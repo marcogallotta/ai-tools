@@ -104,13 +104,13 @@ The final task process record must agree with:
 
 ## Contract-managed task registry
 
-SQLite contains a persistent registry of contract-managed task GIDs.
+Management is determined by the task's current section in the Cooking project (`1215089183018968`), checked live rather than fixed once at enrollment. A task is contract-managed unless its current section is `Sourcing` or `Reference`; every other section — all cuisine sections, `Planned`, `Eating`, `Seasonal`, etc. — defaults to managed. This applies uniformly to new and pre-existing tasks: nothing needs a separate backfill or explicit enrollment pass, and moving a task into or out of `Sourcing`/`Reference` changes its managed status from that point on.
 
-A task enters the registry when its first contract cycle begins.
+SQLite still caches the current determination per task (`managed_tasks`) for audit and to avoid a live Asana lookup on every check, but the cache reflects the task's live section membership rather than being the sole source of truth.
 
-A task remains contract-managed after a successful write. Any later note change requires another contract cycle.
+A task remains contract-managed after a successful write, so long as its section hasn't moved it out of management. Any later note change requires another contract cycle.
 
-Generic commands must consult the registry before mutating notes.
+Generic commands must consult this determination before mutating notes.
 
 The guard applies to:
 
@@ -514,9 +514,9 @@ The first implementation does not:
 
 ## Open decisions
 
-1. **Initial management:** Does a task become contract-managed automatically on the first `contract begin`, or must Marco explicitly enrol it first?
+1. **Initial management — resolved:** No explicit enrollment step. A task is contract-managed by default based on its current Cooking-project section, excluding only `Sourcing` and `Reference` (see Contract-managed task registry).
 2. **Marco-only actions:** `contract recover` is resolved — it lives in a separate script outside agent-visible surfaces, and only Marco runs it (see Failure behaviour). Still open: whether revoking management and replacing a consumed token use the same separate-script pattern, and how the tool should represent that authority structurally.
 3. **Token lifetime — resolved:** No automatic expiry. A stuck `in_flight` token requires an explicit, manually run `contract recover` command (see Failure behaviour); no background timeout or heartbeat-based auto-recovery in v1.
 4. **Verifier edits:** When a verifier changes content, what exact threshold makes the verifier the new material editor and therefore requires verification by the opposite family?
-5. **Existing tasks:** Which existing dish tasks, if any, should be enrolled when the tool is introduced?
+5. **Existing tasks — resolved:** Every pre-existing task in the Cooking project outside `Sourcing`/`Reference` is contract-managed immediately, per the same live section-based rule as new tasks. No separate enrollment pass is needed; whether existing tasks' *content* needs migration to the current canonical structure is a separate question, unaffected by this (see Out of scope).
 
