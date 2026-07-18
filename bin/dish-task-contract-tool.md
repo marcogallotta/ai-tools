@@ -16,9 +16,10 @@ This design does not attempt adversarial security. Agents are trusted to identif
 describe their work honestly. Mechanical controls exist to prevent accidental bypasses, stale writes,
 repeated writes, and incomplete validation.
 
-A direct edit made through the Asana web UI or another integration bypasses this tool entirely and is
-not prevented — it is only caught reactively, at the next `contract prepare`'s baseline check against
-`modified_at`.
+Direct web or integration edits are not prevented and are not generally identifiable as bypasses —
+`contract prepare` simply reads whatever state the task is in at that moment and takes it as a fresh
+baseline, with no memory of what came before. Only an edit made after `prepare` and before `submit` is
+caught, via the `modified_at` staleness check at `submit`.
 
 ## Versioning plan
 
@@ -63,10 +64,13 @@ v1b is a configuration flip on v1a's own logged evidence, not new code.
   related). No incident motivates letting a verifier edit the note at all; a verifier who finds a
   problem rejects it and the editor resubmits (see Workflow). This removes an entire dimension of
   state the design previously carried.
-* `--confirm-independent-review` as a separate required flag. The tool already knows `editor_agent`
-  and `verifier_agent` from the commands themselves; a self-verification collision is detected by
-  comparing those two values directly and logged automatically (see Logging and observability), with
-  no extra flag for an agent to remember to pass.
+* `--confirm-independent-review` as a separate required flag, and any dedicated "self-verification
+  collision" detection alongside it. The opposite-family requirement on `approve` already makes
+  `editor_agent == verifier_agent` structurally unreachable — routing rejects it before any collision
+  check could run — so a comparison built to catch that case is dead code, not a protection. The real
+  residual risk (one session dishonestly declaring `claude` for editing and `gpt` for verification) is
+  exactly the "trusted, not authenticated" limit already stated in Scope, and no mechanical check
+  catches it; claiming one does would be worse than naming the gap.
 * A cached, authoritative `managed_tasks` table. Management is always resolved live (see
   Contract-managed task registry); a cache that isn't authoritative isn't worth maintaining.
 * A distinct adversarial self-review mechanism. The review log is explicit that this "was an assistant
@@ -152,10 +156,10 @@ requires the opposite family, but the verifier may focus review on the declared 
 containment is accepted. `small` matches the contract's Local change class: no verifier runs, and the
 task's existing `Verification` field is left as-is.
 
-A self-verification collision — `editor_agent` equal to the required verifier's own declared agent on
-`approve` — is detected automatically by comparing the two stored values and logged to `audit_events`
-(see Logging and observability). It is not prevented; identity is trusted, not authenticated (see
-Scope).
+The opposite-family requirement on `approve` makes `editor_agent == verifier_agent` structurally
+unreachable — it fails the family check before any further comparison would matter. The residual risk
+of one session dishonestly declaring different agent values for editing and verification is not
+detectable under the trusted-identity model (see Scope) and is not claimed to be caught here.
 
 The final task process record must agree with the declared final editor, its derived family, the
 declared change level, the required verifier family, and the governing contract revision.
@@ -217,7 +221,12 @@ The tool:
 6. On a validation failure: reports every violated rule; no submission row is created, but the attempt
    is logged (see Logging and observability) so failure patterns are visible even without a persisted
    submission.
-7. On a pass: hashes the file as `content_hash` and creates one `submissions` row.
+7. On a pass: hashes the file as `content_hash`, computes a compact diff summary against
+   `baseline_notes_hash`'s source text (`characters_added`, `characters_removed`, `lines_changed`,
+   `headings_touched`), logs that summary to `audit_events`, and creates one `submissions` row. The
+   summary is computed and logged, not persisted as a second full copy of the note — hashes alone
+   cannot answer what a `small`-declared change actually touched (see Logging and observability), so
+   this is the minimum needed to make that observability claim true.
    * `small` → status `ready`, no verifier required.
    * `medium`/`large` → status `awaiting_verification`, with `required_verifier_family` set to the
      family opposite `editor_family`.
@@ -263,14 +272,16 @@ contract approve <submission-id> --agent <verifier-agent> --file <same-final-not
 ```
 
 * Requires `verifier-agent`'s family to be the submission's `required_verifier_family`.
-* Requires the submitted file's hash to exactly match `content_hash` — byte-for-byte, no edits. The
-  verifier has no path to submit modified content through this command.
+* Requires the submitted file's hash to exactly match `content_hash` (see Content hashing for what
+  "exact match" means). The verifier has no path to submit modified content through this command.
 * On pass: records `verifier_agent`/`verifier_family`, sets status `ready`.
 
 ```text
 contract reject <submission-id> --agent <verifier-agent> --reason "<why not signable>"
 ```
 
+* Requires `verifier-agent`'s family to be the submission's `required_verifier_family`, exactly as
+  `approve` does — rejection is part of the same routed review, not a separate unguarded action.
 * Marks the submission `rejected` — terminal for this submission, logged with the reason.
 * The editor addresses the issue and runs `contract prepare` again with a corrected file — a fresh
   submission, not a reopened one. This is the deliberate simplification that replaces verifier in-place
@@ -432,8 +443,9 @@ Every `contract` command execution logs an event regardless of outcome:
 * for `approve`/`reject`: verifier agent/family, the decision, and for `reject`, the stated reason, so
   rejection patterns are visible without reading every case individually;
 * for `submit`: whether `modified_at` had moved (staleness outcome), and the final submission state;
-* self-verification collisions (`editor_agent` equal to the acting verifier) logged automatically
-  wherever they occur, with no extra agent action required (see Agent identity and verifier routing).
+* for `prepare`: the compact diff summary against the prior baseline (`characters_added`,
+  `characters_removed`, `lines_changed`, `headings_touched` — see Workflow §1), so `small`-declared
+  diffs can actually be characterized later, not just counted.
 
 The generic Asana CLI's managed-task check also logs during v1a even though it does not yet block:
 every note-write to a section-managed task made *outside* the guarded `contract` path is logged as an
@@ -448,15 +460,20 @@ minimum:
 * validation failure rate, broken down by which specific rule failed most often;
 * rejection rate, and repeated-rejection-on-same-task rate — the input needed to decide whether v2's
   two-pass-stop rule is actually necessary;
-* what real `small`-declared diffs actually touch and how large they are — the input needed to design
-  v2's small-change speed bump;
+* what real `small`-declared diffs actually touch and how large they are, from the diff summary logged
+  at `prepare` (see Workflow §1) — the input needed to design v2's small-change speed bump;
 * how many advisory bypass events occurred outside the guarded path, and on which tasks/agents;
 * staleness-rejection rate at `submit` — needed to validate whether the `modified_at` baseline is
   over-sensitive (see Content hashing).
 
 ## Content hashing
 
-The validation binds to the exact content sent to Asana.
+The validation binds to the exact content sent to Asana. Every hash comparison in this design —
+`prepare`'s `content_hash`, `approve`'s match check, `submit`'s recomputation — uses the SHA-256 hash
+of the same canonical UTF-8/LF bytes, never raw upload bytes. "Exact match" means equality of those
+canonical hashes, not byte-for-byte equality of whatever was originally uploaded; if the tool
+normalizes line endings or whitespace before hashing, that normalization is what "exact" is measured
+against, consistently everywhere the design says "exact" or "byte-for-byte."
 
 Initial canonicalization proposal: UTF-8 encoding; LF line endings; no trimming; no automatic
 whitespace cleanup; no section reordering; no silent markdown rewriting; SHA-256; canonicalization
@@ -524,6 +541,8 @@ Implementation follows TDD. Tests must cover:
   to submit edited content through `approve`;
 * `contract reject` marking a submission terminal and requiring a fresh `prepare`, not a reopened
   submission;
+* `contract reject` rejecting a call from an agent whose family does not match
+  `required_verifier_family`, exactly as `approve` does;
 * concurrent `contract prepare` on a task with an already-open submission rejected, both by application
   check and by the SQLite unique constraint;
 * any `modified_at` change causing a `stale` rejection at `submit`;
@@ -538,8 +557,12 @@ Implementation follows TDD. Tests must cover:
 * `Self-verified:` line missing, or naming an agent other than `editor_agent`, fails `prepare`;
 * a ChatGPT-authored file missing its own `Self-verified: gpt, <date>` line fails `prepare`, and no
   local-agent insertion satisfies it;
-* self-verification collision (`editor_agent` == acting verifier on `approve`) detected and logged
-  automatically, with no separate flag involved;
+* `editor_agent == verifier_agent` on `approve` is unreachable — always rejected by the family check
+  first, confirming no separate collision path exists to test;
+* the diff summary (`characters_added`/`characters_removed`/`lines_changed`/`headings_touched`) is
+  logged at every `prepare` pass, without persisting a second full copy of the note;
+* `approve`/`submit` hash comparisons use the canonical-byte hash consistently, not raw upload bytes
+  (see Content hashing);
 * `canonical_manifest` captured at `prepare` remains authoritative for the submission even if the
   governing contract text changes before `submit`;
 * section-GID resolution: a `Sourcing`/`Reference` rename does not change managed status; an
