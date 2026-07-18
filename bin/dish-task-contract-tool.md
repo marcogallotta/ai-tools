@@ -12,7 +12,7 @@ It is separate from the general-purpose Asana CLI, but the existing CLI must con
 
 This design does not attempt adversarial security. Agents are trusted to identify themselves and describe their work honestly. Mechanical controls exist to prevent accidental bypasses, stale writes, repeated writes, and incomplete validation.
 
-## Settled design decisions
+## Current design decisions, pending formal approval
 
 * Contract-managed notes cannot be changed through generic note-writing commands.
 * This restriction can be relaxed later if it becomes obstructive.
@@ -29,6 +29,18 @@ This design does not attempt adversarial security. Agents are trusted to identif
 * An identical second write is rejected.
 
 ## Change levels
+
+The tool uses plain-language terms deliberately distinct from the contract's own change-class
+vocabulary, so an agent pattern-matching text cannot conflate the tool's field with the contract's
+field. The declared level maps directly onto the contract's change class for the process record:
+
+```text
+small  → Local
+medium → Delta
+large  → Reconstruction
+```
+
+The tool uses the plain-language terms; the task process record uses the contract terms.
 
 ### Small change
 
@@ -131,13 +143,16 @@ The tool:
 4. Records a hash of the current notes for diagnostics and recovery.
 5. Reads the exact governing contract.
 6. Derives the contract revision.
-7. Registers the task as contract-managed if necessary.
+7. Confirms the task is contract-managed under the enrolment policy.
 8. Creates an open cycle in SQLite.
 9. Exports the current note as the working-file starting point.
 
 The baseline applies to the whole task, not only its notes.
 
-Any later change that alters `modified_at` invalidates the cycle.
+Any later change that alters `modified_at` invalidates the cycle. This deliberately uses a stricter
+baseline than the change plan's note-content-only proposal: any task change, not only a note-content
+change, invalidates the cycle. The notes hash recorded at cycle start is kept for recovery and
+diagnosis, not as the primary staleness check.
 
 ### 2. Construct final note
 
