@@ -283,7 +283,7 @@ def _normalize_batch_op(op):
     if action == "set_notes":
         if not op.get("task") or "notes" not in op:
             sys.exit("set_notes operations need task and notes")
-        return {"action": "update_task", "task": op["task"], "fields": {"notes": _text(op.get("notes"))}, "reason": _op_reason(op)}
+        return {"action": "update_task", "task": op["task"], "fields": {"notes": op.get("notes")}, "reason": _op_reason(op)}
 
     if action == "replace_notes":
         if not op.get("task") or not isinstance(op.get("old"), str) or not op.get("old") or not isinstance(op.get("new"), str):
@@ -291,8 +291,8 @@ def _normalize_batch_op(op):
         return {
             "action": "replace_notes",
             "task": op["task"],
-            "old": _text(op["old"]),
-            "new": _text(op["new"]),
+            "old": op["old"],
+            "new": op["new"],
             "reason": _op_reason(op),
         }
 
@@ -309,7 +309,7 @@ def _normalize_batch_op(op):
             "project": op["project"],
             "name": op["name"],
             "section": op.get("section"),
-            "notes": _text(op.get("notes")) if op.get("notes") is not None else None,
+            "notes": op.get("notes"),
             "reason": _op_reason(op),
         }
 
@@ -320,7 +320,7 @@ def _normalize_batch_op(op):
             "action": "create_subtask",
             "parent": op["parent"],
             "name": op["name"],
-            "notes": _text(op.get("notes")) if op.get("notes") is not None else None,
+            "notes": op.get("notes"),
             "reason": _op_reason(op),
         }
 

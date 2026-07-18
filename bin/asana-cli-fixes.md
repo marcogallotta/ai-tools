@@ -225,7 +225,7 @@ helpers are used by `batch-apply` or anything else in the file.
    that syntax. HELP text (asana:413) already documents the new syntax; no
    bare-gid form remains. All 3 tests above pass; verified in this pass.
 
-5. **Fix double newline decoding.**
+5. **Fix double newline decoding. — DONE**
    `_text()` (asana:50-54) re-applies `\n`-decoding to strings that
    `json.load()` has already decoded in the batch path (asana:250-292),
    which can mangle literal backslash-n content. CLI-argument decoding and
@@ -236,6 +236,14 @@ helpers are used by `batch-apply` or anything else in the file.
    `test_batch_json_literal_backslash_n_round_trips_unchanged`,
    `test_batch_json_literal_backslash_n_in_replace_notes_round_trips`,
    `test_batch_json_literal_backslash_n_in_create_task_notes_round_trips`.
+
+   Done: `_normalize_batch_op` no longer calls `_text()` on `notes`/`old`/
+   `new` values sourced from the batch-file JSON (`set_notes`,
+   `replace_notes`, `create_task`, `create_subtask`) — those are passed
+   through as `json.load()` already decoded them. `_text()` itself is
+   unchanged and still used for CLI-arg/stdin paths (`c_set_notes`,
+   `c_append`, `c_replace`, `c_create_task`, `c_create_subtask`). All 5
+   `tests/test_decode.py` cases pass.
 
 6. **Keep `raw` as a genuine escape hatch, including `DELETE`.**
    Do not restrict the method allowlist. The external Bash-tool permission
