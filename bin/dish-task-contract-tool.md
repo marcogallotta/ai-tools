@@ -20,7 +20,7 @@ A direct edit made through the Asana web UI or another integration bypasses this
 * This restriction can be relaxed later if it becomes obstructive.
 * Agent identity is supplied explicitly as a trusted CLI flag.
 * Agent identity is not cryptographically authenticated.
-* Trusted state is stored in a local SQLite database.
+* Trusted state is stored in a local SQLite database at `~/ai-tools/var/dish-contract.db`, gitignored, shared by every locally-invoked agent regardless of family.
 * Any change to the Asana task after the initial read invalidates the baseline.
 * Baseline freshness is checked through Asana’s `modified_at`.
 * The editing agent declares a **change level** and explains why.
@@ -88,11 +88,13 @@ claude          → Claude family
 gpt, codex      → GPT family
 ```
 
+This mirrors the contract's own family definition ("GPT includes ChatGPT/Codex"), so a ChatGPT-authored cycle is routed the same as any other GPT-family edit — the opposite-family rule below already sends it to Claude, with no ChatGPT-specific case needed. ChatGPT cannot run the CLI itself; whoever runs `contract begin`/`submit` on its behalf declares `--agent gpt`.
+
 Initial construction and large changes require verification by the opposite family.
 
 Medium changes also require the opposite family, but verification may focus on the declared affected areas only when containment is accepted.
 
-Small changes do not require a new independent verification pass unless a deterministic check or the agent’s own review identifies a material consequence.
+Small changes match the contract's Local change class: no verifier is required at all, and the task's existing `Verification` field is left as-is rather than reset. Step 4 (Semantic verification) is skipped entirely for a small change.
 
 The final task process record must agree with:
 
@@ -203,8 +205,11 @@ The verification command requires:
 ```text
 contract verify <cycle-id> \
   --agent <verifier-agent> \
+  --confirm-independent-review \
   --file <final-note>
 ```
+
+`--confirm-independent-review` is a required, explicit flag the verifying agent must pass. It does not prevent one session from declaring itself both editor and verifier — identity is trusted, not authenticated (see Scope) — but it makes accidental self-verification visible rather than silent, and is logged to `audit_events`.
 
 The verifier confirms:
 
@@ -452,19 +457,19 @@ The contract tool performs its final update through a separate guarded gateway t
 
 ## ChatGPT workflow
 
-ChatGPT cannot perform the trusted local submission.
+ChatGPT has no local CLI or SQLite access, so it cannot run any `contract` command itself.
 
 Its output is one complete final-note file.
 
 A local agent or Marco then:
 
-1. begins or resumes the contract cycle;
+1. begins or resumes the contract cycle, declaring `--agent gpt` — this attributes the cycle to ChatGPT as editor even though a local process runs the command on its behalf;
 2. runs deterministic validation;
-3. performs semantic verification;
+3. performs semantic verification, required from the opposite (Claude) family per the standard routing rule — nothing ChatGPT-specific, since GPT and Codex are one family (see Agent identity and verifier routing);
 4. creates the trusted SQLite validation record and token;
 5. submits the exact file.
 
-ChatGPT cannot self-issue a trusted validation record.
+ChatGPT cannot self-issue a trusted validation record, declare its own `--agent` value, or perform `--confirm-independent-review` itself — a human or local agent does so on its behalf, honestly reflecting who actually reviewed the note.
 
 ## Direct dependencies
 
@@ -532,9 +537,4 @@ The first implementation does not:
 3. **Token lifetime — resolved:** No automatic expiry. A stuck `in_flight` token requires an explicit, manually run `contract recover` command (see Failure behaviour); no background timeout or heartbeat-based auto-recovery in v1.
 4. **Verifier edits:** When a verifier changes content, what exact threshold makes the verifier the new material editor and therefore requires verification by the opposite family?
 5. **Existing tasks — resolved:** Every pre-existing task in the Cooking project outside `Sourcing`/`Reference` is contract-managed immediately, per the same live section-based rule as new tasks. No separate enrollment pass is needed; whether existing tasks' *content* needs migration to the current canonical structure is a separate question, unaffected by this (see Out of scope).
-6. **SQLite trust-store location and cross-family access:** Where does the SQLite trust store live, and how do both Claude-family and GPT-family agents — potentially separate processes or environments — reach the same cycle and validation-record state to complete a cross-family verification handoff?
-7. **Small-change verification path:** When a small change skips independent verification, does workflow step 4 (Semantic verification) get skipped entirely, and what does the deterministic check's "editor/verifier family routing is internally consistent with declared change level" mean when there is no verifier?
-8. **ChatGPT-authored cycle attribution:** What `--agent` value represents ChatGPT as editor when a local agent or Marco runs the cycle on its behalf, and how is opposite-family verification guaranteed rather than accidentally same-family?
-9. **Non-authenticated identity — explicit sign-off needed:** The design narrows the change plan's "authenticated editor identity" language to trusted-but-non-authenticated, declared via CLI flag. Confirm this is the accepted scope rather than an unapproved narrowing.
-10. **Self-verification risk — explicit acceptance needed:** Nothing prevents one session from declaring itself both editor and opposite-family verifier (e.g. `--agent claude` then later `--agent codex`) with no actual second review occurring. Confirm this is an accepted consequence of the "not adversarial security" framing, since it materially weakens the verifier-routing protection the change plan treats as approved.
 
