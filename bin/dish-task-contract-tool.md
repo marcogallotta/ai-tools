@@ -1,0 +1,488 @@
+# Dish Task Contract Tool — Design Draft
+
+**Purpose:** Provide one controlled path for validating and writing complete contract-governed dish-task notes to Asana.
+
+**Status:** Initial design. No implementation or production changes are authorized by this document.
+
+## Scope
+
+This tool governs complete writes to the notes of contract-managed dish tasks.
+
+It is separate from the general-purpose Asana CLI, but the existing CLI must consult the contract tool’s registry before performing a generic note mutation.
+
+This design does not attempt adversarial security. Agents are trusted to identify themselves and describe their work honestly. Mechanical controls exist to prevent accidental bypasses, stale writes, repeated writes, and incomplete validation.
+
+## Settled design decisions
+
+* Contract-managed notes cannot be changed through generic note-writing commands.
+* This restriction can be relaxed later if it becomes obstructive.
+* Agent identity is supplied explicitly as a trusted CLI flag.
+* Agent identity is not cryptographically authenticated.
+* Trusted state is stored in a local SQLite database.
+* Any change to the Asana task after the initial read invalidates the baseline.
+* Baseline freshness is checked through Asana’s `modified_at`.
+* The editing agent declares a **change level** and explains why.
+* User-facing change levels are **small**, **medium**, and **large**.
+* Python does not infer the semantic change level.
+* The complete final note is validated and written as one artifact.
+* A successful write consumes a single-use token.
+* An identical second write is rejected.
+
+## Change levels
+
+### Small change
+
+A change that cannot materially alter cooking, sourcing, safety, halal compliance, readiness, Human approval, or the intended result.
+
+Examples may include spelling, formatting, or an unambiguous correction with no material downstream effect.
+
+### Medium change
+
+A material change whose consequences are clearly limited to identified parts of the task.
+
+The editor must identify the affected parts and explain why the effect is contained.
+
+### Large change
+
+A change that can affect the complete construction, or whose consequences cannot be confidently contained.
+
+Initial task construction is always treated as a large change.
+
+The editing agent declares:
+
+```text
+--change-level small|medium|large
+--change-reason "<brief explanation>"
+```
+
+The verifier must explicitly confirm the declared level. If the verifier does not agree, no validation record is issued.
+
+## Agent identity and verifier routing
+
+Every editing or verification operation requires:
+
+```text
+--agent claude|gpt|codex
+```
+
+The value is trusted as an honest declaration.
+
+Agent families are:
+
+```text
+claude          → Claude family
+gpt, codex      → GPT family
+```
+
+Initial construction and large changes require verification by the opposite family.
+
+Medium changes also require the opposite family, but verification may focus on the declared affected areas only when containment is accepted.
+
+Small changes do not require a new independent verification pass unless a deterministic check or the agent’s own review identifies a material consequence.
+
+The final task process record must agree with:
+
+* the declared final editor;
+* the derived editor family;
+* the declared change level;
+* the required verifier family;
+* the governing contract revision.
+
+## Contract-managed task registry
+
+SQLite contains a persistent registry of contract-managed task GIDs.
+
+A task enters the registry when its first contract cycle begins.
+
+A task remains contract-managed after a successful write. Any later note change requires another contract cycle.
+
+Generic commands must consult the registry before mutating notes.
+
+The guard applies to:
+
+* `set-notes`;
+* `append`;
+* `replace`;
+* batch operations that update notes;
+* `raw` writes containing `notes` or `html_notes`.
+
+Unrelated operations such as renaming, moving, completing, or changing other fields remain outside this contract unless later expanded.
+
+The contract submission path uses an internal guarded write operation after all checks pass. It does not disable its own write through the generic-command guard.
+
+## Workflow
+
+### 1. Begin cycle
+
+The editor starts a cycle with:
+
+```text
+contract begin <task-gid> \
+  --agent <agent> \
+  --change-level <level> \
+  --change-reason "<reason>"
+```
+
+The tool:
+
+1. Confirms the task exists.
+2. Reads the complete task.
+3. Records its `modified_at`.
+4. Records a hash of the current notes for diagnostics and recovery.
+5. Reads the exact governing contract.
+6. Derives the contract revision.
+7. Registers the task as contract-managed if necessary.
+8. Creates an open cycle in SQLite.
+9. Exports the current note as the working-file starting point.
+
+The baseline applies to the whole task, not only its notes.
+
+Any later change that alters `modified_at` invalidates the cycle.
+
+### 2. Construct final note
+
+The agent edits a local file containing the complete proposed final task note.
+
+Patches, replacement fragments, and incremental Asana edits are not accepted by the contract submission path.
+
+The agent must review the complete assembled note before requesting validation.
+
+### 3. Deterministic validation
+
+The tool validates the final file against machine-checkable rules, including:
+
+* canonical section structure;
+* required fields;
+* allowed values;
+* exactly one readiness statement;
+* deterministic readiness contradictions;
+* process-record syntax;
+* contract revision;
+* declared editor and verifier routing;
+* declared change-level information;
+* removed legacy fields;
+* absence of unresolved structural placeholders where prohibited.
+
+The validator reports every detected failure and performs no Asana mutation.
+
+The deterministic validator does not decide whether the recipe is culinarily correct, whether research is adequate, or whether the declared change level is semantically honest.
+
+### 4. Semantic verification
+
+The required verifier reviews the complete proposed note.
+
+The verification command requires:
+
+```text
+contract verify <cycle-id> \
+  --agent <verifier-agent> \
+  --file <final-note>
+```
+
+The verifier confirms:
+
+* complete end-to-end semantic review;
+* culinary and internal consistency;
+* evidence adequacy;
+* readiness;
+* editor/verifier routing;
+* the declared change level;
+* containment for a medium change;
+* the exact content being approved.
+
+If the verifier materially edits the note, the edited content must be treated as a new final artifact and validated again before a record is issued.
+
+### 5. Validation record and token
+
+After deterministic and semantic validation pass, the tool creates:
+
+* one trusted validation record;
+* one single-use write token.
+
+Neither needs to be a portable signed file. Their trust comes from being stored and state-managed by the local tool in SQLite.
+
+The validation record binds:
+
+* cycle ID;
+* task GID;
+* final content hash;
+* baseline `modified_at`;
+* baseline notes hash;
+* contract revision;
+* editor agent and family;
+* change level and reason;
+* verifier agent and family;
+* validator version;
+* validation time.
+
+The token binds:
+
+* cycle ID;
+* task GID;
+* validation-record ID;
+* final content hash;
+* baseline `modified_at`;
+* current token state.
+
+The token is an internal database record, not a security credential that the agent must keep secret.
+
+### 6. Guarded submission
+
+Submission uses:
+
+```text
+contract submit <cycle-id> --file <final-note>
+```
+
+The tool:
+
+1. Loads the cycle, validation record, and token.
+2. Re-runs deterministic validation.
+3. Recomputes the exact final-content hash.
+4. Rejects if it differs from the validated hash.
+5. Reads the Asana task immediately before mutation.
+6. Compares current `modified_at` with the initial baseline.
+7. Rejects if they differ.
+8. Atomically changes the token from `issued` to `in_flight` in SQLite.
+9. Sends one complete notes update to Asana.
+10. On clear success, marks the token `consumed` and the cycle `completed`.
+
+The pre-write read adds one Asana round trip. This is intentional.
+
+The design accepts that a small race remains between the freshness check and the Asana mutation unless Asana provides a usable conditional-update mechanism.
+
+## Token states
+
+```text
+issued
+in_flight
+consumed
+uncertain
+revoked
+```
+
+Allowed transitions:
+
+```text
+issued → in_flight
+in_flight → consumed
+in_flight → issued
+in_flight → uncertain
+issued → revoked
+uncertain → consumed
+uncertain → issued
+uncertain → revoked
+```
+
+A consumed or revoked token cannot be reused.
+
+A second submission using a consumed token fails even when the content is identical.
+
+## Failure behaviour
+
+### Failure before mutation
+
+Examples:
+
+* deterministic validation failure;
+* missing verification;
+* content-hash mismatch;
+* routing mismatch;
+* invalid token;
+* stale `modified_at`.
+
+No Asana write occurs.
+
+A stale baseline revokes the current token and closes the cycle as stale. A new cycle must begin from the new task state.
+
+A wrong-file or hash-mismatch rejection does not consume the token.
+
+### Confirmed API failure
+
+When Asana clearly rejects the request and the tool knows the write was not applied, the token returns from `in_flight` to `issued`.
+
+The same validated submission may be retried after the cause is addressed.
+
+### Uncertain API outcome
+
+A timeout, lost response, connection break, or similar ambiguous result changes the token to `uncertain`.
+
+The tool must not blindly retry.
+
+Recovery performs one targeted read:
+
+* If live notes match the intended final-content hash, mark the token `consumed`.
+* If live notes match the original baseline-notes hash and the task state is otherwise consistent with a failed write, return the token to `issued`.
+* If live notes match neither, revoke the token and require Marco-led recovery.
+
+## SQLite model
+
+Minimum tables:
+
+### `managed_tasks`
+
+* `task_gid`
+* `managed_since`
+* `status`
+* `current_cycle_id`
+
+### `cycles`
+
+* `cycle_id`
+* `task_gid`
+* `baseline_modified_at`
+* `baseline_notes_hash`
+* `contract_revision`
+* `editor_agent`
+* `editor_family`
+* `change_level`
+* `change_reason`
+* `status`
+* `created_at`
+* `completed_at`
+
+### `validation_records`
+
+* `validation_record_id`
+* `cycle_id`
+* `content_hash`
+* `verifier_agent`
+* `verifier_family`
+* `validator_version`
+* `validated_at`
+
+### `write_tokens`
+
+* `token_id`
+* `cycle_id`
+* `validation_record_id`
+* `content_hash`
+* `state`
+* `issued_at`
+* `updated_at`
+
+### `audit_events`
+
+* `event_id`
+* `cycle_id`
+* `event_type`
+* `actor_agent`
+* `details`
+* `created_at`
+
+SQLite transactions protect local state changes and prevent two local submissions from consuming the same token.
+
+## Content hashing
+
+The validation record must bind to the exact content sent to Asana.
+
+Initial canonicalization proposal:
+
+* UTF-8 encoding;
+* LF line endings;
+* no trimming;
+* no automatic whitespace cleanup;
+* no section reordering;
+* no silent markdown rewriting;
+* hash algorithm: SHA-256;
+* canonicalization version stored with the record.
+
+The tool hashes the canonical bytes and sends the corresponding decoded text.
+
+Before implementation, this must be tested against an Asana write/read round trip to determine whether Asana normalizes trailing newlines or other note content. The canonicalization rule must reflect observable API behaviour so uncertain-outcome recovery is reliable.
+
+## Integration with the existing Asana CLI
+
+The contract tool and general Asana CLI may share:
+
+* SDK client construction;
+* task reads;
+* task updates;
+* error formatting.
+
+They must not share unguarded note-writing behaviour.
+
+The general CLI asks the contract registry whether a target task is managed before changing notes.
+
+The contract tool performs its final update through a separate guarded gateway that cannot be called without a valid cycle, validation record, and token.
+
+## ChatGPT workflow
+
+ChatGPT cannot perform the trusted local submission.
+
+Its output is one complete final-note file.
+
+A local agent or Marco then:
+
+1. begins or resumes the contract cycle;
+2. runs deterministic validation;
+3. performs semantic verification;
+4. creates the trusted SQLite validation record and token;
+5. submits the exact file.
+
+ChatGPT cannot self-issue a trusted validation record.
+
+## Direct dependencies
+
+Dependency surfacing is advisory and does not block token issuance in the first implementation.
+
+A later scanner may surface only bounded direct candidates:
+
+* exact task-GID references;
+* explicit Asana links;
+* exact task-name references;
+* clearly named planning documents.
+
+It must not recursively audit dependencies or decide semantic impact.
+
+## Testing requirements
+
+Implementation follows TDD.
+
+Tests must cover:
+
+* SQLite schema and migrations;
+* task registration;
+* generic note-write blocking;
+* non-note generic writes remaining allowed;
+* declared agent-name validation;
+* agent-family routing;
+* small, medium, and large change-level handling;
+* initial construction treated as large;
+* verifier-family mismatch;
+* deterministic contract failures;
+* exact content-hash binding;
+* content changed after validation;
+* any `modified_at` change causing stale rejection;
+* no Asana mutation on any pre-write failure;
+* exactly one Asana mutation on success;
+* token reuse rejection;
+* two simultaneous submissions using one token;
+* confirmed API failure preserving retry eligibility;
+* uncertain outcome where the write succeeded;
+* uncertain outcome where the write did not apply;
+* uncertain outcome with a third, conflicting state;
+* raw `notes` and `html_notes` bypass attempts;
+* task remaining managed after successful submission.
+
+## Out of scope
+
+The first implementation does not:
+
+* cryptographically authenticate agents;
+* infer change level from note text;
+* decide semantic culinary correctness;
+* recursively audit dependencies;
+* govern non-note task fields;
+* automatically migrate every existing dish task;
+* modify the contract text or incident logs;
+* provide a remote or multi-user trust service.
+
+## Open decisions
+
+1. **Initial management:** Does a task become contract-managed automatically on the first `contract begin`, or must Marco explicitly enrol it first?
+2. **Marco-only actions:** How should the tool represent Marco’s authority for revoking management, replacing a consumed token, or resolving an ambiguous recovery state?
+3. **Token lifetime:** Should an issued token have a time expiry, or remain valid until the task changes, the content changes, or it is explicitly revoked?
+4. **Verifier edits:** When a verifier changes content, what exact threshold makes the verifier the new material editor and therefore requires verification by the opposite family?
+5. **Existing tasks:** Which existing dish tasks, if any, should be enrolled when the tool is introduced?
+
