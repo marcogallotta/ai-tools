@@ -64,6 +64,41 @@ def _call(fn, *args, **kwargs):
         _fail(e)
 
 
+PAGE_LIMIT = 100  # Asana API max; one page per CLI call, no auto-follow
+
+
+def _fetch_page(fn, *args, opts, cursor):
+    """Fetch exactly one page (fixed size PAGE_LIMIT) from a list endpoint.
+
+    Returns (items, next_cursor); next_cursor is None on the last page.
+    """
+    page_opts = dict(opts)
+    page_opts["limit"] = PAGE_LIMIT
+    if cursor:
+        page_opts["offset"] = cursor
+    try:
+        result = fn(*args, page_opts)
+    except ApiException as e:
+        _fail(e)
+    items = result.get("data") or []
+    next_page = result.get("next_page")
+    next_cursor = next_page.get("offset") if next_page else None
+    return items, next_cursor
+
+
+def _print_cursor(next_cursor):
+    if next_cursor:
+        print("# more results: --cursor %s" % next_cursor)
+
+
+def _status_match(t, status):
+    if status == "both":
+        return True
+    if status == "complete":
+        return bool(t.get("completed"))
+    return not t.get("completed")
+
+
 # raw urllib transport, kept only for `raw` (see asana-cli-fixes.md P1 #6 for its planned SDK migration)
 def req(method, path, data=None, params=None):
     global _PAT
@@ -142,27 +177,35 @@ def c_project(gid):
     print(d.get("notes") or "")
 
 
-def c_sections(gid):
-    for s in _call(asana.SectionsApi(client()).get_sections_for_project, gid, {"opt_fields": "name"}):
+def c_sections(gid, cursor):
+    items, next_cursor = _fetch_page(
+        asana.SectionsApi(client()).get_sections_for_project, gid,
+        opts={"opt_fields": "name"}, cursor=cursor,
+    )
+    for s in items:
         print(s["gid"], s["name"])
+    _print_cursor(next_cursor)
 
 
-def c_tasks(gid, allflag):
-    params = {"opt_fields": "name,completed"}
+def c_tasks(kind, gid, status, cursor):
     tasks_api = asana.TasksApi(client())
-    try:
-        data = _call(tasks_api.get_tasks_for_section, gid, params)
-    except SystemExit:
-        data = _call(tasks_api.get_tasks_for_project, gid, params)
-    for t in data:
-        if not allflag and t["completed"]:
-            continue
-        print(t["gid"], "[x]" if t["completed"] else "[ ]", t["name"])
+    fn = tasks_api.get_tasks_for_section if kind == "section" else tasks_api.get_tasks_for_project
+    items, next_cursor = _fetch_page(fn, gid, opts={"opt_fields": "name,completed"}, cursor=cursor)
+    for t in items:
+        if _status_match(t, status):
+            print(t["gid"], "[x]" if t["completed"] else "[ ]", t["name"])
+    _print_cursor(next_cursor)
 
 
-def c_subtasks(gid):
-    for t in _call(asana.TasksApi(client()).get_subtasks_for_task, gid, {"opt_fields": "name,completed"}):
-        print(t["gid"], "[x]" if t["completed"] else "[ ]", t["name"])
+def c_subtasks(gid, status, cursor):
+    items, next_cursor = _fetch_page(
+        asana.TasksApi(client()).get_subtasks_for_task, gid,
+        opts={"opt_fields": "name,completed"}, cursor=cursor,
+    )
+    for t in items:
+        if _status_match(t, status):
+            print(t["gid"], "[x]" if t["completed"] else "[ ]", t["name"])
+    _print_cursor(next_cursor)
 
 
 def c_move(gid, section):
@@ -323,19 +366,29 @@ def c_batch_apply(path):
         print("Created: %s" % ", ".join(created))
 
 
-def c_search(kind, query):
+def c_search(kind, query, cursor):
     ws = os.environ.get("ASANA_WORKSPACE", DEFAULT_WS)
-    for p in _call(asana.TypeaheadApi(client()).typeahead_for_workspace, ws, kind, {"query": query, "opt_fields": "name"}):
+    items, next_cursor = _fetch_page(
+        asana.TypeaheadApi(client()).typeahead_for_workspace, ws, kind,
+        opts={"query": query, "opt_fields": "name"}, cursor=cursor,
+    )
+    for p in items:
         print(p["gid"], p["name"])
+    _print_cursor(next_cursor)
 
 
-def c_projects():
+def c_projects(cursor):
     """List non-archived projects in the workspace (gid name)."""
     ws = os.environ.get("ASANA_WORKSPACE", DEFAULT_WS)
-    for p in _call(asana.ProjectsApi(client()).get_projects, {"workspace": ws, "opt_fields": "name,archived"}):
+    items, next_cursor = _fetch_page(
+        asana.ProjectsApi(client()).get_projects,
+        opts={"workspace": ws, "opt_fields": "name,archived"}, cursor=cursor,
+    )
+    for p in items:
         if p.get("archived"):
             continue
         print(p["gid"], p["name"])
+    _print_cursor(next_cursor)
 
 
 def c_raw(method, path):
@@ -356,15 +409,16 @@ HELP = """asana — Asana API CLI (reads ASANA_PAT from ~/.config/asana-cli/.env
   asana replace <task> [old new]    exact in-place note edit (args, or {"old":..,"new":..} JSON on stdin)
   asana rename <task> <name>
   asana project <project>           name + notes
-  asana sections <project>          list sections (gid name)
-  asana tasks <section|project> [--all]   incomplete by default
-  asana subtasks <task>
+  asana sections <project> [--cursor <token>]
+  asana tasks section|project <gid> [--status incomplete|complete|both] [--cursor <token>]
+                                     one page (100) per call; --status defaults to incomplete
+  asana subtasks <task> [--status incomplete|complete|both] [--cursor <token>]
   asana move <task> <section>       move task to a section (same project)
   asana create-task <project> <name> [--section <gid>] [--notes -]
   asana create-subtask <parent> <name> [--notes -]
   asana batch-apply <plan.json>     short permission prompt, then apply on yes (3+ operations)
-  asana search project|task <query>
-  asana projects                    list all (non-archived) workspace projects
+  asana search project|task <query> [--cursor <token>]
+  asana projects [--cursor <token>] list all (non-archived) workspace projects
   asana raw <GET|PUT|POST> <path>   JSON body from stdin
       e.g. asana raw GET '/tasks/123?opt_fields=name,notes'
 
@@ -413,13 +467,18 @@ def main():
         elif cmd == "project":
             c_project(rest[0])
         elif cmd == "sections":
-            c_sections(rest[0])
+            cursor = opt("--cursor")
+            c_sections(rest[0], cursor)
         elif cmd == "tasks":
-            allflag = "--all" in rest
-            rest[:] = [x for x in rest if x != "--all"]
-            c_tasks(rest[0], allflag)
+            cursor = opt("--cursor")
+            status = opt("--status") or "incomplete"
+            if len(rest) < 2 or rest[0] not in ("section", "project"):
+                sys.exit("usage: asana tasks section|project <gid> [--status incomplete|complete|both] [--cursor <token>]")
+            c_tasks(rest[0], rest[1], status, cursor)
         elif cmd == "subtasks":
-            c_subtasks(rest[0])
+            cursor = opt("--cursor")
+            status = opt("--status") or "incomplete"
+            c_subtasks(rest[0], status, cursor)
         elif cmd == "move":
             c_move(rest[0], rest[1])
         elif cmd == "create-task":
@@ -432,9 +491,11 @@ def main():
         elif cmd == "batch-apply":
             c_batch_apply(rest[0])
         elif cmd == "search":
-            c_search(rest[0], rest[1])
+            cursor = opt("--cursor")
+            c_search(rest[0], rest[1], cursor)
         elif cmd == "projects":
-            c_projects()
+            cursor = opt("--cursor")
+            c_projects(cursor)
         elif cmd == "raw":
             c_raw(rest[0], rest[1])
         else:

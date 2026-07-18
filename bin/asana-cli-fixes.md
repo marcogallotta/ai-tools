@@ -149,7 +149,7 @@ helpers are used by `batch-apply` or anything else in the file.
 
 ## P1 — cleanup once the SDK/test foundation is in place
 
-3. **Pagination must be explicit at the CLI surface, one page per call.**
+3. **Pagination must be explicit at the CLI surface, one page per call. — DONE**
    Not hidden/auto-followed silently. Each call to a list command
    (`tasks`, `subtasks`, `sections`, `search`, `projects`) returns exactly
    one page — fixed at 100 (the Asana API max, internal constant, not a
@@ -179,6 +179,20 @@ helpers are used by `batch-apply` or anything else in the file.
    (all params), plus `test_status_defaults_to_incomplete`,
    `test_status_both_includes_complete_and_incomplete`,
    `test_status_complete_shows_only_completed` (tasks/subtasks params only).
+
+   Done: added `_fetch_page()`/`_print_cursor()`/`_status_match()` (asana:59
+   area) shared by `tasks`, `subtasks`, `sections`, `search`, `projects`.
+   Each fetches one page via `return_page_iterator=False` +
+   `limit=PAGE_LIMIT` (100) + `offset=<cursor>`, reads `next_page.offset`
+   from the raw response for the continuation cursor, and prints it only
+   when present. `--status` added to `tasks`/`subtasks` (default
+   `incomplete`). All 42 `tests/test_pagination.py` cases pass, including
+   the bare-gid-rejected/no-fallback-on-error cases — implementing the
+   `tasks section|project <gid>` dispatch was unavoidable groundwork for
+   #3 (the parametrized pagination tests are already written against that
+   syntax), so those P1 #4 tests pass as a side effect. #4 itself
+   (below) is not marked done — its own scope (docs, HELP text beyond the
+   pagination flags) hasn't been reviewed against this pass.
 
    **`tasks` semantics change: `--all` is gone.**
    `~/honest-pantry/CLAUDE.md` documents and relies on current behavior —
@@ -269,6 +283,9 @@ break, and what to do about each:
 - **`~/honest-pantry/CLAUDE.md`** — documents `tasks --all` single-call and
   incomplete-only-by-default semantics (P1 #3). `--all` is gone; must be
   rewritten to describe `--status`/`--cursor` one-page-at-a-time fetching.
+  — DONE: "Efficient reads" bullet rewritten to `tasks project <gid>
+  --status both`, paginated 100/call, follow `--cursor` until none
+  returned; verified against the P1 #3 implementation.
 - **`~/plant-monitoring/CLAUDE.md`** — documents the `raw PUT`
   `{"data": ...}` body-wrap gotcha (P1 #6). Update only if the SDK
   migration changes this wrap; otherwise leave as-is.
