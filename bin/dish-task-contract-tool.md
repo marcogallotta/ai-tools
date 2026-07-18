@@ -170,7 +170,14 @@ The agent edits a local file containing the complete proposed final task note.
 
 Patches, replacement fragments, and incremental Asana edits are not accepted by the contract submission path.
 
-The agent must review the complete assembled note before requesting validation.
+Before requesting validation, the agent performs its own end-to-end review of the complete note,
+scoped the same way the contract already scopes verification by change level — local check for
+`small`, the change and its identified dependencies for `medium`, the complete task for `large` (see
+`dish-task-contract.md`'s Local/Delta/Reconstruction scoping). It records that review by writing a
+`Self-verified: <agent>, <date>` line into the note's process record. This is not a separate tool
+command: the line lives in the artifact itself and is checked mechanically by deterministic
+validation (step 3) like any other required process-record line, so no separate self-verify command
+or SQLite state is needed to keep it in sync with the content.
 
 ### 3. Deterministic validation
 
@@ -178,7 +185,8 @@ V1 validates the final file against a narrow, explicit rule set — mechanical c
 
 * exactly one `CAN I COOK IT?` readiness line;
 * `WHAT TO BUY` section present;
-* process-record required lines present and syntactically well-formed (`Stage:`, `Human review:`, `Verification:`);
+* process-record required lines present and syntactically well-formed (`Stage:`, `Human review:`, `Verification:`, `Self-verified:`);
+* `Self-verified:`'s declared agent matches the cycle's current `editor_agent` — the only enforcement available for the self-review step; it cannot confirm the review's thoroughness, only that an attributable attestation exists in the exact content being validated;
 * declared `--change-level` is one of `small`/`medium`/`large`, and matches the process record;
 * editor/verifier family routing is internally consistent with the declared change level;
 * contract revision recorded in the process record matches the revision captured at cycle-begin;
@@ -224,7 +232,49 @@ The verifier confirms:
 * containment for a medium change;
 * the exact content being approved.
 
-If the verifier materially edits the note, the edited content must be treated as a new final artifact and validated again before a record is issued. The exact threshold for "materially" remains undefined (see Open decisions); until resolved, a verifier should treat any edit beyond wording or formatting as material and err toward re-validation.
+The verify command compares the submitted file's hash against the cycle's `pending_verification_hash`
+— the hash of the content that most recently passed deterministic validation (step 3). A match means
+unedited content; verification proceeds as above.
+
+A mismatch means the verifier edited the note before signing. This is detected mechanically
+(byte-level hash comparison), and the command then requires two additional flags before proceeding at
+all:
+
+```text
+--change-level small|medium|large \
+--change-reason "<brief explanation>"
+```
+
+Their absence on a hash mismatch is a hard reject: no validation record, no Asana mutation. The
+declared level then branches:
+
+* **`small`** — a Local correction. The cycle's `editor_agent`/`editor_family`/`change_level` are
+  untouched. Because content changed, the tool re-runs step 3's deterministic validation against the
+  new file — including the `Self-verified:` check, unaffected here since the editor did not change —
+  before continuing to verify against it.
+* **`medium`/`large`** — the verifier is now the new material editor, exactly as the contract already
+  states ("supplying missing material evidence or replacing the recipe makes it the latest material
+  editor and resets `Verification` to the opposite family" — `dish-task-contract.md` lines 199-200).
+  The tool reassigns `editor_agent`/`editor_family`/`change_level`/`change_reason` on the *same*
+  cycle — preserving one continuous audit trail rather than opening a new cycle — logs the escalation
+  to `audit_events`, and re-runs step 3 against the new content. Step 3 now also requires the note's
+  `Self-verified:` line to name this newly-assigned editor: the former verifier must self-verify their
+  own edit, at the same contract-defined scope as any other editor, before anyone reviews it. On a
+  step-3 pass, `pending_verification_hash` is updated to the new content's hash, and verification is
+  now required from the family opposite the newly-assigned editor — which, since the original
+  verifier was already opposite-family from the original editor, mechanically flips back to the
+  original editor's family with no new routing logic.
+
+Python never decides which of `small`/`medium`/`large` applies — that stays the verifier's own honest
+declaration, the same trust basis as the editor's original `--change-level` ("Python does not infer
+the semantic change level," see Current design decisions). The mechanism only enforces that a
+declaration is made whenever content demonstrably changed, and keeps the bookkeeping (hashes,
+routing, audit trail) consistent with whatever was declared.
+
+If a validation record had already been issued for this cycle before an escalating edit is
+discovered — a correction spotted late, between step 5 and `submit` — it is invalidated the same way
+`submit`'s existing content-hash check already invalidates stale validation records (Workflow §6,
+steps 2-4); no separate mechanism is needed for that narrower case.
 
 ### 5. Validation record and token
 
@@ -391,6 +441,7 @@ Minimum tables:
 * `editor_family`
 * `change_level`
 * `change_reason`
+* `pending_verification_hash`
 * `status`
 * `created_at`
 * `completed_at`
@@ -518,7 +569,15 @@ Tests must cover:
 * uncertain outcome with a third, conflicting state;
 * raw `notes` and `html_notes` bypass attempts;
 * task remaining managed after successful submission;
-* stuck `in_flight` token recovered via manual `contract recover` command.
+* stuck `in_flight` token recovered via manual `contract recover` command;
+* `Self-verified:` line missing or naming an agent other than `editor_agent`;
+* verifier submission matching `pending_verification_hash` (no edit) proceeds without requiring
+  `--change-level`/`--change-reason`;
+* verifier submission with a hash mismatch and no `--change-level`/`--change-reason` is rejected;
+* verifier-declared `small` edit re-validates in place with `editor_agent` unchanged;
+* verifier-declared `medium`/`large` edit reassigns `editor_agent`/`editor_family`/`change_level` on
+  the same cycle, updates `pending_verification_hash`, and flips required verifier family back to the
+  original editor's family.
 
 ## Out of scope
 
@@ -540,6 +599,10 @@ The first implementation does not:
 1. **Initial management — resolved:** No explicit enrollment step. A task is contract-managed by default based on its current Cooking-project section, excluding only `Sourcing` and `Reference` (see Contract-managed task registry).
 2. **Marco-only actions — resolved:** All Marco-only actions (`contract recover`, token issuance/replacement) live in a single contract admin tool, separate from and invisible to the agent-facing `contract` commands (see Contract admin tool). Revoking a task's contract-managed status is not a feature of this design: Marco uses the existing general-purpose Asana CLI directly, which agents never have access to or knowledge of.
 3. **Token lifetime — resolved:** No automatic expiry. A stuck `in_flight` token requires an explicit, manually run `contract recover` command (see Failure behaviour); no background timeout or heartbeat-based auto-recovery in v1.
-4. **Verifier edits:** When a verifier changes content, what exact threshold makes the verifier the new material editor and therefore requires verification by the opposite family?
+4. **Verifier edits — resolved:** No threshold is inferred by Python. A hash mismatch between the
+   verifier's submitted file and `pending_verification_hash` requires an explicit
+   `--change-level`/`--change-reason` declaration; `medium`/`large` reassigns
+   `editor_agent`/`editor_family`/`change_level` on the same cycle and re-routes to the opposite
+   family; `small` re-validates in place with no reassignment (see Workflow, step 4).
 5. **Existing tasks — resolved:** Every pre-existing task in the Cooking project outside `Sourcing`/`Reference` is contract-managed immediately, per the same live section-based rule as new tasks. No separate enrollment pass is needed; whether existing tasks' *content* needs migration to the current canonical structure is a separate question, unaffected by this (see Out of scope).
 
