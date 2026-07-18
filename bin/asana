@@ -70,7 +70,7 @@ def _call(fn, *args, context=None, **kwargs):
 PAGE_LIMIT = 100  # Asana API max; one page per CLI call, no auto-follow
 
 
-def _fetch_page(fn, *args, opts, cursor):
+def _fetch_page(fn, *args, opts, cursor, context=None):
     """Fetch exactly one page (fixed size PAGE_LIMIT) from a list endpoint.
 
     Returns (items, next_cursor); next_cursor is None on the last page.
@@ -82,7 +82,7 @@ def _fetch_page(fn, *args, opts, cursor):
     try:
         result = fn(*args, page_opts)
     except ApiException as e:
-        _fail(e)
+        _fail(e, context)
     items = result.get("data") or []
     next_page = result.get("next_page")
     next_cursor = next_page.get("offset") if next_page else None
@@ -171,7 +171,7 @@ def c_project(gid):
 def c_sections(gid, cursor):
     items, next_cursor = _fetch_page(
         asana.SectionsApi(client()).get_sections_for_project, gid,
-        opts={"opt_fields": "name"}, cursor=cursor,
+        opts={"opt_fields": "name"}, cursor=cursor, context="project %s" % gid,
     )
     for s in items:
         print(s["gid"], s["name"])
@@ -186,7 +186,7 @@ def c_tasks(kind, gid, status, cursor):
         # Asana filters server-side here (unlike subtasks, below) so an
         # incomplete-only page is never diluted by completed tasks.
         opts["completed_since"] = "now"
-    items, next_cursor = _fetch_page(fn, gid, opts=opts, cursor=cursor)
+    items, next_cursor = _fetch_page(fn, gid, opts=opts, cursor=cursor, context="%s %s" % (kind, gid))
     for t in items:
         if _status_match(t, status):
             print(t["gid"], "[x]" if t["completed"] else "[ ]", t["name"])
@@ -200,7 +200,7 @@ def c_subtasks(gid, status, cursor):
     # while still returning a --cursor for more.
     items, next_cursor = _fetch_page(
         asana.TasksApi(client()).get_subtasks_for_task, gid,
-        opts={"opt_fields": "name,completed"}, cursor=cursor,
+        opts={"opt_fields": "name,completed"}, cursor=cursor, context="task %s" % gid,
     )
     for t in items:
         if _status_match(t, status):
@@ -333,6 +333,22 @@ def _op_label(op):
     return "%s %s" % (op["action"], target)
 
 
+class _BatchOpFailed(Exception):
+    """A batch-op failure that isn't an ApiException (e.g. a replace_notes text-match abort)."""
+
+
+def _batch_fail(label, created, created_this_op, detail):
+    """Report a batch-op failure (with any prior creates) the same way regardless of cause, then exit non-zero."""
+    if created_this_op:
+        msg = "batch %s: created task %s but a follow-up step failed -- %s" % (label, created_this_op, detail)
+    else:
+        msg = "batch %s: failed -- %s" % (label, detail)
+    print(msg)
+    if created:
+        print("Created before failure: %s" % ", ".join(created))
+    sys.exit(msg)
+
+
 def c_batch_apply(path):
     ops = [_normalize_batch_op(op) for op in _load_batch_plan(path)]
     if len(ops) < 3:
@@ -352,7 +368,7 @@ def c_batch_apply(path):
                 notes = task.get("notes") or ""
                 matches = notes.count(op["old"])
                 if matches != 1:
-                    sys.exit("replace_notes aborted for %s: old text found %d times (need exactly 1)" % (op["task"], matches))
+                    raise _BatchOpFailed("old text found %d times (need exactly 1)" % matches)
                 tasks_api.update_task({"data": {"notes": notes.replace(op["old"], op["new"])}}, op["task"], {})
             elif action == "move":
                 sections_api.add_task_for_section({"data": {"task": op["task"]}}, op["section"], {})
@@ -373,15 +389,15 @@ def c_batch_apply(path):
                 created.append(t["gid"])
                 created_this_op = t["gid"]
         except ApiException as e:
-            detail = _error_detail(e)
-            if created_this_op:
-                msg = "batch %s: created task %s but a follow-up step failed -- %s" % (label, created_this_op, detail)
-            else:
-                msg = "batch %s: failed -- %s" % (label, detail)
-            print(msg)
+            _batch_fail(label, created, created_this_op, _error_detail(e))
+        except _BatchOpFailed as e:
+            _batch_fail(label, created, created_this_op, str(e))
+        except Exception:
+            # Unexpected (non-ApiException, non-validation) failure: preserve the
+            # created-so-far report, then let the real traceback surface as-is.
             if created:
                 print("Created before failure: %s" % ", ".join(created))
-            sys.exit(msg)
+            raise
         print("batch %s: succeeded" % label)
     print("Asana batch applied: %d operations." % len(ops))
     if created:
@@ -392,7 +408,7 @@ def c_search(kind, query, cursor):
     ws = os.environ.get("ASANA_WORKSPACE", DEFAULT_WS)
     items, next_cursor = _fetch_page(
         asana.TypeaheadApi(client()).typeahead_for_workspace, ws, kind,
-        opts={"query": query, "opt_fields": "name"}, cursor=cursor,
+        opts={"query": query, "opt_fields": "name"}, cursor=cursor, context="workspace %s" % ws,
     )
     for p in items:
         print(p["gid"], p["name"])
@@ -404,7 +420,7 @@ def c_projects(cursor):
     ws = os.environ.get("ASANA_WORKSPACE", DEFAULT_WS)
     items, next_cursor = _fetch_page(
         asana.ProjectsApi(client()).get_projects,
-        opts={"workspace": ws, "opt_fields": "name,archived"}, cursor=cursor,
+        opts={"workspace": ws, "opt_fields": "name,archived"}, cursor=cursor, context="workspace %s" % ws,
     )
     for p in items:
         if p.get("archived"):

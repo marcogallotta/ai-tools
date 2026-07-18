@@ -195,6 +195,70 @@ def test_create_task_reports_gid_when_section_move_fails(cli, monkeypatch, tmp_p
     assert FAILURE_WORDS.search(report)
 
 
+def _replace_notes_op(task, old, new, reason="because"):
+    return {"action": "replace_notes", "task": task, "old": old, "new": new, "reason": reason}
+
+
+def test_replace_notes_mismatch_reports_created_before_failure(cli, monkeypatch, tmp_path, capsys):
+    """A replace_notes text-match abort is not an ApiException -- it must still
+    go through the same failure reporting as any other op, including the
+    'Created before failure' summary for tasks already created earlier in
+    the same batch."""
+    monkeypatch.setattr(
+        asana.TasksApi, "create_task",
+        lambda self, body, opts, **kw: {"data": {"gid": "new-task-1"}},
+    )
+    monkeypatch.setattr(
+        asana.TasksApi, "get_task",
+        lambda self, task_gid, opts, **kw: {"data": {"notes": "no match here"}},
+    )
+
+    plan_path = _write_plan(tmp_path, [
+        _create_task_op("proj-1", "First"),
+        _create_task_op("proj-1", "Second"),
+        _replace_notes_op("3", "missing text", "replacement"),
+    ])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.c_batch_apply(plan_path)
+
+    report = str(exc.value) + capsys.readouterr().out
+    assert "new-task-1" in report
+    assert "Created before failure" in report
+    lines = _lines_mentioning(report, "3")
+    assert lines, "no line in report mentions the failing replace_notes task: %r" % report
+    assert any(FAILURE_WORDS.search(l) for l in lines)
+    assert any("found 0 times" in l for l in lines)
+
+
+def test_unexpected_exception_reports_created_before_propagating(cli, monkeypatch, tmp_path, capsys):
+    """A non-ApiException failure (e.g. a bug or unexpected error from the SDK)
+    must not silently drop the created-so-far summary -- it should print it
+    and then let the real exception propagate."""
+    monkeypatch.setattr(
+        asana.TasksApi, "create_task",
+        lambda self, body, opts, **kw: {"data": {"gid": "new-task-1"}},
+    )
+
+    def fake_update_task(self, body, task_gid, opts, **kw):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(asana.TasksApi, "update_task", fake_update_task)
+
+    plan_path = _write_plan(tmp_path, [
+        _create_task_op("proj-1", "First"),
+        _create_task_op("proj-1", "Second"),
+        _op("3", "renamed"),
+    ])
+
+    with pytest.raises(RuntimeError):
+        cli.c_batch_apply(plan_path)
+
+    out = capsys.readouterr().out
+    assert "new-task-1" in out
+    assert "Created before failure" in out
+
+
 def test_all_operations_succeed_reports_full_success(cli, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
         asana.TasksApi, "update_task",

@@ -232,3 +232,26 @@ def test_tasks_project_failure_does_not_fall_back_to_section(cli, run, monkeypat
         run(cli, ["tasks", "project", "111"])
 
     assert section_calls == []
+
+
+GID_CASES = [c for c in CASES if c.id in ("tasks-section", "tasks-project", "subtasks", "sections")]
+
+
+@pytest.mark.parametrize("argv,api_cls,method_name", GID_CASES)
+def test_404_names_the_resource_gid(cli, run, monkeypatch, argv, api_cls, method_name):
+    """Like the single-item lookups (test_transport.py::test_404_names_the_resource),
+    a 404 from a gid-scoped list endpoint must name the gid it was fetching,
+    not just a bare status/body -- otherwise a failing --cursor loop over
+    several gids is impossible to attribute."""
+    monkeypatch.setattr(
+        api_cls, method_name,
+        lambda self, *a, **kw: (_ for _ in ()).throw(_api_exc()),
+    )
+    gid = argv[-1]
+
+    with pytest.raises(SystemExit) as exc:
+        run(cli, argv)
+
+    msg = str(exc.value)
+    assert "404" in msg
+    assert gid in msg
