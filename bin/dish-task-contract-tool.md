@@ -142,14 +142,20 @@ contract begin <task-gid> \
 The tool:
 
 1. Confirms the task exists.
-2. Reads the complete task.
-3. Records its `modified_at`.
-4. Records a hash of the current notes for diagnostics and recovery.
-5. Reads the exact governing contract.
-6. Derives the contract revision.
-7. Confirms the task is contract-managed under the enrolment policy.
-8. Creates an open cycle in SQLite.
-9. Exports the current note as the working-file starting point.
+2. Confirms no other open cycle already exists for this task — enforced both by checking
+   `managed_tasks.current_cycle_id` and by a partial unique index on `cycles(task_gid)` for
+   non-terminal `status`, so a race between two simultaneous `begin` calls fails at the database
+   layer rather than only at the application check.
+3. Reads the complete task.
+4. Records its `modified_at`.
+5. Records a hash of the current notes for diagnostics and recovery.
+6. Reads the exact governing contract, including its canonical-structure manifest, and parses and
+   stores that manifest on the cycle as `canonical_manifest`.
+7. Derives the contract revision.
+8. Confirms the task is contract-managed under the enrolment policy.
+9. Creates an open cycle in SQLite, with `last_content_author` initialized to `editor_agent` and
+   `failed_verification_passes` at 0.
+10. Exports the current note as the working-file starting point.
 
 The cycle binds to the contract revision captured at `begin`: a later edit to `dish-task-contract.md` does not affect an already-open cycle, matching the contract's own freeze-through-signoff rule. The cycle record stores a hash of the exact governing contract text used, not only the human-readable revision string, so a mismatch between the recorded revision and the text actually used is detectable.
 
@@ -181,12 +187,25 @@ or SQLite state is needed to keep it in sync with the content.
 
 ### 3. Deterministic validation
 
+The agent runs:
+
+```text
+contract validate <cycle-id> --file <final-note>
+```
+
+This is the command that actually executes deterministic validation; nothing else in the workflow
+triggers it. On a pass, it stores the file's hash as `pending_verification_hash` on the cycle. For a
+`small` change, it also issues the validation record and single-use write token immediately, since no
+verifier runs (see Agent identity and verifier routing; Workflow, step 5). For `medium`/`large`, a
+pass only prepares the artifact for `contract verify` (step 4) — the record and token are not issued
+until verification also passes.
+
 V1 validates the final file against a narrow, explicit rule set — mechanical checks only, no judgment about content quality or whether a section was rightly omitted:
 
 * exactly one `CAN I COOK IT?` readiness line;
 * `WHAT TO BUY` section present;
 * process-record required lines present and syntactically well-formed (`Stage:`, `Human review:`, `Verification:`, `Self-verified:`);
-* `Self-verified:`'s declared agent matches the cycle's current `editor_agent` — the only enforcement available for the self-review step; it cannot confirm the review's thoroughness, only that an attributable attestation exists in the exact content being validated;
+* `Self-verified:`'s declared agent matches the cycle's current `last_content_author` — the agent credited with producing the exact content being validated, not necessarily the material `editor_agent` (see the `small`-change branch in Semantic verification) — the only enforcement available for the self-review step; it cannot confirm the review's thoroughness, only that an attributable attestation exists for the exact bytes submitted;
 * declared `--change-level` is one of `small`/`medium`/`large`, and matches the process record;
 * editor/verifier family routing is internally consistent with the declared change level;
 * contract revision recorded in the process record matches the revision captured at cycle-begin;
@@ -196,21 +215,24 @@ V1 validates the final file against a narrow, explicit rule set — mechanical c
   Reconstruction. Required by the change plan's approved deterministic-validation scope
   (`dish-task-contract-change-plan.md`, item 1); not deferred.
 
-The last rule is deliberately revision-relative rather than a hardcoded legacy-field list: it checks the proposed final note against whatever the current contract defines as canonical, not against a static set of retired field names. Whatever a contract revision no longer defines — this round's legacy fields or a future one's — is excluded automatically, with no separate legacy-tracking logic needed. Reading an existing task is unconstrained (an old task may sit in an old format indefinitely); only a new write is held to the current contract's structure. The canonical allowlist should eventually be parsed from a machine-readable manifest carried in the contract file itself, once that contract-doc addition is approved (see `dish-task-contract-change-plan.md`), rather than duplicated by hand in this tool; until then, v1 uses a hardcoded allowlist mirroring the current contract and accepts the maintenance cost of updating it by hand when the contract's canonical headings change.
+The last rule is deliberately revision-relative rather than a hardcoded legacy-field list: it checks the proposed final note against whatever the current contract defines as canonical, not against a static set of retired field names. Whatever a contract revision no longer defines — this round's legacy fields or a future one's — is excluded automatically, with no separate legacy-tracking logic needed. Reading an existing task is unconstrained (an old task may sit in an old format indefinitely); only a new write is held to the current contract's structure.
 
-A cycle freezes the *contract* revision at `begin` (see Workflow, step 1). Before the machine-readable
-canonical-structure manifest lands in the contract (a pending contract-doc addition — see
-`dish-task-contract-change-plan.md`), v1's hardcoded allowlist is a property of the validator code,
-not of the cycle, so the cycle record stores `validator_rules_version` — the hardcoded allowlist's own
-version string — captured at `begin` and re-checked at every subsequent deterministic-validation pass.
-A mismatch against the validator's current version invalidates the cycle, exactly as an Asana-side
-task change invalidates a cycle's `modified_at` baseline, rather than silently applying new rules to a
-cycle frozen against the old ones.
+The canonical allowlist is parsed from a machine-readable manifest carried in the contract file itself
+(headings, required fields, allowed values), not duplicated by hand in this tool — v1 ships with this
+manifest as a required part of its scope, not a later addition (see
+`dish-task-contract-change-plan.md`'s approval package). A hand-maintained hardcoded allowlist was
+considered for v1 and rejected: it would recreate, inside the validator meant to eliminate this exact
+failure mode, the same silent-drift risk the tool exists to remove from the contract's own prose
+rules.
 
-Once the manifest exists inside the contract text, this mechanism becomes unnecessary: the manifest is
-covered by the cycle's existing `contract_text_hash` (Workflow, step 1), so a manifest change is
-already detected as a contract-text change with no separate field needed. `validator_rules_version` is
-a v1-only, pre-manifest field.
+A cycle freezes the *contract* revision at `begin` (see Workflow, step 1). `begin` parses the manifest
+out of the exact governing contract text and stores that parsed structure on the cycle as
+`canonical_manifest`, not only its hash — the cycle's `contract_text_hash` proves the contract text
+hasn't changed underneath an open cycle, but deterministic validation needs the actual parsed rules to
+check against, not just a fingerprint that nothing changed. Every validation pass within a cycle
+checks against that cycle's stored `canonical_manifest`, so a mid-cycle contract edit (which would
+change `contract_text_hash`) is still caught by the existing staleness rule, while a *new* cycle begun
+after that edit picks up the new manifest automatically, with no separate versioning field needed.
 
 Deferred to a later version, once the mechanical layer is proven:
 
@@ -247,6 +269,28 @@ The verifier confirms:
 * containment for a medium change;
 * the exact content being approved.
 
+If the verifier's review finds the note not signable — a real defect, not a self-inflicted edit —
+they run:
+
+```text
+contract verify <cycle-id> --agent <verifier-agent> --reject --reason "<why not signable>"
+```
+
+This increments the cycle's `failed_verification_passes`, logs the rejection to `audit_events`, and
+leaves `editor_agent`/`change_level` untouched — a rejection is not an edit and does not reassign
+anything. The editor addresses the rejection and resubmits through `contract validate` for a fresh
+`pending_verification_hash`, after which `contract verify` may run again.
+
+At `failed_verification_passes` = 2, the cycle status moves to `blocked_process_failure` and no
+further `contract verify` call is accepted, matching `dish-task-contract.md`'s stop-and-flag rule ("If
+two validation passes do not produce a signable task, stop and flag a serious process failure to
+Marco" — lines 206-209). Unblocking requires `contract-admin unblock <cycle-id>`, which is Marco-only
+and does not itself resolve the underlying process failure — it only lifts the tool-side gate once the
+contract's required write-up (remaining issue, every pass/change, why both failed, recurrence versus
+new findings, root cause, proposed correction/scope) exists, per the same contract text. The tool does
+not verify the write-up's content; it only enforces that the gate cannot be silently bypassed by a
+third `contract verify` attempt.
+
 The verify command compares the submitted file's hash against the cycle's `pending_verification_hash`
 — the hash of the content that most recently passed deterministic validation (step 3). A match means
 unedited content; verification proceeds as above.
@@ -264,13 +308,18 @@ Their absence on a hash mismatch is a hard reject: no validation record, no Asan
 declared level then branches:
 
 * **`small`** — a Local correction. The cycle's `editor_agent`/`editor_family`/`change_level` are
-  untouched, and the existing `Self-verified:` line is not rewritten: `small` maps to the contract's
-  Local change class, which by definition "cannot change a material cooking, sourcing, safety,
-  approval, or readiness outcome," and where "the prior signer did not verify this edit"
-  (`dish-task-contract.md` line 149-150) — so the original self-verification remains valid for the
-  edited content without re-attestation. The tool still re-runs step 3's deterministic validation
-  against the new file — the `Self-verified:` agent-match check still passes since `editor_agent` is
-  unchanged — before continuing to verify against it.
+  untouched: `small` maps to the contract's Local change class, which by definition "cannot change a
+  material cooking, sourcing, safety, approval, or readiness outcome," and where "the prior signer did
+  not verify this edit" (`dish-task-contract.md` line 149-150) — so no independent opposite-family
+  review is triggered, and the material-editor bookkeeping stays with the original editor. But the
+  exact-content requirement on `Self-verified:` still applies to the corrected bytes: the verifier is
+  the one who produced this specific edit, so `last_content_author` is reassigned to the verifier and
+  the note's `Self-verified:` line must be rewritten to name the verifier and the current date before
+  re-validation — the original line, written for the pre-edit content, does not satisfy the exact-
+  content standard for content it never reviewed. `editor_agent` is unaffected by this reassignment;
+  only `last_content_author` moves. The tool then re-runs step 3's deterministic validation
+  (`contract validate`) against the new file — the `Self-verified:` check now compares against the
+  reassigned `last_content_author` — before continuing to verify against it.
 * **`medium`/`large`** — the verifier is now the new material editor, exactly as the contract already
   states ("supplying missing material evidence or replacing the recipe makes it the latest material
   editor and resets `Verification` to the opposite family" — `dish-task-contract.md` lines 199-200).
@@ -445,6 +494,7 @@ runtime, and no claim of technical secrecy is made.
 `contract-admin` covers:
 
 * `contract-admin recover <cycle-id>` — resolve a stuck `in_flight` or `uncertain` token after a process crash or an ambiguous Asana response;
+* `contract-admin unblock <cycle-id>` — lift a cycle's `blocked_process_failure` gate after two failed verification passes, once the contract's required Marco-facing write-up exists (see Semantic verification); this does not itself resolve the underlying process failure;
 * replacing a token after it is consumed, revoked, or stuck in an ambiguous recovery state that resolves as such — this is always a brand-new cycle, validation record, and token for a fresh review pass, never the reactivation or reuse of the old, already-consumed token record; a consumed or revoked token itself remains permanently unusable;
 * other Marco-only actions identified later.
 
@@ -475,15 +525,22 @@ Minimum tables:
 * `baseline_notes_hash`
 * `contract_revision`
 * `contract_text_hash`
-* `validator_rules_version`
+* `canonical_manifest` (the parsed canonical structure captured at `begin` from the manifest carried
+  in the contract text — see Deterministic validation)
 * `editor_agent`
 * `editor_family`
+* `last_content_author` (the agent credited with the exact content currently pending validation — see
+  Deterministic validation and the `small`-change branch in Semantic verification)
 * `change_level`
 * `change_reason`
 * `pending_verification_hash`
+* `failed_verification_passes` (see Semantic verification's rejection path and the two-pass stop rule)
 * `status`
 * `created_at`
 * `completed_at`
+
+A partial unique index on `cycles(task_gid)` for non-terminal `status` values enforces at most one
+open cycle per task (see Workflow, step 1).
 
 ### `validation_records`
 
@@ -554,7 +611,12 @@ The contract tool performs its final update through a separate guarded gateway t
 
 ChatGPT has no local CLI or SQLite access, so it cannot run any `contract` command itself.
 
-Its output is one complete final-note file.
+Its output is one complete final-note file. That file must already include ChatGPT's own
+`Self-verified: gpt, <date>` line, attested by ChatGPT as part of producing the note — the same
+self-review requirement every other editor meets by writing the line itself (Workflow, step 2). A
+local agent or Marco does not add or backfill this line on ChatGPT's behalf: if it's missing,
+`contract validate` fails exactly as it would for any other editor's missing `Self-verified:` line,
+and the fix is a corrected file from ChatGPT, not a local insertion.
 
 A local agent or Marco then:
 
@@ -609,7 +671,7 @@ Tests must cover:
 * raw `notes` and `html_notes` bypass attempts;
 * task remaining managed after successful submission;
 * stuck `in_flight` token recovered via manual `contract recover` command;
-* `Self-verified:` line missing or naming an agent other than `editor_agent`;
+* `Self-verified:` line missing or naming an agent other than the cycle's current `last_content_author`;
 * verifier submission matching `pending_verification_hash` (no edit) proceeds without requiring
   `--change-level`/`--change-reason`;
 * verifier submission with a hash mismatch and no `--change-level`/`--change-reason` is rejected;
@@ -621,7 +683,18 @@ Tests must cover:
   `verifier_agent`/`verifier_family` null;
 * `CAN I COOK IT? Yes` rejected alongside `Human review: Pending`, `Verification: Not done`, or an
   open Delta/Reconstruction;
-* `validator_rules_version` mismatch at re-validation invalidates the cycle;
+* `canonical_manifest` captured at `begin` remains authoritative for the cycle even if the governing
+  contract text changes mid-cycle;
+* concurrent `contract begin` on a task with an already-open cycle is rejected, both by the
+  application check and by the SQLite unique constraint;
+* `contract validate` issues the validation record and token directly for a `small` change, with no
+  `contract verify` call involved;
+* a verifier's `small` edit reassigns `last_content_author` (not `editor_agent`) and requires a
+  rewritten `Self-verified:` line naming the verifier;
+* two consecutive `contract verify --reject` calls move the cycle to `blocked_process_failure` and
+  reject a third `contract verify` attempt until `contract-admin unblock`;
+* a ChatGPT-authored file missing its own `Self-verified: gpt, <date>` line fails `contract validate`,
+  and no local-agent insertion satisfies it;
 * section-GID resolution: a `Sourcing`/`Reference` rename does not change managed status; an
   unresolvable section fails closed to managed.
 
@@ -643,12 +716,19 @@ The first implementation does not:
 ## Open decisions
 
 1. **Initial management — resolved:** No explicit enrollment step. A task is contract-managed by default based on its current Cooking-project section, excluding only `Sourcing` and `Reference` (see Contract-managed task registry).
-2. **Marco-only actions — resolved:** All Marco-only actions (`contract recover`, token issuance/replacement) live in a single contract admin tool, separate from and invisible to the agent-facing `contract` commands (see Contract admin tool). Revoking a task's contract-managed status is not a feature of this design: Marco uses the existing general-purpose Asana CLI directly, which agents never have access to or knowledge of.
-3. **Token lifetime — resolved:** No automatic expiry. A stuck `in_flight` token requires an explicit, manually run `contract recover` command (see Failure behaviour); no background timeout or heartbeat-based auto-recovery in v1.
+2. **Marco-only actions — resolved:** All Marco-only actions (`contract-admin recover`, `contract-admin unblock`, token issuance/replacement) live in a single contract admin tool, separate from and invisible to the agent-facing `contract` commands (see Contract admin tool). Revoking a task's contract-managed status is not a feature of this design: the general-purpose Asana CLI is guarded identically to any other caller (see Contract-managed task registry) and gives Marco no bypass; a one-off manual edit outside the guarded workflow goes through the Asana web UI directly instead (see Contract admin tool).
+3. **Token lifetime — resolved:** No automatic expiry. A stuck `in_flight` token requires an explicit, manually run `contract-admin recover` command (see Failure behaviour); no background timeout or heartbeat-based auto-recovery in v1.
 4. **Verifier edits — resolved:** No threshold is inferred by Python. A hash mismatch between the
    verifier's submitted file and `pending_verification_hash` requires an explicit
    `--change-level`/`--change-reason` declaration; `medium`/`large` reassigns
    `editor_agent`/`editor_family`/`change_level` on the same cycle and re-routes to the opposite
    family; `small` re-validates in place with no reassignment (see Workflow, step 4).
 5. **Existing tasks — resolved:** Every pre-existing task in the Cooking project outside `Sourcing`/`Reference` is contract-managed immediately, per the same live section-based rule as new tasks. No separate enrollment pass is needed; whether existing tasks' *content* needs migration to the current canonical structure is a separate question, unaffected by this (see Out of scope).
+6. **Small-change carelessness — open.** Marco's concern is an honest agent carelessly mis-declaring a
+   material change as `small`, not a malicious agent gaming the system. The fix should be a
+   deterministic speed bump, not independent verification for every `small` change — but its trigger
+   condition (which sections or size trip it), what it actually requires of the agent (a stronger
+   reason, an explicit override flag, or something else), whether it's a hard block or a warning, and
+   where it lives (a `contract validate`-time check, or a pre-check at `begin`) are all undecided (see
+   `dish-task-contract-change-plan.md`'s reservations).
 
