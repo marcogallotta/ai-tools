@@ -1,14 +1,18 @@
-#!/usr/bin/env python3
+#!/home/marco/ai-tools/bin/.venv/bin/python3
 """asana — minimal Asana API CLI.
 
 Reads ASANA_PAT from ~/.config/asana-cli/.env (override with $ASANA_PAT or $ASANA_ENV).
-Stdlib only. Run `asana help` for usage.
+Transport: python-asana SDK (see requirements.txt for pinned version).
+Run `asana help` for usage.
 """
 import json, os, sys, urllib.request, urllib.parse, urllib.error
+import asana
+from asana.rest import ApiException
 
 BASE = "https://app.asana.com/api/1.0"
 DEFAULT_WS = "1200569426771227"  # "London to Umrah 2022" workspace
 _PAT = None
+_CLIENT = None
 
 
 def load_pat():
@@ -27,6 +31,40 @@ def load_pat():
     sys.exit("ASANA_PAT not found (set $ASANA_PAT or add it to %s)" % env)
 
 
+def client():
+    """Single ApiClient instance, reused across commands in this invocation."""
+    global _CLIENT
+    if _CLIENT is None:
+        config = asana.Configuration()
+        config.access_token = load_pat()
+        config.return_page_iterator = False  # explicit one-page-per-call; no silent auto-follow
+        _CLIENT = asana.ApiClient(config)
+    return _CLIENT
+
+
+def _fail(e):
+    body = e.body.decode(errors="replace") if isinstance(e.body, (bytes, bytearray)) else (e.body or e.reason or "")
+    detail = str(body)[:800]
+    if e.status == 401:
+        sys.exit("Asana auth error (401): %s" % detail)
+    if e.status == 404:
+        sys.exit("Asana resource not found (404): %s" % detail)
+    if e.status == 429:
+        sys.exit("Asana rate limit (429): %s" % detail)
+    if e.status is not None and e.status >= 500:
+        sys.exit("Asana server error (%s): %s" % (e.status, detail))
+    sys.exit("Asana API error (%s): %s" % (e.status, detail))
+
+
+def _call(fn, *args, **kwargs):
+    """Call an SDK method and unwrap the {"data": ...} envelope, or exit with a mapped error."""
+    try:
+        return fn(*args, **kwargs)["data"]
+    except ApiException as e:
+        _fail(e)
+
+
+# raw urllib transport, kept only for `raw` (see asana-cli-fixes.md P1 #6 for its planned SDK migration)
 def req(method, path, data=None, params=None):
     global _PAT
     if _PAT is None:
@@ -55,23 +93,24 @@ def _text(arg):
 
 
 def c_get(gid):
-    d = req("GET", "/tasks/%s" % gid, params={"opt_fields": "name,notes,completed"})
+    d = _call(asana.TasksApi(client()).get_task, gid, {"opt_fields": "name,notes,completed"})
     print("# %s%s" % (d["name"] or "", "  [completed]" if d.get("completed") else ""))
     print(d.get("notes") or "")
 
 
 def c_notes(gid):
-    print(req("GET", "/tasks/%s" % gid, params={"opt_fields": "notes"}).get("notes") or "")
+    print(_call(asana.TasksApi(client()).get_task, gid, {"opt_fields": "notes"}).get("notes") or "")
 
 
 def c_set_notes(gid, text):
-    req("PUT", "/tasks/%s" % gid, data={"notes": _text(text)})
+    _call(asana.TasksApi(client()).update_task, {"data": {"notes": _text(text)}}, gid, {})
     print("set-notes:", gid)
 
 
 def c_append(gid, text):
-    cur = req("GET", "/tasks/%s" % gid, params={"opt_fields": "notes"}).get("notes") or ""
-    req("PUT", "/tasks/%s" % gid, data={"notes": cur + _text(text)})
+    tasks_api = asana.TasksApi(client())
+    cur = _call(tasks_api.get_task, gid, {"opt_fields": "notes"}).get("notes") or ""
+    _call(tasks_api.update_task, {"data": {"notes": cur + _text(text)}}, gid, {})
     print("append:", gid)
 
 
@@ -83,36 +122,38 @@ def c_replace(gid, old=None, new=None):
     else:
         old = old.replace("\\n", "\n")
         new = (new or "").replace("\\n", "\n")
-    cur = req("GET", "/tasks/%s" % gid, params={"opt_fields": "notes"}).get("notes") or ""
+    tasks_api = asana.TasksApi(client())
+    cur = _call(tasks_api.get_task, gid, {"opt_fields": "notes"}).get("notes") or ""
     nmatch = cur.count(old)
     if nmatch != 1:
         sys.exit("replace aborted: 'old' found %d times (need exactly 1)" % nmatch)
-    req("PUT", "/tasks/%s" % gid, data={"notes": cur.replace(old, new)})
+    _call(tasks_api.update_task, {"data": {"notes": cur.replace(old, new)}}, gid, {})
     print("replace:", gid)
 
 
 def c_rename(gid, name):
-    req("PUT", "/tasks/%s" % gid, data={"name": name})
+    _call(asana.TasksApi(client()).update_task, {"data": {"name": name}}, gid, {})
     print("rename:", gid)
 
 
 def c_project(gid):
-    d = req("GET", "/projects/%s" % gid, params={"opt_fields": "name,notes"})
+    d = _call(asana.ProjectsApi(client()).get_project, gid, {"opt_fields": "name,notes"})
     print("# %s" % d["name"])
     print(d.get("notes") or "")
 
 
 def c_sections(gid):
-    for s in req("GET", "/projects/%s/sections" % gid, params={"opt_fields": "name"}):
+    for s in _call(asana.SectionsApi(client()).get_sections_for_project, gid, {"opt_fields": "name"}):
         print(s["gid"], s["name"])
 
 
 def c_tasks(gid, allflag):
     params = {"opt_fields": "name,completed"}
+    tasks_api = asana.TasksApi(client())
     try:
-        data = req("GET", "/sections/%s/tasks" % gid, params=params)
+        data = _call(tasks_api.get_tasks_for_section, gid, params)
     except SystemExit:
-        data = req("GET", "/projects/%s/tasks" % gid, params=params)
+        data = _call(tasks_api.get_tasks_for_project, gid, params)
     for t in data:
         if not allflag and t["completed"]:
             continue
@@ -120,13 +161,13 @@ def c_tasks(gid, allflag):
 
 
 def c_subtasks(gid):
-    for t in req("GET", "/tasks/%s/subtasks" % gid, params={"opt_fields": "name,completed"}):
+    for t in _call(asana.TasksApi(client()).get_subtasks_for_task, gid, {"opt_fields": "name,completed"}):
         print(t["gid"], "[x]" if t["completed"] else "[ ]", t["name"])
 
 
 def c_move(gid, section):
     """Move a task to a section within its project."""
-    req("POST", "/sections/%s/addTask" % section, data={"task": gid})
+    _call(asana.SectionsApi(client()).add_task_for_section, {"data": {"task": gid}}, section, {})
     print("move:", gid, "->", section)
 
 
@@ -134,9 +175,9 @@ def c_create_task(project, name, section, notes):
     d = {"name": name, "projects": [project]}
     if notes is not None:
         d["notes"] = _text(notes)
-    t = req("POST", "/tasks", data=d)
+    t = _call(asana.TasksApi(client()).create_task, {"data": d}, {})
     if section:
-        req("POST", "/sections/%s/addTask" % section, data={"task": t["gid"]})
+        _call(asana.SectionsApi(client()).add_task_for_section, {"data": {"task": t["gid"]}}, section, {})
     print(t["gid"])
 
 
@@ -144,7 +185,7 @@ def c_create_subtask(parent, name, notes):
     d = {"name": name}
     if notes is not None:
         d["notes"] = _text(notes)
-    print(req("POST", "/tasks/%s/subtasks" % parent, data=d)["gid"])
+    print(_call(asana.TasksApi(client()).create_subtask_for_task, {"data": d}, parent, {})["gid"])
 
 
 BATCH_TASK_FIELDS = ("name", "notes", "completed", "due_on", "start_on")
@@ -247,33 +288,35 @@ def c_batch_apply(path):
     ops = [_normalize_batch_op(op) for op in _load_batch_plan(path)]
     if len(ops) < 3:
         sys.exit("batch-apply requires at least 3 operations; use direct Asana commands for one or two writes")
+    tasks_api = asana.TasksApi(client())
+    sections_api = asana.SectionsApi(client())
     created = []
     for op in ops:
         action = op["action"]
         if action == "update_task":
-            req("PUT", "/tasks/%s" % op["task"], data=op["fields"])
+            _call(tasks_api.update_task, {"data": op["fields"]}, op["task"], {})
         elif action == "replace_notes":
-            task = req("GET", "/tasks/%s" % op["task"], params={"opt_fields": "notes"})
+            task = _call(tasks_api.get_task, op["task"], {"opt_fields": "notes"})
             notes = task.get("notes") or ""
             matches = notes.count(op["old"])
             if matches != 1:
                 sys.exit("replace_notes aborted for %s: old text found %d times (need exactly 1)" % (op["task"], matches))
-            req("PUT", "/tasks/%s" % op["task"], data={"notes": notes.replace(op["old"], op["new"])})
+            _call(tasks_api.update_task, {"data": {"notes": notes.replace(op["old"], op["new"])}}, op["task"], {})
         elif action == "move":
-            req("POST", "/sections/%s/addTask" % op["section"], data={"task": op["task"]})
+            _call(sections_api.add_task_for_section, {"data": {"task": op["task"]}}, op["section"], {})
         elif action == "create_task":
             d = {"name": op["name"], "projects": [op["project"]]}
             if op.get("notes") is not None:
                 d["notes"] = op["notes"]
-            t = req("POST", "/tasks", data=d)
+            t = _call(tasks_api.create_task, {"data": d}, {})
             created.append(t["gid"])
             if op.get("section"):
-                req("POST", "/sections/%s/addTask" % op["section"], data={"task": t["gid"]})
+                _call(sections_api.add_task_for_section, {"data": {"task": t["gid"]}}, op["section"], {})
         elif action == "create_subtask":
             d = {"name": op["name"]}
             if op.get("notes") is not None:
                 d["notes"] = op["notes"]
-            t = req("POST", "/tasks/%s/subtasks" % op["parent"], data=d)
+            t = _call(tasks_api.create_subtask_for_task, {"data": d}, op["parent"], {})
             created.append(t["gid"])
     print("Asana batch applied: %d operations." % len(ops))
     if created:
@@ -282,15 +325,14 @@ def c_batch_apply(path):
 
 def c_search(kind, query):
     ws = os.environ.get("ASANA_WORKSPACE", DEFAULT_WS)
-    for p in req("GET", "/workspaces/%s/typeahead" % ws,
-                 params={"resource_type": kind, "query": query, "opt_fields": "name"}):
+    for p in _call(asana.TypeaheadApi(client()).typeahead_for_workspace, ws, kind, {"query": query, "opt_fields": "name"}):
         print(p["gid"], p["name"])
 
 
 def c_projects():
     """List non-archived projects in the workspace (gid name)."""
     ws = os.environ.get("ASANA_WORKSPACE", DEFAULT_WS)
-    for p in req("GET", "/projects", params={"workspace": ws, "opt_fields": "name,archived"}):
+    for p in _call(asana.ProjectsApi(client()).get_projects, {"workspace": ws, "opt_fields": "name,archived"}):
         if p.get("archived"):
             continue
         print(p["gid"], p["name"])

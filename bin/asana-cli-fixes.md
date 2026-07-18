@@ -30,7 +30,7 @@ helpers are used by `batch-apply` or anything else in the file.
 
 ## P0 — do first
 
-1. **Migrate transport from raw `urllib` to the official Asana Python SDK.**
+1. **Migrate transport from raw `urllib` to the official Asana Python SDK. — DONE**
    Current `req()` (asana:30-47) hand-rolls HTTP, JSON body, and error
    handling. Move to the SDK as the new transport/foundation; all other
    fixes below should land on top of it rather than being patched into
@@ -55,6 +55,15 @@ helpers are used by `batch-apply` or anything else in the file.
      auto-follow-all — the opposite of what P1 #3 wants at the CLI surface.
      Explicit page size / continuation / all-pages mode has to be hand-built
      in the CLI layer on top of `item_limit` + `return_page_iterator=False`.
+
+   Done: `bin/requirements.txt` pins `asana==5.2.5`; `.venv/` (gitignored)
+   holds the install; shebang points at `.venv/bin/python3`. `client()`
+   builds one `ApiClient` lazily, reused for the invocation
+   (`return_page_iterator=False` set there). Errors map via `_fail()` on
+   `e.status` (401/404/429/5xx/other). `raw` is intentionally still on the
+   old `urllib` `req()` — its move to `ApiClient.call_api()` is P1 #6, not
+   part of this step. Verified live against real (read-only) endpoints;
+   writes not yet exercised. Unit tests (#2 below) not yet written.
 
 2. **Add unit tests as part of the migration.**
    Use `pytest`, with `unittest.mock` (stdlib, no new dependency) — no live
