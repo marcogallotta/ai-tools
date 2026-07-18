@@ -340,13 +340,11 @@ Recovery performs one targeted read:
 
 ### Crashed process (stuck `in_flight`)
 
-If the tool's own process dies while a token is `in_flight`, nothing recovers it automatically — no timeout, no background sweep. Recovery requires an explicit, manually run command:
+If the tool's own process dies while a token is `in_flight`, nothing recovers it automatically — no timeout, no background sweep. The stuck task simply stays unavailable for a new cycle until recovered; nothing about this blocks an agent from continuing other work, including other tasks' cycles.
 
-```text
-contract recover <cycle-id>
-```
+Recovery lives in a separate script, outside the main `contract` CLI surface and outside this document, so an agent reading this design or the tool's code has no path to the recovery mechanism and no reason to go looking for one. Only Marco runs it. This is a separation-of-knowledge control, not a permission check the tool enforces at runtime — consistent with the "not adversarial security" framing in Scope.
 
-It performs the same targeted read as Uncertain API outcome recovery above: compare live notes against the intended final-content hash and the baseline notes hash, and transition the token to `consumed`, `issued`, or `revoked` accordingly. Whether this command may be run by any agent or is Marco-only remains open (see Open decisions).
+It performs the same targeted read as Uncertain API outcome recovery above: compare live notes against the intended final-content hash and the baseline notes hash, and transition the token to `consumed`, `issued`, or `revoked` accordingly.
 
 ## SQLite model
 
@@ -511,12 +509,13 @@ The first implementation does not:
 * govern non-note task fields;
 * automatically migrate every existing dish task;
 * modify the contract text or incident logs;
-* provide a remote or multi-user trust service.
+* provide a remote or multi-user trust service;
+* document the recovery script's location or invocation for agents.
 
 ## Open decisions
 
 1. **Initial management:** Does a task become contract-managed automatically on the first `contract begin`, or must Marco explicitly enrol it first?
-2. **Marco-only actions:** How should the tool represent Marco’s authority for revoking management, replacing a consumed token, resolving an ambiguous recovery state, or running `contract recover` on a stuck `in_flight` token — is that command Marco-only, or may any agent run it?
+2. **Marco-only actions:** `contract recover` is resolved — it lives in a separate script outside agent-visible surfaces, and only Marco runs it (see Failure behaviour). Still open: whether revoking management and replacing a consumed token use the same separate-script pattern, and how the tool should represent that authority structurally.
 3. **Token lifetime — resolved:** No automatic expiry. A stuck `in_flight` token requires an explicit, manually run `contract recover` command (see Failure behaviour); no background timeout or heartbeat-based auto-recovery in v1.
 4. **Verifier edits:** When a verifier changes content, what exact threshold makes the verifier the new material editor and therefore requires verification by the opposite family?
 5. **Existing tasks:** Which existing dish tasks, if any, should be enrolled when the tool is introduced?
