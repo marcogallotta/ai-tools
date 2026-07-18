@@ -36,8 +36,7 @@ only — no contract/protected-task work in this pass (see bottom).
    this pass:
    - multi-page list concatenation
    - literal CLI `\n` decoding vs. already-JSON-decoded string passthrough
-   - rejected/accepted `raw` methods (see #5)
-   - cumulative batch-preview simulation (see #6)
+   - rejected/accepted `raw` methods (see #6)
    - partial-failure batch-apply reporting
 
 ## P1 — cleanup once the SDK/test foundation is in place
@@ -75,12 +74,17 @@ only — no contract/protected-task work in this pass (see bottom).
    deleted Asana tasks are recoverable. Document its real behavior (full,
    unguarded mutation access) rather than artificially limiting it.
 
-7. **Make `batch-preview` cumulative.**
-   `_preview_batch_ops` (asana:297-344) currently diffs every operation
-   against the same fetched-once remote state. When multiple operations
-   target the same task, later ones should be simulated against the result
-   of earlier ones in the same plan, so the preview reflects the actual final
-   state rather than N independent diffs.
+7. **Remove `batch-preview` entirely.**
+   It isn't in the batch workflow the global CLAUDE.md actually mandates
+   (build plan → chat table as the review surface → immediately invoke
+   `batch-apply` in the same turn) and its printed diff output has not
+   actually been read in practice. Rather than fix its cumulative-diff bug
+   (previously listed here), drop the dead feature. Remove `c_batch_preview`,
+   `_preview_batch_ops`, and the helpers that exist only to support it
+   (`_task_snapshot`, `_section_label`, `_format_value`, `_clip`,
+   `_note_diff` — asana:170-344), plus the `HELP` entry and the
+   `batch-preview` line in the "batch plan shape" example. Confirmed none of
+   these helpers are used by `batch-apply` or anything else in the file.
 
 ## Resolved — declined
 
@@ -97,6 +101,8 @@ window for a plan to drift in. Separately, in practice the printed
 binding `apply` to a hash of something that isn't being reviewed would add
 friction without protecting a real review step. If a mandatory preview gate
 is ever added to the workflow itself, revisit this then.
+
+Now doubly moot: fix #7 removes `batch-preview` from the CLI entirely.
 
 ## Out of scope for this pass
 
