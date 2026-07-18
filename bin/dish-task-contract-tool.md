@@ -69,7 +69,7 @@ The editing agent declares:
 --change-reason "<brief explanation>"
 ```
 
-The verifier must explicitly confirm the declared level. If the verifier does not agree, no validation record is issued.
+For `medium`/`large` changes, the verifier must explicitly confirm the declared level; if the verifier does not agree, no validation record is issued. `small` changes have no verifier at all (see Agent identity and verifier routing) — the declared level there is confirmed only by the mechanical checks in Deterministic validation, not by a second agent.
 
 ## Agent identity and verifier routing
 
@@ -106,7 +106,7 @@ The final task process record must agree with:
 
 ## Contract-managed task registry
 
-Management is determined by the task's current section in the Cooking project (`1215089183018968`), checked live rather than fixed once at enrollment. A task is contract-managed unless its current section is `Sourcing` or `Reference`; every other section — all cuisine sections, `Planned`, `Eating`, `Seasonal`, etc. — defaults to managed. This applies uniformly to new and pre-existing tasks: nothing needs a separate backfill or explicit enrollment pass, and moving a task into or out of `Sourcing`/`Reference` changes its managed status from that point on.
+Management is determined by the task's current section in the Cooking project (`1215089183018968`), checked live rather than fixed once at enrollment. Sections are identified by their immutable Asana section GID, not by display name — a section rename in Asana must not silently change which tasks are managed. The tool resolves the `Sourcing` and `Reference` sections' GIDs once by name at setup time and compares against those GIDs thereafter. A task is contract-managed unless its current section GID matches one of those two recorded GIDs; every other section — all cuisine sections, `Planned`, `Eating`, `Seasonal`, etc. — defaults to managed. If a task's section membership cannot be resolved to a GID at all (no section, or an API read failure), the tool fails closed and treats the task as managed rather than silently exempting it. This applies uniformly to new and pre-existing tasks: nothing needs a separate backfill or explicit enrollment pass, and moving a task into or out of the `Sourcing`/`Reference` GIDs changes its managed status from that point on.
 
 Every generic note-mutation command performs a live Cooking-project section check before writing — the cache is not a substitute for this, since a task can move into or out of `Sourcing`/`Reference` through an allowed non-note command between checks. SQLite still records the determination per task (`managed_tasks`), but only for audit; it is never the sole source of truth for a live guard decision.
 
@@ -190,15 +190,30 @@ V1 validates the final file against a narrow, explicit rule set — mechanical c
 * declared `--change-level` is one of `small`/`medium`/`large`, and matches the process record;
 * editor/verifier family routing is internally consistent with the declared change level;
 * contract revision recorded in the process record matches the revision captured at cycle-begin;
-* no headings outside the canonical allowlist for the currently governing contract revision.
+* no headings outside the canonical allowlist for the currently governing contract revision;
+* no readiness contradiction between `CAN I COOK IT?` and the process record — `CAN I COOK IT? Yes`
+  cannot coexist with `Human review: Pending - ...`, `Verification: Not done...`, or an open Delta or
+  Reconstruction. Required by the change plan's approved deterministic-validation scope
+  (`dish-task-contract-change-plan.md`, item 1); not deferred.
 
 The last rule is deliberately revision-relative rather than a hardcoded legacy-field list: it checks the proposed final note against whatever the current contract defines as canonical, not against a static set of retired field names. Whatever a contract revision no longer defines — this round's legacy fields or a future one's — is excluded automatically, with no separate legacy-tracking logic needed. Reading an existing task is unconstrained (an old task may sit in an old format indefinitely); only a new write is held to the current contract's structure. The canonical allowlist should eventually be parsed from a machine-readable manifest carried in the contract file itself, once that contract-doc addition is approved (see `dish-task-contract-change-plan.md`), rather than duplicated by hand in this tool; until then, v1 uses a hardcoded allowlist mirroring the current contract and accepts the maintenance cost of updating it by hand when the contract's canonical headings change.
 
-A cycle freezes the *contract* revision at `begin` (see Workflow, step 1), but v1's hardcoded allowlist is a property of the validator code, not of the cycle. If the allowlist is updated to track a new contract revision while a cycle is open, re-validation at `submit` must not silently apply the new rules to a cycle frozen against the old ones. V1 resolves this the same way it already resolves task drift: updating the hardcoded allowlist invalidates every currently open cycle, exactly as an Asana-side task change invalidates a cycle's `modified_at` baseline. This avoids snapshotting the full rule set per cycle while still keeping frozen-revision and validator-rule staleness under one consistent invalidation model.
+A cycle freezes the *contract* revision at `begin` (see Workflow, step 1). Before the machine-readable
+canonical-structure manifest lands in the contract (a pending contract-doc addition — see
+`dish-task-contract-change-plan.md`), v1's hardcoded allowlist is a property of the validator code,
+not of the cycle, so the cycle record stores `validator_rules_version` — the hardcoded allowlist's own
+version string — captured at `begin` and re-checked at every subsequent deterministic-validation pass.
+A mismatch against the validator's current version invalidates the cycle, exactly as an Asana-side
+task change invalidates a cycle's `modified_at` baseline, rather than silently applying new rules to a
+cycle frozen against the old ones.
+
+Once the manifest exists inside the contract text, this mechanism becomes unnecessary: the manifest is
+covered by the cycle's existing `contract_text_hash` (Workflow, step 1), so a manifest change is
+already detected as a contract-text change with no separate field needed. `validator_rules_version` is
+a v1-only, pre-manifest field.
 
 Deferred to a later version, once the mechanical layer is proven:
 
-* deterministic readiness contradictions (e.g. `CAN I COOK IT? Yes` with `Human review: Pending`);
 * unresolved structural placeholder detection (e.g. leftover `[approx]` markers);
 * any judgment of whether an omitted section should have been present, or of content quality — these remain the verifier's job, not the validator's, for the foreseeable future.
 
@@ -249,9 +264,13 @@ Their absence on a hash mismatch is a hard reject: no validation record, no Asan
 declared level then branches:
 
 * **`small`** — a Local correction. The cycle's `editor_agent`/`editor_family`/`change_level` are
-  untouched. Because content changed, the tool re-runs step 3's deterministic validation against the
-  new file — including the `Self-verified:` check, unaffected here since the editor did not change —
-  before continuing to verify against it.
+  untouched, and the existing `Self-verified:` line is not rewritten: `small` maps to the contract's
+  Local change class, which by definition "cannot change a material cooking, sourcing, safety,
+  approval, or readiness outcome," and where "the prior signer did not verify this edit"
+  (`dish-task-contract.md` line 149-150) — so the original self-verification remains valid for the
+  edited content without re-attestation. The tool still re-runs step 3's deterministic validation
+  against the new file — the `Self-verified:` agent-match check still passes since `editor_agent` is
+  unchanged — before continuing to verify against it.
 * **`medium`/`large`** — the verifier is now the new material editor, exactly as the contract already
   states ("supplying missing material evidence or replacing the recipe makes it the latest material
   editor and resets `Verification` to the opposite family" — `dish-task-contract.md` lines 199-200).
@@ -278,10 +297,14 @@ steps 2-4); no separate mechanism is needed for that narrower case.
 
 ### 5. Validation record and token
 
-After deterministic and semantic validation pass, the tool creates:
+For `medium`/`large` changes, once deterministic validation (step 3) and semantic verification (step
+4) both pass, the tool creates:
 
 * one trusted validation record;
 * one single-use write token.
+
+For `small` changes, step 4 does not run (see Agent identity and verifier routing); the tool creates
+the same two records once deterministic validation alone passes.
 
 Neither needs to be a portable signed file. Their trust comes from being stored and state-managed by the local tool in SQLite.
 
@@ -295,7 +318,7 @@ The validation record binds:
 * contract revision;
 * editor agent and family;
 * change level and reason;
-* verifier agent and family;
+* verifier agent and family — null for a `small` record, since no verifier ran;
 * validator version;
 * validation time.
 
@@ -408,15 +431,30 @@ Recovery is a command in the contract admin tool (see below), not the agent-faci
 
 ## Contract admin tool
 
-Marco-only actions live in a separate contract admin tool, distinct from the agent-facing `contract begin`/`verify`/`submit` commands. Agents doing contract work are only ever given the agent-facing surface. This is an operational and social convention, not a technical secret: this design document and the tool's own code are both agent-readable, so the admin tool's existence and commands cannot be treated as genuinely undiscoverable. The actual boundary is that agents are not instructed or expected to look for or invoke it, consistent with the "not adversarial security" framing in Scope — it is not a permission check the tool enforces at runtime, and no claim of technical secrecy is made.
+Marco-only actions live in a separate `contract-admin` command surface — a distinct
+binary/subcommand namespace, not just a documented convention, so the boundary is unambiguous at the
+command line rather than a naming similarity to the agent-facing `contract begin`/`verify`/`submit`/
+`self-verify` commands that an agent could stumble into. Agents doing contract work are only ever
+given the agent-facing `contract` surface. This is an operational and social convention, not a
+technical secret: this design document and the tool's own code are both agent-readable, so
+`contract-admin`'s existence and commands cannot be treated as genuinely undiscoverable. The actual
+boundary is that agents are not instructed or expected to look for or invoke it, consistent with the
+"not adversarial security" framing in Scope — it is not a permission check the tool enforces at
+runtime, and no claim of technical secrecy is made.
 
-The admin tool covers:
+`contract-admin` covers:
 
-* `contract recover <cycle-id>` — resolve a stuck `in_flight` or `uncertain` token after a process crash or an ambiguous Asana response;
+* `contract-admin recover <cycle-id>` — resolve a stuck `in_flight` or `uncertain` token after a process crash or an ambiguous Asana response;
 * replacing a token after it is consumed, revoked, or stuck in an ambiguous recovery state that resolves as such — this is always a brand-new cycle, validation record, and token for a fresh review pass, never the reactivation or reuse of the old, already-consumed token record; a consumed or revoked token itself remains permanently unusable;
 * other Marco-only actions identified later.
 
-Revoking a task's contract-managed status is not a feature of the admin tool, or of this design at all. Marco always retains direct access to the existing general-purpose Asana CLI, which agents doing contract work are never given or told about; if a managed task genuinely needs a one-off manual edit outside the guarded workflow, Marco makes it directly through that existing tool instead.
+Revoking a task's contract-managed status is not a feature of `contract-admin`, or of this design at
+all. The general-purpose Asana CLI is guarded the same as any other caller (see Contract-managed task
+registry) and gives Marco no bypass — nothing about being Marco is authenticated or distinguishable
+to it. If a managed task genuinely needs a one-off manual edit outside the guarded workflow, Marco
+makes it directly through the Asana web UI instead — the same documented bypass already named in
+Scope (line 15): a direct edit there isn't prevented, only caught reactively at the next baseline
+check.
 
 ## SQLite model
 
@@ -437,6 +475,7 @@ Minimum tables:
 * `baseline_notes_hash`
 * `contract_revision`
 * `contract_text_hash`
+* `validator_rules_version`
 * `editor_agent`
 * `editor_family`
 * `change_level`
@@ -577,7 +616,14 @@ Tests must cover:
 * verifier-declared `small` edit re-validates in place with `editor_agent` unchanged;
 * verifier-declared `medium`/`large` edit reassigns `editor_agent`/`editor_family`/`change_level` on
   the same cycle, updates `pending_verification_hash`, and flips required verifier family back to the
-  original editor's family.
+  original editor's family;
+* `small`-only cycle creates a validation record/token after deterministic validation alone, with
+  `verifier_agent`/`verifier_family` null;
+* `CAN I COOK IT? Yes` rejected alongside `Human review: Pending`, `Verification: Not done`, or an
+  open Delta/Reconstruction;
+* `validator_rules_version` mismatch at re-validation invalidates the cycle;
+* section-GID resolution: a `Sourcing`/`Reference` rename does not change managed status; an
+  unresolvable section fails closed to managed.
 
 ## Out of scope
 
@@ -592,7 +638,7 @@ The first implementation does not:
 * modify the contract text or incident logs;
 * provide a remote or multi-user trust service;
 * document the contract admin tool's location or invocation for agents;
-* provide a dedicated revoke-management command (Marco uses the existing general-purpose Asana CLI directly instead).
+* provide a dedicated revoke-management command (Marco uses the Asana web UI directly instead, per Contract admin tool).
 
 ## Open decisions
 
