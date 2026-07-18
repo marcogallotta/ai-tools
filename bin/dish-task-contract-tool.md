@@ -12,6 +12,8 @@ It is separate from the general-purpose Asana CLI, but the existing CLI must con
 
 This design does not attempt adversarial security. Agents are trusted to identify themselves and describe their work honestly. Mechanical controls exist to prevent accidental bypasses, stale writes, repeated writes, and incomplete validation.
 
+A direct edit made through the Asana web UI or another integration bypasses this tool entirely and is not prevented — it is only caught reactively, at the next `contract begin`'s baseline check against `modified_at`.
+
 ## Current design decisions, pending formal approval
 
 * Contract-managed notes cannot be changed through generic note-writing commands.
@@ -147,6 +149,8 @@ The tool:
 8. Creates an open cycle in SQLite.
 9. Exports the current note as the working-file starting point.
 
+The cycle binds to the contract revision captured at `begin`: a later edit to `dish-task-contract.md` does not affect an already-open cycle, matching the contract's own freeze-through-signoff rule. The cycle record stores a hash of the exact governing contract text used, not only the human-readable revision string, so a mismatch between the recorded revision and the text actually used is detectable.
+
 The baseline applies to the whole task, not only its notes.
 
 Any later change that alters `modified_at` invalidates the cycle. This deliberately uses a stricter
@@ -164,19 +168,23 @@ The agent must review the complete assembled note before requesting validation.
 
 ### 3. Deterministic validation
 
-The tool validates the final file against machine-checkable rules, including:
+V1 validates the final file against a narrow, explicit rule set — mechanical checks only, no judgment about content quality or whether a section was rightly omitted:
 
-* canonical section structure;
-* required fields;
-* allowed values;
-* exactly one readiness statement;
-* deterministic readiness contradictions;
-* process-record syntax;
-* contract revision;
-* declared editor and verifier routing;
-* declared change-level information;
-* removed legacy fields;
-* absence of unresolved structural placeholders where prohibited.
+* exactly one `CAN I COOK IT?` readiness line;
+* `WHAT TO BUY` section present;
+* process-record required lines present and syntactically well-formed (`Stage:`, `Human review:`, `Verification:`);
+* declared `--change-level` is one of `small`/`medium`/`large`, and matches the process record;
+* editor/verifier family routing is internally consistent with the declared change level;
+* contract revision recorded in the process record matches the revision captured at cycle-begin;
+* no headings outside the canonical allowlist for the currently governing contract revision.
+
+The last rule is deliberately revision-relative rather than a hardcoded legacy-field list: it checks the proposed final note against whatever the current contract defines as canonical, not against a static set of retired field names. Whatever a contract revision no longer defines — this round's legacy fields or a future one's — is excluded automatically, with no separate legacy-tracking logic needed. Reading an existing task is unconstrained (an old task may sit in an old format indefinitely); only a new write is held to the current contract's structure. The canonical allowlist should eventually be parsed from a machine-readable manifest carried in the contract file itself, once that contract-doc addition is approved (see `dish-task-contract-change-plan.md`), rather than duplicated by hand in this tool; until then, v1 uses a hardcoded allowlist mirroring the current contract and accepts the maintenance cost of updating it by hand when the contract's canonical headings change.
+
+Deferred to a later version, once the mechanical layer is proven:
+
+* deterministic readiness contradictions (e.g. `CAN I COOK IT? Yes` with `Human review: Pending`);
+* unresolved structural placeholder detection (e.g. leftover `[approx]` markers);
+* any judgment of whether an omitted section should have been present, or of content quality — these remain the verifier's job, not the validator's, for the foreseeable future.
 
 The validator reports every detected failure and performs no Asana mutation.
 
@@ -205,7 +213,7 @@ The verifier confirms:
 * containment for a medium change;
 * the exact content being approved.
 
-If the verifier materially edits the note, the edited content must be treated as a new final artifact and validated again before a record is issued.
+If the verifier materially edits the note, the edited content must be treated as a new final artifact and validated again before a record is issued. The exact threshold for "materially" remains undefined (see Open decisions); until resolved, a verifier should treat any edit beyond wording or formatting as material and err toward re-validation.
 
 ### 5. Validation record and token
 
@@ -330,6 +338,16 @@ Recovery performs one targeted read:
 * If live notes match the original baseline-notes hash and the task state is otherwise consistent with a failed write, return the token to `issued`.
 * If live notes match neither, revoke the token and require Marco-led recovery.
 
+### Crashed process (stuck `in_flight`)
+
+If the tool's own process dies while a token is `in_flight`, nothing recovers it automatically — no timeout, no background sweep. Recovery requires an explicit, manually run command:
+
+```text
+contract recover <cycle-id>
+```
+
+It performs the same targeted read as Uncertain API outcome recovery above: compare live notes against the intended final-content hash and the baseline notes hash, and transition the token to `consumed`, `issued`, or `revoked` accordingly. Whether this command may be run by any agent or is Marco-only remains open (see Open decisions).
+
 ## SQLite model
 
 Minimum tables:
@@ -348,6 +366,7 @@ Minimum tables:
 * `baseline_modified_at`
 * `baseline_notes_hash`
 * `contract_revision`
+* `contract_text_hash`
 * `editor_agent`
 * `editor_family`
 * `change_level`
@@ -478,7 +497,8 @@ Tests must cover:
 * uncertain outcome where the write did not apply;
 * uncertain outcome with a third, conflicting state;
 * raw `notes` and `html_notes` bypass attempts;
-* task remaining managed after successful submission.
+* task remaining managed after successful submission;
+* stuck `in_flight` token recovered via manual `contract recover` command.
 
 ## Out of scope
 
@@ -496,8 +516,8 @@ The first implementation does not:
 ## Open decisions
 
 1. **Initial management:** Does a task become contract-managed automatically on the first `contract begin`, or must Marco explicitly enrol it first?
-2. **Marco-only actions:** How should the tool represent Marco’s authority for revoking management, replacing a consumed token, or resolving an ambiguous recovery state?
-3. **Token lifetime:** Should an issued token have a time expiry, or remain valid until the task changes, the content changes, or it is explicitly revoked?
+2. **Marco-only actions:** How should the tool represent Marco’s authority for revoking management, replacing a consumed token, resolving an ambiguous recovery state, or running `contract recover` on a stuck `in_flight` token — is that command Marco-only, or may any agent run it?
+3. **Token lifetime — resolved:** No automatic expiry. A stuck `in_flight` token requires an explicit, manually run `contract recover` command (see Failure behaviour); no background timeout or heartbeat-based auto-recovery in v1.
 4. **Verifier edits:** When a verifier changes content, what exact threshold makes the verifier the new material editor and therefore requires verification by the opposite family?
 5. **Existing tasks:** Which existing dish tasks, if any, should be enrolled when the tool is introduced?
 
