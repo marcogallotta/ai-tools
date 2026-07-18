@@ -158,6 +158,10 @@ baseline than the change plan's note-content-only proposal: any task change, not
 change, invalidates the cycle. The notes hash recorded at cycle start is kept for recovery and
 diagnosis, not as the primary staleness check.
 
+Before implementation, this must be tested against real Asana behaviour to confirm which operations
+(comments, custom-field changes, section moves, etc.) actually bump `modified_at`, since an
+over-sensitive baseline would invalidate cycles on activity unrelated to the note content.
+
 ### 2. Construct final note
 
 The agent edits a local file containing the complete proposed final task note.
@@ -528,4 +532,9 @@ The first implementation does not:
 3. **Token lifetime — resolved:** No automatic expiry. A stuck `in_flight` token requires an explicit, manually run `contract recover` command (see Failure behaviour); no background timeout or heartbeat-based auto-recovery in v1.
 4. **Verifier edits:** When a verifier changes content, what exact threshold makes the verifier the new material editor and therefore requires verification by the opposite family?
 5. **Existing tasks — resolved:** Every pre-existing task in the Cooking project outside `Sourcing`/`Reference` is contract-managed immediately, per the same live section-based rule as new tasks. No separate enrollment pass is needed; whether existing tasks' *content* needs migration to the current canonical structure is a separate question, unaffected by this (see Out of scope).
+6. **SQLite trust-store location and cross-family access:** Where does the SQLite trust store live, and how do both Claude-family and GPT-family agents — potentially separate processes or environments — reach the same cycle and validation-record state to complete a cross-family verification handoff?
+7. **Small-change verification path:** When a small change skips independent verification, does workflow step 4 (Semantic verification) get skipped entirely, and what does the deterministic check's "editor/verifier family routing is internally consistent with declared change level" mean when there is no verifier?
+8. **ChatGPT-authored cycle attribution:** What `--agent` value represents ChatGPT as editor when a local agent or Marco runs the cycle on its behalf, and how is opposite-family verification guaranteed rather than accidentally same-family?
+9. **Non-authenticated identity — explicit sign-off needed:** The design narrows the change plan's "authenticated editor identity" language to trusted-but-non-authenticated, declared via CLI flag. Confirm this is the accepted scope rather than an unapproved narrowing.
+10. **Self-verification risk — explicit acceptance needed:** Nothing prevents one session from declaring itself both editor and opposite-family verifier (e.g. `--agent claude` then later `--agent codex`) with no actual second review occurring. Confirm this is an accepted consequence of the "not adversarial security" framing, since it materially weakens the verifier-routing protection the change plan treats as approved.
 
