@@ -330,21 +330,29 @@ The same validated submission may be retried after the cause is addressed.
 
 A timeout, lost response, connection break, or similar ambiguous result changes the token to `uncertain`.
 
-The tool must not blindly retry.
+The tool must not blindly retry, and the agent-facing surface has no way to resolve this itself — it is the same class of judgment call as a crashed process below, and is resolved the same way.
 
-Recovery performs one targeted read:
+### Crashed process or uncertain outcome (stuck `in_flight` / `uncertain`)
+
+If the tool's own process dies while a token is `in_flight`, or a submission returns an ambiguous result and the token is `uncertain`, nothing recovers it automatically — no timeout, no background sweep, no automatic retry. The stuck task simply stays unavailable for a new cycle until recovered; nothing about this blocks an agent from continuing other work, including other tasks' cycles.
+
+Recovery is a command in the contract admin tool (see below), not the agent-facing `contract` CLI, for both cases — an agent should not be able to interpret or resolve an ambiguous write outcome itself. It performs one targeted read:
 
 * If live notes match the intended final-content hash, mark the token `consumed`.
 * If live notes match the original baseline-notes hash and the task state is otherwise consistent with a failed write, return the token to `issued`.
-* If live notes match neither, revoke the token and require Marco-led recovery.
+* If live notes match neither, revoke the token and require further Marco-led recovery.
 
-### Crashed process (stuck `in_flight`)
+## Contract admin tool
 
-If the tool's own process dies while a token is `in_flight`, nothing recovers it automatically — no timeout, no background sweep. The stuck task simply stays unavailable for a new cycle until recovered; nothing about this blocks an agent from continuing other work, including other tasks' cycles.
+Marco-only actions live in a separate contract admin tool, distinct from the agent-facing `contract begin`/`verify`/`submit` commands. Agents doing contract work are only ever given the agent-facing surface — the admin tool's existence, commands, and location are not documented to them and not discoverable from this design or the tool's code. Only Marco runs it. This is a separation-of-knowledge control, not a permission check the tool enforces at runtime, consistent with the "not adversarial security" framing in Scope.
 
-Recovery lives in a separate script, outside the main `contract` CLI surface and outside this document, so an agent reading this design or the tool's code has no path to the recovery mechanism and no reason to go looking for one. Only Marco runs it. This is a separation-of-knowledge control, not a permission check the tool enforces at runtime — consistent with the "not adversarial security" framing in Scope.
+The admin tool covers:
 
-It performs the same targeted read as Uncertain API outcome recovery above: compare live notes against the intended final-content hash and the baseline notes hash, and transition the token to `consumed`, `issued`, or `revoked` accordingly.
+* `contract recover <cycle-id>` — resolve a stuck `in_flight` or `uncertain` token after a process crash or an ambiguous Asana response;
+* issuing or replacing a write token — e.g. after a consumed token needs a genuine re-write, or an ambiguous recovery state needs Marco's explicit resolution;
+* other Marco-only actions identified later.
+
+Revoking a task's contract-managed status is not a feature of the admin tool, or of this design at all. Marco always retains direct access to the existing general-purpose Asana CLI, which agents doing contract work are never given or told about; if a managed task genuinely needs a one-off manual edit outside the guarded workflow, Marco makes it directly through that existing tool instead.
 
 ## SQLite model
 
@@ -510,12 +518,13 @@ The first implementation does not:
 * automatically migrate every existing dish task;
 * modify the contract text or incident logs;
 * provide a remote or multi-user trust service;
-* document the recovery script's location or invocation for agents.
+* document the contract admin tool's location or invocation for agents;
+* provide a dedicated revoke-management command (Marco uses the existing general-purpose Asana CLI directly instead).
 
 ## Open decisions
 
 1. **Initial management — resolved:** No explicit enrollment step. A task is contract-managed by default based on its current Cooking-project section, excluding only `Sourcing` and `Reference` (see Contract-managed task registry).
-2. **Marco-only actions:** `contract recover` is resolved — it lives in a separate script outside agent-visible surfaces, and only Marco runs it (see Failure behaviour). Still open: whether revoking management and replacing a consumed token use the same separate-script pattern, and how the tool should represent that authority structurally.
+2. **Marco-only actions — resolved:** All Marco-only actions (`contract recover`, token issuance/replacement) live in a single contract admin tool, separate from and invisible to the agent-facing `contract` commands (see Contract admin tool). Revoking a task's contract-managed status is not a feature of this design: Marco uses the existing general-purpose Asana CLI directly, which agents never have access to or knowledge of.
 3. **Token lifetime — resolved:** No automatic expiry. A stuck `in_flight` token requires an explicit, manually run `contract recover` command (see Failure behaviour); no background timeout or heartbeat-based auto-recovery in v1.
 4. **Verifier edits:** When a verifier changes content, what exact threshold makes the verifier the new material editor and therefore requires verification by the opposite family?
 5. **Existing tasks — resolved:** Every pre-existing task in the Cooking project outside `Sourcing`/`Reference` is contract-managed immediately, per the same live section-based rule as new tasks. No separate enrollment pass is needed; whether existing tasks' *content* needs migration to the current canonical structure is a separate question, unaffected by this (see Out of scope).
