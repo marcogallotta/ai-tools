@@ -4,7 +4,7 @@
 Reads ASANA_PAT from ~/plant-monitoring/.env (override with $ASANA_PAT or $ASANA_ENV).
 Stdlib only. Run `asana help` for usage.
 """
-import difflib, json, os, sys, urllib.request, urllib.parse, urllib.error
+import json, os, sys, urllib.request, urllib.parse, urllib.error
 
 BASE = "https://app.asana.com/api/1.0"
 DEFAULT_WS = "1200569426771227"  # "London to Umrah 2022" workspace
@@ -167,62 +167,11 @@ def _load_batch_plan(path):
     return ops
 
 
-def _task_snapshot(gid):
-    fields = ",".join(BATCH_TASK_FIELDS + (
-        "memberships.section.gid",
-        "memberships.section.name",
-    ))
-    return req("GET", "/tasks/%s" % gid, params={"opt_fields": fields})
-
-
-def _section_label(task):
-    memberships = task.get("memberships") or []
-    names = []
-    for membership in memberships:
-        section = membership.get("section") or {}
-        if section.get("name"):
-            names.append("%s (%s)" % (section.get("name"), section.get("gid")))
-    return ", ".join(names) if names else ""
-
-
 def _op_reason(op):
     reason = op.get("reason")
     if not isinstance(reason, str) or not reason.strip():
         sys.exit("each batch operation must include a non-empty reason")
     return reason.strip()
-
-
-def _format_value(value):
-    if value is None:
-        return "(empty)"
-    if value == "":
-        return "(empty)"
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value).replace("\n", "\\n")
-
-
-def _clip(value, limit=180):
-    text = _format_value(value)
-    if len(text) <= limit:
-        return text
-    return "%s... [%d chars]" % (text[:limit], len(text))
-
-
-def _note_diff(old, new, limit=12):
-    """Return changed note lines only; never dump the full task body."""
-    old_lines = (old or "").splitlines()
-    new_lines = (new or "").splitlines()
-    changed = []
-    for line in difflib.ndiff(old_lines, new_lines):
-        if line.startswith("- ") or line.startswith("+ "):
-            changed.append("%s%s" % (line[:2], _clip(line[2:])))
-    if not changed and old != new:
-        changed = ["- %s" % _clip(old), "+ %s" % _clip(new)]
-    shown = changed[:limit]
-    if len(changed) > limit:
-        shown.append("... %d more changed line(s)" % (len(changed) - limit))
-    return shown or ["(no text change)"]
 
 
 def _normalize_batch_op(op):
@@ -292,60 +241,6 @@ def _normalize_batch_op(op):
         }
 
     sys.exit("unsupported batch action: %s" % action)
-
-
-def _preview_batch_ops(ops):
-    normalized = [_normalize_batch_op(op) for op in ops]
-    print("Asana batch preview (%d operation%s)" % (len(normalized), "" if len(normalized) == 1 else "s"))
-    print("")
-    for i, op in enumerate(normalized, 1):
-        action = op["action"]
-        if action == "update_task":
-            task = _task_snapshot(op["task"])
-            print("%d. %s (%s)" % (i, task.get("name") or "(unnamed task)", op["task"]))
-            for field, new in op["fields"].items():
-                if field == "notes":
-                    print("   notes changes:")
-                    for line in _note_diff(task.get("notes") or "", new):
-                        print("     %s" % line)
-                else:
-                    print("   %s: %s -> %s" % (field, _clip(task.get(field)), _clip(new)))
-            print("   why: %s" % op["reason"])
-        elif action == "replace_notes":
-            task = _task_snapshot(op["task"])
-            notes = task.get("notes") or ""
-            matches = notes.count(op["old"])
-            if matches != 1:
-                sys.exit("replace_notes preview aborted for %s: old text found %d times (need exactly 1)" % (op["task"], matches))
-            print("%d. %s (%s)" % (i, task.get("name") or "(unnamed task)", op["task"]))
-            print("   notes: %s -> %s" % (_clip(op["old"]), _clip(op["new"])))
-            print("   why: %s" % op["reason"])
-        elif action == "move":
-            task = _task_snapshot(op["task"])
-            print("%d. %s (%s)" % (i, task.get("name") or "(unnamed task)", op["task"]))
-            print("   section: %s -> %s" % (_clip(_section_label(task)), op["section"]))
-            print("   why: %s" % op["reason"])
-        elif action == "create_task":
-            print("%d. Create task in project %s" % (i, op["project"]))
-            print("   name: %s" % _clip(op["name"]))
-            print("   section: %s" % _clip(op.get("section")))
-            if op.get("notes") is not None:
-                print("   notes added:")
-                for line in _note_diff("", op["notes"], limit=6):
-                    print("     %s" % line)
-            print("   why: %s" % op["reason"])
-        elif action == "create_subtask":
-            print("%d. Create subtask under %s" % (i, op["parent"]))
-            print("   name: %s" % _clip(op["name"]))
-            if op.get("notes") is not None:
-                print("   notes added:")
-                for line in _note_diff("", op["notes"], limit=6):
-                    print("     %s" % line)
-            print("   why: %s" % op["reason"])
-
-
-def c_batch_preview(path):
-    _preview_batch_ops(_load_batch_plan(path))
 
 
 def c_batch_apply(path):
@@ -425,7 +320,6 @@ HELP = """asana — Asana API CLI (reads ASANA_PAT from ~/plant-monitoring/.env)
   asana move <task> <section>       move task to a section (same project)
   asana create-task <project> <name> [--section <gid>] [--notes -]
   asana create-subtask <parent> <name> [--notes -]
-  asana batch-preview <plan.json>   print the concise preview without writing
   asana batch-apply <plan.json>     short permission prompt, then apply on yes (3+ operations)
   asana search project|task <query>
   asana projects                    list all (non-archived) workspace projects
@@ -493,8 +387,6 @@ def main():
         elif cmd == "create-subtask":
             notes = opt("--notes")
             c_create_subtask(rest[0], rest[1], notes)
-        elif cmd == "batch-preview":
-            c_batch_preview(rest[0])
         elif cmd == "batch-apply":
             c_batch_apply(rest[0])
         elif cmd == "search":

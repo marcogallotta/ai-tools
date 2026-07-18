@@ -9,7 +9,7 @@ pass (see bottom).
 Ship as staged commits, not one combined PR: Step 0 → P0 (#1 then #2) → P1
 (#3, then #4/#5/#6). Each stage should land and be verifiable on its own.
 
-## Step 0 — precondition, before any P0 work
+## Step 0 — precondition, before any P0 work — DONE
 
 **Remove `batch-preview` entirely.** Do this first, before P0 item #1, not
 as P1 cleanup — its removal is a precondition for the rest of the pass, not
