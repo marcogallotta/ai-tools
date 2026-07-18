@@ -245,7 +245,7 @@ helpers are used by `batch-apply` or anything else in the file.
    `c_append`, `c_replace`, `c_create_task`, `c_create_subtask`). All 5
    `tests/test_decode.py` cases pass.
 
-6. **Keep `raw` as a genuine escape hatch, including `DELETE`.**
+6. **Keep `raw` as a genuine escape hatch, including `DELETE`. — DONE**
    Do not restrict the method allowlist. The external Bash-tool permission
    hook (per global CLAUDE.md) is the safety layer for this command, and
    deleted Asana tasks are recoverable. Document its real behavior (full,
@@ -270,6 +270,23 @@ helpers are used by `batch-apply` or anything else in the file.
    `test_dispatches_via_sdk_call_api_not_urllib`,
    `test_put_wraps_body_in_data_envelope`,
    `test_delete_requires_no_confirmation_flag`).
+
+   Done: `req()`, `BASE`, `_PAT`, and the `urllib.*` imports are removed
+   entirely — `raw` was the only caller. `c_raw` now builds `body = {"data":
+   data}` itself (unchanged wrap contract, so `~/plant-monitoring/CLAUDE.md`
+   needed no update) and calls `client().call_api(path, method.upper(),
+   header_params={"Accept": ...}, body=body, response_type=object,
+   auth_settings=["personalAccessToken"], _return_http_data_only=True)`,
+   mapping `ApiException` through the existing `_fail()`. The query string in
+   `path` (e.g. `?opt_fields=...`) passes straight through as part of
+   `resource_path` — `call_api()` concatenates it onto the host URL
+   unmodified, so no separate `query_params` handling was needed. Response
+   unwrapping (`result["data"]` when present) is preserved to match the old
+   `req()` output shape. HELP text (asana:410-413) updated: `DELETE` added to
+   the method list, and a line documents the no-allowlist/permission-hook
+   safety model. All 6 `tests/test_raw.py` cases pass; verified live
+   (`raw GET` against a real task, both a 404 and a 200 path) — writes not
+   exercised live, only via the mocked unit tests.
 
 ## Resolved — declined
 

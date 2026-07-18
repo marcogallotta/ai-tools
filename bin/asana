@@ -5,13 +5,11 @@ Reads ASANA_PAT from ~/.config/asana-cli/.env (override with $ASANA_PAT or $ASAN
 Transport: python-asana SDK (see requirements.txt for pinned version).
 Run `asana help` for usage.
 """
-import json, os, sys, urllib.request, urllib.parse, urllib.error
+import json, os, sys
 import asana
 from asana.rest import ApiException
 
-BASE = "https://app.asana.com/api/1.0"
 DEFAULT_WS = "1200569426771227"  # "London to Umrah 2022" workspace
-_PAT = None
 _CLIENT = None
 
 
@@ -97,27 +95,6 @@ def _status_match(t, status):
     if status == "complete":
         return bool(t.get("completed"))
     return not t.get("completed")
-
-
-# raw urllib transport, kept only for `raw` (see asana-cli-fixes.md P1 #6 for its planned SDK migration)
-def req(method, path, data=None, params=None):
-    global _PAT
-    if _PAT is None:
-        _PAT = load_pat()
-    url = BASE + path
-    if params:
-        url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
-    body = json.dumps({"data": data}).encode() if data is not None else None
-    r = urllib.request.Request(url, data=body, method=method, headers={
-        "Authorization": "Bearer " + _PAT,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    })
-    try:
-        with urllib.request.urlopen(r) as resp:
-            return json.load(resp).get("data")
-    except urllib.error.HTTPError as e:
-        sys.exit("HTTP %s: %s" % (e.code, e.read().decode()[:800]))
 
 
 def _text(arg):
@@ -397,7 +374,21 @@ def c_raw(method, path):
         s = sys.stdin.read().strip()
         if s:
             data = json.loads(s)
-    print(json.dumps(req(method.upper(), path, data=data), indent=2, ensure_ascii=False))
+    body = {"data": data} if data is not None else None
+    try:
+        result = client().call_api(
+            path, method.upper(),
+            header_params={"Accept": "application/json; charset=UTF-8"},
+            body=body,
+            response_type=object,
+            auth_settings=["personalAccessToken"],
+            _return_http_data_only=True,
+        )
+    except ApiException as e:
+        _fail(e)
+    if isinstance(result, dict) and "data" in result:
+        result = result["data"]
+    print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 HELP = """asana — Asana API CLI (reads ASANA_PAT from ~/.config/asana-cli/.env)
@@ -419,8 +410,10 @@ HELP = """asana — Asana API CLI (reads ASANA_PAT from ~/.config/asana-cli/.env
   asana batch-apply <plan.json>     short permission prompt, then apply on yes (3+ operations)
   asana search project|task <query> [--cursor <token>]
   asana projects [--cursor <token>] list all (non-archived) workspace projects
-  asana raw <GET|PUT|POST> <path>   JSON body from stdin
+  asana raw <GET|PUT|POST|DELETE> <path>   JSON body from stdin, wrapped in {"data": ...}
       e.g. asana raw GET '/tasks/123?opt_fields=name,notes'
+      unrestricted escape hatch (no method allowlist); relies on the Bash-tool
+      permission hook, not an in-CLI confirmation, as its safety layer
 
 batch plan shape:
   {"operations":[
