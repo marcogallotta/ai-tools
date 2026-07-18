@@ -364,6 +364,16 @@ subcommand doesn't make its output less important to verify.
   `--agent gpt` routing. Worth a short runbook note wherever Marco keeps ChatGPT-facing instructions
   (**OPEN** — I don't know if such a place exists; flag if it does and I'll add a pointer there instead
   of leaving this as prose only here).
+- **OPEN — is the current ChatGPT process itself the right shape.** Marco flagged the present
+  ChatGPT-side workflow (relaying context in/out manually, per that section) as jank in practice.
+  Marco already has a custom GPT hosted on his laptop for another purpose, so the groundwork (Action
+  endpoint, laptop hosting, schema registration) is proven, not hypothetical — extending that same
+  pattern with a couple of endpoints wrapping task-read/`contract` calls behind a bearer token is a
+  known-cost addition, not a new infra bet. What's actually open is a judgment call, not a build
+  question: whether ChatGPT should be calling directly into a live endpoint against real tasks (vs.
+  today's model where nothing executes until a local agent runs `contract prepare`/`submit`), and
+  whether `Self-verified:` should stay something ChatGPT asserts in its own output rather than
+  something the Action layer stamps on its behalf.
 - **`requirements.txt`** — no new entries if Step 0 lands as JSON (stdlib `json` only); add `pyyaml` if
   you choose YAML instead.
 - **`.gitignore`** — add `var/` for the new SQLite DB location.
@@ -393,3 +403,8 @@ canonical structure, and anything not already named in that document's Out of sc
 7. Logging/observability surface — recommendation: a checked-in `.sql` file, not a new subcommand, for
    v1a.
 8. Where (if anywhere) a ChatGPT-facing runbook pointer should live.
+9. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
+   has the same laptop-hosted groundwork proven for another purpose); the open call is
+   trust/semantics — direct live-endpoint access to real tasks, and whether `Self-verified:` stays
+   ChatGPT's own assertion rather than something the Action stamps on its behalf — not build effort.
+   See Step 8.
