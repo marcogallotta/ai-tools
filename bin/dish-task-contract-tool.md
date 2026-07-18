@@ -8,27 +8,86 @@
 
 This tool governs complete writes to the notes of contract-managed dish tasks.
 
-It is separate from the general-purpose Asana CLI, but the existing CLI must consult the contract tool’s registry before performing a generic note mutation.
+It is separate from the general-purpose Asana CLI. The existing CLI must consult this tool's live
+managed-task determination before performing a generic note mutation — during v1a that consultation
+is advisory/log-only (see Versioning plan); v1b makes it a hard block.
 
-This design does not attempt adversarial security. Agents are trusted to identify themselves and describe their work honestly. Mechanical controls exist to prevent accidental bypasses, stale writes, repeated writes, and incomplete validation.
+This design does not attempt adversarial security. Agents are trusted to identify themselves and
+describe their work honestly. Mechanical controls exist to prevent accidental bypasses, stale writes,
+repeated writes, and incomplete validation.
 
-A direct edit made through the Asana web UI or another integration bypasses this tool entirely and is not prevented — it is only caught reactively, either at the next `contract begin`'s baseline check against `modified_at`, or, for an edit made during an already-open cycle, at that cycle's `submit`-time freshness check.
+A direct edit made through the Asana web UI or another integration bypasses this tool entirely and is
+not prevented — it is only caught reactively, at the next `contract prepare`'s baseline check against
+`modified_at`.
+
+## Versioning plan
+
+The tool is built and rolled out in stages, scoped to what the evidence in
+`dish-task-contract-change-plan.md`, `dish-task-contract-incident-log.md`, and
+`dish-task-contract-review-log.md` actually requires. Nothing beyond v1a/v1b is built until real usage
+data justifies it.
+
+**v1a — build and soft-launch.** The full guarded path (`prepare` / `approve` / `reject` / `submit` /
+`contract-admin recover`) is implemented, tested, and usable end-to-end against live tasks — it
+performs real Asana writes through the guarded, token-protected path. What v1a does *not* do is make
+this path mandatory: the existing generic Asana CLI still works for managed tasks, and its managed-task
+check runs in advisory/log-only mode (see Contract-managed task registry, Logging and observability).
+This proves the hardest, most novel logic — the structural validator against the contract's manifest,
+the exact-content hash binding, the submission state machine, and uncertain-outcome recovery — under
+real conditions, without the operational risk of a validator bug or an over-sensitive staleness check
+blocking a live cook. It also produces the usage data needed to decide v1b's timing and v2's scope.
+
+**v1b — enforce.** Once v1a's validator has run clean against real usage and the `modified_at`
+staleness behaviour has been empirically confirmed (see Content hashing), the generic CLI's
+managed-task check is flipped from advisory to blocking. No new mechanism is added at this stage —
+v1b is a configuration flip on v1a's own logged evidence, not new code.
+
+**v2 — add once v1a data justifies it.**
+
+* The two-failed-pass stop rule (`dish-task-contract.md` lines 206-209) — real contract text, but no
+  incident shows it failing in practice; v1a's rejection-rate logging is exactly the evidence needed
+  to decide whether to build it. Cheap to add once needed (a counter and a gate).
+* The small-change (`small`/Local) carelessness speed bump — Marco's standing concern (see Open
+  decisions, item 6): an honest agent carelessly mis-declaring a material change as `small`, not a
+  malicious one gaming the system. v1a's logging of what real `small`-declared diffs actually touch
+  and how large they are is the input needed to design the trigger condition, which is currently
+  undecided.
+* Bounded direct-dependency surfacing (see Direct dependencies) — already scoped in the change plan as
+  advisory and non-blocking; natural to add once the core write path is proven.
+* Token/submission replacement as a distinct action from `contract-admin recover` — only worth building
+  if recovery proves insufficient in real use.
+
+**Dropped, not deferred.** These were considered and rejected outright, not postponed:
+
+* Verifier in-place editing and any author-reassignment bookkeeping (`last_content_author` and
+  related). No incident motivates letting a verifier edit the note at all; a verifier who finds a
+  problem rejects it and the editor resubmits (see Workflow). This removes an entire dimension of
+  state the design previously carried.
+* `--confirm-independent-review` as a separate required flag. The tool already knows `editor_agent`
+  and `verifier_agent` from the commands themselves; a self-verification collision is detected by
+  comparing those two values directly and logged automatically (see Logging and observability), with
+  no extra flag for an agent to remember to pass.
+* A cached, authoritative `managed_tasks` table. Management is always resolved live (see
+  Contract-managed task registry); a cache that isn't authoritative isn't worth maintaining.
+* A distinct adversarial self-review mechanism. The review log is explicit that this "was an assistant
+  recommendation and was not approved in the enforcement handoff" and creates no implementation
+  requirement. Stays out unless Marco separately approves it.
+* Cryptographic identity authentication, recursive dependency audits, automatic migration of existing
+  tasks, a multi-user/remote trust service (see Out of scope) — no new reason to revisit these.
 
 ## Current design decisions, pending formal approval
 
-* Contract-managed notes cannot be changed through generic note-writing commands.
-* This restriction can be relaxed later if it becomes obstructive.
-* Agent identity is supplied explicitly as a trusted CLI flag.
-* Agent identity is not cryptographically authenticated.
-* Trusted state is stored in a local SQLite database at `~/ai-tools/var/dish-contract.db`, gitignored, shared by every locally-invoked agent regardless of family.
-* Any change to the Asana task after the initial read invalidates the baseline.
-* Baseline freshness is checked through Asana’s `modified_at`.
-* The editing agent declares a **change level** and explains why.
-* User-facing change levels are **small**, **medium**, and **large**.
-* Python does not infer the semantic change level.
-* The complete final note is validated and written as one artifact.
-* A successful write consumes a single-use token.
-* An identical second write is rejected.
+* Contract-managed notes cannot be changed through generic note-writing commands once v1b is enabled;
+  in v1a the restriction is advisory/logged only.
+* Agent identity is supplied explicitly as a trusted CLI flag, not cryptographically authenticated.
+* Trusted state is stored in a local SQLite database at `~/ai-tools/var/dish-contract.db`, gitignored,
+  shared by every locally-invoked agent regardless of family.
+* Any change to the Asana task after the initial read invalidates the baseline, checked through
+  `modified_at`.
+* The editing agent declares a **change level** (`small`/`medium`/`large`) and a reason; Python does
+  not infer it.
+* The complete final note is validated and written as one artifact — no patches or fragments.
+* A successful write consumes a single-use submission; an identical second write is rejected.
 
 ## Change levels
 
@@ -42,25 +101,21 @@ medium → Delta
 large  → Reconstruction
 ```
 
-The tool uses the plain-language terms; the task process record uses the contract terms.
-
 ### Small change
 
-A change that cannot materially alter cooking, sourcing, safety, halal compliance, readiness, Human approval, or the intended result.
-
-Examples may include spelling, formatting, or an unambiguous correction with no material downstream effect.
+A change that cannot materially alter cooking, sourcing, safety, halal compliance, readiness, Human
+approval, or the intended result. Examples may include spelling, formatting, or an unambiguous
+correction with no material downstream effect.
 
 ### Medium change
 
-A material change whose consequences are clearly limited to identified parts of the task.
-
-The editor must identify the affected parts and explain why the effect is contained.
+A material change whose consequences are clearly limited to identified parts of the task. The editor
+must identify the affected parts and explain why the effect is contained.
 
 ### Large change
 
-A change that can affect the complete construction, or whose consequences cannot be confidently contained.
-
-Initial task construction is always treated as a large change.
+A change that can affect the complete construction, or whose consequences cannot be confidently
+contained. Initial task construction is always treated as a large change.
 
 The editing agent declares:
 
@@ -69,543 +124,360 @@ The editing agent declares:
 --change-reason "<brief explanation>"
 ```
 
-For `medium`/`large` changes, the verifier must explicitly confirm the declared level; if the verifier does not agree, no validation record is issued. `small` changes have no verifier at all (see Agent identity and verifier routing) — the declared level there is confirmed only by the mechanical checks in Deterministic validation, not by a second agent.
+`medium`/`large` require an opposite-family verifier to `approve` before submission. `small` requires
+no verifier at all — confirmed only by deterministic validation, not by a second agent (see Agent
+identity and verifier routing).
 
 ## Agent identity and verifier routing
 
-Every editing or verification operation requires:
+Every command requires:
 
 ```text
 --agent claude|gpt|codex
 ```
 
-The value is trusted as an honest declaration.
-
-Agent families are:
+trusted as an honest declaration. Agent families:
 
 ```text
 claude          → Claude family
 gpt, codex      → GPT family
 ```
 
-This mirrors the contract's own family definition ("GPT includes ChatGPT/Codex"), so a ChatGPT-authored cycle is routed the same as any other GPT-family edit — the opposite-family rule below already sends it to Claude, with no ChatGPT-specific case needed. ChatGPT cannot run the CLI itself; whoever runs `contract begin`/`submit` on its behalf declares `--agent gpt`.
+This mirrors the contract's own family definition ("GPT includes ChatGPT/Codex"), so a ChatGPT-authored
+submission routes the same as any other GPT-family edit. ChatGPT cannot run the CLI itself; whoever
+runs `contract prepare`/`submit` on its behalf declares `--agent gpt`.
 
-Initial construction and large changes require verification by the opposite family.
+Initial construction and `large` changes require verification by the opposite family. `medium` also
+requires the opposite family, but the verifier may focus review on the declared affected areas when
+containment is accepted. `small` matches the contract's Local change class: no verifier runs, and the
+task's existing `Verification` field is left as-is.
 
-Medium changes also require the opposite family, but verification may focus on the declared affected areas only when containment is accepted.
+A self-verification collision — `editor_agent` equal to the required verifier's own declared agent on
+`approve` — is detected automatically by comparing the two stored values and logged to `audit_events`
+(see Logging and observability). It is not prevented; identity is trusted, not authenticated (see
+Scope).
 
-Small changes match the contract's Local change class: no verifier is required at all, and the task's existing `Verification` field is left as-is rather than reset. Step 4 (Semantic verification) is skipped entirely for a small change.
-
-The final task process record must agree with:
-
-* the declared final editor;
-* the derived editor family;
-* the declared change level;
-* the required verifier family;
-* the governing contract revision.
+The final task process record must agree with the declared final editor, its derived family, the
+declared change level, the required verifier family, and the governing contract revision.
 
 ## Contract-managed task registry
 
-Management is determined by the task's current section in the Cooking project (`1215089183018968`), checked live rather than fixed once at enrollment. Sections are identified by their immutable Asana section GID, not by display name — a section rename in Asana must not silently change which tasks are managed. The tool resolves the `Sourcing` and `Reference` sections' GIDs once by name at setup time and compares against those GIDs thereafter. A task is contract-managed unless its current section GID matches one of those two recorded GIDs; every other section — all cuisine sections, `Planned`, `Eating`, `Seasonal`, etc. — defaults to managed. If a task's section membership cannot be resolved to a GID at all (no section, or an API read failure), the tool fails closed and treats the task as managed rather than silently exempting it. This applies uniformly to new and pre-existing tasks: nothing needs a separate backfill or explicit enrollment pass, and moving a task into or out of the `Sourcing`/`Reference` GIDs changes its managed status from that point on.
+Management is determined by the task's current section in the Cooking project (`1215089183018968`),
+checked live rather than fixed once at enrollment. Sections are identified by their immutable Asana
+section GID, not by display name — a section rename must not silently change which tasks are managed.
+The tool resolves the `Sourcing` and `Reference` sections' GIDs once by name at setup time and compares
+against those GIDs thereafter. A task is contract-managed unless its current section GID matches one of
+those two — every other section defaults to managed. If section membership cannot be resolved to a GID
+at all, the tool fails closed and treats the task as managed. This applies uniformly to new and
+pre-existing tasks; no separate enrollment or backfill pass is needed.
 
-Every generic note-mutation command performs a live Cooking-project section check before writing — the cache is not a substitute for this, since a task can move into or out of `Sourcing`/`Reference` through an allowed non-note command between checks. SQLite still records the determination per task (`managed_tasks`), but only for audit; it is never the sole source of truth for a live guard decision.
+**v1a:** the generic CLI still performs a live check before a note mutation on a managed task, but only
+to log an advisory bypass event (task GID, command used, agent if known) — the write proceeds. **v1b:**
+the same check rejects the write instead.
 
-A task remains contract-managed after a successful write, so long as its section hasn't moved it out of management. Any later note change requires another contract cycle.
+The check applies to `set-notes`, `append`, `replace`, batch operations updating notes, and `raw`
+writes containing `notes`/`html_notes`. Unrelated operations (rename, move, complete, other fields)
+remain outside this contract unless later expanded.
 
-Generic commands must consult this determination before mutating notes.
-
-The guard applies to:
-
-* `set-notes`;
-* `append`;
-* `replace`;
-* batch operations that update notes;
-* `raw` writes containing `notes` or `html_notes`.
-
-Unrelated operations such as renaming, moving, completing, or changing other fields remain outside this contract unless later expanded.
-
-The contract submission path uses an internal guarded write operation after all checks pass. It does not disable its own write through the generic-command guard.
+The contract submission path uses an internal guarded write operation after all checks pass; it does
+not go through the generic-command guard at all, in either v1a or v1b.
 
 ## Workflow
 
-### 1. Begin cycle
-
-The editor starts a cycle with:
+### 1. `contract prepare`
 
 ```text
-contract begin <task-gid> \
-  --agent <agent> \
-  --change-level <level> \
-  --change-reason "<reason>"
+contract prepare <task-gid> \
+  --agent claude|gpt|codex \
+  --change-level small|medium|large \
+  --change-reason "<reason>" \
+  --file <final-note>
 ```
+
+Before running this, the agent has already assembled one complete canonical note (no patches or
+fragments accepted anywhere in this workflow) and performed its own end-to-end self-review, scoped by
+change level the same way the contract already scopes verification — local check for `small`, the
+change and its identified dependencies for `medium`, the complete task for `large`. It records that
+review by writing `Self-verified: <agent>, <date>` into the file's process record; this is checked
+mechanically, not through a separate command.
 
 The tool:
 
 1. Confirms the task exists.
-2. Confirms no other open cycle already exists for this task — enforced both by checking
-   `managed_tasks.current_cycle_id` and by a partial unique index on `cycles(task_gid)` for
-   non-terminal `status`, so a race between two simultaneous `begin` calls fails at the database
-   layer rather than only at the application check.
-3. Reads the complete task.
-4. Records its `modified_at`.
-5. Records a hash of the current notes for diagnostics and recovery.
-6. Reads the exact governing contract, including its canonical-structure manifest, and parses and
-   stores that manifest on the cycle as `canonical_manifest`.
-7. Derives the contract revision.
-8. Confirms the task is contract-managed under the enrolment policy.
-9. Creates an open cycle in SQLite, with `last_content_author` initialized to `editor_agent` and
-   `failed_verification_passes` at 0.
-10. Exports the current note as the working-file starting point.
+2. Confirms no other open submission already exists for this task — enforced by application check and
+   by a partial unique index on `submissions(task_gid)` for non-terminal `status`, so a race between
+   two simultaneous `prepare` calls fails at the database layer, not only in application logic.
+3. Reads the complete task; records `baseline_modified_at` and a `baseline_notes_hash`.
+4. Reads the exact governing contract text, including its embedded canonical-structure manifest, and
+   stores the parsed manifest as `canonical_manifest` alongside `contract_revision` and
+   `contract_text_hash` — this submission is validated against this exact frozen manifest for its
+   entire life, matching the contract's own freeze-through-signoff rule; a later contract edit does not
+   affect an already-open submission.
+5. Runs deterministic validation (below) against `<final-note>`.
+6. On a validation failure: reports every violated rule; no submission row is created, but the attempt
+   is logged (see Logging and observability) so failure patterns are visible even without a persisted
+   submission.
+7. On a pass: hashes the file as `content_hash` and creates one `submissions` row.
+   * `small` → status `ready`, no verifier required.
+   * `medium`/`large` → status `awaiting_verification`, with `required_verifier_family` set to the
+     family opposite `editor_family`.
 
-The cycle binds to the contract revision captured at `begin`: a later edit to `dish-task-contract.md` does not affect an already-open cycle, matching the contract's own freeze-through-signoff rule. The cycle record stores a hash of the exact governing contract text used, not only the human-readable revision string, so a mismatch between the recorded revision and the text actually used is detectable.
-
-The baseline applies to the whole task, not only its notes.
-
-Any later change that alters `modified_at` invalidates the cycle. This deliberately uses a stricter
-baseline than the change plan's note-content-only proposal: any task change, not only a note-content
-change, invalidates the cycle. The notes hash recorded at cycle start is kept for recovery and
-diagnosis, not as the primary staleness check.
-
-Before implementation, this must be tested against real Asana behaviour to confirm which operations
-(comments, custom-field changes, section moves, etc.) actually bump `modified_at`, since an
-over-sensitive baseline would invalidate cycles on activity unrelated to the note content.
-
-### 2. Construct final note
-
-The agent edits a local file containing the complete proposed final task note.
-
-Patches, replacement fragments, and incremental Asana edits are not accepted by the contract submission path.
-
-Before requesting validation, the agent performs its own end-to-end review of the complete note,
-scoped the same way the contract already scopes verification by change level — local check for
-`small`, the change and its identified dependencies for `medium`, the complete task for `large` (see
-`dish-task-contract.md`'s Local/Delta/Reconstruction scoping). It records that review by writing a
-`Self-verified: <agent>, <date>` line into the note's process record. This is not a separate tool
-command: the line lives in the artifact itself and is checked mechanically by deterministic
-validation (step 3) like any other required process-record line, so no separate self-verify command
-or SQLite state is needed to keep it in sync with the content.
-
-### 3. Deterministic validation
-
-The agent runs:
-
-```text
-contract validate <cycle-id> --file <final-note>
-```
-
-This is the command that actually executes deterministic validation; nothing else in the workflow
-triggers it. On a pass, it stores the file's hash as `pending_verification_hash` on the cycle. For a
-`small` change, it also issues the validation record and single-use write token immediately, since no
-verifier runs (see Agent identity and verifier routing; Workflow, step 5). For `medium`/`large`, a
-pass only prepares the artifact for `contract verify` (step 4) — the record and token are not issued
-until verification also passes.
-
-V1 validates the final file against a narrow, explicit rule set — mechanical checks only, no judgment about content quality or whether a section was rightly omitted:
+Deterministic validation checks, mechanically only — no judgment about content quality or whether a
+section was rightly omitted:
 
 * exactly one `CAN I COOK IT?` readiness line;
 * `WHAT TO BUY` section present;
-* process-record required lines present and syntactically well-formed (`Stage:`, `Human review:`, `Verification:`, `Self-verified:`);
-* `Self-verified:`'s declared agent matches the cycle's current `last_content_author` — the agent credited with producing the exact content being validated, not necessarily the material `editor_agent` (see the `small`-change branch in Semantic verification) — the only enforcement available for the self-review step; it cannot confirm the review's thoroughness, only that an attributable attestation exists for the exact bytes submitted;
-* declared `--change-level` is one of `small`/`medium`/`large`, and matches the process record;
-* editor/verifier family routing is internally consistent with the declared change level;
-* contract revision recorded in the process record matches the revision captured at cycle-begin;
-* no headings outside the canonical allowlist for the currently governing contract revision;
-* no readiness contradiction between `CAN I COOK IT?` and the process record — `CAN I COOK IT? Yes`
-  cannot coexist with `Human review: Pending - ...`, `Verification: Not done...`, or an open Delta or
-  Reconstruction. Required by the change plan's approved deterministic-validation scope
-  (`dish-task-contract-change-plan.md`, item 1); not deferred.
+* process-record required lines present and well-formed (`Stage:`, `Human review:`, `Verification:`,
+  `Self-verified:`);
+* `Self-verified:`'s declared agent matches `editor_agent` — the only enforcement available for the
+  self-review step; it cannot confirm thoroughness, only that an attributable attestation exists for
+  the exact bytes submitted;
+* declared `--change-level` matches the process record, and editor/verifier family routing is
+  internally consistent with it;
+* contract revision recorded in the process record matches this submission's `contract_revision`;
+* no headings outside `canonical_manifest`'s allowlist;
+* no readiness contradiction — `CAN I COOK IT? Yes` cannot coexist with `Human review: Pending - ...`,
+  `Verification: Not done...`, or an open Delta/Reconstruction (required by the change plan's approved
+  deterministic-validation scope, item 1; not deferred).
 
-The last rule is deliberately revision-relative rather than a hardcoded legacy-field list: it checks the proposed final note against whatever the current contract defines as canonical, not against a static set of retired field names. Whatever a contract revision no longer defines — this round's legacy fields or a future one's — is excluded automatically, with no separate legacy-tracking logic needed. Reading an existing task is unconstrained (an old task may sit in an old format indefinitely); only a new write is held to the current contract's structure.
+The canonical allowlist is parsed from the manifest carried in the contract text itself, not
+duplicated by hand in this tool — required as part of v1a's scope, not a later addition. A
+hand-maintained hardcoded allowlist would recreate, inside the validator meant to eliminate this exact
+failure mode, the same silent-drift risk the tool exists to remove from the contract's own prose rules.
 
-The canonical allowlist is parsed from a machine-readable manifest carried in the contract file itself
-(headings, required fields, allowed values), not duplicated by hand in this tool — v1 ships with this
-manifest as a required part of its scope, not a later addition (see
-`dish-task-contract-change-plan.md`'s approval package). A hand-maintained hardcoded allowlist was
-considered for v1 and rejected: it would recreate, inside the validator meant to eliminate this exact
-failure mode, the same silent-drift risk the tool exists to remove from the contract's own prose
-rules.
+Deferred to v2 once the mechanical layer is proven: unresolved structural placeholder detection (e.g.
+leftover `[approx]` markers); any judgment of whether an omitted section should have been present, or
+of content quality — these remain the verifier's job, not the validator's.
 
-A cycle freezes the *contract* revision at `begin` (see Workflow, step 1). `begin` parses the manifest
-out of the exact governing contract text and stores that parsed structure on the cycle as
-`canonical_manifest`, not only its hash — the cycle's `contract_text_hash` proves the contract text
-hasn't changed underneath an open cycle, but deterministic validation needs the actual parsed rules to
-check against, not just a fingerprint that nothing changed. Every validation pass within a cycle
-checks against that cycle's stored `canonical_manifest`, so a mid-cycle contract edit (which would
-change `contract_text_hash`) is still caught by the existing staleness rule, while a *new* cycle begun
-after that edit picks up the new manifest automatically, with no separate versioning field needed.
+The validator performs no Asana mutation and does not decide whether the recipe is culinarily correct,
+whether research is adequate, or whether the declared change level is semantically honest.
 
-Deferred to a later version, once the mechanical layer is proven:
+### 2. `contract approve` / `contract reject`
 
-* unresolved structural placeholder detection (e.g. leftover `[approx]` markers);
-* any judgment of whether an omitted section should have been present, or of content quality — these remain the verifier's job, not the validator's, for the foreseeable future.
-
-The validator reports every detected failure and performs no Asana mutation.
-
-The deterministic validator does not decide whether the recipe is culinarily correct, whether research is adequate, or whether the declared change level is semantically honest.
-
-### 4. Semantic verification
-
-The required verifier reviews the complete proposed note.
-
-The verification command requires:
+Required only for `medium`/`large`. The verifier reviews the exact prepared file — culinary and
+internal consistency, evidence adequacy, readiness, editor/verifier routing, the declared change level,
+containment for a `medium` change, and that the file is exactly the content being approved.
 
 ```text
-contract verify <cycle-id> \
-  --agent <verifier-agent> \
-  --confirm-independent-review \
-  --file <final-note>
+contract approve <submission-id> --agent <verifier-agent> --file <same-final-note>
 ```
 
-`--confirm-independent-review` is a required, explicit flag the verifying agent must pass. It does not prevent one session from declaring itself both editor and verifier — identity is trusted, not authenticated (see Scope) — but it makes accidental self-verification visible rather than silent, and is logged to `audit_events`.
-
-The verifier confirms:
-
-* complete end-to-end semantic review;
-* culinary and internal consistency;
-* evidence adequacy;
-* readiness;
-* editor/verifier routing;
-* the declared change level;
-* containment for a medium change;
-* the exact content being approved.
-
-If the verifier's review finds the note not signable — a real defect, not a self-inflicted edit —
-they run:
+* Requires `verifier-agent`'s family to be the submission's `required_verifier_family`.
+* Requires the submitted file's hash to exactly match `content_hash` — byte-for-byte, no edits. The
+  verifier has no path to submit modified content through this command.
+* On pass: records `verifier_agent`/`verifier_family`, sets status `ready`.
 
 ```text
-contract verify <cycle-id> --agent <verifier-agent> --reject --reason "<why not signable>"
+contract reject <submission-id> --agent <verifier-agent> --reason "<why not signable>"
 ```
 
-This increments the cycle's `failed_verification_passes`, logs the rejection to `audit_events`, and
-leaves `editor_agent`/`change_level` untouched — a rejection is not an edit and does not reassign
-anything. The editor addresses the rejection and resubmits through `contract validate` for a fresh
-`pending_verification_hash`, after which `contract verify` may run again.
+* Marks the submission `rejected` — terminal for this submission, logged with the reason.
+* The editor addresses the issue and runs `contract prepare` again with a corrected file — a fresh
+  submission, not a reopened one. This is the deliberate simplification that replaces verifier in-place
+  editing (see Versioning plan, Dropped): rather than tracking who authored which exact bytes across a
+  reassignment, a rejected note simply goes back through the same `prepare` entry point as any other
+  edit.
+* v1a applies no automatic lockout after repeated rejections on the same task; v2's two-pass-stop gate
+  is designed once v1a's rejection-rate logging shows whether it's actually needed.
 
-At `failed_verification_passes` = 2, the cycle status moves to `blocked_process_failure` and no
-further `contract verify` call is accepted, matching `dish-task-contract.md`'s stop-and-flag rule ("If
-two validation passes do not produce a signable task, stop and flag a serious process failure to
-Marco" — lines 206-209). Unblocking requires `contract-admin unblock <cycle-id>`, which is Marco-only
-and does not itself resolve the underlying process failure — it only lifts the tool-side gate once the
-contract's required write-up (remaining issue, every pass/change, why both failed, recurrence versus
-new findings, root cause, proposed correction/scope) exists, per the same contract text. The tool does
-not verify the write-up's content; it only enforces that the gate cannot be silently bypassed by a
-third `contract verify` attempt.
-
-The verify command compares the submitted file's hash against the cycle's `pending_verification_hash`
-— the hash of the content that most recently passed deterministic validation (step 3). A match means
-unedited content; verification proceeds as above.
-
-A mismatch means the verifier edited the note before signing. This is detected mechanically
-(byte-level hash comparison), and the command then requires two additional flags before proceeding at
-all:
+### 3. `contract submit`
 
 ```text
---change-level small|medium|large \
---change-reason "<brief explanation>"
+contract submit <submission-id> --file <same-final-note>
 ```
 
-Their absence on a hash mismatch is a hard reject: no validation record, no Asana mutation. The
-declared level then branches:
+1. Loads the submission; requires status `ready`.
+2. Recomputes the file hash; rejects on any mismatch with `content_hash`.
+3. Reads the task fresh; compares live `modified_at` with `baseline_modified_at`; rejects (marks
+   `stale`) on any difference.
+4. Atomically flips status `ready` → `in_flight`.
+5. Sends one complete notes update to Asana.
+6. On clear success: marks `consumed`.
+7. On confirmed API failure: reverts to `ready` — the same validated submission may be retried.
+8. On an ambiguous/uncertain outcome: marks `uncertain` — resolved only by `contract-admin recover`
+   (see Contract admin tool).
 
-* **`small`** — a Local correction. The cycle's `editor_agent`/`editor_family`/`change_level` are
-  untouched: `small` maps to the contract's Local change class, which by definition "cannot change a
-  material cooking, sourcing, safety, approval, or readiness outcome," and where "the prior signer did
-  not verify this edit" (`dish-task-contract.md` line 149-150) — so no independent opposite-family
-  review is triggered, and the material-editor bookkeeping stays with the original editor. But the
-  exact-content requirement on `Self-verified:` still applies to the corrected bytes: the verifier is
-  the one who produced this specific edit, so `last_content_author` is reassigned to the verifier and
-  the note's `Self-verified:` line must be rewritten to name the verifier and the current date before
-  re-validation — the original line, written for the pre-edit content, does not satisfy the exact-
-  content standard for content it never reviewed. `editor_agent` is unaffected by this reassignment;
-  only `last_content_author` moves. The tool then re-runs step 3's deterministic validation
-  (`contract validate`) against the new file — the `Self-verified:` check now compares against the
-  reassigned `last_content_author` — before continuing to verify against it.
-* **`medium`/`large`** — the verifier is now the new material editor, exactly as the contract already
-  states ("supplying missing material evidence or replacing the recipe makes it the latest material
-  editor and resets `Verification` to the opposite family" — `dish-task-contract.md` lines 199-200).
-  The tool reassigns `editor_agent`/`editor_family`/`change_level`/`change_reason` on the *same*
-  cycle — preserving one continuous audit trail rather than opening a new cycle — logs the escalation
-  to `audit_events`, and re-runs step 3 against the new content. Step 3 now also requires the note's
-  `Self-verified:` line to name this newly-assigned editor: the former verifier must self-verify their
-  own edit, at the same contract-defined scope as any other editor, before anyone reviews it. On a
-  step-3 pass, `pending_verification_hash` is updated to the new content's hash, and verification is
-  now required from the family opposite the newly-assigned editor — which, since the original
-  verifier was already opposite-family from the original editor, mechanically flips back to the
-  original editor's family with no new routing logic.
+The pre-write read adds one Asana round trip; this is intentional. A small race remains between the
+freshness check and the mutation unless Asana provides a usable conditional-update mechanism.
 
-Python never decides which of `small`/`medium`/`large` applies — that stays the verifier's own honest
-declaration, the same trust basis as the editor's original `--change-level` ("Python does not infer
-the semantic change level," see Current design decisions). The mechanism only enforces that a
-declaration is made whenever content demonstrably changed, and keeps the bookkeeping (hashes,
-routing, audit trail) consistent with whatever was declared.
-
-If a validation record had already been issued for this cycle before an escalating edit is
-discovered — a correction spotted late, between step 5 and `submit` — it is invalidated the same way
-`submit`'s existing content-hash check already invalidates stale validation records (Workflow §6,
-steps 2-4); no separate mechanism is needed for that narrower case.
-
-### 5. Validation record and token
-
-For `medium`/`large` changes, once deterministic validation (step 3) and semantic verification (step
-4) both pass, the tool creates:
-
-* one trusted validation record;
-* one single-use write token.
-
-For `small` changes, step 4 does not run (see Agent identity and verifier routing); the tool creates
-the same two records once deterministic validation alone passes.
-
-Neither needs to be a portable signed file. Their trust comes from being stored and state-managed by the local tool in SQLite.
-
-The validation record binds:
-
-* cycle ID;
-* task GID;
-* final content hash;
-* baseline `modified_at`;
-* baseline notes hash;
-* contract revision;
-* editor agent and family;
-* change level and reason;
-* verifier agent and family — null for a `small` record, since no verifier ran;
-* validator version;
-* validation time.
-
-The token binds:
-
-* cycle ID;
-* task GID;
-* validation-record ID;
-* final content hash;
-* baseline `modified_at`;
-* current token state.
-
-The token is an internal database record, not a security credential that the agent must keep secret.
-
-### 6. Guarded submission
-
-Submission uses:
+## Submission states
 
 ```text
-contract submit <cycle-id> --file <final-note>
-```
-
-The tool:
-
-1. Loads the cycle, validation record, and token.
-2. Re-runs deterministic validation.
-3. Recomputes the exact final-content hash.
-4. Rejects if it differs from the validated hash.
-5. Reads the Asana task immediately before mutation.
-6. Compares current `modified_at` with the initial baseline.
-7. Rejects if they differ.
-8. Atomically changes the token from `issued` to `in_flight` in SQLite.
-9. Sends one complete notes update to Asana.
-10. On clear success, marks the token `consumed` and the cycle `completed`.
-
-The pre-write read adds one Asana round trip. This is intentional.
-
-The design accepts that a small race remains between the freshness check and the Asana mutation unless Asana provides a usable conditional-update mechanism.
-
-## Token states
-
-```text
-issued
+awaiting_verification
+ready
 in_flight
 consumed
 uncertain
-revoked
+stale
+rejected
 ```
 
-Allowed transitions:
+Terminal (do not block a new `prepare` on the same task): `consumed`, `stale`, `rejected`.
+Non-terminal (block a new `prepare`): `awaiting_verification`, `ready`, `in_flight`, `uncertain`.
 
-```text
-issued → in_flight
-in_flight → consumed
-in_flight → issued
-in_flight → uncertain
-issued → revoked
-uncertain → consumed
-uncertain → issued
-uncertain → revoked
-```
-
-A consumed or revoked token cannot be reused.
-
-A second submission using a consumed token fails even when the content is identical.
+A `consumed`, `stale`, or `rejected` submission cannot be reused; a second submission attempt on the
+same row fails even with identical content.
 
 ## Failure behaviour
 
 ### Failure before mutation
 
-Examples:
-
-* deterministic validation failure;
-* missing verification;
-* content-hash mismatch;
-* routing mismatch;
-* invalid token;
-* stale `modified_at`.
-
-No Asana write occurs.
-
-A stale baseline revokes the current token and closes the cycle as stale. A new cycle must begin from the new task state.
-
-A wrong-file or hash-mismatch rejection does not consume the token.
+Examples: deterministic validation failure; missing approval; content-hash mismatch; routing mismatch;
+stale `modified_at`. No Asana write occurs. A stale baseline moves the submission to `stale`; a new
+`prepare` must begin from the current task state. A wrong-file or hash-mismatch rejection does not
+consume the submission.
 
 ### Confirmed API failure
 
-When Asana clearly rejects the request and the tool knows the write was not applied, the token returns from `in_flight` to `issued`.
+When Asana clearly rejects the request and the tool knows the write was not applied, the submission
+returns from `in_flight` to `ready`. The same validated submission may be retried after the cause is
+addressed.
 
-The same validated submission may be retried after the cause is addressed.
+### Uncertain API outcome / crashed process
 
-### Uncertain API outcome
+A timeout, lost response, or connection break moves the submission to `uncertain`. If the tool's own
+process dies while a submission is `in_flight`, nothing recovers it automatically — no timeout,
+background sweep, or automatic retry; the task simply stays unavailable for a new `prepare` until
+recovered. This does not block other tasks' submissions.
 
-A timeout, lost response, connection break, or similar ambiguous result changes the token to `uncertain`.
+Recovery is `contract-admin recover <submission-id>` (Marco-only, not the agent-facing CLI — an agent
+should not resolve an ambiguous write outcome itself). It performs one targeted read of live notes and
+live `modified_at`, then applies this outcome table — notes state is the primary signal, `modified_at`
+can only make the outcome stricter, never looser:
 
-The tool must not blindly retry, and the agent-facing surface has no way to resolve this itself — it is the same class of judgment call as a crashed process below, and is resolved the same way.
-
-### Crashed process or uncertain outcome (stuck `in_flight` / `uncertain`)
-
-If the tool's own process dies while a token is `in_flight`, or a submission returns an ambiguous result and the token is `uncertain`, nothing recovers it automatically — no timeout, no background sweep, no automatic retry. The stuck task simply stays unavailable for a new cycle until recovered; nothing about this blocks an agent from continuing other work, including other tasks' cycles.
-
-Recovery is a command in the contract admin tool (see below), not the agent-facing `contract` CLI, for both cases — an agent should not be able to interpret or resolve an ambiguous write outcome itself. It performs one targeted read of live notes and live `modified_at`, then applies this outcome table — notes state is the primary signal, `modified_at` state can only make the outcome stricter, never looser:
-
-| Live notes match          | Live `modified_at` vs. baseline | Outcome                                                                                 |
-| -------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
-| Intended final-content hash | unchanged or changed             | `consumed` — the write applied; notes are the write's own effect regardless of any incidental `modified_at` movement it caused. |
-| Original baseline-notes hash | unchanged                        | `issued` — consistent with a confirmed failed write; the same validated content may be retried. |
-| Original baseline-notes hash | changed                          | `revoked`, Marco-led recovery required — notes never changed, but something else touched the task after the baseline was captured, so per the standard staleness rule (any `modified_at` change invalidates a cycle) this cannot be treated as a clean, retriable `issued` state. |
-| Neither                    | unchanged or changed             | `revoked`, Marco-led recovery required.                                                  |
+| Live notes match | Live `modified_at` vs. baseline | Outcome |
+| --- | --- | --- |
+| Intended final-content hash | unchanged or changed | `consumed` — the write applied; notes are the write's own effect regardless of incidental `modified_at` movement. |
+| Original baseline-notes hash | unchanged | `ready` — consistent with a confirmed failed write; the same validated content may be retried. |
+| Original baseline-notes hash | changed | `stale`, Marco-led recovery required — notes never changed, but something else touched the task after baseline capture. |
+| Neither | unchanged or changed | `stale`, Marco-led recovery required. |
 
 ## Contract admin tool
 
 Marco-only actions live in a separate `contract-admin` command surface — a distinct
-binary/subcommand namespace, not just a documented convention, so the boundary is unambiguous at the
-command line rather than a naming similarity to the agent-facing `contract begin`/`verify`/`submit`/
-`self-verify` commands that an agent could stumble into. Agents doing contract work are only ever
-given the agent-facing `contract` surface. This is an operational and social convention, not a
-technical secret: this design document and the tool's own code are both agent-readable, so
-`contract-admin`'s existence and commands cannot be treated as genuinely undiscoverable. The actual
+binary/subcommand namespace, so the boundary is unambiguous at the command line rather than a naming
+similarity to the agent-facing `contract` commands. This is an operational and social convention, not a
+technical secret: this design document and the tool's own code are both agent-readable. The actual
 boundary is that agents are not instructed or expected to look for or invoke it, consistent with the
-"not adversarial security" framing in Scope — it is not a permission check the tool enforces at
-runtime, and no claim of technical secrecy is made.
+"not adversarial security" framing in Scope.
 
 `contract-admin` covers:
 
-* `contract-admin recover <cycle-id>` — resolve a stuck `in_flight` or `uncertain` token after a process crash or an ambiguous Asana response;
-* `contract-admin unblock <cycle-id>` — lift a cycle's `blocked_process_failure` gate after two failed verification passes, once the contract's required Marco-facing write-up exists (see Semantic verification); this does not itself resolve the underlying process failure;
-* replacing a token after it is consumed, revoked, or stuck in an ambiguous recovery state that resolves as such — this is always a brand-new cycle, validation record, and token for a fresh review pass, never the reactivation or reuse of the old, already-consumed token record; a consumed or revoked token itself remains permanently unusable;
-* other Marco-only actions identified later.
+* `contract-admin recover <submission-id>` — resolve a stuck `in_flight` or `uncertain` submission
+  after a process crash or an ambiguous Asana response;
+* other Marco-only actions identified later, including v2's `contract-admin unblock` once the
+  two-failed-pass gate is built.
 
 Revoking a task's contract-managed status is not a feature of `contract-admin`, or of this design at
-all. The general-purpose Asana CLI is guarded the same as any other caller (see Contract-managed task
-registry) and gives Marco no bypass — nothing about being Marco is authenticated or distinguishable
-to it. If a managed task genuinely needs a one-off manual edit outside the guarded workflow, Marco
-makes it directly through the Asana web UI instead — the same documented bypass already named in
-Scope (line 15): a direct edit there isn't prevented, only caught reactively at the next baseline
-check.
+all. If a managed task genuinely needs a one-off manual edit outside the guarded workflow, Marco makes
+it directly through the Asana web UI instead — the same documented bypass named in Scope: a direct edit
+there isn't prevented, only caught reactively at the next baseline check. The general-purpose Asana CLI
+gives Marco no bypass either, once v1b's block is active — nothing about being Marco is authenticated
+or distinguishable to it.
 
 ## SQLite model
 
-Minimum tables:
+### `submissions`
 
-### `managed_tasks`
-
-* `task_gid`
-* `managed_since`
-* `status`
-* `current_cycle_id`
-
-### `cycles`
-
-* `cycle_id`
+* `submission_id`
 * `task_gid`
 * `baseline_modified_at`
 * `baseline_notes_hash`
 * `contract_revision`
 * `contract_text_hash`
-* `canonical_manifest` (the parsed canonical structure captured at `begin` from the manifest carried
-  in the contract text — see Deterministic validation)
+* `canonical_manifest`
 * `editor_agent`
 * `editor_family`
-* `last_content_author` (the agent credited with the exact content currently pending validation — see
-  Deterministic validation and the `small`-change branch in Semantic verification)
 * `change_level`
 * `change_reason`
-* `pending_verification_hash`
-* `failed_verification_passes` (see Semantic verification's rejection path and the two-pass stop rule)
+* `required_verifier_family` (null for `small`)
+* `verifier_agent` (null until approved, or always null for `small`)
+* `verifier_family`
+* `content_hash`
 * `status`
 * `created_at`
+* `approved_at`
 * `completed_at`
 
-A partial unique index on `cycles(task_gid)` for non-terminal `status` values enforces at most one
-open cycle per task (see Workflow, step 1).
-
-### `validation_records`
-
-* `validation_record_id`
-* `cycle_id`
-* `content_hash`
-* `verifier_agent`
-* `verifier_family`
-* `validator_version`
-* `validated_at`
-
-### `write_tokens`
-
-* `token_id`
-* `cycle_id`
-* `validation_record_id`
-* `content_hash`
-* `state`
-* `issued_at`
-* `updated_at`
+A partial unique index on `submissions(task_gid)` for non-terminal `status` values enforces at most one
+open submission per task.
 
 ### `audit_events`
 
 * `event_id`
-* `cycle_id`
+* `submission_id` (nullable — some events, such as a failed `prepare` validation or an advisory
+  bypass, have no submission)
+* `task_gid` (populated whenever known, even without a submission)
 * `event_type`
 * `actor_agent`
-* `details`
+* `details` (structured — e.g. the specific rules a validation failure tripped, or a rejection reason)
 * `created_at`
 
-SQLite transactions protect local state changes and prevent two local submissions from consuming the same token.
+SQLite transactions protect local state changes and prevent two local submissions from consuming the
+same row.
+
+## Logging and observability (v1a)
+
+v1a exists to prove the mechanism and learn real usage before enforcing anything, so logging is a
+first-class requirement, not an afterthought on top of `audit_events`.
+
+Every `contract` command execution logs an event regardless of outcome:
+
+* command name, timestamp, invoking agent, task GID (when applicable), submission ID (once one
+  exists);
+* full outcome: pass/fail, and on failure, every specific rule that failed — not just "validation
+  failed" — so Marco can see which rules trip in practice and which never fire;
+* for `prepare`: declared change level and reason, whether the note passed validation on the first
+  attempt, and if not, which attempt number succeeded;
+* for `approve`/`reject`: verifier agent/family, the decision, and for `reject`, the stated reason, so
+  rejection patterns are visible without reading every case individually;
+* for `submit`: whether `modified_at` had moved (staleness outcome), and the final submission state;
+* self-verification collisions (`editor_agent` equal to the acting verifier) logged automatically
+  wherever they occur, with no extra agent action required (see Agent identity and verifier routing).
+
+The generic Asana CLI's managed-task check also logs during v1a even though it does not yet block:
+every note-write to a section-managed task made *outside* the guarded `contract` path is logged as an
+advisory bypass event (task GID, command used, agent if known). This is the direct evidence for the
+v1a-to-v1b decision — whether it's safe to flip the block on depends on how much real, legitimate
+traffic would have been blocked, not a guess.
+
+A periodic summary — a query over `audit_events`, not a new mechanism — should be able to answer at
+minimum:
+
+* how many `prepare`/`approve`/`reject`/`submit` calls happened, by agent and by change level;
+* validation failure rate, broken down by which specific rule failed most often;
+* rejection rate, and repeated-rejection-on-same-task rate — the input needed to decide whether v2's
+  two-pass-stop rule is actually necessary;
+* what real `small`-declared diffs actually touch and how large they are — the input needed to design
+  v2's small-change speed bump;
+* how many advisory bypass events occurred outside the guarded path, and on which tasks/agents;
+* staleness-rejection rate at `submit` — needed to validate whether the `modified_at` baseline is
+  over-sensitive (see Content hashing).
 
 ## Content hashing
 
-The validation record must bind to the exact content sent to Asana.
+The validation binds to the exact content sent to Asana.
 
-Initial canonicalization proposal:
+Initial canonicalization proposal: UTF-8 encoding; LF line endings; no trimming; no automatic
+whitespace cleanup; no section reordering; no silent markdown rewriting; SHA-256; canonicalization
+version stored with the record.
 
-* UTF-8 encoding;
-* LF line endings;
-* no trimming;
-* no automatic whitespace cleanup;
-* no section reordering;
-* no silent markdown rewriting;
-* hash algorithm: SHA-256;
-* canonicalization version stored with the record.
-
-The tool hashes the canonical bytes and sends the corresponding decoded text.
-
-Before implementation, this must be tested against an Asana write/read round trip to determine whether Asana normalizes trailing newlines or other note content. The canonicalization rule must reflect observable API behaviour so uncertain-outcome recovery is reliable.
+Before implementation — and confirmed by v1a's real usage before v1b enforces anything — this must be
+tested against an Asana write/read round trip to determine whether Asana normalizes trailing newlines
+or other note content, and which operations (comments, custom-field changes, section moves, etc.)
+actually bump `modified_at`. An over-sensitive baseline would invalidate submissions on activity
+unrelated to note content.
 
 ## Integration with the existing Asana CLI
 
-The contract tool and general Asana CLI may share:
+The contract tool and general Asana CLI may share SDK client construction, task reads, task updates,
+and error formatting. They must not share unguarded note-writing behaviour.
 
-* SDK client construction;
-* task reads;
-* task updates;
-* error formatting.
+The general CLI consults the contract tool's live managed-task determination before changing notes —
+advisory/logged in v1a, blocking in v1b (see Versioning plan, Contract-managed task registry).
 
-They must not share unguarded note-writing behaviour.
-
-The general CLI asks the contract registry whether a target task is managed before changing notes.
-
-The contract tool performs its final update through a separate guarded gateway that cannot be called without a valid cycle, validation record, and token.
+The contract tool performs its final update through a separate guarded gateway that cannot be called
+without a valid, `ready` submission.
 
 ## ChatGPT workflow
 
@@ -613,122 +485,105 @@ ChatGPT has no local CLI or SQLite access, so it cannot run any `contract` comma
 
 Its output is one complete final-note file. That file must already include ChatGPT's own
 `Self-verified: gpt, <date>` line, attested by ChatGPT as part of producing the note — the same
-self-review requirement every other editor meets by writing the line itself (Workflow, step 2). A
-local agent or Marco does not add or backfill this line on ChatGPT's behalf: if it's missing,
-`contract validate` fails exactly as it would for any other editor's missing `Self-verified:` line,
-and the fix is a corrected file from ChatGPT, not a local insertion.
+self-review requirement every other editor meets by writing the line itself. A local agent or Marco
+does not add or backfill this line on ChatGPT's behalf: if it's missing, `contract prepare` fails
+exactly as it would for any other editor's missing `Self-verified:` line, and the fix is a corrected
+file from ChatGPT, not a local insertion.
 
-A local agent or Marco then:
+A local agent or Marco then, declaring `--agent gpt` throughout — attributing the submission to
+ChatGPT as editor even though a local process runs the commands on its behalf:
 
-1. begins or resumes the contract cycle, declaring `--agent gpt` — this attributes the cycle to ChatGPT as editor even though a local process runs the command on its behalf;
-2. runs deterministic validation;
-3. performs semantic verification, required from the opposite (Claude) family per the standard routing rule — nothing ChatGPT-specific, since GPT and Codex are one family (see Agent identity and verifier routing);
-4. creates the trusted SQLite validation record and token;
-5. submits the exact file.
+1. runs `contract prepare` with ChatGPT's file;
+2. arranges `contract approve`/`reject` from the opposite (Claude) family per the standard routing
+   rule — nothing ChatGPT-specific, since GPT and Codex are one family;
+3. runs `contract submit` once approved.
 
-ChatGPT cannot self-issue a trusted validation record, declare its own `--agent` value, or perform `--confirm-independent-review` itself — a human or local agent does so on its behalf, honestly reflecting who actually reviewed the note.
+ChatGPT cannot declare its own `--agent` value or run any command itself — a human or local agent does
+so on its behalf, honestly reflecting who actually authored and reviewed the note.
 
-## Direct dependencies
+## Direct dependencies (v2)
 
-Dependency surfacing is advisory and does not block token issuance in the first implementation.
+Deferred; not built in v1a/v1b. Dependency surfacing is advisory and must not block submission status
+in any version. A later scanner may surface only bounded direct candidates: exact task-GID references;
+explicit Asana links; exact task-name references; clearly named planning documents. It must not
+recursively audit dependencies or decide semantic impact.
 
-A later scanner may surface only bounded direct candidates:
+## Testing requirements (v1a)
 
-* exact task-GID references;
-* explicit Asana links;
-* exact task-name references;
-* clearly named planning documents.
-
-It must not recursively audit dependencies or decide semantic impact.
-
-## Testing requirements
-
-Implementation follows TDD.
-
-Tests must cover:
+Implementation follows TDD. Tests must cover:
 
 * SQLite schema and migrations;
-* task registration;
-* generic note-write blocking;
-* non-note generic writes remaining allowed;
-* declared agent-name validation;
-* agent-family routing;
-* small, medium, and large change-level handling;
-* initial construction treated as large;
-* verifier-family mismatch;
-* deterministic contract failures;
-* exact content-hash binding;
-* content changed after validation;
-* any `modified_at` change causing stale rejection;
-* no Asana mutation on any pre-write failure;
-* exactly one Asana mutation on success;
-* token reuse rejection;
-* two simultaneous submissions using one token;
-* confirmed API failure preserving retry eligibility;
-* uncertain outcome where the write succeeded;
-* uncertain outcome where the write did not apply;
-* uncertain outcome with a third, conflicting state;
-* raw `notes` and `html_notes` bypass attempts;
-* task remaining managed after successful submission;
-* stuck `in_flight` token recovered via manual `contract recover` command;
-* `Self-verified:` line missing or naming an agent other than the cycle's current `last_content_author`;
-* verifier submission matching `pending_verification_hash` (no edit) proceeds without requiring
-  `--change-level`/`--change-reason`;
-* verifier submission with a hash mismatch and no `--change-level`/`--change-reason` is rejected;
-* verifier-declared `small` edit re-validates in place with `editor_agent` unchanged;
-* verifier-declared `medium`/`large` edit reassigns `editor_agent`/`editor_family`/`change_level` on
-  the same cycle, updates `pending_verification_hash`, and flips required verifier family back to the
-  original editor's family;
-* `small`-only cycle creates a validation record/token after deterministic validation alone, with
-  `verifier_agent`/`verifier_family` null;
-* `CAN I COOK IT? Yes` rejected alongside `Human review: Pending`, `Verification: Not done`, or an
-  open Delta/Reconstruction;
-* `canonical_manifest` captured at `begin` remains authoritative for the cycle even if the governing
-  contract text changes mid-cycle;
-* concurrent `contract begin` on a task with an already-open cycle is rejected, both by the
-  application check and by the SQLite unique constraint;
-* `contract validate` issues the validation record and token directly for a `small` change, with no
-  `contract verify` call involved;
-* a verifier's `small` edit reassigns `last_content_author` (not `editor_agent`) and requires a
-  rewritten `Self-verified:` line naming the verifier;
-* two consecutive `contract verify --reject` calls move the cycle to `blocked_process_failure` and
-  reject a third `contract verify` attempt until `contract-admin unblock`;
-* a ChatGPT-authored file missing its own `Self-verified: gpt, <date>` line fails `contract validate`,
-  and no local-agent insertion satisfies it;
+* generic note-write advisory logging in v1a, and blocking once v1b is enabled;
+* non-note generic writes remaining allowed in both v1a and v1b;
+* declared agent-name validation and agent-family routing;
+* small, medium, and large change-level handling; initial construction treated as large;
+* verifier-family mismatch on `approve`;
+* every deterministic-validation rule individually, including the readiness-contradiction rule;
+* exact content-hash binding at `approve` and at `submit`;
+* content changed after `prepare` (hash mismatch) rejected at `approve`, with no path for the verifier
+  to submit edited content through `approve`;
+* `contract reject` marking a submission terminal and requiring a fresh `prepare`, not a reopened
+  submission;
+* concurrent `contract prepare` on a task with an already-open submission rejected, both by application
+  check and by the SQLite unique constraint;
+* any `modified_at` change causing a `stale` rejection at `submit`;
+* no Asana mutation on any pre-write failure; exactly one Asana mutation on success;
+* submission reuse rejection (`consumed`/`stale`/`rejected` cannot be resubmitted, even with identical
+  content);
+* two simultaneous `submit` calls on one submission;
+* confirmed API failure preserving retry eligibility (`in_flight` → `ready`);
+* uncertain outcome where the write succeeded, where it did not, and a third conflicting state, each
+  resolved correctly by `contract-admin recover`'s outcome table;
+* raw `notes`/`html_notes` bypass attempts;
+* `Self-verified:` line missing, or naming an agent other than `editor_agent`, fails `prepare`;
+* a ChatGPT-authored file missing its own `Self-verified: gpt, <date>` line fails `prepare`, and no
+  local-agent insertion satisfies it;
+* self-verification collision (`editor_agent` == acting verifier on `approve`) detected and logged
+  automatically, with no separate flag involved;
+* `canonical_manifest` captured at `prepare` remains authoritative for the submission even if the
+  governing contract text changes before `submit`;
 * section-GID resolution: a `Sourcing`/`Reference` rename does not change managed status; an
-  unresolvable section fails closed to managed.
+  unresolvable section fails closed to managed;
+* every command execution produces an `audit_events` row, including failed `prepare` attempts with no
+  persisted submission and advisory bypass events from the generic CLI;
+* the periodic-summary queries listed in Logging and observability return correct counts against a
+  seeded `audit_events` fixture.
 
-## Out of scope
+## Out of scope (all versions)
 
-The first implementation does not:
-
-* cryptographically authenticate agents;
-* infer change level from note text;
-* decide semantic culinary correctness;
-* recursively audit dependencies;
-* govern non-note task fields;
-* automatically migrate every existing dish task;
-* modify the contract text or incident logs;
-* provide a remote or multi-user trust service;
-* document the contract admin tool's location or invocation for agents;
-* provide a dedicated revoke-management command (Marco uses the Asana web UI directly instead, per Contract admin tool).
+* cryptographically authenticating agents;
+* inferring change level from note text;
+* deciding semantic culinary correctness;
+* recursively auditing dependencies;
+* governing non-note task fields;
+* automatically migrating every existing dish task's content to the current canonical structure;
+* modifying the contract text or incident logs;
+* providing a remote or multi-user trust service;
+* documenting the contract admin tool's location or invocation for agents;
+* providing a dedicated revoke-management command (Marco uses the Asana web UI directly instead).
 
 ## Open decisions
 
-1. **Initial management — resolved:** No explicit enrollment step. A task is contract-managed by default based on its current Cooking-project section, excluding only `Sourcing` and `Reference` (see Contract-managed task registry).
-2. **Marco-only actions — resolved:** All Marco-only actions (`contract-admin recover`, `contract-admin unblock`, token issuance/replacement) live in a single contract admin tool, separate from and invisible to the agent-facing `contract` commands (see Contract admin tool). Revoking a task's contract-managed status is not a feature of this design: the general-purpose Asana CLI is guarded identically to any other caller (see Contract-managed task registry) and gives Marco no bypass; a one-off manual edit outside the guarded workflow goes through the Asana web UI directly instead (see Contract admin tool).
-3. **Token lifetime — resolved:** No automatic expiry. A stuck `in_flight` token requires an explicit, manually run `contract-admin recover` command (see Failure behaviour); no background timeout or heartbeat-based auto-recovery in v1.
-4. **Verifier edits — resolved:** No threshold is inferred by Python. A hash mismatch between the
-   verifier's submitted file and `pending_verification_hash` requires an explicit
-   `--change-level`/`--change-reason` declaration; `medium`/`large` reassigns
-   `editor_agent`/`editor_family`/`change_level` on the same cycle and re-routes to the opposite
-   family; `small` re-validates in place with no reassignment (see Workflow, step 4).
-5. **Existing tasks — resolved:** Every pre-existing task in the Cooking project outside `Sourcing`/`Reference` is contract-managed immediately, per the same live section-based rule as new tasks. No separate enrollment pass is needed; whether existing tasks' *content* needs migration to the current canonical structure is a separate question, unaffected by this (see Out of scope).
-6. **Small-change carelessness — open.** Marco's concern is an honest agent carelessly mis-declaring a
-   material change as `small`, not a malicious agent gaming the system. The fix should be a
-   deterministic speed bump, not independent verification for every `small` change — but its trigger
-   condition (which sections or size trip it), what it actually requires of the agent (a stronger
-   reason, an explicit override flag, or something else), whether it's a hard block or a warning, and
-   where it lives (a `contract validate`-time check, or a pre-check at `begin`) are all undecided (see
-   `dish-task-contract-change-plan.md`'s reservations).
-
+1. **Initial management — resolved.** No explicit enrollment step; a task is contract-managed by
+   default based on its current Cooking-project section, excluding only `Sourcing` and `Reference`
+   (see Contract-managed task registry).
+2. **Marco-only actions — resolved.** All Marco-only actions live in `contract-admin`, separate from
+   and invisible to the agent-facing `contract` commands. Revoking managed status is not a feature of
+   this design: the general Asana CLI is guarded identically to any other caller once v1b is active,
+   and gives Marco no bypass; a one-off manual edit goes through the Asana web UI instead.
+3. **Submission lifetime — resolved.** No automatic expiry. A stuck `in_flight`/`uncertain` submission
+   requires an explicit `contract-admin recover` call; no background timeout or heartbeat-based
+   auto-recovery.
+4. **Verifier edits — resolved, and simplified from an earlier draft.** The verifier cannot submit
+   edited content at all. A hash mismatch at `approve` is a hard reject with no override; the verifier
+   must instead `reject` with a reason, and the editor runs `contract prepare` again with a corrected
+   file as a fresh submission (see Workflow, step 2; Versioning plan, Dropped).
+5. **Existing tasks — resolved.** Every pre-existing task in the Cooking project outside
+   `Sourcing`/`Reference` is contract-managed immediately; whether existing tasks' *content* needs
+   migration to the current canonical structure is a separate, out-of-scope question.
+6. **Small-change carelessness — open, targeted for v2.** Marco's concern is an honest agent carelessly
+   mis-declaring a material change as `small`, not a malicious one gaming the system. The fix should be
+   a deterministic speed bump, not independent verification for every `small` change — but its trigger
+   condition, what it actually requires of the agent, whether it's a hard block or a warning, and where
+   it lives are all undecided. v1a's logging of real `small`-declared diffs is the intended input for
+   designing this (see Versioning plan, Logging and observability).
