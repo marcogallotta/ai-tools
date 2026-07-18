@@ -12,7 +12,7 @@ It is separate from the general-purpose Asana CLI, but the existing CLI must con
 
 This design does not attempt adversarial security. Agents are trusted to identify themselves and describe their work honestly. Mechanical controls exist to prevent accidental bypasses, stale writes, repeated writes, and incomplete validation.
 
-A direct edit made through the Asana web UI or another integration bypasses this tool entirely and is not prevented — it is only caught reactively, at the next `contract begin`'s baseline check against `modified_at`.
+A direct edit made through the Asana web UI or another integration bypasses this tool entirely and is not prevented — it is only caught reactively, either at the next `contract begin`'s baseline check against `modified_at`, or, for an edit made during an already-open cycle, at that cycle's `submit`-time freshness check.
 
 ## Current design decisions, pending formal approval
 
@@ -108,7 +108,7 @@ The final task process record must agree with:
 
 Management is determined by the task's current section in the Cooking project (`1215089183018968`), checked live rather than fixed once at enrollment. A task is contract-managed unless its current section is `Sourcing` or `Reference`; every other section — all cuisine sections, `Planned`, `Eating`, `Seasonal`, etc. — defaults to managed. This applies uniformly to new and pre-existing tasks: nothing needs a separate backfill or explicit enrollment pass, and moving a task into or out of `Sourcing`/`Reference` changes its managed status from that point on.
 
-SQLite still caches the current determination per task (`managed_tasks`) for audit and to avoid a live Asana lookup on every check, but the cache reflects the task's live section membership rather than being the sole source of truth.
+Every generic note-mutation command performs a live Cooking-project section check before writing — the cache is not a substitute for this, since a task can move into or out of `Sourcing`/`Reference` through an allowed non-note command between checks. SQLite still records the determination per task (`managed_tasks`), but only for audit; it is never the sole source of truth for a live guard decision.
 
 A task remains contract-managed after a successful write, so long as its section hasn't moved it out of management. Any later note change requires another contract cycle.
 
@@ -185,6 +185,8 @@ V1 validates the final file against a narrow, explicit rule set — mechanical c
 * no headings outside the canonical allowlist for the currently governing contract revision.
 
 The last rule is deliberately revision-relative rather than a hardcoded legacy-field list: it checks the proposed final note against whatever the current contract defines as canonical, not against a static set of retired field names. Whatever a contract revision no longer defines — this round's legacy fields or a future one's — is excluded automatically, with no separate legacy-tracking logic needed. Reading an existing task is unconstrained (an old task may sit in an old format indefinitely); only a new write is held to the current contract's structure. The canonical allowlist should eventually be parsed from a machine-readable manifest carried in the contract file itself, once that contract-doc addition is approved (see `dish-task-contract-change-plan.md`), rather than duplicated by hand in this tool; until then, v1 uses a hardcoded allowlist mirroring the current contract and accepts the maintenance cost of updating it by hand when the contract's canonical headings change.
+
+A cycle freezes the *contract* revision at `begin` (see Workflow, step 1), but v1's hardcoded allowlist is a property of the validator code, not of the cycle. If the allowlist is updated to track a new contract revision while a cycle is open, re-validation at `submit` must not silently apply the new rules to a cycle frozen against the old ones. V1 resolves this the same way it already resolves task drift: updating the hardcoded allowlist invalidates every currently open cycle, exactly as an Asana-side task change invalidates a cycle's `modified_at` baseline. This avoids snapshotting the full rule set per cycle while still keeping frozen-revision and validator-rule staleness under one consistent invalidation model.
 
 Deferred to a later version, once the mechanical layer is proven:
 
@@ -345,20 +347,23 @@ The tool must not blindly retry, and the agent-facing surface has no way to reso
 
 If the tool's own process dies while a token is `in_flight`, or a submission returns an ambiguous result and the token is `uncertain`, nothing recovers it automatically — no timeout, no background sweep, no automatic retry. The stuck task simply stays unavailable for a new cycle until recovered; nothing about this blocks an agent from continuing other work, including other tasks' cycles.
 
-Recovery is a command in the contract admin tool (see below), not the agent-facing `contract` CLI, for both cases — an agent should not be able to interpret or resolve an ambiguous write outcome itself. It performs one targeted read:
+Recovery is a command in the contract admin tool (see below), not the agent-facing `contract` CLI, for both cases — an agent should not be able to interpret or resolve an ambiguous write outcome itself. It performs one targeted read of live notes and live `modified_at`, then applies this outcome table — notes state is the primary signal, `modified_at` state can only make the outcome stricter, never looser:
 
-* If live notes match the intended final-content hash, mark the token `consumed`.
-* If live notes match the original baseline-notes hash and the task state is otherwise consistent with a failed write, return the token to `issued`.
-* If live notes match neither, revoke the token and require further Marco-led recovery.
+| Live notes match          | Live `modified_at` vs. baseline | Outcome                                                                                 |
+| -------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------- |
+| Intended final-content hash | unchanged or changed             | `consumed` — the write applied; notes are the write's own effect regardless of any incidental `modified_at` movement it caused. |
+| Original baseline-notes hash | unchanged                        | `issued` — consistent with a confirmed failed write; the same validated content may be retried. |
+| Original baseline-notes hash | changed                          | `revoked`, Marco-led recovery required — notes never changed, but something else touched the task after the baseline was captured, so per the standard staleness rule (any `modified_at` change invalidates a cycle) this cannot be treated as a clean, retriable `issued` state. |
+| Neither                    | unchanged or changed             | `revoked`, Marco-led recovery required.                                                  |
 
 ## Contract admin tool
 
-Marco-only actions live in a separate contract admin tool, distinct from the agent-facing `contract begin`/`verify`/`submit` commands. Agents doing contract work are only ever given the agent-facing surface — the admin tool's existence, commands, and location are not documented to them and not discoverable from this design or the tool's code. Only Marco runs it. This is a separation-of-knowledge control, not a permission check the tool enforces at runtime, consistent with the "not adversarial security" framing in Scope.
+Marco-only actions live in a separate contract admin tool, distinct from the agent-facing `contract begin`/`verify`/`submit` commands. Agents doing contract work are only ever given the agent-facing surface. This is an operational and social convention, not a technical secret: this design document and the tool's own code are both agent-readable, so the admin tool's existence and commands cannot be treated as genuinely undiscoverable. The actual boundary is that agents are not instructed or expected to look for or invoke it, consistent with the "not adversarial security" framing in Scope — it is not a permission check the tool enforces at runtime, and no claim of technical secrecy is made.
 
 The admin tool covers:
 
 * `contract recover <cycle-id>` — resolve a stuck `in_flight` or `uncertain` token after a process crash or an ambiguous Asana response;
-* issuing or replacing a write token — e.g. after a consumed token needs a genuine re-write, or an ambiguous recovery state needs Marco's explicit resolution;
+* replacing a token after it is consumed, revoked, or stuck in an ambiguous recovery state that resolves as such — this is always a brand-new cycle, validation record, and token for a fresh review pass, never the reactivation or reuse of the old, already-consumed token record; a consumed or revoked token itself remains permanently unusable;
 * other Marco-only actions identified later.
 
 Revoking a task's contract-managed status is not a feature of the admin tool, or of this design at all. Marco always retains direct access to the existing general-purpose Asana CLI, which agents doing contract work are never given or told about; if a managed task genuinely needs a one-off manual edit outside the guarded workflow, Marco makes it directly through that existing tool instead.
