@@ -1,0 +1,169 @@
+"""batch-apply stop-on-error reporting (asana-cli-fixes.md P0 #2).
+
+Current c_batch_apply calls _call(), which sys.exit()s immediately via
+_fail() on the first ApiException -- there is no per-operation success
+reporting and the run-so-far summary is lost when the exit happens. These
+tests describe the intended stop-on-error contract (operations before the
+failure reported succeeded, the failing operation reported with its real
+API error, nothing after it runs) and are expected to fail until that
+reporting is implemented.
+
+Report assertions use word-boundary matching on the task gid tied to a
+success/failure keyword, rather than a bare substring check -- gids are
+short digit strings ("1", "2", "3") that can trivially collide with
+unrelated numbers in the output (an HTTP status code, an op count).
+"""
+import json
+import re
+
+import asana
+from asana.rest import ApiException
+import pytest
+
+SUCCESS_WORDS = re.compile(r"succeed|success|\bok\b|applied|done", re.I)
+FAILURE_WORDS = re.compile(r"fail|error|abort", re.I)
+
+
+def _write_plan(tmp_path, ops):
+    plan = {"operations": ops}
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps(plan))
+    return str(path)
+
+
+def _op(task, name, reason="because"):
+    return {"action": "rename", "task": task, "name": name, "reason": reason}
+
+
+def _lines_mentioning(report, gid):
+    """Lines in `report` where gid appears as a whole token, not a substring
+    of an unrelated number (e.g. gid "2" inside a "422" status code)."""
+    pattern = re.compile(rf"\b{re.escape(gid)}\b")
+    return [line for line in report.splitlines() if pattern.search(line)]
+
+
+def _assert_reported(report, gid, keyword_pattern):
+    lines = _lines_mentioning(report, gid)
+    assert lines, "no line in report mentions task %r: %r" % (gid, report)
+    assert any(keyword_pattern.search(line) for line in lines), (
+        "task %r reported, but no line matches %r: %r" % (gid, keyword_pattern.pattern, lines)
+    )
+
+
+def test_operations_before_failure_reported_succeeded(cli, monkeypatch, tmp_path, capsys):
+    calls = []
+
+    def fake_update_task(self, body, task_gid, opts, **kw):
+        calls.append(task_gid)
+        if task_gid == "2":
+            e = ApiException(status=422, reason="Invalid")
+            e.body = b'{"errors":[{"message":"bad field"}]}'
+            raise e
+        return {"data": {"gid": task_gid}}
+
+    monkeypatch.setattr(asana.TasksApi, "update_task", fake_update_task)
+
+    plan_path = _write_plan(tmp_path, [_op("1", "A"), _op("2", "B"), _op("3", "C")])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.c_batch_apply(plan_path)
+
+    report = str(exc.value) + capsys.readouterr().out
+    _assert_reported(report, "1", SUCCESS_WORDS)
+    assert calls == ["1", "2"]  # op 3 must not have run
+
+
+def test_failing_operation_reports_real_api_error(cli, monkeypatch, tmp_path, capsys):
+    def fake_update_task(self, body, task_gid, opts, **kw):
+        if task_gid == "2":
+            e = ApiException(status=422, reason="Invalid")
+            e.body = b'{"errors":[{"message":"bad field"}]}'
+            raise e
+        return {"data": {"gid": task_gid}}
+
+    monkeypatch.setattr(asana.TasksApi, "update_task", fake_update_task)
+
+    plan_path = _write_plan(tmp_path, [_op("1", "A"), _op("2", "B"), _op("3", "C")])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.c_batch_apply(plan_path)
+
+    report = str(exc.value) + capsys.readouterr().out
+    lines = _lines_mentioning(report, "2")
+    assert lines, "no line in report mentions failing task '2': %r" % report
+    assert any(FAILURE_WORDS.search(l) for l in lines)
+    assert any(("422" in l or "bad field" in l) for l in lines)
+
+
+def test_operations_after_failure_do_not_run(cli, monkeypatch, tmp_path):
+    calls = []
+
+    def fake_update_task(self, body, task_gid, opts, **kw):
+        calls.append(task_gid)
+        if task_gid == "2":
+            e = ApiException(status=422, reason="Invalid")
+            e.body = b"{}"
+            raise e
+        return {"data": {"gid": task_gid}}
+
+    monkeypatch.setattr(asana.TasksApi, "update_task", fake_update_task)
+
+    plan_path = _write_plan(tmp_path, [_op("1", "A"), _op("2", "B"), _op("3", "C")])
+
+    with pytest.raises(SystemExit):
+        cli.c_batch_apply(plan_path)
+
+    assert "3" not in calls
+
+
+def test_summary_accounts_for_every_operation_up_to_failure(cli, monkeypatch, tmp_path, capsys):
+    def fake_update_task(self, body, task_gid, opts, **kw):
+        if task_gid == "3":
+            e = ApiException(status=500, reason="Server Error")
+            e.body = b"{}"
+            raise e
+        return {"data": {"gid": task_gid}}
+
+    monkeypatch.setattr(asana.TasksApi, "update_task", fake_update_task)
+
+    plan_path = _write_plan(tmp_path, [_op("1", "A"), _op("2", "B"), _op("3", "C"), _op("4", "D")])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.c_batch_apply(plan_path)
+
+    report = str(exc.value) + capsys.readouterr().out
+    _assert_reported(report, "1", SUCCESS_WORDS)
+    _assert_reported(report, "2", SUCCESS_WORDS)
+    _assert_reported(report, "3", FAILURE_WORDS)
+    assert not _lines_mentioning(report, "4")
+
+
+def test_exit_code_nonzero_when_any_operation_fails(cli, monkeypatch, tmp_path):
+    def fake_update_task(self, body, task_gid, opts, **kw):
+        e = ApiException(status=500, reason="Server Error")
+        e.body = b"{}"
+        raise e
+
+    monkeypatch.setattr(asana.TasksApi, "update_task", fake_update_task)
+
+    plan_path = _write_plan(tmp_path, [_op("1", "A"), _op("2", "B"), _op("3", "C")])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.c_batch_apply(plan_path)
+
+    assert exc.value.code not in (0, None, "")
+
+
+def test_all_operations_succeed_reports_full_success(cli, monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(
+        asana.TasksApi, "update_task",
+        lambda self, body, task_gid, opts, **kw: {"data": {"gid": task_gid}},
+    )
+
+    plan_path = _write_plan(tmp_path, [_op("1", "A"), _op("2", "B"), _op("3", "C")])
+
+    cli.c_batch_apply(plan_path)  # must not raise
+
+    out = capsys.readouterr().out
+    for gid in ("1", "2", "3"):
+        _assert_reported(out, gid, SUCCESS_WORDS)

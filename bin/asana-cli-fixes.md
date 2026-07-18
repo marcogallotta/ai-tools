@@ -65,11 +65,28 @@ helpers are used by `batch-apply` or anything else in the file.
    part of this step. Verified live against real (read-only) endpoints;
    writes not yet exercised. Unit tests (#2 below) not yet written.
 
-2. **Add unit tests as part of the migration.**
+2. **Add unit tests as part of the migration. — DONE**
    Use `pytest`, with `unittest.mock` (stdlib, no new dependency) — no live
    API calls, mock at the SDK client boundary (patch the `asana.*Api`
    methods, not `urllib`/`requests`). New `tests/` directory, one module per
    concern:
+
+   Done: `pytest==9.1.1` pinned in `bin/requirements.txt`, installed into
+   `.venv`. `tests/conftest.py` loads `asana` fresh per test via
+   `importlib` and exposes a `run(cli, argv)` helper over `main()`.
+
+   Written as TDD: the P1 items below (#3–#6) don't exist in the code yet,
+   so their tests were written now as red tests describing the intended
+   end state, not deferred until each P1 item lands. Landing a P1 item
+   means turning its listed tests green — see the "tests to pass" note
+   under each item below. Current state: 42 red / 32 green. The green
+   tests cover P0 #1 behavior already in place (client reuse, error
+   mapping for 401/429/5xx, non-zero exit on `ApiException`); the red ones
+   are the P1 targets, plus two gaps this pass surfaced that aren't yet
+   assigned to a P1 item: `_fail()` doesn't name the resource gid on 404
+   (`tests/test_transport.py::test_404_names_the_resource`), and
+   `batch-apply` has no per-operation success/failure reporting on
+   stop-on-error (`tests/test_batch_apply.py`, 4 of 6 tests).
 
    **`tests/test_transport.py`** — SDK client wiring and error mapping
    - client is constructed once with the configured token; the same client
@@ -155,6 +172,14 @@ helpers are used by `batch-apply` or anything else in the file.
      today's default). Replaces the old `--all` boolean. Not applicable to
      `sections`, `search`, or `projects`, which have no completion concept.
 
+   Tests to pass: `tests/test_pagination.py` —
+   `test_single_call_fetches_exactly_one_page`,
+   `test_page_size_always_100`, `test_cursor_printed_when_more_results_exist`,
+   `test_no_cursor_printed_on_last_page`, `test_cursor_flag_forwarded_verbatim`
+   (all params), plus `test_status_defaults_to_incomplete`,
+   `test_status_both_includes_complete_and_incomplete`,
+   `test_status_complete_shows_only_completed` (tasks/subtasks params only).
+
    **`tasks` semantics change: `--all` is gone.**
    `~/honest-pantry/CLAUDE.md` documents and relies on current behavior —
    "`asana tasks <project_gid> --all` returns every task across all sections
@@ -175,12 +200,22 @@ helpers are used by `batch-apply` or anything else in the file.
    convention: `asana tasks section <gid>` / `asana tasks project <gid>`.
    The bare-gid, type-guessing form (`asana tasks <gid>`) is removed.
 
+   Tests to pass: `tests/test_pagination.py` —
+   `test_tasks_bare_gid_no_longer_accepted`,
+   `test_tasks_section_failure_does_not_fall_back_to_project`,
+   `test_tasks_project_failure_does_not_fall_back_to_section`.
+
 5. **Fix double newline decoding.**
    `_text()` (asana:50-54) re-applies `\n`-decoding to strings that
    `json.load()` has already decoded in the batch path (asana:250-292),
    which can mangle literal backslash-n content. CLI-argument decoding and
    already-decoded JSON input must be handled as separate paths, with tests
    defining the intended behavior for both.
+
+   Tests to pass: `tests/test_decode.py` —
+   `test_batch_json_literal_backslash_n_round_trips_unchanged`,
+   `test_batch_json_literal_backslash_n_in_replace_notes_round_trips`,
+   `test_batch_json_literal_backslash_n_in_create_task_notes_round_trips`.
 
 6. **Keep `raw` as a genuine escape hatch, including `DELETE`.**
    Do not restrict the method allowlist. The external Bash-tool permission
@@ -201,6 +236,12 @@ helpers are used by `batch-apply` or anything else in the file.
    inner object"). If the migration changes this (e.g. `call_api()` expects
    the caller to pass the full envelope), that file must be updated in the
    same pass.
+
+   Tests to pass: `tests/test_raw.py` — all six tests
+   (`test_method_accepted_no_allowlist_rejection` x4 params,
+   `test_dispatches_via_sdk_call_api_not_urllib`,
+   `test_put_wraps_body_in_data_envelope`,
+   `test_delete_requires_no_confirmation_flag`).
 
 ## Resolved — declined
 
