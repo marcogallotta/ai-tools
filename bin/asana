@@ -40,26 +40,31 @@ def client():
     return _CLIENT
 
 
-def _fail(e):
+def _error_detail(e, context=None):
     body = e.body.decode(errors="replace") if isinstance(e.body, (bytes, bytearray)) else (e.body or e.reason or "")
     detail = str(body)[:800]
+    where = " [%s]" % context if context else ""
     if e.status == 401:
-        sys.exit("Asana auth error (401): %s" % detail)
+        return "Asana auth error (401)%s: %s" % (where, detail)
     if e.status == 404:
-        sys.exit("Asana resource not found (404): %s" % detail)
+        return "Asana resource not found (404)%s: %s" % (where, detail)
     if e.status == 429:
-        sys.exit("Asana rate limit (429): %s" % detail)
+        return "Asana rate limit (429)%s: %s" % (where, detail)
     if e.status is not None and e.status >= 500:
-        sys.exit("Asana server error (%s): %s" % (e.status, detail))
-    sys.exit("Asana API error (%s): %s" % (e.status, detail))
+        return "Asana server error (%s)%s: %s" % (e.status, where, detail)
+    return "Asana API error (%s)%s: %s" % (e.status, where, detail)
 
 
-def _call(fn, *args, **kwargs):
+def _fail(e, context=None):
+    sys.exit(_error_detail(e, context))
+
+
+def _call(fn, *args, context=None, **kwargs):
     """Call an SDK method and unwrap the {"data": ...} envelope, or exit with a mapped error."""
     try:
         return fn(*args, **kwargs)["data"]
     except ApiException as e:
-        _fail(e)
+        _fail(e, context)
 
 
 PAGE_LIMIT = 100  # Asana API max; one page per CLI call, no auto-follow
@@ -105,24 +110,24 @@ def _text(arg):
 
 
 def c_get(gid):
-    d = _call(asana.TasksApi(client()).get_task, gid, {"opt_fields": "name,notes,completed"})
+    d = _call(asana.TasksApi(client()).get_task, gid, {"opt_fields": "name,notes,completed"}, context="task %s" % gid)
     print("# %s%s" % (d["name"] or "", "  [completed]" if d.get("completed") else ""))
     print(d.get("notes") or "")
 
 
 def c_notes(gid):
-    print(_call(asana.TasksApi(client()).get_task, gid, {"opt_fields": "notes"}).get("notes") or "")
+    print(_call(asana.TasksApi(client()).get_task, gid, {"opt_fields": "notes"}, context="task %s" % gid).get("notes") or "")
 
 
 def c_set_notes(gid, text):
-    _call(asana.TasksApi(client()).update_task, {"data": {"notes": _text(text)}}, gid, {})
+    _call(asana.TasksApi(client()).update_task, {"data": {"notes": _text(text)}}, gid, {}, context="task %s" % gid)
     print("set-notes:", gid)
 
 
 def c_append(gid, text):
     tasks_api = asana.TasksApi(client())
-    cur = _call(tasks_api.get_task, gid, {"opt_fields": "notes"}).get("notes") or ""
-    _call(tasks_api.update_task, {"data": {"notes": cur + _text(text)}}, gid, {})
+    cur = _call(tasks_api.get_task, gid, {"opt_fields": "notes"}, context="task %s" % gid).get("notes") or ""
+    _call(tasks_api.update_task, {"data": {"notes": cur + _text(text)}}, gid, {}, context="task %s" % gid)
     print("append:", gid)
 
 
@@ -135,21 +140,21 @@ def c_replace(gid, old=None, new=None):
         old = old.replace("\\n", "\n")
         new = (new or "").replace("\\n", "\n")
     tasks_api = asana.TasksApi(client())
-    cur = _call(tasks_api.get_task, gid, {"opt_fields": "notes"}).get("notes") or ""
+    cur = _call(tasks_api.get_task, gid, {"opt_fields": "notes"}, context="task %s" % gid).get("notes") or ""
     nmatch = cur.count(old)
     if nmatch != 1:
         sys.exit("replace aborted: 'old' found %d times (need exactly 1)" % nmatch)
-    _call(tasks_api.update_task, {"data": {"notes": cur.replace(old, new)}}, gid, {})
+    _call(tasks_api.update_task, {"data": {"notes": cur.replace(old, new)}}, gid, {}, context="task %s" % gid)
     print("replace:", gid)
 
 
 def c_rename(gid, name):
-    _call(asana.TasksApi(client()).update_task, {"data": {"name": name}}, gid, {})
+    _call(asana.TasksApi(client()).update_task, {"data": {"name": name}}, gid, {}, context="task %s" % gid)
     print("rename:", gid)
 
 
 def c_project(gid):
-    d = _call(asana.ProjectsApi(client()).get_project, gid, {"opt_fields": "name,notes"})
+    d = _call(asana.ProjectsApi(client()).get_project, gid, {"opt_fields": "name,notes"}, context="project %s" % gid)
     print("# %s" % d["name"])
     print(d.get("notes") or "")
 
@@ -187,7 +192,7 @@ def c_subtasks(gid, status, cursor):
 
 def c_move(gid, section):
     """Move a task to a section within its project."""
-    _call(asana.SectionsApi(client()).add_task_for_section, {"data": {"task": gid}}, section, {})
+    _call(asana.SectionsApi(client()).add_task_for_section, {"data": {"task": gid}}, section, {}, context="section %s" % section)
     print("move:", gid, "->", section)
 
 
@@ -195,9 +200,9 @@ def c_create_task(project, name, section, notes):
     d = {"name": name, "projects": [project]}
     if notes is not None:
         d["notes"] = _text(notes)
-    t = _call(asana.TasksApi(client()).create_task, {"data": d}, {})
+    t = _call(asana.TasksApi(client()).create_task, {"data": d}, {}, context="project %s" % project)
     if section:
-        _call(asana.SectionsApi(client()).add_task_for_section, {"data": {"task": t["gid"]}}, section, {})
+        _call(asana.SectionsApi(client()).add_task_for_section, {"data": {"task": t["gid"]}}, section, {}, context="section %s" % section)
     print(t["gid"])
 
 
@@ -205,7 +210,7 @@ def c_create_subtask(parent, name, notes):
     d = {"name": name}
     if notes is not None:
         d["notes"] = _text(notes)
-    print(_call(asana.TasksApi(client()).create_subtask_for_task, {"data": d}, parent, {})["gid"])
+    print(_call(asana.TasksApi(client()).create_subtask_for_task, {"data": d}, parent, {}, context="task %s" % parent)["gid"])
 
 
 BATCH_TASK_FIELDS = ("name", "notes", "completed", "due_on", "start_on")
@@ -304,6 +309,12 @@ def _normalize_batch_op(op):
     sys.exit("unsupported batch action: %s" % action)
 
 
+def _op_label(op):
+    """Human-readable 'action target' identifying an op in progress/error output."""
+    target = op.get("task") or op.get("project") or op.get("parent")
+    return "%s %s" % (op["action"], target)
+
+
 def c_batch_apply(path):
     ops = [_normalize_batch_op(op) for op in _load_batch_plan(path)]
     if len(ops) < 3:
@@ -313,31 +324,38 @@ def c_batch_apply(path):
     created = []
     for op in ops:
         action = op["action"]
-        if action == "update_task":
-            _call(tasks_api.update_task, {"data": op["fields"]}, op["task"], {})
-        elif action == "replace_notes":
-            task = _call(tasks_api.get_task, op["task"], {"opt_fields": "notes"})
-            notes = task.get("notes") or ""
-            matches = notes.count(op["old"])
-            if matches != 1:
-                sys.exit("replace_notes aborted for %s: old text found %d times (need exactly 1)" % (op["task"], matches))
-            _call(tasks_api.update_task, {"data": {"notes": notes.replace(op["old"], op["new"])}}, op["task"], {})
-        elif action == "move":
-            _call(sections_api.add_task_for_section, {"data": {"task": op["task"]}}, op["section"], {})
-        elif action == "create_task":
-            d = {"name": op["name"], "projects": [op["project"]]}
-            if op.get("notes") is not None:
-                d["notes"] = op["notes"]
-            t = _call(tasks_api.create_task, {"data": d}, {})
-            created.append(t["gid"])
-            if op.get("section"):
-                _call(sections_api.add_task_for_section, {"data": {"task": t["gid"]}}, op["section"], {})
-        elif action == "create_subtask":
-            d = {"name": op["name"]}
-            if op.get("notes") is not None:
-                d["notes"] = op["notes"]
-            t = _call(tasks_api.create_subtask_for_task, {"data": d}, op["parent"], {})
-            created.append(t["gid"])
+        label = _op_label(op)
+        try:
+            if action == "update_task":
+                tasks_api.update_task({"data": op["fields"]}, op["task"], {})
+            elif action == "replace_notes":
+                task = tasks_api.get_task(op["task"], {"opt_fields": "notes"})["data"]
+                notes = task.get("notes") or ""
+                matches = notes.count(op["old"])
+                if matches != 1:
+                    sys.exit("replace_notes aborted for %s: old text found %d times (need exactly 1)" % (op["task"], matches))
+                tasks_api.update_task({"data": {"notes": notes.replace(op["old"], op["new"])}}, op["task"], {})
+            elif action == "move":
+                sections_api.add_task_for_section({"data": {"task": op["task"]}}, op["section"], {})
+            elif action == "create_task":
+                d = {"name": op["name"], "projects": [op["project"]]}
+                if op.get("notes") is not None:
+                    d["notes"] = op["notes"]
+                t = tasks_api.create_task({"data": d}, {})["data"]
+                created.append(t["gid"])
+                if op.get("section"):
+                    sections_api.add_task_for_section({"data": {"task": t["gid"]}}, op["section"], {})
+            elif action == "create_subtask":
+                d = {"name": op["name"]}
+                if op.get("notes") is not None:
+                    d["notes"] = op["notes"]
+                t = tasks_api.create_subtask_for_task({"data": d}, op["parent"], {})["data"]
+                created.append(t["gid"])
+        except ApiException as e:
+            msg = "batch %s: failed -- %s" % (label, _error_detail(e))
+            print(msg)
+            sys.exit(msg)
+        print("batch %s: succeeded" % label)
     print("Asana batch applied: %d operations." % len(ops))
     if created:
         print("Created: %s" % ", ".join(created))
