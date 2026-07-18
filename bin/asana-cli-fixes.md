@@ -1,7 +1,8 @@
 # asana CLI — cleanup implementation plan
 
-Scope: general-purpose CLI (`~/.claude/bin/asana`) only — no contract/
-protected-task work in this pass (see bottom).
+Scope: general-purpose CLI (`~/ai-tools/bin/asana` — `~/.claude/bin/asana`
+is a symlink to this file) only — no contract/protected-task work in this
+pass (see bottom).
 
 ## Rollout
 
@@ -211,8 +212,9 @@ Now doubly moot: Step 0 removes `batch-preview` from the CLI entirely.
 
 ## Docs to update in this pass
 
-Every consumer of this CLI outside `~/.claude/bin/asana` itself that this
-pass could break, and what to do about each:
+Every consumer of this CLI outside `~/ai-tools/bin/asana` itself (consumers
+invoke it via the `~/.claude/bin/asana` symlink) that this pass could
+break, and what to do about each:
 
 - **`~/honest-pantry/CLAUDE.md`** — documents `tasks --all` single-call and
   incomplete-only-by-default semantics (P1 #3). `--all` is gone; must be
