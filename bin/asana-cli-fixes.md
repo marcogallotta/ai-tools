@@ -203,7 +203,7 @@ helpers are used by `batch-apply` or anything else in the file.
    updated in the same pass to describe cursor-based one-page-at-a-time
    fetching.
 
-4. **Remove section/project fallback guessing.**
+4. **Remove section/project fallback guessing. — DONE**
    `c_tasks` (asana:112-115) currently tries the section endpoint and
    silently retries against the project endpoint on any failure — including
    auth/rate-limit/server errors, not just "wrong resource type." Commands
@@ -218,6 +218,12 @@ helpers are used by `batch-apply` or anything else in the file.
    `test_tasks_bare_gid_no_longer_accepted`,
    `test_tasks_section_failure_does_not_fall_back_to_project`,
    `test_tasks_project_failure_does_not_fall_back_to_section`.
+
+   Done: landed as a side effect of P1 #3's `3e83f63` commit — the
+   `tasks section|project <gid>` dispatch (asana:472-477) was unavoidable
+   groundwork for #3's parametrized pagination tests, which already exercise
+   that syntax. HELP text (asana:413) already documents the new syntax; no
+   bare-gid form remains. All 3 tests above pass; verified in this pass.
 
 5. **Fix double newline decoding.**
    `_text()` (asana:50-54) re-applies `\n`-decoding to strings that
