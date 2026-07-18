@@ -146,6 +146,46 @@ def test_status_complete_shows_only_completed(cli, run, monkeypatch, argv, api_c
     assert "Done" in out
 
 
+TASKS_ONLY_CASES = [c for c in CASES if c.id in ("tasks-section", "tasks-project")]
+
+
+@pytest.mark.parametrize("argv,api_cls,method_name", TASKS_ONLY_CASES)
+def test_incomplete_status_filters_server_side(cli, run, monkeypatch, argv, api_cls, method_name):
+    """tasks section|project supports completed_since; default --status
+    incomplete should send completed_since=now so an incomplete-only page
+    isn't diluted by completed tasks Asana already knows to exclude."""
+    calls = _mock_list(monkeypatch, api_cls, method_name, PAGE_LAST)
+    run(cli, argv)
+    args, kwargs = calls[0]
+    opts = args[-1] if args and isinstance(args[-1], dict) else kwargs.get("opts", {})
+    assert opts.get("completed_since") == "now"
+
+
+@pytest.mark.parametrize("argv,api_cls,method_name", TASKS_ONLY_CASES)
+def test_non_incomplete_status_omits_completed_since(cli, run, monkeypatch, argv, api_cls, method_name):
+    calls = _mock_list(monkeypatch, api_cls, method_name, PAGE_LAST)
+    run(cli, argv + ["--status", "both"])
+    args, kwargs = calls[0]
+    opts = args[-1] if args and isinstance(args[-1], dict) else kwargs.get("opts", {})
+    assert "completed_since" not in opts
+
+
+def test_subtasks_does_not_send_completed_since(cli, run, monkeypatch):
+    """The subtasks endpoint has no completed_since param (unlike
+    get_tasks_for_{section,project}) -- must never send it."""
+    calls = _mock_list(monkeypatch, asana.TasksApi, "get_subtasks_for_task", PAGE_LAST)
+    run(cli, ["subtasks", "222"])
+    args, kwargs = calls[0]
+    opts = args[-1] if args and isinstance(args[-1], dict) else kwargs.get("opts", {})
+    assert "completed_since" not in opts
+
+
+@pytest.mark.parametrize("cmd_argv", [["tasks", "section", "111"], ["tasks", "project", "111"], ["subtasks", "222"]])
+def test_invalid_status_rejected(cli, run, monkeypatch, cmd_argv):
+    with pytest.raises(SystemExit):
+        run(cli, cmd_argv + ["--status", "complet"])
+
+
 def test_tasks_bare_gid_no_longer_accepted(cli, run, monkeypatch):
     """The old type-guessing `tasks <gid>` form is removed in favor of
     `tasks section <gid>` / `tasks project <gid>`. Both endpoints are mocked

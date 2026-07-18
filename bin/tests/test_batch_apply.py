@@ -154,6 +154,47 @@ def test_exit_code_nonzero_when_any_operation_fails(cli, monkeypatch, tmp_path):
     assert exc.value.code not in (0, None, "")
 
 
+def _create_task_op(project, name, section=None, reason="because"):
+    op = {"action": "create_task", "project": project, "name": name, "reason": reason}
+    if section:
+        op["section"] = section
+    return op
+
+
+def test_create_task_reports_gid_when_section_move_fails(cli, monkeypatch, tmp_path, capsys):
+    """If create_task succeeds but the follow-up move-to-section fails, the
+    task already exists in Asana -- the failure report must surface its gid,
+    not just the project it was created under."""
+    monkeypatch.setattr(
+        asana.TasksApi, "update_task",
+        lambda self, body, task_gid, opts, **kw: {"data": {"gid": task_gid}},
+    )
+    monkeypatch.setattr(
+        asana.TasksApi, "create_task",
+        lambda self, body, opts, **kw: {"data": {"gid": "new-task-99"}},
+    )
+
+    def fake_add_task_for_section(self, body, section_gid, opts, **kw):
+        e = ApiException(status=404, reason="Not Found")
+        e.body = b'{"errors":[{"message":"section not found"}]}'
+        raise e
+
+    monkeypatch.setattr(asana.SectionsApi, "add_task_for_section", fake_add_task_for_section)
+
+    plan_path = _write_plan(tmp_path, [
+        _op("1", "A"),
+        _op("2", "B"),
+        _create_task_op("proj-1", "New Task", section="bad-section"),
+    ])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.c_batch_apply(plan_path)
+
+    report = str(exc.value) + capsys.readouterr().out
+    assert "new-task-99" in report
+    assert FAILURE_WORDS.search(report)
+
+
 def test_all_operations_succeed_reports_full_success(cli, monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(
         asana.TasksApi, "update_task",

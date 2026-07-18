@@ -94,12 +94,21 @@ def _print_cursor(next_cursor):
         print("# more results: --cursor %s" % next_cursor)
 
 
+STATUS_VALUES = ("incomplete", "complete", "both")
+
+
 def _status_match(t, status):
     if status == "both":
         return True
     if status == "complete":
         return bool(t.get("completed"))
     return not t.get("completed")
+
+
+def _validate_status(status):
+    if status not in STATUS_VALUES:
+        sys.exit("invalid --status %r (expected one of: %s)" % (status, ", ".join(STATUS_VALUES)))
+    return status
 
 
 def _text(arg):
@@ -172,7 +181,12 @@ def c_sections(gid, cursor):
 def c_tasks(kind, gid, status, cursor):
     tasks_api = asana.TasksApi(client())
     fn = tasks_api.get_tasks_for_section if kind == "section" else tasks_api.get_tasks_for_project
-    items, next_cursor = _fetch_page(fn, gid, opts={"opt_fields": "name,completed"}, cursor=cursor)
+    opts = {"opt_fields": "name,completed"}
+    if status == "incomplete":
+        # Asana filters server-side here (unlike subtasks, below) so an
+        # incomplete-only page is never diluted by completed tasks.
+        opts["completed_since"] = "now"
+    items, next_cursor = _fetch_page(fn, gid, opts=opts, cursor=cursor)
     for t in items:
         if _status_match(t, status):
             print(t["gid"], "[x]" if t["completed"] else "[ ]", t["name"])
@@ -180,6 +194,10 @@ def c_tasks(kind, gid, status, cursor):
 
 
 def c_subtasks(gid, status, cursor):
+    # Unlike get_tasks_for_{section,project}, the subtasks endpoint has no
+    # completed_since param, so incomplete-only filtering here is always
+    # local/post-fetch: a page can print fewer (even zero) matching rows
+    # while still returning a --cursor for more.
     items, next_cursor = _fetch_page(
         asana.TasksApi(client()).get_subtasks_for_task, gid,
         opts={"opt_fields": "name,completed"}, cursor=cursor,
@@ -325,6 +343,7 @@ def c_batch_apply(path):
     for op in ops:
         action = op["action"]
         label = _op_label(op)
+        created_this_op = None  # set once create succeeds, in case a later step in the same op fails
         try:
             if action == "update_task":
                 tasks_api.update_task({"data": op["fields"]}, op["task"], {})
@@ -343,6 +362,7 @@ def c_batch_apply(path):
                     d["notes"] = op["notes"]
                 t = tasks_api.create_task({"data": d}, {})["data"]
                 created.append(t["gid"])
+                created_this_op = t["gid"]
                 if op.get("section"):
                     sections_api.add_task_for_section({"data": {"task": t["gid"]}}, op["section"], {})
             elif action == "create_subtask":
@@ -351,9 +371,16 @@ def c_batch_apply(path):
                     d["notes"] = op["notes"]
                 t = tasks_api.create_subtask_for_task({"data": d}, op["parent"], {})["data"]
                 created.append(t["gid"])
+                created_this_op = t["gid"]
         except ApiException as e:
-            msg = "batch %s: failed -- %s" % (label, _error_detail(e))
+            detail = _error_detail(e)
+            if created_this_op:
+                msg = "batch %s: created task %s but a follow-up step failed -- %s" % (label, created_this_op, detail)
+            else:
+                msg = "batch %s: failed -- %s" % (label, detail)
             print(msg)
+            if created:
+                print("Created before failure: %s" % ", ".join(created))
             sys.exit(msg)
         print("batch %s: succeeded" % label)
     print("Asana batch applied: %d operations." % len(ops))
@@ -482,13 +509,13 @@ def main():
             c_sections(rest[0], cursor)
         elif cmd == "tasks":
             cursor = opt("--cursor")
-            status = opt("--status") or "incomplete"
+            status = _validate_status(opt("--status") or "incomplete")
             if len(rest) < 2 or rest[0] not in ("section", "project"):
                 sys.exit("usage: asana tasks section|project <gid> [--status incomplete|complete|both] [--cursor <token>]")
             c_tasks(rest[0], rest[1], status, cursor)
         elif cmd == "subtasks":
             cursor = opt("--cursor")
-            status = opt("--status") or "incomplete"
+            status = _validate_status(opt("--status") or "incomplete")
             c_subtasks(rest[0], status, cursor)
         elif cmd == "move":
             c_move(rest[0], rest[1])
