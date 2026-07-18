@@ -5,6 +5,27 @@ ChatGPT, cross-checked line-by-line against the actual file and refined in
 discussion. Decisions below are confirmed; scope is the general-purpose CLI
 only — no contract/protected-task work in this pass (see bottom).
 
+## Step 0 — precondition, before any P0 work
+
+**Remove `batch-preview` entirely.** Do this first, before P0 item #1, not
+as P1 cleanup — its removal is a precondition for the rest of the pass, not
+just a nice-to-have cleanup alongside it, since P0 #2's test list and the
+migration itself should not carry forward tests/behavior for a feature
+being deleted.
+
+It isn't in the batch workflow the global CLAUDE.md actually mandates
+(build plan → chat table as the review surface → immediately invoke
+`batch-apply` in the same turn) and its printed diff output has not
+actually been read in practice. Checked the only other place outside global
+CLAUDE.md that references this tool (`~/honest-pantry/cooking-master-reference.md`)
+and confirmed it does not mention `batch-preview` either — no consumer
+depends on it. Remove `c_batch_preview`, `_preview_batch_ops`, and the
+helpers that exist only to support it (`_task_snapshot`, `_section_label`,
+`_format_value`, `_clip`, `_note_diff` — asana:170-344), plus the `HELP`
+entry and the `batch-preview` line in the "batch plan shape" example.
+Confirmed none of these helpers are used by `batch-apply` or anything else
+in the file.
+
 ## P0 — do first
 
 1. **Migrate transport from raw `urllib` to the official Asana Python SDK.**
@@ -74,18 +95,6 @@ only — no contract/protected-task work in this pass (see bottom).
    deleted Asana tasks are recoverable. Document its real behavior (full,
    unguarded mutation access) rather than artificially limiting it.
 
-7. **Remove `batch-preview` entirely.**
-   It isn't in the batch workflow the global CLAUDE.md actually mandates
-   (build plan → chat table as the review surface → immediately invoke
-   `batch-apply` in the same turn) and its printed diff output has not
-   actually been read in practice. Rather than fix its cumulative-diff bug
-   (previously listed here), drop the dead feature. Remove `c_batch_preview`,
-   `_preview_batch_ops`, and the helpers that exist only to support it
-   (`_task_snapshot`, `_section_label`, `_format_value`, `_clip`,
-   `_note_diff` — asana:170-344), plus the `HELP` entry and the
-   `batch-preview` line in the "batch plan shape" example. Confirmed none of
-   these helpers are used by `batch-apply` or anything else in the file.
-
 ## Resolved — declined
 
 **Should `batch-preview` be bound to the exact plan file before `apply`?**
@@ -102,7 +111,7 @@ binding `apply` to a hash of something that isn't being reviewed would add
 friction without protecting a real review step. If a mandatory preview gate
 is ever added to the workflow itself, revisit this then.
 
-Now doubly moot: fix #7 removes `batch-preview` from the CLI entirely.
+Now doubly moot: Step 0 removes `batch-preview` from the CLI entirely.
 
 ## Out of scope for this pass
 
