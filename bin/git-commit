@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# Atomic stage-and-commit. Refuses carpet-bomb patterns to prevent index
+# collisions between concurrent Claude sessions.
+#
+# Usage: git-commit <file> [file...] -m "message"
+#        [--contract-size-explained <sha256>]
+
+set -euo pipefail
+
+msg=""
+repo=""
+contract_size_explained=""
+files=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -m)
+      shift
+      msg="$1"
+      ;;
+    -C)
+      shift
+      repo="$1"
+      ;;
+    --contract-size-explained)
+      shift
+      contract_size_explained="$1"
+      ;;
+    --)
+      shift
+      files+=("$@")
+      break
+      ;;
+    -*)
+      echo "Unknown flag: $1" >&2
+      exit 1
+      ;;
+    *)
+      files+=("$1")
+      ;;
+  esac
+  shift
+done
+
+if [[ -z "$msg" ]]; then
+  echo "Error: -m <message> is required" >&2
+  exit 1
+fi
+
+if [[ ${#files[@]} -eq 0 ]]; then
+  echo "Error: at least one explicit file path is required — no carpet-bomb commits" >&2
+  exit 1
+fi
+
+for f in "${files[@]}"; do
+  if [[ "$f" == "." || "$f" == "-A" || "$f" == "-u" || "$f" == "--all" ]]; then
+    echo "Error: '$f' not allowed — list explicit paths to avoid index collisions with other sessions" >&2
+    exit 1
+  fi
+done
+
+git_cwd="$PWD"
+if [[ -n "$repo" ]]; then
+  git_cwd="$(cd "$repo" && pwd -P)"
+fi
+repo_root="$(git -C "$git_cwd" rev-parse --show-toplevel)"
+contract_path="$repo_root/dish-task-contract.md"
+contract_requested=false
+
+for f in "${files[@]}"; do
+  candidate="$f"
+  if [[ "$candidate" != /* ]]; then
+    candidate="$git_cwd/$candidate"
+  fi
+  if [[ "$(realpath -m -- "$candidate")" == "$contract_path" ]]; then
+    contract_requested=true
+    break
+  fi
+done
+
+if [[ "$contract_requested" == true ]]; then
+  contract_lines="$(awk '
+    $0 == "### [TO BE DEPRECATED] Legacy task fields" { legacy = 1; next }
+    legacy && /^### / { legacy = 0 }
+    !legacy { count++ }
+    END { print count + 0 }
+  ' "$contract_path")"
+  contract_hash="$(sha256sum "$contract_path" | awk '{print $1}')"
+
+  if (( contract_lines >= 250 )); then
+    cat >&2 <<EOF
+Error: dish-task-contract.md has $contract_lines counted lines (hard limit: 250).
+The deprecated legacy subsection is excluded from this count.
+
+There is no override. Reduce the contract below 250 counted lines before committing.
+EOF
+    exit 1
+  elif (( contract_lines >= 220 )); then
+    if [[ "$contract_size_explained" != "$contract_hash" ]]; then
+      cat >&2 <<EOF
+Error: dish-task-contract.md has $contract_lines counted lines (soft target: below 220).
+The deprecated legacy subsection is excluded from this count.
+
+Before retrying, explain to Marco why further rule removal would weaken clarity, reliability, or a
+required protection. After giving that explanation for this exact version, retry with:
+  --contract-size-explained $contract_hash
+EOF
+      exit 1
+    fi
+  fi
+fi
+
+if [[ -n "$repo" ]]; then
+  git -C "$repo" add -- "${files[@]}"
+  git -C "$repo" commit -m "$msg"
+else
+  git add -- "${files[@]}"
+  git commit -m "$msg"
+fi

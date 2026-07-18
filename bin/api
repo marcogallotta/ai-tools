@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Plant monitoring API wrapper.
+# Reads BACKEND_PORT and ASSISTANT_API_TOKEN from ~/plant-monitoring/.env.
+#
+# Usage:
+#   api GET /photos?limit=10
+#   api GET /sensors/latest
+#   api POST /events '{"event_type":"watered"}'
+#   api PATCH /suggestions/42 '{"action":"accept"}'
+#   api DELETE /photos/123
+
+set -euo pipefail
+
+ENV_FILE="$HOME/plant-monitoring/.env"
+
+if [[ ! -f "$ENV_FILE" ]]; then
+  echo "Error: $ENV_FILE not found" >&2
+  exit 1
+fi
+
+get_env() {
+  grep -E "^$1=" "$ENV_FILE" | tail -1 | cut -d= -f2- | tr -d '"' | tr -d "'"
+}
+
+PORT=$(get_env BACKEND_PORT)
+TOKEN=$(get_env ASSISTANT_API_TOKEN)
+PORT=${PORT:-8001}
+BASE="http://localhost:$PORT"
+
+METHOD="${1:-GET}"
+PATH_ARG="${2:-/}"
+BODY="${3:-}"
+
+if [[ -z "$TOKEN" ]]; then
+  echo "Error: ASSISTANT_API_TOKEN not set in $ENV_FILE" >&2
+  exit 1
+fi
+
+args=(-s -X "$METHOD" "$BASE$PATH_ARG" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json")
+
+if [[ -n "$BODY" ]]; then
+  args+=(-d "$BODY")
+fi
+
+curl "${args[@]}"

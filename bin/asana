@@ -1,0 +1,513 @@
+#!/usr/bin/env python3
+"""asana — minimal Asana API CLI.
+
+Reads ASANA_PAT from ~/plant-monitoring/.env (override with $ASANA_PAT or $ASANA_ENV).
+Stdlib only. Run `asana help` for usage.
+"""
+import difflib, json, os, sys, urllib.request, urllib.parse, urllib.error
+
+BASE = "https://app.asana.com/api/1.0"
+DEFAULT_WS = "1200569426771227"  # "London to Umrah 2022" workspace
+_PAT = None
+
+
+def load_pat():
+    pat = os.environ.get("ASANA_PAT")
+    if pat:
+        return pat
+    env = os.environ.get("ASANA_ENV", os.path.expanduser("~/plant-monitoring/.env"))
+    try:
+        with open(env) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith("ASANA_PAT="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except FileNotFoundError:
+        pass
+    sys.exit("ASANA_PAT not found (set $ASANA_PAT or add it to %s)" % env)
+
+
+def req(method, path, data=None, params=None):
+    global _PAT
+    if _PAT is None:
+        _PAT = load_pat()
+    url = BASE + path
+    if params:
+        url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+    body = json.dumps({"data": data}).encode() if data is not None else None
+    r = urllib.request.Request(url, data=body, method=method, headers={
+        "Authorization": "Bearer " + _PAT,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    })
+    try:
+        with urllib.request.urlopen(r) as resp:
+            return json.load(resp).get("data")
+    except urllib.error.HTTPError as e:
+        sys.exit("HTTP %s: %s" % (e.code, e.read().decode()[:800]))
+
+
+def _text(arg):
+    """Return arg (literal \\n decoded to newlines), or stdin if arg is '-' or None."""
+    if arg in (None, "-"):
+        return sys.stdin.read()
+    return arg.replace("\\n", "\n")
+
+
+def c_get(gid):
+    d = req("GET", "/tasks/%s" % gid, params={"opt_fields": "name,notes,completed"})
+    print("# %s%s" % (d["name"] or "", "  [completed]" if d.get("completed") else ""))
+    print(d.get("notes") or "")
+
+
+def c_notes(gid):
+    print(req("GET", "/tasks/%s" % gid, params={"opt_fields": "notes"}).get("notes") or "")
+
+
+def c_set_notes(gid, text):
+    req("PUT", "/tasks/%s" % gid, data={"notes": _text(text)})
+    print("set-notes:", gid)
+
+
+def c_append(gid, text):
+    cur = req("GET", "/tasks/%s" % gid, params={"opt_fields": "notes"}).get("notes") or ""
+    req("PUT", "/tasks/%s" % gid, data={"notes": cur + _text(text)})
+    print("append:", gid)
+
+
+def c_replace(gid, old=None, new=None):
+    """Exact in-place note edit. old/new as args, or {"old":..,"new":..} JSON on stdin. Aborts unless 'old' matches exactly once."""
+    if old is None:
+        payload = json.load(sys.stdin)
+        old, new = payload["old"], payload["new"]
+    else:
+        old = old.replace("\\n", "\n")
+        new = (new or "").replace("\\n", "\n")
+    cur = req("GET", "/tasks/%s" % gid, params={"opt_fields": "notes"}).get("notes") or ""
+    nmatch = cur.count(old)
+    if nmatch != 1:
+        sys.exit("replace aborted: 'old' found %d times (need exactly 1)" % nmatch)
+    req("PUT", "/tasks/%s" % gid, data={"notes": cur.replace(old, new)})
+    print("replace:", gid)
+
+
+def c_rename(gid, name):
+    req("PUT", "/tasks/%s" % gid, data={"name": name})
+    print("rename:", gid)
+
+
+def c_project(gid):
+    d = req("GET", "/projects/%s" % gid, params={"opt_fields": "name,notes"})
+    print("# %s" % d["name"])
+    print(d.get("notes") or "")
+
+
+def c_sections(gid):
+    for s in req("GET", "/projects/%s/sections" % gid, params={"opt_fields": "name"}):
+        print(s["gid"], s["name"])
+
+
+def c_tasks(gid, allflag):
+    params = {"opt_fields": "name,completed"}
+    try:
+        data = req("GET", "/sections/%s/tasks" % gid, params=params)
+    except SystemExit:
+        data = req("GET", "/projects/%s/tasks" % gid, params=params)
+    for t in data:
+        if not allflag and t["completed"]:
+            continue
+        print(t["gid"], "[x]" if t["completed"] else "[ ]", t["name"])
+
+
+def c_subtasks(gid):
+    for t in req("GET", "/tasks/%s/subtasks" % gid, params={"opt_fields": "name,completed"}):
+        print(t["gid"], "[x]" if t["completed"] else "[ ]", t["name"])
+
+
+def c_move(gid, section):
+    """Move a task to a section within its project."""
+    req("POST", "/sections/%s/addTask" % section, data={"task": gid})
+    print("move:", gid, "->", section)
+
+
+def c_create_task(project, name, section, notes):
+    d = {"name": name, "projects": [project]}
+    if notes is not None:
+        d["notes"] = _text(notes)
+    t = req("POST", "/tasks", data=d)
+    if section:
+        req("POST", "/sections/%s/addTask" % section, data={"task": t["gid"]})
+    print(t["gid"])
+
+
+def c_create_subtask(parent, name, notes):
+    d = {"name": name}
+    if notes is not None:
+        d["notes"] = _text(notes)
+    print(req("POST", "/tasks/%s/subtasks" % parent, data=d)["gid"])
+
+
+BATCH_TASK_FIELDS = ("name", "notes", "completed", "due_on", "start_on")
+
+
+def _load_batch_plan(path):
+    try:
+        with open(path) as f:
+            plan = json.load(f)
+    except FileNotFoundError:
+        sys.exit("batch plan not found: %s" % path)
+    except json.JSONDecodeError as e:
+        sys.exit("invalid batch JSON: %s" % e)
+
+    if not isinstance(plan, dict):
+        sys.exit("batch plan must be a JSON object")
+    ops = plan.get("operations")
+    if not isinstance(ops, list) or not ops:
+        sys.exit("batch plan must contain a non-empty operations array")
+    return ops
+
+
+def _task_snapshot(gid):
+    fields = ",".join(BATCH_TASK_FIELDS + (
+        "memberships.section.gid",
+        "memberships.section.name",
+    ))
+    return req("GET", "/tasks/%s" % gid, params={"opt_fields": fields})
+
+
+def _section_label(task):
+    memberships = task.get("memberships") or []
+    names = []
+    for membership in memberships:
+        section = membership.get("section") or {}
+        if section.get("name"):
+            names.append("%s (%s)" % (section.get("name"), section.get("gid")))
+    return ", ".join(names) if names else ""
+
+
+def _op_reason(op):
+    reason = op.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        sys.exit("each batch operation must include a non-empty reason")
+    return reason.strip()
+
+
+def _format_value(value):
+    if value is None:
+        return "(empty)"
+    if value == "":
+        return "(empty)"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value).replace("\n", "\\n")
+
+
+def _clip(value, limit=180):
+    text = _format_value(value)
+    if len(text) <= limit:
+        return text
+    return "%s... [%d chars]" % (text[:limit], len(text))
+
+
+def _note_diff(old, new, limit=12):
+    """Return changed note lines only; never dump the full task body."""
+    old_lines = (old or "").splitlines()
+    new_lines = (new or "").splitlines()
+    changed = []
+    for line in difflib.ndiff(old_lines, new_lines):
+        if line.startswith("- ") or line.startswith("+ "):
+            changed.append("%s%s" % (line[:2], _clip(line[2:])))
+    if not changed and old != new:
+        changed = ["- %s" % _clip(old), "+ %s" % _clip(new)]
+    shown = changed[:limit]
+    if len(changed) > limit:
+        shown.append("... %d more changed line(s)" % (len(changed) - limit))
+    return shown or ["(no text change)"]
+
+
+def _normalize_batch_op(op):
+    if not isinstance(op, dict):
+        sys.exit("each batch operation must be an object")
+
+    action = op.get("action")
+    if action in (None, "update_task"):
+        task = op.get("task")
+        fields = dict(op.get("fields") or {})
+        if op.get("field"):
+            fields[op["field"]] = op.get("new")
+        if not task or not fields:
+            sys.exit("update_task operations need task plus fields, or task/field/new")
+        unsupported = sorted(set(fields) - set(BATCH_TASK_FIELDS))
+        if unsupported:
+            sys.exit("unsupported update_task field(s): %s" % ", ".join(unsupported))
+        return {"action": "update_task", "task": task, "fields": fields, "reason": _op_reason(op)}
+
+    if action == "rename":
+        if not op.get("task") or not op.get("name"):
+            sys.exit("rename operations need task and name")
+        return {"action": "update_task", "task": op["task"], "fields": {"name": op["name"]}, "reason": _op_reason(op)}
+
+    if action == "set_notes":
+        if not op.get("task") or "notes" not in op:
+            sys.exit("set_notes operations need task and notes")
+        return {"action": "update_task", "task": op["task"], "fields": {"notes": _text(op.get("notes"))}, "reason": _op_reason(op)}
+
+    if action == "replace_notes":
+        if not op.get("task") or not isinstance(op.get("old"), str) or not op.get("old") or not isinstance(op.get("new"), str):
+            sys.exit("replace_notes operations need task plus non-empty old and string new")
+        return {
+            "action": "replace_notes",
+            "task": op["task"],
+            "old": _text(op["old"]),
+            "new": _text(op["new"]),
+            "reason": _op_reason(op),
+        }
+
+    if action == "move":
+        if not op.get("task") or not op.get("section"):
+            sys.exit("move operations need task and section")
+        return {"action": "move", "task": op["task"], "section": op["section"], "reason": _op_reason(op)}
+
+    if action == "create_task":
+        if not op.get("project") or not op.get("name"):
+            sys.exit("create_task operations need project and name")
+        return {
+            "action": "create_task",
+            "project": op["project"],
+            "name": op["name"],
+            "section": op.get("section"),
+            "notes": _text(op.get("notes")) if op.get("notes") is not None else None,
+            "reason": _op_reason(op),
+        }
+
+    if action == "create_subtask":
+        if not op.get("parent") or not op.get("name"):
+            sys.exit("create_subtask operations need parent and name")
+        return {
+            "action": "create_subtask",
+            "parent": op["parent"],
+            "name": op["name"],
+            "notes": _text(op.get("notes")) if op.get("notes") is not None else None,
+            "reason": _op_reason(op),
+        }
+
+    sys.exit("unsupported batch action: %s" % action)
+
+
+def _preview_batch_ops(ops):
+    normalized = [_normalize_batch_op(op) for op in ops]
+    print("Asana batch preview (%d operation%s)" % (len(normalized), "" if len(normalized) == 1 else "s"))
+    print("")
+    for i, op in enumerate(normalized, 1):
+        action = op["action"]
+        if action == "update_task":
+            task = _task_snapshot(op["task"])
+            print("%d. %s (%s)" % (i, task.get("name") or "(unnamed task)", op["task"]))
+            for field, new in op["fields"].items():
+                if field == "notes":
+                    print("   notes changes:")
+                    for line in _note_diff(task.get("notes") or "", new):
+                        print("     %s" % line)
+                else:
+                    print("   %s: %s -> %s" % (field, _clip(task.get(field)), _clip(new)))
+            print("   why: %s" % op["reason"])
+        elif action == "replace_notes":
+            task = _task_snapshot(op["task"])
+            notes = task.get("notes") or ""
+            matches = notes.count(op["old"])
+            if matches != 1:
+                sys.exit("replace_notes preview aborted for %s: old text found %d times (need exactly 1)" % (op["task"], matches))
+            print("%d. %s (%s)" % (i, task.get("name") or "(unnamed task)", op["task"]))
+            print("   notes: %s -> %s" % (_clip(op["old"]), _clip(op["new"])))
+            print("   why: %s" % op["reason"])
+        elif action == "move":
+            task = _task_snapshot(op["task"])
+            print("%d. %s (%s)" % (i, task.get("name") or "(unnamed task)", op["task"]))
+            print("   section: %s -> %s" % (_clip(_section_label(task)), op["section"]))
+            print("   why: %s" % op["reason"])
+        elif action == "create_task":
+            print("%d. Create task in project %s" % (i, op["project"]))
+            print("   name: %s" % _clip(op["name"]))
+            print("   section: %s" % _clip(op.get("section")))
+            if op.get("notes") is not None:
+                print("   notes added:")
+                for line in _note_diff("", op["notes"], limit=6):
+                    print("     %s" % line)
+            print("   why: %s" % op["reason"])
+        elif action == "create_subtask":
+            print("%d. Create subtask under %s" % (i, op["parent"]))
+            print("   name: %s" % _clip(op["name"]))
+            if op.get("notes") is not None:
+                print("   notes added:")
+                for line in _note_diff("", op["notes"], limit=6):
+                    print("     %s" % line)
+            print("   why: %s" % op["reason"])
+
+
+def c_batch_preview(path):
+    _preview_batch_ops(_load_batch_plan(path))
+
+
+def c_batch_apply(path):
+    ops = [_normalize_batch_op(op) for op in _load_batch_plan(path)]
+    if len(ops) < 3:
+        sys.exit("batch-apply requires at least 3 operations; use direct Asana commands for one or two writes")
+    created = []
+    for op in ops:
+        action = op["action"]
+        if action == "update_task":
+            req("PUT", "/tasks/%s" % op["task"], data=op["fields"])
+        elif action == "replace_notes":
+            task = req("GET", "/tasks/%s" % op["task"], params={"opt_fields": "notes"})
+            notes = task.get("notes") or ""
+            matches = notes.count(op["old"])
+            if matches != 1:
+                sys.exit("replace_notes aborted for %s: old text found %d times (need exactly 1)" % (op["task"], matches))
+            req("PUT", "/tasks/%s" % op["task"], data={"notes": notes.replace(op["old"], op["new"])})
+        elif action == "move":
+            req("POST", "/sections/%s/addTask" % op["section"], data={"task": op["task"]})
+        elif action == "create_task":
+            d = {"name": op["name"], "projects": [op["project"]]}
+            if op.get("notes") is not None:
+                d["notes"] = op["notes"]
+            t = req("POST", "/tasks", data=d)
+            created.append(t["gid"])
+            if op.get("section"):
+                req("POST", "/sections/%s/addTask" % op["section"], data={"task": t["gid"]})
+        elif action == "create_subtask":
+            d = {"name": op["name"]}
+            if op.get("notes") is not None:
+                d["notes"] = op["notes"]
+            t = req("POST", "/tasks/%s/subtasks" % op["parent"], data=d)
+            created.append(t["gid"])
+    print("Asana batch applied: %d operations." % len(ops))
+    if created:
+        print("Created: %s" % ", ".join(created))
+
+
+def c_search(kind, query):
+    ws = os.environ.get("ASANA_WORKSPACE", DEFAULT_WS)
+    for p in req("GET", "/workspaces/%s/typeahead" % ws,
+                 params={"resource_type": kind, "query": query, "opt_fields": "name"}):
+        print(p["gid"], p["name"])
+
+
+def c_projects():
+    """List non-archived projects in the workspace (gid name)."""
+    ws = os.environ.get("ASANA_WORKSPACE", DEFAULT_WS)
+    for p in req("GET", "/projects", params={"workspace": ws, "opt_fields": "name,archived"}):
+        if p.get("archived"):
+            continue
+        print(p["gid"], p["name"])
+
+
+def c_raw(method, path):
+    data = None
+    if not sys.stdin.isatty():
+        s = sys.stdin.read().strip()
+        if s:
+            data = json.loads(s)
+    print(json.dumps(req(method.upper(), path, data=data), indent=2, ensure_ascii=False))
+
+
+HELP = """asana — Asana API CLI (reads ASANA_PAT from ~/plant-monitoring/.env)
+
+  asana get <task>                  name + notes
+  asana notes <task>                notes only
+  asana set-notes <task> [text|-]   set notes (arg, or stdin if '-'/omitted)
+  asana append <task> [text|-]      append to notes
+  asana replace <task> [old new]    exact in-place note edit (args, or {"old":..,"new":..} JSON on stdin)
+  asana rename <task> <name>
+  asana project <project>           name + notes
+  asana sections <project>          list sections (gid name)
+  asana tasks <section|project> [--all]   incomplete by default
+  asana subtasks <task>
+  asana move <task> <section>       move task to a section (same project)
+  asana create-task <project> <name> [--section <gid>] [--notes -]
+  asana create-subtask <parent> <name> [--notes -]
+  asana batch-preview <plan.json>   print the concise preview without writing
+  asana batch-apply <plan.json>     short permission prompt, then apply on yes (3+ operations)
+  asana search project|task <query>
+  asana projects                    list all (non-archived) workspace projects
+  asana raw <GET|PUT|POST> <path>   JSON body from stdin
+      e.g. asana raw GET '/tasks/123?opt_fields=name,notes'
+
+batch plan shape:
+  {"operations":[
+    {"action":"update_task","task":"123","field":"due_on","new":"2026-07-20","reason":"why"},
+    {"action":"update_task","task":"123","fields":{"name":"New name","completed":false},"reason":"why"},
+    {"action":"replace_notes","task":"123","old":"exact old text","new":"replacement","reason":"why"},
+    {"action":"move","task":"123","section":"456","reason":"why"},
+    {"action":"create_task","project":"789","name":"Task name","section":"456","notes":"optional","reason":"why"},
+    {"action":"create_subtask","parent":"123","name":"Subtask name","notes":"optional","reason":"why"}
+  ]}
+
+env overrides: ASANA_PAT, ASANA_ENV, ASANA_WORKSPACE
+"""
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] in ("help", "-h", "--help"):
+        print(HELP)
+        return
+    cmd, rest = a[0], a[1:]
+
+    def opt(flag):
+        if flag in rest:
+            i = rest.index(flag)
+            v = rest[i + 1]
+            del rest[i:i + 2]
+            return v
+        return None
+
+    try:
+        if cmd == "get":
+            c_get(rest[0])
+        elif cmd == "notes":
+            c_notes(rest[0])
+        elif cmd == "set-notes":
+            c_set_notes(rest[0], rest[1] if len(rest) > 1 else "-")
+        elif cmd == "append":
+            c_append(rest[0], rest[1] if len(rest) > 1 else "-")
+        elif cmd == "replace":
+            c_replace(rest[0], rest[1] if len(rest) > 1 else None, rest[2] if len(rest) > 2 else None)
+        elif cmd == "rename":
+            c_rename(rest[0], rest[1])
+        elif cmd == "project":
+            c_project(rest[0])
+        elif cmd == "sections":
+            c_sections(rest[0])
+        elif cmd == "tasks":
+            allflag = "--all" in rest
+            rest[:] = [x for x in rest if x != "--all"]
+            c_tasks(rest[0], allflag)
+        elif cmd == "subtasks":
+            c_subtasks(rest[0])
+        elif cmd == "move":
+            c_move(rest[0], rest[1])
+        elif cmd == "create-task":
+            section = opt("--section")
+            notes = opt("--notes")
+            c_create_task(rest[0], rest[1], section, notes)
+        elif cmd == "create-subtask":
+            notes = opt("--notes")
+            c_create_subtask(rest[0], rest[1], notes)
+        elif cmd == "batch-preview":
+            c_batch_preview(rest[0])
+        elif cmd == "batch-apply":
+            c_batch_apply(rest[0])
+        elif cmd == "search":
+            c_search(rest[0], rest[1])
+        elif cmd == "projects":
+            c_projects()
+        elif cmd == "raw":
+            c_raw(rest[0], rest[1])
+        else:
+            sys.exit("unknown command: %s (try `asana help`)" % cmd)
+    except IndexError:
+        sys.exit("missing argument (try `asana help`)")
+
+
+if __name__ == "__main__":
+    main()
