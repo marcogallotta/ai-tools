@@ -47,6 +47,14 @@ only — no contract/protected-task work in this pass (see bottom).
    and an explicit all-pages mode on list commands (`tasks`, `subtasks`,
    `sections`, `search`, `projects`). Affects asana:105-124, 388-401.
 
+   **Downstream consumer to update if `tasks --all` semantics change:**
+   `~/honest-pantry/CLAUDE.md` documents and relies on current behavior —
+   "`asana tasks <project_gid> --all` returns every task across all sections
+   in one call" and "bare command (no `--all`) is incomplete-only by default."
+   If this fix changes those semantics (e.g. `--all` no longer means
+   single-call-every-task, or default behavior changes), that file must be
+   updated in the same pass, not left stale.
+
 4. **Remove section/project fallback guessing.**
    `c_tasks` (asana:112-115) currently tries the section endpoint and
    silently retries against the project endpoint on any failure — including
@@ -74,17 +82,21 @@ only — no contract/protected-task work in this pass (see bottom).
    of earlier ones in the same plan, so the preview reflects the actual final
    state rather than N independent diffs.
 
-## Open question — still undecided
+## Resolved — declined
 
 **Should `batch-preview` be bound to the exact plan file before `apply`?**
-E.g. hash the plan file itself (not task content) so `batch-apply` can
-verify it's operating on the exact plan that was previewed, catching
-edits to the plan between the two calls.
+(E.g. hash the plan file itself so `batch-apply` can verify it's operating
+on the exact plan that was previewed.)
 
-This is scoped tighter than the general contract-plumbing questions below —
-it only needs a hash of the local plan file, not any canonical
-task-content/baseline model. Still needs a decision: do it now as part of
-this cleanup, or defer all preview/apply binding to the later contract work.
+Declined. The global CLAUDE.md's mandated batch workflow doesn't put
+`batch-preview` in the critical path at all — it has the agent build the
+plan, show a Markdown table in chat as the review surface, then immediately
+invoke `batch-apply` in the same turn. There's no separate preview-then-apply
+window for a plan to drift in. Separately, in practice the printed
+`batch-preview` diff output has not actually been read before applying, so
+binding `apply` to a hash of something that isn't being reviewed would add
+friction without protecting a real review step. If a mandatory preview gate
+is ever added to the workflow itself, revisit this then.
 
 ## Out of scope for this pass
 
