@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """asana — minimal Asana API CLI.
 
-Reads ASANA_PAT from ~/plant-monitoring/.env (override with $ASANA_PAT or $ASANA_ENV).
+Reads ASANA_PAT from ~/.config/asana-cli/.env (override with $ASANA_PAT or $ASANA_ENV).
 Stdlib only. Run `asana help` for usage.
 """
 import json, os, sys, urllib.request, urllib.parse, urllib.error
@@ -15,7 +15,7 @@ def load_pat():
     pat = os.environ.get("ASANA_PAT")
     if pat:
         return pat
-    env = os.environ.get("ASANA_ENV", os.path.expanduser("~/plant-monitoring/.env"))
+    env = os.environ.get("ASANA_ENV", os.path.expanduser("~/.config/asana-cli/.env"))
     try:
         with open(env) as f:
             for line in f:
@@ -305,7 +305,7 @@ def c_raw(method, path):
     print(json.dumps(req(method.upper(), path, data=data), indent=2, ensure_ascii=False))
 
 
-HELP = """asana — Asana API CLI (reads ASANA_PAT from ~/plant-monitoring/.env)
+HELP = """asana — Asana API CLI (reads ASANA_PAT from ~/.config/asana-cli/.env)
 
   asana get <task>                  name + notes
   asana notes <task>                notes only
