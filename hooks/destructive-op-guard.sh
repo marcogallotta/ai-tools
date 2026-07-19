@@ -23,45 +23,45 @@ deny() {
 
 # rm anywhere in the command (word-bounded so npm/charm/etc. don't match)
 if printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|(`])rm([[:space:]]|$)'; then
-  ask "[git-rm-guard] Destructive: 'rm' requires explicit approval."
+  ask "[destructive-op-guard] Destructive: 'rm' requires explicit approval."
 fi
 
 # docker compose down -v destroys volumes (including dev DB)
 if printf '%s' "$cmd" | grep -Eq '\bdocker\b' && printf '%s' "$cmd" | grep -Eq '\bdown\b' && printf '%s' "$cmd" | grep -Eq '(^|[[:space:]])-[a-zA-Z]*v'; then
-  ask "[git-rm-guard] Destructive: 'docker compose down -v' will destroy volumes including the dev DB. Explicit approval required."
+  ask "[destructive-op-guard] Destructive: 'docker compose down -v' will destroy volumes including the dev DB. Explicit approval required."
 fi
 
 # git-commit wrapper (atomic stage+commit)
 if printf '%s' "$cmd" | grep -Eq '(^|[[:space:]/])git-commit[[:space:]]'; then
-  ask "[git-rm-guard] git-commit (stage + commit) requires explicit approval."
+  ask "[destructive-op-guard] git-commit (stage + commit) requires explicit approval."
 fi
 
 # destructive git subcommands
 if printf '%s' "$cmd" | grep -Eq '\bgit\b'; then
   if printf '%s' "$cmd" | grep -Eq '\b(commit|push|clean|checkout|restore)\b'; then
-    ask "[git-rm-guard] Destructive git operation (commit/push/checkout/restore/clean) requires explicit approval."
+    ask "[destructive-op-guard] Destructive git operation (commit/push/checkout/restore/clean) requires explicit approval."
   fi
   if printf '%s' "$cmd" | grep -Eq '\breset\b' && printf '%s' "$cmd" | grep -Eq -- '--hard'; then
-    ask "[git-rm-guard] Destructive git operation (reset --hard) requires explicit approval."
+    ask "[destructive-op-guard] Destructive git operation (reset --hard) requires explicit approval."
   fi
   if printf '%s' "$cmd" | grep -Eq '\bgit\b[^|&;]*\badd\b'; then
-    deny "[git-rm-guard] Don't run git add alone — it leaves staged changes that can collide with another session's commit. Use: ~/.claude/bin/git-commit <files> -m 'message'"
+    deny "[destructive-op-guard] Don't run git add alone — it leaves staged changes that can collide with another session's commit. Use: ~/.claude/bin/git-commit <files> -m 'message'"
   fi
 fi
 
 # psql write operations
 if printf '%s' "$cmd" | grep -Eq '\bpsql\b'; then
   if printf '%s' "$cmd" | grep -Eiq '\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|COPY)\b'; then
-    ask "[git-rm-guard] psql write operation (INSERT/UPDATE/DELETE/DROP/etc.) requires explicit approval."
+    ask "[destructive-op-guard] psql write operation (INSERT/UPDATE/DELETE/DROP/etc.) requires explicit approval."
   fi
   if printf '%s' "$cmd" | grep -Eq -- '-c\b'; then
-    ask "[git-rm-guard] psql -c (inline SQL command) requires explicit approval."
+    ask "[destructive-op-guard] psql -c (inline SQL command) requires explicit approval."
   fi
 fi
 
 # rsync --delete removes files on the target
 if printf '%s' "$cmd" | grep -Eq '\brsync\b' && printf '%s' "$cmd" | grep -Eq -- '--delete\b'; then
-  ask "[git-rm-guard] rsync --delete can remove files on the target. Explicit approval required."
+  ask "[destructive-op-guard] rsync --delete can remove files on the target. Explicit approval required."
 fi
 
 # ssh with a remote command (not just interactive login)
@@ -81,7 +81,7 @@ if printf '%s' "$cmd" | grep -Eq '\bssh\b' && ! printf '%s' "$cmd" | grep -Eq 'p
     END { print n }
   ')
   if [ "${nonflag:-0}" -gt 1 ]; then
-    ask "[git-rm-guard] ssh with remote command (not just interactive login) requires explicit approval."
+    ask "[destructive-op-guard] ssh with remote command (not just interactive login) requires explicit approval."
   fi
 fi
 
