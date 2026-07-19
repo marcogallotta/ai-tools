@@ -2,7 +2,7 @@
 # Atomic stage-and-commit. Refuses carpet-bomb patterns to prevent index
 # collisions between concurrent Claude sessions.
 #
-# Usage: git-commit <file> [file...] -m "message"
+# Usage: git-commit <file> [file...] -m "message" [--amend]
 #        [--contract-size-explained <sha256>]
 
 set -euo pipefail
@@ -10,19 +10,23 @@ set -euo pipefail
 msg=""
 repo=""
 contract_size_explained=""
+amend=false
 files=()
 
 show_help() {
   cat <<EOF
-Usage: git-commit <file> [file...] -m "message" [-C <repo>]
+Usage: git-commit <file> [file...] -m "message" [-C <repo>] [--amend]
        [--contract-size-explained <sha256>]
 
 Atomic stage-and-commit. Refuses carpet-bomb patterns ('.', '-A', '-u', '--all')
 to prevent index collisions between concurrent Claude sessions.
 
 Options:
-  -m <message>                    Commit message (required)
+  -m <message>                    Commit message (required, unless --amend is
+                                   used without one, which keeps the prior message)
   -C <repo>                       Run git in <repo> instead of \$PWD
+  --amend                         Amend the previous commit instead of creating
+                                   a new one
   --contract-size-explained <sha> Acknowledge dish-task-contract.md soft size
                                    limit after explaining the removal to Marco
   -h, --help                      Show this help and exit
@@ -47,6 +51,9 @@ while [[ $# -gt 0 ]]; do
       shift
       contract_size_explained="$1"
       ;;
+    --amend)
+      amend=true
+      ;;
     --)
       shift
       files+=("$@")
@@ -63,7 +70,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-if [[ -z "$msg" ]]; then
+if [[ -z "$msg" && "$amend" == false ]]; then
   echo "Error: -m <message> is required" >&2
   exit 1
 fi
@@ -131,10 +138,22 @@ EOF
   fi
 fi
 
+commit_args=()
+if [[ "$amend" == true ]]; then
+  commit_args+=(--amend)
+  if [[ -n "$msg" ]]; then
+    commit_args+=(-m "$msg")
+  else
+    commit_args+=(--no-edit)
+  fi
+else
+  commit_args+=(-m "$msg")
+fi
+
 if [[ -n "$repo" ]]; then
   git -C "$repo" add -- "${files[@]}"
-  git -C "$repo" commit -m "$msg"
+  git -C "$repo" commit "${commit_args[@]}"
 else
   git add -- "${files[@]}"
-  git commit -m "$msg"
+  git commit "${commit_args[@]}"
 fi
