@@ -394,7 +394,8 @@ subcommand doesn't make its output less important to verify.
   whether `Self-verified:` should stay something ChatGPT asserts in its own output rather than
   something the Action layer stamps on its behalf.
 - **`requirements.txt`** — no new entries; the manifest is JSON, parsed with stdlib `json` only.
-- **`.gitignore`** — add `var/` for the new SQLite DB location.
+- **`.gitignore`** — no separate action here; `var/` is added in Step 1 alongside the SQLite schema
+  work, not deferred to this step.
 
 ## Deployment
 
