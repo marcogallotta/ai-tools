@@ -53,15 +53,20 @@ is always present") and the heading list at lines 68–99:
     {"name": "STORAGE", "required": false},
     {"name": "PROCESS RECORD", "required": true}
   ],
-  "process_record_subheadings": ["Decisions", "Research basis", "Material changes", "Post-cook actuals"]
+  "process_record_subheadings": ["Decisions", "Research basis", "Material changes", "Post-cook actuals", "Open questions"]
 }
 ```
 
 `manifest_version` lets the validator detect a future incompatible manifest shape without guessing.
-This is a proposed starting shape, not a final one — you should review it against the actual current
-heading set before approving, since I derived it from the prose rather than from a live task sample.
-`process_record_subheadings` should additionally be scoped as valid only nested under `PROCESS RECORD`,
-not as a second top-level allowlist.
+
+**Checked against live tasks, not just the prose.** Spot-checked several real tasks across sections
+(`Sichuan`, `Subcontinent`, `Eating`) via `asana notes`. All top-level headings above matched exactly —
+nothing extra, nothing missing. One gap surfaced and is now fixed: task `1216471568411594` (Lushui
+master stock) has an `### Open questions` subheading under `PROCESS RECORD` that the original draft
+didn't allow; it's added to `process_record_subheadings` above. Still worth a final look before
+approving, since this was a sample, not every live task. `process_record_subheadings` should
+additionally be scoped as valid only nested under `PROCESS RECORD`, not as a second top-level
+allowlist.
 
 **Manifest scope: heading allowlist only, decided.** The change plan's older wording asks for a
 manifest of "headings, required fields, and allowed values," but the design doc's Deterministic
@@ -127,6 +132,19 @@ tests are unaffected either way.
   SHA-256, canonicalization version stored with the record — per Content hashing. One function,
   `canonicalize_and_hash(text) -> (canonical_bytes, hash_hex, version)`, used identically by
   `prepare`/`approve`/`submit`; no second implementation anywhere.
+
+  **OPEN — Asana write/read round-trip on note content is unverified.** Content hashing requires this
+  be tested "before implementation": whether Asana normalizes trailing newlines or other note content
+  on write, and which operations actually bump `modified_at`. The entire hash-equality model
+  (`baseline_notes_hash` at `start`, `content_hash` match at `approve`/`submit`) assumes canonicalized
+  bytes survive an Asana round trip unchanged; if Asana silently rewrites anything on write, an honest
+  `approve`/`submit` hash check — or a later `start`'s baseline read — could mismatch for reasons that
+  have nothing to do with a real edit. Options: (a) do this as a standalone spike against a scratch
+  Asana task before writing `canonicalize_and_hash`, so canonicalization is chosen from evidence rather
+  than assumption; (b) build `canonicalize_and_hash` as proposed and let Step 1/2's own tests against a
+  real (non-fixture) task surface any mismatch. Recommendation: (a) — this is a cheap, one-time check
+  and the canonicalization scheme it validates is depended on by every later step; discovering a
+  mismatch after Steps 2–5 are already built against the wrong assumption is more expensive to unwind.
 - `contract_revision()`: runs `git -C <honest-pantry path> log -1 --format=%H -- dish-task-contract.md`;
   on any git failure, falls back to `sha256(contract_text) + read timestamp`, matching the contract
   text's own fallback rule (dish-task-contract.md:183–184) exactly.
@@ -289,6 +307,23 @@ reverting to `ready`, which a 5xx doesn't establish:
   retries are exhausted (a 500/502/503/504 does not prove the mutation was never applied), timeouts, and
   connection breaks with no response at all.
 
+  **Verified: the SDK's retry/backoff is real, not assumed.** `asana==5.2.5`'s `Configuration()` carries
+  a `urllib3.util.retry.Retry` with `total=5`, `status_forcelist=[429, 500, 502, 503, 504]`,
+  `backoff_factor=2`, `backoff_max=120`. `update_task` (what `submit` calls) is a `PUT`, which *is* in
+  urllib3's default retryable-methods set, so this retry strategy does apply to the write call itself,
+  not just reads — the classification above is sound.
+
+  One consequence worth being deliberate about in Step 5's implementation: because urllib3 retries `PUT`
+  transparently *underneath* the SDK call, a single `submit()` invocation that eventually times out or
+  raises may already represent up to 5 real `PUT` attempts against Asana, not zero or one. A timeout the
+  tool observes is not evidence the write was never sent — it's evidence the tool never got a confirming
+  response, which is exactly why the design routes it to `uncertain` rather than `ready`. This doesn't
+  break the design (an idempotent PUT of the same complete note content is safe to have been applied more
+  than once), but "exactly one Asana mutation call on the success path" (test list below) should be read
+  as exactly one `submit()` invocation reaching the API, not a guarantee of exactly one HTTP request on
+  the wire — worth a one-line comment in the test itself so a future reader doesn't misread a passing test
+  as proving single-request behavior.
+
 ### Tests (`tests/test_contract_submit.py`)
 
 - content-hash mismatch at `submit` rejected, no Asana call made;
@@ -329,8 +364,10 @@ editor gets a new attempt.
 In `asana` (existing file): before `set-notes`/`append`/`replace`/batch note-updating operations/`raw`
 writes touching `notes`/`html_notes`, call a new `contract_lib.is_managed(task_gid)` that compares the
 task's current section GID directly against `COOKING_SOURCING_SECTION_GID`/
-`COOKING_REFERENCE_SECTION_GID` (config values, resolved by name once, by hand, at setup time and
-pinned — not re-resolved by name on every process start). Re-resolving by *name* on every invocation
+`COOKING_REFERENCE_SECTION_GID` — hardcoded constants in `contract_lib.py`, same convention as
+`$CONTRACT_MD_PATH`'s default. Resolved once by hand via `asana sections 1215089183018968`, not
+re-resolved by name at runtime; the actual GIDs are `1215097887456673` (`Sourcing`) and
+`1215259129474846` (`Reference`), confirmed live. Re-resolving by *name* on every invocation
 would mean a rename of `Sourcing`/`Reference` silently breaks the lookup and misclassifies that
 section's own tasks as newly managed — exactly the rename fragility the design's GID-based approach
 exists to avoid, since a task's *current* section is always compared by GID, but the exclusion-set GIDs
