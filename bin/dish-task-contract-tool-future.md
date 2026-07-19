@@ -45,6 +45,14 @@ v1b is a configuration flip on v1a's own logged evidence, not new code.
   trigger condition can be designed from real data.
 - Bounded direct-dependency surfacing (see Direct dependencies) — already scoped in the change plan
   as advisory and non-blocking; natural to add once the core write path is proven.
+- Structured task-title construction (incident 22): take `--dish-name` plus repeatable `--blocker`
+  and `--optional` values and render the canonical marker prefix rather than asking agents to hand-
+  format it. This guarantees title syntax, not semantic completeness; verification still catches
+  omitted real blockers or trivial marker dumping. Repeatable options avoid ambiguous commas.
+- Verifier correction support for the split contract: preserve the judgment-based hybrid. A verifier
+  may make a clear fix, recheck, and sign; a substantive defect, such as a recipe whose protein is
+  off, returns to the editor. The tool must permit that workflow but must not attempt to classify a
+  correction as clear or substantive.
 - Token/submission replacement as a distinct action from `contract-admin recover` — only worth
   building if recovery proves insufficient in real use.
 - Replacing the manual ChatGPT copy/paste relay (`dish-task-contract-tool.md`'s ChatGPT workflow
@@ -55,14 +63,14 @@ v1b is a configuration flip on v1a's own logged evidence, not new code.
   model (ChatGPT calling directly into a live endpoint against real tasks, vs. today's model where
   nothing executes until a local agent runs `contract prepare`/`submit`) and what `Self-verified:`
   actually asserts (ChatGPT's own claim in its output vs. something the Action layer stamps on its
-  behalf). Decide the trust/semantics question before building.
+  behalf). Decide the trust/semantics question before building. The same endpoint may later mediate
+  reads: give a cook the complete signed above-divider brief, a shopper the buying/quantity view,
+  and a verifier the complete candidate and provenance. Named-section reads are useful for bounded
+  work, but must not replace a complete cook view where quantities, timing, fallbacks, and warnings
+  depend on one another.
 
 **Dropped, not deferred.** These were considered and rejected outright, not postponed:
 
-- Verifier in-place editing and any author-reassignment bookkeeping (`last_content_author` and
-  related). No incident motivates letting a verifier edit the note at all; a verifier who finds a
-  problem rejects it and the editor resubmits (see Workflow). This removes an entire dimension of
-  state the design previously carried.
 - `--confirm-independent-review` as a separate required flag, and any dedicated "self-verification
   collision" detection alongside it. The opposite-family requirement on `approve` already makes
   `editor_agent == verifier_agent` structurally unreachable — routing rejects it before any
@@ -113,24 +121,27 @@ must not recursively audit dependencies or decide semantic impact.
 ## Candidate deterministic checks flagged during dish-verification.md checklist drafting (v2)
 
 Raised while drafting `dish-verification.md`'s compact checklist in honest-pantry
-(`dish-docs-design.md`, "Research/verification split and file rename"), cross-checking it against
-this tool's v1a validation list. Not evidenced by a dedicated incident beyond the two named below;
-recorded as candidates because both are mechanically checkable against note text without any
-semantic/culinary judgment, unlike most other deferred items in this file.
+(`dish-docs-design.md`, "Research/verification split and file rename"). This records a settled v2
+title interface, a settled nutrition-check direction whose rollout timing remains open, and the
+still-candidate purchase reconciliation. Each tool check stays narrow; semantic and culinary truth
+remain verifier work.
 
-- **Blocking-dependency bracket-marker presence (incident 22).** Check that a task carrying a
-  practical/Human blocker also carries `[bracketed]` marker text on its title/marker line. Purely
-  structural (regex/string check against the marker line), same character as the existing
-  no-headings-outside-manifest check, not a judgment of whether the blocker itself is real or
-  correctly described.
+- **Task-title validation (incident 22).** Use the structured construction specified in the v2 list
+  above; do not attempt brittle blocker inference from free-form notes.
+- **Four-field nutrition checks — direction settled, timing open (incidents 5 and 23).** Parse
+  calories, carbohydrate, protein, and fat per served portion; check approximate 4/4/9 calorie
+  reconciliation; and flag `<750 kcal`, `<40 g protein`, and `>40 g fat`. These flags never
+  auto-reject. An explicit Planning exception for the applicable limit suppresses its flag; a
+  research-stage acknowledgment does not. Ingredient-level estimate truth and deep-fried/fat-heavy
+  construction remain semantic, and exact exception encoding still needs implementation review.
 - **`WHAT TO BUY` / `QUANTITIES` reconciliation (incident 21).** v1a only checks that `WHAT TO BUY`
   is present, not whether each purchase amount reconciles with recipe use, live stock, usable yield
   or trim, and package/minimum purchase quantity. A later check needs a defined per-ingredient
   syntax that distinguishes those values and permits an explicit reason for a difference; literal
   numeric equality is not the invariant.
 
-Neither is scoped into v1a's implementation plan; both are candidates for whenever a v1.x follow-up
-to the deterministic validator is considered, alongside the existing v2 list above.
+None is scoped into v1a's implementation plan. Title construction is explicitly v2; nutrition timing
+and purchase-reconciliation syntax remain for a later implementation review.
 
 ## Open decision: small-change carelessness (v2)
 
