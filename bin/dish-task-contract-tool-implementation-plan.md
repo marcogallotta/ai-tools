@@ -133,18 +133,29 @@ tests are unaffected either way.
   `canonicalize_and_hash(text) -> (canonical_bytes, hash_hex, version)`, used identically by
   `prepare`/`approve`/`submit`; no second implementation anywhere.
 
-  **OPEN — Asana write/read round-trip on note content is unverified.** Content hashing requires this
-  be tested "before implementation": whether Asana normalizes trailing newlines or other note content
-  on write, and which operations actually bump `modified_at`. The entire hash-equality model
-  (`baseline_notes_hash` at `start`, `content_hash` match at `approve`/`submit`) assumes canonicalized
-  bytes survive an Asana round trip unchanged; if Asana silently rewrites anything on write, an honest
-  `approve`/`submit` hash check — or a later `start`'s baseline read — could mismatch for reasons that
-  have nothing to do with a real edit. Options: (a) do this as a standalone spike against a scratch
-  Asana task before writing `canonicalize_and_hash`, so canonicalization is chosen from evidence rather
-  than assumption; (b) build `canonicalize_and_hash` as proposed and let Step 1/2's own tests against a
-  real (non-fixture) task surface any mismatch. Recommendation: (a) — this is a cheap, one-time check
-  and the canonicalization scheme it validates is depended on by every later step; discovering a
-  mismatch after Steps 2–5 are already built against the wrong assumption is more expensive to unwind.
+  **Verified against a live Asana write/read round trip**, task `1216683399494189` in the "test"
+  project (`1216693403164366`; left in place, not deleted — harmless scratch data, not a real dish
+  task):
+
+  * No trailing-newline normalization — the raw API JSON confirmed Asana stores exactly the bytes
+    sent, no added or stripped trailing newline. (An initial apparent mismatch was this CLI's own
+    `print()` adding a display-time `\n`, not an Asana behavior — resolved by comparing against
+    `asana raw GET` output instead of `asana notes`.)
+  * CRLF is preserved literally, not normalized to LF — Asana does zero line-ending work. LF
+    canonicalization is entirely the tool's own responsibility; nothing arrives pre-normalized.
+  * Non-ASCII content (accented Latin, em-dash, curly quotes, CJK) round-trips byte-for-byte.
+  * `modified_at` is bumped by *any* field change, not just notes — confirmed by renaming the task
+    (touching only `name`) and observing `modified_at` move. It is a whole-task signal, not a
+    notes-specific one. This matters only if something later compares `baseline_modified_at` against
+    a fresh read: nothing in this design does that automatically today — `start` captures it once and
+    only `content_hash` is actively re-checked (at `approve`/`submit`); `baseline_modified_at` is
+    stored for Marco's manual investigation via `contract-admin recover`, not consumed by any
+    automated gate. Do not add one later without accounting for this — an automated
+    `modified_at`-equality check would misfire on routine unrelated activity (a rename, a section
+    move, likely a comment or custom-field edit too).
+
+  Conclusion: the proposed canonicalization (UTF-8, LF, no trimming/whitespace cleanup/reordering) is
+  correct as designed — Asana does no content rewriting for `canonicalize_and_hash` to account for.
 - `contract_revision()`: runs `git -C <honest-pantry path> log -1 --format=%H -- dish-task-contract.md`;
   on any git failure, falls back to `sha256(contract_text) + read timestamp`, matching the contract
   text's own fallback rule (dish-task-contract.md:183–184) exactly.
