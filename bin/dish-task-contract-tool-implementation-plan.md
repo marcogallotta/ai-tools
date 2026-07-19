@@ -1,9 +1,10 @@
 # Dish task contract tool — v1a implementation plan
 
 Scope: v1a only, per `dish-task-contract-tool.md`'s Versioning plan — the full guarded path
-(`prepare`/`approve`/`reject`/`submit`/`contract-admin recover`), soft-launched with the generic
-Asana CLI's managed-task check running advisory/log-only. v1b's enforcement flip and all v2 items are
-out of scope here; nothing in this plan builds toward them ahead of need.
+(`start`/`prepare`/`approve`/`reject`/`submit`/`contract-admin recover`/`contract-admin reset`),
+soft-launched with the generic Asana CLI's managed-task check running advisory/log-only. v1b's
+enforcement flip and all v2 items are out of scope here; nothing in this plan builds toward them ahead
+of need.
 
 This plan assumes the design in `dish-task-contract-tool.md` as final for v1a. Where that document
 already resolved a question, this plan does not re-litigate it — it cites the resolution and moves to
@@ -13,11 +14,11 @@ options and a recommendation; nothing else in this plan should be read as still 
 ## Rollout
 
 Ship as staged commits: Step 0 → Step 1 → Step 2 → Step 3 → Step 4 → Step 5 → Step 6 → Step 7 → Step
-8. Each stage lands and is independently testable. Steps 1–5 can be built and tested against a fixture
-copy of the contract text before Step 0 is merged; nothing in Steps 1–5 depends on Step 0 having
-landed in the real `dish-task-contract.md`, but the tool must not soft-launch against live tasks (Step
-6 going live) until Step 0 is merged for real, since `prepare` cannot validate against a manifest that
-doesn't exist yet.
+8 → Step 9. Each stage lands and is independently testable. Steps 1–6 can be built and tested against a
+fixture copy of the contract text before Step 0 is merged; nothing in Steps 1–6 depends on Step 0
+having landed in the real `dish-task-contract.md`, but the tool must not soft-launch against live tasks
+(Step 7 going live) until Step 0 is merged for real, since `prepare` cannot validate against a manifest
+that doesn't exist yet.
 
 ## Step 0 — contract-text prerequisites (draft here, approve separately)
 
@@ -130,7 +131,7 @@ tests are unaffected either way.
 - Agent family routing: `family(agent) -> "claude"|"gpt"`, per the `claude` / `gpt,codex` mapping.
 - Change-level mapping: `small|medium|large -> Local|Delta|Reconstruction` for the process record.
 - Audit logging: one `log_event(...)` function writing to `audit_events`, called by every command
-  path in Steps 2–6, including failure paths with no submission row.
+  path in Steps 2–7, including failure paths with no submission row.
 
 **OPEN — `$CONTRACT_MD_PATH` location.** honest-pantry is a sibling directory to `ai-tools`, not a git
 submodule of it, so the tool reads it as a plain filesystem path with its own git repo underneath (for
@@ -154,25 +155,54 @@ want this pinned some other way.
 - `family()` maps `claude` → `claude`, `gpt`/`codex` → `gpt`, and rejects any other value;
 - `log_event` writes a row with `submission_id` nullable and `task_gid` populated whenever known.
 
-## Step 2 — `contract prepare` and deterministic validation
+## Step 2 — `contract start`
 
-`~/ai-tools/bin/contract` (new) — dispatch shell using `argparse` (subparsers for `prepare`/`approve`/
-`reject`/`submit`, `choices=` for `--agent`/`--change-level`). No convention forces this to match
-`asana`'s hand-rolled flag parsing, and `argparse` gets free `--help`, error messages, and `choices`
-validation for no extra code.
+`~/ai-tools/bin/contract` (new) — dispatch shell using `argparse` (subparsers for `start`/`prepare`/
+`approve`/`reject`/`submit`, `choices=` for `--agent`/`--change-level`). No convention forces this to
+match `asana`'s hand-rolled flag parsing, and `argparse` gets free `--help`, error messages, and
+`choices` validation for no extra code.
 
-`c_prepare(...)` implements Workflow §1 exactly: task existence check; open-submission check (app-level
-+ relies on Step 1's unique index for the race case); baseline read (`baseline_modified_at`,
-`baseline_notes_hash` via `contract_lib.canonicalize_and_hash`); manifest/revision/text-hash capture
-via `contract_lib`'s manifest loader; the full deterministic validation rule set (readiness line,
-`WHAT TO BUY` presence, process-record lines well-formed, `Self-verified:` agent match, change-level/
-process-record consistency, contract-revision match, heading allowlist, readiness-contradiction check);
-diff-summary computation (`characters_added`, `characters_removed`, `lines_changed`,
-`headings_touched`) against the baseline; and submission-row creation with the correct initial status
+`c_start(...)` implements Workflow §1: task existence check; open-submission check (app-level + relies
+on Step 1's unique index on `submissions(task_gid)` for non-terminal `status`, including `drafting`,
+for the race case — this is the lock); one baseline read of the live task, recording
+`baseline_modified_at` and `baseline_notes_hash` via `contract_lib.canonicalize_and_hash`; creates one
+`submissions` row, status `drafting`, `write_count` 0; prints the `submission_id` back to the caller —
+this is the only token every later command (`prepare`/`approve`/`reject`/`submit`) operates on, there is
+no separate token object.
+
+This is the only baseline read for the submission's entire life. Closing the gap where a long drafting
+window could otherwise silently miss an intervening edit was an open implementation question in an
+earlier pass of this plan (previously drafted as an optional `contract start` addition); the design doc
+now specifies `start` as a required first step for every submission, so that gap no longer exists —
+there is nothing left to add here at v1a.
+
+### Tests (`tests/test_contract_start.py`)
+
+- `start` on a task with no open submission succeeds, creates a `drafting` row, and captures
+  `baseline_modified_at`/`baseline_notes_hash` from a live read;
+- `start` on a task with an already-open (non-terminal, including `drafting`) submission is rejected;
+- two simultaneous `start` calls on the same task: only one succeeds (assert on the SQLite unique-index
+  rejection for the second, not just "doesn't crash" — the race case Step 1's partial unique index
+  exists for);
+- `start` on a task that no longer exists is rejected before any row is created;
+- every `start` call (pass or fail) produces exactly one `audit_events` row.
+
+## Step 3 — `contract prepare` and deterministic validation
+
+`c_prepare(...)` implements Workflow §2: confirms the submission exists and is in status `drafting` — it
+does not take its own fresh baseline read, it uses `baseline_modified_at`/`baseline_notes_hash` already
+captured on the row by `start`; manifest/revision/text-hash capture via `contract_lib`'s manifest loader,
+stored on the row so this submission is validated against this exact frozen manifest for its entire
+life; the full deterministic validation rule set (readiness line, `WHAT TO BUY` presence, process-record
+lines well-formed, `Self-verified:` agent match, change-level/process-record consistency,
+contract-revision match, heading allowlist, readiness-contradiction check); on a validation failure, the
+submission stays in `drafting` (it already exists, opened by `start`) and the attempt is logged; on a
+pass, diff-summary computation (`characters_added`, `characters_removed`, `lines_changed`,
+`headings_touched`) against the baseline captured at `start`, and advancing the row out of `drafting`
 (`ready` for `small`, `awaiting_verification` with `required_verifier_family` set for `medium`/`large`).
 
 Every validation failure is reported with every violated rule, not just the first, and logged via
-`log_event` even though no submission row is created.
+`log_event` even on a failing attempt, since `start` already created the row it attaches to.
 
 **OPEN — attempt-number logging.** The design doc's Logging and observability section requires `prepare`
 logging to record "whether the note passed validation on the first attempt, and if not, which attempt
@@ -182,22 +212,6 @@ reset once a submission is created. It's a small addition, not heavy machinery, 
 logging requirement this plan hadn't accounted for. Build it as specified, or drop it and log failure
 counts by task/rule only (simpler, but under-delivers what the design doc's Logging section already
 promises, so the design doc would need the matching edit)?
-
-**OPEN — baseline timing.** As specified, `prepare` reads the task and captures `baseline_modified_at`
-*after* the editor has already finished drafting the file, not at the start of their work. The design
-doc's Scope section names this exact gap explicitly and accepts it as a deliberate limitation ("`contract
-prepare` simply reads whatever state the task is in at that moment and takes it as a fresh baseline,
-with no memory of what came before... Only an edit made after `prepare` and before `submit` is
-caught") — so this isn't a bug in this plan, it's the design doc's own documented tradeoff. The gap is
-real: an edit landing between when the editor started drafting and when they run `prepare` is silently
-adopted as the new baseline and can be overwritten at `submit` without ever being noticed. Closing it
-means adding a `contract start <task-gid>` command that captures the baseline *before* drafting begins,
-with `prepare <submission-id> --file <final-note>` validating against that earlier baseline instead of
-a fresh one — a real addition to the design (new command, new pre-validation submission state), not
-just this plan. Unlike the v2-deferred items, this can't be observed-and-decided-later: the data needed
-to detect the gap only exists if the earlier baseline was captured in the first place. Add `contract
-start` now (closes the gap, adds a command and a state), or leave it as Scope currently documents
-(accepted residual risk, no design change)?
 
 ### Tests (`tests/test_contract_prepare.py`, `tests/test_contract_validation.py`)
 
@@ -218,14 +232,17 @@ Mirrors `dish-task-contract-tool.md`'s Testing requirements section directly:
 - heading outside the manifest allowlist fails; a heading present in the allowlist but absent from the
   note (and not `WHAT TO BUY`) does not fail, since omission-judgment is explicitly the verifier's job,
   not the validator's;
-- second `prepare` on a task with an already-open (non-terminal) submission is rejected;
+- `prepare` on a submission not in status `drafting` (nonexistent, or already past `drafting`) is
+  rejected;
+- `prepare` validates against the exact `baseline_modified_at`/`baseline_notes_hash` captured by
+  `start`, not a fresh read of the task at `prepare` time;
 - successful `prepare` produces the correct initial `status` for each of `small`/`medium`/`large`, and
   the correct `required_verifier_family` for `medium`/`large`;
 - diff summary fields are computed and logged, and are not persisted as a second full copy of the note
   text anywhere in `submissions` or `audit_events`;
 - every `prepare` call (pass or fail) produces exactly one `audit_events` row.
 
-## Step 3 — `contract approve` / `contract reject`
+## Step 4 — `contract approve` / `contract reject`
 
 `c_approve(...)`: verifier-family check against `required_verifier_family`; exact content-hash match
 against `content_hash` (hard reject on mismatch, no override, no path for the verifier to submit edited
@@ -236,15 +253,16 @@ concurrent call) is reported as a conflict, not silently treated as success.
 
 `c_reject(...)`: same family check as `approve`; same conditional-update pattern (`WHERE status =
 'awaiting_verification'`) marking `rejected` (terminal); logs the reason. No in-place edit path — the
-editor must run `prepare` again as a fresh submission.
+editor runs `contract start` again on the same task, then `contract prepare` on the fresh submission it
+opens: a new lock, a new baseline, and a new submission, not a reopened one.
 
 ### Tests (`tests/test_contract_approve_reject.py`)
 
 - verifier-family mismatch rejected on both `approve` and `reject`;
 - content-hash mismatch at `approve` is a hard reject, and does not consume or mutate the submission;
 - successful `approve` transitions `awaiting_verification` → `ready` and records verifier fields;
-- `reject` transitions to terminal `rejected`; a subsequent `prepare` on the same task creates a new
-  submission row, not a reopened one;
+- `reject` transitions to terminal `rejected`; a subsequent `contract start` on the same task creates a
+  new submission row (new lock, new baseline), not a reopened one;
 - concurrent `approve`/`reject` on the same submission: only the first conditional update succeeds
   (row count 1); the second sees zero rows affected and is reported as a conflict, not applied on top
   of the first;
@@ -252,12 +270,18 @@ editor must run `prepare` again as a fresh submission.
   before any equality comparison would run, i.e. no separate collision-detection code path exists to
   test (per Versioning plan, Dropped).
 
-## Step 4 — `contract submit` and failure handling
+## Step 5 — `contract submit` and failure handling
 
-`c_submit(...)` implements Workflow §3: load submission, require `ready`; recompute file hash and
-reject on mismatch; fresh task read, compare `modified_at` to `baseline_modified_at`, reject (mark
-`stale`) on any difference; atomic `ready` → `in_flight` flip; one notes update call; on clear success
-mark `consumed`.
+`c_submit(...)` implements Workflow §4: load submission, require `ready`; reject outright, with no
+Asana call attempted, if `write_count` has already reached its current limit (`2 + reset_count`) — the
+agent is told to stop and ask Marco, only `contract-admin reset` unblocks it; if `write_count` is 1 and
+`--final` was not passed, make no Asana call, do not increment `write_count`, and return a hard
+confirmation prompt (idempotent — repeating the plain call just repeats the prompt); recompute file hash
+and reject on mismatch; fresh task read, compare `modified_at` to `baseline_modified_at`, reject (mark
+`stale`) on any difference; atomic `ready` → `in_flight` flip; increment `write_count` — this happens for
+every attempt that reaches an actual Asana mutation, regardless of outcome (success, confirmed failure,
+or uncertain), with no special case for a retry of identical content vs. a genuinely different edit; one
+notes update call; on clear success mark `consumed`.
 
 Failure classification is by status code, not "any mapped `ApiException` means confirmed failure" — the
 design doc's own Failure behaviour section requires the tool to *know* the write wasn't applied before
@@ -281,25 +305,47 @@ reverting to `ready`, which a 5xx doesn't establish:
   silently retried and not left `in_flight` forever, and not misclassified as confirmed-`ready`;
 - two simultaneous `submit` calls on the same submission: only one can flip `ready` → `in_flight`
   (assert on the second call's rejection, not just "doesn't crash" — this is the same
-  race shape as `prepare`'s open-submission check, but at a different table state);
-- `consumed`/`stale`/`rejected` cannot be resubmitted, even byte-identical.
+  race shape as `start`'s open-submission check, but at a different table state);
+- `consumed`/`stale`/`rejected` cannot be resubmitted, even byte-identical;
+- `write_count` gating: write 1 executes silently with no confirmation required and increments
+  `write_count` to 1; a second plain `submit` call (no `--final`) makes no Asana call, does not
+  increment `write_count`, and returns the confirmation prompt every time it's repeated; `submit
+  --final` at that point executes the 2nd write; a third attempt (with or without `--final`) is
+  rejected before any Asana call is attempted;
+- a submission at its write limit is unusable until `contract-admin reset`; after reset, exactly one
+  further write is available and requires `--final` immediately — a plain `submit` call post-reset does
+  not execute and does not itself consume the granted write.
 
-## Step 5 — `contract-admin recover`
+## Step 6 — `contract-admin recover` / `contract-admin reset`
 
 `~/ai-tools/bin/contract-admin` (new, separate executable — deliberately not a hidden subcommand of
 `contract`, per the design's "distinct binary/subcommand namespace" requirement). `recover
 <submission-id>` performs one live read of notes + `modified_at`, and applies the four-row outcome
 table from Workflow → Uncertain API outcome / crashed process exactly.
 
-### Tests (`tests/test_contract_admin_recover.py`)
+`reset <submission-id>` clears a submission that has hit its write limit (`write_count` at
+`2 + reset_count`, see `contract submit`) so the same validated content can be written again:
+increments `reset_count` by one, which raises the write-limit ceiling by exactly one further write — not
+a restored two-write budget — and that next write requires `--final` immediately (no silent write, no
+confirmation round-trip the second time around, per Workflow §4). `reset` only releases the exhausted
+row's hold; it does not reopen the row for further drafting — a further edit still requires a fresh
+`contract start`. Rejected if the submission is not currently at its write limit (nothing to reset).
+
+### Tests (`tests/test_contract_admin_recover.py`, `tests/test_contract_admin_reset.py`)
 
 - one test per outcome-table row (four cases): intended-hash-match (either `modified_at` state) →
   `consumed`; baseline-hash-match + unchanged `modified_at` → `ready`; baseline-hash-match + changed
   `modified_at` → `stale`; neither hash matches (either `modified_at` state) → `stale`;
 - `recover` on a submission not in `in_flight`/`uncertain` is rejected (nothing to recover);
+- `reset` on a submission not currently at its write limit is rejected;
+- `reset` increments `reset_count` by exactly one and grants exactly one further write; the next
+  `submit` call on that submission requires `--final` immediately — no silent write, no confirmation
+  round-trip;
+- a second `reset` after the granted write is again consumed raises the ceiling by one more, not back to
+  a two-write budget;
 - `contract-admin` is not reachable through the `contract` binary under any flag or subcommand name.
 
-## Step 6 — generic-CLI advisory integration and managed-task registry
+## Step 7 — generic-CLI advisory integration and managed-task registry
 
 In `asana` (existing file): before `set-notes`/`append`/`replace`/batch note-updating operations/`raw`
 writes touching `notes`/`html_notes`, call a new `contract_lib.is_managed(task_gid)` that compares the
@@ -330,13 +376,14 @@ unchanged in v1a. No blocking logic is added in this step — that's v1b, out of
 - `raw` writes containing `notes`/`html_notes` in the body are caught by the same check; `raw` writes
   that don't touch notes are not.
 
-## Step 7 — logging/observability summary
+## Step 8 — logging/observability summary
 
 A `contract-admin report` command (or a plain SQL query script, if you'd rather run it ad hoc — see
 **OPEN** below) answering the six bullet points in `dish-task-contract-tool.md`'s Logging and
 observability section: call counts by agent/change-level, validation-failure rate by rule, rejection
 rate and repeated-rejection-per-task rate, `small`-declared diff-size distribution, advisory-bypass
-count by task/agent, and staleness-rejection rate at `submit`.
+count by task/agent, and how often the `--final` confirmation is actually reached vs. write 1 alone
+being sufficient, and how often `contract-admin reset` is actually needed.
 
 **OPEN — how you want to consume this.** A `contract-admin report` subcommand is more discoverable and
 keeps this consistent with the rest of the tool, but it's a real command surface to build and test for
@@ -355,12 +402,12 @@ testable: load it and run each statement through `sqlite3` against the fixture D
 `tests/test_contract_reports.py`, same as any other query; being a checked-in `.sql` file rather than a
 subcommand doesn't make its output less important to verify.
 
-## Step 8 — docs
+## Step 9 — docs
 
 - **`~/ai-tools/bin/dish-task-contract-tool.md`** — no content change needed; this plan implements what
   it already specifies. Do not duplicate its content into this plan or vice versa.
 - **ChatGPT workflow** — no new code; the local-agent-on-ChatGPT's-behalf procedure in
-  `dish-task-contract-tool.md`'s ChatGPT workflow section is already fully covered by Steps 2–4's
+  `dish-task-contract-tool.md`'s ChatGPT workflow section is already fully covered by Steps 2–5's
   `--agent gpt` routing. Worth a short runbook note wherever Marco keeps ChatGPT-facing instructions
   (**OPEN** — I don't know if such a place exists; flag if it does and I'll add a pointer there instead
   of leaving this as prose only here).
@@ -395,16 +442,13 @@ canonical structure, and anything not already named in that document's Out of sc
 3. Exact final wording for the `Self-verified:` and "writes go through this tool" contract-text
    additions — yours to set; intent described in Step 0.
 4. `$CONTRACT_MD_PATH` default — recommendation: `~/honest-pantry/dish-task-contract.md`, overridable.
-5. Baseline timing — add `contract start` to capture the baseline before drafting begins (closes a real
-   gap, adds a command and a submission state), or leave the fresh-baseline-at-`prepare` behavior as
-   Scope currently documents it (accepted residual risk, no design change)? See Step 2.
-6. Attempt-number logging — build the `(task_gid, editor_agent)` attempt counter the design doc's
-   Logging section already requires, or drop it and simplify the design doc to match? See Step 2.
-7. Logging/observability surface — recommendation: a checked-in `.sql` file, not a new subcommand, for
+5. Attempt-number logging — build the `(task_gid, editor_agent)` attempt counter the design doc's
+   Logging section already requires, or drop it and simplify the design doc to match? See Step 3.
+6. Logging/observability surface — recommendation: a checked-in `.sql` file, not a new subcommand, for
    v1a.
-8. Where (if anywhere) a ChatGPT-facing runbook pointer should live.
-9. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
+7. Where (if anywhere) a ChatGPT-facing runbook pointer should live.
+8. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
    has the same laptop-hosted groundwork proven for another purpose); the open call is
    trust/semantics — direct live-endpoint access to real tasks, and whether `Self-verified:` stays
    ChatGPT's own assertion rather than something the Action stamps on its behalf — not build effort.
-   See Step 8.
+   See Step 9.
