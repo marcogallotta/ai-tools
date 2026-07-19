@@ -18,9 +18,23 @@ sessions invoke directly, plus design docs for tools in progress.
 - `bin/dish-task-contract-tool.md` — design draft for an in-progress tool (name not yet decided)
   that will be the one guarded, validated path for writing contract-governed dish-task notes to
   Asana (structural validation, single-use write tokens, staleness checks, verifier routing). Not
-  yet implemented as a CLI.
+  yet implemented as a CLI. **Scoped to v1 only** — everything not needed for v1 to exist and
+  work lives in `dish-task-contract-tool-future.md` instead (see below).
+- `bin/dish-task-contract-tool-future.md` — everything about the same tool that is *not* v1: the
+  v1b enforcement flip, v2 candidate features, and ideas considered and rejected outright. Split
+  out of the design doc above so that doc can stay focused on exactly what v1 needs.
 - `bin/dish-task-contract-tool-implementation-plan.md` — the staged build plan (v1a) for that
   tool: rollout steps, file/module layout, open implementation questions.
+
+  **Work on one of these three docs at a time.** When iterating on the v1 design doc, leave the
+  implementation plan and the future doc untouched (and vice versa), and commit each meaningful
+  edit rather than batching several uncommitted changes together. The docs are meant to be
+  reconciled with each other later by diffing git history against a known baseline commit — e.g.
+  "what changed in the v1 design doc since the split, and what does that imply for the
+  implementation plan." That only works cleanly if the untouched doc's history has no unrelated
+  edits mixed in during the same window. Git history gives you *what changed*; reconciling it
+  into the other doc is still a judgment call for whoever picks that up next — it isn't
+  automatic, but a clean commit trail is what makes that judgment call tractable.
 - Related files, not in this repo:
   - `~/honest-pantry/dish-task-contract-change-plan.md` — the authoritative tracker of what
     enforcement direction Marco has actually approved for that tool vs. what's still pending
