@@ -20,6 +20,8 @@ having landed in the real `dish-task-contract.md`, but the tool must not soft-la
 (Step 7 going live) until Step 0 is merged for real, since `prepare` cannot validate against a manifest
 that doesn't exist yet.
 
+See Deployment for the post-build go-live steps.
+
 ## Step 0 — contract-text prerequisites (draft here, approve separately)
 
 `dish-task-contract-tool.md`'s validator assumes three things in `dish-task-contract.md` that are not
@@ -380,9 +382,7 @@ subcommand doesn't make its output less important to verify.
   it already specifies. Do not duplicate its content into this plan or vice versa.
 - **ChatGPT workflow** — no new code; the local-agent-on-ChatGPT's-behalf procedure in
   `dish-task-contract-tool.md`'s ChatGPT workflow section is already fully covered by Steps 2–5's
-  `--agent gpt` routing. Worth a short runbook note wherever Marco keeps ChatGPT-facing instructions
-  (**OPEN** — I don't know if such a place exists; flag if it does and I'll add a pointer there instead
-  of leaving this as prose only here).
+  `--agent gpt` routing. See Deployment for the runbook-pointer push this still requires.
 - **OPEN — is the current ChatGPT process itself the right shape.** Marco flagged the present
   ChatGPT-side workflow (relaying context in/out manually, per that section) as jank in practice.
   Marco already has a custom GPT hosted on his laptop for another purpose, so the groundwork (Action
@@ -396,6 +396,19 @@ subcommand doesn't make its output less important to verify.
 - **`requirements.txt`** — no new entries; the manifest is JSON, parsed with stdlib `json` only.
 - **`.gitignore`** — add `var/` for the new SQLite DB location.
 
+## Deployment
+
+Once all steps are built and merged, and the `--agent gpt` routing (Steps 2–5) is live: add the ChatGPT
+runbook pointer bullet to `~/honest-pantry/cooking-master-reference.md`'s CORE section, near the
+existing readiness-gate bullet that already makes the same kind of hand-off — a short pointer, since
+that file explicitly scopes itself to live execution only and defers task construction/verification to
+`dish-task-contract.md` "when it's actually needed." Runbook pointer location:
+`~/honest-pantry/cooking-master-reference.md` (the git-tracked snapshot of the live Asana "Cooking
+master prompt" task ChatGPT actually reads). Adding the bullet is a `~/honest-pantry` edit, out of scope
+for this ai-tools plan itself.
+
+Then push it live via `asana set-notes 1215259129474847 -`, per that file's own sync instructions.
+
 ## Out of scope for this plan
 
 Everything `dish-task-contract-tool.md` defers to v1b or v2 (enforcement flip, two-failed-pass stop,
@@ -406,8 +419,7 @@ canonical structure, and anything not already named in that document's Out of sc
 
 ## Open questions summary
 
-1. Where (if anywhere) a ChatGPT-facing runbook pointer should live.
-2. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
+1. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
    has the same laptop-hosted groundwork proven for another purpose); the open call is
    trust/semantics — direct live-endpoint access to real tasks, and whether `Self-verified:` stays
    ChatGPT's own assertion rather than something the Action stamps on its behalf — not build effort.
