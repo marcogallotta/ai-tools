@@ -72,17 +72,14 @@ specifies, not a gap in this plan. Keep the manifest heading-only (matching the 
 or expand it to also cover required-field names and allowed values (closer to the change plan's literal
 wording, more validator coverage, more surface to keep in sync)?
 
-**OPEN — manifest encoding.** You asked whether YAML/JSON are hard for agents to parse specifically,
-and whether that nervousness is founded. It isn't, for the reason you were worried about: the block is
-parsed by the Python validator (`json.loads`, two lines, stdlib-only), not read structurally by an
-LLM — and LLMs handle fenced JSON/YAML at least as reliably as free-form prose lists when they do read
-it. The real tradeoff is parser strictness: JSON fails loudly on a malformed edit (missing bracket/
-comma), matching this design's fail-closed philosophy elsewhere (e.g. unresolved section-GID → managed
-by default). YAML is more pleasant to hand-edit but indentation-sensitive, so a careless prose edit
-near the block could silently misparse rather than error. A hand-parsed plain markdown list avoids new
-syntax entirely but reintroduces exactly the brittle-regex risk the design explicitly rejected for the
-allowlist. **Recommendation: fenced JSON, as drafted above.** Flag if you'd rather have YAML for
-editability — I'll add PyYAML as a dependency if so.
+**Manifest encoding: fenced JSON, decided.** The block is parsed by the Python validator
+(`json.loads`, two lines, stdlib-only), not read structurally by an LLM, so agent-parsing difficulty
+isn't a real concern either way. JSON fails loudly on a malformed edit (missing bracket/comma),
+matching this design's fail-closed philosophy elsewhere (e.g. unresolved section-GID → managed by
+default) — the deciding factor over YAML (pleasant to hand-edit but indentation-sensitive, so a
+careless prose edit near the block could silently misparse rather than error) or a hand-parsed plain
+markdown list (avoids new syntax but reintroduces the brittle-regex risk already rejected for the
+allowlist).
 
 **2. `Self-verified: <agent>, <date>` as a required process-record line.** Add it alongside `Stage:`,
 `Human review:`, and `Verification:` (dish-task-contract.md:86–88), stating it attests the editor's
@@ -421,8 +418,7 @@ subcommand doesn't make its output less important to verify.
   today's model where nothing executes until a local agent runs `contract prepare`/`submit`), and
   whether `Self-verified:` should stay something ChatGPT asserts in its own output rather than
   something the Action layer stamps on its behalf.
-- **`requirements.txt`** — no new entries if Step 0 lands as JSON (stdlib `json` only); add `pyyaml` if
-  you choose YAML instead.
+- **`requirements.txt`** — no new entries; the manifest is JSON, parsed with stdlib `json` only.
 - **`.gitignore`** — add `var/` for the new SQLite DB location.
 
 ## Out of scope for this plan
@@ -435,19 +431,18 @@ canonical structure, and anything not already named in that document's Out of sc
 
 ## Open questions summary
 
-1. Manifest encoding (JSON vs. YAML vs. plain list) — recommendation: JSON, drafted in Step 0.
-2. Manifest scope — heading allowlist only (matches design doc's validation list as written), or
+1. Manifest scope — heading allowlist only (matches design doc's validation list as written), or
    expanded to also cover required-field names and allowed values (matches the change plan's literal
    wording, more coverage, more surface). See Step 0.
-3. Exact final wording for the `Self-verified:` and "writes go through this tool" contract-text
+2. Exact final wording for the `Self-verified:` and "writes go through this tool" contract-text
    additions — yours to set; intent described in Step 0.
-4. `$CONTRACT_MD_PATH` default — recommendation: `~/honest-pantry/dish-task-contract.md`, overridable.
-5. Attempt-number logging — build the `(task_gid, editor_agent)` attempt counter the design doc's
+3. `$CONTRACT_MD_PATH` default — recommendation: `~/honest-pantry/dish-task-contract.md`, overridable.
+4. Attempt-number logging — build the `(task_gid, editor_agent)` attempt counter the design doc's
    Logging section already requires, or drop it and simplify the design doc to match? See Step 3.
-6. Logging/observability surface — recommendation: a checked-in `.sql` file, not a new subcommand, for
+5. Logging/observability surface — recommendation: a checked-in `.sql` file, not a new subcommand, for
    v1a.
-7. Where (if anywhere) a ChatGPT-facing runbook pointer should live.
-8. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
+6. Where (if anywhere) a ChatGPT-facing runbook pointer should live.
+7. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
    has the same laptop-hosted groundwork proven for another purpose); the open call is
    trust/semantics — direct live-endpoint access to real tasks, and whether `Self-verified:` stays
    ChatGPT's own assertion rather than something the Action stamps on its behalf — not build effort.
