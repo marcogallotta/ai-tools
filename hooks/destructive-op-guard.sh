@@ -76,7 +76,7 @@ if printf '%s' "$cmd_no_wrapper" | grep -Eq '\bgit\b'; then
     ask "[destructive-op-guard] Destructive git operation (reset --hard) requires explicit approval."
   fi
   if printf '%s' "$cmd_no_wrapper" | grep -Eq '\bgit\b[^|&;]*\badd\b'; then
-    deny "[destructive-op-guard] Don't run git add alone — it leaves staged changes that can collide with another session's commit. Use: ~/.claude/bin/git-commit <files> -m 'message'"
+    deny "[destructive-op-guard] Don't run git add alone — it leaves staged changes that can collide with another session's commit. Use: ~/.claude/bin/git-commit <files> -m 'message'. Paths resolve relative to \$PWD's repo, NOT the repo root or an absolute target — if the repo you want isn't your current cwd, pass -C <repo> instead of cd'ing there (cd && git-commit is a compound command and will be blocked). Run 'git-commit --help' first if unsure."
   fi
 fi
 
