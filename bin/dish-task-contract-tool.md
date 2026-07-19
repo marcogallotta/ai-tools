@@ -608,43 +608,7 @@ Implementation follows TDD. Tests must cover:
 * modifying the contract text or incident logs;
 * providing a remote or multi-user trust service;
 * documenting the contract admin tool's location or invocation for agents;
-* providing a dedicated revoke-management command (Marco uses the Asana web UI directly instead).
-
-## Open decisions
-
-1. **Initial management — resolved.** No explicit enrollment step; a task is contract-managed by
-   default based on its current Cooking-project section, excluding only `Sourcing` and `Reference`
-   (see Contract-managed task registry).
-2. **Marco-only actions — resolved.** All Marco-only actions live in `contract-admin`, separate from
-   and invisible to the agent-facing `contract` commands. Revoking managed status is not a feature of
-   this design: the general Asana CLI is guarded identically to any other caller once v1b is active,
-   and gives Marco no bypass; a one-off manual edit goes through the Asana web UI instead.
-3. **Submission lifetime — resolved.** No automatic expiry. A stuck `in_flight`/`uncertain` submission
-   requires an explicit `contract-admin recover` call; no background timeout or heartbeat-based
-   auto-recovery.
-4. **Verifier edits — resolved, and simplified from an earlier draft.** The verifier cannot submit
-   edited content at all. A hash mismatch at `approve` is a hard reject with no override; the verifier
-   must instead `reject` with a reason, and the editor runs `contract start` and `contract prepare`
-   again with a corrected file as a fresh submission (see Workflow §3; `dish-task-contract-tool-future.md`,
-   Dropped).
-5. **Existing tasks — resolved.** Every pre-existing task in the Cooking project outside
-   `Sourcing`/`Reference` is contract-managed immediately; whether existing tasks' *content* needs
-   migration to the current canonical structure is a separate, out-of-scope question.
-6. **`Self-verified:` process-record line — resolved, required by the change plan.** The design already
-   implements this throughout: the editor writes `Self-verified: <agent>, <date>` at `prepare` (Workflow
-   §2); deterministic validation requires the line and that its declared agent matches `editor_agent`;
-   ChatGPT must supply its own such line in the file it hands over, with no local-agent backfill; and
-   both cases are covered in Testing requirements. This is not a new design decision — it mechanically
-   confirms the contract's existing end-to-end self-review requirement was attested to in the exact
-   content being validated, as the change plan's approval package requires.
-7. **`write_count` cap — resolved, Marco's design.** A submission gets exactly one silent write; a
-   second `submit` call without `--final` makes no Asana call and returns a hard confirmation prompt
-   (last write, confirm everything is done) rather than a passive warning; `submit --final` then
-   executes the 2nd write. A third attempt is hard-rejected — the agent is told to stop and ask Marco,
-   not to retry itself — and only `contract-admin reset` unblocks it. Each reset grants exactly one
-   further `--final`-gated write, not a restored two-write budget (see Workflow §4, `contract-admin
-   reset`). This replaces an earlier draft (3 silent-ish writes with only a logged warning at 2 and 3)
-   that never actually required the agent to engage with the warning before writing again.
-
-The small-change-carelessness question (Marco's standing concern about an honest agent mis-declaring a
-material change as `small`) moved to `dish-task-contract-tool-future.md` — it's targeted for v2, not v1.
+* providing a dedicated revoke-management command (Marco uses the Asana web UI directly instead);
+* a speed bump against an honest agent carelessly mis-declaring a material change as `small` (Marco's
+  standing concern) — tracked in `dish-task-contract-tool-future.md` for v2, once v1a's logging of what
+  real `small`-declared diffs touch gives the input needed to design it.
