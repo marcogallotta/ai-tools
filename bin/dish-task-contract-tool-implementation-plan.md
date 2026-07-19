@@ -78,19 +78,30 @@ careless prose edit near the block could silently misparse rather than error) or
 markdown list (avoids new syntax but reintroduces the brittle-regex risk already rejected for the
 allowlist).
 
-**2. `Self-verified: <agent>, <date>` as a required process-record line.** Add it alongside `Stage:`,
-`Human review:`, and `Verification:` (dish-task-contract.md:86–88), stating it attests the editor's
-own end-to-end self-review scoped by change class before submission — the human-facing description of
-what `contract prepare`'s mechanical check (`dish-task-contract-tool.md` Workflow §1) already enforces
-byte-for-byte.
+**2. `Self-verified: <agent>, <date>` as a required process-record line.** Add it as a fourth line in
+the `## PROCESS RECORD` block (dish-task-contract.md:86–88), alongside `Stage:`, `Human review:`, and
+`Verification:`:
 
-**3. Statement that contract-managed note writes go through the guarded tool.** One sentence near
-`## Canonical task` or `## Workflow` naming `dish-task-contract-tool.md`'s `contract` command as the
-intended path for managed tasks, and noting that v1a logs but does not yet block direct edits (so the
-contract text doesn't overclaim enforcement it doesn't have yet).
+```text
+Self-verified: <agent>, <date>
+```
 
-Exact final wording for items 2 and 3 is yours to set; I've described intent, not the sentence, since
-this is contract prose you own.
+Drafted wording for the explanatory sentence, matching the terse style of the surrounding contract
+prose (no other field in this block gets its own paragraph either, beyond the dedicated Verification
+and readiness section for `Verification` specifically) — one line is enough here:
+
+> `Self-verified` attests the editor's own end-to-end self-review of the note, scoped by change class,
+> immediately before submission; the named agent must match the note's actual editor.
+
+**3. Statement that contract-managed note writes go through the guarded tool.** Drafted wording, for
+one sentence near `## Canonical task` or `## Workflow`:
+
+> Contract-managed task writes go through `dish-task-contract-tool.md`'s `contract` command; as of
+> v1a this is logged, not yet enforced — a direct edit still succeeds but is recorded as an advisory
+> bypass event.
+
+Both are drafts against the actual contract prose style, ready for you to approve as-is or edit —
+not a placeholder for you to write from scratch.
 
 ## Step 1 — foundation: shared modules, schema, hashing, manifest parsing
 
@@ -372,21 +383,15 @@ unchanged in v1a. No blocking logic is added in this step — that's v1b, out of
 
 ## Step 8 — logging/observability summary
 
-A `contract-admin report` command (or a plain SQL query script, if you'd rather run it ad hoc — see
-**OPEN** below) answering the six bullet points in `dish-task-contract-tool.md`'s Logging and
+A checked-in `.sql` file (`~/ai-tools/bin/contract-reports.sql`), not a `contract-admin report`
+subcommand, decided — answering the six bullet points in `dish-task-contract-tool.md`'s Logging and
 observability section: call counts by agent/change-level, validation-failure rate by rule, rejection
 rate and repeated-rejection-per-task rate, `small`-declared diff-size distribution, advisory-bypass
 count by task/agent, and how often the `--final` confirmation is actually reached vs. write 1 alone
-being sufficient, and how often `contract-admin reset` is actually needed.
-
-**OPEN — how you want to consume this.** A `contract-admin report` subcommand is more discoverable and
-keeps this consistent with the rest of the tool, but it's a real command surface to build and test for
-what's fundamentally a handful of `SELECT`s you might just as easily run yourself against the sqlite
-file when you actually want the v1a→v1b answer. **Recommendation: skip the subcommand for v1a; ship the
-six queries as a checked-in `.sql` file (`~/ai-tools/bin/contract-reports.sql`) you run with `sqlite3
-~/ai-tools/var/dish-contract.db < contract-reports.sql` when you're ready to decide v1b timing.** Cheap
-to promote to a real subcommand later if you end up running it often. Flag if you'd rather have the
-subcommand now.
+being sufficient, and how often `contract-admin reset` is actually needed. Run with `sqlite3
+~/ai-tools/var/dish-contract.db < contract-reports.sql` when you're ready to decide v1b timing. A real
+command surface to build and test would be overkill for what's fundamentally a handful of `SELECT`s;
+cheap to promote to a subcommand later if it ends up being run often.
 
 ### Tests
 
@@ -428,14 +433,10 @@ canonical structure, and anything not already named in that document's Out of sc
 
 ## Open questions summary
 
-1. Exact final wording for the `Self-verified:` and "writes go through this tool" contract-text
-   additions — yours to set; intent described in Step 0.
-2. Attempt-number logging — build the `(task_gid, editor_agent)` attempt counter the design doc's
+1. Attempt-number logging — build the `(task_gid, editor_agent)` attempt counter the design doc's
    Logging section already requires, or drop it and simplify the design doc to match? See Step 3.
-3. Logging/observability surface — recommendation: a checked-in `.sql` file, not a new subcommand, for
-   v1a.
-4. Where (if anywhere) a ChatGPT-facing runbook pointer should live.
-5. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
+2. Where (if anywhere) a ChatGPT-facing runbook pointer should live.
+3. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
    has the same laptop-hosted groundwork proven for another purpose); the open call is
    trust/semantics — direct live-endpoint access to real tasks, and whether `Self-verified:` stays
    ChatGPT's own assertion rather than something the Action stamps on its behalf — not build effort.
