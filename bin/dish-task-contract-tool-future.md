@@ -66,6 +66,30 @@ v1b is a configuration flip on v1a's own logged evidence, not new code.
 * Cryptographic identity authentication, recursive dependency audits, automatic migration of existing
   tasks, a multi-user/remote trust service (see Out of scope) — no new reason to revisit these.
 
+## Deferred: write-safety and observability machinery with no evidenced incident (v2)
+
+Checked against `dish-task-contract-incident-log.md` and `dish-task-contract-review-log.md` in full:
+none of the following is a response to any recorded incident. v1a ships the simpler behaviour noted
+under each; build the fuller mechanism only if v1a's own logging actually shows a problem.
+
+* **`write_count` escalation (silent write / `--final`-gated write / hard block / `contract-admin
+  reset`).** No incident involves an accidental duplicate write, a repeat-write failure, or anything
+  else this guards against. v1a: `submit` performs exactly one write per submission and logs it; no
+  confirmation round-trip, no reset mechanism.
+* **`contract-admin recover`'s full crashed/uncertain-outcome table.** No incident involves a crashed
+  process or an ambiguous Asana API outcome. v1a: an uncertain `submit` outcome is logged and left for
+  Marco to check directly in Asana; the deterministic recovery table is only worth building once a
+  real crash/ambiguous-outcome case actually occurs.
+* **Diff-summary fields (`characters_added`, `characters_removed`, `lines_changed`,
+  `headings_touched`) computed at `prepare`.** No incident needed this granularity. What the evidence
+  actually supports is rule-level pass/fail logging (which validation rule failed, how often) — that
+  stays in v1a; the per-character diffing does not.
+* **The fuller periodic-summary query list** (small-change diff characterization, `--final`/reset
+  frequency). These feed decisions (the v2 small-change speed bump's trigger, the write-limit's
+  level) that don't exist yet because the machinery they'd tune isn't being built in v1a either.
+  v1a's logging keeps only what's evidenced: validation-failure rate by rule, and advisory-bypass
+  count.
+
 ## Direct dependencies (v2)
 
 Deferred; not built in v1a/v1b. Dependency surfacing is advisory and must not block submission status
