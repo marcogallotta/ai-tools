@@ -11,8 +11,8 @@ v1 doc (or a future v1.x/v2 doc) only when Marco explicitly decides to build the
 ## Versioning plan
 
 The tool is built and rolled out in stages, scoped to what the evidence in
-`dish-task-contract-change-plan.md`, `dish-task-contract-incident-log.md`, and
-`dish-task-contract-review-log.md` actually requires. Nothing beyond v1a/v1b is built until real usage
+`dish-docs-design.md`, `dish-incident-log.md`, and
+`dish-review-log.md` actually requires. Nothing beyond v1a/v1b is built until real usage
 data justifies it.
 
 **v1a — build and soft-launch.** The full guarded path (`prepare` / `approve` / `reject` / `submit` /
@@ -77,7 +77,7 @@ v1b is a configuration flip on v1a's own logged evidence, not new code.
 
 ## Deferred: write-safety and observability machinery with no evidenced incident (v2)
 
-Checked against `dish-task-contract-incident-log.md` and `dish-task-contract-review-log.md` in full:
+Checked against `dish-incident-log.md` and `dish-review-log.md` in full:
 none of the following is a response to any recorded incident. v1a ships the simpler behaviour noted
 under each; build the fuller mechanism only if v1a's own logging actually shows a problem.
 

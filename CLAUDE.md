@@ -39,7 +39,7 @@ sessions invoke directly, plus design docs for tools in progress.
   it into the future doc's v2 list — that's a single logical edit that happens to span two files,
   not two unrelated edits sharing a commit. Commit it as one commit, both files together.
 - Related files, not in this repo:
-  - `~/honest-pantry/dish-task-contract-change-plan.md` — the tracker of what enforcement
+  - `~/honest-pantry/dish-docs-design.md` — the tracker of what enforcement
     direction Marco has approved for that tool, upstream of the two docs above.
   - `~/honest-pantry/dish-task-contract.md` — the actual contract the tool validates dish-task
     notes against (canonical task structure, change classes, verification rules).
@@ -56,7 +56,7 @@ sessions invoke directly, plus design docs for tools in progress.
 
   If you are working *on* the two design docs above (drafting, revising, reconciling design
   decisions) — as opposed to using them as a spec to build the tool — also read
-  `dish-task-contract-change-plan.md` first, since it's the source of truth for what's approved.
+  `dish-docs-design.md` first, since it's the source of truth for what's approved.
   If that work goes deep enough into the contract's own structure (not just the tool that edits
   it — e.g. its canonical manifest, process-record fields, change-class definitions), also read
   `dish-task-contract.md`.
