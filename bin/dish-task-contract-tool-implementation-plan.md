@@ -382,17 +382,9 @@ subcommand doesn't make its output less important to verify.
   it already specifies. Do not duplicate its content into this plan or vice versa.
 - **ChatGPT workflow** — no new code; the local-agent-on-ChatGPT's-behalf procedure in
   `dish-task-contract-tool.md`'s ChatGPT workflow section is already fully covered by Steps 2–5's
-  `--agent gpt` routing. See Deployment for the runbook-pointer push this still requires.
-- **OPEN — is the current ChatGPT process itself the right shape.** Marco flagged the present
-  ChatGPT-side workflow (relaying context in/out manually, per that section) as jank in practice.
-  Marco already has a custom GPT hosted on his laptop for another purpose, so the groundwork (Action
-  endpoint, laptop hosting, schema registration) is proven, not hypothetical — extending that same
-  pattern with a couple of endpoints wrapping task-read/`contract` calls behind a bearer token is a
-  known-cost addition, not a new infra bet. What's actually open is a judgment call, not a build
-  question: whether ChatGPT should be calling directly into a live endpoint against real tasks (vs.
-  today's model where nothing executes until a local agent runs `contract prepare`/`submit`), and
-  whether `Self-verified:` should stay something ChatGPT asserts in its own output rather than
-  something the Action layer stamps on its behalf.
+  `--agent gpt` routing. See Deployment for the runbook-pointer push this still requires. Replacing
+  the manual relay with a custom GPT Action is a v2 candidate — see
+  `dish-task-contract-tool-future.md`, not built or open here.
 - **`requirements.txt`** — no new entries; the manifest is JSON, parsed with stdlib `json` only.
 - **`.gitignore`** — no separate action here; `var/` is added in Step 1 alongside the SQLite schema
   work, not deferred to this step.
@@ -416,11 +408,3 @@ small-change speed bump, dependency surfacing, token/submission replacement) or 
 (verifier in-place editing, `--confirm-independent-review`, cached `managed_tasks` table, adversarial
 self-review, cryptographic identity). Also out of scope: migrating existing tasks' content to the
 canonical structure, and anything not already named in that document's Out of scope section.
-
-## Open questions summary
-
-1. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
-   has the same laptop-hosted groundwork proven for another purpose); the open call is
-   trust/semantics — direct live-endpoint access to real tasks, and whether `Self-verified:` stays
-   ChatGPT's own assertion rather than something the Action stamps on its behalf — not build effort.
-   See Step 9.

@@ -44,6 +44,15 @@ v1b is a configuration flip on v1a's own logged evidence, not new code.
   advisory and non-blocking; natural to add once the core write path is proven.
 * Token/submission replacement as a distinct action from `contract-admin recover` — only worth building
   if recovery proves insufficient in real use.
+* Replacing the manual ChatGPT copy/paste relay (`dish-task-contract-tool.md`'s ChatGPT workflow
+  section) with a custom GPT Action calling a live endpoint directly, cutting out the local
+  human/agent relay step. Marco already has the underlying pattern proven on a laptop-hosted custom
+  GPT for another purpose (Action endpoint, hosting, schema registration), so this isn't a new infra
+  bet — but it's punted to v2 by Marco's explicit call, not incident evidence: it changes the trust
+  model (ChatGPT calling directly into a live endpoint against real tasks, vs. today's model where
+  nothing executes until a local agent runs `contract prepare`/`submit`) and what `Self-verified:`
+  actually asserts (ChatGPT's own claim in its output vs. something the Action layer stamps on its
+  behalf). Decide the trust/semantics question before building.
 
 **Dropped, not deferred.** These were considered and rejected outright, not postponed:
 
