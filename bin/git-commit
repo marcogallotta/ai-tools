@@ -150,6 +150,41 @@ else
   commit_args+=(-m "$msg")
 fi
 
+# Pre-flight: catch bad paths before staging, with a diagnostic specific
+# enough that one retry fixes it (instead of blind repeated guessing —
+# each retry re-triggers a permission prompt for the caller).
+missing=()
+for f in "${files[@]}"; do
+  candidate="$f"
+  if [[ "$candidate" != /* ]]; then
+    candidate="$git_cwd/$candidate"
+  fi
+  resolved="$(realpath -m -- "$candidate")"
+  if [[ ! -e "$resolved" ]]; then
+    # Could be a staged deletion (path removed from worktree, still tracked).
+    if ! git -C "$git_cwd" ls-files --error-unmatch -- "$resolved" >/dev/null 2>&1; then
+      missing+=("$f -> $resolved")
+    fi
+  fi
+done
+
+if [[ ${#missing[@]} -gt 0 ]]; then
+  {
+    echo "Error: file path(s) did not resolve to anything in the working tree or index:"
+    for m in "${missing[@]}"; do
+      echo "  $m"
+    done
+    echo
+    echo "Resolved relative to git_cwd: $git_cwd"
+    echo "Repo root: $repo_root"
+    echo "Real invocation directory (\$PWD): $PWD"
+    echo
+    echo "If git_cwd and \$PWD differ, your paths were resolved against git_cwd (the -C target),"
+    echo "not against your actual shell location. Pass paths relative to git_cwd, or use absolute paths."
+  } >&2
+  exit 1
+fi
+
 if [[ -n "$repo" ]]; then
   git -C "$repo" add -- "${files[@]}"
   git -C "$repo" commit "${commit_args[@]}"
