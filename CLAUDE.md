@@ -26,15 +26,18 @@ sessions invoke directly, plus design docs for tools in progress.
 - `bin/dish-task-contract-tool-implementation-plan.md` — the staged build plan (v1a) for that
   tool: rollout steps, file/module layout, open implementation questions.
 
-  **Work on one of these three docs at a time.** When iterating on the v1 design doc, leave the
-  implementation plan and the future doc untouched (and vice versa), and commit each meaningful
-  edit rather than batching several uncommitted changes together. The docs are meant to be
-  reconciled with each other later by diffing git history against a known baseline commit — e.g.
-  "what changed in the v1 design doc since the split, and what does that imply for the
-  implementation plan." That only works cleanly if the untouched doc's history has no unrelated
-  edits mixed in during the same window. Git history gives you *what changed*; reconciling it
-  into the other doc is still a judgment call for whoever picks that up next — it isn't
-  automatic, but a clean commit trail is what makes that judgment call tractable.
+  **These three docs are allowed to go stale relative to each other — that's fine, not a bug.**
+  When actually iterating/designing on one doc (e.g. adding to the v1 design doc), just work on
+  that doc. Don't feel obliged to keep the other two in sync in the same pass, and especially
+  don't hold back on the future doc — it's deliberately a loose catch-all net, not a doc that
+  needs to track the others in real time. Going stale there is expected and cheap to reconcile
+  later, e.g. by diffing one doc's git history against a known baseline commit to see what
+  changed and what it implies for the others.
+
+  The one case that's different: when a change *intentionally moves or resolves content between
+  two of these docs* — e.g. resolving an open question in the implementation plan by relocating
+  it into the future doc's v2 list — that's a single logical edit that happens to span two files,
+  not two unrelated edits sharing a commit. Commit it as one commit, both files together.
 - Related files, not in this repo:
   - `~/honest-pantry/dish-task-contract-change-plan.md` — the tracker of what enforcement
     direction Marco has approved for that tool, upstream of the two docs above.
