@@ -31,20 +31,23 @@ if printf '%s' "$cmd" | grep -Eq '\bdocker\b' && printf '%s' "$cmd" | grep -Eq '
   ask "[destructive-op-guard] Destructive: 'docker compose down -v' will destroy volumes including the dev DB. Explicit approval required."
 fi
 
-# git-commit wrapper (atomic stage+commit)
-if printf '%s' "$cmd" | grep -Eq '(^|[[:space:]/])git-commit[[:space:]]'; then
+# git-commit wrapper (atomic stage+commit) — but not --help/-h, which is read-only
+if printf '%s' "$cmd" | grep -Eq '(^|[[:space:]/])git-commit[[:space:]]' \
+  && ! printf '%s' "$cmd" | grep -Eq '(^|[[:space:]/])git-commit[[:space:]]+(--help|-h)([[:space:]]|$)'; then
   ask "[destructive-op-guard] git-commit (stage + commit) requires explicit approval."
 fi
 
-# destructive git subcommands
-if printf '%s' "$cmd" | grep -Eq '\bgit\b'; then
-  if printf '%s' "$cmd" | grep -Eq '\b(commit|push|clean|checkout|restore)\b'; then
+# destructive git subcommands (git-commit wrapper tokens stripped first — "commit" inside
+# the hyphenated wrapper name would otherwise false-match \bcommit\b here too)
+cmd_no_wrapper=$(printf '%s' "$cmd" | sed -E 's#(^|[[:space:]/])git-commit([[:space:]]|$)#\1GIT_COMMIT_WRAPPER\2#g')
+if printf '%s' "$cmd_no_wrapper" | grep -Eq '\bgit\b'; then
+  if printf '%s' "$cmd_no_wrapper" | grep -Eq '\b(commit|push|clean|checkout|restore)\b'; then
     ask "[destructive-op-guard] Destructive git operation (commit/push/checkout/restore/clean) requires explicit approval."
   fi
-  if printf '%s' "$cmd" | grep -Eq '\breset\b' && printf '%s' "$cmd" | grep -Eq -- '--hard'; then
+  if printf '%s' "$cmd_no_wrapper" | grep -Eq '\breset\b' && printf '%s' "$cmd_no_wrapper" | grep -Eq -- '--hard'; then
     ask "[destructive-op-guard] Destructive git operation (reset --hard) requires explicit approval."
   fi
-  if printf '%s' "$cmd" | grep -Eq '\bgit\b[^|&;]*\badd\b'; then
+  if printf '%s' "$cmd_no_wrapper" | grep -Eq '\bgit\b[^|&;]*\badd\b'; then
     deny "[destructive-op-guard] Don't run git add alone — it leaves staged changes that can collide with another session's commit. Use: ~/.claude/bin/git-commit <files> -m 'message'"
   fi
 fi
