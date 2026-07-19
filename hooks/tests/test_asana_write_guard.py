@@ -69,6 +69,62 @@ class TestDirectWrites:
         assert_allowed(decision)
 
 
+class TestHeredocFalsePositives:
+    # Live repro: a git-commit invocation whose commit-message heredoc body
+    # described the batch-apply subcommand in prose, which the raw-text
+    # command scan mistook for an actual invocation and blocked the commit.
+    def test_heredoc_body_mentioning_batch_apply_allowed(self, asana_write_guard, monkeypatch, capsys):
+        cmd = (
+            "git-commit -m \"$(cat <<'EOF'\n"
+            "Explain the asana batch-apply /tmp/plan.json loophole fix.\n"
+            "EOF\n"
+            ")\""
+        )
+        decision = run_hook(asana_write_guard, cmd, monkeypatch, capsys)
+        assert_allowed(decision)
+
+    def test_heredoc_body_mentioning_direct_write_allowed(self, asana_write_guard, monkeypatch, capsys):
+        cmd = (
+            "cat <<'EOF'\n"
+            "Remember: asana rename should always be approved manually.\n"
+            "EOF\n"
+        )
+        decision = run_hook(asana_write_guard, cmd, monkeypatch, capsys)
+        assert_allowed(decision)
+
+    def test_real_write_after_heredoc_still_asked(self, asana_write_guard, monkeypatch, capsys):
+        cmd = (
+            "cat <<'EOF'\n"
+            "just some notes, nothing destructive here\n"
+            "EOF\n"
+            "asana rename 123 'x'"
+        )
+        decision = run_hook(asana_write_guard, cmd, monkeypatch, capsys)
+        assert_asked(decision, "Approve this Asana write")
+
+    def test_tab_stripped_terminator_heredoc_body_allowed(self, asana_write_guard, monkeypatch, capsys):
+        cmd = (
+            "cat <<-'EOF'\n"
+            "\tasana batch-apply /tmp/plan.json - just an example in indented docs\n"
+            "\tEOF\n"
+        )
+        decision = run_hook(asana_write_guard, cmd, monkeypatch, capsys)
+        assert_allowed(decision)
+
+    def test_multiple_heredocs_on_one_line_both_bodies_ignored(self, asana_write_guard, monkeypatch, capsys):
+        cmd = (
+            "diff <(cat <<A\n"
+            "asana rename 1 x\n"
+            "A\n"
+            ") <(cat <<B\n"
+            "asana move 1 2\n"
+            "B\n"
+            ")"
+        )
+        decision = run_hook(asana_write_guard, cmd, monkeypatch, capsys)
+        assert_allowed(decision)
+
+
 class TestQuotedTextFalsePositives:
     def test_descriptive_text_mentioning_rename_allowed(self, asana_write_guard, monkeypatch, capsys):
         decision = run_hook(

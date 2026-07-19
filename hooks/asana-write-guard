@@ -22,6 +22,12 @@
 # invocation, silently running whatever preceded it. This port requires the
 # asana/batch-apply/path triple to be the *entire* command (after an
 # optional leading "bash" token).
+#
+# Heredoc bodies (e.g. `git commit -m "$(cat <<'EOF' ... EOF)"`) are text,
+# not shell syntax, and can legitimately contain words like "asana
+# batch-apply" while describing or documenting something - not invoking it.
+# strip_heredocs() blanks those bodies out before any scanning happens, the
+# same way quotes are treated as opaque by the segment splitter.
 
 import json
 import os
@@ -70,6 +76,33 @@ def deny(reason):
             "permissionDecisionReason": reason,
         }
     }
+
+
+HEREDOC_RE = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
+
+
+def strip_heredocs(cmd):
+    """Blank out heredoc body lines so their text content (which can say
+    anything, including the words this hook looks for) isn't scanned as if
+    it were shell syntax. Handles multiple heredocs per line (in the order
+    bash consumes them) and `<<-` tab-stripped terminators."""
+    lines = cmd.split("\n")
+    out = []
+    pending = []  # [(strip_tabs, terminator), ...], consumed in order
+    for line in lines:
+        if pending:
+            strip_tabs, terminator = pending[0]
+            check_line = line.lstrip("\t") if strip_tabs else line
+            if check_line == terminator:
+                pending.pop(0)
+                out.append(line)
+            else:
+                out.append("")
+            continue
+        out.append(line)
+        for m in HEREDOC_RE.finditer(line):
+            pending.append((m.group(1) == "-", m.group(3)))
+    return "\n".join(out)
 
 
 def split_segments(cmd):
@@ -249,6 +282,8 @@ def check_api_wrapper(cmd):
 
 
 def evaluate(cmd):
+    cmd = strip_heredocs(cmd)
+
     if detect_batch_apply(cmd):
         return evaluate_batch_apply(cmd)
 
