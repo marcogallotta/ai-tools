@@ -22,8 +22,36 @@ deny() {
 }
 
 # rm anywhere in the command (word-bounded so npm/charm/etc. don't match)
+# Skip the prompt when every target literally starts with /tmp/ — scratch space,
+# not worth an approval round-trip. Any non-/tmp target (or no resolvable
+# target) falls back to asking, since paths built from variables/expansions
+# aren't visible to this hook as literal text.
 if printf '%s' "$cmd" | grep -Eq '(^|[[:space:];&|(`])rm([[:space:]]|$)'; then
-  ask "[destructive-op-guard] Destructive: 'rm' requires explicit approval."
+  rm_targets="$(printf '%s' "$cmd" | awk '
+    BEGIN { found=0 }
+    {
+      for (i=1; i<=NF; i++) {
+        if (!found) { if ($i == "rm") found=1; continue }
+        if ($i ~ /^[;&|]/) { found=0; continue }
+        if ($i ~ /^-/) continue
+        print $i
+      }
+    }
+  ')"
+  rm_all_tmp=true
+  if [[ -z "$rm_targets" ]]; then
+    rm_all_tmp=false
+  fi
+  while IFS= read -r t; do
+    [[ -z "$t" ]] && continue
+    case "$t" in
+      /tmp/*) ;;
+      *) rm_all_tmp=false ;;
+    esac
+  done <<< "$rm_targets"
+  if [[ "$rm_all_tmp" != true ]]; then
+    ask "[destructive-op-guard] Destructive: 'rm' requires explicit approval."
+  fi
 fi
 
 # docker compose down -v destroys volumes (including dev DB)
