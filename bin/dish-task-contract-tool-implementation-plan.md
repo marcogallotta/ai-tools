@@ -59,18 +59,15 @@ is always present") and the heading list at lines 68–99:
 This is a proposed starting shape, not a final one — you should review it against the actual current
 heading set before approving, since I derived it from the prose rather than from a live task sample.
 `process_record_subheadings` should additionally be scoped as valid only nested under `PROCESS RECORD`,
-not as a second top-level allowlist — not yet reflected in the JSON above pending the scope question
-below.
+not as a second top-level allowlist.
 
-**OPEN — manifest scope.** The change plan's own wording asks for a manifest of "headings, required
-fields, and allowed values" — broader than the heading-only shape drafted above. The design doc's
-Deterministic validation checks list, though, treats `Stage:`/`Human review:`/`Verification:`/
-`Self-verified:` as fixed field names the validator checks directly, and only describes the *heading*
-allowlist as manifest-sourced — expanding the manifest to also carry those fields' allowed-value
-vocabularies (e.g. `Stage: Draft|Researched`) is new scope beyond what that checklist currently
-specifies, not a gap in this plan. Keep the manifest heading-only (matching the design doc as written),
-or expand it to also cover required-field names and allowed values (closer to the change plan's literal
-wording, more validator coverage, more surface to keep in sync)?
+**Manifest scope: heading allowlist only, decided.** The change plan's older wording asks for a
+manifest of "headings, required fields, and allowed values," but the design doc's Deterministic
+validation checks list (`dish-task-contract-tool.md`:216–229) already settles this downstream: it
+treats `Stage:`/`Human review:`/`Verification:`/`Self-verified:` as fixed field names the validator
+checks directly, and describes only the *heading* allowlist as manifest-sourced. The change plan
+doesn't need to be brought back in sync with this — see `CLAUDE.md`'s authority-flow note. Heading-only,
+matching the JSON above.
 
 **Manifest encoding: fenced JSON, decided.** The block is parsed by the Python validator
 (`json.loads`, two lines, stdlib-only), not read structurally by an LLM, so agent-parsing difficulty
@@ -130,11 +127,11 @@ tests are unaffected either way.
 - Audit logging: one `log_event(...)` function writing to `audit_events`, called by every command
   path in Steps 2–7, including failure paths with no submission row.
 
-**OPEN — `$CONTRACT_MD_PATH` location.** honest-pantry is a sibling directory to `ai-tools`, not a git
-submodule of it, so the tool reads it as a plain filesystem path with its own git repo underneath (for
-`contract_revision()`'s `git log`). **Recommendation: default `~/honest-pantry/dish-task-contract.md`,
-overridable via env var**, exactly as drafted above — flag if honest-pantry could ever move or if you
-want this pinned some other way.
+**`$CONTRACT_MD_PATH` default: `~/honest-pantry/dish-task-contract.md`, decided.** honest-pantry is a
+sibling directory to `ai-tools`, not a git submodule of it, so the tool reads it as a plain filesystem
+path with its own git repo underneath (for `contract_revision()`'s `git log`). Not actually a plan-level
+recommendation — the design doc already states this exact default, overridable via env var
+(`dish-task-contract-tool.md`:191), matching `asana`'s `$ASANA_ENV` pattern.
 
 ### Tests (`tests/test_contract_lib.py`, `tests/test_contract_schema.py`)
 
@@ -431,18 +428,14 @@ canonical structure, and anything not already named in that document's Out of sc
 
 ## Open questions summary
 
-1. Manifest scope — heading allowlist only (matches design doc's validation list as written), or
-   expanded to also cover required-field names and allowed values (matches the change plan's literal
-   wording, more coverage, more surface). See Step 0.
-2. Exact final wording for the `Self-verified:` and "writes go through this tool" contract-text
+1. Exact final wording for the `Self-verified:` and "writes go through this tool" contract-text
    additions — yours to set; intent described in Step 0.
-3. `$CONTRACT_MD_PATH` default — recommendation: `~/honest-pantry/dish-task-contract.md`, overridable.
-4. Attempt-number logging — build the `(task_gid, editor_agent)` attempt counter the design doc's
+2. Attempt-number logging — build the `(task_gid, editor_agent)` attempt counter the design doc's
    Logging section already requires, or drop it and simplify the design doc to match? See Step 3.
-5. Logging/observability surface — recommendation: a checked-in `.sql` file, not a new subcommand, for
+3. Logging/observability surface — recommendation: a checked-in `.sql` file, not a new subcommand, for
    v1a.
-6. Where (if anywhere) a ChatGPT-facing runbook pointer should live.
-7. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
+4. Where (if anywhere) a ChatGPT-facing runbook pointer should live.
+5. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
    has the same laptop-hosted groundwork proven for another purpose); the open call is
    trust/semantics — direct live-endpoint access to real tasks, and whether `Self-verified:` stays
    ChatGPT's own assertion rather than something the Action stamps on its behalf — not build effort.
