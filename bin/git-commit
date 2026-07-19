@@ -12,8 +12,29 @@ repo=""
 contract_size_explained=""
 files=()
 
+show_help() {
+  cat <<EOF
+Usage: git-commit <file> [file...] -m "message" [-C <repo>]
+       [--contract-size-explained <sha256>]
+
+Atomic stage-and-commit. Refuses carpet-bomb patterns ('.', '-A', '-u', '--all')
+to prevent index collisions between concurrent Claude sessions.
+
+Options:
+  -m <message>                    Commit message (required)
+  -C <repo>                       Run git in <repo> instead of \$PWD
+  --contract-size-explained <sha> Acknowledge dish-task-contract.md soft size
+                                   limit after explaining the removal to Marco
+  -h, --help                      Show this help and exit
+EOF
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    -h|--help)
+      show_help
+      exit 0
+      ;;
     -m)
       shift
       msg="$1"
