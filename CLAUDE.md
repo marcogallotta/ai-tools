@@ -55,3 +55,9 @@ sessions invoke directly, plus design docs for tools in progress.
 
 Both `bin/git-commit` and `bin/asana` are used by both Claude Code and Codex sessions, via
 the symlinks under `~/.claude/bin/`.
+
+## Memory
+
+No memory writing ever. Do not save, create, or update entries in the persistent memory
+system (`~/.claude/projects/*/memory/`, `MEMORY.md`, etc.) while working in this repo, even
+if the memory instructions elsewhere say to.
