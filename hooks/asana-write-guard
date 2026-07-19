@@ -1,0 +1,285 @@
+#!/usr/bin/env python3
+# PreToolUse(Bash) guard: force a confirmation prompt for Asana WRITE
+# operations via the asana CLI, overriding the Bash(.../asana *) allow-list
+# match. Emits permissionDecision:"ask" (or "deny") when matched; stays
+# silent otherwise so normal permission evaluation proceeds. Read
+# subcommands (notes/get/tasks/sections/projects/subtasks/search, and
+# `raw GET`) fall through untouched.
+#
+# Same tokenize-by-segment approach as destructive-op-guard: $cmd is split
+# into top-level segments on unquoted ; | & and each segment is
+# shlex-tokenized, so a word like "asana rename" sitting inside an unrelated
+# quoted argument (e.g. descriptive text in an echo) can't be mistaken for
+# an actual asana invocation the way raw-text regex matching could.
+#
+# Along the way this also closes a real loophole in the old batch-apply
+# fast path: the bash version detected "asana ... batch-apply" as a
+# substring anywhere in $cmd, then required the *whole* $cmd to tokenize to
+# exactly 3 words - but only checked that the total word count matched
+# `asana_index + 3`, not that asana_index was 0. That let a compound
+# command like "cd /tmp; asana batch-apply plan.json" slip through the
+# strict-shape check and get treated as a legitimate single batch-apply
+# invocation, silently running whatever preceded it. This port requires the
+# asana/batch-apply/path triple to be the *entire* command (after an
+# optional leading "bash" token).
+
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+
+WRITE_SUBCOMMANDS = {
+    "set-notes", "append", "replace", "rename",
+    "create-task", "create-subtask", "move", "batch-apply",
+}
+RAW_WRITE_VERBS = {"put", "post", "delete"}
+SCRIPT_RUNNERS = {"bash", "sh", "zsh", "python", "python3", "node", "ruby", "perl", "php", "source"}
+ENV_INNER_RUNNERS = {"bash", "sh", "zsh", "python", "python3", "node", "ruby", "perl", "php"}
+ASANA_BIN = "/home/marco/.claude/bin/asana"
+
+# Argv-list literal forms found in embedded scripts, e.g.
+# subprocess.run(["/path/to/asana", "rename", ...]). This scans arbitrary
+# script source text (not necessarily shell syntax), so it stays a textual
+# regex rather than shell tokenization.
+ARGV_LIST_WRITE_RE = re.compile(
+    r"""asana["'][ \t]*,[ \t]*["'](?:""" + "|".join(re.escape(w) for w in sorted(WRITE_SUBCOMMANDS)) + r""")["']"""
+)
+ARGV_LIST_RAW_WRITE_RE = re.compile(
+    r"""asana["'][ \t]*,[ \t]*["']raw["'][ \t]*,[ \t]*["'](?:put|post|delete)["']""",
+    re.IGNORECASE,
+)
+
+
+def ask(reason):
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+def deny(reason):
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+def split_segments(cmd):
+    segments = []
+    seg = []
+    in_single = in_double = False
+    for c in cmd:
+        if c == "'" and not in_double:
+            in_single = not in_single
+            seg.append(c)
+        elif c == '"' and not in_single:
+            in_double = not in_double
+            seg.append(c)
+        elif not in_single and not in_double and c in ";|&":
+            segments.append("".join(seg))
+            seg = []
+        else:
+            seg.append(c)
+    segments.append("".join(seg))
+    return segments
+
+
+def tokenize(text):
+    try:
+        return shlex.split(text, posix=True)
+    except ValueError:
+        return text.split()
+
+
+def basename_token(token):
+    t = token
+    while t and t[0] in "(`{":
+        t = t[1:]
+    while t and t[-1] in ")`}":
+        t = t[:-1]
+    return t.rsplit("/", 1)[-1] if t else t
+
+
+def is_word(token, word):
+    return basename_token(token) == word
+
+
+def direct_asana_write(text):
+    for seg in split_segments(text):
+        tokens = tokenize(seg)
+        for i, t in enumerate(tokens):
+            if not is_word(t, "asana"):
+                continue
+            rest = tokens[i + 1:]
+            if not rest:
+                continue
+            if rest[0] in WRITE_SUBCOMMANDS:
+                return True
+            if rest[0].lower() == "raw" and len(rest) > 1 and rest[1].lower() in RAW_WRITE_VERBS:
+                return True
+    return False
+
+
+def has_asana_write(text):
+    return (
+        direct_asana_write(text)
+        or bool(ARGV_LIST_WRITE_RE.search(text))
+        or bool(ARGV_LIST_RAW_WRITE_RE.search(text))
+    )
+
+
+def detect_batch_apply(cmd):
+    for seg in split_segments(cmd):
+        tokens = tokenize(seg)
+        for i in range(len(tokens) - 1):
+            if is_word(tokens[i], "asana") and tokens[i + 1] == "batch-apply":
+                return True
+    return False
+
+
+def extract_batch_plan(cmd):
+    try:
+        tokens = shlex.split(cmd, posix=True)
+    except ValueError:
+        return None
+    if tokens and is_word(tokens[0], "bash"):
+        tokens = tokens[1:]
+    if len(tokens) == 3 and is_word(tokens[0], "asana") and tokens[1] == "batch-apply":
+        return os.path.expanduser(tokens[2])
+    return None
+
+
+def script_from_command(cmd):
+    first_line = cmd.split("\n", 1)[0]
+    tokens = tokenize(first_line)
+    if not tokens:
+        return None
+
+    runner = basename_token(tokens[0])
+    file = None
+
+    if runner in SCRIPT_RUNNERS:
+        file = next((t for t in tokens[1:] if not t.startswith("-")), None)
+    elif runner == "env":
+        rest = tokens[1:]
+        idx = 0
+        while idx < len(rest) and (rest[idx].startswith("-") or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", rest[idx])):
+            idx += 1
+        if idx >= len(rest) or basename_token(rest[idx]) not in ENV_INNER_RUNNERS:
+            return None
+        file = next((t for t in rest[idx + 1:] if not t.startswith("-")), None)
+    elif tokens[0] == ".":
+        file = tokens[1] if len(tokens) > 1 else None
+    elif re.match(r"^(/|\.{1,2}/|~)", tokens[0]):
+        file = tokens[0]
+    else:
+        return None
+
+    if not file:
+        return None
+    file = os.path.expanduser(file)
+    if os.path.basename(file) == "asana":
+        return None
+    if os.path.isfile(file) and os.access(file, os.R_OK):
+        return file
+    return None
+
+
+def run_batch_preview(plan):
+    """Thin wrapper so tests can monkeypatch the external call."""
+    return subprocess.run(
+        [ASANA_BIN, "batch-preview", plan],
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+
+
+def evaluate_batch_apply(cmd):
+    plan = extract_batch_plan(cmd)
+    if plan is None:
+        return deny("[asana-write-guard] Invoke batch-apply directly with exactly one plan path so its preview can be checked.")
+
+    try:
+        with open(plan) as f:
+            plan_data = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        plan_data = None
+
+    operations = plan_data.get("operations") if isinstance(plan_data, dict) else None
+    count = len(operations) if isinstance(operations, list) else 0
+    if count < 3:
+        return deny("[asana-write-guard] Batch requires at least 3 operations; use direct Asana commands for one or two writes.")
+
+    preview = run_batch_preview(plan)
+    if preview.returncode != 0:
+        lines = preview.stdout.splitlines()
+        error = lines[-1] if lines else ""
+        return deny(f"[asana-write-guard] Batch validation failed; nothing was written. {error}")
+
+    targets = []
+    for op in operations:
+        if not isinstance(op, dict):
+            continue
+        val = op.get("task")
+        if val is None:
+            val = op.get("parent")
+        if val is None:
+            val = op.get("project")
+        if val is not None:
+            targets.append(str(val))
+    target_count = len(set(targets))
+
+    return ask(f"[asana-write-guard] Approve Asana batch: {count} operations across {target_count} targets?")
+
+
+def check_api_wrapper(cmd):
+    for seg in split_segments(cmd):
+        tokens = tokenize(seg)
+        for i, t in enumerate(tokens):
+            if is_word(t, "api") and i + 1 < len(tokens) and tokens[i + 1] in ("POST", "PATCH", "PUT", "DELETE"):
+                return ask("[api-guard] API write (POST/PATCH/PUT/DELETE) requires explicit approval.")
+    return None
+
+
+def evaluate(cmd):
+    if detect_batch_apply(cmd):
+        return evaluate_batch_apply(cmd)
+
+    if has_asana_write(cmd):
+        return ask("[asana-write-guard] Approve this Asana write?")
+
+    script = script_from_command(cmd)
+    if script is not None:
+        try:
+            with open(script) as f:
+                content = f.read()
+        except OSError:
+            content = ""
+        if has_asana_write(content):
+            return deny(
+                "[asana-write-guard] Script contains hidden Asana writes. Invoke direct CLI "
+                "operations for one or two writes, or one direct batch-apply for three or more."
+            )
+
+    return check_api_wrapper(cmd)
+
+
+def main() -> int:
+    data = json.load(sys.stdin)
+    cmd = data.get("tool_input", {}).get("command") or ""
+    if cmd:
+        decision = evaluate(cmd)
+        if decision is not None:
+            print(json.dumps(decision))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

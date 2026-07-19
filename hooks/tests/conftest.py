@@ -29,3 +29,8 @@ def no_compound_bash():
 @pytest.fixture
 def destructive_op_guard():
     return load_hook_module("destructive-op-guard")
+
+
+@pytest.fixture
+def asana_write_guard():
+    return load_hook_module("asana-write-guard")
