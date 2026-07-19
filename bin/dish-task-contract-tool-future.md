@@ -14,6 +14,18 @@ The tool is built and rolled out in stages, scoped to what the evidence in `dish
 `dish-incident-log.md`, and `dish-review-log.md` actually requires. Nothing beyond v1a/v1b is built
 until real usage data justifies it.
 
+For the later split contract, the approved checked-in `dish-planning.md`, `dish-research.md`, and
+`dish-verification.md` are repository-maintained governing sources, not generated or synced from
+Asana. One human-readable `contract_release` version identifies their exact checked-in set together
+with the manifest/schema. The shared `git-commit` wrapper owns the version file: agents and humans
+do not edit it; the wrapper advances and includes it atomically whenever a file in the defined
+contractual set changes, rejects direct edits or an unversioned contractual commit, and ignores
+unrelated commits. Git history supplies the exact-content binding, so the release value need not be
+a combined hash. `tool_version` remains separate; compatible tool-only fixes change only that
+version, while schema or semantic compatibility changes require both versions to advance. The
+cross-repository enforcement mechanism is still an implementation question, not authorization to
+build it.
+
 **v1a — build and soft-launch.** The full guarded path (`prepare` / `approve` / `reject` / `submit`
 / `contract-admin recover`) is implemented, tested, and usable end-to-end against live tasks — it
 performs real Asana writes through the guarded, token-protected path. What v1a does *not* do is make
@@ -57,6 +69,11 @@ v1b is a configuration flip on v1a's own logged evidence, not new code.
   off; a Marco-signed lock may deserve more evidence to challenge than an agent-set lock, but that
   remains judgment. Do not encode separate lock classes or evidence thresholds in the tool. Any
   proposed lock change after planning handoff goes to Human Review.
+- Scripted migration for later contract releases: perform deterministic structural transformations,
+  remove obsolete fields, stamp the new `contract_release`, and fail closed on content requiring
+  judgment. This follows the split's initial agent-led migration, where deterministic corpus
+  validation returns every failure for correction until all live tasks pass; it does not replace
+  that first rollout.
 - Token/submission replacement as a distinct action from `contract-admin recover` — only worth
   building if recovery proves insufficient in real use.
 - Replacing the manual ChatGPT copy/paste relay (`dish-task-contract-tool.md`'s ChatGPT workflow
@@ -87,9 +104,8 @@ v1b is a configuration flip on v1a's own logged evidence, not new code.
 - A distinct adversarial self-review mechanism. The review log is explicit that this "was an
   assistant recommendation and was not approved in the enforcement handoff" and creates no
   implementation requirement. Stays out unless Marco separately approves it.
-- Cryptographic identity authentication, recursive dependency audits, automatic migration of
-  existing tasks, a multi-user/remote trust service (see Out of scope) — no new reason to revisit
-  these.
+- Cryptographic identity authentication, recursive dependency audits, and a multi-user/remote trust
+  service (see Out of scope) — no new reason to revisit these.
 
 ## Deferred: write-safety and observability machinery with no evidenced incident (v2)
 
