@@ -209,15 +209,6 @@ pass, diff-summary computation (`characters_added`, `characters_removed`, `lines
 Every validation failure is reported with every violated rule, not just the first, and logged via
 `log_event` even on a failing attempt, since `start` already created the row it attaches to.
 
-**OPEN — attempt-number logging.** The design doc's Logging and observability section requires `prepare`
-logging to record "whether the note passed validation on the first attempt, and if not, which attempt
-number succeeded" — this needs a correlation key grouping a task's failed `prepare` attempts (which get
-no submission row) with the eventual successful one, e.g. a counter keyed on `(task_gid, editor_agent)`
-reset once a submission is created. It's a small addition, not heavy machinery, but it is a design-doc
-logging requirement this plan hadn't accounted for. Build it as specified, or drop it and log failure
-counts by task/rule only (simpler, but under-delivers what the design doc's Logging section already
-promises, so the design doc would need the matching edit)?
-
 ### Tests (`tests/test_contract_prepare.py`, `tests/test_contract_validation.py`)
 
 Mirrors `dish-task-contract-tool.md`'s Testing requirements section directly:
@@ -433,10 +424,8 @@ canonical structure, and anything not already named in that document's Out of sc
 
 ## Open questions summary
 
-1. Attempt-number logging — build the `(task_gid, editor_agent)` attempt counter the design doc's
-   Logging section already requires, or drop it and simplify the design doc to match? See Step 3.
-2. Where (if anywhere) a ChatGPT-facing runbook pointer should live.
-3. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
+1. Where (if anywhere) a ChatGPT-facing runbook pointer should live.
+2. Whether to replace the manual ChatGPT copy/paste relay with a custom GPT Action (Marco already
    has the same laptop-hosted groundwork proven for another purpose); the open call is
    trust/semantics — direct live-endpoint access to real tasks, and whether `Self-verified:` stays
    ChatGPT's own assertion rather than something the Action stamps on its behalf — not build effort.
