@@ -53,6 +53,10 @@ v1b is a configuration flip on v1a's own logged evidence, not new code.
   may make a clear fix, recheck, and sign; a substantive defect, such as a recipe whose protein is
   off, returns to the editor. The tool must permit that workflow but must not attempt to classify a
   correction as clear or substantive.
+- Split-planning lock handling: use one lock type. The Decisions/process record preserves who signed
+  off; a Marco-signed lock may deserve more evidence to challenge than an agent-set lock, but that
+  remains judgment. Do not encode separate lock classes or evidence thresholds in the tool. Any
+  proposed lock change after planning handoff goes to Human Review.
 - Token/submission replacement as a distinct action from `contract-admin recover` — only worth
   building if recovery proves insufficient in real use.
 - Replacing the manual ChatGPT copy/paste relay (`dish-task-contract-tool.md`'s ChatGPT workflow
