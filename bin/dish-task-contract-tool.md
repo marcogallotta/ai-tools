@@ -611,5 +611,5 @@ Implementation follows TDD. Tests must cover:
    `Sourcing`/`Reference` is contract-managed immediately; whether existing tasks' *content* needs
    migration to the current canonical structure is a separate, out-of-scope question.
 
-Item 6 (small-change carelessness) moved to `dish-task-contract-tool-future.md` — it's targeted for v2,
-not v1.
+The small-change-carelessness question (Marco's standing concern about an honest agent mis-declaring a
+material change as `small`) moved to `dish-task-contract-tool-future.md` — it's targeted for v2, not v1.
