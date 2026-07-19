@@ -42,10 +42,10 @@ advisory-only v1a mode — which is invisible to the lock and is only caught, if
   not infer it.
 * The complete final note is validated and written as one artifact — no patches or fragments.
 * A successful write consumes a single-use submission; an identical second write is rejected.
-* A submission gets exactly one silent write, then one further write gated behind an explicit
-  `--final` confirmation; a third attempt is hard-rejected and requires `contract-admin reset` before
-  the task can be written again, and each reset grants exactly one further `--final`-gated write (see
-  `contract submit`).
+* A submission gets exactly one write; a second `submit` attempt on an already-`consumed` submission
+  is rejected (see `contract submit`). No incident evidences a need for a multi-write escalation
+  budget or reset mechanism — see `dish-task-contract-tool-future.md` if v1a's logging shows
+  otherwise.
 
 ## Change levels
 
@@ -159,8 +159,8 @@ workflow operates on.
 3. Reads the complete task; records `baseline_modified_at` and `baseline_notes_hash`. This is the only
    baseline read for the submission's entire life — closing the gap where a long drafting window could
    silently miss an intervening edit.
-4. Creates one `submissions` row, status `drafting`, `write_count` 0. The row's `submission_id` is
-   printed back to the caller and used as the token for every subsequent command
+4. Creates one `submissions` row, status `drafting`. The row's `submission_id` is printed back to the
+   caller and used as the token for every subsequent command
    (`prepare`/`approve`/`reject`/`submit`) on this submission — there is no separate token object.
 
 The lock is held for as long as the submission stays in a non-terminal status, and releases
@@ -198,12 +198,7 @@ The tool:
 4. On a validation failure: reports every violated rule; the submission stays in `drafting` (it already
    exists, opened by `start`), but the attempt is logged (see Logging and observability) so failure
    patterns are visible even before a validation pass.
-5. On a pass: hashes the file as `content_hash`, computes a compact diff summary against
-   `baseline_notes_hash`'s source text (`characters_added`, `characters_removed`, `lines_changed`,
-   `headings_touched`), logs that summary to `audit_events`, and advances the row out of `drafting`. The
-   summary is computed and logged, not persisted as a second full copy of the note — hashes alone
-   cannot answer what a `small`-declared change actually touched (see Logging and observability), so
-   this is the minimum needed to make that observability claim true.
+5. On a pass: hashes the file as `content_hash` and advances the row out of `drafting`.
    * `small` → status `ready`, no verifier required.
    * `medium`/`large` → status `awaiting_verification`, with `required_verifier_family` set to the
      family opposite `editor_family`.
@@ -273,38 +268,20 @@ contract reject <submission-id> --agent <verifier-agent> --reason "<why not sign
 ### 4. `contract submit`
 
 ```text
-contract submit <submission-id> --file <same-final-note> [--final]
+contract submit <submission-id> --file <same-final-note>
 ```
 
 1. Loads the submission; requires status `ready`.
-2. Rejects outright, with no Asana call attempted, if `write_count` has already reached its current
-   limit (`2 + reset_count`, see SQLite model) — the agent is told it must stop and ask Marco for
-   permission; only `contract-admin reset` unblocks it.
-3. If `write_count` is 1 and `--final` was not passed: makes no Asana call and does not increment
-   `write_count`. Returns a hard confirmation prompt — this will be the submission's last write,
-   confirm every necessary change has already been made, and re-run with `--final` to actually execute
-   it. This response is idempotent: calling `submit` again without `--final` simply repeats the same
-   prompt.
-4. Recomputes the file hash; rejects on any mismatch with `content_hash`.
-5. Atomically flips status `ready` → `in_flight`.
-6. Increments `write_count` — this happens for every attempt that reaches an actual Asana mutation,
-   regardless of its outcome (success, confirmed failure, or uncertain). A failed `prepare` validation,
-   and the confirmation-only response in step 3, never reach here and never increment it. There is no
-   special case for a retry that resends identical content versus one that resends a genuinely
-   different edit — both count the same way.
-   * `write_count` reaches 1: silent, no warning — this is the submission's one unconditional write.
-   * `write_count` reaches 2: only reachable via `--final` (step 3); succeeds and is logged as the last
-     allowed write for this submission until a `contract-admin reset`.
-   * After a `contract-admin reset`, exactly one further write is granted, and it requires `--final`
-     immediately — there is no silent write and no confirmation round-trip the second time around; a
-     plain `submit` call post-reset does not execute.
-7. Sends one complete notes update to Asana.
-8. On clear success: marks `consumed` — the lock releases.
-9. On confirmed API failure: reverts to `ready` — the same validated submission may be retried, subject
-   to the `write_count` limit above (a failed attempt still consumed one of the writes it counted
-   against).
-10. On an ambiguous/uncertain outcome: marks `uncertain` — resolved only by `contract-admin recover`
-    (see Contract admin tool).
+2. Recomputes the file hash; rejects on any mismatch with `content_hash`.
+3. Atomically flips status `ready` → `in_flight`.
+4. Sends one complete notes update to Asana.
+5. On clear success: marks `consumed` — the lock releases. A submission is single-use: a second
+   `submit` call against a `consumed` submission is rejected outright.
+6. On confirmed API failure: reverts to `ready` — the same validated submission may be retried.
+7. On an ambiguous/uncertain outcome: marks `uncertain` — logged for Marco to check directly in Asana
+   (see Contract admin tool). No incident evidences a crash or ambiguous-outcome case in practice; a
+   deterministic recovery table is a v2 candidate once real usage shows it's needed (see
+   `dish-task-contract-tool-future.md`).
 
 There is no pre-write freshness re-read here: `start` already holds an exclusive lock on the task for
 this submission's entire life, so no other `contract` CLI caller can have moved `modified_at` in the
@@ -337,9 +314,8 @@ baseline — is required after any terminal state.
 
 ### Failure before mutation
 
-Examples: deterministic validation failure; missing approval; content-hash mismatch; routing mismatch;
-`write_count` already at its limit. No Asana write occurs. A wrong-file or hash-mismatch rejection does
-not consume the submission and does not increment `write_count`, since it never reaches Asana.
+Examples: deterministic validation failure; missing approval; content-hash mismatch; routing mismatch.
+No Asana write occurs, and the submission is not consumed.
 
 ### Confirmed API failure
 
@@ -354,17 +330,12 @@ process dies while a submission is `in_flight`, nothing recovers it automaticall
 background sweep, or automatic retry; the lock stays held and the task simply stays unavailable for a
 new `start` until recovered. This does not block other tasks' submissions.
 
-Recovery is `contract-admin recover <submission-id>` (Marco-only, not the agent-facing CLI — an agent
-should not resolve an ambiguous write outcome itself). It performs one targeted read of live notes and
-live `modified_at`, then applies this outcome table — notes state is the primary signal, `modified_at`
-can only make the outcome stricter, never looser:
-
-| Live notes match | Live `modified_at` vs. baseline | Outcome |
-| --- | --- | --- |
-| Intended final-content hash | unchanged or changed | `consumed` — the write applied; notes are the write's own effect regardless of incidental `modified_at` movement. |
-| Original baseline-notes hash | unchanged | `ready` — consistent with a confirmed failed write; the same validated content may be retried. |
-| Original baseline-notes hash | changed | `stale`, Marco-led recovery required — notes never changed, but something else touched the task after baseline capture. |
-| Neither | unchanged or changed | `stale`, Marco-led recovery required. |
+No incident evidences a crashed process or an ambiguous Asana outcome happening in practice. v1a logs
+the `uncertain` state and leaves recovery to Marco checking the live task directly and using
+`contract-admin recover <submission-id>` (Marco-only) to set the submission's status by hand once he's
+confirmed what actually happened. A deterministic outcome table driven off live notes/`modified_at`
+comparison is a v2 candidate once real usage shows this needs to be automated (see
+`dish-task-contract-tool-future.md`).
 
 ## Contract admin tool
 
@@ -377,13 +348,8 @@ boundary is that agents are not instructed or expected to look for or invoke it,
 
 `contract-admin` covers:
 
-* `contract-admin recover <submission-id>` — resolve a stuck `in_flight` or `uncertain` submission
-  after a process crash or an ambiguous Asana response;
-* `contract-admin reset <submission-id>` — clear a submission that has hit its write limit (see
-  `contract submit`) so the same validated content can be written again; each reset grants exactly one
-  further `--final`-gated write, not a restored two-write budget. This only releases the exhausted
-  row's hold rather than reopening it for further drafting — a further edit still requires a fresh
-  `contract start`;
+* `contract-admin recover <submission-id>` — set a stuck `in_flight` or `uncertain` submission's
+  status by hand after Marco has checked the live task directly and confirmed what actually happened;
 * other Marco-only actions identified later, including v2's `contract-admin unblock` once the
   two-failed-pass gate is built.
 
@@ -415,10 +381,6 @@ or distinguishable to it.
 * `verifier_family`
 * `content_hash`
 * `status`
-* `write_count` (default 0; incremented on every actual Asana mutation attempt at `submit`, not on the
-  confirmation-only response when `--final` is omitted; see `contract submit`)
-* `reset_count` (default 0; incremented by each `contract-admin reset`; each increment grants exactly
-  one further `--final`-gated write on top of the base 2-write limit)
 * `created_at` (set at `start`, when the row and its lock are first created)
 * `approved_at`
 * `completed_at`
@@ -454,12 +416,8 @@ Every `contract` command execution logs an event regardless of outcome:
 * for `prepare`: declared change level and reason, and whether the note passed validation;
 * for `approve`/`reject`: verifier agent/family, the decision, and for `reject`, the stated reason, so
   rejection patterns are visible without reading every case individually;
-* for `submit`: the resulting `write_count` and the final submission state, so the confirmation-only
-  response (no `--final`), the confirmed `--final` write, and any hard-block/`contract-admin reset`
-  event are all visible in the log, not just returned to the caller;
-* for `prepare`: the compact diff summary against the prior baseline (`characters_added`,
-  `characters_removed`, `lines_changed`, `headings_touched` — see Workflow §2), so `small`-declared
-  diffs can actually be characterized later, not just counted.
+* for `submit`: the final submission state (`consumed`, reverted to `ready` on confirmed failure, or
+  `uncertain`), so every outcome is visible in the log, not just returned to the caller.
 
 The generic Asana CLI's managed-task check also logs during v1a even though it does not yet block:
 every note-write to a section-managed task made *outside* the guarded `contract` path is logged as an
@@ -474,12 +432,10 @@ minimum:
 * validation failure rate, broken down by which specific rule failed most often;
 * rejection rate, and repeated-rejection-on-same-task rate — the input needed to decide whether v2's
   two-pass-stop rule is actually necessary;
-* what real `small`-declared diffs actually touch and how large they are, from the diff summary logged
-  at `prepare` (see Workflow §2) — the input needed to design v2's small-change speed bump;
-* how many advisory bypass events occurred outside the guarded path, and on which tasks/agents;
-* how often the `--final` confirmation is actually reached (vs. write 1 alone being sufficient), and how
-  often `contract-admin reset` is actually needed — the input needed to judge whether the 2-write limit
-  is set at the right level.
+* how many advisory bypass events occurred outside the guarded path, and on which tasks/agents.
+
+Further queries (small-change diff characterization, write/reset frequency) are v2 candidates, tied to
+mechanisms not built in v1a either — see `dish-task-contract-tool-future.md`.
 
 ## Content hashing
 
@@ -564,27 +520,17 @@ Implementation follows TDD. Tests must cover:
 * submission reuse rejection (`consumed`/`stale`/`rejected` cannot be resubmitted, even with identical
   content);
 * two simultaneous `submit` calls on one submission;
-* `write_count` gating at `submit`: write 1 executes silently with no confirmation required; a second
-  plain `submit` call (no `--final`) makes no Asana call, does not increment `write_count`, and returns
-  the confirmation prompt every time it's repeated; `submit --final` at that point executes the 2nd
-  write; a third attempt (with or without `--final`) is rejected before any Asana call is attempted;
-* a submission at its write limit is unusable until `contract-admin reset`; after reset, exactly one
-  further write is available and requires `--final` immediately — a plain `submit` call post-reset does
-  not execute and does not itself consume the granted write;
-* each `contract-admin reset` increments `reset_count` and grants exactly one further write, not a
-  restored two-write budget;
-* confirmed API failure preserving retry eligibility (`in_flight` → `ready`) and incrementing
-  `write_count` for that attempt;
-* uncertain outcome where the write succeeded, where it did not, and a third conflicting state, each
-  resolved correctly by `contract-admin recover`'s outcome table;
+* a submission is single-use: a second `submit` call against an already-`consumed` submission is
+  rejected;
+* confirmed API failure preserving retry eligibility (`in_flight` → `ready`);
+* an uncertain `submit` outcome is logged as `uncertain` and left for Marco to resolve via
+  `contract-admin recover`, without asserting any automatic outcome-table behaviour;
 * raw `notes`/`html_notes` bypass attempts;
 * `Self-verified:` line missing, or naming an agent other than `editor_agent`, fails `prepare`;
 * a ChatGPT-authored file missing its own `Self-verified: gpt, <date>` line fails `prepare`, and no
   local-agent insertion satisfies it;
 * `editor_agent == verifier_agent` on `approve` is unreachable — always rejected by the family check
   first, confirming no separate collision path exists to test;
-* the diff summary (`characters_added`/`characters_removed`/`lines_changed`/`headings_touched`) is
-  logged at every `prepare` pass, without persisting a second full copy of the note;
 * `approve`/`submit` hash comparisons use the canonical-byte hash consistently, not raw upload bytes
   (see Content hashing);
 * `canonical_manifest` captured at `prepare` remains authoritative for the submission even if the
