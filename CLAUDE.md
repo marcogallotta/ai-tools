@@ -36,11 +36,20 @@ sessions invoke directly, plus design docs for tools in progress.
   into the other doc is still a judgment call for whoever picks that up next — it isn't
   automatic, but a clean commit trail is what makes that judgment call tractable.
 - Related files, not in this repo:
-  - `~/honest-pantry/dish-task-contract-change-plan.md` — the authoritative tracker of what
-    enforcement direction Marco has actually approved for that tool vs. what's still pending
-    design/decision. The two docs above are downstream of it and must stay consistent with it.
+  - `~/honest-pantry/dish-task-contract-change-plan.md` — the tracker of what enforcement
+    direction Marco has approved for that tool, upstream of the two docs above.
   - `~/honest-pantry/dish-task-contract.md` — the actual contract the tool validates dish-task
     notes against (canonical task structure, change classes, verification rules).
+
+  **Authority flows one way: change plan → design doc (`dish-task-contract-tool.md`) →
+  implementation plan. It is not a three-way sync.** Once the design doc has made a concrete
+  decision, the design doc wins outright, even where the change plan's wording is older, vaguer,
+  or broader — that is expected and not a discrepancy to resolve. The change plan is never
+  updated to tighten it back up. The *only* pairwise sync obligation is design doc ↔
+  implementation plan, since the plan's job is to build exactly what the design doc specifies.
+  When the implementation plan flags something as an open question, first check whether the
+  design doc has actually already decided it — if so, it is not open; cite the resolution and
+  move on, rather than re-litigating it as a live choice.
 
   If you are working *on* the two design docs above (drafting, revising, reconciling design
   decisions) — as opposed to using them as a spec to build the tool — also read
