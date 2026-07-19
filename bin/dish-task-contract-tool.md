@@ -42,9 +42,10 @@ advisory-only v1a mode — which is invisible to the lock and is only caught, if
   not infer it.
 * The complete final note is validated and written as one artifact — no patches or fragments.
 * A successful write consumes a single-use submission; an identical second write is rejected.
-* A submission may attempt at most 3 actual Asana writes (`write_count`); a 4th attempt is rejected
-  outright and requires `contract-admin` to reset or replace the submission before the task can be
-  written again.
+* A submission gets exactly one silent write, then one further write gated behind an explicit
+  `--final` confirmation; a third attempt is hard-rejected and requires `contract-admin reset` before
+  the task can be written again, and each reset grants exactly one further `--final`-gated write (see
+  `contract submit`).
 
 ## Change levels
 
@@ -272,29 +273,38 @@ contract reject <submission-id> --agent <verifier-agent> --reason "<why not sign
 ### 4. `contract submit`
 
 ```text
-contract submit <submission-id> --file <same-final-note>
+contract submit <submission-id> --file <same-final-note> [--final]
 ```
 
 1. Loads the submission; requires status `ready`.
-2. Rejects outright, with no Asana call attempted, if `write_count` is already 3 — a 4th write requires
-   `contract-admin` to reset or replace the submission first.
-3. Recomputes the file hash; rejects on any mismatch with `content_hash`.
-4. Atomically flips status `ready` → `in_flight`.
-5. Increments `write_count` — this happens for every attempt that reaches this point, i.e. every actual
-   Asana mutation attempt, regardless of its outcome (success, confirmed failure, or uncertain). A
-   failed `prepare` validation never reaches here and never increments it. There is no special case for
-   a retry that resends identical content versus one that resends a genuinely different edit — both
-   count the same way.
-   * `write_count` reaches 1: no warning.
-   * `write_count` reaches 2: succeeds, but logs a warning event ("stop doing tiny writes, one write
-     remaining").
-   * `write_count` reaches 3: succeeds, logged as the last allowed write for this submission.
-6. Sends one complete notes update to Asana.
-7. On clear success: marks `consumed` — the lock releases.
-8. On confirmed API failure: reverts to `ready` — the same validated submission may be retried, up to
-   the `write_count` limit above.
-9. On an ambiguous/uncertain outcome: marks `uncertain` — resolved only by `contract-admin recover`
-   (see Contract admin tool).
+2. Rejects outright, with no Asana call attempted, if `write_count` has already reached its current
+   limit (`2 + reset_count`, see SQLite model) — the agent is told it must stop and ask Marco for
+   permission; only `contract-admin reset` unblocks it.
+3. If `write_count` is 1 and `--final` was not passed: makes no Asana call and does not increment
+   `write_count`. Returns a hard confirmation prompt — this will be the submission's last write,
+   confirm every necessary change has already been made, and re-run with `--final` to actually execute
+   it. This response is idempotent: calling `submit` again without `--final` simply repeats the same
+   prompt.
+4. Recomputes the file hash; rejects on any mismatch with `content_hash`.
+5. Atomically flips status `ready` → `in_flight`.
+6. Increments `write_count` — this happens for every attempt that reaches an actual Asana mutation,
+   regardless of its outcome (success, confirmed failure, or uncertain). A failed `prepare` validation,
+   and the confirmation-only response in step 3, never reach here and never increment it. There is no
+   special case for a retry that resends identical content versus one that resends a genuinely
+   different edit — both count the same way.
+   * `write_count` reaches 1: silent, no warning — this is the submission's one unconditional write.
+   * `write_count` reaches 2: only reachable via `--final` (step 3); succeeds and is logged as the last
+     allowed write for this submission until a `contract-admin reset`.
+   * After a `contract-admin reset`, exactly one further write is granted, and it requires `--final`
+     immediately — there is no silent write and no confirmation round-trip the second time around; a
+     plain `submit` call post-reset does not execute.
+7. Sends one complete notes update to Asana.
+8. On clear success: marks `consumed` — the lock releases.
+9. On confirmed API failure: reverts to `ready` — the same validated submission may be retried, subject
+   to the `write_count` limit above (a failed attempt still consumed one of the writes it counted
+   against).
+10. On an ambiguous/uncertain outcome: marks `uncertain` — resolved only by `contract-admin recover`
+    (see Contract admin tool).
 
 There is no pre-write freshness re-read here: `start` already holds an exclusive lock on the task for
 this submission's entire life, so no other `contract` CLI caller can have moved `modified_at` in the
@@ -369,9 +379,11 @@ boundary is that agents are not instructed or expected to look for or invoke it,
 
 * `contract-admin recover <submission-id>` — resolve a stuck `in_flight` or `uncertain` submission
   after a process crash or an ambiguous Asana response;
-* `contract-admin reset <submission-id>` — clear a submission that has hit its 3-write limit (see
-  `contract submit`) so the task can be written again; the editor still starts over via a fresh
-  `contract start`, this only releases the exhausted row's hold rather than reopening it for reuse;
+* `contract-admin reset <submission-id>` — clear a submission that has hit its write limit (see
+  `contract submit`) so the same validated content can be written again; each reset grants exactly one
+  further `--final`-gated write, not a restored two-write budget. This only releases the exhausted
+  row's hold rather than reopening it for further drafting — a further edit still requires a fresh
+  `contract start`;
 * other Marco-only actions identified later, including v2's `contract-admin unblock` once the
   two-failed-pass gate is built.
 
@@ -403,8 +415,10 @@ or distinguishable to it.
 * `verifier_family`
 * `content_hash`
 * `status`
-* `write_count` (default 0; incremented on every actual Asana mutation attempt at `submit`; see
-  `contract submit`)
+* `write_count` (default 0; incremented on every actual Asana mutation attempt at `submit`, not on the
+  confirmation-only response when `--final` is omitted; see `contract submit`)
+* `reset_count` (default 0; incremented by each `contract-admin reset`; each increment grants exactly
+  one further `--final`-gated write on top of the base 2-write limit)
 * `created_at` (set at `start`, when the row and its lock are first created)
 * `approved_at`
 * `completed_at`
@@ -440,8 +454,9 @@ Every `contract` command execution logs an event regardless of outcome:
 * for `prepare`: declared change level and reason, and whether the note passed validation;
 * for `approve`/`reject`: verifier agent/family, the decision, and for `reject`, the stated reason, so
   rejection patterns are visible without reading every case individually;
-* for `submit`: the resulting `write_count` and the final submission state, so the 2nd-write warning and
-  3rd-write last-allowed notice are both visible in the log, not just returned to the caller;
+* for `submit`: the resulting `write_count` and the final submission state, so the confirmation-only
+  response (no `--final`), the confirmed `--final` write, and any hard-block/`contract-admin reset`
+  event are all visible in the log, not just returned to the caller;
 * for `prepare`: the compact diff summary against the prior baseline (`characters_added`,
   `characters_removed`, `lines_changed`, `headings_touched` — see Workflow §2), so `small`-declared
   diffs can actually be characterized later, not just counted.
@@ -462,8 +477,9 @@ minimum:
 * what real `small`-declared diffs actually touch and how large they are, from the diff summary logged
   at `prepare` (see Workflow §2) — the input needed to design v2's small-change speed bump;
 * how many advisory bypass events occurred outside the guarded path, and on which tasks/agents;
-* how often `write_count` reaches 2 or 3 in practice, and how often `contract-admin reset` is actually
-  needed — the input needed to judge whether the 3-write limit is set at the right level.
+* how often the `--final` confirmation is actually reached (vs. write 1 alone being sufficient), and how
+  often `contract-admin reset` is actually needed — the input needed to judge whether the 2-write limit
+  is set at the right level.
 
 ## Content hashing
 
@@ -548,11 +564,15 @@ Implementation follows TDD. Tests must cover:
 * submission reuse rejection (`consumed`/`stale`/`rejected` cannot be resubmitted, even with identical
   content);
 * two simultaneous `submit` calls on one submission;
-* `write_count` escalation at `submit`: write 1 no warning, write 2 succeeds with a warning event
-  logged, write 3 succeeds and is logged as the last allowed write, write 4 rejected before any Asana
-  call is attempted;
-* a submission at its `write_count` limit is unusable until `contract-admin reset`, and usable again
-  immediately after;
+* `write_count` gating at `submit`: write 1 executes silently with no confirmation required; a second
+  plain `submit` call (no `--final`) makes no Asana call, does not increment `write_count`, and returns
+  the confirmation prompt every time it's repeated; `submit --final` at that point executes the 2nd
+  write; a third attempt (with or without `--final`) is rejected before any Asana call is attempted;
+* a submission at its write limit is unusable until `contract-admin reset`; after reset, exactly one
+  further write is available and requires `--final` immediately — a plain `submit` call post-reset does
+  not execute and does not itself consume the granted write;
+* each `contract-admin reset` increments `reset_count` and grants exactly one further write, not a
+  restored two-write budget;
 * confirmed API failure preserving retry eligibility (`in_flight` → `ready`) and incrementing
   `write_count` for that attempt;
 * uncertain outcome where the write succeeded, where it did not, and a third conflicting state, each
@@ -610,6 +630,21 @@ Implementation follows TDD. Tests must cover:
 5. **Existing tasks — resolved.** Every pre-existing task in the Cooking project outside
    `Sourcing`/`Reference` is contract-managed immediately; whether existing tasks' *content* needs
    migration to the current canonical structure is a separate, out-of-scope question.
+6. **`Self-verified:` process-record line — resolved, required by the change plan.** The design already
+   implements this throughout: the editor writes `Self-verified: <agent>, <date>` at `prepare` (Workflow
+   §2); deterministic validation requires the line and that its declared agent matches `editor_agent`;
+   ChatGPT must supply its own such line in the file it hands over, with no local-agent backfill; and
+   both cases are covered in Testing requirements. This is not a new design decision — it mechanically
+   confirms the contract's existing end-to-end self-review requirement was attested to in the exact
+   content being validated, as the change plan's approval package requires.
+7. **`write_count` cap — resolved, Marco's design.** A submission gets exactly one silent write; a
+   second `submit` call without `--final` makes no Asana call and returns a hard confirmation prompt
+   (last write, confirm everything is done) rather than a passive warning; `submit --final` then
+   executes the 2nd write. A third attempt is hard-rejected — the agent is told to stop and ask Marco,
+   not to retry itself — and only `contract-admin reset` unblocks it. Each reset grants exactly one
+   further `--final`-gated write, not a restored two-write budget (see Workflow §4, `contract-admin
+   reset`). This replaces an earlier draft (3 silent-ish writes with only a logged warning at 2 and 3)
+   that never actually required the agent to engage with the warning before writing again.
 
 The small-change-carelessness question (Marco's standing concern about an honest agent mis-declaring a
 material change as `small`) moved to `dish-task-contract-tool-future.md` — it's targeted for v2, not v1.
