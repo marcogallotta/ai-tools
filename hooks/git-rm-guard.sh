@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# PreToolUse(Bash) guard: force a confirmation prompt for destructive
-# git operations and rm, overriding any allow-list match (e.g. Bash(git *)).
-# Emits permissionDecision:"ask" when matched; stays silent otherwise so
-# normal permission evaluation proceeds.
+# PreToolUse(Bash) guard: force a confirmation prompt (or outright deny) for
+# a broad set of destructive/risky ops — not just git and rm, but also
+# docker volume removal, psql writes, rsync --delete, and ssh with a remote
+# command — overriding any allow-list match (e.g. Bash(git *)).
+# Emits permissionDecision:"ask" (or "deny") when matched; stays silent
+# otherwise so normal permission evaluation proceeds.
 
 input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // ""')
