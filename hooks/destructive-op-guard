@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+# PreToolUse(Bash) guard: force a confirmation prompt (or outright deny) for
+# a broad set of destructive/risky ops — not just git and rm, but also
+# docker volume removal, psql writes, rsync --delete, and ssh with a remote
+# command — overriding any allow-list match (e.g. Bash(git *)).
+# Emits permissionDecision:"ask" (or "deny") when matched; stays silent
+# otherwise so normal permission evaluation proceeds.
+#
+# $cmd is split into top-level segments on unquoted ; | & (quote-aware char
+# scan, same idea as no-compound-bash's outside_quotes) and each segment is
+# shlex-tokenized. Every check below matches by token identity/position
+# rather than regex-over-raw-text. That's a deliberate fix, not just a
+# language port: the old bash version ran \bgit\b / \bcommit\b word-boundary
+# regexes over the *entire* raw command string, and bash's \b treats '-' as
+# a non-word boundary — so the literal substring "git-commit" sitting inside
+# an unrelated quoted argument (e.g. a grep pattern) read as the standalone
+# words "git" and "commit" and false-triggered the git guard with no git
+# invocation anywhere in the command. Tokenizing means "git-commit" is one
+# token, compared by identity, never split into "git" + "commit".
+# All checks (not just git) are scoped to segments for the same reason: a
+# destructive word inside one command's quoted argument shouldn't be
+# attributed to a different command elsewhere in a compound line.
+
+import json
+import re
+import shlex
+import sys
+
+SSH_VALUE_FLAGS = set("bicloDEeFIiJLmopQRSWw")
+
+
+def ask(reason):
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "ask",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+def deny(reason):
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+def split_segments(cmd):
+    """Split on unquoted ; | & (single chars, so && / || split into two
+    segments with an empty one between — filtered out by callers), leaving
+    quoted spans untouched."""
+    segments = []
+    seg = []
+    in_single = in_double = False
+    for c in cmd:
+        if c == "'" and not in_double:
+            in_single = not in_single
+            seg.append(c)
+        elif c == '"' and not in_single:
+            in_double = not in_double
+            seg.append(c)
+        elif not in_single and not in_double and c in ";|&":
+            segments.append("".join(seg))
+            seg = []
+        else:
+            seg.append(c)
+    segments.append("".join(seg))
+    return segments
+
+
+def tokenize(segment):
+    try:
+        return shlex.split(segment, posix=True)
+    except ValueError:
+        # Unbalanced quotes (e.g. an apostrophe in prose text) - fall back
+        # to a naive split rather than crashing the hook.
+        return segment.split()
+
+
+def basename_token(token):
+    t = token
+    while t and t[0] in "(`{":
+        t = t[1:]
+    while t and t[-1] in ")`}":
+        t = t[:-1]
+    return t.rsplit("/", 1)[-1] if t else t
+
+
+def is_word(token, word):
+    return basename_token(token) == word
+
+
+def segments_of(cmd):
+    return [s for s in split_segments(cmd) if s.strip()]
+
+
+# rm anywhere in a segment (word-identity, not substring, so npm/charm/etc.
+# don't match). Skip the prompt when every target literally starts with
+# /tmp/ - scratch space, not worth an approval round-trip. Any non-/tmp
+# target (or no resolvable target) falls back to asking, since paths built
+# from variables/expansions aren't visible to this hook as literal text.
+def check_rm(segments):
+    for seg in segments:
+        tokens = tokenize(seg)
+        if not any(is_word(t, "rm") for t in tokens):
+            continue
+        targets = []
+        found = False
+        for t in tokens:
+            if not found:
+                if is_word(t, "rm"):
+                    found = True
+                continue
+            if t.startswith("-"):
+                continue
+            targets.append(t)
+        if targets and all(t.startswith("/tmp/") for t in targets):
+            continue
+        return ask("[destructive-op-guard] Destructive: 'rm' requires explicit approval.")
+    return None
+
+
+# docker compose down -v destroys volumes (including dev DB)
+def check_docker(segments):
+    for seg in segments:
+        tokens = tokenize(seg)
+        has_docker = any(is_word(t, "docker") for t in tokens)
+        has_down = any(is_word(t, "down") for t in tokens)
+        has_vflag = any(re.match(r"^-[A-Za-z]*v", t) for t in tokens)
+        if has_docker and has_down and has_vflag:
+            return ask(
+                "[destructive-op-guard] Destructive: 'docker compose down -v' "
+                "will destroy volumes including the dev DB. Explicit approval required."
+            )
+    return None
+
+
+def check_git(segments):
+    # git-commit wrapper (atomic stage+commit) - but not --help/-h, which is
+    # read-only. A bare "git-commit" with no following token is left alone,
+    # matching the original bash regex which required trailing text after it.
+    for seg in segments:
+        tokens = tokenize(seg)
+        for i, t in enumerate(tokens):
+            if not is_word(t, "git-commit"):
+                continue
+            if i + 1 >= len(tokens):
+                continue
+            if tokens[i + 1] in ("--help", "-h"):
+                continue
+            return ask("[destructive-op-guard] git-commit (stage + commit) requires explicit approval.")
+
+    # destructive git subcommands. Each is its own pass over every segment,
+    # checked in this order, mirroring the original's sequence of exit-on-
+    # first-match ifs over the whole (unsegmented) command.
+    for seg in segments:
+        tokens = tokenize(seg)
+        if not any(is_word(t, "git") for t in tokens):
+            continue
+        if any(t in ("commit", "push", "clean", "checkout", "restore") for t in tokens):
+            return ask(
+                "[destructive-op-guard] Destructive git operation "
+                "(commit/push/checkout/restore/clean) requires explicit approval."
+            )
+
+    for seg in segments:
+        tokens = tokenize(seg)
+        if not any(is_word(t, "git") for t in tokens):
+            continue
+        if "reset" in tokens and "--hard" in tokens:
+            return ask("[destructive-op-guard] Destructive git operation (reset --hard) requires explicit approval.")
+
+    for seg in segments:
+        tokens = tokenize(seg)
+        if not any(is_word(t, "git") for t in tokens):
+            continue
+        if "add" in tokens:
+            return deny(
+                "[destructive-op-guard] Don't run git add alone — it leaves staged changes that can "
+                "collide with another session's commit. Use: ~/.claude/bin/git-commit <files> -m 'message'. "
+                "Paths resolve relative to $PWD's repo, NOT the repo root or an absolute target — if the "
+                "repo you want isn't your current cwd, pass -C <repo> instead of cd'ing there (cd && "
+                "git-commit is a compound command and will be blocked). Run 'git-commit --help' first if unsure."
+            )
+
+    return None
+
+
+def check_psql(segments):
+    for seg in segments:
+        tokens = tokenize(seg)
+        if not any(is_word(t, "psql") for t in tokens):
+            continue
+        if any(re.search(r"\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|COPY)\b", t, re.IGNORECASE) for t in tokens):
+            return ask(
+                "[destructive-op-guard] psql write operation (INSERT/UPDATE/DELETE/DROP/etc.) "
+                "requires explicit approval."
+            )
+
+    for seg in segments:
+        tokens = tokenize(seg)
+        if not any(is_word(t, "psql") for t in tokens):
+            continue
+        if any(re.search(r"-c\b", t) for t in tokens):
+            return ask("[destructive-op-guard] psql -c (inline SQL command) requires explicit approval.")
+
+    return None
+
+
+# rsync --delete removes files on the target
+def check_rsync(segments):
+    for seg in segments:
+        tokens = tokenize(seg)
+        if any(is_word(t, "rsync") for t in tokens) and any(re.search(r"--delete\b", t) for t in tokens):
+            return ask("[destructive-op-guard] rsync --delete can remove files on the target. Explicit approval required.")
+    return None
+
+
+# ssh with a remote command (not just interactive login). plantpi.local is
+# trusted - skip the prompt for that host.
+def check_ssh(segments):
+    for seg in segments:
+        tokens = tokenize(seg)
+        ssh_idx = next((i for i, t in enumerate(tokens) if is_word(t, "ssh")), None)
+        if ssh_idx is None:
+            continue
+        if any("plantpi.local" in t for t in tokens):
+            continue
+
+        nonflag = 0
+        skip = False
+        for t in tokens[ssh_idx + 1:]:
+            if skip:
+                skip = False
+                continue
+            if len(t) == 2 and t[0] == "-" and t[1] in SSH_VALUE_FLAGS:
+                skip = True
+                continue
+            if t.startswith("-"):
+                continue
+            nonflag += 1
+
+        if nonflag > 1:
+            return ask(
+                "[destructive-op-guard] ssh with remote command (not just interactive login) "
+                "requires explicit approval."
+            )
+    return None
+
+
+def evaluate(cmd):
+    segments = segments_of(cmd)
+    return (
+        check_rm(segments)
+        or check_docker(segments)
+        or check_git(segments)
+        or check_psql(segments)
+        or check_rsync(segments)
+        or check_ssh(segments)
+    )
+
+
+def main() -> int:
+    data = json.load(sys.stdin)
+    cmd = data.get("tool_input", {}).get("command") or ""
+    if cmd:
+        decision = evaluate(cmd)
+        if decision is not None:
+            print(json.dumps(decision))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
