@@ -1,7 +1,7 @@
 # Dish task contract tool — v1a implementation plan
 
 Scope: v1a only, per `dish-task-contract-tool.md`'s Versioning plan — the full guarded path
-(`start`/`prepare`/`approve`/`reject`/`submit`/`contract-admin recover`/`contract-admin reset`),
+(`start`/`prepare`/`approve`/`reject`/`submit`/`contract-admin recover`),
 soft-launched with the generic Asana CLI's managed-task check running advisory/log-only. v1b's
 enforcement flip and all v2 items are out of scope here; nothing in this plan builds toward them ahead
 of need.
@@ -171,7 +171,7 @@ match `asana`'s hand-rolled flag parsing, and `argparse` gets free `--help`, err
 on Step 1's unique index on `submissions(task_gid)` for non-terminal `status`, including `drafting`,
 for the race case — this is the lock); one baseline read of the live task, recording
 `baseline_modified_at` and `baseline_notes_hash` via `contract_lib.canonicalize_and_hash`; creates one
-`submissions` row, status `drafting`, `write_count` 0; prints the `submission_id` back to the caller —
+`submissions` row, status `drafting`; prints the `submission_id` back to the caller —
 this is the only token every later command (`prepare`/`approve`/`reject`/`submit`) operates on, there is
 no separate token object.
 
@@ -202,9 +202,9 @@ life; the full deterministic validation rule set (readiness line, `WHAT TO BUY` 
 lines well-formed, `Self-verified:` agent match, change-level/process-record consistency,
 contract-revision match, heading allowlist, readiness-contradiction check); on a validation failure, the
 submission stays in `drafting` (it already exists, opened by `start`) and the attempt is logged; on a
-pass, diff-summary computation (`characters_added`, `characters_removed`, `lines_changed`,
-`headings_touched`) against the baseline captured at `start`, and advancing the row out of `drafting`
+pass, advancing the row out of `drafting`
 (`ready` for `small`, `awaiting_verification` with `required_verifier_family` set for `medium`/`large`).
+No diff-summary computation — dropped from v1a entirely (see `dish-task-contract-tool-future.md`).
 
 Every validation failure is reported with every violated rule, not just the first, and logged via
 `log_event` even on a failing attempt, since `start` already created the row it attaches to.
@@ -234,8 +234,6 @@ Mirrors `dish-task-contract-tool.md`'s Testing requirements section directly:
   `start`, not a fresh read of the task at `prepare` time;
 - successful `prepare` produces the correct initial `status` for each of `small`/`medium`/`large`, and
   the correct `required_verifier_family` for `medium`/`large`;
-- diff summary fields are computed and logged, and are not persisted as a second full copy of the note
-  text anywhere in `submissions` or `audit_events`;
 - every `prepare` call (pass or fail) produces exactly one `audit_events` row.
 
 ## Step 4 — `contract approve` / `contract reject`
@@ -268,16 +266,15 @@ opens: a new lock, a new baseline, and a new submission, not a reopened one.
 
 ## Step 5 — `contract submit` and failure handling
 
-`c_submit(...)` implements Workflow §4: load submission, require `ready`; reject outright, with no
-Asana call attempted, if `write_count` has already reached its current limit (`2 + reset_count`) — the
-agent is told to stop and ask Marco, only `contract-admin reset` unblocks it; if `write_count` is 1 and
-`--final` was not passed, make no Asana call, do not increment `write_count`, and return a hard
-confirmation prompt (idempotent — repeating the plain call just repeats the prompt); recompute file hash
-and reject on mismatch; fresh task read, compare `modified_at` to `baseline_modified_at`, reject (mark
-`stale`) on any difference; atomic `ready` → `in_flight` flip; increment `write_count` — this happens for
-every attempt that reaches an actual Asana mutation, regardless of outcome (success, confirmed failure,
-or uncertain), with no special case for a retry of identical content vs. a genuinely different edit; one
-notes update call; on clear success mark `consumed`.
+`c_submit(...)` implements Workflow §4: load submission, require `ready`; recompute file hash and reject
+on mismatch; atomic `ready` → `in_flight` flip; one notes update call; on clear success mark `consumed` —
+a submission is single-use, and a second `submit` call against an already-`consumed` submission is
+rejected outright, with no write-count budget, `--final` confirmation step, or reset mechanism (no
+incident evidences a need for one — see `dish-task-contract-tool-future.md`).
+
+Note there is no pre-write freshness re-read here beyond the hash check: `start`'s exclusive lock means
+no other `contract` CLI caller could have moved `modified_at` in the meantime (see the design doc's
+Workflow §4 and Scope for the residual gap this doesn't cover).
 
 Failure classification is by status code, not "any mapped `ApiException` means confirmed failure" — the
 design doc's own Failure behaviour section requires the tool to *know* the write wasn't applied before
@@ -293,7 +290,6 @@ reverting to `ready`, which a 5xx doesn't establish:
 ### Tests (`tests/test_contract_submit.py`)
 
 - content-hash mismatch at `submit` rejected, no Asana call made;
-- any `modified_at` drift rejected and marks `stale`, no Asana call made;
 - exactly one Asana mutation call on the success path, none on any pre-write failure path;
 - each of `400`/`401`/`403`/`404`/`429`-after-retries reverts `in_flight` → `ready`, and the same
   submission can be retried;
@@ -303,42 +299,27 @@ reverting to `ready`, which a 5xx doesn't establish:
   (assert on the second call's rejection, not just "doesn't crash" — this is the same
   race shape as `start`'s open-submission check, but at a different table state);
 - `consumed`/`stale`/`rejected` cannot be resubmitted, even byte-identical;
-- `write_count` gating: write 1 executes silently with no confirmation required and increments
-  `write_count` to 1; a second plain `submit` call (no `--final`) makes no Asana call, does not
-  increment `write_count`, and returns the confirmation prompt every time it's repeated; `submit
-  --final` at that point executes the 2nd write; a third attempt (with or without `--final`) is
-  rejected before any Asana call is attempted;
-- a submission at its write limit is unusable until `contract-admin reset`; after reset, exactly one
-  further write is available and requires `--final` immediately — a plain `submit` call post-reset does
-  not execute and does not itself consume the granted write.
+- a second `submit` call against an already-`consumed` submission is rejected outright — no write-count
+  budget, `--final` confirmation step, or reset mechanism exists to test (see
+  `dish-task-contract-tool-future.md`).
 
-## Step 6 — `contract-admin recover` / `contract-admin reset`
+## Step 6 — `contract-admin recover`
 
 `~/ai-tools/bin/contract-admin` (new, separate executable — deliberately not a hidden subcommand of
 `contract`, per the design's "distinct binary/subcommand namespace" requirement). `recover
-<submission-id>` performs one live read of notes + `modified_at`, and applies the four-row outcome
-table from Workflow → Uncertain API outcome / crashed process exactly.
+<submission-id> --status ready|consumed|stale` sets a stuck `in_flight` or `uncertain` submission's
+status by hand, once Marco has checked the live task directly in Asana and confirmed what actually
+happened — no automated outcome table; the mechanism to compute one from live notes-hash/`modified_at`
+comparison is a v2 candidate with no evidenced need yet (see `dish-task-contract-tool-future.md`).
 
-`reset <submission-id>` clears a submission that has hit its write limit (`write_count` at
-`2 + reset_count`, see `contract submit`) so the same validated content can be written again:
-increments `reset_count` by one, which raises the write-limit ceiling by exactly one further write — not
-a restored two-write budget — and that next write requires `--final` immediately (no silent write, no
-confirmation round-trip the second time around, per Workflow §4). `reset` only releases the exhausted
-row's hold; it does not reopen the row for further drafting — a further edit still requires a fresh
-`contract start`. Rejected if the submission is not currently at its write limit (nothing to reset).
+No `reset` command in v1a — there is no write-limit mechanism to reset (see `contract submit`, Step 5);
+a consumed/stale/rejected submission is simply not reusable, and a fresh `contract start` is how an
+editor gets a new attempt.
 
-### Tests (`tests/test_contract_admin_recover.py`, `tests/test_contract_admin_reset.py`)
+### Tests (`tests/test_contract_admin_recover.py`)
 
-- one test per outcome-table row (four cases): intended-hash-match (either `modified_at` state) →
-  `consumed`; baseline-hash-match + unchanged `modified_at` → `ready`; baseline-hash-match + changed
-  `modified_at` → `stale`; neither hash matches (either `modified_at` state) → `stale`;
+- `recover` sets the submission to the status Marco passes (`ready`, `consumed`, or `stale`);
 - `recover` on a submission not in `in_flight`/`uncertain` is rejected (nothing to recover);
-- `reset` on a submission not currently at its write limit is rejected;
-- `reset` increments `reset_count` by exactly one and grants exactly one further write; the next
-  `submit` call on that submission requires `--final` immediately — no silent write, no confirmation
-  round-trip;
-- a second `reset` after the granted write is again consumed raises the ceiling by one more, not back to
-  a two-write budget;
 - `contract-admin` is not reachable through the `contract` binary under any flag or subcommand name.
 
 ## Step 7 — generic-CLI advisory integration and managed-task registry
@@ -375,14 +356,15 @@ unchanged in v1a. No blocking logic is added in this step — that's v1b, out of
 ## Step 8 — logging/observability summary
 
 A checked-in `.sql` file (`~/ai-tools/bin/contract-reports.sql`), not a `contract-admin report`
-subcommand, decided — answering the six bullet points in `dish-task-contract-tool.md`'s Logging and
+subcommand, decided — answering the four bullet points in `dish-task-contract-tool.md`'s Logging and
 observability section: call counts by agent/change-level, validation-failure rate by rule, rejection
-rate and repeated-rejection-per-task rate, `small`-declared diff-size distribution, advisory-bypass
-count by task/agent, and how often the `--final` confirmation is actually reached vs. write 1 alone
-being sufficient, and how often `contract-admin reset` is actually needed. Run with `sqlite3
-~/ai-tools/var/dish-contract.db < contract-reports.sql` when you're ready to decide v1b timing. A real
-command surface to build and test would be overkill for what's fundamentally a handful of `SELECT`s;
-cheap to promote to a subcommand later if it ends up being run often.
+rate (including repeated-rejection-on-same-task rate), and advisory-bypass count by task/agent. The
+fuller query list (`small`-declared diff-size distribution, `--final`/reset frequency) is a v2 candidate
+tied to mechanisms not built in v1a either (diff-summary computation, write-count escalation — see
+`dish-task-contract-tool-future.md`). Run with `sqlite3 ~/ai-tools/var/dish-contract.db <
+contract-reports.sql` when you're ready to decide v1b timing. A real command surface to build and test
+would be overkill for what's fundamentally a handful of `SELECT`s; cheap to promote to a subcommand
+later if it ends up being run often.
 
 ### Tests
 
