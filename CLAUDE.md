@@ -49,6 +49,9 @@ sessions invoke directly, plus design docs for tools in progress.
   it — e.g. its canonical manifest, process-record fields, change-class definitions), also read
   `dish-task-contract.md`.
 - `bin/tests/` — pytest suite for `bin/asana` (run with `pytest` from `bin/`).
+- `hooks/` — Claude Code hook scripts (PreToolUse guards and nudges: blocking carpet-bomb
+  git/rm patterns, compound bash, raw redirects, unguarded Asana/Anthropic-API writes, etc).
+  Symlinked into `~/.claude/hooks/`.
 
 Both `bin/git-commit` and `bin/asana` are used by both Claude Code and Codex sessions, via
 the symlinks under `~/.claude/bin/`.
