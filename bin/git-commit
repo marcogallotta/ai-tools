@@ -30,6 +30,14 @@ Options:
   --contract-size-explained <sha> Acknowledge dish-task-contract.md soft size
                                    limit after explaining the removal to Marco
   -h, --help                      Show this help and exit
+
+Paths are resolved relative to \$PWD (or -C <repo> if given), NOT the repo root.
+Check your current directory before adding a prefix like "bin/" — if you're
+already in bin/, pass "foo.md", not "bin/foo.md". Example:
+  \$ pwd
+  /home/marco/ai-tools/bin
+  \$ git-commit foo.md -m "..."          # correct
+  \$ git-commit bin/foo.md -m "..."      # wrong: resolves to bin/bin/foo.md
 EOF
 }
 
