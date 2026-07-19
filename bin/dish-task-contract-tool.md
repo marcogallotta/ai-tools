@@ -20,12 +20,13 @@ describe their work honestly. Mechanical controls exist to prevent accidental by
 repeated writes, and incomplete validation.
 
 Direct web or integration edits are not prevented and are not generally identifiable as bypasses.
-`contract start` claims an exclusive lock on the task and captures the baseline once, at that moment,
-before drafting begins; while the lock is held, no other `contract` CLI caller can start work on the
-same task, and `submit` performs no further staleness re-check (see Workflow). This does not cover an
-edit made directly outside the guarded tool entirely — e.g. via Asana's UI, or the generic CLI's
-advisory-only v1a mode — which is invisible to the lock and is only caught, if at all, by
-`contract-admin recover`'s outcome table when resolving a crashed/uncertain submission.
+`contract start` claims an exclusive lock on the task and captures the live-notes baseline before
+drafting begins; while the lock is held, no other `contract` CLI caller can start work on the same
+task. Immediately before mutation, `submit` rereads the live notes and compares their canonical hash
+with that baseline, rejecting a stale submission even when the intervening edit came through Asana's
+UI, an integration, or the generic CLI's advisory-only v1a mode. This leaves only the narrow external
+edit race between that final read and Asana accepting the update; the API offers no atomic
+compare-and-set claimed by this design.
 
 ## Current design decisions, pending formal approval
 
@@ -37,7 +38,8 @@ advisory-only v1a mode — which is invisible to the lock and is only caught, if
 * `contract start` claims an exclusive per-task lock, held by one `submissions` row from `drafting`
   through any terminal state; the `submission_id` it creates is used as the token for every later
   command on that submission. The baseline (`baseline_modified_at`/`baseline_notes_hash`) is captured
-  once, at `start`, not re-read for staleness later — see Workflow.
+  once at `start`; `submit` rereads the task and compares the live notes hash with
+  `baseline_notes_hash` immediately before writing — see Workflow.
 * The editing agent declares a **change level** (`small`/`medium`/`large`) and a reason; Python does
   not infer it.
 * The complete final note is validated and written as one artifact — no patches or fragments.
@@ -160,9 +162,8 @@ workflow operates on.
    by a partial unique index on `submissions(task_gid)` for non-terminal `status` (including
    `drafting`), so a race between two simultaneous `start` calls fails at the database layer, not only
    in application logic. This is the lock: two agents cannot both `start` the same task.
-3. Reads the complete task; records `baseline_modified_at` and `baseline_notes_hash`. This is the only
-   baseline read for the submission's entire life — closing the gap where a long drafting window could
-   silently miss an intervening edit.
+3. Reads the complete task; records `baseline_modified_at` for diagnostics and
+   `baseline_notes_hash` for the final stale-content comparison at `submit`.
 4. Creates one `submissions` row, status `drafting`. The row's `submission_id` is printed back to the
    caller and used as the token for every subsequent command
    (`prepare`/`approve`/`reject`/`submit`) on this submission — there is no separate token object.
@@ -280,20 +281,24 @@ contract submit <submission-id> --file <same-final-note>
 
 1. Loads the submission; requires status `ready`.
 2. Recomputes the file hash; rejects on any mismatch with `content_hash`.
-3. Atomically flips status `ready` → `in_flight`.
-4. Sends one complete notes update to Asana.
-5. On clear success: marks `consumed` — the lock releases. A submission is single-use: a second
+3. Rereads the complete live task immediately before mutation and compares the canonical live-notes
+   hash with `baseline_notes_hash`. On mismatch: atomically marks the submission `stale`, releases
+   the lock, reports the conflict, and performs no Asana write. `modified_at` is retained for
+   diagnostics but is not the gate because unrelated task-field changes can bump it.
+4. Atomically flips status `ready` → `in_flight`.
+5. Sends one complete notes update to Asana.
+6. On clear success: marks `consumed` — the lock releases. A submission is single-use: a second
    `submit` call against a `consumed` submission is rejected outright.
-6. On confirmed API failure: reverts to `ready` — the same validated submission may be retried.
-7. On an ambiguous/uncertain outcome: marks `uncertain` — logged for Marco to check directly in Asana
+7. On confirmed API failure: reverts to `ready` — the same validated submission may be retried.
+8. On an ambiguous/uncertain outcome: marks `uncertain` — logged for Marco to check directly in Asana
    (see Contract admin tool). No incident evidences a crash or ambiguous-outcome case in practice; a
    deterministic recovery table is a v2 candidate once real usage shows it's needed (see
    `dish-task-contract-tool-future.md`).
 
-There is no pre-write freshness re-read here: `start` already holds an exclusive lock on the task for
-this submission's entire life, so no other `contract` CLI caller can have moved `modified_at` in the
-meantime (see Scope for the residual gap this doesn't cover — a direct edit made entirely outside the
-guarded tool).
+The local lock prevents concurrent contract-tool submissions; the final live-notes comparison catches
+changes made outside that lock before the reread. It cannot make the following Asana update atomic
+with the read, so a narrow external check-to-mutation race remains explicit rather than being claimed
+as closed.
 
 ## Submission states
 
@@ -321,8 +326,9 @@ baseline — is required after any terminal state.
 
 ### Failure before mutation
 
-Examples: deterministic validation failure; missing approval; content-hash mismatch; routing mismatch.
-No Asana write occurs, and the submission is not consumed.
+Examples: deterministic validation failure; missing approval; content-hash mismatch; routing mismatch;
+live notes differing from the baseline. No Asana write occurs. A stale baseline marks the submission
+terminally `stale`; other pre-mutation failures leave it unconsumed in their existing state.
 
 ### Confirmed API failure
 
@@ -423,8 +429,9 @@ Every `contract` command execution logs an event regardless of outcome:
 * for `prepare`: declared change level and reason, and whether the note passed validation;
 * for `approve`/`reject`: verifier agent/family, the decision, and for `reject`, the stated reason, so
   rejection patterns are visible without reading every case individually;
-* for `submit`: the final submission state (`consumed`, reverted to `ready` on confirmed failure, or
-  `uncertain`), so every outcome is visible in the log, not just returned to the caller.
+* for `submit`: the final submission state (`stale` before mutation, `consumed`, reverted to `ready`
+  on confirmed failure, or `uncertain`), so every outcome is visible in the log, not just returned to
+  the caller.
 
 The generic Asana CLI's managed-task check also logs during v1a even though it does not yet block:
 every note-write to a section-managed task made *outside* the guarded `contract` path is logged as an
@@ -446,12 +453,13 @@ mechanisms not built in v1a either — see `dish-task-contract-tool-future.md`.
 
 ## Content hashing
 
-The validation binds to the exact content sent to Asana. Every hash comparison in this design —
-`prepare`'s `content_hash`, `approve`'s match check, `submit`'s recomputation — uses the SHA-256 hash
-of the same canonical UTF-8/LF bytes, never raw upload bytes. "Exact match" means equality of those
-canonical hashes, not byte-for-byte equality of whatever was originally uploaded; if the tool
-normalizes line endings or whitespace before hashing, that normalization is what "exact" is measured
-against, consistently everywhere the design says "exact" or "byte-for-byte."
+The validation binds to the exact content sent to Asana. Every hash comparison in this design — the
+baseline/live-notes staleness check, `prepare`'s `content_hash`, `approve`'s match check, and
+`submit`'s file recomputation — uses the SHA-256 hash of the same canonical UTF-8/LF bytes, never raw
+upload bytes. "Exact match" means equality of those canonical hashes, not byte-for-byte equality of
+whatever was originally uploaded; if the tool normalizes line endings or whitespace before hashing,
+that normalization is what "exact" is measured against, consistently everywhere the design says
+"exact" or "byte-for-byte."
 
 Initial canonicalization proposal: UTF-8 encoding; LF line endings; no trimming; no automatic
 whitespace cleanup; no section reordering; no silent markdown rewriting; SHA-256; canonicalization
@@ -520,8 +528,11 @@ Implementation follows TDD. Tests must cover:
   `drafting`) rejected, both by application check and by the SQLite unique constraint — the lock;
 * `contract prepare`/`approve`/`reject`/`submit` called against a nonexistent or wrong-status
   `submission-id` rejected;
-* `start` capturing `baseline_modified_at`/`baseline_notes_hash` once, and `prepare` using that same
-  captured baseline rather than re-reading the task;
+* `start` capturing `baseline_modified_at`/`baseline_notes_hash` once, `prepare` using the frozen
+  baseline without a live read, and `submit` rereading the live task immediately before mutation;
+* live notes differing from `baseline_notes_hash` at `submit` marks the submission terminally
+  `stale`, releases the lock, and performs no Asana mutation; a changed `modified_at` with identical
+  canonical notes does not fail the submission;
 * no Asana mutation on any pre-write failure; exactly one Asana mutation attempt per `submit` call that
   reaches the API;
 * submission reuse rejection (`consumed`/`stale`/`rejected` cannot be resubmitted, even with identical

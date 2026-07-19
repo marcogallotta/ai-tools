@@ -123,11 +123,11 @@ semantic/culinary judgment, unlike most other deferred items in this file.
   structural (regex/string check against the marker line), same character as the existing
   no-headings-outside-manifest check, not a judgment of whether the blocker itself is real or
   correctly described.
-- **`WHAT TO BUY` / `QUANTITIES` quantity equality (incident 21).** v1a only checks that
-  `WHAT TO BUY` is present, not that its stated quantities equal `QUANTITIES`'s. A per-ingredient
-  string/number match between the two sections is mechanical, though it would need a defined parsing
-  convention for both sections (ingredient name + amount) to compare against reliably - that parsing
-  design is the open part, not the comparison itself.
+- **`WHAT TO BUY` / `QUANTITIES` reconciliation (incident 21).** v1a only checks that `WHAT TO BUY`
+  is present, not whether each purchase amount reconciles with recipe use, live stock, usable yield
+  or trim, and package/minimum purchase quantity. A later check needs a defined per-ingredient
+  syntax that distinguishes those values and permits an explicit reason for a difference; literal
+  numeric equality is not the invariant.
 
 Neither is scoped into v1a's implementation plan; both are candidates for whenever a v1.x follow-up
 to the deterministic validator is considered, alongside the existing v2 list above.

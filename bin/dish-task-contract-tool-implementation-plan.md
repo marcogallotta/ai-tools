@@ -145,14 +145,11 @@ tests are unaffected either way.
     canonicalization is entirely the tool's own responsibility; nothing arrives pre-normalized.
   * Non-ASCII content (accented Latin, em-dash, curly quotes, CJK) round-trips byte-for-byte.
   * `modified_at` is bumped by *any* field change, not just notes — confirmed by renaming the task
-    (touching only `name`) and observing `modified_at` move. It is a whole-task signal, not a
-    notes-specific one. This matters only if something later compares `baseline_modified_at` against
-    a fresh read: nothing in this design does that automatically today — `start` captures it once and
-    only `content_hash` is actively re-checked (at `approve`/`submit`); `baseline_modified_at` is
-    stored for Marco's manual investigation via `contract-admin recover`, not consumed by any
-    automated gate. Do not add one later without accounting for this — an automated
-    `modified_at`-equality check would misfire on routine unrelated activity (a rename, a section
-    move, likely a comment or custom-field edit too).
+    (touching only `name`) and observing `modified_at` move. It is a whole-task signal, so the final
+    stale-content gate must compare the freshly read canonical notes hash with
+    `baseline_notes_hash`, not require `modified_at` equality. Retain `baseline_modified_at` for
+    diagnostics; a rename, section move, comment, or custom-field edit must not by itself invalidate
+    an otherwise unchanged note submission.
 
   Conclusion: the proposed canonicalization (UTF-8, LF, no trimming/whitespace cleanup/reordering) is
   correct as designed — Asana does no content rewriting for `canonicalize_and_hash` to account for.
@@ -207,11 +204,10 @@ for the race case — this is the lock); one baseline read of the live task, rec
 this is the only token every later command (`prepare`/`approve`/`reject`/`submit`) operates on, there is
 no separate token object.
 
-This is the only baseline read for the submission's entire life. Closing the gap where a long drafting
-window could otherwise silently miss an intervening edit was an open implementation question in an
-earlier pass of this plan (previously drafted as an optional `contract start` addition); the design doc
-now specifies `start` as a required first step for every submission, so that gap no longer exists —
-there is nothing left to add here at v1a.
+This is the only read that establishes the baseline. `submit` performs the second live read and
+compares its canonical notes hash with this stored value immediately before mutation; `start`'s local
+lock alone does not detect edits made through the Asana UI, integrations, or the generic CLI during
+v1a.
 
 ### Tests (`tests/test_contract_start.py`)
 
@@ -302,15 +298,17 @@ opens: a new lock, a new baseline, and a new submission, not a reopened one.
 
 ## Step 5 — `contract submit` and failure handling
 
-`c_submit(...)` implements Workflow §4: load submission, require `ready`; recompute file hash and reject
-on mismatch; atomic `ready` → `in_flight` flip; one notes update call; on clear success mark `consumed` —
-a submission is single-use, and a second `submit` call against an already-`consumed` submission is
+`c_submit(...)` implements Workflow §4: load submission, require `ready`; recompute the submitted-file
+hash and reject on mismatch; reread the complete live task and compare its canonical notes hash with
+`baseline_notes_hash`; on mismatch atomically mark `stale`, release the lock, and perform no Asana
+write; otherwise atomically flip `ready` → `in_flight`; make one notes update call; on clear success
+mark `consumed`. A changed `modified_at` with identical canonical notes is diagnostic only and does not
+fail the submission. The final read and following Asana update are not an atomic compare-and-set, so a
+narrow external edit race remains explicit.
+
+A submission is single-use, and a second `submit` call against an already-`consumed` submission is
 rejected outright, with no write-count budget, `--final` confirmation step, or reset mechanism (no
 incident evidences a need for one — see `dish-task-contract-tool-future.md`).
-
-Note there is no pre-write freshness re-read here beyond the hash check: `start`'s exclusive lock means
-no other `contract` CLI caller could have moved `modified_at` in the meantime (see the design doc's
-Workflow §4 and Scope for the residual gap this doesn't cover).
 
 Failure classification is by status code, not "any mapped `ApiException` means confirmed failure" — the
 design doc's own Failure behaviour section requires the tool to *know* the write wasn't applied before
@@ -343,6 +341,10 @@ reverting to `ready`, which a 5xx doesn't establish:
 ### Tests (`tests/test_contract_submit.py`)
 
 - content-hash mismatch at `submit` rejected, no Asana call made;
+- live canonical notes differing from `baseline_notes_hash` marks the submission `stale`, releases
+  the lock, and makes no Asana mutation call;
+- changed live `modified_at` with canonical notes still matching `baseline_notes_hash` does not make
+  the submission stale;
 - exactly one Asana mutation call on the success path, none on any pre-write failure path;
 - each of `400`/`401`/`403`/`404`/`429`-after-retries reverts `in_flight` → `ready`, and the same
   submission can be retried;
