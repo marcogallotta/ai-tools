@@ -35,11 +35,11 @@ v1b is a configuration flip on v1a's own logged evidence, not new code.
 * The two-failed-pass stop rule (`dish-task-contract.md` lines 206-209) — real contract text, but no
   incident shows it failing in practice; v1a's rejection-rate logging is exactly the evidence needed
   to decide whether to build it. Cheap to add once needed (a counter and a gate).
-* The small-change (`small`/Local) carelessness speed bump — Marco's standing concern (see Open
-  decisions, item 6): an honest agent carelessly mis-declaring a material change as `small`, not a
-  malicious one gaming the system. v1a's logging of what real `small`-declared diffs actually touch
-  and how large they are is the input needed to design the trigger condition, which is currently
-  undecided.
+* The small-change (`small`/Local) carelessness speed bump — Marco's standing concern (see Out of
+  scope (all versions) in `dish-task-contract-tool.md`): an honest agent carelessly mis-declaring a
+  material change as `small`, not a malicious one gaming the system. v1a's logging of what real
+  `small`-declared diffs actually touch and how large they are is the input needed to design the
+  trigger condition, which is currently undecided.
 * Bounded direct-dependency surfacing (see Direct dependencies) — already scoped in the change plan as
   advisory and non-blocking; natural to add once the core write path is proven.
 * Token/submission replacement as a distinct action from `contract-admin recover` — only worth building
