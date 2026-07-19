@@ -55,6 +55,10 @@ Name authorized handoffs `/tmp/handoff-<project>-YYYYMMDD-HHMM.md`, omitting `<p
 not short and unambiguous. Include the objective, key decisions and constraints, relevant files and
 external task IDs, completed work, unresolved issues, and exact next action.
 
+If you are picking up a handoff file that lives under another session's scratchpad directory, copy
+it into your own scratchpad immediately, before doing anything else with it — the original's
+scratchpad is deleted once that session ends and the file can disappear before you finish using it.
+
 ## Searches and delegated agents
 
 Keep searches deliberately bounded. Define the scope and stopping condition before starting a broad
