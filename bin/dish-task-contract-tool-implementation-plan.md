@@ -399,13 +399,12 @@ subcommand doesn't make its output less important to verify.
 ## Deployment
 
 Once all steps are built and merged, and the `--agent gpt` routing (Steps 2–5) is live: add the ChatGPT
-runbook pointer bullet to `~/honest-pantry/cooking-master-reference.md`'s CORE section, near the
-existing readiness-gate bullet that already makes the same kind of hand-off — a short pointer, since
-that file explicitly scopes itself to live execution only and defers task construction/verification to
-`dish-task-contract.md` "when it's actually needed." Runbook pointer location:
-`~/honest-pantry/cooking-master-reference.md` (the git-tracked snapshot of the live Asana "Cooking
-master prompt" task ChatGPT actually reads). Adding the bullet is a `~/honest-pantry` edit, out of scope
-for this ai-tools plan itself.
+runbook pointer bullet to `~/honest-pantry/cooking-master-reference.md`'s CORE section (the git-tracked
+snapshot of the live Asana "Cooking master prompt" task ChatGPT actually reads), near the existing
+readiness-gate bullet that already makes the same kind of hand-off — a short pointer, since that file
+explicitly scopes itself to live execution only and defers task construction/verification to
+`dish-task-contract.md` "when it's actually needed." Adding the bullet is a `~/honest-pantry` edit, out
+of scope for this ai-tools plan itself.
 
 Then push it live via `asana set-notes 1215259129474847 -`, per that file's own sync instructions.
 
