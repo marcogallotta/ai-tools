@@ -5,9 +5,10 @@ sessions invoke directly, plus design docs for tools in progress.
 
 ## Files
 
-- `CLAUDE-global.md` — Marco's global CLAUDE.md, symlinked into `~/.claude/CLAUDE-global.md`
-  and loaded into every Claude Code session regardless of working directory. It holds
-  cross-project preferences and instructions, not anything specific to this repo.
+- `CLAUDE-global.md` — Marco's global CLAUDE.md, symlinked into `~/.claude/CLAUDE.md`
+  (the filename Claude Code actually auto-loads for every session regardless of working
+  directory — it must be named `CLAUDE.md`, not `CLAUDE-global.md`, in `~/.claude/`). It
+  holds cross-project preferences and instructions, not anything specific to this repo.
 - `bin/git-commit` — the git commit tool agents use instead of raw `git add`/`git commit`.
   It enforces stage-and-commit atomically with explicit file paths (no `.`/`-A`/`-u` carpet-bombing,
   to avoid index collisions between concurrent sessions), and carries a size-limit policy check
