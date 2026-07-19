@@ -194,9 +194,10 @@ recommendation — the design doc already states this exact default, overridable
 ## Step 2 — `contract start`
 
 `~/ai-tools/bin/contract` (new) — dispatch shell using `argparse` (subparsers for `start`/`prepare`/
-`approve`/`reject`/`submit`, `choices=` for `--agent`/`--change-level`). No convention forces this to
-match `asana`'s hand-rolled flag parsing, and `argparse` gets free `--help`, error messages, and
-`choices` validation for no extra code.
+`approve`/`reject`/`submit`, `choices=` for `--change-level`, and for `--agent` on every subparser
+except `submit`, which takes no `--agent` — see the design doc's Agent identity and verifier routing
+section). No convention forces this to match `asana`'s hand-rolled flag parsing, and `argparse` gets
+free `--help`, error messages, and `choices` validation for no extra code.
 
 `c_start(...)` implements Workflow §1: task existence check; open-submission check (app-level + relies
 on Step 1's unique index on `submissions(task_gid)` for non-terminal `status`, including `drafting`,
@@ -229,9 +230,10 @@ there is nothing left to add here at v1a.
 does not take its own fresh baseline read, it uses `baseline_modified_at`/`baseline_notes_hash` already
 captured on the row by `start`; manifest/revision/text-hash capture via `contract_lib`'s manifest loader,
 stored on the row so this submission is validated against this exact frozen manifest for its entire
-life; the full deterministic validation rule set (readiness line, `WHAT TO BUY` presence, process-record
-lines well-formed, `Self-verified:` agent match, change-level/process-record consistency,
-contract-revision match, heading allowlist, readiness-contradiction check); on a validation failure, the
+life; the full deterministic validation rule set (readiness line, `WHAT TO BUY` presence, `Portions:`
+presence under `## QUANTITIES` when that heading is present, process-record lines well-formed,
+`Self-verified:` agent match, change-level/process-record consistency, contract-revision match, heading
+allowlist, readiness-contradiction check); on a validation failure, the
 submission stays in `drafting` (it already exists, opened by `start`) and the attempt is logged; on a
 pass, advancing the row out of `drafting`
 (`ready` for `small`, `awaiting_verification` with `required_verifier_family` set for `medium`/`large`).
@@ -246,6 +248,9 @@ Mirrors `dish-task-contract-tool.md`'s Testing requirements section directly:
 
 - each deterministic-validation rule fails and passes independently (one test per rule, not one
   mega-test), including the readiness-contradiction rule's three trigger conditions;
+- a note with `## QUANTITIES` present but no well-formed `Portions:` line under it fails; a note
+  without `## QUANTITIES` at all is unaffected by this rule (heading omission stays the verifier's
+  call, per the heading-allowlist rule above);
 - `Self-verified:` missing, or naming an agent other than `editor_agent`, fails `prepare` — including a
   `gpt`-attributed submission. What's mechanically checked is only that a syntactically valid
   `Self-verified: gpt, <date>` line names the declared editor; the validator cannot determine whether

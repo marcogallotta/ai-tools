@@ -37,9 +37,12 @@ v1b is a configuration flip on v1a's own logged evidence, not new code.
   to decide whether to build it. Cheap to add once needed (a counter and a gate).
 * The small-change (`small`/Local) carelessness speed bump — Marco's standing concern (see Out of
   scope (all versions) in `dish-task-contract-tool.md`): an honest agent carelessly mis-declaring a
-  material change as `small`, not a malicious one gaming the system. v1a's logging of what real
-  `small`-declared diffs actually touch and how large they are is the input needed to design the
-  trigger condition, which is currently undecided.
+  material change as `small`, not a malicious one gaming the system. Designing its trigger condition
+  needs data on what real `small`-declared diffs actually touch and how large they are — but v1a does
+  not collect that (see Deferred below: diff-summary fields are dropped from v1a entirely, and only
+  rule-level pass/fail logging is kept). So this item isn't just waiting on v1a's existing logs to
+  accumulate; it needs diff-summary computation added first, as its own v1.x step, before the trigger
+  condition can be designed from real data.
 * Bounded direct-dependency surfacing (see Direct dependencies) — already scoped in the change plan as
   advisory and non-blocking; natural to add once the core write path is proven.
 * Token/submission replacement as a distinct action from `contract-admin recover` — only worth building

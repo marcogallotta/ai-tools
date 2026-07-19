@@ -88,13 +88,17 @@ identity and verifier routing).
 
 ## Agent identity and verifier routing
 
-Every command requires:
+Every command that introduces or checks an attribution (`start`, `prepare`, `approve`, `reject`)
+requires:
 
 ```text
 --agent claude|gpt|codex
 ```
 
-trusted as an honest declaration. Agent families:
+`submit` does not take `--agent` — it operates on an already-fully-attributed `ready` submission and
+adds no new attribution of its own, so there is nothing for the flag to declare.
+
+`--agent` is trusted as an honest declaration. Agent families:
 
 ```text
 claude          → Claude family
@@ -208,6 +212,9 @@ section was rightly omitted:
 
 * exactly one `CAN I COOK IT?` readiness line;
 * `WHAT TO BUY` section present;
+* when `## QUANTITIES` is present, a well-formed `Portions:` line is present under it — added because
+  `dish-review-log.md`'s cohort review found `Portions:` missing in 7 of 24 tasks, the same tier of
+  evidence behind the `WHAT TO BUY` and `Verification` checks already on this list;
 * process-record required lines present and well-formed (`Stage:`, `Human review:`, `Verification:`,
   `Self-verified:`);
 * `Self-verified:`'s declared agent matches `editor_agent` — the only enforcement available for the
