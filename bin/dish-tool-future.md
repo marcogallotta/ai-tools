@@ -14,26 +14,27 @@ The tool is built and rolled out in stages, scoped to what the evidence in `dish
 `dish-incident-log.md`, and `dish-review-log.md` actually requires. Nothing beyond v1a/v1b is built
 until real usage data justifies it.
 
-For the later split protocol, the approved checked-in `dish-planning.md`, `dish-research.md`, and
-`dish-verification.md` are repository-maintained governing sources, not generated or synced from
-Asana. One human-readable `protocol_release` version identifies their exact checked-in set together
-with the manifest/schema. The shared `git-commit` wrapper owns the version file: agents and humans
-do not edit it; the wrapper advances and includes it atomically whenever a file in the defined
-protocol-governed set changes, rejects direct edits or an unversioned protocol-governed commit, and ignores
-unrelated commits. Git history supplies the exact-content binding, so the release value need not be
-a combined hash. `tool_version` remains separate; compatible tool-only fixes change only that
-version, while schema or semantic compatibility changes require both versions to advance. The
-cross-repository enforcement mechanism is still an implementation question, not authorization to
-build it.
+V1 ships against the three-way split. The approved checked-in `dish-planning.md`,
+`dish-research.md`, and `dish-verification.md` are repository-maintained governing sources, not
+generated or synced from Asana. The V1 resolver and pre-authorship binding are specified in
+`dish-tool.md`; they are no longer future work. One human-readable `protocol_release` identifies
+their exact checked-in set together with the manifest/schema. The shared `git-commit` wrapper owns
+the version file: agents and humans do not edit it; the wrapper advances and includes it atomically
+whenever a file in the defined protocol-governed set changes, rejects direct edits or an unversioned
+protocol-governed commit, and ignores unrelated commits. Git history supplies exact-content binding,
+so the release value need not be a combined hash. `tool_version` remains separate; compatible
+tool-only fixes change only that version, while schema or semantic compatibility changes require
+both versions to advance.
 
-**v1a — build and soft-launch.** The full guarded path (`prepare` / `approve` / `reject` / `submit`
-/ `dish-admin recover`) is implemented, tested, and usable end-to-end against live tasks — it
+**v1a — build and soft-launch.** The full guarded path (`start` / `prepare` / `approve` / `reject` /
+`submit` / `dish-admin recover` / `dish-admin discard`) is implemented, tested, and usable
+end-to-end against live tasks — it
 performs real Asana writes through the guarded, token-protected path. What v1a does *not* do is make
 this path mandatory: the existing generic Asana CLI still works for managed tasks, and its
 managed-task check runs in advisory/log-only mode (see Protocol-managed task registry, Logging and
-observability). This proves the structural validator against the protocol's manifest, the lock-based
-submission state machine, verifier correction/return flow, and uncertain-outcome recovery under real
-conditions. It also produces the usage data needed to decide v1b's timing and v2's scope.
+observability). This proves both planning and complete-task structural validators, the lock-based
+submission state machine, verifier correction/return flow, and recovery under real conditions. It
+also produces the usage data needed to decide v1b's timing and v2's scope.
 
 **v1b — enforce.** Once v1a's validator and lock workflow have run clean against real usage, the
 generic CLI's managed-task check is flipped from advisory to blocking. No new mechanism is added at
@@ -63,10 +64,6 @@ this stage — v1b is a configuration flip on v1a's own logged evidence, not new
 - Exact-content binding and detection of edits made outside the controlled workflow. V1 deliberately
   trusts its lock and does neither. Consider hashes or another mechanism only if real usage shows
   that the accepted external-edit risk or an approval-to-submit handoff is causing problems.
-- Split-planning lock handling: use one lock type. The Decisions/process record preserves who signed
-  off; a Marco-signed lock may deserve more evidence to challenge than an agent-set lock, but that
-  remains judgment. Do not encode separate lock classes or evidence thresholds in the tool. Any
-  proposed lock change after planning handoff goes to Human Review.
 - Scripted migration for later protocol releases: perform deterministic structural transformations,
   remove obsolete fields, stamp the new `protocol_release`, and stop on content requiring judgment
   rather than inventing it. This follows the split's initial snapshot-backed, agent-led local
