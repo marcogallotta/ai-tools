@@ -3,20 +3,20 @@
 # collisions between concurrent Claude sessions.
 #
 # Usage: git-commit <file> [file...] -m "message" [--amend]
-#        [--contract-size-explained <sha256>]
+#        [--protocol-size-explained <sha256>]
 
 set -euo pipefail
 
 msg=""
 repo=""
-contract_size_explained=""
+protocol_size_explained=""
 amend=false
 files=()
 
 show_help() {
   cat <<EOF
 Usage: git-commit <file> [file...] -m "message" [-C <repo>] [--amend]
-       [--contract-size-explained <sha256>]
+       [--protocol-size-explained <sha256>]
 
 Atomic stage-and-commit. Refuses carpet-bomb patterns ('.', '-A', '-u', '--all')
 to prevent index collisions between concurrent Claude sessions.
@@ -27,7 +27,7 @@ Options:
   -C <repo>                       Run git in <repo> instead of \$PWD
   --amend                         Amend the previous commit instead of creating
                                    a new one
-  --contract-size-explained <sha> Acknowledge dish-task-contract.md soft size
+  --protocol-size-explained <sha> Acknowledge dish-protocol.md soft size
                                    limit after explaining the removal to Marco
   -h, --help                      Show this help and exit
 
@@ -55,9 +55,9 @@ while [[ $# -gt 0 ]]; do
       shift
       repo="$1"
       ;;
-    --contract-size-explained)
+    --protocol-size-explained)
       shift
-      contract_size_explained="$1"
+      protocol_size_explained="$1"
       ;;
     --amend)
       amend=true
@@ -100,46 +100,46 @@ if [[ -n "$repo" ]]; then
   git_cwd="$(cd "$repo" && pwd -P)"
 fi
 repo_root="$(git -C "$git_cwd" rev-parse --show-toplevel)"
-contract_path="$repo_root/dish-task-contract.md"
-contract_requested=false
+protocol_path="$repo_root/dish-protocol.md"
+protocol_requested=false
 
 for f in "${files[@]}"; do
   candidate="$f"
   if [[ "$candidate" != /* ]]; then
     candidate="$git_cwd/$candidate"
   fi
-  if [[ "$(realpath -m -- "$candidate")" == "$contract_path" ]]; then
-    contract_requested=true
+  if [[ "$(realpath -m -- "$candidate")" == "$protocol_path" ]]; then
+    protocol_requested=true
     break
   fi
 done
 
-if [[ "$contract_requested" == true ]]; then
-  contract_lines="$(awk '
+if [[ "$protocol_requested" == true ]]; then
+  protocol_lines="$(awk '
     $0 == "### [TO BE DEPRECATED] Legacy task fields" { legacy = 1; next }
     legacy && /^### / { legacy = 0 }
     !legacy { count++ }
     END { print count + 0 }
-  ' "$contract_path")"
-  contract_hash="$(sha256sum "$contract_path" | awk '{print $1}')"
+  ' "$protocol_path")"
+  protocol_hash="$(sha256sum "$protocol_path" | awk '{print $1}')"
 
-  if (( contract_lines >= 250 )); then
+  if (( protocol_lines >= 250 )); then
     cat >&2 <<EOF
-Error: dish-task-contract.md has $contract_lines counted lines (hard limit: 250).
+Error: dish-protocol.md has $protocol_lines counted lines (hard limit: 250).
 The deprecated legacy subsection is excluded from this count.
 
-There is no override. Reduce the contract below 250 counted lines before committing.
+There is no override. Reduce the protocol below 250 counted lines before committing.
 EOF
     exit 1
-  elif (( contract_lines >= 220 )); then
-    if [[ "$contract_size_explained" != "$contract_hash" ]]; then
+  elif (( protocol_lines >= 220 )); then
+    if [[ "$protocol_size_explained" != "$protocol_hash" ]]; then
       cat >&2 <<EOF
-Error: dish-task-contract.md has $contract_lines counted lines (soft target: below 220).
+Error: dish-protocol.md has $protocol_lines counted lines (soft target: below 220).
 The deprecated legacy subsection is excluded from this count.
 
 Before retrying, explain to Marco why further rule removal would weaken clarity, reliability, or a
 required protection. After giving that explanation for this exact version, retry with:
-  --contract-size-explained $contract_hash
+  --protocol-size-explained $protocol_hash
 EOF
       exit 1
     fi
