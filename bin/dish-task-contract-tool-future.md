@@ -31,16 +31,13 @@ build it.
 performs real Asana writes through the guarded, token-protected path. What v1a does *not* do is make
 this path mandatory: the existing generic Asana CLI still works for managed tasks, and its
 managed-task check runs in advisory/log-only mode (see Contract-managed task registry, Logging and
-observability). This proves the hardest, most novel logic — the structural validator against the
-contract's manifest, the exact-content hash binding, the submission state machine, and
-uncertain-outcome recovery — under real conditions, without the operational risk of a validator bug
-or an over-sensitive staleness check blocking a live cook. It also produces the usage data needed to
-decide v1b's timing and v2's scope.
+observability). This proves the structural validator against the contract's manifest, the lock-based
+submission state machine, verifier correction/return flow, and uncertain-outcome recovery under real
+conditions. It also produces the usage data needed to decide v1b's timing and v2's scope.
 
-**v1b — enforce.** Once v1a's validator has run clean against real usage and the `modified_at`
-staleness behaviour has been empirically confirmed (see Content hashing), the generic CLI's
-managed-task check is flipped from advisory to blocking. No new mechanism is added at this stage —
-v1b is a configuration flip on v1a's own logged evidence, not new code.
+**v1b — enforce.** Once v1a's validator and lock workflow have run clean against real usage, the
+generic CLI's managed-task check is flipped from advisory to blocking. No new mechanism is added at
+this stage — v1b is a configuration flip on v1a's own logged evidence, not new code.
 
 **v2 — add once v1a data justifies it.**
 
@@ -61,10 +58,9 @@ v1b is a configuration flip on v1a's own logged evidence, not new code.
   and `--optional` values and render the canonical marker prefix rather than asking agents to hand-
   format it. This guarantees title syntax, not semantic completeness; verification still catches
   omitted real blockers or trivial marker dumping. Repeatable options avoid ambiguous commas.
-- Verifier correction support for the split contract: preserve the judgment-based hybrid. A verifier
-  may make a clear fix, recheck, and sign; a substantive defect, such as a recipe whose protein is
-  off, returns to the editor. The tool must permit that workflow but must not attempt to classify a
-  correction as clear or substantive.
+- Exact-content binding and detection of edits made outside the controlled workflow. V1 deliberately
+  trusts its lock and does neither. Consider hashes or another mechanism only if real usage shows
+  that the accepted external-edit risk or an approval-to-submit handoff is causing problems.
 - Split-planning lock handling: use one lock type. The Decisions/process record preserves who signed
   off; a Marco-signed lock may deserve more evidence to challenge than an agent-set lock, but that
   remains judgment. Do not encode separate lock classes or evidence thresholds in the tool. Any
