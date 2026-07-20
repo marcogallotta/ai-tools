@@ -88,7 +88,7 @@ needed. The write-authorization rules above still apply to Git operations that c
 
 ## Documentation complexity budgets
 
-Contract usability is itself a protection. Conceptual complexity -- branches, fields, exceptions,
+Protocol usability is itself a protection. Conceptual complexity -- branches, fields, exceptions,
 and overlapping rules -- is the real failure risk; line count is only a proxy. Do not add operating
 complexity unless comparable complexity is removed or consolidated elsewhere, except for a very
 strong evidenced reason where simplification would sacrifice a material protection. Do not compress

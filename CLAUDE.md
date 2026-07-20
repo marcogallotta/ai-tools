@@ -12,12 +12,12 @@ sessions invoke directly, plus design docs for tools in progress.
 - `bin/git-commit` — the git commit tool agents use instead of raw `git add`/`git commit`.
   It enforces stage-and-commit atomically with explicit file paths (no `.`/`-A`/`-u` carpet-bombing,
   to avoid index collisions between concurrent sessions), and carries a size-limit policy check
-  specific to `dish-task-contract.md`. Symlinked into `~/.claude/bin/git-commit`.
+  specific to `dish-protocol.md`. Symlinked into `~/.claude/bin/git-commit`.
 - `bin/asana` — the CLI agents use to read and write Asana tasks/projects (get/set notes,
   move tasks between sections, batch-apply multi-step plans, etc). Reads the API token from
   `~/.config/asana-cli/.env`. Symlinked into `~/.claude/bin/asana`.
 - `bin/dish-tool.md` — design draft for an in-progress tool named `dish` that will be the one
-  guarded, validated path for writing contract-governed dish-task notes to
+  guarded, validated path for writing protocol-governed dish-task notes to
   Asana (structural validation, single-use write tokens, staleness checks, verifier routing). Not
   yet implemented as a CLI. **Scoped to v1 only** — everything not needed for v1 to exist and
   work lives in `dish-tool-future.md` instead (see below).
@@ -42,7 +42,7 @@ sessions invoke directly, plus design docs for tools in progress.
 - Related files, not in this repo:
   - `~/honest-pantry/dish-docs-design.md` — the tracker of what enforcement
     direction Marco has approved for that tool, upstream of the two docs above.
-  - `~/honest-pantry/dish-task-contract.md` — the actual contract the tool validates dish-task
+  - `~/honest-pantry/dish-protocol.md` — the actual protocol the tool validates dish-task
     notes against (canonical task structure, change classes, verification rules).
 
   **Authority flows one way: change plan → design doc (`dish-tool.md`) →
@@ -58,9 +58,9 @@ sessions invoke directly, plus design docs for tools in progress.
   If you are working *on* the two design docs above (drafting, revising, reconciling design
   decisions) — as opposed to using them as a spec to build the tool — also read
   `dish-docs-design.md` first, since it's the source of truth for what's approved.
-  If that work goes deep enough into the contract's own structure (not just the tool that edits
+  If that work goes deep enough into the protocol's own structure (not just the tool that edits
   it — e.g. its canonical manifest, process-record fields, change-class definitions), also read
-  `dish-task-contract.md`.
+  `dish-protocol.md`.
 - `bin/tests/` — pytest suite for `bin/asana` (run with `pytest` from `bin/`).
 - `hooks/` — Claude Code hook scripts (PreToolUse guards and nudges: blocking carpet-bomb
   git/rm patterns, compound bash, raw redirects, unguarded Asana/Anthropic-API writes, etc).
