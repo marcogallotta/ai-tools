@@ -57,7 +57,9 @@ this stage — v1b is a configuration flip on v1a's own logged evidence, not new
 - Structured task-title construction (incident 22): take `--dish-name` plus repeatable `--blocker`
   and `--optional` values and render the canonical marker prefix rather than asking agents to hand-
   format it. This guarantees title syntax, not semantic completeness; verification still catches
-  omitted real blockers or trivial marker dumping. Repeatable options avoid ambiguous commas.
+  omitted real blockers or trivial marker dumping. Repeatable options avoid ambiguous commas. When
+  this managed title path ships, title joins notes inside the controlled task surface; section and
+  completion state remain ordinary lifecycle metadata outside it.
 - Exact-content binding and detection of edits made outside the controlled workflow. V1 deliberately
   trusts its lock and does neither. Consider hashes or another mechanism only if real usage shows
   that the accepted external-edit risk or an approval-to-submit handoff is causing problems.
@@ -66,10 +68,10 @@ this stage — v1b is a configuration flip on v1a's own logged evidence, not new
   remains judgment. Do not encode separate lock classes or evidence thresholds in the tool. Any
   proposed lock change after planning handoff goes to Human Review.
 - Scripted migration for later contract releases: perform deterministic structural transformations,
-  remove obsolete fields, stamp the new `contract_release`, and fail closed on content requiring
-  judgment. This follows the split's initial agent-led migration, where deterministic corpus
-  validation returns every failure for correction until all live tasks pass; it does not replace
-  that first rollout.
+  remove obsolete fields, stamp the new `contract_release`, and stop on content requiring judgment
+  rather than inventing it. This follows the split's initial snapshot-backed, agent-led local
+  migration, where literal template validation returns every structural failure for correction
+  before scripted upload; it does not replace that first rollout or claim semantic equivalence.
 - Token/submission replacement as a distinct action from `contract-admin recover` — only worth
   building if recovery proves insufficient in real use.
 - Replacing the manual ChatGPT copy/paste relay (`dish-task-contract-tool.md`'s ChatGPT workflow
@@ -137,27 +139,26 @@ must not recursively audit dependencies or decide semantic impact.
 ## Candidate deterministic checks flagged during dish-verification.md checklist drafting (v2)
 
 Raised while drafting `dish-verification.md`'s compact checklist in honest-pantry
-(`dish-docs-design.md`, "Research/verification split and file rename"). This records a settled v2
-title interface, a settled nutrition-check direction whose rollout timing remains open, and the
-still-candidate purchase reconciliation. Each tool check stays narrow; semantic and culinary truth
-remain verifier work.
+(`dish-docs-design.md`, "Research/verification split and file rename"). V1 deliberately avoids
+field-value grammar. This section records only later candidates whose automation would first require
+a narrow input syntax; semantic and culinary truth remain verifier work.
 
 - **Task-title validation (incident 22).** Use the structured construction specified in the v2 list
   above; do not attempt brittle blocker inference from free-form notes.
-- **Four-field nutrition checks — direction settled, timing open (incidents 5 and 23).** Parse
-  calories, carbohydrate, protein, and fat per served portion; check approximate 4/4/9 calorie
-  reconciliation; and flag `<750 kcal`, `<40 g protein`, and `>40 g fat`. These flags never
-  auto-reject. An explicit Planning exception for the applicable limit suppresses its flag; a
-  research-stage acknowledgment does not. Ingredient-level estimate truth and deep-fried/fat-heavy
-  construction remain semantic, and exact exception encoding still needs implementation review.
+- **Three-value nutrition enforcement (incidents 5 and 23).** If automated in V2, parse calories,
+  protein, and fat per complete served portion and require 750-1,000 kcal, over 40 g protein, and
+  under 40 g fat unless an explicit Planning lock or Marco approval covers the departure. Do not add
+  carbohydrate parsing, 4/4/9 reconciliation, or warning tolerances. Exact field and exception-tag
+  syntax is deliberately deferred until this automation is chosen for implementation.
 - **`WHAT TO BUY` / `QUANTITIES` reconciliation (incident 21).** v1a only checks that `WHAT TO BUY`
   is present, not whether each purchase amount reconciles with recipe use, live stock, usable yield
   or trim, and package/minimum purchase quantity. A later check needs a defined per-ingredient
   syntax that distinguishes those values and permits an explicit reason for a difference; literal
   numeric equality is not the invariant.
 
-None is scoped into v1a's implementation plan. Title construction is explicitly v2; nutrition timing
-and purchase-reconciliation syntax remain for a later implementation review.
+None is scoped into v1a's implementation plan. Title construction and every field-value grammar are
+explicitly V2; nutrition timing and purchase-reconciliation syntax remain for later implementation
+review.
 
 ## Open decision: small-change carelessness (v2)
 

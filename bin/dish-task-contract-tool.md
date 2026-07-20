@@ -119,8 +119,9 @@ unreachable — it fails the family check before any further comparison would ma
 risk of one session dishonestly declaring different agent values for editing and verification is not
 detectable under the trusted-identity model (see Scope) and is not claimed to be caught here.
 
-The final task process record must agree with the declared final editor, its derived family, the
-declared change level, the required verifier family, and the governing contract revision.
+The final task process record must agree with the declared final editor, routing, change level, and
+governing contract revision, but V1 does not establish that agreement by parsing field values. The
+editor and verifier check it manually; trusted CLI/SQLite state controls workflow routing.
 
 ## Contract-managed task registry
 
@@ -182,8 +183,8 @@ Before running this, the agent has already assembled one complete canonical note
 fragments accepted anywhere in this workflow) and performed its own end-to-end self-review, scoped
 by change level the same way the contract already scopes verification — local check for `small`, the
 change and its identified dependencies for `medium`, the complete task for `large`. It records that
-review by writing `Self-verified: <agent>, <date>` into the file's process record; this is checked
-mechanically, not through a separate command.
+review by writing `Self-verified: <agent>, <date>` into the file's process record; V1 checks that
+the label exists, not the grammar or meaning of its value.
 
 The tool:
 
@@ -202,25 +203,18 @@ The tool:
    - `medium`/`large` → status `awaiting_verification`, with `required_verifier_family` set to the
      family opposite `editor_family`.
 
-Deterministic validation checks, mechanically only — no judgment about content quality or whether a
-section was rightly omitted:
+Deterministic validation checks literal template shape only:
 
-- exactly one `CAN I COOK IT?` readiness line;
-- `WHAT TO BUY` section present;
-- when `## QUANTITIES` is present, a well-formed `Portions:` line is present under it — added
-  because `dish-review-log.md`'s cohort review found `Portions:` missing in 7 of 24 tasks, the same
-  tier of evidence behind the `WHAT TO BUY` and `Verification` checks already on this list;
-- process-record required lines present and well-formed (`Stage:`, `Human review:`, `Verification:`,
-  `Self-verified:`);
-- `Self-verified:`'s declared agent matches `editor_agent` — the only enforcement available for the
-  self-review step; it cannot confirm thoroughness;
-- declared `--change-level` matches the process record, and editor/verifier family routing is
-  internally consistent with it;
-- contract revision recorded in the process record matches this submission's `contract_revision`;
-- no headings outside `canonical_manifest`'s allowlist;
-- no readiness contradiction — `CAN I COOK IT? Yes` cannot coexist with
-  `Human review: Pending - ...`, `Verification: Not done...`, or an open Delta/Reconstruction
-  (required by the change plan's approved deterministic-validation scope, item 1; not deferred).
+- headings and labels that the canonical manifest marks required are present;
+- headings and labels that must occur once occur exactly once;
+- when `## QUANTITIES` is present, a `Portions:` label is present under it;
+- no heading exists outside the manifest's allowlist.
+
+Text after a label is opaque to V1. It does not parse or interpret portions, macros, readiness,
+Planning exceptions, Human Review state, verification results, self-verification identity, contract
+releases, change-level wording, or any other field value. Their correctness remains editor/verifier
+work. Field grammar, tolerant schemas, and tool-generated values are V2 questions to design only
+when a specific automation needs them.
 
 The canonical allowlist is parsed from the manifest carried in the contract text itself, not
 duplicated by hand in this tool — required as part of v1a's scope, not a later addition. A
@@ -228,9 +222,9 @@ hand-maintained hardcoded allowlist would recreate, inside the validator meant t
 exact failure mode, the same silent-drift risk the tool exists to remove from the contract's own
 prose rules.
 
-Deferred to v2 once the mechanical layer is proven: unresolved structural placeholder detection
-(e.g. leftover `[approx]` markers); any judgment of whether an omitted section should have been
-present, or of content quality — these remain the verifier's job, not the validator's.
+Deferred to V2 once the mechanical layer is proven: field grammar and value parsing; unresolved
+structural placeholder detection (e.g. leftover `[approx]` markers); any judgment of whether an
+omitted optional section should have been present; and content quality.
 
 The validator performs no Asana mutation and does not decide whether the recipe is culinarily
 correct, whether research is adequate, or whether the declared change level is semantically honest.
@@ -247,8 +241,8 @@ contract approve <submission-id> --agent <verifier-agent> --file <final-note>
 ```
 
 - Requires `verifier-agent`'s family to be the submission's `required_verifier_family`.
-- Reruns deterministic validation on the verifier's complete final file, including checking that the
-  signed `Verification:` line identifies the verifier and frozen contract revision.
+- Reruns literal template-shape validation on the verifier's complete final file. The verifier
+  manually checks the signed `Verification:` value and frozen contract revision.
 - On pass, records `verifier_agent`/`verifier_family` and sets status `ready`.
 
 ```text
@@ -470,7 +464,8 @@ Implementation follows TDD. Tests must cover:
 - declared agent-name validation and agent-family routing;
 - small, medium, and large change-level handling; initial construction treated as large;
 - verifier-family mismatch on `approve`;
-- every deterministic-validation rule individually, including the readiness-contradiction rule;
+- every literal template-shape rule individually, including missing, duplicate, and unknown
+  headings/labels, without interpreting their values;
 - verifier-authored clear corrections accepted by `approve`, with deterministic validation rerun on
   the complete corrected file;
 - `contract reject` returning the submission to `drafting` while retaining the lock, followed by a
@@ -491,9 +486,9 @@ Implementation follows TDD. Tests must cover:
 - an uncertain `submit` outcome is logged as `uncertain` and left for Marco to resolve via
   `contract-admin recover`, without asserting any automatic outcome-table behaviour;
 - raw `notes`/`html_notes` bypass attempts;
-- `Self-verified:` line missing, or naming an agent other than `editor_agent`, fails `prepare`;
-- a ChatGPT-authored file missing its own `Self-verified: gpt, <date>` line fails `prepare`, and no
-  local-agent insertion satisfies it;
+- a missing `Self-verified:` label fails `prepare`; V1 does not parse its value;
+- a ChatGPT-authored file missing the `Self-verified:` label fails `prepare`, and no local-agent
+  insertion satisfies the authorship requirement even though V1 cannot verify that judgment;
 - `editor_agent == verifier_agent` on `approve` is unreachable — always rejected by the family check
   first, confirming no separate collision path exists to test;
 - `canonical_manifest` captured at `prepare` remains authoritative for the submission even if the
