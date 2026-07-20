@@ -1,8 +1,8 @@
-# Dish Task Contract Tool — Future / v2+ Ideas
+# Dish Tool — Future / v2+ Ideas
 
-**Purpose:** Holds everything about the dish-task contract tool that is NOT part of the v1 design —
+**Purpose:** Holds everything about the dish tool that is NOT part of the v1 design —
 the v1b enforcement flip, v2 candidate features, and ideas considered and rejected outright. Split
-out of `dish-task-contract-tool.md` so that doc can stay focused on exactly what v1 needs to exist
+out of `dish-tool.md` so that doc can stay focused on exactly what v1 needs to exist
 and work.
 
 **Status:** Not authorized for implementation. Nothing here is scheduled; items move into the v1 doc
@@ -27,7 +27,7 @@ cross-repository enforcement mechanism is still an implementation question, not 
 build it.
 
 **v1a — build and soft-launch.** The full guarded path (`prepare` / `approve` / `reject` / `submit`
-/ `contract-admin recover`) is implemented, tested, and usable end-to-end against live tasks — it
+/ `dish-admin recover`) is implemented, tested, and usable end-to-end against live tasks — it
 performs real Asana writes through the guarded, token-protected path. What v1a does *not* do is make
 this path mandatory: the existing generic Asana CLI still works for managed tasks, and its
 managed-task check runs in advisory/log-only mode (see Contract-managed task registry, Logging and
@@ -45,7 +45,7 @@ this stage — v1b is a configuration flip on v1a's own logged evidence, not new
   incident shows it failing in practice; v1a's rejection-rate logging is exactly the evidence needed
   to decide whether to build it. Cheap to add once needed (a counter and a gate).
 - The small-change (`small`/Local) carelessness speed bump — Marco's standing concern (see Out of
-  scope (all versions) in `dish-task-contract-tool.md`): an honest agent carelessly mis-declaring a
+  scope (all versions) in `dish-tool.md`): an honest agent carelessly mis-declaring a
   material change as `small`, not a malicious one gaming the system. Designing its trigger condition
   needs data on what real `small`-declared diffs actually touch and how large they are — but v1a
   does not collect that (see Deferred below: diff-summary fields are dropped from v1a entirely, and
@@ -72,15 +72,15 @@ this stage — v1b is a configuration flip on v1a's own logged evidence, not new
   rather than inventing it. This follows the split's initial snapshot-backed, agent-led local
   migration, where literal template validation returns every structural failure for correction
   before scripted upload; it does not replace that first rollout or claim semantic equivalence.
-- Token/submission replacement as a distinct action from `contract-admin recover` — only worth
+- Token/submission replacement as a distinct action from `dish-admin recover` — only worth
   building if recovery proves insufficient in real use.
-- Replacing the manual ChatGPT copy/paste relay (`dish-task-contract-tool.md`'s ChatGPT workflow
+- Replacing the manual ChatGPT copy/paste relay (`dish-tool.md`'s ChatGPT workflow
   section) with a custom GPT Action calling a live endpoint directly, cutting out the local
   human/agent relay step. Marco already has the underlying pattern proven on a laptop-hosted custom
   GPT for another purpose (Action endpoint, hosting, schema registration), so this isn't a new infra
   bet — but it's punted to v2 by Marco's explicit call, not incident evidence: it changes the trust
   model (ChatGPT calling directly into a live endpoint against real tasks, vs. today's model where
-  nothing executes until a local agent runs `contract prepare`/`submit`) and what `Self-verified:`
+  nothing executes until a local agent runs `dish prepare`/`submit`) and what `Self-verified:`
   actually asserts (ChatGPT's own claim in its output vs. something the Action layer stamps on its
   behalf). Decide the trust/semantics question before building. The same endpoint may later mediate
   reads: give a cook the complete signed above-divider brief, a shopper the buying/quantity view,
@@ -112,10 +112,10 @@ response to any recorded incident. v1a ships the simpler behaviour noted under e
 fuller mechanism only if v1a's own logging actually shows a problem.
 
 - **`write_count` escalation (silent write / `--final`-gated write / hard block /
-  `contract-admin reset`).** No incident involves an accidental duplicate write, a repeat-write
+  `dish-admin reset`).** No incident involves an accidental duplicate write, a repeat-write
   failure, or anything else this guards against. v1a: `submit` performs exactly one write per
   submission and logs it; no confirmation round-trip, no reset mechanism.
-- **`contract-admin recover`'s full crashed/uncertain-outcome table.** No incident involves a
+- **`dish-admin recover`'s full crashed/uncertain-outcome table.** No incident involves a
   crashed process or an ambiguous Asana API outcome. v1a: an uncertain `submit` outcome is logged
   and left for Marco to check directly in Asana; the deterministic recovery table is only worth
   building once a real crash/ambiguous-outcome case actually occurs.

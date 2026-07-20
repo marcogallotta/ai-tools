@@ -16,15 +16,15 @@ sessions invoke directly, plus design docs for tools in progress.
 - `bin/asana` — the CLI agents use to read and write Asana tasks/projects (get/set notes,
   move tasks between sections, batch-apply multi-step plans, etc). Reads the API token from
   `~/.config/asana-cli/.env`. Symlinked into `~/.claude/bin/asana`.
-- `bin/dish-task-contract-tool.md` — design draft for an in-progress tool (name not yet decided)
-  that will be the one guarded, validated path for writing contract-governed dish-task notes to
+- `bin/dish-tool.md` — design draft for an in-progress tool named `dish` that will be the one
+  guarded, validated path for writing contract-governed dish-task notes to
   Asana (structural validation, single-use write tokens, staleness checks, verifier routing). Not
   yet implemented as a CLI. **Scoped to v1 only** — everything not needed for v1 to exist and
-  work lives in `dish-task-contract-tool-future.md` instead (see below).
-- `bin/dish-task-contract-tool-future.md` — everything about the same tool that is *not* v1: the
+  work lives in `dish-tool-future.md` instead (see below).
+- `bin/dish-tool-future.md` — everything about the same tool that is *not* v1: the
   v1b enforcement flip, v2 candidate features, and ideas considered and rejected outright. Split
   out of the design doc above so that doc can stay focused on exactly what v1 needs.
-- `bin/dish-task-contract-tool-implementation-plan.md` — the staged build plan (v1a) for that
+- `bin/dish-tool-imp.md` — the staged build plan (v1a) for that
   tool: rollout steps, file/module layout, open implementation questions.
 
   **These three docs are allowed to go stale relative to each other — that's fine, not a bug.**
@@ -45,7 +45,7 @@ sessions invoke directly, plus design docs for tools in progress.
   - `~/honest-pantry/dish-task-contract.md` — the actual contract the tool validates dish-task
     notes against (canonical task structure, change classes, verification rules).
 
-  **Authority flows one way: change plan → design doc (`dish-task-contract-tool.md`) →
+  **Authority flows one way: change plan → design doc (`dish-tool.md`) →
   implementation plan. It is not a three-way sync.** Once the design doc has made a concrete
   decision, the design doc wins outright, even where the change plan's wording is older, vaguer,
   or broader — that is expected and not a discrepancy to resolve. The change plan is never
