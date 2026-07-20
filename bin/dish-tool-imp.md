@@ -227,8 +227,8 @@ Returning a note to `drafting` via `reject` does not release it.
 
 - `start` on a task with no open submission succeeds and creates a `drafting` row;
 - `start --kind planning` on a task with existing (non-bare) notes is rejected;
-- `start --kind small change` captures the task's current `Verification:` line verbatim onto the row;
-  `start` for `initial`/`medium`/`large` does not require or capture one;
+- `start --kind change --change-level small` captures the task's current `Verification:` line verbatim
+  onto the row; `start` for `initial`/`medium`/`large` does not require or capture one;
 - `start` on a task with an already-open (non-terminal, including `drafting`) submission is rejected;
 - two simultaneous `start` calls on the same task: only one succeeds (assert on the SQLite unique-index
   rejection for the second, not just "doesn't crash" — the race case Step 1's partial unique index
@@ -254,9 +254,12 @@ this plan does not add rules beyond it.** For `planning`, it checks the Planning
 required/exact-once labels from the planning manifest (blocked on Step 0 item 4). For a complete task
 (`initial`/`change`):
 
-- headings and labels that the canonical manifest marks required are present (this covers `WHAT TO
-  BUY`, `PROCESS RECORD`, and the fixed process-record labels `Stage:`/`Human review:`/`Verification:`/
-  `Self-verified:` — presence only, none of their values are parsed);
+- headings that the canonical manifest marks required are present (this covers `WHAT TO BUY` and
+  `PROCESS RECORD`);
+- the fixed process-record labels `Stage:`/`Human review:`/`Verification:`/`Self-verified:` are
+  present — these are direct validator checks, not manifest-defined fields, per Step 0's
+  Manifest scope decision (manifest supplies the heading allowlist only); presence only, none of
+  their values are parsed;
 - headings and labels that must occur once occur exactly once;
 - when `## QUANTITIES` is present, a `Portions:` label is present under it;
 - no heading exists outside the manifest's allowlist.
