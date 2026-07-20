@@ -36,6 +36,11 @@ When a question requires background or trade-off context to understand, ask it i
 than a multiple-choice widget. Reserve multiple-choice interfaces for simple, self-explanatory
 choices.
 
+**Human review:** inspect the whole artefact, but report selectively. Refresh its purpose, group what
+is clearly sound, and focus on choices needing judgment. For each borderline or questionable choice,
+give only the context needed, the consequence, and your recommendation. End with the approval status
+and the exact decisions requiring human sign-off. Split reviews that cannot be read in a few minutes.
+
 ## Context and session efficiency
 
 Warn Marco when accumulated context is likely to impair recall or make a substantial new phase
