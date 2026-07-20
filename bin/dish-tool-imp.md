@@ -15,28 +15,28 @@ options and a recommendation; nothing else in this plan should be read as still 
 
 Ship as staged commits: Step 0 → Step 1 → Step 2 → Step 3 → Step 4 → Step 5 → Step 6 → Step 7 → Step
 8 → Step 9. Each stage lands and is independently testable. Steps 1–6 can be built and tested against a
-fixture copy of the contract text before Step 0 is merged; nothing in Steps 1–6 depends on Step 0
-having landed in the real `dish-task-contract.md`, but the tool must not soft-launch against live tasks
+fixture copy of the protocol text before Step 0 is merged; nothing in Steps 1–6 depends on Step 0
+having landed in the real `dish-protocol.md`, but the tool must not soft-launch against live tasks
 (Step 7 going live) until Step 0 is merged for real, since `prepare` cannot validate against a manifest
 that doesn't exist yet.
 
 See Deployment for the post-build go-live steps.
 
-## Step 0 — contract-text prerequisites (draft here, approve separately)
+## Step 0 — protocol-text prerequisites (draft here, approve separately)
 
-`dish-tool.md`'s validator assumes three things in `dish-task-contract.md` that are not
+`dish-tool.md`'s validator assumes three things in `dish-protocol.md` that are not
 there yet (confirmed by reading the live file). This is drafted here for your sign-off per the change
-plan's "Approval package required before production changes" — it is a contract-text edit, which is
+plan's "Approval package required before production changes" — it is a protocol-text edit, which is
 explicitly out of scope for the *tool* itself, but it's a hard precondition for the tool to work at
 all, so the plan can't skip past it.
 
-**Already resolved, no change needed:** `contract <revision>` — the contract text (line 183) already
+**Already resolved, no change needed:** `protocol <revision>` — the protocol text (line 183) already
 defines this as "the latest Git commit that changed this file. Without Git access, use the SHA-256 of
-the exact contract text used plus the date and time it was read." The tool implements exactly this
-(see Step 1, Content hashing/canonicalization); no contract-text addition required.
+the exact protocol text used plus the date and time it was read." The tool implements exactly this
+(see Step 1, Content hashing/canonicalization); no protocol-text addition required.
 
 **1. Machine-readable canonical-structure manifest.** Add a fenced block near `## Canonical task`
-(dish-task-contract.md:55) enumerating the allowed headings and which are required, sourced from the
+(dish-protocol.md:55) enumerating the allowed headings and which are required, sourced from the
 existing prose there (line 57: "Use only sections that carry information, except `WHAT TO BUY`, which
 is always present") and the heading list at lines 68–99:
 
@@ -86,28 +86,28 @@ markdown list (avoids new syntax but reintroduces the brittle-regex risk already
 allowlist).
 
 **2. `Self-verified: <agent>, <date>` as a required process-record line.** Add it as a fourth line in
-the `## PROCESS RECORD` block (dish-task-contract.md:86–88), alongside `Stage:`, `Human review:`, and
+the `## PROCESS RECORD` block (dish-protocol.md:86–88), alongside `Stage:`, `Human review:`, and
 `Verification:`:
 
 ```text
 Self-verified: <agent>, <date>
 ```
 
-Drafted wording for the explanatory sentence, matching the terse style of the surrounding contract
+Drafted wording for the explanatory sentence, matching the terse style of the surrounding protocol
 prose (no other field in this block gets its own paragraph either, beyond the dedicated Verification
 and readiness section for `Verification` specifically) — one line is enough here:
 
 > `Self-verified` attests the editor's own end-to-end self-review of the note, scoped by change class,
 > immediately before submission; the named agent must match the note's actual editor.
 
-**3. Statement that contract-managed note writes go through the guarded tool.** Drafted wording, for
+**3. Statement that protocol-managed note writes go through the guarded tool.** Drafted wording, for
 one sentence near `## Canonical task` or `## Workflow`:
 
-> Contract-managed task writes go through `dish-tool.md`'s `dish` command; as of
+> Protocol-managed task writes go through `dish-tool.md`'s `dish` command; as of
 > v1a this is logged, not yet enforced — a direct edit still succeeds but is recorded as an advisory
 > bypass event.
 
-Both are drafts against the actual contract prose style, ready for you to approve as-is or edit —
+Both are drafts against the actual protocol prose style, ready for you to approve as-is or edit —
 not a placeholder for you to write from scratch.
 
 ## Step 1 — foundation: shared modules, schema, hashing, manifest parsing
@@ -153,22 +153,22 @@ tests are unaffected either way.
 
   Conclusion: the proposed canonicalization (UTF-8, LF, no trimming/whitespace cleanup/reordering) is
   correct as designed — Asana does no content rewriting for `canonicalize_and_hash` to account for.
-- `contract_revision()`: runs `git -C <honest-pantry path> log -1 --format=%H -- dish-task-contract.md`;
-  on any git failure, falls back to `sha256(contract_text) + read timestamp`, matching the contract
-  text's own fallback rule (dish-task-contract.md:183–184) exactly.
-- Manifest loader: reads `dish-task-contract.md` (path from `$CONTRACT_MD_PATH`, default
-  `~/honest-pantry/dish-task-contract.md`, mirroring `asana`'s `$ASANA_ENV` pattern), extracts and
+- `protocol_revision()`: runs `git -C <honest-pantry path> log -1 --format=%H -- dish-protocol.md`;
+  on any git failure, falls back to `sha256(protocol_text) + read timestamp`, matching the protocol
+  text's own fallback rule (dish-protocol.md:183–184) exactly.
+- Manifest loader: reads `dish-protocol.md` (path from `$PROTOCOL_MD_PATH`, default
+  `~/honest-pantry/dish-protocol.md`, mirroring `asana`'s `$ASANA_ENV` pattern), extracts and
   `json.loads`s the fenced manifest block added in Step 0, and returns `(canonical_manifest,
-  contract_revision, contract_text_hash)`. A missing or malformed manifest block is a hard failure —
+  protocol_revision, protocol_text_hash)`. A missing or malformed manifest block is a hard failure —
   no `prepare` can proceed — consistent with fail-closed elsewhere in this design.
 - Agent family routing: `family(agent) -> "claude"|"gpt"`, per the `claude` / `gpt,codex` mapping.
 - Change-level mapping: `small|medium|large -> Local|Delta|Reconstruction` for the process record.
 - Audit logging: one `log_event(...)` function writing to `audit_events`, called by every command
   path in Steps 2–7, including failure paths with no submission row.
 
-**`$CONTRACT_MD_PATH` default: `~/honest-pantry/dish-task-contract.md`, decided.** honest-pantry is a
+**`$PROTOCOL_MD_PATH` default: `~/honest-pantry/dish-protocol.md`, decided.** honest-pantry is a
 sibling directory to `ai-tools`, not a git submodule of it, so the tool reads it as a plain filesystem
-path with its own git repo underneath (for `contract_revision()`'s `git log`). Not actually a plan-level
+path with its own git repo underneath (for `protocol_revision()`'s `git log`). Not actually a plan-level
 recommendation — the design doc already states this exact default, overridable via env var
 (`dish-tool.md`:191), matching `asana`'s `$ASANA_ENV` pattern.
 
@@ -181,7 +181,7 @@ recommendation — the design doc already states this exact default, overridable
   LF-only equivalent normalize to the *same* canonical bytes and hash (LF normalization is part of what
   "exact" means, per Content hashing); any other byte difference that survives canonicalization produces
   a *different* hash;
-- `contract_revision()` returns the git commit hash when git succeeds, and the SHA-256+timestamp
+- `protocol_revision()` returns the git commit hash when git succeeds, and the SHA-256+timestamp
   fallback shape when git is unavailable (mock the subprocess call for both branches);
 - manifest loader parses a valid fixture block correctly; rejects (does not silently accept) a missing
   block, a malformed-JSON block, and a block with an unrecognized `manifest_version`;
@@ -228,7 +228,7 @@ captured on the row by `start`; manifest/revision/text-hash capture via `dish_li
 stored on the row so this submission is validated against this exact frozen manifest for its entire
 life; the full deterministic validation rule set (readiness line, `WHAT TO BUY` presence, `Portions:`
 presence under `## QUANTITIES` when that heading is present, process-record lines well-formed,
-`Self-verified:` agent match, change-level/process-record consistency, contract-revision match, heading
+`Self-verified:` agent match, change-level/process-record consistency, protocol-revision match, heading
 allowlist, readiness-contradiction check); on a validation failure, the
 submission stays in `drafting` (it already exists, opened by `start`) and the attempt is logged; on a
 pass, advancing the row out of `drafting`
@@ -256,7 +256,7 @@ Mirrors `dish-tool.md`'s Testing requirements section directly:
   consistent with the trusted-identity model in Scope;
 - declared `--change-level` mismatched against the process record fails; initial construction is
   always treated as `large`;
-- contract revision in the process record not matching the freshly-read `contract_revision` fails;
+- protocol revision in the process record not matching the freshly-read `protocol_revision` fails;
 - heading outside the manifest allowlist fails; a heading present in the allowlist but absent from the
   note (and not `WHAT TO BUY`) does not fail, since omission-judgment is explicitly the verifier's job,
   not the validator's;
@@ -383,7 +383,7 @@ In `asana` (existing file): before `set-notes`/`append`/`replace`/batch note-upd
 writes touching `notes`/`html_notes`, call a new `dish_lib.is_managed(task_gid)` that compares the
 task's current section GID directly against `COOKING_SOURCING_SECTION_GID`/
 `COOKING_REFERENCE_SECTION_GID` — hardcoded constants in `dish_lib.py`, same convention as
-`$CONTRACT_MD_PATH`'s default. Resolved once by hand via `asana sections 1215089183018968`, not
+`$PROTOCOL_MD_PATH`'s default. Resolved once by hand via `asana sections 1215089183018968`, not
 re-resolved by name at runtime; the actual GIDs are `1215097887456673` (`Sourcing`) and
 `1215259129474846` (`Reference`), confirmed live. Re-resolving by *name* on every invocation
 would mean a rename of `Sourcing`/`Reference` silently breaks the lookup and misclassifies that
@@ -451,7 +451,7 @@ runbook pointer bullet to `~/honest-pantry/cooking-master-reference.md`'s CORE s
 snapshot of the live Asana "Cooking master prompt" task ChatGPT actually reads), near the existing
 readiness-gate bullet that already makes the same kind of hand-off — a short pointer, since that file
 explicitly scopes itself to live execution only and defers task construction/verification to
-`dish-task-contract.md` "when it's actually needed." Adding the bullet is a `~/honest-pantry` edit, out
+`dish-protocol.md` "when it's actually needed." Adding the bullet is a `~/honest-pantry` edit, out
 of scope for this ai-tools plan itself.
 
 Then push it live via `asana set-notes 1215259129474847 -`, per that file's own sync instructions.

@@ -1,6 +1,6 @@
 # Dish Tool — Design Draft
 
-**Purpose:** Provide one controlled path for validating and writing complete contract-governed
+**Purpose:** Provide one controlled path for validating and writing complete protocol-governed
 dish-task notes to Asana.
 
 **Status:** Initial design, v1 scope only. No implementation or production changes are authorized by
@@ -10,7 +10,7 @@ not here.
 
 ## Scope
 
-This tool governs complete writes to the notes of contract-managed dish tasks.
+This tool governs complete writes to the notes of protocol-managed dish tasks.
 
 It is separate from the general-purpose Asana CLI. The existing CLI must consult this tool's live
 managed-task determination before performing a generic note mutation — during v1a that consultation
@@ -29,7 +29,7 @@ those protections may be reconsidered for V2 if usage justifies them.
 
 ## Current design decisions, pending formal approval
 
-- Contract-managed notes cannot be changed through generic note-writing commands once v1b is
+- Protocol-managed notes cannot be changed through generic note-writing commands once v1b is
   enabled; in v1a the restriction is advisory/logged only.
 - Agent identity is supplied explicitly as a trusted CLI flag, not cryptographically authenticated.
 - Trusted state is stored in a local SQLite database at `~/ai-tools/var/dish-tool.db`,
@@ -49,9 +49,9 @@ those protections may be reconsidered for V2 if usage justifies them.
 
 ## Change levels
 
-The tool uses plain-language terms deliberately distinct from the contract's own change-class
-vocabulary, so an agent pattern-matching text cannot conflate the tool's field with the contract's
-field. The declared level maps directly onto the contract's change class for the process record:
+The tool uses plain-language terms deliberately distinct from the protocol's own change-class
+vocabulary, so an agent pattern-matching text cannot conflate the tool's field with the protocol's
+field. The declared level maps directly onto the protocol's change class for the process record:
 
 ```text
 small  → Local
@@ -105,13 +105,13 @@ claude          → Claude family
 gpt, codex      → GPT family
 ```
 
-This mirrors the contract's own family definition ("GPT includes ChatGPT/Codex"), so a
+This mirrors the protocol's own family definition ("GPT includes ChatGPT/Codex"), so a
 ChatGPT-authored submission routes the same as any other GPT-family edit. ChatGPT cannot run the CLI
 itself; whoever runs `dish start`/`prepare`/`submit` on its behalf declares `--agent gpt`.
 
 Initial construction and `large` changes require verification by the opposite family. `medium` also
 requires the opposite family, but the verifier may focus review on the declared affected areas when
-containment is accepted. `small` matches the contract's Local change class: no verifier runs, and
+containment is accepted. `small` matches the protocol's Local change class: no verifier runs, and
 the task's existing `Verification` field is left as-is.
 
 The opposite-family requirement on `approve` makes `editor_agent == verifier_agent` structurally
@@ -120,16 +120,16 @@ risk of one session dishonestly declaring different agent values for editing and
 detectable under the trusted-identity model (see Scope) and is not claimed to be caught here.
 
 The final task process record must agree with the declared final editor, routing, change level, and
-governing contract revision, but V1 does not establish that agreement by parsing field values. The
+governing protocol revision, but V1 does not establish that agreement by parsing field values. The
 editor and verifier check it manually; trusted CLI/SQLite state controls workflow routing.
 
-## Contract-managed task registry
+## Protocol-managed task registry
 
 Management is determined by the task's current section in the Cooking project (`1215089183018968`),
 checked live rather than fixed once at enrollment. Sections are identified by their immutable Asana
 section GID, not by display name — a section rename must not silently change which tasks are
 managed. The tool resolves the `Sourcing` and `Reference` sections' GIDs once by name at setup time
-and compares against those GIDs thereafter. A task is contract-managed unless its current section
+and compares against those GIDs thereafter. A task is protocol-managed unless its current section
 GID matches one of those two — every other section defaults to managed. If section membership cannot
 be resolved to a GID at all, the tool fails closed and treats the task as managed. This applies
 uniformly to new and pre-existing tasks; no separate enrollment or backfill pass is needed.
@@ -140,7 +140,7 @@ only to log an advisory bypass event (task GID, command used, agent if known) �
 
 The check applies to `set-notes`, `append`, `replace`, batch operations updating notes, and `raw`
 writes containing `notes`/`html_notes`. Unrelated operations (rename, move, complete, other fields)
-remain outside this contract unless later expanded.
+remain outside this protocol unless later expanded.
 
 The dish-tool submission path uses an internal guarded write operation after all checks pass; it does
 not go through the generic-command guard at all, in either v1a or v1b.
@@ -181,7 +181,7 @@ dish prepare <submission-id> \
 
 Before running this, the agent has already assembled one complete canonical note (no patches or
 fragments accepted anywhere in this workflow) and performed its own end-to-end self-review, scoped
-by change level the same way the contract already scopes verification — local check for `small`, the
+by change level the same way the protocol already scopes verification — local check for `small`, the
 change and its identified dependencies for `medium`, the complete task for `large`. It records that
 review by writing `Self-verified: <agent>, <date>` into the file's process record; V1 checks that
 the label exists, not the grammar or meaning of its value.
@@ -189,10 +189,10 @@ the label exists, not the grammar or meaning of its value.
 The tool:
 
 1. Confirms the submission exists and is in status `drafting`.
-1. Reads the exact governing contract text (from `$CONTRACT_MD_PATH`, defaulting to
-   `~/honest-pantry/dish-task-contract.md`), including its embedded canonical-structure manifest,
-   and stores the parsed manifest as `canonical_manifest` alongside `contract_revision`. This
-   submission uses that frozen revision and manifest for its entire life; a later contract edit does
+1. Reads the exact governing protocol text (from `$PROTOCOL_MD_PATH`, defaulting to
+   `~/honest-pantry/dish-protocol.md`), including its embedded canonical-structure manifest,
+   and stores the parsed manifest as `canonical_manifest` alongside `protocol_revision`. This
+   submission uses that frozen revision and manifest for its entire life; a later protocol edit does
    not affect an already-open submission.
 1. Runs deterministic validation (below) against `<candidate-note>`.
 1. On a validation failure: reports every violated rule; the submission stays in `drafting` (it
@@ -211,15 +211,15 @@ Deterministic validation checks literal template shape only:
 - no heading exists outside the manifest's allowlist.
 
 Text after a label is opaque to V1. It does not parse or interpret portions, macros, readiness,
-Planning exceptions, Human Review state, verification results, self-verification identity, contract
+Planning exceptions, Human Review state, verification results, self-verification identity, protocol
 releases, change-level wording, or any other field value. Their correctness remains editor/verifier
 work. Field grammar, tolerant schemas, and tool-generated values are V2 questions to design only
 when a specific automation needs them.
 
-The canonical allowlist is parsed from the manifest carried in the contract text itself, not
+The canonical allowlist is parsed from the manifest carried in the protocol text itself, not
 duplicated by hand in this tool — required as part of v1a's scope, not a later addition. A
 hand-maintained hardcoded allowlist would recreate, inside the validator meant to eliminate this
-exact failure mode, the same silent-drift risk the tool exists to remove from the contract's own
+exact failure mode, the same silent-drift risk the tool exists to remove from the protocol's own
 prose rules.
 
 Deferred to V2 once the mechanical layer is proven: field grammar and value parsing; unresolved
@@ -242,7 +242,7 @@ dish approve <submission-id> --agent <verifier-agent> --file <final-note>
 
 - Requires `verifier-agent`'s family to be the submission's `required_verifier_family`.
 - Reruns literal template-shape validation on the verifier's complete final file. The verifier
-  manually checks the signed `Verification:` value and frozen contract revision.
+  manually checks the signed `Verification:` value and frozen protocol revision.
 - On pass, records `verifier_agent`/`verifier_family` and sets status `ready`.
 
 ```text
@@ -271,7 +271,7 @@ dish submit <submission-id> --file <final-note>
    `submit` call against a `consumed` submission is rejected outright.
 1. On confirmed API failure: reverts to `ready` — the same validated submission may be retried.
 1. On an ambiguous/uncertain outcome: marks `uncertain` — logged for Marco to check directly in
-   Asana (see Contract admin tool). No incident evidences a crash or ambiguous-outcome case in
+   Asana (see Protocol admin tool). No incident evidences a crash or ambiguous-outcome case in
    practice; a deterministic recovery table is a v2 candidate once real usage shows it's needed (see
    `dish-tool-future.md`).
 
@@ -339,7 +339,7 @@ with the "not adversarial security" framing in Scope.
 - other Marco-only actions identified later, including v2's `dish-admin unblock` once the
   two-failed-pass gate is built.
 
-Revoking a task's contract-managed status is not a feature of `dish-admin`, or of this design at
+Revoking a task's protocol-managed status is not a feature of `dish-admin`, or of this design at
 all. If a managed task genuinely needs a one-off manual edit outside the guarded workflow, Marco
 makes it directly through the Asana web UI instead — the same documented bypass named in Scope: a
 direct edit there is neither prevented nor detected by V1. The general-purpose Asana CLI gives Marco
@@ -352,7 +352,7 @@ distinguishable to it.
 
 - `submission_id`
 - `task_gid`
-- `contract_revision`
+- `protocol_revision`
 - `canonical_manifest`
 - `editor_agent`
 - `editor_family`
@@ -426,7 +426,7 @@ and error formatting. They must not share unguarded note-writing behaviour.
 
 The general CLI consults the dish tool's live managed-task determination before changing notes —
 advisory/logged in v1a, blocking in v1b (see `dish-tool-future.md`, Versioning plan;
-Contract-managed task registry, above).
+Protocol-managed task registry, above).
 
 The dish tool performs its final update through a separate guarded gateway that cannot be called
 without a valid, `ready` submission.
@@ -492,7 +492,7 @@ Implementation follows TDD. Tests must cover:
 - `editor_agent == verifier_agent` on `approve` is unreachable — always rejected by the family check
   first, confirming no separate collision path exists to test;
 - `canonical_manifest` captured at `prepare` remains authoritative for the submission even if the
-  governing contract text changes before `submit`;
+  governing protocol text changes before `submit`;
 - section-GID resolution: a `Sourcing`/`Reference` rename does not change managed status; an
   unresolvable section fails closed to managed;
 - every command execution produces an `audit_events` row, including failed `prepare` attempts on an
@@ -509,7 +509,7 @@ Implementation follows TDD. Tests must cover:
 - recursively auditing dependencies;
 - governing non-note task fields;
 - automatically migrating every existing dish task's content to the current canonical structure;
-- modifying the contract text or incident logs;
+- modifying the protocol text or incident logs;
 - providing a remote or multi-user trust service;
 - documenting the dish admin tool's location or invocation for agents;
 - providing a dedicated revoke-management command (Marco uses the Asana web UI directly instead);

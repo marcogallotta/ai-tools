@@ -14,12 +14,12 @@ The tool is built and rolled out in stages, scoped to what the evidence in `dish
 `dish-incident-log.md`, and `dish-review-log.md` actually requires. Nothing beyond v1a/v1b is built
 until real usage data justifies it.
 
-For the later split contract, the approved checked-in `dish-planning.md`, `dish-research.md`, and
+For the later split protocol, the approved checked-in `dish-planning.md`, `dish-research.md`, and
 `dish-verification.md` are repository-maintained governing sources, not generated or synced from
-Asana. One human-readable `contract_release` version identifies their exact checked-in set together
+Asana. One human-readable `protocol_release` version identifies their exact checked-in set together
 with the manifest/schema. The shared `git-commit` wrapper owns the version file: agents and humans
 do not edit it; the wrapper advances and includes it atomically whenever a file in the defined
-contractual set changes, rejects direct edits or an unversioned contractual commit, and ignores
+protocol-governed set changes, rejects direct edits or an unversioned protocol-governed commit, and ignores
 unrelated commits. Git history supplies the exact-content binding, so the release value need not be
 a combined hash. `tool_version` remains separate; compatible tool-only fixes change only that
 version, while schema or semantic compatibility changes require both versions to advance. The
@@ -30,8 +30,8 @@ build it.
 / `dish-admin recover`) is implemented, tested, and usable end-to-end against live tasks — it
 performs real Asana writes through the guarded, token-protected path. What v1a does *not* do is make
 this path mandatory: the existing generic Asana CLI still works for managed tasks, and its
-managed-task check runs in advisory/log-only mode (see Contract-managed task registry, Logging and
-observability). This proves the structural validator against the contract's manifest, the lock-based
+managed-task check runs in advisory/log-only mode (see Protocol-managed task registry, Logging and
+observability). This proves the structural validator against the protocol's manifest, the lock-based
 submission state machine, verifier correction/return flow, and uncertain-outcome recovery under real
 conditions. It also produces the usage data needed to decide v1b's timing and v2's scope.
 
@@ -41,7 +41,7 @@ this stage — v1b is a configuration flip on v1a's own logged evidence, not new
 
 **v2 — add once v1a data justifies it.**
 
-- The two-failed-pass stop rule (`dish-task-contract.md` lines 206-209) — real contract text, but no
+- The two-failed-pass stop rule (`dish-protocol.md` lines 206-209) — real protocol text, but no
   incident shows it failing in practice; v1a's rejection-rate logging is exactly the evidence needed
   to decide whether to build it. Cheap to add once needed (a counter and a gate).
 - The small-change (`small`/Local) carelessness speed bump — Marco's standing concern (see Out of
@@ -67,8 +67,8 @@ this stage — v1b is a configuration flip on v1a's own logged evidence, not new
   off; a Marco-signed lock may deserve more evidence to challenge than an agent-set lock, but that
   remains judgment. Do not encode separate lock classes or evidence thresholds in the tool. Any
   proposed lock change after planning handoff goes to Human Review.
-- Scripted migration for later contract releases: perform deterministic structural transformations,
-  remove obsolete fields, stamp the new `contract_release`, and stop on content requiring judgment
+- Scripted migration for later protocol releases: perform deterministic structural transformations,
+  remove obsolete fields, stamp the new `protocol_release`, and stop on content requiring judgment
   rather than inventing it. This follows the split's initial snapshot-backed, agent-led local
   migration, where literal template validation returns every structural failure for correction
   before scripted upload; it does not replace that first rollout or claim semantic equivalence.
@@ -98,7 +98,7 @@ this stage — v1b is a configuration flip on v1a's own logged evidence, not new
   `gpt` for verification) is exactly the "trusted, not authenticated" limit already stated in Scope,
   and no mechanical check catches it; claiming one does would be worse than naming the gap.
 - A cached, authoritative `managed_tasks` table. Management is always resolved live (see
-  Contract-managed task registry); a cache that isn't authoritative isn't worth maintaining.
+  Protocol-managed task registry); a cache that isn't authoritative isn't worth maintaining.
 - A distinct adversarial self-review mechanism. The review log is explicit that this "was an
   assistant recommendation and was not approved in the enforcement handoff" and creates no
   implementation requirement. Stays out unless Marco separately approves it.
