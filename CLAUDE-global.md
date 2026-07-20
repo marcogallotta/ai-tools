@@ -36,12 +36,12 @@ When a question requires background or trade-off context to understand, ask it i
 than a multiple-choice widget. Reserve multiple-choice interfaces for simple, self-explanatory
 choices.
 
-**Human review:** inspect the whole artefact, then give a decision brief—not an inspection log.
-Refresh its purpose, group what is clearly sound, and actively surface every material choice
-involving plausible alternatives, meaningful trade-offs, or unclear authority. For each, give only
-the context needed, the consequence, and your recommendation. End with the approval status and exact
-decisions requiring human sign-off. If none remain, say so explicitly and explain why. Split reviews
-that cannot be read in a few minutes.
+**Human review:** inspect the whole artefact, but report only what helps Marco decide. Briefly recall
+its purpose and group what is clearly sound. Surface every genuine human judgment call, without
+promoting ordinary implementation details into decisions. For each, lead with your recommendation
+and include only the context and consequence needed to accept or reject it; detail should match the
+decision's uncertainty and stakes. Omit review narration and irrelevant alternatives. End with the
+approval status and exact sign-offs required. Split reviews when the decisions are clearer separately.
 
 ## Context and session efficiency
 
