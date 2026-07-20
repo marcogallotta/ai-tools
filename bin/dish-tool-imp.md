@@ -167,9 +167,11 @@ tests are unaffected either way.
   `json.loads`s the fenced manifest block added in Step 0, and returns `(canonical_manifest,
   protocol_release, release_commit, protocol_bundle)` — `protocol_bundle` is the exact frozen protocol
   text itself (per `dish-tool.md`'s SQLite model: `submissions.protocol_bundle`, "the exact
-  role-specific checked-in protocol contents frozen at `start`"), not a hash of it. A missing or
-  malformed manifest block is a hard failure — no `prepare` can proceed — consistent with fail-closed
-  elsewhere in this design.
+  role-specific checked-in protocol contents frozen at `start`"), not a hash of it. Pre-split,
+  "role-specific" collapses to the single `dish-protocol.md` file — there is only one role to be
+  specific about — so no per-role logic is built here; that's a post-split concern, same as
+  `release_commit` above. A missing or malformed manifest block is a hard failure — no `prepare` can
+  proceed — consistent with fail-closed elsewhere in this design.
 - Agent family routing: `family(agent) -> "claude"|"gpt"`, per the `claude` / `gpt,codex` mapping.
 - Change-level mapping: `small|medium|large -> Local|Delta|Reconstruction` for the process record.
 - Audit logging: one `log_event(...)` function writing to `audit_events`, called by every command
@@ -262,7 +264,13 @@ required/exact-once labels from the planning manifest (blocked on Step 0 item 4)
   their values are parsed;
 - headings and labels that must occur once occur exactly once;
 - when `## QUANTITIES` is present, a `Portions:` label is present under it;
-- no heading exists outside the manifest's allowlist.
+- no top-level (`##`) heading exists outside the manifest's allowlist;
+- no subheading (`###`) under `## PROCESS RECORD` exists outside `process_record_subheadings`; each
+  listed subheading occurs at most once, and none is required — `process_record_subheadings` governs
+  only which subheadings are *allowed* there, exactly as Step 0 scoped it, not which are mandatory.
+  This check applies only to subheadings nested under `PROCESS RECORD`; it does not extend the
+  top-level allowlist, and a subheading name is never checked against the top-level allowlist or vice
+  versa.
 
 **One additional check, for `small` changes only:** the submitted note's `Verification:` line must
 match `baseline_verification_line` (captured at `start`) byte-for-byte. If it doesn't, `prepare` fails —
@@ -298,6 +306,12 @@ Mirrors `dish-tool.md`'s Testing requirements section directly:
 - each deterministic-validation rule (required heading/label presence, exactly-once occurrence,
   `Portions:`-under-`QUANTITIES`, heading allowlist) fails and passes independently — one test per
   rule, not one mega-test;
+- a `### Decisions`/`### Open questions`/etc. subheading listed in `process_record_subheadings` and
+  nested under `PROCESS RECORD` passes; one absent from that list fails; the same subheading name
+  repeated twice under `PROCESS RECORD` fails the exactly-once rule; a `PROCESS RECORD` with none of
+  the optional subheadings present still passes, since none is required; a top-level `##` heading with
+  the same text as an allowed subheading (or vice versa) is still checked against its own allowlist
+  only, not the other;
 - a note with `## QUANTITIES` present but no well-formed `Portions:` line under it fails; a note
   without `## QUANTITIES` at all is unaffected by this rule (heading omission stays the verifier's
   call, per the heading-allowlist rule above);
