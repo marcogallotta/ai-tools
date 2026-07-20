@@ -173,7 +173,7 @@ tests are unaffected either way.
   `release_commit` above. A missing or malformed manifest block is a hard failure — no `prepare` can
   proceed — consistent with fail-closed elsewhere in this design.
 - Agent family routing: `family(agent) -> "claude"|"gpt"`, per the `claude` / `gpt,codex` mapping.
-- Change-level mapping: `small|medium|large -> Local|Delta|Reconstruction` for the process record.
+- Change-level mapping: `small|large -> Local|Reconstruction` for the process record.
 - Audit logging: one `log_event(...)` function writing to `audit_events`, called by every command
   path in Steps 2–7, including failure paths with no submission row.
 
@@ -230,7 +230,7 @@ Returning a note to `drafting` via `reject` does not release it.
 - `start` on a task with no open submission succeeds and creates a `drafting` row;
 - `start --kind planning` on a task with existing (non-bare) notes is rejected;
 - `start --kind change --change-level small` captures the task's current `Verification:` line verbatim
-  onto the row; `start` for `initial`/`medium`/`large` does not require or capture one;
+  onto the row; `start` for `initial`/`large` does not require or capture one;
 - `start` on a task with an already-open (non-terminal, including `drafting`) submission is rejected;
 - two simultaneous `start` calls on the same task: only one succeeds (assert on the SQLite unique-index
   rejection for the second, not just "doesn't crash" — the race case Step 1's partial unique index
@@ -248,8 +248,8 @@ release again, even if the checked-in protocol changes before `prepare` runs; ru
 validation rule set against `<candidate-note>` (see below); on a validation failure, reports every
 violated rule, the submission stays in `drafting` (it already exists, opened by `start`), and the
 attempt is logged; on a pass, advances the row out of `drafting` — `planning` or `small` change →
-status `ready`, no verifier required; `initial`, `medium`, or `large` → status `awaiting_verification`,
-with `required_verifier_family` set to the family opposite `editor_family`.
+status `ready`, no verifier required; `initial` or `large` → status `awaiting_verification`, with
+`required_verifier_family` set to the family opposite `editor_family`.
 
 **Deterministic validation is literal template shape only — the design doc's own list is short, and
 this plan does not add rules beyond it.** For `planning`, it checks the Planning brief heading and
@@ -327,8 +327,8 @@ Mirrors `dish-tool.md`'s Testing requirements section directly:
   not the validator's;
 - `prepare` on a submission not in status `drafting` (nonexistent, or already past `drafting`) is
   rejected;
-- successful `prepare` produces the correct initial `status` for each of `planning`/`small`/
-  `medium`/`large`, and the correct `required_verifier_family` for `initial`/`medium`/`large`;
+- successful `prepare` produces the correct initial `status` for each of `planning`/`small`/`large`,
+  and the correct `required_verifier_family` for `initial`/`large`;
 - `planning` receives only its literal manifest checks and advances directly to `ready`, with no
   `Self-verified:` or verifier requirement (blocked on Step 0 item 4 landing before this test can run
   for real; write it against a fixture manifest in the meantime if the real one isn't ready);

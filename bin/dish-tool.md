@@ -5,8 +5,7 @@ dish-task notes to Asana.
 
 **Status:** Initial design, v1 scope only. No implementation or production changes are authorized by
 this document. Everything not needed for v1 to exist and work — v1b's enforcement flip, v2 candidate
-features, and ideas considered and rejected outright — lives in `dish-tool-future.md`,
-not here.
+features, and ideas considered and rejected outright — lives in `dish-tool-future.md`, not here.
 
 ## Scope
 
@@ -14,38 +13,39 @@ This tool governs complete writes to the notes of protocol-managed dish tasks.
 
 It is separate from the general-purpose Asana CLI. The existing CLI must consult this tool's live
 managed-task determination before performing a generic note mutation — during v1a that consultation
-is advisory/log-only (see `dish-tool-future.md`, Versioning plan); v1b makes it a hard
-block.
+is advisory/log-only (see `dish-tool-future.md`, Versioning plan); v1b makes it a hard block.
 
 This design does not attempt adversarial security. Agents are trusted to identify themselves and
 describe their work honestly. Mechanical controls exist to prevent concurrent controlled
 submissions, repeated writes, and incomplete validation.
 
 Direct web or integration edits are not prevented and are not generally identifiable as bypasses.
-`dish start` claims an exclusive lock; while it is held, no other `dish` CLI caller can
-start work on the same task. V1 assumes no edits are made outside this controlled workflow during
-the cycle. It does not hash candidate content, save a live-notes baseline, or detect external edits;
-those protections may be reconsidered for V2 if usage justifies them.
+`dish start` claims an exclusive lock; while it is held, no other `dish` CLI caller can start work
+on the same task. V1 assumes no edits are made outside this controlled workflow during the cycle. It
+does not hash candidate content, save a live-notes baseline, or detect external edits; those
+protections may be reconsidered for V2 if usage justifies them.
 
 ## Current design decisions, pending formal approval
 
 - Protocol-managed notes cannot be changed through generic note-writing commands once v1b is
   enabled; in v1a the restriction is advisory/logged only.
 - Agent identity is supplied explicitly as a trusted CLI flag, not cryptographically authenticated.
-- Trusted state is stored in a local SQLite database at `~/ai-tools/var/dish-tool.db`,
-  gitignored, shared by every locally-invoked agent regardless of family.
+- Trusted state is stored in a local SQLite database at `~/ai-tools/var/dish-tool.db`, gitignored,
+  shared by every locally-invoked agent regardless of family.
 - `dish start` claims an exclusive per-task lock, held by one `submissions` row from `drafting`
   through any terminal state; the `submission_id` it creates is used as the token for every later
   command on that submission. A verifier return to construction stays inside the same submission and
   keeps the lock held — see Workflow.
 - Every submission declares a kind: `planning`, `initial`, or `change`. A `change` also declares a
-  level (`small`/`medium`/`large`) and reason; Python does not infer either value.
+  level (`small`/`large`) and reason; Python does not infer either value.
 - Every note passed between workflow stages is complete — no patches or fragments.
+- Planning and complete-task manifests require one `Exemptions:` field. V1 narrowly parses its
+  literal nutrition tags and preserves their set across the planning handoff; other field values
+  remain opaque.
 - A successful write consumes a single-use submission; an identical second write is rejected.
 - A submission gets exactly one write; a second `submit` attempt on an already-`consumed` submission
-  is rejected (see `dish submit`). No incident evidences a need for a multi-write escalation
-  budget or reset mechanism — see `dish-tool-future.md` if v1a's logging shows
-  otherwise.
+  is rejected (see `dish submit`). No incident evidences a need for a multi-write escalation budget
+  or reset mechanism — see `dish-tool-future.md` if v1a's logging shows otherwise.
 
 ## Submission kinds and change levels
 
@@ -60,7 +60,6 @@ consequence:
 
 ```text
 small  → Local
-medium → Delta
 large  → Reconstruction
 ```
 
@@ -70,27 +69,21 @@ A change that cannot materially alter cooking, sourcing, safety, halal complianc
 approval, or the intended result. Examples may include spelling, formatting, or an unambiguous
 correction with no material downstream effect.
 
-### Medium change
-
-A material change whose consequences are clearly limited to identified parts of the task. The editor
-must identify the affected parts and explain why the effect is contained.
-
 ### Large change
 
-A change that can affect the complete construction, or whose consequences cannot be confidently
-contained. Initial construction uses the separate `initial` kind; it routes like a large change but
-is not a Reconstruction and creates no post-construction Material changes entry.
+A material change. Initial construction uses the separate `initial` kind; it routes like a large
+change but is not a Reconstruction and creates no post-construction Material changes entry.
 
 At `start`, the editing agent declares either:
 
 ```text
 --kind planning|initial
---kind change --change-level small|medium|large --change-reason "<brief explanation>"
+--kind change --change-level small|large --change-reason "<brief explanation>"
 ```
 
-`medium`/`large` require an opposite-family verifier to `approve` before submission. `small`
-requires no verifier at all — confirmed only by deterministic validation, not by a second agent (see
-Agent identity and verifier routing).
+`large` requires an opposite-family verifier to `approve` before submission. `small` requires no
+verifier at all — confirmed only by deterministic validation, not by a second agent (see Agent
+identity and verifier routing).
 
 ## Agent identity and verifier routing
 
@@ -116,10 +109,8 @@ ChatGPT-authored submission routes the same as any other GPT-family edit. ChatGP
 itself; whoever runs `dish start`/`prepare`/`submit` on its behalf declares `--agent gpt`.
 
 Planning receives scripted validation only. Initial construction and `large` changes require
-verification by the opposite family. `medium` also requires the opposite family, but the verifier
-may focus review on the declared affected areas when containment is accepted. `small` matches the
-protocol's Local change class: no verifier runs, and the task's existing `Verification` field is
-left as-is.
+verification by the opposite family. `small` matches the protocol's Local change class: no verifier
+runs, and the task's existing `Verification` field is left as-is.
 
 The opposite-family requirement on `approve` makes `editor_agent == verifier_agent` structurally
 unreachable — it fails the family check before any further comparison would matter. The residual
@@ -154,8 +145,8 @@ Cooking section is managed. An unresolved intended section fails closed to manag
 of a bare managed task remains allowed. Unrelated operations (rename, move, complete, other fields)
 remain outside this protocol unless later expanded.
 
-The dish-tool submission path uses an internal guarded write operation after all checks pass; it does
-not go through the generic-command guard at all, in either v1a or v1b.
+The dish-tool submission path uses an internal guarded write operation after all checks pass; it
+does not go through the generic-command guard at all, in either v1a or v1b.
 
 ## Workflow
 
@@ -168,9 +159,9 @@ researched task; `create_task` with notes cannot bypass it.
 
 The current single-file `$PROTOCOL_MD_PATH` mechanism remains until the three-way split ships. At
 that boundary it is replaced by one resolver for the checked-in release manifest. A human-readable
-`protocol_release` identifies the exact `dish-planning.md`, `dish-research.md`,
-`dish-verification.md`, and canonical manifest/schema set at the Git commit that introduced that
-release. The resolver loads those committed contents by role and fails closed if the release is
+`protocol_release` identifies the exact `dish-planning-protocol.md`, `dish-research-protocol.md`,
+`dish-verification-protocol.md`, and canonical manifest/schema set at the Git commit that introduced
+that release. The resolver loads those committed contents by role and fails closed if the release is
 missing, ambiguous, incomplete, or the protocol set has uncommitted changes. Git provides the
 exact-content binding; no combined hash is exposed in tasks.
 
@@ -179,7 +170,7 @@ exact-content binding; no combined hash is exposed in tasks.
 ```text
 dish start <task-gid> --agent claude|gpt|codex --kind planning|initial
 dish start <task-gid> --agent claude|gpt|codex --kind change \
-  --change-level small|medium|large --change-reason "<reason>"
+  --change-level small|large --change-reason "<reason>"
 ```
 
 Claims the exclusive lock on the task and opens the submission that every later command in this
@@ -197,6 +188,8 @@ workflow operates on.
    self-review where required, validation, and verification for the submission's entire life.
    `start` prints the release and exact documents the author must read before drafting.
 1. For a `small` change, captures the existing `Verification:` line for exact preservation.
+1. For `initial` or `change`, captures the live Planning brief's normalized exemption-tag set for
+   preservation through `prepare` and `approve`; a missing or malformed field makes `start` fail.
 1. Creates one `submissions` row, status `drafting`. The row's `submission_id` is printed back to
    the caller and used as the token for every subsequent command
    (`prepare`/`approve`/`reject`/`submit`) on this submission — there is no separate token object.
@@ -210,7 +203,8 @@ construction does not release it.
 ```text
 dish prepare <submission-id> \
   --agent claude|gpt|codex \
-  --file <candidate-note>
+  --file <candidate-note> \
+  [--exemption-revision "<Marco decision, date, and reason>"]
 ```
 
 For `planning`, the candidate is the complete compact Planning brief and receives scripted checks
@@ -229,27 +223,37 @@ The tool:
    self-review, and structural checks without attributing the edit to the prior signer. If the old
    task cannot satisfy the current structure, it requires explicit migration rather than a Local
    edit.
+1. Parses `Exemptions:` as either `None` or a unique set of `[nutrition-kcal]`,
+   `[nutrition-protein]`, and `[nutrition-fat]` followed by a non-empty scope/reason/approval note.
+   Unknown tags, duplicate tags, mixed `None` and tags, or missing explanatory text fail. For
+   `initial` or `change`, the normalized tag set must match the live Planning brief captured at
+   `start`. A changed set is rejected for `small`; otherwise it requires `--exemption-revision`,
+   which is stored in trusted audit state and must also be supported by the candidate's recorded
+   Human decision. V1 verifies the syntax and trusted declaration, not whether Marco truly approved
+   it. The flag is rejected for `planning`, `small`, or an unchanged tag set.
 1. On a validation failure: reports every violated rule; the submission stays in `drafting` (it
    already exists, opened by `start`), but the attempt is logged (see Logging and observability) so
    failure patterns are visible even before a validation pass.
 1. On a pass, advances the row out of `drafting`.
    - `planning` or `small` change → status `ready`, no verifier required.
-   - `initial`, `medium`, or `large` → status `awaiting_verification`, with
+   - `initial` or `large` → status `awaiting_verification`, with
      `required_verifier_family` set to the family opposite `editor_family`.
 
-Deterministic validation checks literal template shape only. For planning, it checks the Planning
-brief heading and required/exact-once labels from the planning manifest. For a complete task:
+Deterministic validation checks literal template shape plus the narrow exemption grammar. For
+planning, it checks the Planning brief heading and required/exact-once labels from the planning
+manifest. For a complete task:
 
 - headings and labels that the canonical manifest marks required are present;
 - headings and labels that must occur once occur exactly once;
 - when `## QUANTITIES` is present, a `Portions:` label is present under it;
 - no heading exists outside the manifest's allowlist.
 
-Text after a label is opaque to V1. It does not parse or interpret portions, macros, readiness,
-Planning exceptions, Human Review state, verification results, self-verification identity, protocol
-releases, change-level wording, or any other field value. Their correctness remains editor/verifier
-work. Field grammar, tolerant schemas, and tool-generated values are V2 questions to design only
-when a specific automation needs them.
+Except for the exact Local `Verification:` line and the narrow `Exemptions:` grammar above, text
+after a label is opaque to V1. It does not parse or interpret portions, macros, readiness, Human
+Review state, verification results, self-verification identity, protocol releases, change-level
+wording, or any other field value. Their correctness remains editor/verifier work. Further field
+grammar, tolerant schemas, and tool-generated values are V2 questions to design only when a specific
+automation needs them.
 
 The canonical allowlist is parsed from the manifest carried in the protocol text itself, not
 duplicated by hand in this tool — required as part of v1a's scope, not a later addition. A
@@ -257,28 +261,30 @@ hand-maintained hardcoded allowlist would recreate, inside the validator meant t
 exact failure mode, the same silent-drift risk the tool exists to remove from the protocol's own
 prose rules.
 
-Deferred to V2 once the mechanical layer is proven: field grammar and value parsing; unresolved
-structural placeholder detection (e.g. leftover `[approx]` markers); any judgment of whether an
-omitted optional section should have been present; and content quality.
+Deferred to V2 once the mechanical layer is proven: further field grammar and value parsing;
+unresolved structural placeholder detection (e.g. leftover `[approx]` markers); any judgment of
+whether an omitted optional section should have been present; and content quality.
 
 The validator performs no Asana mutation and does not decide whether the recipe is culinarily
 correct, whether research is adequate, or whether the declared change level is semantically honest.
 
 ### 3. `dish approve` / `dish reject`
 
-Required only for `initial`, `medium`, or `large`. The verifier reviews the prepared file for
-culinary and internal consistency, evidence adequacy, readiness, editor/verifier routing, the
-declared change level, and containment for a `medium` change. The verifier may make a clear
-correction, recheck the complete file, and sign it; the tool does not classify whether that judgment
-was correct.
+Required only for `initial` or `large`. The verifier reviews the prepared file for culinary and
+internal consistency, evidence adequacy, readiness, editor/verifier routing, and the declared change
+level. The verifier may make a clear correction, recheck the complete file, and sign it; the tool
+does not classify whether that judgment was correct.
 
 ```text
 dish approve <submission-id> --agent <verifier-agent> --file <final-note>
 ```
 
 - Requires `verifier-agent`'s family to be the submission's `required_verifier_family`.
-- Reruns literal template-shape validation on the verifier's complete final file. The verifier
-  manually checks the signed `Verification:` value and frozen protocol release.
+- Reruns template-shape and exemption-tag validation on the verifier's complete final file. Its
+  normalized exemption set must equal the prepared set; a verifier cannot introduce a new revision
+  during `approve`, but may return the submission to `drafting` for a new `prepare`. The verifier
+  manually checks the signed `Verification:` value, frozen protocol release, exemption scope, and
+  truth of the recorded Human approval.
 - On pass, records `verifier_agent`/`verifier_family` and sets status `ready`.
 
 ```text
@@ -307,8 +313,8 @@ dish submit <submission-id> --file <final-note>
    `submit` call against a `consumed` submission is rejected outright.
 1. On confirmed API failure: reverts to `ready` — the same validated submission may be retried.
 1. On an ambiguous/uncertain outcome: marks `uncertain` — logged for Marco to check directly in
-   Asana (see Dish admin tool). No incident evidences a crash or ambiguous-outcome case in
-   practice; a deterministic recovery table is a v2 candidate once real usage shows it's needed (see
+   Asana (see Dish admin tool). No incident evidences a crash or ambiguous-outcome case in practice;
+   a deterministic recovery table is a v2 candidate once real usage shows it's needed (see
    `dish-tool-future.md`).
 
 The local lock prevents concurrent dish-tool submissions. V1 explicitly accepts that it neither
@@ -354,25 +360,24 @@ a new `start` until recovered. This does not block other tasks' submissions.
 
 No incident evidences a crashed process or an ambiguous Asana outcome happening in practice. v1a
 logs the `uncertain` state and leaves recovery to Marco checking the live task directly and using
-`dish-admin recover <submission-id>` (Marco-only) to set the submission's status by hand once
-he's confirmed what actually happened. A deterministic outcome table driven off live
-notes/`modified_at` comparison is a v2 candidate once real usage shows this needs to be automated
-(see `dish-tool-future.md`).
+`dish-admin recover <submission-id>` (Marco-only) to set the submission's status by hand once he's
+confirmed what actually happened. A deterministic outcome table driven off live notes/`modified_at`
+comparison is a v2 candidate once real usage shows this needs to be automated (see
+`dish-tool-future.md`).
 
 ## Dish admin tool
 
-Marco-only actions live in a separate `dish-admin` command surface — a distinct
-binary/subcommand namespace, so the boundary is unambiguous at the command line rather than a naming
-similarity to the agent-facing `dish` commands. This is an operational and social convention,
-not a technical secret: this design document and the tool's own code are both agent-readable. The
-actual boundary is that agents are not instructed or expected to look for or invoke it, consistent
-with the "not adversarial security" framing in Scope.
+Marco-only actions live in a separate `dish-admin` command surface — a distinct binary/subcommand
+namespace, so the boundary is unambiguous at the command line rather than a naming similarity to the
+agent-facing `dish` commands. This is an operational and social convention, not a technical secret:
+this design document and the tool's own code are both agent-readable. The actual boundary is that
+agents are not instructed or expected to look for or invoke it, consistent with the "not adversarial
+security" framing in Scope.
 
 `dish-admin` covers:
 
-- `dish-admin recover <submission-id>` — set a stuck `in_flight` or `uncertain` submission's
-  status by hand after Marco has checked the live task directly and confirmed what actually
-  happened;
+- `dish-admin recover <submission-id>` — set a stuck `in_flight` or `uncertain` submission's status
+  by hand after Marco has checked the live task directly and confirmed what actually happened;
 - `dish-admin discard <submission-id> --reason "<reason>"` — mark an abandoned `drafting`,
   `awaiting_verification`, or `ready` submission `discarded`, release its lock, and log the reason
   without mutating or changing the lifecycle state of the Asana task. It rejects `in_flight`,
@@ -398,6 +403,10 @@ distinguishable to it.
 - `release_commit`
 - `protocol_bundle` (the exact role-specific checked-in protocol contents frozen at `start`)
 - `canonical_manifest` (planning or complete-task manifest, frozen at `start`)
+- `baseline_exemption_tags` (normalized set captured from the live Planning brief; null for
+  `planning`)
+- `prepared_exemption_tags` (normalized set accepted at the latest successful `prepare`)
+- `exemption_revision` (null unless `prepare` records a declared Marco-approved tag-set revision)
 - `editor_agent`
 - `editor_family`
 - `change_level` (null except for `change`)
@@ -442,17 +451,18 @@ Every `dish` command execution logs an event regardless of outcome:
   failed" — so Marco can see which rules trip in practice and which never fire;
 - for `start`: submission kind, frozen protocol release/Git binding, and any declared change level
   and reason;
-- for `prepare`: which manifest was used and whether the note passed validation;
+- for `prepare`: which manifest was used, whether the note passed validation, the normalized
+  exemption tags, and any declared exemption revision;
 - for `approve`/`reject`: verifier agent/family, the decision, and for `reject`, the stated reason,
   so rejection patterns are visible without reading every case individually;
 - for `submit`: the final submission state (`consumed`, reverted to `ready` on confirmed failure, or
   `uncertain`), so every outcome is visible in the log, not just returned to the caller.
 
 The generic Asana CLI's managed-task check also logs during v1a even though it does not yet block:
-every note-write to a section-managed task made *outside* the guarded `dish` path is logged as
-an advisory bypass event (task GID, command used, agent if known). This is the direct evidence for
-the v1a-to-v1b decision — whether it's safe to flip the block on depends on how much real,
-legitimate traffic would have been blocked, not a guess.
+every note-write to a section-managed task made *outside* the guarded `dish` path is logged as an
+advisory bypass event (task GID, command used, agent if known). This is the direct evidence for the
+v1a-to-v1b decision — whether it's safe to flip the block on depends on how much real, legitimate
+traffic would have been blocked, not a guess.
 
 A periodic summary — a query over `audit_events`, not a new mechanism — should be able to answer at
 minimum:
@@ -469,8 +479,8 @@ to mechanisms not built in v1a either — see `dish-tool-future.md`.
 
 ## Integration with the existing Asana CLI
 
-The dish tool and general Asana CLI may share SDK client construction, task reads, task updates,
-and error formatting. They must not share unguarded note-writing behaviour.
+The dish tool and general Asana CLI may share SDK client construction, task reads, task updates, and
+error formatting. They must not share unguarded note-writing behaviour.
 
 The general CLI consults the dish tool's live managed-task determination before changing notes —
 advisory/logged in v1a, blocking in v1b (see `dish-tool-future.md`, Versioning plan;
@@ -489,20 +499,18 @@ documents. An already-authored file cannot be retroactively bound to a release; 
 and regenerated under the frozen bundle.
 
 ChatGPT's output is one complete candidate-note file. Except for a planning-only submission, that
-file must already include ChatGPT's own
-`Self-verified: gpt, <date>` line, attested by ChatGPT as part of producing the note — the same
-self-review requirement every other editor meets by writing the line itself. A local agent or Marco
-does not add or backfill this line on ChatGPT's behalf: if it's missing, `dish prepare` fails
-exactly as it would for any other editor's missing `Self-verified:` line, and the fix is a corrected
-file from ChatGPT, not a local insertion.
+file must already include ChatGPT's own `Self-verified: gpt, <date>` line, attested by ChatGPT as
+part of producing the note — the same self-review requirement every other editor meets by writing
+the line itself. A local agent or Marco does not add or backfill this line on ChatGPT's behalf: if
+it's missing, `dish prepare` fails exactly as it would for any other editor's missing
+`Self-verified:` line, and the fix is a corrected file from ChatGPT, not a local insertion.
 
 A local agent or Marco then continues, declaring `--agent gpt` throughout — attributing the
 submission to ChatGPT as editor even though a local process runs the commands on its behalf:
 
 1. runs `dish prepare` with ChatGPT's file;
-1. for `initial`, `medium`, or `large`, arranges `dish approve`/`reject` from the opposite (Claude)
-   family per the standard routing rule — nothing ChatGPT-specific, since GPT and Codex are one
-   family;
+1. for `initial` or `large`, arranges `dish approve`/`reject` from the opposite (Claude) family per
+   the standard routing rule — nothing ChatGPT-specific, since GPT and Codex are one family;
 1. runs `dish submit` once ready.
 
 ChatGPT cannot declare its own `--agent` value or run any command itself — a human or local agent
@@ -519,10 +527,10 @@ Implementation follows TDD. Tests must cover:
 - non-note generic writes remaining allowed in both v1a and v1b;
 - declared agent-name validation and agent-family routing;
 - planning, initial, and change submission kinds; change-level arguments required only for change;
-- planning receives only its literal manifest checks and advances directly to `ready`, with no
-  `Self-verified:` or verifier requirement;
+- planning receives its literal manifest and exemption-tag checks and advances directly to `ready`,
+  with no `Self-verified:` or verifier requirement;
 - initial routes to whole-task opposite-family verification without a Reconstruction entry;
-- small, medium, and large change-level handling and their Local/Delta/Reconstruction consequences;
+- small and large change-level handling and their Local/Reconstruction consequences;
 - the release resolver loads the complete checked-in protocol set, fails closed on missing,
   ambiguous, incomplete, or dirty sets, and chooses the correct role-specific manifest;
 - release and manifest binding occurs at `start`, is printed for authorship, and remains frozen even
@@ -533,6 +541,13 @@ Implementation follows TDD. Tests must cover:
 - verifier-family mismatch on `approve`;
 - every literal template-shape rule individually, including missing, duplicate, and unknown
   headings/labels, without interpreting their values;
+- `Exemptions:` required in planning and complete-task candidates; `None` and each allowed nutrition
+  tag accepted; unknown, duplicate, mixed-`None`, and explanation-less values rejected;
+- initial and change submissions preserve the normalized live Planning exemption set; changed sets
+  require a recorded `--exemption-revision`, while small changes reject any exemption change;
+- `--exemption-revision` rejected for planning, small, and unchanged tag sets;
+- `approve` rejects a final file whose exemption set differs from the prepared set, requiring a
+  return to `drafting` and a new `prepare` for any Human-approved revision;
 - verifier-authored clear corrections accepted by `approve`, with deterministic validation rerun on
   the complete corrected file;
 - `dish reject` returning the submission to `drafting` while retaining the lock, followed by a
@@ -582,5 +597,5 @@ Implementation follows TDD. Tests must cover:
 - documenting the dish admin tool's location or invocation for agents;
 - providing a dedicated revoke-management command (Marco uses the Asana web UI directly instead);
 - a speed bump against an honest agent carelessly mis-declaring a material change as `small`
-  (Marco's standing concern) — tracked in `dish-tool-future.md` for v2, once v1a's
-  logging of what real `small`-declared diffs touch gives the input needed to design it.
+  (Marco's standing concern) — tracked in `dish-tool-future.md` for v2, once v1a's logging of what
+  real `small`-declared diffs touch gives the input needed to design it.
