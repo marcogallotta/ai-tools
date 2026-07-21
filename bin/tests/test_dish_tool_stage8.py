@@ -22,6 +22,7 @@ EXPECTED_REPORTS = {
     "rejection_rates",
     "human_review_rates",
     "submit_outcomes",
+    "change_diff_distributions",
     "advisory_bypasses",
 }
 
@@ -510,3 +511,142 @@ def test_advisory_bypasses_group_by_task_agent_command_and_resolution(tmp_path):
         resolution="section_unresolved",
     )
     assert unresolved_create["bypass_count"] == 1
+
+
+def test_change_diff_distributions_group_by_declared_level(tmp_path):
+    conn = initialize_database(tmp_path / "dish.db")
+    _insert_submission(
+        conn,
+        submission_id="small",
+        task_gid="task-small",
+        kind="change",
+        change_level="small",
+    )
+    _insert_submission(
+        conn,
+        submission_id="large",
+        task_gid="task-large",
+        kind="change",
+        change_level="large",
+    )
+
+    small_diff = {
+        "characters_added": 4,
+        "characters_removed": 3,
+        "lines_added": 1,
+        "lines_removed": 1,
+        "headings_changed": ["# DISH"],
+    }
+    large_diff = {
+        "characters_added": 20,
+        "characters_removed": 5,
+        "lines_added": 3,
+        "lines_removed": 2,
+        "headings_changed": ["# DISH", "## QUANTITIES"],
+    }
+    _audit(
+        conn,
+        event_type="dish.prepare",
+        submission_id="small",
+        task_gid="task-small",
+        actor_agent="claude",
+        details=_command_details(
+            "prepare",
+            ok=True,
+            code="OK",
+            state="ready",
+            change_diff=small_diff,
+        ),
+        second=1,
+    )
+    _audit(
+        conn,
+        event_type="dish.prepare",
+        submission_id="small",
+        task_gid="task-small",
+        actor_agent="claude",
+        details=_command_details(
+            "prepare",
+            ok=True,
+            code="OK",
+            state="ready",
+            change_diff_unavailable="live_task_read_failed",
+        ),
+        second=2,
+    )
+    for second in (3, 4):
+        _audit(
+            conn,
+            event_type="dish.prepare",
+            submission_id="large",
+            task_gid="task-large",
+            actor_agent="gpt",
+            details=_command_details(
+                "prepare",
+                ok=True,
+                code="OK",
+                state="awaiting_verification",
+                change_diff=large_diff,
+            ),
+            second=second,
+        )
+    _audit(
+        conn,
+        event_type="dish.prepare",
+        submission_id="large",
+        task_gid="task-large",
+        actor_agent="gpt",
+        details=_command_details(
+            "prepare",
+            ok=False,
+            code="VALIDATION_FAILED",
+            state="drafting",
+            change_diff=large_diff,
+        ),
+        second=5,
+    )
+
+    rows = _rows(conn, "change_diff_distributions")
+
+    assert _row_by(
+        rows,
+        change_level="small",
+        metric="telemetry_status",
+        metric_value="available",
+    )["event_count"] == 1
+    assert _row_by(
+        rows,
+        change_level="small",
+        metric="telemetry_status",
+        metric_value="unavailable",
+    )["event_count"] == 1
+    assert _row_by(
+        rows,
+        change_level="small",
+        metric="telemetry_unavailable_reason",
+        metric_value="live_task_read_failed",
+    )["event_count"] == 1
+    assert _row_by(
+        rows,
+        change_level="small",
+        metric="characters_added",
+        metric_value="4",
+    )["event_count"] == 1
+    assert _row_by(
+        rows,
+        change_level="large",
+        metric="characters_added",
+        metric_value="20",
+    )["event_count"] == 2
+    assert _row_by(
+        rows,
+        change_level="large",
+        metric="heading_changed",
+        metric_value="## QUANTITIES",
+    )["event_count"] == 2
+    assert _row_by(
+        rows,
+        change_level="large",
+        metric="headings_changed_count",
+        metric_value="2",
+    )["event_count"] == 2

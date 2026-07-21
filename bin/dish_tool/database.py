@@ -146,6 +146,52 @@ def record_audit(
     return event_id
 
 
+def latest_change_diff_telemetry(
+    conn: sqlite3.Connection, submission_id: str
+) -> dict[str, Any] | None:
+    """Return the latest source-free prepare telemetry for a move-only retry."""
+
+    rows = conn.execute(
+        """
+        SELECT details
+          FROM audit_events
+         WHERE submission_id = ?
+           AND event_type = 'dish.prepare'
+         ORDER BY created_at DESC, rowid DESC
+        """,
+        (submission_id,),
+    ).fetchall()
+    for row in rows:
+        try:
+            details = json.loads(row["details"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        summary = details.get("change_diff")
+        if isinstance(summary, dict):
+            counts = {}
+            for key in (
+                "characters_added",
+                "characters_removed",
+                "lines_added",
+                "lines_removed",
+            ):
+                value = summary.get(key)
+                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                    counts = {}
+                    break
+                counts[key] = value
+            headings = summary.get("headings_changed")
+            if counts and isinstance(headings, list) and all(
+                isinstance(heading, str) for heading in headings
+            ):
+                counts["headings_changed"] = list(headings)
+                return {"change_diff": counts}
+        reason = details.get("change_diff_unavailable")
+        if isinstance(reason, str) and reason:
+            return {"change_diff_unavailable": reason}
+    return None
+
+
 def latest_successful_rejection_reason(
     conn: sqlite3.Connection, submission_id: str
 ) -> str | None:

@@ -17,6 +17,7 @@ from .constants import (
 from .database import (
     create_submission,
     get_submission,
+    latest_change_diff_telemetry,
     latest_successful_rejection_reason,
     record_audit,
     transition_submission,
@@ -33,6 +34,7 @@ from .models import (
 )
 from .recovery import begin_write_attempt, finish_write_attempt
 from .results import allowed_actions_for_state, error_envelope, result_envelope
+from .telemetry import calculate_change_diff
 from .validation import extract_exact_label_line, validate_note
 
 
@@ -655,9 +657,49 @@ class DishApplication:
             )
         return row, verifier_family
 
+    def _capture_change_diff(
+        self,
+        *,
+        trace: CommandTrace,
+        row: sqlite3.Row,
+        candidate: str,
+        manifest: Mapping[str, Any],
+    ) -> None:
+        if row["submission_kind"] != "change":
+            return
+        try:
+            task = self._read_live_task(row["task_gid"])
+        except Exception:
+            trace.audit_details["change_diff_unavailable"] = (
+                "live_task_read_failed"
+            )
+            return
+        live_notes = task.get("notes")
+        if not isinstance(live_notes, str):
+            trace.audit_details["change_diff_unavailable"] = (
+                "live_notes_malformed"
+            )
+            return
+        try:
+            trace.audit_details["change_diff"] = calculate_change_diff(
+                live_notes, candidate, manifest
+            )
+        except Exception:
+            trace.audit_details["change_diff_unavailable"] = (
+                "calculation_failed"
+            )
+
     def _prepare_move_only(
         self, *, trace: CommandTrace, row: sqlite3.Row, registry: SectionRegistry
     ) -> dict[str, Any]:
+        if row["submission_kind"] == "change" and not (
+            {"change_diff", "change_diff_unavailable"} & trace.audit_details.keys()
+        ):
+            prior_telemetry = latest_change_diff_telemetry(
+                self.conn, row["submission_id"]
+            )
+            if prior_telemetry is not None:
+                trace.audit_details.update(prior_telemetry)
         task = self._read_live_task(row["task_gid"])
         _require_cooking_task(task, row["task_gid"])
         current = _task_section_gid(task, COOKING_PROJECT_GID)
@@ -796,6 +838,10 @@ class DishApplication:
                 errors=errors,
             )
         assert destination is not None
+
+        self._capture_change_diff(
+            trace=trace, row=row, candidate=candidate, manifest=manifest
+        )
 
         updates = {
             "prepared_exemption_tags": json.dumps(list(prepared_tags or ()), separators=(",", ":")),

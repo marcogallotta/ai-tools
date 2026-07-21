@@ -242,6 +242,98 @@ GROUP BY e.final_state, e.write_outcome, e.code, e.ok, t.submit_events
 ORDER BY outcome_count DESC, e.final_state, e.write_outcome, e.code;
 -- end report
 
+-- report: change_diff_distributions
+WITH successful_change_prepares AS (
+    SELECT
+        s.change_level,
+        a.details,
+        CASE
+            WHEN json_type(a.details, '$.change_diff') = 'object'
+                THEN 'available'
+            ELSE 'unavailable'
+        END AS telemetry_status,
+        json_extract(
+            a.details, '$.change_diff_unavailable'
+        ) AS telemetry_unavailable_reason
+    FROM audit_events AS a
+    JOIN submissions AS s
+        ON s.submission_id = a.submission_id
+    WHERE a.event_type = 'dish.prepare'
+      AND json_extract(a.details, '$.ok') = 1
+      AND s.submission_kind = 'change'
+),
+status_metrics AS (
+    SELECT
+        change_level,
+        'telemetry_status' AS metric,
+        telemetry_status AS metric_value
+    FROM successful_change_prepares
+),
+unavailable_reason_metrics AS (
+    SELECT
+        change_level,
+        'telemetry_unavailable_reason' AS metric,
+        telemetry_unavailable_reason AS metric_value
+    FROM successful_change_prepares
+    WHERE telemetry_unavailable_reason IS NOT NULL
+),
+size_metrics AS (
+    SELECT
+        change_level,
+        metric,
+        cast(values_json.value AS TEXT) AS metric_value
+    FROM successful_change_prepares
+    CROSS JOIN json_each(
+        json_array(
+            json_extract(details, '$.change_diff.characters_added'),
+            json_extract(details, '$.change_diff.characters_removed'),
+            json_extract(details, '$.change_diff.lines_added'),
+            json_extract(details, '$.change_diff.lines_removed'),
+            json_array_length(
+                json_extract(details, '$.change_diff.headings_changed')
+            )
+        )
+    ) AS values_json
+    JOIN (
+        SELECT 0 AS metric_index, 'characters_added' AS metric
+        UNION ALL SELECT 1, 'characters_removed'
+        UNION ALL SELECT 2, 'lines_added'
+        UNION ALL SELECT 3, 'lines_removed'
+        UNION ALL SELECT 4, 'headings_changed_count'
+    ) AS metric_names
+        ON metric_names.metric_index = cast(values_json.key AS INTEGER)
+    WHERE json_type(details, '$.change_diff') = 'object'
+),
+heading_metrics AS (
+    SELECT
+        events.change_level,
+        'heading_changed' AS metric,
+        cast(headings.value AS TEXT) AS metric_value
+    FROM successful_change_prepares AS events
+    JOIN json_each(
+        events.details, '$.change_diff.headings_changed'
+    ) AS headings
+    WHERE json_type(events.details, '$.change_diff') = 'object'
+),
+all_metrics AS (
+    SELECT * FROM status_metrics
+    UNION ALL
+    SELECT * FROM unavailable_reason_metrics
+    UNION ALL
+    SELECT * FROM size_metrics
+    UNION ALL
+    SELECT * FROM heading_metrics
+)
+SELECT
+    change_level,
+    metric,
+    metric_value,
+    count(*) AS event_count
+FROM all_metrics
+GROUP BY change_level, metric, metric_value
+ORDER BY change_level, metric, metric_value;
+-- end report
+
 -- report: advisory_bypasses
 SELECT
     coalesce(a.task_gid, '<pending-create>') AS task_gid,
