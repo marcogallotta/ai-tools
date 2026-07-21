@@ -10,10 +10,11 @@ but live rollout waits for the later tool-aware beta of `dish-planning-protocol.
 agent-facing command workflow and governed machine-readable manifest. Do not add tool instructions
 to the current tool-independent beta.
 
-This plan implements decisions already settled in `dish-tool.md` and
-`~/honest-pantry/dish-docs-design.md`; it does not reopen them. In particular:
+This plan implements decisions settled in `dish-tool.md`,
+`~/honest-pantry/dish-docs-design.md`, and Marco's later decision that V1 owns structured titles;
+it does not reopen them. In particular:
 
-- the tool owns governed task creation, reads, complete note writes, and both queue moves;
+- the tool owns governed task creation, reads, complete title-and-notes writes, and both queue moves;
 - Asana is a backend detail, not part of the tool-aware agent workflow;
 - the second unsuccessful verification pass escalates to Human Review in v1a;
 - every multi-step operation resumes only missing work;
@@ -34,7 +35,9 @@ The later beta, not the current tool-independent protocols, must provide one gov
 - one wrapper-owned human-readable `protocol_release` version file.
 
 The manifest is the sole structural source for required, optional, exact-once, and allowed headings
-and labels. It also defines the narrow parseable grammar for `Exemptions:` and `Destination section`.
+and labels. It also defines the narrow parseable grammar for `Exemptions:`, `Destination section`,
+and complete-task titles. The title schema defines the canonical role-tag set, bracket-marker
+grammar, dish-name and recognition-phrase boundary, and deterministic rendering order.
 The release wrapper advances the version atomically whenever any governed file changes and rejects
 dirty, incomplete, ambiguous, or unversioned sets.
 
@@ -48,11 +51,11 @@ Create `bin/dish_lib.py`, shared by the separate `dish` and `dish-admin` executa
 - a small Asana client/auth/error layer contained in `dish_lib.py` for v1a;
 - SQLite setup and migrations for `~/ai-tools/var/dish-tool.db`, with `var/` gitignored;
 - release resolution from the honest-pantry Git worktree;
-- manifest parsing and literal note validation;
+- manifest parsing and literal title/note validation;
 - agent-family routing (`claude` versus the `gpt`/`codex` family);
 - managed-section and queue/destination helpers using immutable section GIDs;
 - one JSON result-envelope/error helper shared by every command;
-- conservative request-phase and process-identity tracking for notes writes;
+- conservative request-phase and process-identity tracking for combined title-and-notes writes;
 - one audit helper used on every success and failure path.
 
 The resolver loads the complete committed release, verifies its wrapper-owned version binding, and
@@ -63,9 +66,13 @@ Implement the `submissions` and `audit_events` models from `dish-tool.md`, inclu
 
 - the partial unique index allowing one non-terminal submission per task;
 - `failed_verification_passes`;
+- `baseline_title` and parsed `baseline_title_fields`;
+- `prepared_title` and parsed `prepared_title_fields` accepted at the latest successful `prepare`
+  or verifier small correction;
 - the validated `destination_section_name` and `destination_section_gid`;
 - write-attempt ID, `in_flight_at`, hostname, PID, and process-start identity;
-- `research_queue_moved_at`, `notes_written_at`, and `destination_moved_at` completion markers;
+- `research_queue_moved_at`, `task_content_written_at`, and `destination_moved_at` completion
+  markers;
 - every specified lifecycle state, including `research_handoff`, `awaiting_human`, and `written`.
 
 Transactions and conditional updates must make competing state transitions fail explicitly. Do not
@@ -79,6 +86,7 @@ add candidate hashes, a live-notes baseline, a stale state, or external-edit det
   ambiguous, malformed, or version-mismatched variant;
 - the exact frozen bundle and manifest survive later changes to the current fixture release;
 - agent mapping, section resolution, and fail-closed management behave as designed;
+- title parsing and rendering round-trip canonical values and reject malformed or ambiguous titles;
 - result codes, retryability, allowed actions, and exit statuses follow the common JSON contract;
 - audit rows support nullable submission IDs while retaining task GIDs whenever known.
 
@@ -88,23 +96,28 @@ Create `bin/dish` with argparse subcommands and trusted `--agent claude|gpt|code
 Override argparse's default prose failures so argument and startup errors also use the common JSON
 envelope.
 
-`dish create` creates one bare task in Cooking's Research Queue and returns its GID. It never writes
-notes. Clear API rejection fails; an ambiguous create outcome is logged and reported for Marco to
-resolve, without an automatic retry that could duplicate the task.
+`dish create` creates one bare task with a free working title in Cooking's Research Queue and returns
+its GID. It never writes notes. Research later replaces that working title with the canonical
+structured title. Clear API rejection fails; an ambiguous create outcome is logged and reported for
+Marco to resolve, without an automatic retry that could duplicate the task.
 
-`dish read` returns the complete live task through the backend abstraction. It permits reads of
-excluded Cooking sections because it makes no mutation.
+`dish read` returns the complete live task through the backend abstraction, including the raw title
+and its parsed structured fields when canonical. It permits reads of excluded Cooking sections
+because it makes no mutation.
 
 `dish inspect` returns, for every submission state, its kind, state, attribution, required verifier
-family, frozen protocol/manifest bundle, destination name/GID, completion markers, and legal next
-agent actions. It remains explicit that candidate content is the controlled file handoff and is not
-stored or returned by v1.
+family, frozen protocol/manifest bundle, baseline and prepared title fields, destination name/GID,
+completion markers, and legal next agent actions. Candidate note content remains the controlled file
+handoff and is not stored or returned by v1; structured title state is stored because `submit` owns
+its final rendering and write.
 
 `dish start`:
 
 - confirms the task is a protocol-managed Cooking task;
 - validates kind-specific starting shape: empty notes for `planning`, the Planning manifest for
   `initial`, and the complete-task manifest for `change`;
+- captures the raw live title for every kind; `change` additionally requires and stores a canonical
+  parse, while planning and initial construction may begin from a free working title;
 - validates change-level/reason arguments only and always for `change`;
 - rejects an existing non-terminal submission by application check and database constraint;
 - freezes and returns the release and exact documents the author must read in the JSON `data` field;
@@ -116,10 +129,12 @@ stored or returned by v1.
 
 - create uses the correct project/queue and produces no notes mutation;
 - create distinguishes clear and ambiguous failure and never auto-retries the latter;
-- read returns complete current content without applying management restrictions;
+- read returns complete current content and parsed canonical title fields without applying
+  management restrictions;
 - inspect returns the frozen handoff instructions, routing, state, markers, and exact allowed-action
   mapping in both active and terminal states;
 - each submission kind accepts only its valid starting shape;
+- change start rejects a noncanonical live title, while planning and initial accept a working title;
 - invalid project, excluded section, agent, kind, and change arguments fail before row creation;
 - simultaneous starts produce exactly one open submission;
 - every command invocation produces one audit event.
@@ -130,6 +145,20 @@ stored or returned by v1.
 validation, `--agent` must equal the recorded editor. It validates the complete candidate against
 the frozen role-specific manifest, preserving the exact baseline Verification line for `small`
 changes.
+
+For `initial` and `change`, `prepare` also requires one complete structured title declaration:
+
+- `--dish-name` and `--recognition` are non-empty and may not contain title-control brackets;
+- exactly one of one-or-more repeatable
+  `--role side|dessert|component|condiment|benchmark|comparison` or `--no-role-tags` is required;
+- exactly one of one-or-more repeatable non-empty `--blocker` or `--no-blockers` is required; and
+- known role tags render first in manifest order, followed by blocker markers in declared order,
+  then `<dish name> — <recognition phrase>`.
+
+Planning stores its unchanged free working title as the prepared title. The tool guarantees
+complete-task title grammar, explicit declaration, and deterministic rendering; Research and
+Verification remain responsible for whether roles and blockers are complete, truthful, and
+coherent with readiness and the notes.
 
 Narrow value parsing is limited to:
 
@@ -153,6 +182,10 @@ manual override. After recording completion, advance to `awaiting_verification`.
 - exemption syntax, preservation, and revision cases match the design matrix;
 - Destination section rejects queue, foreign-project, mismatched-name/GID, and missing sections and
   stores the accepted pair;
+- complete-task prepare requires exactly one side of each role/blocker declaration pair, stores the
+  structured fields, and renders the canonical title deterministically;
+- malformed, duplicate, reserved, bracket-containing, or ambiguous title inputs fail together with
+  other deterministic validation errors;
 - `prepare --agent` must equal `editor_agent`;
 - status and verifier routing are correct for all kinds/levels;
 - Research handoff handles source queue, already-moved, and manual-override cases;
@@ -166,6 +199,11 @@ resolution over the complete final file, records verifier attribution, and sets 
 Destination name/GID must equal the pair accepted at `prepare`; a mismatch returns to `drafting` for
 a fresh `prepare` without incrementing the failed-pass counter. Approval never moves the task
 onward. A material verifier correction cannot be approved in place.
+
+Approval uses the prepared structured title by default. With `--correction small`, the verifier may
+supply one complete replacement title declaration; the tool reruns title validation and atomically
+replaces the stored prepared fields. Partial title patches are never accepted. A material title
+correction follows rejection and a fresh `prepare`, like any other material correction.
 
 `reject` uses the same verifier-family check and records a complete reason. `--take-ownership`
 records the verifier as the new material editor, causing the next successful `prepare` to route to
@@ -186,6 +224,8 @@ counter, and returns to `drafting` without erasing prior events or releasing the
 - family mismatch and wrong-state calls fail for approve and reject;
 - `approve --correction small` accepts a structurally valid correction; material correction cannot
   be approved through that path;
+- approval preserves the prepared title when no replacement is supplied and accepts only a complete
+  valid replacement with a declared small correction;
 - a changed or newly misresolved Destination returns to `drafting` without counting a verification
   rejection, while an unchanged pair proceeds;
 - `reject --take-ownership` changes editor attribution and the next verifier family;
@@ -201,9 +241,10 @@ counter, and returns to `drafting` without erasing prior events or releasing the
 
 `submit` accepts `ready` or `written`. From `ready`, it creates a unique write-attempt ID and
 conditionally enters `in_flight`, recording its timestamp, hostname, PID, and process-start token
-before making one complete notes update. It continues to trust the supplied controlled-handoff
-file: v1a does not hash it or compare it with a saved live baseline. Every later state update uses
-the attempt ID in its conditional update so a stale process cannot commit an outcome after recovery.
+before making one backend request that updates the stored prepared title and supplied complete
+notes together. It continues to trust the supplied controlled-handoff note file: v1a does not hash
+it or compare it with a saved live baseline. Every later state update uses the attempt ID in its
+conditional update so a stale process cannot commit an outcome after recovery.
 
 Classify outcomes conservatively:
 
@@ -212,22 +253,23 @@ Classify outcomes conservatively:
 - timeout/reset/lost response after sending may have begun, HTTP 5xx, malformed or undecodable
   response, cancellation after sending may have begun, or unknown SDK send phase becomes
   `uncertain`;
-- confirmed success becomes `written` and records `notes_written_at`.
+- confirmed success becomes `written` and records `task_content_written_at`.
 
-From `written`, never call the notes API. If the task is in Verification Queue, move it to the
-validated Destination section; already-at-destination succeeds; a manual position outside both
-queues is preserved; a planning submission remains in Research Queue. A move failure remains
-`written` for a move-only retry. Once no move remains, set `consumed` and release the lock.
+From `written`, never repeat the title-and-notes API call. If the task is in Verification Queue,
+move it to the validated Destination section; already-at-destination succeeds; a manual position
+outside both queues is preserved; a planning submission remains in Research Queue. A move failure
+remains `written` for a move-only retry. Once no move remains, set `consumed` and release the lock.
 
 ### Step 5 tests
 
 - no pre-write failure reaches Asana and one submit invocation makes one SDK mutation call;
+- that one mutation contains both the exact stored prepared title and supplied complete notes;
 - simultaneous submits allow only one `ready` to `in_flight` transition;
 - write-attempt identity prevents stale completion after an administrative recovery;
 - confirmed, uncertain, and successful write outcomes reach the specified states;
 - the full request/transport/response exception matrix defaults to `uncertain` whenever the client
   cannot prove non-application;
-- retry from `written` never calls the notes API;
+- retry from `written` never repeats either title or notes;
 - destination, already-moved, planning, and manual-override cases behave correctly;
 - a move failure resumes only the move and then consumes the submission;
 - a consumed submission cannot be reused.
@@ -240,7 +282,8 @@ Keep `dish-admin` a separate Marco-only executable.
   is live or before a fixed quarantine interval exceeding the maximum request lifetime plus safety
   margin has elapsed. It requires `--outcome not-applied|applied` and a concrete inspection reason,
   invalidates the old attempt ID atomically, and sets `ready` or `written` accordingly. Retrying
-  `submit` from `written` completes only the move.
+  `submit` from `written` completes only the move; `applied` means the combined title-and-notes
+  mutation applied, never one field independently, and requires Marco to inspect both live fields.
 - `discard` accepts `drafting`, `research_handoff`, `awaiting_verification`, `awaiting_human`,
   `ready`, or `written`, records its reason, releases the lock, and never mutates Asana. It rejects
   `in_flight`, `uncertain`, and terminal states.
@@ -251,25 +294,30 @@ separation between `dish` and `dish-admin` command surfaces.
 
 ## Step 7 — generic CLI advisory integration
 
-Before every generic note mutation, `bin/asana` consults `dish_lib.is_managed`. In v1a a managed or
-unresolved target produces an advisory bypass event and the write proceeds. Cover `set-notes`,
-`append`, `replace`, note-bearing batch operations, raw `notes`/`html_notes`, and note-bearing task
-creation. Bare creation and non-note operations remain allowed. Section identity uses pinned GIDs,
-not mutable names.
+Before every generic title or note mutation, `bin/asana` consults `dish_lib.is_managed`. In v1a a
+managed or unresolved target produces an advisory bypass event and the write proceeds. Cover task
+rename/name updates, `set-notes`, `append`, `replace`, title- or note-bearing batch operations, raw
+`name`/`notes`/`html_notes`, and title- or note-bearing task creation. Tool-owned bare creation with
+its working title remains allowed; unrelated non-content operations remain allowed. Section identity
+uses pinned GIDs, not mutable names.
 
 Tests cover all mutation surfaces, excluded sections, renamed sections, unresolved membership,
-bare creation, and non-note writes. V1b changes only the advisory outcome to a block.
+tool-owned bare creation, and unrelated non-content writes. V1b changes only the advisory outcome
+to a block.
 
 ## Step 8 — reporting
 
 Ship `bin/dish-reports.sql` with tested queries for command counts (including `inspect`) by
 actor/kind/level, validation failure rates by rule, rejection and repeated-rejection rates, Human
 escalation/unblock rates, submit outcomes, and advisory bypasses by task/agent.
+Include title-validation failures and title-versus-note generic bypasses distinctly.
 
 ## Step 9 — documentation and release preparation
 
 - Update the later tool-aware protocol beta with only the agent-facing `dish` workflow; do not
   expose generic Asana or `dish-admin` instructions to agents.
+- Make the beta require structured title declarations for complete-task `prepare` and document that
+  the tool, not the agent or relay runner, renders and writes the final title.
 - Add the short ChatGPT relay pointer required by `dish-tool.md` after the tool is usable.
 - Run the protocol/tool integration suite against the exact release bundle.
 - Write and test the production activation runbook without executing it. Development and fixture
@@ -297,7 +345,7 @@ Before cutover:
 
 Then perform one deliberate cutover:
 
-1. Hold protocol-managed note changes for the migration window.
+1. Hold protocol-managed title and note changes for the migration window.
 2. Revalidate the exact release bundle and tool integration suite.
 3. Migrate and verify the complete managed corpus using the snapshot-safe procedure. If any task
    cannot be migrated or explicitly dispositioned, stop with the old authority intact.
@@ -309,21 +357,24 @@ Do not leave mixed production authority. If cutover verification fails, restore 
 snapshot and previous governing release before reopening writes. V1a begins with the generic CLI
 guard advisory-only; the separately authorized v1b rollout changes that existing guard to blocking.
 
+The initial migration establishes canonical title syntax but does not invent missing semantic
+knowledge. Normalize known role and blocker markers mechanically. Where the snapshot cannot support
+an honest blocker declaration without judgment, use the manifest-defined `[blockers unreviewed]`
+marker and repair that task later through an ordinary guarded change. This keeps V1's architecture
+stable without making comprehensive title repair a cutover dependency.
+
 ## Out of scope
 
 V1b enforcement, exact-content binding or hashes, live-baseline/external-edit detection, the
 small-change carelessness speed bump, dependency surfacing, general field-value grammar, semantic
 culinary checks, automatic uncertain-outcome recovery, and later scripted migrations remain outside
-this plan. Structured title management and change-diff telemetry are also outside the committed
-plan unless deliberately selected from the bounded additions below.
+this plan. Blocker filtering and systematic semantic title repair are v2 follow-ups. Change-diff
+telemetry remains optional unless deliberately selected below.
 
 ## Consider adding
 
-Consider these independently before v1a is frozen; they are not implementation authorization. Diff
-telemetry is a bounded addition to the existing audit path. Structured title construction belongs in
-v1 only if title and notes can share one guarded backend mutation and the existing retry/recovery
-semantics; a creation-only formatter would not keep later Research discoveries and verifier
-corrections coherent with the final title.
+The remaining item is not implementation authorization. Diff telemetry is a bounded addition to the
+existing audit path.
 
 ### Change-diff telemetry — recommended
 
@@ -336,19 +387,3 @@ submission, so this does not add a saved live baseline or imply external-edit de
 If selected, add the calculation and audit tests to Step 3 and report distributions by declared
 change level in Step 8. The resulting `small`-change evidence informs v2's carelessness speed bump;
 it does not predetermine that trigger or its enforcement.
-
-### Structured task-title construction — conditional
-
-Replace free-form title formatting with a dish-name input, repeatable bounded role-tag inputs, and
-repeatable free-text blocker inputs. The allowed role values are `side`, `dessert`, `component`,
-`condiment`, `benchmark`, and `comparison`; role tags and blockers remain distinct even though both
-use square brackets. Incident 22 supplies direct evidence for the missed blocker marker, and Marco's
-recorded refinement permits these specific non-blocking role tags on the same title line. The tool
-guarantees syntax and deterministic ordering only. Research and Verification still decide whether a
-role applies, whether a real blocker was omitted, and whether the title agrees with the task body.
-
-Do not add only a formatter to `dish create`: blockers may be discovered and role tags corrected
-during Research or Verification. Select this addition only if the final title can travel with the
-candidate and the backend can write title plus notes as the same single guarded operation. Then
-extend Steps 2–5 and their tests so creation, preparation, verifier correction, submission,
-uncertain outcomes, and retries preserve one final title without adding a second mutation.
