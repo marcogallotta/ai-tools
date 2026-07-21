@@ -13,9 +13,9 @@ from .constants import (
     COOKING_PROJECT_GID,
     SUBMISSION_KINDS,
 )
-from .database import create_submission, get_submission, record_audit
+from .database import create_submission, get_submission, record_audit, transition_submission
 from .errors import BackendFailure, DishRuleError
-from .models import ResolvedRelease, SectionRegistry, agent_family, is_protocol_managed
+from .models import (ResolvedRelease, SectionRegistry, agent_family, is_protocol_managed, opposite_family, resolve_destination, utc_now)
 from .results import allowed_actions_for_state, error_envelope, result_envelope
 from .validation import extract_exact_label_line, validate_note
 
@@ -28,6 +28,8 @@ class CommandBackend(Protocol):
     def create_bare_task(
         self, *, title: str, project_gid: str, section_gid: str
     ) -> dict[str, Any]: ...
+
+    def move_task_to_section(self, *, task_gid: str, section_gid: str) -> None: ...
 
 
 @dataclass
@@ -550,3 +552,190 @@ class DishApplication:
                 },
             },
         )
+
+    def _load_candidate_file(self, file_path: str) -> str:
+        from pathlib import Path
+
+        clean_path = _clean_required(
+            file_path, rule="candidate_file_required", label="candidate file"
+        )
+        try:
+            return Path(clean_path).read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                f"candidate file not found: {clean_path}",
+                rule="candidate_file_not_found",
+            ) from exc
+        except (OSError, UnicodeError) as exc:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                f"candidate file could not be read: {clean_path}",
+                rule="candidate_file_unreadable",
+            ) from exc
+
+    def _prepare_move_only(
+        self, *, trace: CommandTrace, row: sqlite3.Row, registry: SectionRegistry
+    ) -> dict[str, Any]:
+        task = self._read_live_task(row["task_gid"])
+        _require_cooking_task(task, row["task_gid"])
+        current = _task_section_gid(task, COOKING_PROJECT_GID)
+        move_needed = current == registry.research_queue_gid
+        if move_needed:
+            self.backend.move_task_to_section(
+                task_gid=row["task_gid"], section_gid=registry.verification_queue_gid
+            )
+        moved_at = row["research_queue_moved_at"] or utc_now()
+        final = transition_submission(
+            self.conn,
+            row["submission_id"],
+            {"research_handoff"},
+            "awaiting_verification",
+            updates={"research_queue_moved_at": moved_at},
+        )
+        trace.state = final["status"]
+        trace.audit_details.update(
+            {
+                "research_handoff": (
+                    "moved" if move_needed else
+                    "already_in_verification" if current == registry.verification_queue_gid else
+                    "manual_override_preserved"
+                ),
+                "current_section_gid": current,
+            }
+        )
+        return result_envelope(
+            command="prepare",
+            task_gid=row["task_gid"],
+            submission_id=row["submission_id"],
+            state=final["status"],
+            data={
+                "destination": {
+                    "name": final["destination_section_name"],
+                    "gid": final["destination_section_gid"],
+                },
+                "research_handoff": trace.audit_details["research_handoff"],
+            },
+        )
+
+    def _command_prepare(
+        self,
+        *,
+        trace: CommandTrace,
+        agent: str,
+        submission_id: str,
+        file_path: str | None = None,
+        exemption_revision: str | None = None,
+    ) -> dict[str, Any]:
+        agent_family(agent)
+        submission_id = _clean_required(
+            submission_id, rule="submission_id_required", label="submission ID"
+        )
+        row = get_submission(self.conn, submission_id)
+        trace.submission_id = submission_id
+        trace.known_submission = True
+        trace.task_gid = row["task_gid"]
+        trace.state = row["status"]
+
+        if row["status"] not in {"drafting", "research_handoff"}:
+            raise DishRuleError(
+                "WRONG_STATE",
+                f"submission is {row['status']}, expected drafting or research_handoff",
+                rule="wrong_state",
+                details={"actual": row["status"], "expected": ["drafting", "research_handoff"]},
+            )
+        if agent != row["editor_agent"]:
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "prepare agent does not match the recorded editor",
+                rule="editor_agent_mismatch",
+                details={"expected": row["editor_agent"], "actual": agent},
+            )
+
+        registry = SectionRegistry.from_sections(
+            self.backend.list_sections(COOKING_PROJECT_GID)
+        )
+        if row["status"] == "research_handoff":
+            return self._prepare_move_only(trace=trace, row=row, registry=registry)
+
+        candidate = self._load_candidate_file(file_path or "")
+        manifest = _decode_json(row["canonical_manifest"], field_name="canonical_manifest")
+        validation = validate_note(candidate, manifest)
+        errors = list(validation.errors)
+
+        if row["submission_kind"] == "change" and row["change_level"] == "small":
+            actual_verification = extract_exact_label_line(candidate, "Verification")
+            if actual_verification != row["baseline_verification_line"]:
+                errors.append({
+                    "rule": "verification_line_changed",
+                    "expected": row["baseline_verification_line"],
+                    "actual": actual_verification,
+                })
+
+        baseline_tags = (
+            None if row["baseline_exemption_tags"] is None
+            else tuple(_decode_json(row["baseline_exemption_tags"], field_name="baseline_exemption_tags"))
+        )
+        prepared_tags = validation.exemption_tags
+        changed_tags = baseline_tags is not None and prepared_tags is not None and tuple(baseline_tags) != tuple(prepared_tags)
+        clean_revision = str(exemption_revision or "").strip() or None
+
+        if row["submission_kind"] == "planning":
+            if clean_revision is not None:
+                errors.append({"rule": "exemption_revision_forbidden"})
+        elif row["change_level"] == "small":
+            if changed_tags:
+                errors.append({"rule": "small_change_exemptions_changed"})
+            if clean_revision is not None:
+                errors.append({"rule": "exemption_revision_forbidden"})
+        elif changed_tags and clean_revision is None:
+            errors.append({"rule": "exemption_revision_required"})
+        elif not changed_tags and clean_revision is not None:
+            errors.append({"rule": "exemption_revision_unnecessary"})
+
+        if validation.destination_name and validation.destination_gid:
+            try:
+                destination = resolve_destination(
+                    validation.destination_name, validation.destination_gid, registry
+                )
+            except DishRuleError as exc:
+                item = {"rule": exc.rule or "destination_invalid"}
+                item.update(exc.details)
+                errors.append(item)
+                destination = None
+        else:
+            destination = None
+
+        if errors:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "candidate note failed deterministic validation",
+                errors=errors,
+            )
+        assert destination is not None
+
+        updates = {
+            "prepared_exemption_tags": json.dumps(list(prepared_tags or ()), separators=(",", ":")),
+            "destination_section_name": destination.name,
+            "destination_section_gid": destination.gid,
+            "exemption_revision": clean_revision,
+        }
+        needs_verifier = row["submission_kind"] == "initial" or (
+            row["submission_kind"] == "change" and row["change_level"] == "large"
+        )
+        if not needs_verifier:
+            final = transition_submission(
+                self.conn, submission_id, {"drafting"}, "ready", updates=updates
+            )
+            trace.state = final["status"]
+            return result_envelope(
+                command="prepare", task_gid=row["task_gid"], submission_id=submission_id,
+                state=final["status"], data={"destination": {"name": destination.name, "gid": destination.gid}}
+            )
+
+        updates["required_verifier_family"] = opposite_family(row["editor_family"])
+        handoff = transition_submission(
+            self.conn, submission_id, {"drafting"}, "research_handoff", updates=updates
+        )
+        trace.state = handoff["status"]
+        return self._prepare_move_only(trace=trace, row=handoff, registry=registry)

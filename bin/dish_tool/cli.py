@@ -47,6 +47,12 @@ def build_parser() -> JsonArgumentParser:
     start.add_argument("--kind", required=True, choices=("planning", "initial", "change"))
     start.add_argument("--change-level", choices=("small", "large"))
     start.add_argument("--change-reason")
+
+    prepare = subparsers.add_parser("prepare")
+    prepare.add_argument("submission_id")
+    prepare.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    prepare.add_argument("--file", dest="file_path", required=True)
+    prepare.add_argument("--exemption-revision")
     return parser
 
 
@@ -74,7 +80,7 @@ def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
     submission_id = None
     if command in {"read", "start"} and len(argv) > 1 and not argv[1].startswith("-"):
         task_gid = argv[1]
-    if command == "inspect" and len(argv) > 1 and not argv[1].startswith("-"):
+    if command in {"inspect", "prepare"} and len(argv) > 1 and not argv[1].startswith("-"):
         submission_id = argv[1]
     return {
         "command": command,

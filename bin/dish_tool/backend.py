@@ -246,3 +246,16 @@ class AsanaBackend:
             ) from exc
         task.setdefault("notes", "")
         return task
+
+    def move_task_to_section(self, *, task_gid: str, section_gid: str) -> None:
+        """Place a task in a section after the caller resolves live state."""
+
+        import asana
+
+        self.call(
+            asana.SectionsApi(self.client()).add_task_for_section,
+            {"data": {"task": task_gid}},
+            section_gid,
+            {},
+            context=f"section {section_gid}",
+        )
