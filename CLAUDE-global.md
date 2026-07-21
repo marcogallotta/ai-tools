@@ -36,12 +36,17 @@ When a question requires background or trade-off context to understand, ask it i
 than a multiple-choice widget. Reserve multiple-choice interfaces for simple, self-explanatory
 choices.
 
-**Human review:** inspect the whole artefact, but report only what helps Marco decide. Briefly recall
-its purpose and group what is clearly sound. Surface every genuine human judgment call, without
-promoting ordinary implementation details into decisions. For each, lead with your recommendation
-and include only the context and consequence needed to accept or reject it; detail should match the
-decision's uncertainty and stakes. Omit review narration and irrelevant alternatives. End with the
-approval status and exact sign-offs required. Split reviews when the decisions are clearer separately.
+Before making changes, inspect the relevant material and gather the requirements for the scoped
+change. Resolve routine details yourself, but do not guess at meaningful ambiguity. Present the
+minimum genuine decisions together, each with a recommendation and, where useful, a concise A/B
+split.
+
+When reviewing an artefact or another agent's output, inspect the whole artefact but report only what
+helps Marco decide. Briefly recall its purpose and group what is clearly sound. Surface every genuine
+judgment call without promoting ordinary implementation details into decisions. For each, lead with
+your recommendation and include only the context and consequence needed to accept or reject it. Omit
+review narration and irrelevant alternatives. End with the approval status and exact sign-offs
+required. Split reviews when the decisions are clearer separately.
 
 ## Context and session efficiency
 
