@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Any, Mapping
@@ -134,7 +135,7 @@ class AsanaBackend:
             return response["data"]
         except BackendFailure:
             raise
-        except Exception as exc:
+        except (Exception, asyncio.CancelledError) as exc:
             raise map_backend_exception(
                 exc, phase=tracker.phase, context=context
             ) from exc
@@ -246,6 +247,44 @@ class AsanaBackend:
             ) from exc
         task.setdefault("notes", "")
         return task
+
+
+    def update_task_notes(self, *, task_gid: str, notes: str) -> None:
+        """Replace complete notes once, preserving application certainty."""
+
+        try:
+            import asana
+
+            tasks_api = asana.TasksApi(self.client())
+        except BackendFailure:
+            raise
+        except (Exception, asyncio.CancelledError) as exc:
+            raise map_backend_exception(
+                exc,
+                phase=RequestPhase.PRE_SEND,
+                context=f"task {task_gid} notes",
+            ) from exc
+
+        data = self.call(
+            tasks_api.update_task,
+            {"data": {"notes": notes}},
+            task_gid,
+            {"opt_fields": "gid"},
+            context=f"task {task_gid} notes",
+        )
+        response_gid = (
+            str(data.get("gid") or "").strip()
+            if isinstance(data, Mapping)
+            else ""
+        )
+        if response_gid != task_gid:
+            raise BackendFailure(
+                "BACKEND_UNCERTAIN",
+                "Asana returned malformed data after the notes write",
+                phase=RequestPhase.RESPONSE_RECEIVED.value,
+                retryable=False,
+                details={"expected_task_gid": task_gid, "actual_task_gid": response_gid},
+            )
 
     def move_task_to_section(self, *, task_gid: str, section_gid: str) -> None:
         """Place a task in a section after the caller resolves live state."""

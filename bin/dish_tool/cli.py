@@ -53,6 +53,23 @@ def build_parser() -> JsonArgumentParser:
     prepare.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
     prepare.add_argument("--file", dest="file_path", required=True)
     prepare.add_argument("--exemption-revision")
+
+    approve = subparsers.add_parser("approve")
+    approve.add_argument("submission_id")
+    approve.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    approve.add_argument("--file", dest="file_path", required=True)
+    approve.add_argument("--correction", required=True, choices=("none", "small"))
+
+    reject = subparsers.add_parser("reject")
+    reject.add_argument("submission_id")
+    reject.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    reject.add_argument("--reason", required=True)
+    reject.add_argument("--changed-since-prior")
+    reject.add_argument("--take-ownership", action="store_true")
+
+    submit = subparsers.add_parser("submit")
+    submit.add_argument("submission_id")
+    submit.add_argument("--file", dest="file_path", required=True)
     return parser
 
 
@@ -80,7 +97,11 @@ def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
     submission_id = None
     if command in {"read", "start"} and len(argv) > 1 and not argv[1].startswith("-"):
         task_gid = argv[1]
-    if command in {"inspect", "prepare"} and len(argv) > 1 and not argv[1].startswith("-"):
+    if (
+        command in {"inspect", "prepare", "approve", "reject", "submit"}
+        and len(argv) > 1
+        and not argv[1].startswith("-")
+    ):
         submission_id = argv[1]
     return {
         "command": command,

@@ -146,6 +146,30 @@ def record_audit(
     return event_id
 
 
+def latest_successful_rejection_reason(
+    conn: sqlite3.Connection, submission_id: str
+) -> str | None:
+    rows = conn.execute(
+        """
+        SELECT details
+          FROM audit_events
+         WHERE submission_id = ?
+           AND event_type = 'dish.reject'
+         ORDER BY created_at DESC
+        """,
+        (submission_id,),
+    ).fetchall()
+    for row in rows:
+        try:
+            details = json.loads(row["details"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        reason = str(details.get("reason") or "").strip()
+        if details.get("ok") is True and details.get("decision") == "reject" and reason:
+            return reason
+    return None
+
+
 def get_submission(conn: sqlite3.Connection, submission_id: str) -> sqlite3.Row:
     row = conn.execute(
         "SELECT * FROM submissions WHERE submission_id = ?", (submission_id,)

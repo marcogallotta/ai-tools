@@ -1,7 +1,8 @@
-"""Stage-2 command behavior for the agent-facing ``dish`` CLI."""
+"""Agent-facing command behavior for the guarded ``dish`` CLI."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from dataclasses import dataclass, field
@@ -13,9 +14,24 @@ from .constants import (
     COOKING_PROJECT_GID,
     SUBMISSION_KINDS,
 )
-from .database import create_submission, get_submission, record_audit, transition_submission
+from .database import (
+    create_submission,
+    get_submission,
+    latest_successful_rejection_reason,
+    record_audit,
+    transition_submission,
+)
 from .errors import BackendFailure, DishRuleError
-from .models import (ResolvedRelease, SectionRegistry, agent_family, is_protocol_managed, opposite_family, resolve_destination, utc_now)
+from .models import (
+    ResolvedRelease,
+    SectionRegistry,
+    agent_family,
+    is_protocol_managed,
+    opposite_family,
+    resolve_destination,
+    utc_now,
+)
+from .recovery import begin_write_attempt, finish_write_attempt
 from .results import allowed_actions_for_state, error_envelope, result_envelope
 from .validation import extract_exact_label_line, validate_note
 
@@ -29,6 +45,8 @@ class CommandBackend(Protocol):
         self, *, title: str, project_gid: str, section_gid: str
     ) -> dict[str, Any]: ...
 
+    def update_task_notes(self, *, task_gid: str, notes: str) -> None: ...
+
     def move_task_to_section(self, *, task_gid: str, section_gid: str) -> None: ...
 
 
@@ -39,6 +57,7 @@ class CommandTrace:
     state: str | None = None
     known_submission: bool = False
     audit_details: dict[str, Any] = field(default_factory=dict)
+    actor_agent: str | None = None
 
 
 def _clean_required(value: Any, *, rule: str, label: str) -> str:
@@ -168,6 +187,8 @@ class DishApplication:
         except DishRuleError as exc:
             if trace.task_gid is None:
                 trace.task_gid = _gid(exc.details.get("task_gid"))
+            if exc.code == "WRONG_STATE" and exc.details.get("actual"):
+                trace.state = str(exc.details["actual"])
             result = error_envelope(
                 command,
                 exc,
@@ -188,7 +209,7 @@ class DishApplication:
                 submission_id=trace.submission_id,
                 state=trace.state,
             )
-        self._record_invocation(command, actor, trace, result)
+        self._record_invocation(command, trace.actor_agent or actor, trace, result)
         return result
 
     def record_argument_failure(
@@ -201,13 +222,24 @@ class DishApplication:
         submission_id: str | None = None,
     ) -> dict[str, Any]:
         trace = CommandTrace(task_gid=task_gid, submission_id=submission_id)
+        if command == "submit" and submission_id:
+            try:
+                row = get_submission(self.conn, submission_id)
+            except DishRuleError:
+                pass
+            else:
+                trace.known_submission = True
+                trace.task_gid = row["task_gid"]
+                trace.state = row["status"]
+                trace.actor_agent = row["editor_agent"]
         result = error_envelope(
             command,
             error,
-            task_gid=task_gid,
+            task_gid=trace.task_gid,
             submission_id=submission_id,
+            state=trace.state,
         )
-        self._record_invocation(command, agent, trace, result)
+        self._record_invocation(command, trace.actor_agent or agent, trace, result)
         return result
 
     def _record_invocation(
@@ -574,6 +606,55 @@ class DishApplication:
                 rule="candidate_file_unreadable",
             ) from exc
 
+    def _require_agent_workflow_available(self, row: sqlite3.Row) -> None:
+        if row["status"] == "awaiting_human":
+            raise DishRuleError(
+                "HUMAN_ACTION_REQUIRED",
+                "submission requires Human Review",
+                rule="human_review_required",
+            )
+
+    def _load_verifier_submission(
+        self,
+        *,
+        trace: CommandTrace,
+        agent: str,
+        submission_id: str,
+    ) -> tuple[sqlite3.Row, str]:
+        verifier_family = agent_family(agent)
+        clean_submission_id = _clean_required(
+            submission_id,
+            rule="submission_id_required",
+            label="submission ID",
+        )
+        row = get_submission(self.conn, clean_submission_id)
+        trace.submission_id = clean_submission_id
+        trace.known_submission = True
+        trace.task_gid = row["task_gid"]
+        trace.state = row["status"]
+        self._require_agent_workflow_available(row)
+        if row["status"] != "awaiting_verification":
+            raise DishRuleError(
+                "WRONG_STATE",
+                f"submission is {row['status']}, expected awaiting_verification",
+                rule="wrong_state",
+                details={
+                    "actual": row["status"],
+                    "expected": ["awaiting_verification"],
+                },
+            )
+        if verifier_family != row["required_verifier_family"]:
+            raise DishRuleError(
+                "VERIFIER_FAMILY_MISMATCH",
+                "verifier family does not match the routed review family",
+                rule="verifier_family_mismatch",
+                details={
+                    "expected": row["required_verifier_family"],
+                    "actual": verifier_family,
+                },
+            )
+        return row, verifier_family
+
     def _prepare_move_only(
         self, *, trace: CommandTrace, row: sqlite3.Row, registry: SectionRegistry
     ) -> dict[str, Any]:
@@ -636,6 +717,8 @@ class DishApplication:
         trace.known_submission = True
         trace.task_gid = row["task_gid"]
         trace.state = row["status"]
+
+        self._require_agent_workflow_available(row)
 
         if row["status"] not in {"drafting", "research_handoff"}:
             raise DishRuleError(
@@ -739,3 +822,478 @@ class DishApplication:
         )
         trace.state = handoff["status"]
         return self._prepare_move_only(trace=trace, row=handoff, registry=registry)
+
+    def _command_approve(
+        self,
+        *,
+        trace: CommandTrace,
+        agent: str,
+        submission_id: str,
+        file_path: str,
+        correction: str,
+    ) -> dict[str, Any]:
+        row, verifier_family = self._load_verifier_submission(
+            trace=trace,
+            agent=agent,
+            submission_id=submission_id,
+        )
+        clean_correction = _clean_required(
+            correction,
+            rule="correction_required",
+            label="correction",
+        )
+        if clean_correction not in {"none", "small"}:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "correction must be none or small",
+                rule="invalid_correction",
+                details={"actual": clean_correction},
+            )
+
+        trace.audit_details.update(
+            {
+                "decision": "approve",
+                "verifier_agent": agent,
+                "verifier_family": verifier_family,
+                "correction": clean_correction,
+            }
+        )
+        candidate = self._load_candidate_file(file_path)
+        manifest = _decode_json(
+            row["canonical_manifest"], field_name="canonical_manifest"
+        )
+        validation = validate_note(candidate, manifest)
+        errors = list(validation.errors)
+
+        prepared_tags = tuple(
+            _decode_json(
+                row["prepared_exemption_tags"],
+                field_name="prepared_exemption_tags",
+            )
+        )
+        if validation.exemption_tags is not None and (
+            tuple(validation.exemption_tags) != prepared_tags
+        ):
+            errors.append(
+                {
+                    "rule": "prepared_exemptions_changed",
+                    "expected": list(prepared_tags),
+                    "actual": list(validation.exemption_tags),
+                }
+            )
+
+        destination_drift = False
+        destination = None
+        registry = SectionRegistry.from_sections(
+            self.backend.list_sections(COOKING_PROJECT_GID)
+        )
+        if validation.destination_name and validation.destination_gid:
+            try:
+                destination = resolve_destination(
+                    validation.destination_name,
+                    validation.destination_gid,
+                    registry,
+                )
+            except DishRuleError as exc:
+                item = {"rule": exc.rule or "destination_invalid"}
+                item.update(exc.details)
+                errors.append(item)
+                destination_drift = True
+            else:
+                if (
+                    destination.name != row["destination_section_name"]
+                    or destination.gid != row["destination_section_gid"]
+                ):
+                    errors.append(
+                        {
+                            "rule": "destination_changed_since_prepare",
+                            "expected": {
+                                "name": row["destination_section_name"],
+                                "gid": row["destination_section_gid"],
+                            },
+                            "actual": {
+                                "name": destination.name,
+                                "gid": destination.gid,
+                            },
+                        }
+                    )
+                    destination_drift = True
+
+        trace.audit_details.update(
+            {
+                "manifest": "complete_task",
+                "validation_passed": not errors,
+                "normalized_exemption_tags": (
+                    None
+                    if validation.exemption_tags is None
+                    else list(validation.exemption_tags)
+                ),
+                "destination_drift": destination_drift,
+            }
+        )
+        if destination_drift:
+            final = transition_submission(
+                self.conn,
+                row["submission_id"],
+                {"awaiting_verification"},
+                "drafting",
+            )
+            trace.state = final["status"]
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "Destination changed or no longer resolves; run prepare again",
+                errors=errors,
+            )
+        if errors:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "final note failed deterministic verification validation",
+                errors=errors,
+            )
+
+        final = transition_submission(
+            self.conn,
+            row["submission_id"],
+            {"awaiting_verification"},
+            "ready",
+            updates={
+                "verifier_agent": agent,
+                "verifier_family": verifier_family,
+                "approved_at": utc_now(),
+            },
+        )
+        trace.state = final["status"]
+        return result_envelope(
+            command="approve",
+            task_gid=row["task_gid"],
+            submission_id=row["submission_id"],
+            state=final["status"],
+            data={
+                "verifier_agent": agent,
+                "verifier_family": verifier_family,
+                "correction": clean_correction,
+                "destination": {
+                    "name": destination.name if destination else None,
+                    "gid": destination.gid if destination else None,
+                },
+            },
+        )
+
+
+    def _load_submit_submission(
+        self, *, trace: CommandTrace, submission_id: str
+    ) -> sqlite3.Row:
+        clean_submission_id = _clean_required(
+            submission_id,
+            rule="submission_id_required",
+            label="submission ID",
+        )
+        row = get_submission(self.conn, clean_submission_id)
+        trace.submission_id = clean_submission_id
+        trace.known_submission = True
+        trace.task_gid = row["task_gid"]
+        trace.state = row["status"]
+        trace.actor_agent = row["editor_agent"]
+        if row["status"] not in {"ready", "written"}:
+            raise DishRuleError(
+                "WRONG_STATE",
+                f"submission is {row['status']}, expected ready or written",
+                rule="wrong_state",
+                details={
+                    "actual": row["status"],
+                    "expected": ["ready", "written"],
+                },
+            )
+        return row
+
+    def _refresh_trace_state(self, trace: CommandTrace) -> None:
+        if not trace.submission_id:
+            return
+        try:
+            trace.state = get_submission(self.conn, trace.submission_id)["status"]
+        except DishRuleError:
+            pass
+
+    def _write_notes_once(
+        self,
+        *,
+        trace: CommandTrace,
+        row: sqlite3.Row,
+        candidate: str,
+    ) -> sqlite3.Row:
+        attempt = begin_write_attempt(self.conn, row["submission_id"])
+        trace.state = "in_flight"
+        trace.audit_details.update(
+            {
+                "write_attempt_id": attempt.attempt_id,
+                "write_outcome": "attempted",
+            }
+        )
+        try:
+            self.backend.update_task_notes(
+                task_gid=row["task_gid"], notes=candidate
+            )
+        except BackendFailure as exc:
+            target = (
+                "ready" if exc.code == "BACKEND_REJECTED" else "uncertain"
+            )
+            try:
+                final = finish_write_attempt(
+                    self.conn,
+                    row["submission_id"],
+                    attempt_id=attempt.attempt_id,
+                    target_state=target,
+                )
+            except DishRuleError:
+                self._refresh_trace_state(trace)
+                raise
+            trace.state = final["status"]
+            trace.audit_details["write_outcome"] = (
+                "confirmed_non_application"
+                if target == "ready"
+                else "uncertain"
+            )
+            raise
+        except (Exception, asyncio.CancelledError) as exc:
+            uncertain = BackendFailure(
+                "BACKEND_UNCERTAIN",
+                f"notes write outcome is unknown: {exc}",
+                retryable=False,
+                details={"exception_type": type(exc).__name__},
+            )
+            try:
+                final = finish_write_attempt(
+                    self.conn,
+                    row["submission_id"],
+                    attempt_id=attempt.attempt_id,
+                    target_state="uncertain",
+                )
+            except DishRuleError:
+                self._refresh_trace_state(trace)
+                raise
+            trace.state = final["status"]
+            trace.audit_details["write_outcome"] = "uncertain"
+            raise uncertain from exc
+
+        try:
+            final = finish_write_attempt(
+                self.conn,
+                row["submission_id"],
+                attempt_id=attempt.attempt_id,
+                target_state="written",
+            )
+        except DishRuleError:
+            self._refresh_trace_state(trace)
+            raise
+        trace.state = final["status"]
+        trace.audit_details["write_outcome"] = "confirmed_success"
+        return final
+
+    def _complete_destination_handoff(
+        self, *, trace: CommandTrace, row: sqlite3.Row
+    ) -> dict[str, Any]:
+        registry = SectionRegistry.from_sections(
+            self.backend.list_sections(COOKING_PROJECT_GID)
+        )
+        destination_name = str(row["destination_section_name"] or "").strip()
+        destination_gid = str(row["destination_section_gid"] or "").strip()
+        if not destination_name or not destination_gid:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "written submission is missing its validated Destination",
+                rule="stored_destination_missing",
+            )
+        destination = resolve_destination(
+            destination_name, destination_gid, registry
+        )
+        task = self._read_live_task(row["task_gid"])
+        _require_cooking_task(task, row["task_gid"])
+        current = _task_section_gid(task, COOKING_PROJECT_GID)
+        if current is None:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "task has no resolvable Cooking section for destination handoff",
+                rule="task_section_unresolved",
+            )
+
+        moved = False
+        if current == registry.verification_queue_gid:
+            self.backend.move_task_to_section(
+                task_gid=row["task_gid"], section_gid=destination.gid
+            )
+            handoff = "moved_to_destination"
+            moved = True
+        elif current == destination.gid:
+            handoff = "already_at_destination"
+        elif (
+            current == registry.research_queue_gid
+            and row["submission_kind"] == "planning"
+        ):
+            handoff = "planning_research_queue"
+        elif current not in registry.queue_gids:
+            handoff = "manual_override_preserved"
+        else:
+            raise DishRuleError(
+                "CONFLICT",
+                "non-planning submission remains in Research Queue",
+                rule="unexpected_research_queue_position",
+                details={"current_section_gid": current},
+            )
+
+        completed_at = utc_now()
+        updates: dict[str, Any] = {"completed_at": completed_at}
+        if moved:
+            updates["destination_moved_at"] = completed_at
+        final = transition_submission(
+            self.conn,
+            row["submission_id"],
+            {"written"},
+            "consumed",
+            updates=updates,
+        )
+        trace.state = final["status"]
+        trace.audit_details["handoff"] = handoff
+        trace.audit_details["current_section_gid"] = current
+        return result_envelope(
+            command="submit",
+            task_gid=row["task_gid"],
+            submission_id=row["submission_id"],
+            state=final["status"],
+            data={
+                "write_outcome": trace.audit_details.get(
+                    "write_outcome", "already_written"
+                ),
+                "handoff": handoff,
+                "destination": {
+                    "name": destination.name,
+                    "gid": destination.gid,
+                },
+            },
+        )
+
+    def _command_submit(
+        self,
+        *,
+        trace: CommandTrace,
+        submission_id: str,
+        file_path: str,
+    ) -> dict[str, Any]:
+        row = self._load_submit_submission(
+            trace=trace, submission_id=submission_id
+        )
+        trace.audit_details["write_outcome"] = "already_written"
+        if row["status"] == "ready":
+            candidate = self._load_candidate_file(file_path)
+            row = self._write_notes_once(
+                trace=trace, row=row, candidate=candidate
+            )
+        return self._complete_destination_handoff(trace=trace, row=row)
+
+    def _command_reject(
+        self,
+        *,
+        trace: CommandTrace,
+        agent: str,
+        submission_id: str,
+        reason: str,
+        changed_since_prior: str | None = None,
+        take_ownership: bool = False,
+    ) -> dict[str, Any]:
+        row, verifier_family = self._load_verifier_submission(
+            trace=trace,
+            agent=agent,
+            submission_id=submission_id,
+        )
+        clean_reason = _clean_required(
+            reason,
+            rule="rejection_reason_required",
+            label="rejection reason",
+        )
+        clean_changed = str(changed_since_prior or "").strip() or None
+        current_passes = int(row["failed_verification_passes"])
+        if current_passes not in {0, 1}:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "stored failed-verification counter is invalid for routed review",
+                rule="invalid_failed_verification_counter",
+                details={"actual": current_passes},
+            )
+        next_passes = current_passes + 1
+        if current_passes >= 1 and clean_changed is None:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "the second rejection requires what changed since the prior pass",
+                rule="changed_since_prior_required",
+            )
+
+        updates: dict[str, Any] = {
+            "failed_verification_passes": next_passes,
+        }
+        if take_ownership:
+            updates.update(
+                {
+                    "editor_agent": agent,
+                    "editor_family": verifier_family,
+                }
+            )
+        target_state = "drafting" if next_passes == 1 else "awaiting_human"
+
+        trace.audit_details.update(
+            {
+                "decision": "reject",
+                "verifier_agent": agent,
+                "verifier_family": verifier_family,
+                "reason": clean_reason,
+                "changed_since_prior": clean_changed,
+                "take_ownership": bool(take_ownership),
+                "failed_verification_passes": next_passes,
+            }
+        )
+        if target_state == "awaiting_human":
+            first_reason = latest_successful_rejection_reason(
+                self.conn, row["submission_id"]
+            )
+            if first_reason is None:
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "prior successful rejection reason is missing",
+                    rule="prior_rejection_reason_missing",
+                )
+            trace.audit_details["escalation_summary"] = {
+                "first_rejection_reason": first_reason,
+                "second_rejection_reason": clean_reason,
+                "changed_since_prior": clean_changed,
+            }
+
+        final = transition_submission(
+            self.conn,
+            row["submission_id"],
+            {"awaiting_verification"},
+            target_state,
+            updates=updates,
+        )
+        trace.state = final["status"]
+        data = {
+            "decision": "reject",
+            "failed_verification_passes": next_passes,
+            "take_ownership": bool(take_ownership),
+        }
+        if target_state == "awaiting_human":
+            data["escalation_summary"] = trace.audit_details["escalation_summary"]
+            return result_envelope(
+                command="reject",
+                ok=False,
+                code="HUMAN_ACTION_REQUIRED",
+                task_gid=row["task_gid"],
+                submission_id=row["submission_id"],
+                state=final["status"],
+                data=data,
+                errors=[{"rule": "human_review_required"}],
+            )
+        return result_envelope(
+            command="reject",
+            task_gid=row["task_gid"],
+            submission_id=row["submission_id"],
+            state=final["status"],
+            data=data,
+        )
