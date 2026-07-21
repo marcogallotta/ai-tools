@@ -44,5 +44,5 @@
     ]
   },
   "manifest_kind": "planning",
-  "protocol_release": "fixture-v1a-tool-aware"
+  "protocol_release": "fixture-v1b-structured-title"
 }

@@ -25,6 +25,15 @@ class JsonArgumentParser(argparse.ArgumentParser):
         )
 
 
+def _add_title_declaration(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--dish-name")
+    parser.add_argument("--recognition")
+    parser.add_argument("--role", dest="roles", action="append")
+    parser.add_argument("--no-role-tags", action="store_true")
+    parser.add_argument("--blocker", dest="blockers", action="append")
+    parser.add_argument("--no-blockers", action="store_true")
+
+
 def build_parser() -> JsonArgumentParser:
     parser = JsonArgumentParser(prog="dish")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -53,12 +62,14 @@ def build_parser() -> JsonArgumentParser:
     prepare.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
     prepare.add_argument("--file", dest="file_path", required=True)
     prepare.add_argument("--exemption-revision")
+    _add_title_declaration(prepare)
 
     approve = subparsers.add_parser("approve")
     approve.add_argument("submission_id")
     approve.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
     approve.add_argument("--file", dest="file_path", required=True)
     approve.add_argument("--correction", required=True, choices=("none", "small"))
+    _add_title_declaration(approve)
 
     reject = subparsers.add_parser("reject")
     reject.add_argument("submission_id")

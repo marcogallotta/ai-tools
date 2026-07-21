@@ -107,7 +107,7 @@ def finish_write_attempt(
             }
         )
     elif target_state == "written":
-        updates["notes_written_at"] = utc_now()
+        updates["task_content_written_at"] = utc_now()
 
     assignments = ["status = ?"] + [f"{column} = ?" for column in updates]
     params = [target_state, *updates.values(), submission_id, attempt_id]
@@ -263,7 +263,7 @@ def recover_write_attempt(
             details={"field": "write_attempt_id"},
         )
 
-    notes_written_at = utc_now() if target_state == "written" else None
+    content_written_at = utc_now() if target_state == "written" else None
 
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -271,7 +271,7 @@ def recover_write_attempt(
             """
             UPDATE submissions
                SET status = ?,
-                   notes_written_at = ?,
+                   task_content_written_at = ?,
                    write_attempt_id = NULL,
                    in_flight_at = NULL,
                    in_flight_hostname = NULL,
@@ -281,7 +281,12 @@ def recover_write_attempt(
                AND status IN ('in_flight', 'uncertain')
                AND write_attempt_id = ?
             """,
-            (target_state, notes_written_at, submission_id, clean_attempt_id),
+            (
+                target_state,
+                content_written_at,
+                submission_id,
+                clean_attempt_id,
+            ),
         )
         if cursor.rowcount != 1:
             conn.execute("ROLLBACK")

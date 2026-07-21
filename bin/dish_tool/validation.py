@@ -8,7 +8,7 @@ from typing import Any, Mapping, Sequence
 
 from .constants import MANIFEST_FILENAMES
 from .errors import ReleaseResolutionError
-from .models import ValidationResult
+from .models import TitleFields, TitleValidationResult, ValidationResult
 
 _LABEL_RE = re.compile(r"^([A-Za-z][A-Za-z0-9 /_-]*):(?:[ \t]*(.*))$")
 _TAG_AT_START_RE = re.compile(r"\A\s*\[([^\]]+)\]")
@@ -139,11 +139,300 @@ def validate_manifest_shape(
             "manifest_malformed",
             f"{filename} destination regex requires name and gid groups",
         )
+
+    title_schema = manifest.get("title")
+    if expected_kind == "complete_task":
+        if not isinstance(title_schema, dict) or set(title_schema) != {
+            "role_tags",
+            "marker_pattern",
+            "marker_prefix",
+            "marker_suffix",
+            "separator",
+            "unreviewed_blocker",
+        }:
+            raise ReleaseResolutionError(
+                "manifest_malformed", f"{filename} title grammar is malformed"
+            )
+        role_tags = title_schema["role_tags"]
+        if (
+            not isinstance(role_tags, list)
+            or not role_tags
+            or not all(
+                isinstance(role, str) and role and role == role.strip()
+                for role in role_tags
+            )
+            or len(role_tags) != len(set(role_tags))
+        ):
+            raise ReleaseResolutionError(
+                "manifest_malformed", f"{filename} title role_tags is malformed"
+            )
+        for key in ("marker_prefix", "marker_suffix", "separator"):
+            value = title_schema[key]
+            if (
+                not isinstance(value, str)
+                or not value
+                or "\r" in value
+                or "\n" in value
+            ):
+                raise ReleaseResolutionError(
+                    "manifest_malformed", f"{filename} title {key} is malformed"
+                )
+        if any(
+            value != value.strip()
+            for value in (
+                title_schema["marker_prefix"],
+                title_schema["marker_suffix"],
+            )
+        ):
+            raise ReleaseResolutionError(
+                "manifest_malformed",
+                f"{filename} title marker controls contain whitespace",
+            )
+        if title_schema["marker_prefix"] == title_schema["marker_suffix"]:
+            raise ReleaseResolutionError(
+                "manifest_malformed",
+                f"{filename} title marker controls must differ",
+            )
+        try:
+            marker_regex = re.compile(title_schema["marker_pattern"])
+        except (TypeError, re.error) as exc:
+            raise ReleaseResolutionError(
+                "manifest_malformed", f"{filename} title marker_pattern is invalid"
+            ) from exc
+        unreviewed = title_schema["unreviewed_blocker"]
+        if (
+            not isinstance(unreviewed, str)
+            or not unreviewed
+            or unreviewed != unreviewed.strip()
+            or unreviewed in role_tags
+        ):
+            raise ReleaseResolutionError(
+                "manifest_malformed",
+                f"{filename} title unreviewed_blocker is malformed",
+            )
+        marker_values = [*role_tags, unreviewed]
+        if any(marker_regex.fullmatch(value) is None for value in marker_values):
+            raise ReleaseResolutionError(
+                "manifest_malformed",
+                f"{filename} title marker grammar rejects a declared marker",
+            )
+        controls = (title_schema["marker_prefix"], title_schema["marker_suffix"])
+        if any(any(control in value for control in controls) for value in marker_values):
+            raise ReleaseResolutionError(
+                "manifest_malformed",
+                f"{filename} title marker values contain control delimiters",
+            )
+    elif title_schema is not None:
+        raise ReleaseResolutionError(
+            "manifest_malformed", f"{filename} planning manifest must not define title grammar"
+        )
     return copy.deepcopy(manifest)
 
 
 def _error(rule: str, **fields: Any) -> dict[str, Any]:
     return {"rule": rule, **fields}
+
+
+def _title_schema(manifest: Mapping[str, Any]) -> Mapping[str, Any]:
+    checked = validate_manifest_shape(
+        manifest,
+        expected_kind="complete_task",
+        filename="frozen complete-task manifest",
+    )
+    return checked["title"]
+
+
+def _title_text_errors(
+    value: Any, *, field: str, schema: Mapping[str, Any]
+) -> tuple[str | None, list[dict[str, Any]]]:
+    clean = str(value or "").strip()
+    errors: list[dict[str, Any]] = []
+    if not clean:
+        errors.append(_error(f"title_{field}_required", field=field))
+        return None, errors
+    if "\r" in clean or "\n" in clean:
+        errors.append(_error("title_line_break_forbidden", field=field))
+    controls = (schema["marker_prefix"], schema["marker_suffix"])
+    if any(control in clean for control in controls):
+        errors.append(_error("title_control_character_forbidden", field=field))
+    if schema["separator"] in clean:
+        errors.append(_error("title_boundary_ambiguous", field=field))
+    return clean, errors
+
+
+def validate_title_declaration(
+    manifest: Mapping[str, Any],
+    *,
+    dish_name: Any,
+    recognition: Any,
+    roles: Sequence[Any] | None,
+    no_role_tags: bool,
+    blockers: Sequence[Any] | None,
+    no_blockers: bool,
+) -> TitleValidationResult:
+    """Validate one complete title declaration and render it canonically."""
+
+    schema = _title_schema(manifest)
+    errors: list[dict[str, Any]] = []
+    clean_name, name_errors = _title_text_errors(
+        dish_name, field="dish_name", schema=schema
+    )
+    clean_recognition, recognition_errors = _title_text_errors(
+        recognition, field="recognition", schema=schema
+    )
+    errors.extend(name_errors)
+    errors.extend(recognition_errors)
+
+    supplied_roles = list(roles or ())
+    if supplied_roles and no_role_tags:
+        errors.append(_error("title_role_declaration_conflict"))
+    elif not supplied_roles and not no_role_tags:
+        errors.append(_error("title_role_declaration_required"))
+
+    allowed_roles = list(schema["role_tags"])
+    role_set = set(allowed_roles)
+    cleaned_roles: list[str] = []
+    for raw_role in supplied_roles:
+        role = str(raw_role or "").strip()
+        if not role or role not in role_set:
+            errors.append(_error("unknown_title_role", role=role))
+            continue
+        cleaned_roles.append(role)
+    duplicate_roles = sorted(
+        {role for role in cleaned_roles if cleaned_roles.count(role) > 1}
+    )
+    if duplicate_roles:
+        errors.append(_error("duplicate_title_role", roles=duplicate_roles))
+    canonical_roles = tuple(role for role in allowed_roles if role in cleaned_roles)
+
+    supplied_blockers = list(blockers or ())
+    if supplied_blockers and no_blockers:
+        errors.append(_error("title_blocker_declaration_conflict"))
+    elif not supplied_blockers and not no_blockers:
+        errors.append(_error("title_blocker_declaration_required"))
+
+    marker_regex = re.compile(schema["marker_pattern"])
+    cleaned_blockers: list[str] = []
+    for raw_blocker in supplied_blockers:
+        blocker = str(raw_blocker or "").strip()
+        controls = (schema["marker_prefix"], schema["marker_suffix"])
+        if (
+            not blocker
+            or marker_regex.fullmatch(blocker) is None
+            or any(control in blocker for control in controls)
+        ):
+            errors.append(_error("invalid_title_blocker", blocker=blocker))
+            continue
+        if blocker in role_set:
+            errors.append(_error("reserved_title_blocker", blocker=blocker))
+            continue
+        cleaned_blockers.append(blocker)
+    duplicate_blockers = sorted(
+        {blocker for blocker in cleaned_blockers if cleaned_blockers.count(blocker) > 1}
+    )
+    if duplicate_blockers:
+        errors.append(
+            _error("duplicate_title_blocker", blockers=duplicate_blockers)
+        )
+    canonical_blockers = tuple(dict.fromkeys(cleaned_blockers))
+
+    if errors or clean_name is None or clean_recognition is None:
+        return TitleValidationResult(errors=tuple(errors))
+
+    fields = TitleFields(
+        role_tags=canonical_roles,
+        blockers=canonical_blockers,
+        dish_name=clean_name,
+        recognition=clean_recognition,
+    )
+    return TitleValidationResult(
+        errors=(), title=render_title(fields, manifest), fields=fields
+    )
+
+
+def render_title(fields: TitleFields, manifest: Mapping[str, Any]) -> str:
+    schema = _title_schema(manifest)
+    markers = [*fields.role_tags, *fields.blockers]
+    rendered_markers = " ".join(
+        f"{schema['marker_prefix']}{marker}{schema['marker_suffix']}"
+        for marker in markers
+    )
+    body = f"{fields.dish_name}{schema['separator']}{fields.recognition}"
+    return f"{rendered_markers} {body}" if rendered_markers else body
+
+
+def parse_canonical_title(
+    title: Any, manifest: Mapping[str, Any]
+) -> TitleValidationResult:
+    """Parse a title only when it exactly matches the manifest grammar."""
+
+    schema = _title_schema(manifest)
+    raw = str(title or "")
+    errors: list[dict[str, Any]] = []
+    if not raw or raw != raw.strip():
+        errors.append(_error("title_noncanonical_whitespace"))
+    remaining = raw.strip()
+    prefix = schema["marker_prefix"]
+    suffix = schema["marker_suffix"]
+    markers: list[str] = []
+    while remaining.startswith(prefix):
+        close = remaining.find(suffix, len(prefix))
+        if close < 0:
+            errors.append(_error("title_marker_unclosed"))
+            return TitleValidationResult(errors=tuple(errors))
+        marker = remaining[len(prefix):close]
+        if not marker or re.fullmatch(schema["marker_pattern"], marker) is None:
+            errors.append(_error("invalid_title_marker", marker=marker))
+        markers.append(marker)
+        tail = remaining[close + len(suffix):]
+        if tail and not tail.startswith(" "):
+            errors.append(_error("title_marker_spacing"))
+            remaining = tail.lstrip()
+            break
+        remaining = tail[1:] if tail.startswith(" ") else tail
+
+    separator = schema["separator"]
+    if remaining.count(separator) != 1:
+        errors.append(
+            _error("title_boundary_ambiguous", count=remaining.count(separator))
+        )
+        return TitleValidationResult(errors=tuple(errors))
+    dish_name, recognition = remaining.split(separator, 1)
+
+    role_order = {role: index for index, role in enumerate(schema["role_tags"])}
+    roles: list[str] = []
+    blockers: list[str] = []
+    blocker_seen = False
+    last_role_index = -1
+    for marker in markers:
+        if marker in role_order:
+            if blocker_seen:
+                errors.append(_error("title_role_after_blocker", role=marker))
+            if role_order[marker] < last_role_index:
+                errors.append(_error("title_role_order_noncanonical", role=marker))
+            last_role_index = max(last_role_index, role_order[marker])
+            roles.append(marker)
+        else:
+            blocker_seen = True
+            blockers.append(marker)
+
+    declared = validate_title_declaration(
+        manifest,
+        dish_name=dish_name,
+        recognition=recognition,
+        roles=roles,
+        no_role_tags=not roles,
+        blockers=blockers,
+        no_blockers=not blockers,
+    )
+    errors.extend(declared.errors)
+    if declared.title is not None and declared.title != raw:
+        errors.append(
+            _error("title_noncanonical", expected=declared.title, actual=raw)
+        )
+    if errors or declared.fields is None or declared.title is None:
+        return TitleValidationResult(errors=tuple(errors))
+    return declared
 
 
 def _extract_structure(

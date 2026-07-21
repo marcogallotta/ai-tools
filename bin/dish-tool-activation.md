@@ -19,12 +19,16 @@ Follow `~/honest-pantry/dish-docs-design.md` exactly for the authoritative snaps
 Do not replace or paraphrase that procedure here. Record the source snapshot, release identity,
 migration result, unresolved tasks, and rollback point before cutover.
 
+Normalize every managed title to the release manifest's canonical structured grammar. Preserve known
+role and blocker semantics mechanically. When the snapshot cannot support an honest blocker decision,
+use the manifest-defined `[blockers unreviewed]` marker and record that task for later guarded repair.
+
 Do not activate a partial corpus. If any managed task cannot be migrated or explicitly dispositioned,
 stop with the old authority still intact.
 
 ## One cutover
 
-1. Hold protocol-managed note changes for the migration window.
+1. Hold protocol-managed title and note changes for the migration window.
 2. Validate the exact release bundle and tool integration suite.
 3. Complete and verify the snapshot-backed corpus migration.
 4. Switch the governing agent instructions and release pointer together.

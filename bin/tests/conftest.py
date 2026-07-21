@@ -31,10 +31,13 @@ def cli(monkeypatch):
     module = _load_cli_module()
 
     class NoopAdvisoryGuard:
-        def before_task_notes(self, *args, **kwargs):
+        def before_task_content(self, *args, **kwargs):
             return None
 
         def before_create_task(self, *args, **kwargs):
+            return None
+
+        def before_create_subtask(self, *args, **kwargs):
             return None
 
         def before_raw(self, *args, **kwargs):

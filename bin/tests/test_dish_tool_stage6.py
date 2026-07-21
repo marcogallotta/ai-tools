@@ -132,9 +132,9 @@ def test_recover_accepts_only_stuck_write_states_and_maps_outcome(
     assert saved["in_flight_pid"] is None
     assert saved["in_flight_process_start"] is None
     if outcome == "applied":
-        assert saved["notes_written_at"] is not None
+        assert saved["task_content_written_at"] is not None
     else:
-        assert saved["notes_written_at"] is None
+        assert saved["task_content_written_at"] is None
     row, details = audit_row(app, "dish-admin.recover")
     assert row["submission_id"] == sid
     assert row["task_gid"] == saved["task_gid"]

@@ -33,6 +33,14 @@ Destination section: Weeknight (123456)
 Exemptions: [nutrition-fat] keep the existing fat target
 """
 
+CANONICAL_TITLE = "Dish — recognition"
+CANONICAL_TITLE_FIELDS = {
+    "role_tags": [],
+    "blockers": [],
+    "dish_name": "Dish",
+    "recognition": "recognition",
+}
+
 COMPLETE_NOTE = """# DISH
 Exemptions: [nutrition-fat] keep the existing fat target
 Destination section: Weeknight (123456)
@@ -46,7 +54,7 @@ def release_fixture() -> ResolvedRelease:
     planning_text = (FIXTURE_DIR / "dish-planning-manifest.json").read_text()
     complete_text = (FIXTURE_DIR / "dish-complete-task-manifest.json").read_text()
     return ResolvedRelease(
-        version="fixture-v1",
+        version="fixture-v2-structured-title",
         commit="fixture-commit",
         root=FIXTURE_DIR,
         protocols={
@@ -71,7 +79,7 @@ def cooking_task(gid: str, notes: str, section_gid: str = "research") -> dict:
     )
     return {
         "gid": gid,
-        "name": f"Task {gid}",
+        "name": CANONICAL_TITLE,
         "notes": notes,
         "completed": False,
         "projects": [{"gid": "1215089183018968", "name": "Cooking"}],
@@ -250,6 +258,13 @@ def test_read_returns_complete_excluded_cooking_task(tmp_path):
 
     assert result["ok"] is True
     assert result["data"]["task"] == task
+    assert result["data"]["structured_title"] == {
+        "raw": CANONICAL_TITLE,
+        "canonical": True,
+        "fields": CANONICAL_TITLE_FIELDS,
+        "errors": [],
+        "protocol_release": "fixture-v2-structured-title",
+    }
     assert result["task_gid"] == "ref-task"
     assert len(audit_rows(application)) == 1
 
@@ -306,10 +321,10 @@ def test_start_accepts_each_valid_starting_shape(
     assert result["ok"] is True
     assert result["state"] == "drafting"
     frozen = result["data"]["frozen_release"]
-    assert frozen["protocol_release"] == "fixture-v1"
+    assert frozen["protocol_release"] == "fixture-v2-structured-title"
     assert frozen["release_commit"] == "fixture-commit"
     assert frozen["protocol_bundle"]
-    assert frozen["canonical_manifest"]["protocol_release"] == "fixture-v1"
+    assert frozen["canonical_manifest"]["protocol_release"] == "fixture-v2-structured-title"
     assert frozen["canonical_manifest_text"] == release_fixture().manifest_texts[
         "planning" if kind == "planning" else "complete_task"
     ]
@@ -321,6 +336,8 @@ def test_start_accepts_each_valid_starting_shape(
     )
     assert actual_tags == expected_tags
     assert row["baseline_verification_line"] == verification
+    assert row["baseline_title"] == CANONICAL_TITLE
+    assert json.loads(row["baseline_title_fields"]) == CANONICAL_TITLE_FIELDS
     assert len(audit_rows(application)) == 1
 
 
@@ -446,7 +463,7 @@ def test_inspect_returns_frozen_handoff_routing_markers_and_actions(tmp_path):
     assert submission["frozen_release"]["protocol_bundle"]
     assert submission["completion_markers"] == {
         "research_queue_moved_at": None,
-        "notes_written_at": None,
+        "task_content_written_at": None,
         "destination_moved_at": None,
         "approved_at": None,
         "completed_at": None,
@@ -516,7 +533,7 @@ def test_failed_start_audit_keeps_release_and_all_validation_rules(tmp_path):
 
     details = json.loads(audit_rows(application)[0]["details"])
     assert result["code"] == "VALIDATION_FAILED"
-    assert details["protocol_release"] == "fixture-v1"
+    assert details["protocol_release"] == "fixture-v2-structured-title"
     assert details["release_commit"] == "fixture-commit"
     assert details["submission_kind"] == "initial"
     assert details["errors"] == result["errors"]

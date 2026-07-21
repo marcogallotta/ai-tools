@@ -1,4 +1,4 @@
-"""Stage 7: advisory integration for generic Asana note mutations."""
+"""Stage 7: advisory integration for generic Asana title/note mutations."""
 
 from __future__ import annotations
 
@@ -104,7 +104,7 @@ def test_direct_note_mutations_log_managed_bypass_and_proceed(
     rows = _events(db_path)
     assert len(rows) == 1
     assert rows[0]["task_gid"] == "task-1"
-    assert rows[0]["event_type"] == "generic_note_bypass"
+    assert rows[0]["event_type"] == "generic_content_bypass"
     assert rows[0]["actor_agent"] == "codex"
     details = json.loads(rows[0]["details"])
     assert details["command"] == command
@@ -231,7 +231,7 @@ def test_note_bearing_creation_checks_intended_section(cli, monkeypatch, tmp_pat
     assert all(row["task_gid"] is None for row in rows)
 
 
-def test_bare_creation_and_non_note_write_do_not_consult_or_log(cli, monkeypatch, tmp_path):
+def test_title_only_creation_and_rename_log_content_bypasses(cli, monkeypatch, tmp_path):
     db_path = _install_guard(cli, monkeypatch, tmp_path, {"task-1": _task("task-1", "managed")})
     monkeypatch.setattr(
         asana.TasksApi,
@@ -252,7 +252,13 @@ def test_bare_creation_and_non_note_write_do_not_consult_or_log(cli, monkeypatch
     cli.c_create_task(COOKING_PROJECT_GID, "Bare", "managed", None)
     cli.c_rename("task-1", "Renamed")
 
-    assert _events(db_path) == []
+    rows = _events(db_path)
+    assert len(rows) == 2
+    details = [json.loads(row["details"]) for row in rows]
+    assert details[0]["command"] == "create-task"
+    assert details[0]["fields"] == ["name"]
+    assert details[1]["command"] == "rename"
+    assert details[1]["fields"] == ["name"]
 
 
 def _write_plan(tmp_path: Path, operations: list[dict]) -> str:
@@ -305,13 +311,14 @@ def test_batch_logs_each_note_bearing_operation_only(cli, monkeypatch, tmp_path)
     cli.c_batch_apply(path)
 
     rows = _events(db_path)
-    assert len(rows) == 4
+    assert len(rows) == 5
     details = [json.loads(row["details"]) for row in rows]
-    assert [item["command"] for item in details] == ["batch-apply"] * 4
+    assert [item["command"] for item in details] == ["batch-apply"] * 5
     assert [item["operation"] for item in details] == [
         "set_notes",
         "update_task",
         "replace_notes",
+        "update_task",
         "create_task",
     ]
 
@@ -340,7 +347,7 @@ def test_raw_task_note_fields_are_advised(cli, monkeypatch, tmp_path, field):
     assert details["fields"] == [field]
 
 
-def test_raw_non_note_write_is_not_advised(cli, monkeypatch, tmp_path):
+def test_raw_title_write_is_advised(cli, monkeypatch, tmp_path):
     db_path = _install_guard(
         cli, monkeypatch, tmp_path, {"task-1": _task("task-1", "managed")}
     )
@@ -355,7 +362,36 @@ def test_raw_non_note_write_is_not_advised(cli, monkeypatch, tmp_path):
 
     cli.c_raw("PUT", "/tasks/task-1")
 
-    assert _events(db_path) == []
+    rows = _events(db_path)
+    assert len(rows) == 1
+    details = json.loads(rows[0]["details"])
+    assert details["fields"] == ["name"]
+
+
+def test_raw_subtask_creation_advises_against_managed_parent(
+    cli, monkeypatch, tmp_path
+):
+    db_path = _install_guard(
+        cli, monkeypatch, tmp_path, {"parent": _task("parent", "managed")}
+    )
+    monkeypatch.setattr(
+        asana.ApiClient,
+        "call_api",
+        lambda self, path, method, *args, **kwargs: {"data": {"gid": "subtask"}},
+    )
+    stdin = io.StringIO(json.dumps({"name": "subtask", "notes": "body"}))
+    stdin.isatty = lambda: False
+    monkeypatch.setattr("sys.stdin", stdin)
+
+    cli.c_raw("POST", "/tasks/parent/subtasks")
+
+    rows = _events(db_path)
+    assert len(rows) == 1
+    assert rows[0]["task_gid"] == "parent"
+    details = json.loads(rows[0]["details"])
+    assert details["command"] == "raw"
+    assert details["operation"] == "create_subtask"
+    assert details["fields"] == ["name", "notes"]
 
 
 def test_raw_note_bearing_task_creation_uses_intended_cooking_section(cli, monkeypatch, tmp_path):

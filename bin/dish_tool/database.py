@@ -67,7 +67,20 @@ CREATE INDEX audit_events_submission_idx ON audit_events(submission_id, created_
 CREATE INDEX audit_events_task_idx ON audit_events(task_gid, created_at);
 CREATE INDEX audit_events_type_idx ON audit_events(event_type, created_at);
 """
-MIGRATIONS = {1: _MIGRATION_1}
+_MIGRATION_2 = """
+ALTER TABLE submissions ADD COLUMN baseline_title TEXT;
+ALTER TABLE submissions ADD COLUMN baseline_title_fields TEXT
+    CHECK (baseline_title_fields IS NULL OR json_valid(baseline_title_fields));
+ALTER TABLE submissions ADD COLUMN prepared_title TEXT;
+ALTER TABLE submissions ADD COLUMN prepared_title_fields TEXT
+    CHECK (prepared_title_fields IS NULL OR json_valid(prepared_title_fields));
+ALTER TABLE submissions ADD COLUMN task_content_written_at TEXT;
+UPDATE submissions
+   SET task_content_written_at = notes_written_at
+ WHERE task_content_written_at IS NULL
+   AND notes_written_at IS NOT NULL;
+"""
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2}
 
 
 def initialize_database(
@@ -253,6 +266,8 @@ def create_submission(
     protocol_bundle: Mapping[str, str],
     canonical_manifest_text: str,
     baseline_exemption_tags: Iterable[str] | None,
+    baseline_title: str,
+    baseline_title_fields: Mapping[str, Any] | None,
     editor_agent: str,
     change_level: str | None,
     change_reason: str | None,
@@ -267,6 +282,16 @@ def create_submission(
         if baseline_exemption_tags is None
         else json.dumps(
             sorted(set(baseline_exemption_tags)), separators=(",", ":")
+        )
+    )
+    baseline_title_json = (
+        None
+        if baseline_title_fields is None
+        else json.dumps(
+            dict(baseline_title_fields),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
         )
     )
     conn.execute("BEGIN IMMEDIATE")
@@ -288,10 +313,10 @@ def create_submission(
                 INSERT INTO submissions (
                     submission_id, task_gid, submission_kind, protocol_release,
                     release_commit, protocol_bundle, canonical_manifest,
-                    baseline_exemption_tags, editor_agent, editor_family,
-                    change_level, change_reason, baseline_verification_line,
-                    status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'drafting', ?)
+                    baseline_exemption_tags, baseline_title, baseline_title_fields,
+                    editor_agent, editor_family, change_level, change_reason,
+                    baseline_verification_line, status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'drafting', ?)
                 """,
                 (
                     submission_id,
@@ -307,6 +332,8 @@ def create_submission(
                     ),
                     canonical_manifest_text,
                     baseline_json,
+                    baseline_title,
+                    baseline_title_json,
                     editor_agent,
                     editor_family,
                     change_level,
@@ -339,6 +366,8 @@ def create_submission(
 
 _ALLOWED_SUBMISSION_UPDATE_COLUMNS = {
     "prepared_exemption_tags",
+    "prepared_title",
+    "prepared_title_fields",
     "destination_section_name",
     "destination_section_gid",
     "exemption_revision",
@@ -356,7 +385,7 @@ _ALLOWED_SUBMISSION_UPDATE_COLUMNS = {
     "approved_at",
     "completed_at",
     "research_queue_moved_at",
-    "notes_written_at",
+    "task_content_written_at",
     "destination_moved_at",
 }
 

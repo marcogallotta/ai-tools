@@ -249,8 +249,10 @@ class AsanaBackend:
         return task
 
 
-    def update_task_notes(self, *, task_gid: str, notes: str) -> None:
-        """Replace complete notes once, preserving application certainty."""
+    def update_task_content(
+        self, *, task_gid: str, title: str, notes: str
+    ) -> None:
+        """Replace the canonical title and complete notes in one mutation."""
 
         try:
             import asana
@@ -262,15 +264,15 @@ class AsanaBackend:
             raise map_backend_exception(
                 exc,
                 phase=RequestPhase.PRE_SEND,
-                context=f"task {task_gid} notes",
+                context=f"task {task_gid} content",
             ) from exc
 
         data = self.call(
             tasks_api.update_task,
-            {"data": {"notes": notes}},
+            {"data": {"name": title, "notes": notes}},
             task_gid,
             {"opt_fields": "gid"},
-            context=f"task {task_gid} notes",
+            context=f"task {task_gid} content",
         )
         response_gid = (
             str(data.get("gid") or "").strip()
@@ -280,7 +282,7 @@ class AsanaBackend:
         if response_gid != task_gid:
             raise BackendFailure(
                 "BACKEND_UNCERTAIN",
-                "Asana returned malformed data after the notes write",
+                "Asana returned malformed data after the title-and-notes write",
                 phase=RequestPhase.RESPONSE_RECEIVED.value,
                 retryable=False,
                 details={"expected_task_gid": task_gid, "actual_task_gid": response_gid},

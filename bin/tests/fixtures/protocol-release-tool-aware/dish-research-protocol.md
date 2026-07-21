@@ -25,11 +25,19 @@ unless Marco approved a revision. Initial and large-change candidates must inclu
 self-review attribution in `Self-verified:`. A small change must preserve the existing
 `Verification:` line byte-for-byte.
 
+Declare the complete structured title on the same preparation command. Supply non-empty
+`--dish-name` and `--recognition`; choose exactly one of repeatable
+`--role side|dessert|component|condiment|benchmark|comparison` or `--no-role-tags`; and choose
+exactly one of repeatable `--blocker <marker>` or `--no-blockers`.
+The tool validates, orders, renders, stores, and later writes the canonical title; do not pre-render
+the bracket markers in a relay script.
+
 Run:
 
-`dish prepare <submission-id> --agent <same-editor> --file <candidate-file>`
+`dish prepare <submission-id> --agent <same-editor> --file <candidate-file> --dish-name "<dish>" --recognition "<recognition>" --no-role-tags --no-blockers`
 
-Add `--exemption-revision "<Marco decision, date, and reason>"` only when the command contract permits
+Replace the two `--no-*` declarations with repeatable `--role` and/or `--blocker` arguments when
+needed. Add `--exemption-revision "<Marco decision, date, and reason>"` only when the command contract permits
 an approved exemption change. On validation failure, correct the complete file and prepare again on
 the same submission.
 

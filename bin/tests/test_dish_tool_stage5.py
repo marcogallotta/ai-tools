@@ -27,6 +27,13 @@ PLANNING_NOTE = """# PLANNING BRIEF
 Destination section: Planned (123456)
 Exemptions: None
 """
+CANONICAL_TITLE = "Dish — recognition"
+TITLE_ARGS = {
+    "dish_name": "Dish",
+    "recognition": "recognition",
+    "no_role_tags": True,
+    "no_blockers": True,
+}
 COMPLETE_NOTE = """# DISH
 Exemptions: None
 Destination section: Planned (123456)
@@ -42,7 +49,7 @@ def release_fixture():
     planning_text = (FIXTURE_DIR / "dish-planning-manifest.json").read_text()
     complete_text = (FIXTURE_DIR / "dish-complete-task-manifest.json").read_text()
     return ResolvedRelease(
-        version="fixture-v1",
+        version="fixture-v2-structured-title",
         commit="fixture-commit",
         root=FIXTURE_DIR,
         protocols={
@@ -62,7 +69,7 @@ def task(notes=PLANNING_NOTE, section="verification"):
     name = next(item["name"] for item in SECTIONS if item["gid"] == section)
     return {
         "gid": "task",
-        "name": "Task",
+        "name": CANONICAL_TITLE,
         "notes": notes,
         "projects": [{"gid": "1215089183018968"}],
         "memberships": [
@@ -95,14 +102,15 @@ class Backend:
     def create_bare_task(self, **kwargs):
         raise AssertionError
 
-    def update_task_notes(self, *, task_gid, notes):
-        self.notes_calls.append((task_gid, notes))
+    def update_task_content(self, *, task_gid, title, notes):
+        self.notes_calls.append((task_gid, title, notes))
         if self.notes_entered is not None:
             self.notes_entered.set()
         if self.notes_release is not None:
             assert self.notes_release.wait(timeout=5)
         if self.notes_error is not None:
             raise self.notes_error
+        self.item["name"] = title
         self.item["notes"] = notes
         if self.on_notes_success is not None:
             self.on_notes_success()
@@ -133,16 +141,18 @@ def ready_submission(app, tmp_path, *, kind="initial"):
     started = app.execute("start", agent="claude", task_gid="task", kind=kind)
     assert started["ok"]
     sid = started["submission_id"]
-    prepared = app.execute(
-        "prepare",
-        agent="claude",
-        submission_id=sid,
-        file_path=candidate(
+    prepare_kwargs = {
+        "agent": "claude",
+        "submission_id": sid,
+        "file_path": candidate(
             tmp_path,
             PLANNING_NOTE if kind == "planning" else COMPLETE_NOTE,
             f"{kind}.md",
         ),
-    )
+    }
+    if kind != "planning":
+        prepare_kwargs.update(TITLE_ARGS)
+    prepared = app.execute("prepare", **prepare_kwargs)
     if prepared["state"] == "awaiting_verification":
         approved = app.execute(
             "approve",
@@ -233,10 +243,10 @@ def test_success_writes_once_moves_from_verification_and_consumes(tmp_path):
     result = app.execute("submit", submission_id=sid, file_path=final_path)
 
     assert result["state"] == "consumed"
-    assert backend.notes_calls == [("task", COMPLETE_NOTE + "final\n")]
+    assert backend.notes_calls == [("task", CANONICAL_TITLE, COMPLETE_NOTE + "final\n")]
     assert backend.moves == [("task", "123456")]
     row = saved(app, sid)
-    assert row["notes_written_at"]
+    assert row["task_content_written_at"]
     assert row["destination_moved_at"]
     assert row["completed_at"]
     actor, details = submit_audit(app)
@@ -253,7 +263,7 @@ def test_written_retry_ignores_file_and_never_repeats_notes(tmp_path):
         sid,
         {"ready"},
         "written",
-        updates={"notes_written_at": "already-written"},
+        updates={"task_content_written_at": "already-written"},
     )
 
     result = app.execute("submit", submission_id=sid, file_path="/gone/final.md")
@@ -437,8 +447,8 @@ def test_asana_notes_transport_failures_are_uncertain(monkeypatch, failure, expe
 
     monkeypatch.setattr(asana, "TasksApi", TasksApi)
     with pytest.raises(BackendFailure) as exc:
-        AsanaBackend(api_client=object()).update_task_notes(
-            task_gid="task", notes="notes"
+        AsanaBackend(api_client=object()).update_task_content(
+            task_gid="task", title=CANONICAL_TITLE, notes="notes"
         )
     assert exc.value.code == expected
 
@@ -477,26 +487,26 @@ def test_asana_notes_explicit_rejection_server_error_and_malformed_response(
     backend = AsanaBackend(api_client=object())
 
     with pytest.raises(BackendFailure) as rejected:
-        backend.update_task_notes(task_gid="task", notes="one")
+        backend.update_task_content(task_gid="task", title=CANONICAL_TITLE, notes="one")
     assert rejected.value.code == "BACKEND_REJECTED"
 
     with pytest.raises(BackendFailure) as uncertain_5xx:
-        backend.update_task_notes(task_gid="task", notes="two")
+        backend.update_task_content(task_gid="task", title=CANONICAL_TITLE, notes="two")
     assert uncertain_5xx.value.code == "BACKEND_UNCERTAIN"
 
     with pytest.raises(BackendFailure) as malformed_envelope:
-        backend.update_task_notes(task_gid="task", notes="three")
+        backend.update_task_content(task_gid="task", title=CANONICAL_TITLE, notes="three")
     assert malformed_envelope.value.code == "BACKEND_UNCERTAIN"
 
     with pytest.raises(BackendFailure) as malformed_data:
-        backend.update_task_notes(task_gid="task", notes="four")
+        backend.update_task_content(task_gid="task", title=CANONICAL_TITLE, notes="four")
     assert malformed_data.value.code == "BACKEND_UNCERTAIN"
 
     with pytest.raises(BackendFailure) as wrong_task:
-        backend.update_task_notes(task_gid="task", notes="five")
+        backend.update_task_content(task_gid="task", title=CANONICAL_TITLE, notes="five")
     assert wrong_task.value.code == "BACKEND_UNCERTAIN"
 
-    backend.update_task_notes(task_gid="task", notes="six")
+    backend.update_task_content(task_gid="task", title=CANONICAL_TITLE, notes="six")
 
 
 def test_asana_notes_setup_failure_is_confirmed_pre_send(monkeypatch):
@@ -509,7 +519,7 @@ def test_asana_notes_setup_failure_is_confirmed_pre_send(monkeypatch):
 
     monkeypatch.setattr(backend, "client", fail_client)
     with pytest.raises(BackendFailure) as exc:
-        backend.update_task_notes(task_gid="task", notes="notes")
+        backend.update_task_content(task_gid="task", title=CANONICAL_TITLE, notes="notes")
 
     assert exc.value.code == "BACKEND_REJECTED"
     assert exc.value.phase == "pre_send"
@@ -523,7 +533,7 @@ def test_asana_notes_cancelled_setup_is_confirmed_pre_send(monkeypatch):
 
     monkeypatch.setattr(backend, "client", cancel_client)
     with pytest.raises(BackendFailure) as exc:
-        backend.update_task_notes(task_gid="task", notes="notes")
+        backend.update_task_content(task_gid="task", title=CANONICAL_TITLE, notes="notes")
 
     assert exc.value.code == "BACKEND_REJECTED"
     assert exc.value.phase == "pre_send"

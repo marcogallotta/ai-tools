@@ -45,6 +45,14 @@ Portions: 2
 ## PROCESS RECORD
 """
 
+CANONICAL_TITLE = "Dish — recognition"
+TITLE_ARGS = {
+    "dish_name": "Dish",
+    "recognition": "recognition",
+    "no_role_tags": True,
+    "no_blockers": True,
+}
+
 APPROVED_COMPLETE_NOTE = PREPARED_COMPLETE_NOTE.replace(
     "Verification: Pending opposite-family verification",
     "Verification: gpt, 2026-07-21",
@@ -91,7 +99,7 @@ def cooking_task(task_gid: str, notes: str, section_gid: str = "research") -> di
     )
     return {
         "gid": task_gid,
-        "name": f"Task {task_gid}",
+        "name": CANONICAL_TITLE,
         "notes": notes,
         "completed": False,
         "projects": [{"gid": "1215089183018968", "name": "Cooking"}],
@@ -107,7 +115,7 @@ def cooking_task(task_gid: str, notes: str, section_gid: str = "research") -> di
 class FakeBackend:
     def __init__(self, task: dict):
         self.task = dict(task)
-        self.note_writes: list[str] = []
+        self.content_writes: list[tuple[str, str]] = []
         self.moves: list[str] = []
 
     def list_sections(self, project_gid: str) -> list[dict]:
@@ -121,9 +129,12 @@ class FakeBackend:
     def create_bare_task(self, **kwargs):
         raise AssertionError("creation is outside this integration fixture")
 
-    def update_task_notes(self, *, task_gid: str, notes: str) -> None:
+    def update_task_content(
+        self, *, task_gid: str, title: str, notes: str
+    ) -> None:
         assert task_gid == self.task["gid"]
-        self.note_writes.append(notes)
+        self.content_writes.append((title, notes))
+        self.task["name"] = title
         self.task["notes"] = notes
 
     def move_task_to_section(self, *, task_gid: str, section_gid: str) -> None:
@@ -166,7 +177,7 @@ def test_tool_aware_beta_bundle_is_complete_consistent_and_agent_only():
     assert {path.name for path in BUNDLE_DIR.iterdir()} == expected
 
     release = load_tool_aware_release()
-    assert release.version == "fixture-v1a-tool-aware"
+    assert release.version == "fixture-v1b-structured-title"
     assert release.manifests["planning"]["protocol_release"] == release.version
     assert release.manifests["complete_task"]["protocol_release"] == release.version
     validate_manifest_shape(
@@ -184,6 +195,10 @@ def test_tool_aware_beta_bundle_is_complete_consistent_and_agent_only():
     assert "dish start" in combined
     assert "dish prepare" in combined
     assert "dish submit" in combined
+    assert "--dish-name" in combined
+    assert "--recognition" in combined
+    assert "--no-role-tags" in combined
+    assert "--no-blockers" in combined
     assert "dish-admin" not in combined
     assert "bin/asana" not in combined
     assert "asana set-notes" not in combined
@@ -199,6 +214,11 @@ def test_chatgpt_relay_pointer_is_short_and_uses_only_agent_facing_commands():
     assert "self-verified: gpt" in lowered
     assert "dish prepare" in lowered
     assert "dish submit" in lowered
+    assert "--dish-name" in lowered
+    assert "--recognition" in lowered
+    assert "--no-role-tags" in lowered
+    assert "--no-blockers" in lowered
+    assert "tool renders the canonical title" in lowered
     assert "claude" in lowered
     assert "dish-admin" not in lowered
     assert "bin/asana" not in lowered
@@ -211,6 +231,9 @@ def test_activation_runbook_requires_exact_bundle_snapshot_and_single_cutover():
     assert "snapshot" in runbook
     assert "mixed production authority" in runbook
     assert "one cutover" in runbook
+    assert "canonical structured grammar" in runbook
+    assert "[blockers unreviewed]" in runbook
+    assert "title and note changes" in runbook
     assert "no live cooking-task write" in runbook
 
 
@@ -240,7 +263,7 @@ def test_planning_workflow_uses_exact_tool_aware_bundle_end_to_end(tmp_path):
     )
     assert started["ok"] is True
     frozen = started["data"]["frozen_release"]
-    assert frozen["protocol_release"] == "fixture-v1a-tool-aware"
+    assert frozen["protocol_release"] == "fixture-v1b-structured-title"
     assert frozen["protocol_bundle"]["planning"] == (
         BUNDLE_DIR / "dish-planning-protocol.md"
     ).read_text(encoding="utf-8")
@@ -264,7 +287,7 @@ def test_planning_workflow_uses_exact_tool_aware_bundle_end_to_end(tmp_path):
     )
     assert submitted["state"] == "consumed"
     assert submitted["data"]["handoff"] == "planning_research_queue"
-    assert backend.note_writes == [PLANNING_NOTE]
+    assert backend.content_writes == [(CANONICAL_TITLE, PLANNING_NOTE)]
     assert backend.moves == []
 
 
@@ -281,7 +304,7 @@ def test_initial_workflow_uses_exact_tool_aware_bundle_end_to_end(tmp_path):
     )
     assert started["state"] == "drafting"
     frozen = started["data"]["frozen_release"]
-    assert frozen["protocol_release"] == "fixture-v1a-tool-aware"
+    assert frozen["protocol_release"] == "fixture-v1b-structured-title"
     assert frozen["protocol_bundle"] == {
         "research": (BUNDLE_DIR / "dish-research-protocol.md").read_text(
             encoding="utf-8"
@@ -302,6 +325,7 @@ def test_initial_workflow_uses_exact_tool_aware_bundle_end_to_end(tmp_path):
         agent="claude",
         submission_id=started["submission_id"],
         file_path=prepared_candidate,
+        **TITLE_ARGS,
     )
     assert prepared["state"] == "awaiting_verification"
     assert backend.moves == ["verification"]
@@ -325,5 +349,5 @@ def test_initial_workflow_uses_exact_tool_aware_bundle_end_to_end(tmp_path):
     )
     assert submitted["state"] == "consumed"
     assert submitted["data"]["handoff"] == "moved_to_destination"
-    assert backend.note_writes == [APPROVED_COMPLETE_NOTE]
+    assert backend.content_writes == [(CANONICAL_TITLE, APPROVED_COMPLETE_NOTE)]
     assert backend.moves == ["verification", "123456"]

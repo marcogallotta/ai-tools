@@ -6,7 +6,7 @@ import asyncio
 import json
 import sqlite3
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from .constants import (
     AGENT_FAMILIES,
@@ -35,7 +35,12 @@ from .models import (
 from .recovery import begin_write_attempt, finish_write_attempt
 from .results import allowed_actions_for_state, error_envelope, result_envelope
 from .telemetry import calculate_change_diff
-from .validation import extract_exact_label_line, validate_note
+from .validation import (
+    extract_exact_label_line,
+    parse_canonical_title,
+    validate_note,
+    validate_title_declaration,
+)
 
 
 class CommandBackend(Protocol):
@@ -47,7 +52,9 @@ class CommandBackend(Protocol):
         self, *, title: str, project_gid: str, section_gid: str
     ) -> dict[str, Any]: ...
 
-    def update_task_notes(self, *, task_gid: str, notes: str) -> None: ...
+    def update_task_content(
+        self, *, task_gid: str, title: str, notes: str
+    ) -> None: ...
 
     def move_task_to_section(self, *, task_gid: str, section_gid: str) -> None: ...
 
@@ -155,6 +162,35 @@ def _decode_json(value: Any, *, field_name: str) -> Any:
             rule="stored_submission_malformed",
             details={"field": field_name},
         ) from exc
+
+
+def _title_arguments_present(
+    *,
+    dish_name: Any = None,
+    recognition: Any = None,
+    roles: Any = None,
+    no_role_tags: bool = False,
+    blockers: Any = None,
+    no_blockers: bool = False,
+) -> bool:
+    return any(
+        (
+            dish_name is not None,
+            recognition is not None,
+            roles is not None,
+            no_role_tags,
+            blockers is not None,
+            no_blockers,
+        )
+    )
+
+
+def _json_text(value: Mapping[str, Any] | None) -> str | None:
+    if value is None:
+        return None
+    return json.dumps(
+        dict(value), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
 
 
 class DishApplication:
@@ -325,8 +361,28 @@ class DishApplication:
         trace.task_gid = task_gid
         task = self._read_live_task(task_gid)
         _require_cooking_task(task, task_gid)
+        raw_title = task.get("name")
+        release = self.release_loader()
+        parsed_title = parse_canonical_title(
+            raw_title, release.manifests["complete_task"]
+        )
         return result_envelope(
-            command="read", task_gid=task_gid, data={"task": task}
+            command="read",
+            task_gid=task_gid,
+            data={
+                "task": task,
+                "structured_title": {
+                    "raw": raw_title,
+                    "canonical": parsed_title.ok,
+                    "fields": (
+                        parsed_title.fields.as_dict()
+                        if parsed_title.fields is not None
+                        else None
+                    ),
+                    "errors": list(parsed_title.errors),
+                    "protocol_release": release.version,
+                },
+            },
         )
 
     def _command_inspect(
@@ -380,6 +436,28 @@ class DishApplication:
                 )
             ),
             "baseline_verification_line": row["baseline_verification_line"],
+            "baseline_title": {
+                "raw": row["baseline_title"],
+                "fields": (
+                    None
+                    if row["baseline_title_fields"] is None
+                    else _decode_json(
+                        row["baseline_title_fields"],
+                        field_name="baseline_title_fields",
+                    )
+                ),
+            },
+            "prepared_title": {
+                "raw": row["prepared_title"],
+                "fields": (
+                    None
+                    if row["prepared_title_fields"] is None
+                    else _decode_json(
+                        row["prepared_title_fields"],
+                        field_name="prepared_title_fields",
+                    )
+                ),
+            },
             "frozen_release": {
                 "protocol_release": row["protocol_release"],
                 "release_commit": row["release_commit"],
@@ -393,7 +471,7 @@ class DishApplication:
             },
             "completion_markers": {
                 "research_queue_moved_at": row["research_queue_moved_at"],
-                "notes_written_at": row["notes_written_at"],
+                "task_content_written_at": row["task_content_written_at"],
                 "destination_moved_at": row["destination_moved_at"],
                 "approved_at": row["approved_at"],
                 "completed_at": row["completed_at"],
@@ -508,6 +586,30 @@ class DishApplication:
                 "change_reason": change_reason,
             }
         )
+        raw_title = task.get("name")
+        if not isinstance(raw_title, str) or not raw_title.strip():
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "task title is missing or malformed",
+                rule="task_title_malformed",
+            )
+        parsed_baseline_title = parse_canonical_title(
+            raw_title, release.manifests["complete_task"]
+        )
+        if kind == "change" and not parsed_baseline_title.ok:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "change must start from a canonical structured title",
+                errors=parsed_baseline_title.errors,
+            )
+        baseline_title_fields = (
+            parsed_baseline_title.fields.as_dict()
+            if parsed_baseline_title.fields is not None
+            else None
+        )
+        trace.audit_details["baseline_title_canonical"] = (
+            parsed_baseline_title.ok
+        )
         notes = task.get("notes") or ""
         if not isinstance(notes, str):
             raise DishRuleError(
@@ -563,6 +665,8 @@ class DishApplication:
             protocol_bundle=bundle,
             canonical_manifest_text=release.manifest_texts[manifest_key],
             baseline_exemption_tags=baseline_tags,
+            baseline_title=raw_title,
+            baseline_title_fields=baseline_title_fields,
             editor_agent=agent,
             change_level=change_level,
             change_reason=change_reason,
@@ -738,6 +842,17 @@ class DishApplication:
                     "gid": final["destination_section_gid"],
                 },
                 "research_handoff": trace.audit_details["research_handoff"],
+                "prepared_title": {
+                    "raw": final["prepared_title"],
+                    "fields": (
+                        None
+                        if final["prepared_title_fields"] is None
+                        else _decode_json(
+                            final["prepared_title_fields"],
+                            field_name="prepared_title_fields",
+                        )
+                    ),
+                },
             },
         )
 
@@ -749,6 +864,12 @@ class DishApplication:
         submission_id: str,
         file_path: str | None = None,
         exemption_revision: str | None = None,
+        dish_name: str | None = None,
+        recognition: str | None = None,
+        roles: Sequence[str] | None = None,
+        no_role_tags: bool = False,
+        blockers: Sequence[str] | None = None,
+        no_blockers: bool = False,
     ) -> dict[str, Any]:
         agent_family(agent)
         submission_id = _clean_required(
@@ -787,6 +908,44 @@ class DishApplication:
         manifest = _decode_json(row["canonical_manifest"], field_name="canonical_manifest")
         validation = validate_note(candidate, manifest)
         errors = list(validation.errors)
+
+        title_arguments_present = _title_arguments_present(
+            dish_name=dish_name,
+            recognition=recognition,
+            roles=roles,
+            no_role_tags=no_role_tags,
+            blockers=blockers,
+            no_blockers=no_blockers,
+        )
+        if row["submission_kind"] == "planning":
+            if title_arguments_present:
+                errors.append({"rule": "planning_title_declaration_forbidden"})
+            prepared_title = row["baseline_title"]
+            prepared_title_fields = (
+                None
+                if row["baseline_title_fields"] is None
+                else _decode_json(
+                    row["baseline_title_fields"],
+                    field_name="baseline_title_fields",
+                )
+            )
+        else:
+            title_validation = validate_title_declaration(
+                manifest,
+                dish_name=dish_name,
+                recognition=recognition,
+                roles=roles,
+                no_role_tags=no_role_tags,
+                blockers=blockers,
+                no_blockers=no_blockers,
+            )
+            errors.extend(title_validation.errors)
+            prepared_title = title_validation.title
+            prepared_title_fields = (
+                title_validation.fields.as_dict()
+                if title_validation.fields is not None
+                else None
+            )
 
         if row["submission_kind"] == "change" and row["change_level"] == "small":
             actual_verification = extract_exact_label_line(candidate, "Verification")
@@ -843,8 +1002,16 @@ class DishApplication:
             trace=trace, row=row, candidate=candidate, manifest=manifest
         )
 
+        if prepared_title is None:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "validated prepare did not produce a title",
+                rule="prepared_title_missing",
+            )
         updates = {
             "prepared_exemption_tags": json.dumps(list(prepared_tags or ()), separators=(",", ":")),
+            "prepared_title": prepared_title,
+            "prepared_title_fields": _json_text(prepared_title_fields),
             "destination_section_name": destination.name,
             "destination_section_gid": destination.gid,
             "exemption_revision": clean_revision,
@@ -859,7 +1026,14 @@ class DishApplication:
             trace.state = final["status"]
             return result_envelope(
                 command="prepare", task_gid=row["task_gid"], submission_id=submission_id,
-                state=final["status"], data={"destination": {"name": destination.name, "gid": destination.gid}}
+                state=final["status"],
+                data={
+                    "destination": {"name": destination.name, "gid": destination.gid},
+                    "prepared_title": {
+                        "raw": prepared_title,
+                        "fields": prepared_title_fields,
+                    },
+                },
             )
 
         updates["required_verifier_family"] = opposite_family(row["editor_family"])
@@ -877,6 +1051,12 @@ class DishApplication:
         submission_id: str,
         file_path: str,
         correction: str,
+        dish_name: str | None = None,
+        recognition: str | None = None,
+        roles: Sequence[str] | None = None,
+        no_role_tags: bool = False,
+        blockers: Sequence[str] | None = None,
+        no_blockers: bool = False,
     ) -> dict[str, Any]:
         row, verifier_family = self._load_verifier_submission(
             trace=trace,
@@ -910,6 +1090,52 @@ class DishApplication:
         )
         validation = validate_note(candidate, manifest)
         errors = list(validation.errors)
+
+        title_arguments_present = _title_arguments_present(
+            dish_name=dish_name,
+            recognition=recognition,
+            roles=roles,
+            no_role_tags=no_role_tags,
+            blockers=blockers,
+            no_blockers=no_blockers,
+        )
+        replacement_title = None
+        replacement_title_fields = None
+        if clean_correction == "none" and title_arguments_present:
+            errors.append({"rule": "title_correction_forbidden"})
+        elif clean_correction == "small" and title_arguments_present:
+            title_validation = validate_title_declaration(
+                manifest,
+                dish_name=dish_name,
+                recognition=recognition,
+                roles=roles,
+                no_role_tags=no_role_tags,
+                blockers=blockers,
+                no_blockers=no_blockers,
+            )
+            errors.extend(title_validation.errors)
+            replacement_title = title_validation.title
+            replacement_title_fields = (
+                title_validation.fields.as_dict()
+                if title_validation.fields is not None
+                else None
+            )
+
+        prepared_title = str(row["prepared_title"] or "").strip()
+        if not prepared_title:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "submission is missing its prepared title",
+                rule="prepared_title_missing",
+            )
+        prepared_title_fields = (
+            None
+            if row["prepared_title_fields"] is None
+            else _decode_json(
+                row["prepared_title_fields"],
+                field_name="prepared_title_fields",
+            )
+        )
 
         prepared_tags = tuple(
             _decode_json(
@@ -997,16 +1223,27 @@ class DishApplication:
                 errors=errors,
             )
 
+        approval_updates: dict[str, Any] = {
+            "verifier_agent": agent,
+            "verifier_family": verifier_family,
+            "approved_at": utc_now(),
+        }
+        if replacement_title is not None:
+            approval_updates.update(
+                {
+                    "prepared_title": replacement_title,
+                    "prepared_title_fields": _json_text(replacement_title_fields),
+                }
+            )
+            prepared_title = replacement_title
+            prepared_title_fields = replacement_title_fields
+        trace.audit_details["title_replaced"] = replacement_title is not None
         final = transition_submission(
             self.conn,
             row["submission_id"],
             {"awaiting_verification"},
             "ready",
-            updates={
-                "verifier_agent": agent,
-                "verifier_family": verifier_family,
-                "approved_at": utc_now(),
-            },
+            updates=approval_updates,
         )
         trace.state = final["status"]
         return result_envelope(
@@ -1021,6 +1258,10 @@ class DishApplication:
                 "destination": {
                     "name": destination.name if destination else None,
                     "gid": destination.gid if destination else None,
+                },
+                "prepared_title": {
+                    "raw": prepared_title,
+                    "fields": prepared_title_fields,
                 },
             },
         )
@@ -1060,13 +1301,20 @@ class DishApplication:
         except DishRuleError:
             pass
 
-    def _write_notes_once(
+    def _write_content_once(
         self,
         *,
         trace: CommandTrace,
         row: sqlite3.Row,
         candidate: str,
     ) -> sqlite3.Row:
+        prepared_title = str(row["prepared_title"] or "").strip()
+        if not prepared_title:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "ready submission is missing its prepared title",
+                rule="prepared_title_missing",
+            )
         attempt = begin_write_attempt(self.conn, row["submission_id"])
         trace.state = "in_flight"
         trace.audit_details.update(
@@ -1076,8 +1324,10 @@ class DishApplication:
             }
         )
         try:
-            self.backend.update_task_notes(
-                task_gid=row["task_gid"], notes=candidate
+            self.backend.update_task_content(
+                task_gid=row["task_gid"],
+                title=prepared_title,
+                notes=candidate,
             )
         except BackendFailure as exc:
             target = (
@@ -1103,7 +1353,7 @@ class DishApplication:
         except (Exception, asyncio.CancelledError) as exc:
             uncertain = BackendFailure(
                 "BACKEND_UNCERTAIN",
-                f"notes write outcome is unknown: {exc}",
+                f"title-and-notes write outcome is unknown: {exc}",
                 retryable=False,
                 details={"exception_type": type(exc).__name__},
             )
@@ -1230,7 +1480,7 @@ class DishApplication:
         trace.audit_details["write_outcome"] = "already_written"
         if row["status"] == "ready":
             candidate = self._load_candidate_file(file_path)
-            row = self._write_notes_once(
+            row = self._write_content_once(
                 trace=trace, row=row, candidate=candidate
             )
         return self._complete_destination_handoff(trace=trace, row=row)

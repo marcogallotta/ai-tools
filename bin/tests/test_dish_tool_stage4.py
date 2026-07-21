@@ -31,13 +31,20 @@ Verification: original verification text
 Portions: 2
 ## PROCESS RECORD
 """
+CANONICAL_TITLE = "Dish — recognition"
+TITLE_ARGS = {
+    "dish_name": "Dish",
+    "recognition": "recognition",
+    "no_role_tags": True,
+    "no_blockers": True,
+}
 
 
 def release_fixture():
     planning_text = (FIXTURE_DIR / "dish-planning-manifest.json").read_text()
     complete_text = (FIXTURE_DIR / "dish-complete-task-manifest.json").read_text()
     return ResolvedRelease(
-        version="fixture-v1",
+        version="fixture-v2-structured-title",
         commit="fixture-commit",
         root=FIXTURE_DIR,
         protocols={
@@ -57,7 +64,7 @@ def task(notes, section="research"):
     name = next(s["name"] for s in SECTIONS if s["gid"] == section)
     return {
         "gid": "task",
-        "name": "Task",
+        "name": CANONICAL_TITLE,
         "notes": notes,
         "projects": [{"gid": "1215089183018968"}],
         "memberships": [
@@ -114,6 +121,7 @@ def awaiting_verification(app, tmp_path):
         agent="claude",
         submission_id=sid,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE),
+        **TITLE_ARGS
     )
     assert prepared["state"] == "awaiting_verification"
     return sid
@@ -317,6 +325,7 @@ def test_reject_take_ownership_changes_editor_and_next_route(tmp_path):
         agent="gpt",
         submission_id=sid,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE, "owned.md"),
+        **TITLE_ARGS
     )
     assert prepared["state"] == "awaiting_verification"
     assert row(app, sid)["required_verifier_family"] == "claude"
@@ -337,6 +346,7 @@ def test_second_rejection_requires_change_and_escalates_with_both_reasons(tmp_pa
         agent="claude",
         submission_id=sid,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE, "second-pass.md"),
+        **TITLE_ARGS
     )
     assert prepared["state"] == "awaiting_verification"
 
@@ -375,6 +385,7 @@ def test_agent_workflow_commands_are_blocked_in_awaiting_human(tmp_path):
         agent="claude",
         submission_id=sid,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE, "second-pass.md"),
+        **TITLE_ARGS
     )
     app.execute(
         "reject",
@@ -390,6 +401,7 @@ def test_agent_workflow_commands_are_blocked_in_awaiting_human(tmp_path):
             agent="claude",
             submission_id=sid,
             file_path=write_candidate(tmp_path, COMPLETE_NOTE, "blocked.md"),
+        **TITLE_ARGS
         ),
         app.execute(
             "approve",
@@ -425,6 +437,7 @@ def test_admin_unblock_requires_state_and_reason_and_retains_history(tmp_path):
         agent="claude",
         submission_id=sid,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE, "second-pass.md"),
+        **TITLE_ARGS
     )
     app.execute(
         "reject",

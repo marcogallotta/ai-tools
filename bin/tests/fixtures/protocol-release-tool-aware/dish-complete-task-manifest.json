@@ -61,5 +61,20 @@
     ]
   },
   "manifest_kind": "complete_task",
-  "protocol_release": "fixture-v1a-tool-aware"
+  "protocol_release": "fixture-v1b-structured-title",
+  "title": {
+    "marker_pattern": "^[^\\[\\]\\r\\n]+$",
+    "marker_prefix": "[",
+    "marker_suffix": "]",
+    "role_tags": [
+      "side",
+      "dessert",
+      "component",
+      "condiment",
+      "benchmark",
+      "comparison"
+    ],
+    "separator": " — ",
+    "unreviewed_blocker": "blockers unreviewed"
+  }
 }

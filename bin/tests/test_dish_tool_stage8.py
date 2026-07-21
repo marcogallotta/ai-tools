@@ -19,6 +19,7 @@ REPORT_PATTERN = re.compile(
 EXPECTED_REPORTS = {
     "command_counts",
     "validation_failure_rates",
+    "title_validation_failure_rates",
     "rejection_rates",
     "human_review_rates",
     "submit_outcomes",
@@ -169,6 +170,7 @@ def _fixture_connection(tmp_path):
                 {"rule": "heading_missing", "heading": "WHAT TO BUY"},
                 {"rule": "heading_missing", "heading": "CHECK BEFORE COOKING"},
                 {"rule": "invalid_exemptions"},
+                {"rule": "title_boundary_ambiguous"},
             ],
             submission_kind="change",
             change_level="large",
@@ -333,7 +335,7 @@ def _fixture_connection(tmp_path):
 
     for _ in range(2):
         add(
-            event_type="generic_note_bypass",
+            event_type="generic_content_bypass",
             task_gid="task-a",
             actor_agent="codex",
             details={
@@ -344,7 +346,29 @@ def _fixture_connection(tmp_path):
             },
         )
     add(
-        event_type="generic_note_bypass",
+        event_type="generic_content_bypass",
+        task_gid="task-a",
+        actor_agent="codex",
+        details={
+            "command": "rename",
+            "mode": "v1a_advisory",
+            "resolution": "managed_section",
+            "fields": ["name"],
+        },
+    )
+    add(
+        event_type="generic_content_bypass",
+        task_gid="task-a",
+        actor_agent="codex",
+        details={
+            "command": "raw",
+            "mode": "v1a_advisory",
+            "resolution": "managed_section",
+            "fields": ["name", "notes"],
+        },
+    )
+    add(
+        event_type="generic_content_bypass",
         task_gid=None,
         actor_agent=None,
         details={
@@ -434,6 +458,18 @@ def test_validation_failure_rates_deduplicate_rules_per_invocation(tmp_path):
     assert prepare_exemptions["validation_failure_rate"] == 0.5
 
 
+def test_title_validation_failure_rates_are_separate(tmp_path):
+    conn = _fixture_connection(tmp_path)
+    rows = _rows(conn, "title_validation_failure_rates")
+
+    row = _row_by(
+        rows, command="start", rule="title_boundary_ambiguous"
+    )
+    assert row["title_validation_failure_events"] == 1
+    assert row["command_events"] == 2
+    assert row["title_validation_failure_rate"] == 0.5
+
+
 def test_rejection_and_repeated_rejection_rates_use_applied_decisions(tmp_path):
     conn = _fixture_connection(tmp_path)
     row = _rows(conn, "rejection_rates")[0]
@@ -499,6 +535,7 @@ def test_advisory_bypasses_group_by_task_agent_command_and_resolution(tmp_path):
         actor_agent="codex",
         command="set-notes",
         resolution="managed_section",
+        content_kind="notes",
     )
     assert managed["bypass_count"] == 2
     assert managed["first_seen_at"] < managed["last_seen_at"]
@@ -509,8 +546,26 @@ def test_advisory_bypasses_group_by_task_agent_command_and_resolution(tmp_path):
         actor_agent="<unknown>",
         command="create-task",
         resolution="section_unresolved",
+        content_kind="notes",
     )
     assert unresolved_create["bypass_count"] == 1
+
+    assert _row_by(
+        rows,
+        task_gid="task-a",
+        actor_agent="codex",
+        command="rename",
+        resolution="managed_section",
+        content_kind="title",
+    )["bypass_count"] == 1
+    assert _row_by(
+        rows,
+        task_gid="task-a",
+        actor_agent="codex",
+        command="raw",
+        resolution="managed_section",
+        content_kind="title_and_notes",
+    )["bypass_count"] == 1
 
 
 def test_change_diff_distributions_group_by_declared_level(tmp_path):

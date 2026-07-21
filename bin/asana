@@ -56,8 +56,8 @@ def advisory_guard():
     return _ADVISORY_GUARD
 
 
-def _advise_task_notes(gid, command, fields=("notes",), operation=None):
-    advisory_guard().before_task_notes(
+def _advise_task_content(gid, command, fields=("notes",), operation=None):
+    advisory_guard().before_task_content(
         gid, command=command, fields=fields, operation=operation
     )
 
@@ -164,7 +164,7 @@ def c_notes(gid):
 
 def c_set_notes(gid, text):
     notes = _text(text)
-    _advise_task_notes(gid, "set-notes")
+    _advise_task_content(gid, "set-notes")
     _call(asana.TasksApi(client()).update_task, {"data": {"notes": notes}}, gid, {}, context="task %s" % gid)
     print("set-notes:", gid)
 
@@ -173,7 +173,7 @@ def c_append(gid, text):
     tasks_api = asana.TasksApi(client())
     cur = _call(tasks_api.get_task, gid, {"opt_fields": "notes"}, context="task %s" % gid).get("notes") or ""
     updated = cur + _text(text)
-    _advise_task_notes(gid, "append")
+    _advise_task_content(gid, "append")
     _call(tasks_api.update_task, {"data": {"notes": updated}}, gid, {}, context="task %s" % gid)
     print("append:", gid)
 
@@ -191,12 +191,13 @@ def c_replace(gid, old=None, new=None):
     nmatch = cur.count(old)
     if nmatch != 1:
         sys.exit("replace aborted: 'old' found %d times (need exactly 1)" % nmatch)
-    _advise_task_notes(gid, "replace")
+    _advise_task_content(gid, "replace")
     _call(tasks_api.update_task, {"data": {"notes": cur.replace(old, new)}}, gid, {}, context="task %s" % gid)
     print("replace:", gid)
 
 
 def c_rename(gid, name):
+    _advise_task_content(gid, "rename", fields=("name",))
     _call(asana.TasksApi(client()).update_task, {"data": {"name": name}}, gid, {}, context="task %s" % gid)
     print("rename:", gid)
 
@@ -255,10 +256,12 @@ def c_move(gid, section):
 
 def c_create_task(project, name, section, notes):
     d = {"name": name, "projects": [project]}
+    fields = ["name"]
     if notes is not None:
         note_text = _text(notes)
-        _advise_create_task(project, section, "create-task")
+        fields.append("notes")
         d["notes"] = note_text
+    _advise_create_task(project, section, "create-task", fields=fields)
     t = _call(asana.TasksApi(client()).create_task, {"data": d}, {}, context="project %s" % project)
     if section:
         _call(asana.SectionsApi(client()).add_task_for_section, {"data": {"task": t["gid"]}}, section, {}, context="section %s" % section)
@@ -267,8 +270,13 @@ def c_create_task(project, name, section, notes):
 
 def c_create_subtask(parent, name, notes):
     d = {"name": name}
+    fields = ["name"]
     if notes is not None:
         d["notes"] = _text(notes)
+        fields.append("notes")
+    advisory_guard().before_create_subtask(
+        parent_gid=parent, command="create-subtask", fields=fields
+    )
     print(_call(asana.TasksApi(client()).create_subtask_for_task, {"data": d}, parent, {}, context="task %s" % parent)["gid"])
 
 
@@ -405,10 +413,15 @@ def c_batch_apply(path):
         created_this_op = None  # set once create succeeds, in case a later step in the same op fails
         try:
             if action == "update_task":
-                if "notes" in op["fields"]:
-                    _advise_task_notes(
+                content_fields = tuple(
+                    field for field in ("name", "notes", "html_notes")
+                    if field in op["fields"]
+                )
+                if content_fields:
+                    _advise_task_content(
                         op["task"],
                         "batch-apply",
+                        fields=content_fields,
                         operation=op["source_action"],
                     )
                 tasks_api.update_task({"data": op["fields"]}, op["task"], {})
@@ -418,22 +431,28 @@ def c_batch_apply(path):
                 matches = notes.count(op["old"])
                 if matches != 1:
                     raise _BatchOpFailed("old text found %d times (need exactly 1)" % matches)
-                _advise_task_notes(
-                    op["task"], "batch-apply", operation="replace_notes"
+                _advise_task_content(
+                    op["task"],
+                    "batch-apply",
+                    fields=("notes",),
+                    operation="replace_notes",
                 )
                 tasks_api.update_task({"data": {"notes": notes.replace(op["old"], op["new"])}}, op["task"], {})
             elif action == "move":
                 sections_api.add_task_for_section({"data": {"task": op["task"]}}, op["section"], {})
             elif action == "create_task":
                 d = {"name": op["name"], "projects": [op["project"]]}
+                content_fields = ["name"]
                 if op.get("notes") is not None:
-                    _advise_create_task(
-                        op["project"],
-                        op.get("section"),
-                        "batch-apply",
-                        operation="create_task",
-                    )
                     d["notes"] = op["notes"]
+                    content_fields.append("notes")
+                _advise_create_task(
+                    op["project"],
+                    op.get("section"),
+                    "batch-apply",
+                    fields=content_fields,
+                    operation="create_task",
+                )
                 t = tasks_api.create_task({"data": d}, {})["data"]
                 created.append(t["gid"])
                 created_this_op = t["gid"]
@@ -441,8 +460,16 @@ def c_batch_apply(path):
                     sections_api.add_task_for_section({"data": {"task": t["gid"]}}, op["section"], {})
             elif action == "create_subtask":
                 d = {"name": op["name"]}
+                content_fields = ["name"]
                 if op.get("notes") is not None:
                     d["notes"] = op["notes"]
+                    content_fields.append("notes")
+                advisory_guard().before_create_subtask(
+                    parent_gid=op["parent"],
+                    command="batch-apply",
+                    fields=content_fields,
+                    operation="create_subtask",
+                )
                 t = tasks_api.create_subtask_for_task({"data": d}, op["parent"], {})["data"]
                 created.append(t["gid"])
                 created_this_op = t["gid"]

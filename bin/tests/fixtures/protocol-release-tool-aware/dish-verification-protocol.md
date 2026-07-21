@@ -14,9 +14,14 @@ With no verifier edit:
 
 `dish approve <submission-id> --agent <verifier> --file <complete-file> --correction none`
 
-After a clear small correction made by the verifier:
+After a clear small notes-only correction made by the verifier:
 
 `dish approve <submission-id> --agent <verifier> --file <corrected-complete-file> --correction small`
+
+A small correction may instead replace the complete structured title. When it does, provide the
+full declaration again with `--dish-name`, `--recognition`, exactly one role declaration choice,
+and exactly one blocker declaration choice. Partial title edits are not accepted. The tool renders
+and writes the title; the verifier supplies fields, not bracket syntax.
 
 Approval reruns deterministic validation. Destination drift returns the submission for a new
 Research preparation rather than silently changing the frozen handoff.

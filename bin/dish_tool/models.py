@@ -126,6 +126,33 @@ class ValidationResult:
 
 
 @dataclass(frozen=True)
+class TitleFields:
+    role_tags: tuple[str, ...]
+    blockers: tuple[str, ...]
+    dish_name: str
+    recognition: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "role_tags": list(self.role_tags),
+            "blockers": list(self.blockers),
+            "dish_name": self.dish_name,
+            "recognition": self.recognition,
+        }
+
+
+@dataclass(frozen=True)
+class TitleValidationResult:
+    errors: tuple[dict[str, Any], ...]
+    title: str | None = None
+    fields: TitleFields | None = None
+
+    @property
+    def ok(self) -> bool:
+        return not self.errors and self.title is not None and self.fields is not None
+
+
+@dataclass(frozen=True)
 class ProcessIdentity:
     hostname: str
     pid: int

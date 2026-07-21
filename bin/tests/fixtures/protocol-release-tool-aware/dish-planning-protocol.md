@@ -13,7 +13,8 @@ Use `dish` as the only interface for a protocol-managed Cooking task. Commands r
 4. Read the complete frozen release returned by `start` before authoring. The returned planning
    protocol and manifest govern this submission until it ends.
 
-Planning starts only from empty notes. Produce one complete candidate file matching the returned
+Planning starts only from empty notes. Its free working title is preserved unchanged; do not pass
+structured-title arguments during planning. Produce one complete candidate file matching the returned
 planning manifest. It must contain the complete Planning brief, including one `Destination section:`
 and one `Exemptions:` field. Do not submit a patch or fragment.
 

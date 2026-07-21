@@ -335,20 +335,84 @@ ORDER BY change_level, metric, metric_value;
 -- end report
 
 -- report: advisory_bypasses
+WITH bypass_events AS (
+    SELECT
+        a.*,
+        CASE
+            WHEN EXISTS (
+                SELECT 1 FROM json_each(a.details, '$.fields')
+                WHERE value = 'name'
+            ) AND EXISTS (
+                SELECT 1 FROM json_each(a.details, '$.fields')
+                WHERE value IN ('notes', 'html_notes')
+            ) THEN 'title_and_notes'
+            WHEN EXISTS (
+                SELECT 1 FROM json_each(a.details, '$.fields')
+                WHERE value = 'name'
+            ) THEN 'title'
+            WHEN EXISTS (
+                SELECT 1 FROM json_each(a.details, '$.fields')
+                WHERE value IN ('notes', 'html_notes')
+            ) THEN 'notes'
+            ELSE 'unknown'
+        END AS content_kind
+    FROM audit_events AS a
+    WHERE a.event_type IN ('generic_content_bypass', 'generic_note_bypass')
+)
 SELECT
-    coalesce(a.task_gid, '<pending-create>') AS task_gid,
-    coalesce(a.actor_agent, '<unknown>') AS actor_agent,
-    coalesce(json_extract(a.details, '$.command'), '<unknown>') AS command,
-    coalesce(json_extract(a.details, '$.resolution'), '<unknown>') AS resolution,
+    coalesce(task_gid, '<pending-create>') AS task_gid,
+    coalesce(actor_agent, '<unknown>') AS actor_agent,
+    coalesce(json_extract(details, '$.command'), '<unknown>') AS command,
+    coalesce(json_extract(details, '$.resolution'), '<unknown>') AS resolution,
+    content_kind,
     count(*) AS bypass_count,
-    min(a.created_at) AS first_seen_at,
-    max(a.created_at) AS last_seen_at
-FROM audit_events AS a
-WHERE a.event_type = 'generic_note_bypass'
+    min(created_at) AS first_seen_at,
+    max(created_at) AS last_seen_at
+FROM bypass_events
 GROUP BY
-    coalesce(a.task_gid, '<pending-create>'),
-    coalesce(a.actor_agent, '<unknown>'),
-    coalesce(json_extract(a.details, '$.command'), '<unknown>'),
-    coalesce(json_extract(a.details, '$.resolution'), '<unknown>')
-ORDER BY bypass_count DESC, task_gid, actor_agent, command, resolution;
+    coalesce(task_gid, '<pending-create>'),
+    coalesce(actor_agent, '<unknown>'),
+    coalesce(json_extract(details, '$.command'), '<unknown>'),
+    coalesce(json_extract(details, '$.resolution'), '<unknown>'),
+    content_kind
+ORDER BY bypass_count DESC, task_gid, actor_agent, command, resolution, content_kind;
+-- end report
+
+-- report: title_validation_failure_rates
+WITH dish_commands AS (
+    SELECT
+        a.event_id,
+        substr(a.event_type, length('dish.') + 1) AS command,
+        json_extract(a.details, '$.code') AS code,
+        a.details
+    FROM audit_events AS a
+    WHERE a.event_type LIKE 'dish.%'
+),
+command_totals AS (
+    SELECT command, count(*) AS command_events
+    FROM dish_commands
+    GROUP BY command
+),
+distinct_title_failures AS (
+    SELECT DISTINCT
+        c.event_id,
+        c.command,
+        json_extract(error.value, '$.rule') AS rule
+    FROM dish_commands AS c
+    JOIN json_each(c.details, '$.errors') AS error
+    WHERE c.code = 'VALIDATION_FAILED'
+      AND json_type(error.value, '$.rule') = 'text'
+      AND json_extract(error.value, '$.rule') LIKE '%title%'
+)
+SELECT
+    f.command,
+    f.rule,
+    count(*) AS title_validation_failure_events,
+    t.command_events,
+    round(1.0 * count(*) / nullif(t.command_events, 0), 4)
+        AS title_validation_failure_rate
+FROM distinct_title_failures AS f
+JOIN command_totals AS t USING (command)
+GROUP BY f.command, f.rule, t.command_events
+ORDER BY title_validation_failure_events DESC, f.command, f.rule;
 -- end report

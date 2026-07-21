@@ -26,6 +26,13 @@ PLANNING_NOTE = """# PLANNING BRIEF
 Destination section: Planned (123456)
 Exemptions: None
 """
+CANONICAL_TITLE = "Dish — recognition"
+TITLE_ARGS = {
+    "dish_name": "Dish",
+    "recognition": "recognition",
+    "no_role_tags": True,
+    "no_blockers": True,
+}
 COMPLETE_NOTE = """# DISH
 Exemptions: None
 Destination section: Planned (123456)
@@ -43,7 +50,7 @@ def release_fixture() -> ResolvedRelease:
         FIXTURE_DIR / "dish-complete-task-manifest.json"
     ).read_text()
     return ResolvedRelease(
-        version="fixture-v1",
+        version="fixture-v2-structured-title",
         commit="fixture-commit",
         root=FIXTURE_DIR,
         protocols={
@@ -68,7 +75,7 @@ def task(notes: str, section: str = "research") -> dict:
     name = next(item["name"] for item in SECTIONS if item["gid"] == section)
     return {
         "gid": "task",
-        "name": "Task",
+        "name": CANONICAL_TITLE,
         "notes": notes,
         "projects": [{"gid": "1215089183018968"}],
         "memberships": [
@@ -212,6 +219,7 @@ def test_successful_change_prepare_audits_diff_against_current_live_notes(
         agent="claude",
         submission_id=submission_id,
         file_path=write_candidate(tmp_path, candidate),
+        **TITLE_ARGS,
     )
 
     assert result["state"] == "ready"
@@ -235,6 +243,7 @@ def test_non_change_and_failed_prepare_events_have_no_diff_summary(tmp_path) -> 
         agent="claude",
         submission_id=initial_id,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE),
+        **TITLE_ARGS,
     )
     assert passed["ok"]
     assert "change_diff" not in latest_prepare_details(app, initial_id)
@@ -246,6 +255,7 @@ def test_non_change_and_failed_prepare_events_have_no_diff_summary(tmp_path) -> 
         agent="claude",
         submission_id=change_id,
         file_path=write_candidate(tmp_path / "failed", "invalid"),
+        **TITLE_ARGS,
     )
     assert failed["code"] == "VALIDATION_FAILED"
     assert "change_diff" not in latest_prepare_details(app2, change_id)
@@ -264,6 +274,7 @@ def test_move_only_retry_copies_diff_to_successful_prepare_audit(tmp_path) -> No
         agent="claude",
         submission_id=submission_id,
         file_path=write_candidate(tmp_path, candidate),
+        **TITLE_ARGS,
     )
     assert first["code"] == "INTERNAL_ERROR"
     first_diff = latest_prepare_details(app, submission_id)["change_diff"]
@@ -292,6 +303,7 @@ def test_telemetry_read_failure_never_blocks_change_prepare(tmp_path) -> None:
         agent="claude",
         submission_id=submission_id,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE),
+        **TITLE_ARGS,
     )
 
     assert result["state"] == "ready"
@@ -311,6 +323,7 @@ def test_move_only_retry_copies_unavailable_reason_to_success(tmp_path) -> None:
         agent="claude",
         submission_id=submission_id,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE),
+        **TITLE_ARGS,
     )
     assert first["code"] == "INTERNAL_ERROR"
     assert (

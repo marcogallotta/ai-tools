@@ -129,6 +129,21 @@ def complete_manifest(version):
         ],
         "exemptions": planning_manifest(version)["exemptions"],
         "destination_section": planning_manifest(version)["destination_section"],
+        "title": {
+            "role_tags": [
+                "side",
+                "dessert",
+                "component",
+                "condiment",
+                "benchmark",
+                "comparison",
+            ],
+            "marker_pattern": r"^[^\[\]\r\n]+$",
+            "marker_prefix": "[",
+            "marker_suffix": "]",
+            "separator": " — ",
+            "unreviewed_blocker": "blockers unreviewed",
+        },
     }
 
 
@@ -220,7 +235,12 @@ def test_schema_creation_and_migration_are_idempotent(tmp_path):
         "in_flight_process_start",
         "research_queue_moved_at",
         "notes_written_at",
+        "task_content_written_at",
         "destination_moved_at",
+        "baseline_title",
+        "baseline_title_fields",
+        "prepared_title",
+        "prepared_title_fields",
     } <= submission_columns
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
@@ -246,7 +266,7 @@ def test_resolver_accepts_complete_clean_committed_release(release_repo):
     repo, commit = release_repo
     release = resolve_release(repo)
 
-    assert release.version == "fixture-v1"
+    assert release.version == "fixture-v2-structured-title"
     assert release.commit == commit
     assert set(release.protocols) == {"planning", "research", "verification"}
     assert set(release.manifests) == {"planning", "complete_task"}
@@ -381,7 +401,7 @@ def test_resolver_rejects_non_atomic_release_advance(release_repo):
 
 def test_resolver_rejects_reused_release_version(release_repo):
     repo, _ = release_repo
-    (repo / "protocol_release").write_text("fixture-v1\n\n")
+    (repo / "protocol_release").write_text("fixture-v2-structured-title\n\n")
     (repo / "dish-research-protocol.md").write_text("changed\n")
     run_git(repo, "add", "protocol_release", "dish-research-protocol.md")
     run_git(repo, "commit", "-m", "reuse release version")
@@ -411,7 +431,7 @@ def test_frozen_release_survives_later_current_release_changes(release_repo):
     new_commit = commit_release(repo, "fixture v2")
     current = resolve_release(repo)
 
-    assert frozen.version == "fixture-v1"
+    assert frozen.version == "fixture-v2-structured-title"
     assert frozen.commit == old_commit
     assert frozen.protocols["research"] == old_protocol
     assert current.version == "fixture-v2"

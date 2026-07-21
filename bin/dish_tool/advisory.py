@@ -1,4 +1,4 @@
-"""Advisory-only managed-task checks for generic Asana note writes."""
+"""Advisory-only managed-task checks for generic Asana title and note writes."""
 
 from __future__ import annotations
 
@@ -19,7 +19,8 @@ from .database import initialize_database, record_audit
 
 _TASK_PATH = re.compile(r"^/tasks/([^/]+)$")
 _TASKS_PATH = "/tasks"
-_NOTE_FIELDS = frozenset({"notes", "html_notes"})
+_SUBTASKS_PATH = re.compile(r"^/tasks/([^/]+)/subtasks$")
+_CONTENT_FIELDS = frozenset({"name", "notes", "html_notes"})
 
 
 @dataclass(frozen=True)
@@ -47,10 +48,10 @@ def _known_actor() -> str | None:
     return actor if actor in AGENT_FAMILIES else None
 
 
-def _note_fields(payload: Any) -> tuple[str, ...]:
+def _content_fields(payload: Any) -> tuple[str, ...]:
     if not isinstance(payload, Mapping):
         return ()
-    return tuple(sorted(_NOTE_FIELDS.intersection(payload)))
+    return tuple(sorted(_CONTENT_FIELDS.intersection(payload)))
 
 
 def _cooking_creation_target(payload: Mapping[str, Any]) -> tuple[bool, str | None]:
@@ -182,7 +183,7 @@ class AdvisoryGuard:
                 self._conn,
                 submission_id=None,
                 task_gid=task_gid,
-                event_type="generic_note_bypass",
+                event_type="generic_content_bypass",
                 actor_agent=_known_actor(),
                 details=details,
             )
@@ -191,7 +192,7 @@ class AdvisoryGuard:
             # the future v1b block on early by preventing the generic write.
             return
 
-    def before_task_notes(
+    def before_task_content(
         self,
         task_gid: str,
         *,
@@ -232,16 +233,39 @@ class AdvisoryGuard:
             },
         )
 
+    def before_create_subtask(
+        self,
+        *,
+        parent_gid: str,
+        command: str,
+        fields: Sequence[str],
+        operation: str | None = None,
+    ) -> None:
+        self.before_task_content(
+            parent_gid,
+            command=command,
+            fields=fields,
+            operation=operation or "create_subtask",
+        )
+
     def before_raw(self, *, method: str, path: str, payload: Any) -> None:
-        fields = _note_fields(payload)
+        fields = _content_fields(payload)
         if not fields:
             return
         normalized_path = urlsplit(path).path.rstrip("/") or "/"
         task_match = _TASK_PATH.fullmatch(normalized_path)
         method = method.upper()
         if task_match and method not in {"GET", "DELETE"}:
-            self.before_task_notes(
+            self.before_task_content(
                 task_match.group(1), command="raw", fields=fields
+            )
+            return
+        subtask_match = _SUBTASKS_PATH.fullmatch(normalized_path)
+        if subtask_match and method == "POST":
+            self.before_create_subtask(
+                parent_gid=subtask_match.group(1),
+                command="raw",
+                fields=fields,
             )
             return
         if normalized_path == _TASKS_PATH and method == "POST" and isinstance(payload, Mapping):
