@@ -46,6 +46,8 @@ protections may be reconsidered for V2 if usage justifies them.
 - Every submission declares a kind: `planning`, `initial`, or `change`. A `change` also declares a
   level (`small`/`large`) and reason; Python does not infer either value.
 - Every note passed between workflow stages is complete — no patches or fragments.
+- Every command returns one stable JSON result with a machine-readable outcome code, current state,
+  retryability, and legal next agent actions; agents do not scrape human-oriented prose.
 - The tool owns task creation and both queue transitions. Multi-step operations record completed
   steps and are safely retryable without repeating a notes write or making a contradictory move.
 - Planning and complete-task manifests require one `Exemptions:` field. V1 narrowly parses its
@@ -90,8 +92,8 @@ identity and verifier routing).
 
 ## Agent identity and verifier routing
 
-Every command that introduces or checks an attribution (`create`, `read`, `start`, `prepare`,
-`approve`, `reject`) requires:
+Every command that introduces or checks an attribution (`create`, `read`, `inspect`, `start`,
+`prepare`, `approve`, `reject`) requires:
 
 ```text
 --agent claude|gpt|codex
@@ -127,6 +129,48 @@ changes entry; a `small` change preserves the existing signed `Verification:` li
 formal change entry; a `large` change records the material change and resets Verification. V1 does
 not parse these field values, except for the narrow exact-line preservation check on `small`
 submissions described below.
+
+## CLI result contract
+
+Every `dish` and `dish-admin` invocation, including argument-parsing and startup failures, writes
+exactly one JSON object to stdout. Incidental diagnostics go to stderr and are never needed to
+interpret the result. The common envelope is:
+
+```json
+{
+  "ok": false,
+  "command": "prepare",
+  "code": "VALIDATION_FAILED",
+  "task_gid": "...",
+  "submission_id": "...",
+  "state": "drafting",
+  "retryable": true,
+  "allowed_actions": ["prepare"],
+  "data": {},
+  "errors": [{"rule": "missing_label", "field": "Exemptions"}]
+}
+```
+
+Fields that do not apply are `null` or empty, never omitted. `data` carries command-specific
+results, including task content, the frozen protocol bundle, or created IDs. `allowed_actions`
+lists only agent-facing `dish` commands legal from the returned state; a state requiring Marco does
+not expose `dish-admin` invocation details and instead returns `HUMAN_ACTION_REQUIRED` with an empty
+list.
+
+Successful commands use `code: "OK"`. `inspect` is always permitted and therefore omitted from
+`allowed_actions`, which describes the next state-changing step: `drafting` → `prepare`,
+`research_handoff` → `prepare` (move-only retry), `awaiting_verification` → `approve` or `reject`,
+`ready` → `submit`, and `written` → `submit` (move-only retry). `awaiting_human`, `in_flight`,
+`uncertain`, `consumed`, and `discarded` have no legal agent state-changing action.
+
+Stable top-level failure codes are `INVALID_ARGUMENT`, `NOT_FOUND`, `UNMANAGED_TASK`,
+`VALIDATION_FAILED`, `WRONG_STATE`, `AGENT_MISMATCH`, `VERIFIER_FAMILY_MISMATCH`, `CONFLICT`,
+`BACKEND_REJECTED`, `BACKEND_UNCERTAIN`, `HUMAN_ACTION_REQUIRED`, and `INTERNAL_ERROR`.
+Rule-level validation identifiers live in `errors`; prose may explain a failure but never identifies
+it by itself. Exit status is `0` for success, `2` for caller/input/validation failures, `3` for
+state/routing/conflict failures, `4` for confirmed backend rejection, `5` for uncertain backend
+outcomes, and `1` for unexpected internal failure. Tests, protocols, and callers rely on the JSON
+codes rather than wording.
 
 ## Protocol-managed task registry
 
@@ -181,20 +225,29 @@ that release. The resolver loads those committed contents by role and fails clos
 missing, ambiguous, incomplete, or the protocol set has uncommitted changes. Git provides the
 exact-content binding; no combined hash is exposed in tasks.
 
-### 0. `dish create` / `dish read`
+### 0. `dish create` / `dish read` / `dish inspect`
 
 ```text
 dish create --agent claude|gpt|codex --title "<working task title>"
 dish read <task-gid> --agent claude|gpt|codex
+dish inspect <submission-id> --agent claude|gpt|codex
 ```
 
-Creates one bare task in the Cooking project's Research Queue and prints its task GID. It performs
-no notes write. A clear API failure reports failure; an ambiguous outcome is reported for Marco to
-resolve rather than automatically retrying and risking a duplicate task.
+Creates one bare task in the Cooking project's Research Queue and returns its task GID in `data`. It
+performs no notes write. A clear API failure returns `BACKEND_REJECTED`; an ambiguous outcome returns
+`BACKEND_UNCERTAIN` for Marco to resolve rather than automatically retrying and risking a duplicate
+task.
 
 `dish read` returns the complete current task through the backend abstraction. It accepts any
 Cooking task, including an excluded Reference or Sourcing task, because reading does not mutate or
 enrol it. Tool-aware agents do not use the generic Asana CLI to fetch task content.
+
+`dish inspect` returns the submission kind, current state, attribution and required verifier family,
+frozen release and exact protocol/manifest bundle, recorded destination name/GID, completion
+markers, and legal next agent actions. It is read-only and works in every state, including terminal
+states. V1's candidate remains the explicitly controlled file handoff: `inspect` does not store or
+return candidate bytes, invent a candidate path, or weaken the requirement that the verifier receive
+the complete file being reviewed.
 
 ### 1. `dish start`
 
@@ -218,12 +271,12 @@ workflow operates on.
 1. Resolves the current checked-in `protocol_release`, loads the exact role-specific protocol and
    manifest set, and stores the release and Git binding. This frozen bundle governs authorship,
    self-review where required, validation, and verification for the submission's entire life.
-   `start` prints the release and exact documents the author must read before drafting.
+   `start` returns the release and exact documents the author must read in `data` before drafting.
 1. For a `small` change, captures the existing `Verification:` line for exact preservation.
 1. For `initial` or `change`, captures the live Planning brief's normalized exemption-tag set for
    preservation through `prepare` and `approve`; a missing or malformed field makes `start` fail.
-1. Creates one `submissions` row, status `drafting`. The row's `submission_id` is printed back to
-   the caller and used as the token for every subsequent command
+1. Creates one `submissions` row, status `drafting`. The row's `submission_id` is returned in `data`
+   and used as the token for every subsequent command
    (`prepare`/`approve`/`reject`/`submit`) on this submission — there is no separate token object.
 
 The lock is held for as long as the submission stays in a non-terminal status, and releases
@@ -266,9 +319,9 @@ The tool:
    Human decision. V1 verifies the syntax and trusted declaration, not whether Marco truly approved
    it. The flag is rejected for `planning`, `small`, or an unchanged tag set.
 1. Parses the Planning brief's `Destination section` as a section name plus GID, resolves it live,
-   and requires a non-queue section in the Cooking project. The resolved GID is stored for the
-   eventual conditional move; this narrow operational field is parsed even though other field
-   values remain opaque.
+   and requires a non-queue section in the Cooking project. The validated name and resolved GID are
+   stored for approval and the eventual conditional move; this narrow operational field is parsed
+   even though other field values remain opaque.
 1. On a validation failure: reports every violated rule; the submission stays in `drafting` (it
    already exists, opened by `start`), but the attempt is logged (see Logging and observability) so
    failure patterns are visible even before a validation pass.
@@ -324,11 +377,15 @@ dish approve <submission-id> --agent <verifier-agent> --file <final-note> \
 - Requires `verifier-agent`'s family to be the submission's `required_verifier_family`.
 - `--correction small` declares a non-material verifier correction that may be rechecked and signed
   in the same pass. A material verifier correction cannot be approved in place.
-- Reruns template-shape and exemption-tag validation on the verifier's complete final file. Its
-  normalized exemption set must equal the prepared set; a verifier cannot introduce a new revision
-  during `approve`, but may reject the submission back to `drafting` for a new `prepare`. The verifier
-  manually checks the signed `Verification:` value, frozen protocol release, exemption scope, and
-  truth of the recorded Human approval.
+- Reruns template-shape, exemption-tag, and Destination validation on the verifier's complete final
+  file. Its normalized exemption set must equal the prepared set, and its live-resolved Destination
+  name/GID must exactly equal the pair accepted by `prepare`. A verifier cannot introduce either
+  change during `approve`. A Destination mismatch returns the submission to `drafting` for a fresh
+  `prepare`, without counting as a failed verification pass; an exemption revision follows the
+  ordinary rejection/new-`prepare` path. The verifier manually checks the signed `Verification:`
+  value, frozen protocol release, exemption scope, and truth of the recorded Human approval.
+- A Destination mismatch returns `VALIDATION_FAILED`, records the mismatch in the audit event, and
+  leaves `prepare` as the sole legal next state-changing action.
 - On pass, records `verifier_agent`/`verifier_family` and sets status `ready`. Verification
   acceptance does not move the task out of Verification Queue.
 
@@ -363,20 +420,29 @@ dish submit <submission-id> --file <final-note>
    retry.
 1. Trusts the controlled handoff to supply the final reviewed file; V1 does not bind it by hash or
    compare the live task with a saved baseline.
-1. Atomically flips status `ready` → `in_flight`.
+1. Creates a unique write-attempt ID and atomically flips status `ready` → `in_flight`, recording
+   the attempt ID, timestamp, hostname, PID, and process-start token before any request can be sent.
 1. Sends one complete notes update to Asana.
-1. On clear write success: marks `written`, so a retry cannot repeat the notes write.
+1. On clear write success: marks `written`, so a retry cannot repeat the notes write. Every
+   post-request transition is conditional on the same attempt ID, so a stale process cannot commit
+   state for an attempt that Marco has recovered.
 1. If the task is currently in Verification Queue, moves it to the validated Destination section;
    if it is already there, the move is complete; if it remains in Research Queue for a planning
    submission, leaves it there; if it is outside both queues, preserves the manual override. A
    failed move leaves the submission `written` for a move-only retry.
 1. After any required move succeeds: marks `consumed` — the lock releases. A submission is
    single-use: a second `submit` call against a `consumed` submission is rejected outright.
-1. On confirmed API failure: reverts to `ready` — the same validated submission may be retried.
+1. On confirmed non-application: reverts to `ready` — the same validated submission may be retried.
 1. On an ambiguous/uncertain outcome: marks `uncertain` — logged for Marco to check directly in
-   Asana (see Dish admin tool). No incident evidences a crash or ambiguous-outcome case in practice;
-   a deterministic recovery table is a v2 candidate once real usage shows it's needed (see
-   `dish-tool-future.md`).
+   Asana (see Dish admin tool).
+
+The client tracks whether request transmission may have begun. Only a local failure proven to occur
+before any request bytes were sent, or a well-formed backend response explicitly rejecting the
+mutation, is confirmed non-application. A timeout after sending may have begun, connection reset or
+lost response, HTTP 5xx, malformed or undecodable response, cancellation after sending may have
+begun, or SDK exception whose send phase is unknown is `uncertain`. A valid success response is the
+only confirmed success. When the SDK cannot prove the narrower classification, it chooses
+`uncertain`.
 
 The local lock prevents concurrent dish-tool submissions. V1 explicitly accepts that it neither
 prevents nor detects a web, integration, or generic-CLI edit made while that lock is held.
@@ -410,7 +476,7 @@ A `consumed` submission cannot be reused. A fresh `dish start` is required for a
 Examples: deterministic validation failure, missing approval, or routing mismatch. No Asana write
 occurs, and the submission stays locked in its existing state.
 
-### Confirmed API failure
+### Confirmed non-application
 
 When Asana clearly rejects the request and the tool knows the write was not applied, the submission
 returns from `in_flight` to `ready`. The same validated submission may be retried after the cause is
@@ -424,17 +490,19 @@ the submission `consumed`. It never writes the notes again.
 
 ### Uncertain API outcome / crashed process
 
-A timeout, lost response, or connection break moves the submission to `uncertain`. If the tool's own
-process dies while a submission is `in_flight`, nothing recovers it automatically — no timeout,
-background sweep, or automatic retry; the lock stays held and the task simply stays unavailable for
-a new `start` until recovered. This does not block other tasks' submissions.
+A timeout, lost response, connection break, HTTP 5xx, or undecodable response after transmission may
+have begun moves the submission to `uncertain`. If the tool's own process dies while a submission is
+`in_flight`, nothing recovers it automatically — no timeout, background sweep, or automatic retry;
+the lock stays held and the task simply stays unavailable for a new `start` until recovered. This
+does not block other tasks' submissions.
 
 No incident evidences a crashed process or an ambiguous Asana outcome happening in practice. v1a
-logs the `uncertain` state and leaves recovery to Marco checking the live task directly and using
-`dish-admin recover <submission-id>` (Marco-only) to set the submission's status by hand once he's
-confirmed what actually happened. A deterministic outcome table driven off live notes/`modified_at`
-comparison is a v2 candidate once real usage shows this needs to be automated (see
-`dish-tool-future.md`).
+logs the `uncertain` state and leaves recovery to Marco checking the live task directly. Recovery is
+refused while the recorded process identity is still live or until a fixed quarantine interval has
+elapsed; that interval must exceed the client's maximum request lifetime plus a documented safety
+margin. Once both checks pass, `dish-admin recover <submission-id>` (Marco-only) records Marco's
+inspected outcome and the concrete reason for it. A deterministic outcome table driven off live
+notes/`modified_at` comparison remains a v2 candidate (see `dish-tool-future.md`).
 
 ## Dish admin tool
 
@@ -447,9 +515,12 @@ security" framing in Scope.
 
 `dish-admin` covers:
 
-- `dish-admin recover <submission-id>` — after Marco checks the live task, set a stuck `in_flight`
-  or `uncertain` submission to `ready` when the notes were not applied, or `written` when they were;
-  retrying `submit` from `written` completes only the destination move;
+- `dish-admin recover <submission-id> --outcome not-applied|applied --reason "<inspection>"` — after
+  Marco checks the live task, set a stuck `in_flight` or `uncertain` submission to `ready` when the
+  notes were not applied, or `written` when they were. It first requires the recorded process to be
+  dead and the recovery quarantine interval to have elapsed, then invalidates the old attempt ID in
+  the same transaction as the state change. Retrying `submit` from `written` completes only the
+  destination move;
 - `dish-admin discard <submission-id> --reason "<reason>"` — mark an abandoned `drafting`,
   `research_handoff`, `awaiting_verification`, `awaiting_human`, `ready`, or `written` submission
   `discarded`, release its lock, and log the reason
@@ -480,6 +551,7 @@ distinguishable to it.
 - `baseline_exemption_tags` (normalized set captured from the live Planning brief; null for
   `planning`)
 - `prepared_exemption_tags` (normalized set accepted at the latest successful `prepare`)
+- `destination_section_name` (live-validated at the latest successful `prepare`)
 - `destination_section_gid` (live-validated at the latest successful `prepare`)
 - `exemption_revision` (null unless `prepare` records a declared Marco-approved tag-set revision)
 - `editor_agent`
@@ -492,6 +564,11 @@ distinguishable to it.
 - `verifier_agent` (null until approved, or always null for `planning` and `small`)
 - `verifier_family`
 - `status`
+- `write_attempt_id` (unique for the current notes mutation attempt; invalidated by recovery)
+- `in_flight_at`
+- `in_flight_hostname`
+- `in_flight_pid`
+- `in_flight_process_start` (disambiguates PID reuse)
 - `created_at` (set at `start`, when the row and its lock are first created)
 - `approved_at`
 - `completed_at`
@@ -535,8 +612,11 @@ Every `dish` command execution logs an event regardless of outcome:
 - for `approve`/`reject`: verifier agent/family, the decision, and for `reject`, the stated reason,
   so rejection patterns are visible without reading every case individually;
 - for `submit`: the final submission state (`consumed`, `written` after a move failure, reverted to
-  `ready` on confirmed write failure, or `uncertain`), so every outcome is visible in the log, not
+  `ready` on confirmed non-application, or `uncertain`), so every outcome is visible in the log, not
   just returned to the caller.
+
+`inspect` logs the attributed reader and returned state but not a duplicate copy of the frozen
+bundle. Every logged outcome uses the same stable code returned in the CLI JSON envelope.
 
 The generic Asana CLI's managed-task check also logs during v1a even though it does not yet block:
 every note-write to a section-managed task made *outside* the guarded `dish` path is logged as an
@@ -547,8 +627,8 @@ traffic would have been blocked, not a guess.
 A periodic summary — a query over `audit_events`, not a new mechanism — should be able to answer at
 minimum:
 
-- how many `create`/`read`/`start`/`prepare`/`approve`/`reject`/`submit` calls happened, by agent,
-  submission kind, and change level where applicable;
+- how many `create`/`read`/`inspect`/`start`/`prepare`/`approve`/`reject`/`submit` calls happened, by
+  agent, submission kind, and change level where applicable;
 - validation failure rate, broken down by which specific rule failed most often;
 - rejection rate, repeated-rejection-on-same-task rate, and Human-escalation/unblock rate;
 - how many advisory bypass events occurred outside the guarded path, and on which tasks/agents.
@@ -573,7 +653,7 @@ without a valid, `ready` submission.
 ChatGPT has no local CLI or SQLite access, so it cannot run any `dish` command itself.
 
 Before ChatGPT authors anything, a local agent or Marco runs `dish start --agent gpt` with the
-appropriate submission kind, then supplies ChatGPT the printed frozen release and exact protocol
+appropriate submission kind, then supplies ChatGPT the returned frozen release and exact protocol
 documents. An already-authored file cannot be retroactively bound to a release; it must be reviewed
 and regenerated under the frozen bundle.
 
@@ -603,6 +683,10 @@ Implementation follows TDD. Tests must cover:
 - SQLite schema and migrations;
 - tool-owned bare task creation in Research Queue, including clear versus ambiguous failure;
 - tool-owned complete reads, including read-only access to excluded Cooking sections;
+- submission inspection in every state, returning the frozen bundle, routing, completion markers,
+  and exact legal next agent actions without claiming to store the controlled-handoff candidate;
+- the common JSON result envelope, stable outcome/rule codes, retryability, allowed-action mapping,
+  and exit status for every success and failure class;
 - generic note-write advisory logging in v1a, and blocking once v1b is enabled, including
   `create_task` with notes for a managed or unresolved destination while bare creation remains
   allowed;
@@ -617,7 +701,7 @@ Implementation follows TDD. Tests must cover:
 - small and large change-level handling and their Process Record and verifier-routing consequences;
 - the release resolver loads the complete checked-in protocol set, fails closed on missing,
   ambiguous, incomplete, or dirty sets, and chooses the correct role-specific manifest;
-- release and manifest binding occurs at `start`, is printed for authorship, and remains frozen even
+- release and manifest binding occurs at `start`, is returned for authorship, and remains frozen even
   if the current release changes before `prepare` or `submit`;
 - a `small` submission preserves the baseline `Verification:` line byte-for-byte while recording the
   current governing release in submission/audit state, and fails rather than silently migrating an
@@ -627,13 +711,15 @@ Implementation follows TDD. Tests must cover:
   headings/labels, without interpreting their values;
 - `Exemptions:` required in planning and complete-task candidates; `None` and each allowed nutrition
   tag accepted; unknown, duplicate, mixed-`None`, and explanation-less values rejected;
-- `Destination section` required to resolve to the named non-queue Cooking section GID and frozen
-  for the submission's final conditional move;
+- `Destination section` required to resolve to the named non-queue Cooking section name/GID pair and
+  frozen for approval and the submission's final conditional move;
 - initial and change submissions preserve the normalized live Planning exemption set; changed sets
   require a recorded `--exemption-revision`, while small changes reject any exemption change;
 - `--exemption-revision` rejected for planning, small, and unchanged tag sets;
 - `approve` rejects a final file whose exemption set differs from the prepared set, requiring a
   return to `drafting` and a new `prepare` for any Human-approved revision;
+- `approve` reparses Destination and returns a name/GID mismatch to `drafting` for a new `prepare`
+  without incrementing the failed-verification counter;
 - verifier-authored clear corrections accepted by `approve`, with deterministic validation rerun on
   the complete corrected file;
 - `dish reject` returning the submission to `drafting` while retaining the lock, followed by a
@@ -658,12 +744,19 @@ Implementation follows TDD. Tests must cover:
 - two simultaneous `submit` calls on one submission;
 - a submission is single-use: a second `submit` call against an already-`consumed` submission is
   rejected;
-- confirmed API failure preserving retry eligibility (`in_flight` → `ready`);
+- confirmed non-application preserving retry eligibility (`in_flight` → `ready`);
+- write-attempt identity and compare-and-swap protection preventing a stale process from recording a
+  result for a recovered or replacement attempt;
+- pre-send failures and explicit backend rejections classified as confirmed non-application, while
+  possibly-sent timeouts/resets, HTTP 5xx, response-decoding failures, cancellation, and unknown SDK
+  phases classify as `uncertain`;
 - a confirmed notes write followed by a failed destination move preserving `written` and retrying
   only the move, never the notes write;
 - an uncertain `submit` outcome is logged as `uncertain` and left for Marco to resolve via
   `dish-admin recover` to `ready` or `written`, without asserting any automatic outcome-table
   behaviour;
+- `dish-admin recover` refuses a live recorded process or an unelapsed quarantine interval, requires
+  an inspected outcome and reason, and invalidates the recovered attempt atomically;
 - `dish-admin discard` releases only `drafting`, `research_handoff`, `awaiting_verification`,
   `awaiting_human`, `ready`, or `written` submissions,
   logs its reason, never mutates Asana, and rejects `in_flight`, `uncertain`, or terminal states;
