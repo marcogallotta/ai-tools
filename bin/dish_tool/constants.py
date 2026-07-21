@@ -5,6 +5,7 @@ from pathlib import Path
 
 COOKING_PROJECT_GID = "1215089183018968"
 DEFAULT_DB_PATH = Path("~/ai-tools/var/dish-tool.db").expanduser()
+DEFAULT_PROTOCOL_WORKTREE = Path("~/honest-pantry").expanduser()
 
 AGENT_FAMILIES = {
     "claude": "claude",

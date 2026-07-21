@@ -212,6 +212,20 @@ def _parse_exemptions(
         errors.append(_error("missing_exemption_explanation", field=grammar["label"]))
     return tuple(sorted(set(tags))), errors
 
+def extract_exact_label_line(note: str, label: str) -> str | None:
+    """Return the one literal label line, preserving its value and spacing."""
+
+    matches: list[str] = []
+    for raw_line in note.splitlines():
+        line = raw_line.rstrip("\r")
+        match = _LABEL_RE.fullmatch(line)
+        if match and match.group(1) == label:
+            matches.append(line)
+    if not matches:
+        return None
+    if len(matches) != 1:
+        raise ValueError(f"expected one {label} line, found {len(matches)}")
+    return matches[0]
 
 def validate_note(note: str, manifest: Mapping[str, Any]) -> ValidationResult:
     """Validate only literal shape and the two narrow operational grammars."""

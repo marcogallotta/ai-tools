@@ -61,7 +61,7 @@ def error_envelope(
     submission_id: str | None = None,
     state: str | None = None,
 ) -> dict[str, Any]:
-    rule_error = []
+    rule_error = [dict(item) for item in error.errors]
     if error.rule:
         item = {"rule": error.rule}
         item.update(error.details)

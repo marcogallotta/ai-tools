@@ -146,6 +146,127 @@ def record_audit(
     return event_id
 
 
+def get_submission(conn: sqlite3.Connection, submission_id: str) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM submissions WHERE submission_id = ?", (submission_id,)
+    ).fetchone()
+    if row is None:
+        raise DishRuleError(
+            "NOT_FOUND",
+            f"submission not found: {submission_id}",
+            rule="submission_not_found",
+        )
+    return row
+
+
+def get_open_submission_for_task(
+    conn: sqlite3.Connection, task_gid: str
+) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT *
+          FROM submissions
+         WHERE task_gid = ?
+           AND status NOT IN ('consumed', 'discarded')
+        """,
+        (task_gid,),
+    ).fetchone()
+
+
+def create_submission(
+    conn: sqlite3.Connection,
+    *,
+    task_gid: str,
+    submission_kind: str,
+    protocol_release: str,
+    release_commit: str,
+    protocol_bundle: Mapping[str, str],
+    canonical_manifest_text: str,
+    baseline_exemption_tags: Iterable[str] | None,
+    editor_agent: str,
+    change_level: str | None,
+    change_reason: str | None,
+    baseline_verification_line: str | None,
+) -> sqlite3.Row:
+    """Atomically claim the per-task lock and create a drafting submission."""
+
+    editor_family = agent_family(editor_agent)
+    submission_id = str(uuid.uuid4())
+    baseline_json = (
+        None
+        if baseline_exemption_tags is None
+        else json.dumps(
+            sorted(set(baseline_exemption_tags)), separators=(",", ":")
+        )
+    )
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        existing = get_open_submission_for_task(conn, task_gid)
+        if existing is not None:
+            raise DishRuleError(
+                "CONFLICT",
+                f"task already has an open submission: {existing['submission_id']}",
+                rule="open_submission_exists",
+                details={
+                    "existing_submission_id": existing["submission_id"],
+                    "existing_state": existing["status"],
+                },
+            )
+        try:
+            conn.execute(
+                """
+                INSERT INTO submissions (
+                    submission_id, task_gid, submission_kind, protocol_release,
+                    release_commit, protocol_bundle, canonical_manifest,
+                    baseline_exemption_tags, editor_agent, editor_family,
+                    change_level, change_reason, baseline_verification_line,
+                    status, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'drafting', ?)
+                """,
+                (
+                    submission_id,
+                    task_gid,
+                    submission_kind,
+                    protocol_release,
+                    release_commit,
+                    json.dumps(
+                        dict(protocol_bundle),
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    canonical_manifest_text,
+                    baseline_json,
+                    editor_agent,
+                    editor_family,
+                    change_level,
+                    change_reason,
+                    baseline_verification_line,
+                    utc_now(),
+                ),
+            )
+        except sqlite3.IntegrityError as exc:
+            if "submissions_one_open_per_task" in str(exc) or (
+                "UNIQUE constraint failed: submissions.task_gid" in str(exc)
+            ):
+                raise DishRuleError(
+                    "CONFLICT",
+                    "task already has an open submission",
+                    rule="open_submission_exists",
+                ) from exc
+            raise
+        row = get_submission(conn, submission_id)
+        conn.execute("COMMIT")
+        return row
+    except DishRuleError:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
 _ALLOWED_SUBMISSION_UPDATE_COLUMNS = {
     "prepared_exemption_tags",
     "destination_section_name",

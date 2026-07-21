@@ -1,6 +1,6 @@
 """Machine-classifiable errors for the guarded dish workflow."""
 
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from .constants import DEFAULT_RETRYABLE_BY_CODE, EXIT_STATUS_BY_CODE
 
@@ -16,6 +16,7 @@ class DishRuleError(Exception):
         rule: str | None = None,
         retryable: bool | None = None,
         details: Mapping[str, Any] | None = None,
+        errors: Sequence[Mapping[str, Any]] | None = None,
     ) -> None:
         if code not in EXIT_STATUS_BY_CODE:
             raise ValueError(f"unknown result code: {code}")
@@ -26,6 +27,7 @@ class DishRuleError(Exception):
             DEFAULT_RETRYABLE_BY_CODE[code] if retryable is None else retryable
         )
         self.details = dict(details or {})
+        self.errors = tuple(dict(item) for item in (errors or ()))
 
 
 class ReleaseResolutionError(DishRuleError):
@@ -50,7 +52,8 @@ class BackendFailure(DishRuleError):
         status: int | None = None,
         phase: str | None = None,
         retryable: bool | None = None,
+        details: Mapping[str, Any] | None = None,
     ) -> None:
-        super().__init__(code, message, retryable=retryable)
+        super().__init__(code, message, retryable=retryable, details=details)
         self.status = status
         self.phase = phase

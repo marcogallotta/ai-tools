@@ -138,3 +138,111 @@ class AsanaBackend:
             raise map_backend_exception(
                 exc, phase=tracker.phase, context=context
             ) from exc
+
+    def list_sections(self, project_gid: str) -> list[dict[str, Any]]:
+        import asana
+
+        data = self.call(
+            asana.SectionsApi(self.client()).get_sections_for_project,
+            project_gid,
+            {"opt_fields": "gid,name", "limit": 100},
+            context=f"Cooking project {project_gid} sections",
+        )
+        if not isinstance(data, list) or not all(isinstance(item, Mapping) for item in data):
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "Asana returned malformed section data",
+                rule="backend_response_malformed",
+            )
+        return [dict(item) for item in data]
+
+    def read_task(self, task_gid: str) -> dict[str, Any]:
+        import asana
+
+        opt_fields = ",".join(
+            (
+                "gid",
+                "name",
+                "notes",
+                "html_notes",
+                "completed",
+                "modified_at",
+                "permalink_url",
+                "projects.gid",
+                "projects.name",
+                "memberships.project.gid",
+                "memberships.project.name",
+                "memberships.section.gid",
+                "memberships.section.name",
+            )
+        )
+        try:
+            data = self.call(
+                asana.TasksApi(self.client()).get_task,
+                task_gid,
+                {"opt_fields": opt_fields},
+                context=f"task {task_gid}",
+            )
+        except BackendFailure as exc:
+            if exc.status == 404:
+                raise DishRuleError(
+                    "NOT_FOUND",
+                    f"task not found: {task_gid}",
+                    rule="task_not_found",
+                ) from exc
+            raise
+        if not isinstance(data, Mapping):
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "Asana returned malformed task data",
+                rule="backend_response_malformed",
+            )
+        return dict(data)
+
+    def create_bare_task(
+        self, *, title: str, project_gid: str, section_gid: str
+    ) -> dict[str, Any]:
+        """Create without notes, then place the confirmed task in Research Queue.
+
+        Any failure after task creation is ambiguous for the overall command: a
+        retry could duplicate the task, so it is never reported as safely retryable.
+        """
+
+        import asana
+
+        created = self.call(
+            asana.TasksApi(self.client()).create_task,
+            {"data": {"name": title, "projects": [project_gid]}},
+            {"opt_fields": "gid,name,notes"},
+            context=f"Cooking project {project_gid}",
+        )
+        if not isinstance(created, Mapping) or not str(created.get("gid") or "").strip():
+            raise BackendFailure(
+                "BACKEND_UNCERTAIN",
+                "task creation response did not identify the created task",
+                retryable=False,
+            )
+        task = dict(created)
+        task_gid = str(task["gid"])
+        try:
+            self.call(
+                asana.SectionsApi(self.client()).add_task_for_section,
+                {"data": {"task": task_gid}},
+                section_gid,
+                {},
+                context=f"Research Queue {section_gid}",
+            )
+        except DishRuleError as exc:
+            raise BackendFailure(
+                "BACKEND_UNCERTAIN",
+                f"task {task_gid} was created but Research Queue placement was not confirmed: {exc}",
+                status=getattr(exc, "status", None),
+                phase=getattr(exc, "phase", None),
+                retryable=False,
+                details={
+                    "task_gid": task_gid,
+                    "partial_application": "task_created",
+                },
+            ) from exc
+        task.setdefault("notes", "")
+        return task
