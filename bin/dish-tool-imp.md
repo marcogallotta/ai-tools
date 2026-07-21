@@ -280,4 +280,41 @@ escalation/unblock rates, submit outcomes, and advisory bypasses by task/agent.
 V1b enforcement, exact-content binding or hashes, live-baseline/external-edit detection, the
 small-change carelessness speed bump, dependency surfacing, general field-value grammar, semantic
 culinary checks, automatic uncertain-outcome recovery, and later scripted migrations remain outside
-this plan.
+this plan. Structured title management and change-diff telemetry are also outside the committed
+plan unless deliberately selected from the bounded additions below.
+
+## Consider adding
+
+Consider these independently before v1a is frozen; they are not implementation authorization. Diff
+telemetry is a bounded addition to the existing audit path. Structured title construction belongs in
+v1 only if title and notes can share one guarded backend mutation and the existing retry/recovery
+semantics; a creation-only formatter would not keep later Research discoveries and verifier
+corrections coherent with the final title.
+
+### Change-diff telemetry — recommended
+
+For `change` submissions, compare the candidate accepted at `prepare` with the live task notes and
+add a compact summary to that successful invocation's audit event: characters added and removed,
+lines added and removed, and canonical headings containing changed lines. Do not warn, block,
+reclassify the change, or persist the source text. V1 already assumes no external edits during a
+submission, so this does not add a saved live baseline or imply external-edit detection.
+
+If selected, add the calculation and audit tests to Step 3 and report distributions by declared
+change level in Step 8. The resulting `small`-change evidence informs v2's carelessness speed bump;
+it does not predetermine that trigger or its enforcement.
+
+### Structured task-title construction — conditional
+
+Replace free-form title formatting with a dish-name input, repeatable bounded role-tag inputs, and
+repeatable free-text blocker inputs. The allowed role values are `side`, `dessert`, `component`,
+`condiment`, `benchmark`, and `comparison`; role tags and blockers remain distinct even though both
+use square brackets. Incident 22 supplies direct evidence for the missed blocker marker, and Marco's
+recorded refinement permits these specific non-blocking role tags on the same title line. The tool
+guarantees syntax and deterministic ordering only. Research and Verification still decide whether a
+role applies, whether a real blocker was omitted, and whether the title agrees with the task body.
+
+Do not add only a formatter to `dish create`: blockers may be discovered and role tags corrected
+during Research or Verification. Select this addition only if the final title can travel with the
+candidate and the backend can write title plus notes as the same single guarded operation. Then
+extend Steps 2–5 and their tests so creation, preparation, verifier correction, submission,
+uncertain outcomes, and retries preserve one final title without adding a second mutation.

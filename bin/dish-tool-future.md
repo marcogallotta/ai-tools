@@ -1,12 +1,12 @@
 # Dish Tool — Version Triage / Future Ideas
 
-**Purpose:** Sort work that is not in the current v1 design into three useful horizons: small items
-that may be folded into v1 before implementation, the first real post-v1 release, and later work
-that still needs usage evidence or additional design. `dish-tool.md` remains the v1 design.
+**Purpose:** Sort work that is not in the current v1 design into the first real post-v1 release and
+later work that still needs usage evidence or additional design. `dish-tool.md` remains the v1
+design; bounded additions still worth considering before v1a is frozen now live at the end of
+`dish-tool-imp.md`.
 
-**Status:** This is design triage, not implementation authorization. The two "roll into v1" items
-are earmarked for a v1 implementation review, not yet part of `dish-tool.md`. Moving an item into
-that design or building any item still requires Marco's explicit decision.
+**Status:** This is design triage, not implementation authorization. Building any item still
+requires Marco's explicit decision.
 
 ## Versioning and rollout
 
@@ -36,40 +36,6 @@ recovery under real conditions.
 from advisory to blocking. This is a configuration/rollout change on v1a's logged evidence, not a
 new mechanism and not v2.
 
-## Earmarked: roll into v1 if small enough
-
-These are bounded enough to consider during v1 implementation review. If either materially expands
-the v1 state machine, backend mutation contract, or protocol grammar, leave it in v2 instead; the
-earmark is not a mandate to make v1 larger.
-
-### Structured task-title construction
-
-Have the tool construct the canonical title from a dish name plus repeatable role-tag and blocker
-inputs rather than asking agents to hand-format marker prefixes. Incident 22 supplies direct
-evidence for the blocker-marker failure, and Marco has since approved specific bracketed role tags
-sharing the title line while remaining explicitly non-blocking.
-
-The interface should follow the protocol's actual distinction: a bounded role value (the current
-protocol names `side`, `dessert`, `component`, `condiment`, `benchmark`, and `comparison`) is not an
-arbitrary optional marker, while each `--blocker` is free text. Repeatable options avoid comma
-parsing. The tool guarantees title syntax only; Research and Verification still detect an omitted
-real blocker, a wrong role, or meaningless marker dumping.
-
-If this ships in v1, title joins notes inside the controlled task surface and its final update/retry
-tests. Section and completion state remain ordinary lifecycle metadata outside that surface.
-
-### Change-diff telemetry only
-
-For `change` submissions, compute a compact baseline-to-prepared-note summary at `prepare` and store
-it in the audit event: characters added/removed, lines changed, and headings touched. It has no
-warning or blocking effect in v1. Its sole purpose is to give the first post-v1 release real evidence
-for the small-change speed bump below.
-
-This requires capturing a comparison baseline at `start`; implementation review must confirm that
-doing so is a small addition rather than quietly introducing the whole external-edit-detection
-mechanism. If it is not small, omit both the telemetry and the speed bump from the near-term plan
-rather than inventing a trigger without data.
-
 ## Earmarked: v2 — first release soon after v1
 
 V2 adds a small content-sensitive layer on top of v1's controlled structural path and removes the
@@ -81,9 +47,11 @@ semantic recipe judge or a general remote platform.
 ### Small-change carelessness speed bump
 
 Address Marco's concern about an honest agent carelessly declaring a material edit `small`, not a
-malicious caller gaming the trusted identity model. Use the v1 diff telemetry to choose a narrow
-deterministic trigger from observed `small` changes. The protection remains a speed bump, not
-opposite-family verification for every small edit and not inferred semantic classification.
+malicious caller gaming the trusted identity model. Use the diff telemetry considered in
+`dish-tool-imp.md`, if selected, to choose a narrow deterministic trigger from observed `small`
+changes. If it was not selected for v1, gather that evidence before choosing a trigger. The
+protection remains a speed bump, not opposite-family verification for every small edit and not
+inferred semantic classification.
 
 The trigger, the exact acknowledgement required, and warning-versus-blocking behaviour remain open
 until that evidence exists. No implementation should guess them in advance.
