@@ -1,0 +1,48 @@
+{
+  "contextual_labels": [],
+  "destination_section": {
+    "label": "Destination section",
+    "pattern": "^(?P<name>[^()]+?)\\s*\\((?P<gid>[0-9]+)\\)$"
+  },
+  "exemptions": {
+    "allowed_tags": [
+      "nutrition-kcal",
+      "nutrition-protein",
+      "nutrition-fat"
+    ],
+    "label": "Exemptions",
+    "none_value": "None"
+  },
+  "headings": {
+    "allowed": [
+      "# PLANNING BRIEF"
+    ],
+    "exactly_once": [
+      "# PLANNING BRIEF"
+    ],
+    "optional": [],
+    "required": [
+      "# PLANNING BRIEF"
+    ]
+  },
+  "labels": {
+    "allowed": [
+      "Destination section",
+      "Exemptions",
+      "Research notes"
+    ],
+    "exactly_once": [
+      "Destination section",
+      "Exemptions"
+    ],
+    "optional": [
+      "Research notes"
+    ],
+    "required": [
+      "Destination section",
+      "Exemptions"
+    ]
+  },
+  "manifest_kind": "planning",
+  "protocol_release": "fixture-v1"
+}
