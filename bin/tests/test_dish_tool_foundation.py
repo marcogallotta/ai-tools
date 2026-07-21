@@ -12,7 +12,44 @@ import pytest
 BIN_DIR = Path(__file__).resolve().parent.parent
 FIXTURE_RELEASE_DIR = Path(__file__).resolve().parent / "fixtures" / "protocol-release"
 sys.path.insert(0, str(BIN_DIR))
-from dish_tool import core  # noqa: E402
+from dish_tool.backend import AsanaBackend, load_asana_pat, map_backend_exception  # noqa: E402
+from dish_tool.constants import (  # noqa: E402
+    ASANA_REQUEST_TIMEOUT,
+    CONNECT_TIMEOUT_SECONDS,
+    EXIT_STATUS_BY_CODE,
+    GOVERNED_RELEASE_FILENAMES,
+    MAX_REQUEST_LIFETIME_SECONDS,
+    NONTERMINAL_STATES,
+    READ_TIMEOUT_SECONDS,
+    RECOVERY_QUARANTINE_SECONDS,
+    RECOVERY_SAFETY_MARGIN_SECONDS,
+    SCHEMA_VERSION,
+    TERMINAL_STATES,
+)
+from dish_tool.database import (  # noqa: E402
+    initialize_database,
+    migrate_database,
+    record_audit,
+    transition_submission,
+)
+from dish_tool.errors import BackendFailure, DishRuleError, ReleaseResolutionError  # noqa: E402
+from dish_tool.models import (  # noqa: E402
+    RequestPhase,
+    SectionRegistry,
+    agent_family,
+    is_protocol_managed,
+    opposite_family,
+    resolve_destination,
+)
+from dish_tool.recovery import (  # noqa: E402
+    begin_write_attempt,
+    current_process_identity,
+    finish_write_attempt,
+    process_identity_is_live,
+)
+from dish_tool.releases import resolve_release  # noqa: E402
+from dish_tool.results import exit_status, result_envelope  # noqa: E402
+from dish_tool.validation import validate_note  # noqa: E402
 
 
 PROTOCOLS = {
@@ -66,10 +103,26 @@ def complete_manifest(version):
             "allowed": ["# DISH", "## QUANTITIES", "## PROCESS RECORD"],
         },
         "labels": {
-            "required": ["Exemptions", "Destination section", "Self-verified", "Verification"],
+            "required": [
+                "Exemptions",
+                "Destination section",
+                "Self-verified",
+                "Verification",
+            ],
             "optional": ["Portions"],
-            "exactly_once": ["Exemptions", "Destination section", "Self-verified", "Verification"],
-            "allowed": ["Exemptions", "Destination section", "Self-verified", "Verification", "Portions"],
+            "exactly_once": [
+                "Exemptions",
+                "Destination section",
+                "Self-verified",
+                "Verification",
+            ],
+            "allowed": [
+                "Exemptions",
+                "Destination section",
+                "Self-verified",
+                "Verification",
+                "Portions",
+            ],
         },
         "contextual_labels": [
             {"heading": "## QUANTITIES", "required_label": "Portions"},
@@ -104,11 +157,13 @@ def write_release(repo, version="fixture-v1", *, malformed=None, mismatch=None):
         if malformed == name:
             (repo / name).write_text("{not-json\n")
         else:
-            (repo / name).write_text(json.dumps(content, indent=2, sort_keys=True) + "\n")
+            (repo / name).write_text(
+                json.dumps(content, indent=2, sort_keys=True) + "\n"
+            )
 
 
 def commit_release(repo, message="fixture release"):
-    run_git(repo, "add", "protocol_release", *core.GOVERNED_RELEASE_FILENAMES)
+    run_git(repo, "add", "protocol_release", *GOVERNED_RELEASE_FILENAMES)
     run_git(repo, "commit", "-m", message)
     return run_git(repo, "rev-parse", "HEAD")
 
@@ -141,9 +196,9 @@ def insert_submission(conn, submission_id, task_gid, status):
 
 def test_schema_creation_and_migration_are_idempotent(tmp_path):
     db_path = tmp_path / "dish-tool.db"
-    conn = core.initialize_database(db_path)
-    core.migrate_database(conn)
-    core.migrate_database(conn)
+    conn = initialize_database(db_path)
+    migrate_database(conn)
+    migrate_database(conn)
 
     tables = {
         row[0]
@@ -167,12 +222,12 @@ def test_schema_creation_and_migration_are_idempotent(tmp_path):
         "notes_written_at",
         "destination_moved_at",
     } <= submission_columns
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == core.SCHEMA_VERSION
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 
 def test_partial_unique_index_holds_for_every_nonterminal_state(tmp_path):
-    conn = core.initialize_database(tmp_path / "dish-tool.db")
-    for index, status in enumerate(sorted(core.NONTERMINAL_STATES)):
+    conn = initialize_database(tmp_path / "dish-tool.db")
+    for index, status in enumerate(sorted(NONTERMINAL_STATES)):
         task_gid = f"task-{index}"
         insert_submission(conn, f"first-{index}", task_gid, status)
         with pytest.raises(sqlite3.IntegrityError):
@@ -180,8 +235,8 @@ def test_partial_unique_index_holds_for_every_nonterminal_state(tmp_path):
 
 
 def test_partial_unique_index_releases_for_terminal_states(tmp_path):
-    conn = core.initialize_database(tmp_path / "dish-tool.db")
-    for index, status in enumerate(sorted(core.TERMINAL_STATES)):
+    conn = initialize_database(tmp_path / "dish-tool.db")
+    for index, status in enumerate(sorted(TERMINAL_STATES)):
         task_gid = f"terminal-{index}"
         insert_submission(conn, f"old-{index}", task_gid, status)
         insert_submission(conn, f"new-{index}", task_gid, "drafting")
@@ -189,7 +244,7 @@ def test_partial_unique_index_releases_for_terminal_states(tmp_path):
 
 def test_resolver_accepts_complete_clean_committed_release(release_repo):
     repo, commit = release_repo
-    release = core.resolve_release(repo)
+    release = resolve_release(repo)
 
     assert release.version == "fixture-v1"
     assert release.commit == commit
@@ -201,14 +256,14 @@ def test_resolver_accepts_complete_clean_committed_release(release_repo):
     assert set(release.bundle_for_submission("initial")) == {"research", "verification"}
 
 
-@pytest.mark.parametrize("missing", core.GOVERNED_RELEASE_FILENAMES)
+@pytest.mark.parametrize("missing", GOVERNED_RELEASE_FILENAMES)
 def test_resolver_rejects_incomplete_release(release_repo, missing):
     repo, _ = release_repo
     run_git(repo, "rm", missing)
     run_git(repo, "commit", "-m", f"remove {missing}")
 
-    with pytest.raises(core.ReleaseResolutionError) as exc:
-        core.resolve_release(repo)
+    with pytest.raises(ReleaseResolutionError) as exc:
+        resolve_release(repo)
     assert exc.value.rule == "release_incomplete"
 
 
@@ -216,8 +271,8 @@ def test_resolver_rejects_dirty_governed_file(release_repo):
     repo, _ = release_repo
     (repo / "dish-research-protocol.md").write_text("dirty\n")
 
-    with pytest.raises(core.ReleaseResolutionError) as exc:
-        core.resolve_release(repo)
+    with pytest.raises(ReleaseResolutionError) as exc:
+        resolve_release(repo)
     assert exc.value.rule == "release_dirty"
 
 
@@ -229,8 +284,8 @@ def test_resolver_rejects_ambiguous_release_file(release_repo):
     run_git(repo, "add", "old-release/protocol_release")
     run_git(repo, "commit", "-m", "ambiguous wrapper")
 
-    with pytest.raises(core.ReleaseResolutionError) as exc:
-        core.resolve_release(repo)
+    with pytest.raises(ReleaseResolutionError) as exc:
+        resolve_release(repo)
     assert exc.value.rule == "release_ambiguous"
 
 
@@ -243,8 +298,8 @@ def test_resolver_rejects_malformed_manifest(tmp_path):
     write_release(repo, malformed="dish-planning-manifest.json")
     commit_release(repo)
 
-    with pytest.raises(core.ReleaseResolutionError) as exc:
-        core.resolve_release(repo)
+    with pytest.raises(ReleaseResolutionError) as exc:
+        resolve_release(repo)
     assert exc.value.rule == "manifest_malformed"
 
 
@@ -257,8 +312,8 @@ def test_resolver_rejects_manifest_version_mismatch(tmp_path):
     write_release(repo, mismatch="dish-complete-task-manifest.json")
     commit_release(repo)
 
-    with pytest.raises(core.ReleaseResolutionError) as exc:
-        core.resolve_release(repo)
+    with pytest.raises(ReleaseResolutionError) as exc:
+        resolve_release(repo)
     assert exc.value.rule == "release_version_mismatch"
 
 
@@ -272,7 +327,9 @@ def test_resolver_accepts_unchanged_files_from_earlier_commit(release_repo):
         ("dish-planning-manifest.json", planning_manifest(version)),
         ("dish-complete-task-manifest.json", complete_manifest(version)),
     ):
-        (repo / filename).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        (repo / filename).write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+        )
     run_git(
         repo,
         "add",
@@ -284,10 +341,12 @@ def test_resolver_accepts_unchanged_files_from_earlier_commit(release_repo):
     commit = run_git(repo, "commit", "-m", "fixture v2 partial content change")
     del commit
 
-    release = core.resolve_release(repo)
+    release = resolve_release(repo)
     assert release.version == version
     assert release.protocols["planning"] == PROTOCOLS["dish-planning-protocol.md"]
-    assert release.protocols["verification"] == PROTOCOLS["dish-verification-protocol.md"]
+    assert (
+        release.protocols["verification"] == PROTOCOLS["dish-verification-protocol.md"]
+    )
     assert release.protocols["research"] == research
 
 
@@ -303,7 +362,9 @@ def test_resolver_rejects_non_atomic_release_advance(release_repo):
         ("dish-planning-manifest.json", planning_manifest(version)),
         ("dish-complete-task-manifest.json", complete_manifest(version)),
     ):
-        (repo / filename).write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+        (repo / filename).write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+        )
     run_git(
         repo,
         "add",
@@ -313,8 +374,8 @@ def test_resolver_rejects_non_atomic_release_advance(release_repo):
     )
     run_git(repo, "commit", "-m", "late wrapper advance")
 
-    with pytest.raises(core.ReleaseResolutionError) as exc:
-        core.resolve_release(repo)
+    with pytest.raises(ReleaseResolutionError) as exc:
+        resolve_release(repo)
     assert exc.value.rule == "release_commit_mismatch"
 
 
@@ -325,8 +386,8 @@ def test_resolver_rejects_reused_release_version(release_repo):
     run_git(repo, "add", "protocol_release", "dish-research-protocol.md")
     run_git(repo, "commit", "-m", "reuse release version")
 
-    with pytest.raises(core.ReleaseResolutionError) as exc:
-        core.resolve_release(repo)
+    with pytest.raises(ReleaseResolutionError) as exc:
+        resolve_release(repo)
     assert exc.value.rule == "release_version_not_advanced"
 
 
@@ -336,19 +397,19 @@ def test_resolver_rejects_governed_change_without_wrapper_advance(release_repo):
     run_git(repo, "add", "dish-research-protocol.md")
     run_git(repo, "commit", "-m", "bad partial release")
 
-    with pytest.raises(core.ReleaseResolutionError) as exc:
-        core.resolve_release(repo)
+    with pytest.raises(ReleaseResolutionError) as exc:
+        resolve_release(repo)
     assert exc.value.rule == "release_commit_mismatch"
 
 
 def test_frozen_release_survives_later_current_release_changes(release_repo):
     repo, old_commit = release_repo
-    frozen = core.resolve_release(repo)
+    frozen = resolve_release(repo)
     old_protocol = frozen.protocols["research"]
 
     write_release(repo, version="fixture-v2")
     new_commit = commit_release(repo, "fixture v2")
-    current = core.resolve_release(repo)
+    current = resolve_release(repo)
 
     assert frozen.version == "fixture-v1"
     assert frozen.commit == old_commit
@@ -363,13 +424,13 @@ def test_frozen_release_survives_later_current_release_changes(release_repo):
     [("claude", "claude"), ("gpt", "gpt"), ("codex", "gpt")],
 )
 def test_agent_family_mapping(agent, family):
-    assert core.agent_family(agent) == family
-    assert core.opposite_family(family) != family
+    assert agent_family(agent) == family
+    assert opposite_family(family) != family
 
 
 def test_unknown_agent_fails_closed():
-    with pytest.raises(core.DishRuleError) as exc:
-        core.agent_family("other")
+    with pytest.raises(DishRuleError) as exc:
+        agent_family("other")
     assert exc.value.code == "INVALID_ARGUMENT"
 
 
@@ -381,18 +442,18 @@ def test_section_resolution_and_management_fail_closed():
         {"gid": "13", "name": "Reference"},
         {"gid": "14", "name": "Ready to Cook"},
     ]
-    registry = core.SectionRegistry.from_sections(sections)
+    registry = SectionRegistry.from_sections(sections)
 
-    assert core.is_protocol_managed("12", registry) is False
-    assert core.is_protocol_managed("13", registry) is False
-    assert core.is_protocol_managed("14", registry) is True
-    assert core.is_protocol_managed(None, registry) is True
-    assert core.resolve_destination("Ready to Cook", "14", registry).gid == "14"
+    assert is_protocol_managed("12", registry) is False
+    assert is_protocol_managed("13", registry) is False
+    assert is_protocol_managed("14", registry) is True
+    assert is_protocol_managed(None, registry) is True
+    assert resolve_destination("Ready to Cook", "14", registry).gid == "14"
 
-    with pytest.raises(core.DishRuleError):
-        core.resolve_destination("Research Queue", "10", registry)
-    with pytest.raises(core.DishRuleError):
-        core.resolve_destination("Ready to Cook", "999", registry)
+    with pytest.raises(DishRuleError):
+        resolve_destination("Research Queue", "10", registry)
+    with pytest.raises(DishRuleError):
+        resolve_destination("Ready to Cook", "999", registry)
 
 
 def test_section_setup_rejects_missing_or_duplicate_names():
@@ -403,43 +464,43 @@ def test_section_setup_rejects_missing_or_duplicate_names():
         {"gid": "13", "name": "Reference"},
         {"gid": "14", "name": "Reference"},
     ]
-    with pytest.raises(core.DishRuleError):
-        core.SectionRegistry.from_sections(sections)
+    with pytest.raises(DishRuleError):
+        SectionRegistry.from_sections(sections)
 
 
 def test_literal_note_validation_uses_manifest(release_repo):
     repo, _ = release_repo
-    manifest = core.resolve_release(repo).manifests["planning"]
+    manifest = resolve_release(repo).manifests["planning"]
     valid = """# PLANNING BRIEF
 Destination section: Ready to Cook (14)
 Exemptions: [nutrition-kcal] Marco approved 2026-07-21 for this dish
 Research notes: Opaque text
 """
-    result = core.validate_note(valid, manifest)
+    result = validate_note(valid, manifest)
     assert result.ok is True
     assert result.exemption_tags == ("nutrition-kcal",)
     assert result.destination_name == "Ready to Cook"
     assert result.destination_gid == "14"
 
     invalid = valid + "## UNKNOWN\nExemptions: None\n"
-    result = core.validate_note(invalid, manifest)
+    result = validate_note(invalid, manifest)
     rules = {error["rule"] for error in result.errors}
     assert {"unknown_heading", "duplicate_label", "mixed_exemptions"} <= rules
 
 
 def test_literal_note_validation_rejects_unknown_manifest_kind(release_repo):
     repo, _ = release_repo
-    manifest = dict(core.resolve_release(repo).manifests["planning"])
+    manifest = dict(resolve_release(repo).manifests["planning"])
     manifest["manifest_kind"] = "unknown"
 
-    with pytest.raises(core.ReleaseResolutionError) as exc:
-        core.validate_note("", manifest)
+    with pytest.raises(ReleaseResolutionError) as exc:
+        validate_note("", manifest)
     assert exc.value.rule == "manifest_malformed"
 
 
 def test_contextual_label_is_required_only_when_heading_present(release_repo):
     repo, _ = release_repo
-    manifest = core.resolve_release(repo).manifests["complete_task"]
+    manifest = resolve_release(repo).manifests["complete_task"]
     note = """# DISH
 Exemptions: None
 Destination section: Ready to Cook (14)
@@ -448,12 +509,12 @@ Verification: pending
 ## QUANTITIES
 ## PROCESS RECORD
 """
-    result = core.validate_note(note, manifest)
+    result = validate_note(note, manifest)
     assert any(error["rule"] == "missing_contextual_label" for error in result.errors)
 
 
 def test_common_result_contract_and_exit_statuses():
-    success = core.result_envelope(command="prepare", state="ready")
+    success = result_envelope(command="prepare", state="ready")
     assert success == {
         "ok": True,
         "command": "prepare",
@@ -466,9 +527,9 @@ def test_common_result_contract_and_exit_statuses():
         "data": {},
         "errors": [],
     }
-    assert core.exit_status(success["code"]) == 0
+    assert exit_status(success["code"]) == 0
 
-    failure = core.result_envelope(
+    failure = result_envelope(
         command="prepare",
         ok=False,
         code="VALIDATION_FAILED",
@@ -479,15 +540,15 @@ def test_common_result_contract_and_exit_statuses():
     )
     assert failure["retryable"] is True
     assert failure["allowed_actions"] == ["prepare"]
-    assert core.exit_status(failure["code"]) == 2
+    assert exit_status(failure["code"]) == 2
 
-    for code, expected in core.EXIT_STATUS_BY_CODE.items():
-        assert core.exit_status(code) == expected
+    for code, expected in EXIT_STATUS_BY_CODE.items():
+        assert exit_status(code) == expected
 
 
 def test_audit_rows_allow_null_submission_and_keep_task_gid(tmp_path):
-    conn = core.initialize_database(tmp_path / "dish-tool.db")
-    event_id = core.record_audit(
+    conn = initialize_database(tmp_path / "dish-tool.db")
+    event_id = record_audit(
         conn,
         submission_id=None,
         task_gid="task-123",
@@ -505,33 +566,32 @@ def test_audit_rows_allow_null_submission_and_keep_task_gid(tmp_path):
 
 
 def test_conditional_transition_fails_competing_state_change(tmp_path):
-    conn = core.initialize_database(tmp_path / "dish-tool.db")
+    conn = initialize_database(tmp_path / "dish-tool.db")
     insert_submission(conn, "s1", "t1", "drafting")
 
-    core.transition_submission(conn, "s1", {"drafting"}, "ready")
-    with pytest.raises(core.DishRuleError) as exc:
-        core.transition_submission(conn, "s1", {"drafting"}, "ready")
+    transition_submission(conn, "s1", {"drafting"}, "ready")
+    with pytest.raises(DishRuleError) as exc:
+        transition_submission(conn, "s1", {"drafting"}, "ready")
     assert exc.value.code == "WRONG_STATE"
 
 
 def test_process_identity_and_recovery_quarantine_invariant():
-    identity = core.current_process_identity()
+    identity = current_process_identity()
     assert identity.hostname == socket.gethostname()
     assert identity.pid == os.getpid()
     assert identity.process_start
-    assert core.process_identity_is_live(identity) is True
+    assert process_identity_is_live(identity) is True
     assert (
-        core.RECOVERY_QUARANTINE_SECONDS
-        > core.MAX_REQUEST_LIFETIME_SECONDS
-        + core.RECOVERY_SAFETY_MARGIN_SECONDS
+        RECOVERY_QUARANTINE_SECONDS
+        > MAX_REQUEST_LIFETIME_SECONDS + RECOVERY_SAFETY_MARGIN_SECONDS
     )
 
 
 def test_begin_write_attempt_records_identity_and_compare_and_swap(tmp_path):
-    conn = core.initialize_database(tmp_path / "dish-tool.db")
+    conn = initialize_database(tmp_path / "dish-tool.db")
     insert_submission(conn, "s1", "t1", "ready")
 
-    attempt = core.begin_write_attempt(conn, "s1")
+    attempt = begin_write_attempt(conn, "s1")
     row = conn.execute(
         """SELECT status, write_attempt_id, in_flight_hostname, in_flight_pid,
                   in_flight_process_start FROM submissions WHERE submission_id = 's1'"""
@@ -542,22 +602,25 @@ def test_begin_write_attempt_records_identity_and_compare_and_swap(tmp_path):
     assert row[3] == attempt.identity.pid
     assert row[4] == attempt.identity.process_start
 
-    with pytest.raises(core.DishRuleError):
-        core.finish_write_attempt(
+    with pytest.raises(DishRuleError):
+        finish_write_attempt(
             conn,
             "s1",
             attempt_id="stale-attempt",
             target_state="written",
         )
-    core.finish_write_attempt(
+    finish_write_attempt(
         conn,
         "s1",
         attempt_id=attempt.attempt_id,
         target_state="written",
     )
-    assert conn.execute(
-        "SELECT status FROM submissions WHERE submission_id = 's1'"
-    ).fetchone()[0] == "written"
+    assert (
+        conn.execute(
+            "SELECT status FROM submissions WHERE submission_id = 's1'"
+        ).fetchone()[0]
+        == "written"
+    )
 
 
 def test_resolver_preserves_committed_protocol_bytes_exactly(release_repo):
@@ -570,19 +633,19 @@ def test_resolver_preserves_committed_protocol_bytes_exactly(release_repo):
     (repo / "dish-research-protocol.md").write_text(exact)
     commit_release(repo, "exact fixture release")
 
-    release = core.resolve_release(repo)
+    release = resolve_release(repo)
     assert release.protocols["research"] == exact
 
 
 def test_backend_failure_classification_tracks_request_phase():
-    pre_send = core.map_backend_exception(
-        TimeoutError("connect failed"), phase=core.RequestPhase.PRE_SEND
+    pre_send = map_backend_exception(
+        TimeoutError("connect failed"), phase=RequestPhase.PRE_SEND
     )
     assert pre_send.code == "BACKEND_REJECTED"
     assert pre_send.retryable is True
 
-    possibly_sent = core.map_backend_exception(
-        TimeoutError("response lost"), phase=core.RequestPhase.POSSIBLY_SENT
+    possibly_sent = map_backend_exception(
+        TimeoutError("response lost"), phase=RequestPhase.POSSIBLY_SENT
     )
     assert possibly_sent.code == "BACKEND_UNCERTAIN"
     assert possibly_sent.retryable is False
@@ -592,9 +655,7 @@ def test_backend_failure_classification_tracks_request_phase():
         body = "unavailable"
         reason = "Service Unavailable"
 
-    server = core.map_backend_exception(
-        ServerError(), phase=core.RequestPhase.RESPONSE_RECEIVED
-    )
+    server = map_backend_exception(ServerError(), phase=RequestPhase.RESPONSE_RECEIVED)
     assert server.code == "BACKEND_UNCERTAIN"
     assert server.status == 503
 
@@ -603,27 +664,27 @@ def test_backend_failure_classification_tracks_request_phase():
         body = "request timeout"
         reason = "Request Timeout"
 
-    timeout_response = core.map_backend_exception(
-        RequestTimeout(), phase=core.RequestPhase.RESPONSE_RECEIVED
+    timeout_response = map_backend_exception(
+        RequestTimeout(), phase=RequestPhase.RESPONSE_RECEIVED
     )
     assert timeout_response.code == "BACKEND_UNCERTAIN"
 
 
 def test_backend_call_without_explicit_tracker_marks_request_as_sent():
-    backend = core.AsanaBackend(api_client=object())
+    backend = AsanaBackend(api_client=object())
 
     def fail_after_send(*args, **kwargs):
         raise TimeoutError("response lost")
 
-    with pytest.raises(core.BackendFailure) as exc:
+    with pytest.raises(BackendFailure) as exc:
         backend.call(fail_after_send)
     assert exc.value.code == "BACKEND_UNCERTAIN"
-    assert exc.value.phase == core.RequestPhase.POSSIBLY_SENT.value
+    assert exc.value.phase == RequestPhase.POSSIBLY_SENT.value
 
 
 def test_asana_backend_reuses_client_and_disables_sdk_retries(monkeypatch):
     monkeypatch.setenv("ASANA_PAT", "test-token")
-    backend = core.AsanaBackend()
+    backend = AsanaBackend()
     first = backend.client()
     second = backend.client()
 
@@ -637,11 +698,11 @@ def test_asana_auth_loader_and_timeout_configuration(tmp_path, monkeypatch):
     env_file.write_text("ASANA_PAT=file-token\n")
     monkeypatch.delenv("ASANA_PAT", raising=False)
     monkeypatch.setenv("ASANA_ENV", str(env_file))
-    assert core.load_asana_pat() == "file-token"
+    assert load_asana_pat() == "file-token"
 
     monkeypatch.setenv("ASANA_PAT", "env-token")
-    assert core.load_asana_pat() == "env-token"
-    assert core.ASANA_REQUEST_TIMEOUT == (
-        core.CONNECT_TIMEOUT_SECONDS,
-        core.READ_TIMEOUT_SECONDS,
+    assert load_asana_pat() == "env-token"
+    assert ASANA_REQUEST_TIMEOUT == (
+        CONNECT_TIMEOUT_SECONDS,
+        READ_TIMEOUT_SECONDS,
     )

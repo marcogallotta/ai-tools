@@ -1,0 +1,107 @@
+"""Shared constants for the guarded dish workflow."""
+
+from pathlib import Path
+
+
+COOKING_PROJECT_GID = "1215089183018968"
+DEFAULT_DB_PATH = Path("~/ai-tools/var/dish-tool.db").expanduser()
+
+AGENT_FAMILIES = {
+    "claude": "claude",
+    "gpt": "gpt",
+    "codex": "gpt",
+}
+FAMILIES = frozenset(AGENT_FAMILIES.values())
+SUBMISSION_KINDS = frozenset({"planning", "initial", "change"})
+CHANGE_LEVELS = frozenset({"small", "large"})
+SUBMISSION_STATES = frozenset(
+    {
+        "drafting",
+        "research_handoff",
+        "awaiting_verification",
+        "awaiting_human",
+        "ready",
+        "in_flight",
+        "written",
+        "consumed",
+        "discarded",
+        "uncertain",
+    }
+)
+TERMINAL_STATES = frozenset({"consumed", "discarded"})
+NONTERMINAL_STATES = SUBMISSION_STATES - TERMINAL_STATES
+
+ALLOWED_ACTIONS_BY_STATE = {
+    None: [],
+    "drafting": ["prepare"],
+    "research_handoff": ["prepare"],
+    "awaiting_verification": ["approve", "reject"],
+    "ready": ["submit"],
+    "written": ["submit"],
+    "awaiting_human": [],
+    "in_flight": [],
+    "uncertain": [],
+    "consumed": [],
+    "discarded": [],
+}
+
+EXIT_STATUS_BY_CODE = {
+    "OK": 0,
+    "INVALID_ARGUMENT": 2,
+    "NOT_FOUND": 2,
+    "UNMANAGED_TASK": 2,
+    "VALIDATION_FAILED": 2,
+    "WRONG_STATE": 3,
+    "AGENT_MISMATCH": 3,
+    "VERIFIER_FAMILY_MISMATCH": 3,
+    "CONFLICT": 3,
+    "HUMAN_ACTION_REQUIRED": 3,
+    "BACKEND_REJECTED": 4,
+    "BACKEND_UNCERTAIN": 5,
+    "INTERNAL_ERROR": 1,
+}
+DEFAULT_RETRYABLE_BY_CODE = {
+    "OK": False,
+    "INVALID_ARGUMENT": False,
+    "NOT_FOUND": False,
+    "UNMANAGED_TASK": False,
+    "VALIDATION_FAILED": True,
+    "WRONG_STATE": False,
+    "AGENT_MISMATCH": False,
+    "VERIFIER_FAMILY_MISMATCH": False,
+    "CONFLICT": False,
+    "HUMAN_ACTION_REQUIRED": False,
+    "BACKEND_REJECTED": True,
+    "BACKEND_UNCERTAIN": False,
+    "INTERNAL_ERROR": False,
+}
+
+# The SDK is configured with no automatic retries. One request may spend at most
+# 10 seconds connecting and 30 seconds waiting for a response. Recovery waits 90
+# seconds: 40 seconds maximum request lifetime plus a 30 second safety margin, with
+# a further 20 seconds of conservatism for scheduler and clock granularity.
+CONNECT_TIMEOUT_SECONDS = 10
+READ_TIMEOUT_SECONDS = 30
+ASANA_REQUEST_TIMEOUT = (CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS)
+MAX_REQUEST_LIFETIME_SECONDS = CONNECT_TIMEOUT_SECONDS + READ_TIMEOUT_SECONDS
+RECOVERY_SAFETY_MARGIN_SECONDS = 30
+RECOVERY_QUARANTINE_SECONDS = 90
+assert RECOVERY_QUARANTINE_SECONDS > (
+    MAX_REQUEST_LIFETIME_SECONDS + RECOVERY_SAFETY_MARGIN_SECONDS
+)
+
+RELEASE_VERSION_FILENAME = "protocol_release"
+PROTOCOL_FILENAMES = {
+    "planning": "dish-planning-protocol.md",
+    "research": "dish-research-protocol.md",
+    "verification": "dish-verification-protocol.md",
+}
+MANIFEST_FILENAMES = {
+    "planning": "dish-planning-manifest.json",
+    "complete_task": "dish-complete-task-manifest.json",
+}
+GOVERNED_RELEASE_FILENAMES = tuple(PROTOCOL_FILENAMES.values()) + tuple(
+    MANIFEST_FILENAMES.values()
+)
+
+SCHEMA_VERSION = 1
