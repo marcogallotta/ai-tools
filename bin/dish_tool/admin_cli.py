@@ -15,6 +15,8 @@ from .database import initialize_database
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
+_ADMIN_COMMANDS = {"recover", "discard", "unblock"}
+
 
 class JsonArgumentParser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
@@ -28,6 +30,17 @@ class JsonArgumentParser(argparse.ArgumentParser):
 def build_parser() -> JsonArgumentParser:
     parser = JsonArgumentParser(prog="dish-admin")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    recover = subparsers.add_parser("recover")
+    recover.add_argument("submission_id")
+    recover.add_argument(
+        "--outcome", required=True, choices=("not-applied", "applied")
+    )
+    recover.add_argument("--reason", required=True)
+
+    discard = subparsers.add_parser("discard")
+    discard.add_argument("submission_id")
+    discard.add_argument("--reason", required=True)
 
     unblock = subparsers.add_parser("unblock")
     unblock.add_argument("submission_id")
@@ -43,7 +56,11 @@ def build_application() -> DishAdminApplication:
 def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
     command = argv[0] if argv and not argv[0].startswith("-") else "unknown"
     submission_id = None
-    if command == "unblock" and len(argv) > 1 and not argv[1].startswith("-"):
+    if (
+        command in _ADMIN_COMMANDS
+        and len(argv) > 1
+        and not argv[1].startswith("-")
+    ):
         submission_id = argv[1]
     return {"command": command, "submission_id": submission_id}
 
