@@ -1,8 +1,8 @@
 # Dish tool — v1a implementation plan
 
-Scope: build and soft-launch the complete v1a guarded workflow specified by `dish-tool.md`. V1a
-performs real backend writes but leaves the generic Asana CLI's managed-task guard advisory-only;
-v1b later flips that existing guard to blocking.
+Scope: build and development-test the complete v1a guarded workflow specified by `dish-tool.md`.
+When separately authorized for production, v1a performs real backend writes but leaves the generic
+Asana CLI's managed-task guard advisory-only; v1b later flips that existing guard to blocking.
 
 The tool-independent three-way protocols ship first. Tool development can proceed against fixtures,
 but live rollout waits for the later tool-aware beta of `dish-planning-protocol.md`,
@@ -19,7 +19,7 @@ This plan implements decisions already settled in `dish-tool.md` and
 - every multi-step operation resumes only missing work;
 - exact-content binding, live-baseline comparison, and external-edit detection remain deferred.
 
-## Rollout
+## Implementation sequence
 
 Land Steps 0–9 as independently testable commits. Steps 1–8 may use a committed fixture release
 while the tool-aware protocol beta is being prepared. Do not point the live tool at Cooking tasks
@@ -266,14 +266,48 @@ Ship `bin/dish-reports.sql` with tested queries for command counts (including `i
 actor/kind/level, validation failure rates by rule, rejection and repeated-rejection rates, Human
 escalation/unblock rates, submit outcomes, and advisory bypasses by task/agent.
 
-## Step 9 — documentation and activation
+## Step 9 — documentation and release preparation
 
 - Update the later tool-aware protocol beta with only the agent-facing `dish` workflow; do not
   expose generic Asana or `dish-admin` instructions to agents.
-- Add the short ChatGPT relay/runbook pointer required by `dish-tool.md` after the tool is usable.
+- Add the short ChatGPT relay pointer required by `dish-tool.md` after the tool is usable.
 - Run the protocol/tool integration suite against the exact release bundle.
-- Validate the tool-aware beta separately, migrate the corpus using the snapshot-safe procedure in
-  `dish-docs-design.md`, and deliberately activate it. Do not leave mixed production authority.
+- Write and test the production activation runbook without executing it. Development and fixture
+  validation must perform no live Cooking-task write.
+
+## Rollout to production — separate future authorization required
+
+Do not begin this section merely because Steps 0–9 pass. Live migration, activation, changes to
+governing agent instructions, and any live Cooking-task write require Marco's separate execution
+approval. Until then, `CLAUDE-global.md` must not mention or route agents to the development tool.
+The repository `CLAUDE.md` remains design guidance only; production agent routing is added to the
+global file during the authorized cutover.
+
+Before cutover:
+
+- prepare one exact release bundle containing the three validated tool-aware protocols, both
+  canonical manifests, and the wrapper-owned `protocol_release` file;
+- run the complete protocol/tool integration suite against those exact committed bytes without a
+  live Cooking-task write;
+- confirm the release resolver accepts the clean committed bundle;
+- confirm the agent-facing protocols and short ChatGPT relay expose only the `dish` workflow, not
+  generic Asana commands or `dish-admin`; and
+- record the source snapshot, release identity, migration result, unresolved tasks, and rollback
+  point required by the snapshot-safe migration procedure in `dish-docs-design.md`.
+
+Then perform one deliberate cutover:
+
+1. Hold protocol-managed note changes for the migration window.
+2. Revalidate the exact release bundle and tool integration suite.
+3. Migrate and verify the complete managed corpus using the snapshot-safe procedure. If any task
+   cannot be migrated or explicitly dispositioned, stop with the old authority intact.
+4. Switch the governing protocol release and any selected agent-routing instructions together.
+5. Verify that all managed tasks and new work resolve to the same active release before reopening
+   writes.
+
+Do not leave mixed production authority. If cutover verification fails, restore the recorded
+snapshot and previous governing release before reopening writes. V1a begins with the generic CLI
+guard advisory-only; the separately authorized v1b rollout changes that existing guard to blocking.
 
 ## Out of scope
 
