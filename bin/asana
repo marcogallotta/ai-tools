@@ -5,12 +5,19 @@ Reads ASANA_PAT from ~/.config/asana-cli/.env (override with $ASANA_PAT or $ASAN
 Transport: python-asana SDK (see requirements.txt for pinned version).
 Run `asana help` for usage.
 """
-import json, os, sys
+import json
+import os
+import sys
+
 import asana
 from asana.rest import ApiException
 
+from dish_tool.advisory import AdvisoryGuard
+from dish_tool.constants import DEFAULT_DB_PATH
+
 DEFAULT_WS = "1200569426771227"  # "London to Umrah 2022" workspace
 _CLIENT = None
+_ADVISORY_GUARD = None
 
 
 def load_pat():
@@ -38,6 +45,33 @@ def client():
         config.return_page_iterator = False  # explicit one-page-per-call; no silent auto-follow
         _CLIENT = asana.ApiClient(config)
     return _CLIENT
+
+
+def advisory_guard():
+    """One advisory guard per CLI invocation, sharing the SDK client."""
+    global _ADVISORY_GUARD
+    if _ADVISORY_GUARD is None:
+        db_path = os.environ.get("DISH_DB_PATH", str(DEFAULT_DB_PATH))
+        _ADVISORY_GUARD = AdvisoryGuard(api_client=client(), db_path=db_path)
+    return _ADVISORY_GUARD
+
+
+def _advise_task_notes(gid, command, fields=("notes",), operation=None):
+    advisory_guard().before_task_notes(
+        gid, command=command, fields=fields, operation=operation
+    )
+
+
+def _advise_create_task(
+    project, section, command, fields=("notes",), operation=None
+):
+    advisory_guard().before_create_task(
+        project_gid=project,
+        section_gid=section,
+        command=command,
+        fields=fields,
+        operation=operation,
+    )
 
 
 def _error_detail(e, context=None):
@@ -129,14 +163,18 @@ def c_notes(gid):
 
 
 def c_set_notes(gid, text):
-    _call(asana.TasksApi(client()).update_task, {"data": {"notes": _text(text)}}, gid, {}, context="task %s" % gid)
+    notes = _text(text)
+    _advise_task_notes(gid, "set-notes")
+    _call(asana.TasksApi(client()).update_task, {"data": {"notes": notes}}, gid, {}, context="task %s" % gid)
     print("set-notes:", gid)
 
 
 def c_append(gid, text):
     tasks_api = asana.TasksApi(client())
     cur = _call(tasks_api.get_task, gid, {"opt_fields": "notes"}, context="task %s" % gid).get("notes") or ""
-    _call(tasks_api.update_task, {"data": {"notes": cur + _text(text)}}, gid, {}, context="task %s" % gid)
+    updated = cur + _text(text)
+    _advise_task_notes(gid, "append")
+    _call(tasks_api.update_task, {"data": {"notes": updated}}, gid, {}, context="task %s" % gid)
     print("append:", gid)
 
 
@@ -153,6 +191,7 @@ def c_replace(gid, old=None, new=None):
     nmatch = cur.count(old)
     if nmatch != 1:
         sys.exit("replace aborted: 'old' found %d times (need exactly 1)" % nmatch)
+    _advise_task_notes(gid, "replace")
     _call(tasks_api.update_task, {"data": {"notes": cur.replace(old, new)}}, gid, {}, context="task %s" % gid)
     print("replace:", gid)
 
@@ -217,7 +256,9 @@ def c_move(gid, section):
 def c_create_task(project, name, section, notes):
     d = {"name": name, "projects": [project]}
     if notes is not None:
-        d["notes"] = _text(notes)
+        note_text = _text(notes)
+        _advise_create_task(project, section, "create-task")
+        d["notes"] = note_text
     t = _call(asana.TasksApi(client()).create_task, {"data": d}, {}, context="project %s" % project)
     if section:
         _call(asana.SectionsApi(client()).add_task_for_section, {"data": {"task": t["gid"]}}, section, {}, context="section %s" % section)
@@ -273,23 +314,24 @@ def _normalize_batch_op(op):
         unsupported = sorted(set(fields) - set(BATCH_TASK_FIELDS))
         if unsupported:
             sys.exit("unsupported update_task field(s): %s" % ", ".join(unsupported))
-        return {"action": "update_task", "task": task, "fields": fields, "reason": _op_reason(op)}
+        return {"action": "update_task", "source_action": action or "update_task", "task": task, "fields": fields, "reason": _op_reason(op)}
 
     if action == "rename":
         if not op.get("task") or not op.get("name"):
             sys.exit("rename operations need task and name")
-        return {"action": "update_task", "task": op["task"], "fields": {"name": op["name"]}, "reason": _op_reason(op)}
+        return {"action": "update_task", "source_action": "rename", "task": op["task"], "fields": {"name": op["name"]}, "reason": _op_reason(op)}
 
     if action == "set_notes":
         if not op.get("task") or "notes" not in op:
             sys.exit("set_notes operations need task and notes")
-        return {"action": "update_task", "task": op["task"], "fields": {"notes": op.get("notes")}, "reason": _op_reason(op)}
+        return {"action": "update_task", "source_action": "set_notes", "task": op["task"], "fields": {"notes": op.get("notes")}, "reason": _op_reason(op)}
 
     if action == "replace_notes":
         if not op.get("task") or not isinstance(op.get("old"), str) or not op.get("old") or not isinstance(op.get("new"), str):
             sys.exit("replace_notes operations need task plus non-empty old and string new")
         return {
             "action": "replace_notes",
+            "source_action": "replace_notes",
             "task": op["task"],
             "old": op["old"],
             "new": op["new"],
@@ -306,6 +348,7 @@ def _normalize_batch_op(op):
             sys.exit("create_task operations need project and name")
         return {
             "action": "create_task",
+            "source_action": "create_task",
             "project": op["project"],
             "name": op["name"],
             "section": op.get("section"),
@@ -362,6 +405,12 @@ def c_batch_apply(path):
         created_this_op = None  # set once create succeeds, in case a later step in the same op fails
         try:
             if action == "update_task":
+                if "notes" in op["fields"]:
+                    _advise_task_notes(
+                        op["task"],
+                        "batch-apply",
+                        operation=op["source_action"],
+                    )
                 tasks_api.update_task({"data": op["fields"]}, op["task"], {})
             elif action == "replace_notes":
                 task = tasks_api.get_task(op["task"], {"opt_fields": "notes"})["data"]
@@ -369,12 +418,21 @@ def c_batch_apply(path):
                 matches = notes.count(op["old"])
                 if matches != 1:
                     raise _BatchOpFailed("old text found %d times (need exactly 1)" % matches)
+                _advise_task_notes(
+                    op["task"], "batch-apply", operation="replace_notes"
+                )
                 tasks_api.update_task({"data": {"notes": notes.replace(op["old"], op["new"])}}, op["task"], {})
             elif action == "move":
                 sections_api.add_task_for_section({"data": {"task": op["task"]}}, op["section"], {})
             elif action == "create_task":
                 d = {"name": op["name"], "projects": [op["project"]]}
                 if op.get("notes") is not None:
+                    _advise_create_task(
+                        op["project"],
+                        op.get("section"),
+                        "batch-apply",
+                        operation="create_task",
+                    )
                     d["notes"] = op["notes"]
                 t = tasks_api.create_task({"data": d}, {})["data"]
                 created.append(t["gid"])
@@ -436,6 +494,7 @@ def c_raw(method, path):
         if s:
             data = json.loads(s)
     body = {"data": data} if data is not None else None
+    advisory_guard().before_raw(method=method, path=path, payload=data)
     try:
         result = client().call_api(
             path, method.upper(),
@@ -486,7 +545,7 @@ batch plan shape:
     {"action":"create_subtask","parent":"123","name":"Subtask name","notes":"optional","reason":"why"}
   ]}
 
-env overrides: ASANA_PAT, ASANA_ENV, ASANA_WORKSPACE
+env overrides: ASANA_PAT, ASANA_ENV, ASANA_WORKSPACE, ASANA_AGENT, DISH_DB_PATH
 """
 
 

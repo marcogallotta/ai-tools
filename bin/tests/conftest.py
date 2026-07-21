@@ -28,7 +28,20 @@ def cli(monkeypatch):
     """A freshly loaded asana CLI module with ASANA_PAT set."""
     monkeypatch.setenv("ASANA_PAT", "test-pat-token")
     monkeypatch.delenv("ASANA_ENV", raising=False)
-    return _load_cli_module()
+    module = _load_cli_module()
+
+    class NoopAdvisoryGuard:
+        def before_task_notes(self, *args, **kwargs):
+            return None
+
+        def before_create_task(self, *args, **kwargs):
+            return None
+
+        def before_raw(self, *args, **kwargs):
+            return None
+
+    module._ADVISORY_GUARD = NoopAdvisoryGuard()
+    return module
 
 
 def run_cli(module, argv, monkeypatch):
