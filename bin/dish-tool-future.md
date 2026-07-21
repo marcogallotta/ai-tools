@@ -14,9 +14,9 @@ The tool is built and rolled out in stages, scoped to what the evidence in `dish
 `dish-incident-log.md`, and `dish-review-log.md` actually requires. Nothing beyond v1a/v1b is built
 until real usage data justifies it.
 
-V1 ships against the three-way split. The approved checked-in `dish-planning.md`,
-`dish-research.md`, and `dish-verification.md` are repository-maintained governing sources, not
-generated or synced from Asana. The V1 resolver and pre-authorship binding are specified in
+V1 ships against the three-way split. The approved checked-in `dish-planning-protocol.md`,
+`dish-research-protocol.md`, and `dish-verification-protocol.md` are repository-maintained governing
+sources, not generated or synced from Asana. The V1 resolver and pre-authorship binding are specified in
 `dish-tool.md`; they are no longer future work. One human-readable `protocol_release` identifies
 their exact checked-in set together with the manifest/schema. The shared `git-commit` wrapper owns
 the version file: agents and humans do not edit it; the wrapper advances and includes it atomically
@@ -26,10 +26,10 @@ so the release value need not be a combined hash. `tool_version` remains separat
 tool-only fixes change only that version, while schema or semantic compatibility changes require
 both versions to advance.
 
-**v1a — build and soft-launch.** The full guarded path (`start` / `prepare` / `approve` / `reject` /
-`submit` / `dish-admin recover` / `dish-admin discard`) is implemented, tested, and usable
-end-to-end against live tasks — it
-performs real Asana writes through the guarded, token-protected path. What v1a does *not* do is make
+**v1a — build and soft-launch.** The full guarded path (`create` / `read` / `start` / `prepare` /
+`approve` / `reject` / `submit` plus `dish-admin recover` / `discard` / `unblock`) is implemented,
+tested, and usable end-to-end against live tasks — it performs real Asana writes through the guarded,
+token-protected path. What v1a does *not* do is make
 this path mandatory: the existing generic Asana CLI still works for managed tasks, and its
 managed-task check runs in advisory/log-only mode (see Protocol-managed task registry, Logging and
 observability). This proves both planning and complete-task structural validators, the lock-based
@@ -42,10 +42,7 @@ this stage — v1b is a configuration flip on v1a's own logged evidence, not new
 
 **v2 — add once v1a data justifies it.**
 
-- The two-failed-pass stop rule (`dish-protocol.md` lines 206-209) — real protocol text, but no
-  incident shows it failing in practice; v1a's rejection-rate logging is exactly the evidence needed
-  to decide whether to build it. Cheap to add once needed (a counter and a gate).
-- The small-change (`small`/Local) carelessness speed bump — Marco's standing concern (see Out of
+- The `small`-change carelessness speed bump — Marco's standing concern (see Out of
   scope (all versions) in `dish-tool.md`): an honest agent carelessly mis-declaring a
   material change as `small`, not a malicious one gaming the system. Designing its trigger condition
   needs data on what real `small`-declared diffs actually touch and how large they are — but v1a
@@ -133,9 +130,9 @@ status in any version. A later scanner may surface only bounded direct candidate
 references; explicit Asana links; exact task-name references; clearly named planning documents. It
 must not recursively audit dependencies or decide semantic impact.
 
-## Candidate deterministic checks flagged during dish-verification.md checklist drafting (v2)
+## Candidate deterministic checks flagged during verification-protocol drafting (v2)
 
-Raised while drafting `dish-verification.md`'s compact checklist in honest-pantry
+Raised while drafting `dish-verification-protocol.md`'s compact checklist in honest-pantry
 (`dish-docs-design.md`, "Research/verification split and file rename"). V1 deliberately avoids
 field-value grammar. This section records only later candidates whose automation would first require
 a narrow input syntax; semantic and culinary truth remain verifier work.
