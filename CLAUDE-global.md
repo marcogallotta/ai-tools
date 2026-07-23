@@ -75,9 +75,13 @@ prevent repeated work.
 For read-only public web research, use the environment's built-in web tools first; fall back to
 `curl` only when they cannot retrieve the needed content.
 
-Before launching any background, forked, isolated, or otherwise non-inline subagent, ask Marco for
-permission. State its task, approximate size or duration, and why delegation is useful. Approval is
-specific to that proposed delegation, not standing permission.
+Delegate freely, including expensively, when what Marco asked for already implies that scope — e.g.
+"do a deep, thorough review of this" authorizes heavy delegation to match it without a separate ask.
+Ask first before delegating in a way that goes beyond what was actually asked: dispatching multiple
+agents together, deep or open-ended reasoning/research, or a large token budget, when the request
+itself was light, casual, or exploratory (a quick opinion, "what do you think," or similar). State
+the task, approximate size or duration, and why delegation is useful; approval is specific to that
+proposed delegation, not standing permission for the next one.
 
 When dispatching a subagent that inherits conversation context, explicitly identify it as a worker
 or coordinator. A worker must not dispatch other agents; mentions of agents or forks in inherited
