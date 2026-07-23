@@ -43,29 +43,6 @@ your recommendation and include only the context and consequence needed to accep
 review narration and irrelevant alternatives. End with the approval status and exact sign-offs
 required. Split reviews when the decisions are clearer separately.
 
-## Context and session efficiency
-
-Warn Marco when accumulated context is likely to impair recall or make a substantial new phase
-inefficient — not merely because a long thread remains useful to the immediate work. Don't claim an
-exact context percentage or account allowance unless the runtime exposes it; if the runtime issues
-an account-usage warning, relay it immediately.
-
-Make warnings conspicuous, name the trigger, and say what to do:
-
-- **CONTEXT — WARNING** — continuing the current atomic unit is reasonable, but context is becoming
-  costly or a fresh thread is advisable before the next substantial phase.
-- **CONTEXT — HANDOFF** — at compaction, unreliable recall, or before a substantial phase would
-  carry mostly historical context, finish only the current safe atomic operation and strongly
-  recommend a fresh thread. Offer to create a handoff; do not write one without authorization.
-
-Name authorized handoffs `/tmp/handoff-<project>-YYYYMMDD-HHMM.md`, omitting `<project>` when it is
-not short and unambiguous. Include the objective, key decisions and constraints, relevant files and
-external task IDs, completed work, unresolved issues, and exact next action.
-
-If you are picking up a handoff file that lives under another session's scratchpad directory, copy
-it into your own scratchpad immediately, before doing anything else with it — the original's
-scratchpad is deleted once that session ends and the file can disappear before you finish using it.
-
 ## Searches and delegated agents
 
 Keep searches deliberately bounded. Define the scope and stopping condition before starting a broad
