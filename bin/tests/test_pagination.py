@@ -40,6 +40,10 @@ CASES = [
         id="subtasks",
     ),
     pytest.param(
+        ["comments", "222"], asana.StoriesApi, "get_stories_for_task",
+        id="comments",
+    ),
+    pytest.param(
         ["sections", "333"], asana.SectionsApi, "get_sections_for_project",
         id="sections",
     ),
@@ -234,7 +238,7 @@ def test_tasks_project_failure_does_not_fall_back_to_section(cli, run, monkeypat
     assert section_calls == []
 
 
-GID_CASES = [c for c in CASES if c.id in ("tasks-section", "tasks-project", "subtasks", "sections")]
+GID_CASES = [c for c in CASES if c.id in ("tasks-section", "tasks-project", "subtasks", "sections", "comments")]
 
 
 @pytest.mark.parametrize("argv,api_cls,method_name", GID_CASES)
@@ -284,3 +288,23 @@ def test_projects_without_modified_since_does_not_request_modified_at(cli, run, 
     args, kwargs = calls[0]
     opts = args[-1] if args and isinstance(args[-1], dict) else kwargs.get("opts", {})
     assert "modified_at" not in opts.get("opt_fields", "")
+
+
+def test_comments_excludes_system_stories(cli, run, monkeypatch, capsys):
+    """The stories endpoint mixes real comments with system activity
+    (assignment, section moves, etc); only resource_subtype ==
+    "comment_added" should print."""
+    page = {
+        "data": [
+            {"gid": "1", "resource_subtype": "comment_added", "text": "Looks good",
+             "created_at": "2026-07-20T00:00:00.000Z", "created_by": {"name": "Marco"}},
+            {"gid": "2", "resource_subtype": "assigned", "text": None,
+             "created_at": "2026-07-21T00:00:00.000Z", "created_by": {"name": "Marco"}},
+        ],
+        "next_page": None,
+    }
+    _mock_list(monkeypatch, asana.StoriesApi, "get_stories_for_task", page)
+    run(cli, ["comments", "222"])
+    out = capsys.readouterr().out
+    assert "Looks good" in out
+    assert "assigned" not in out

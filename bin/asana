@@ -248,6 +248,30 @@ def c_subtasks(gid, status, cursor):
     _print_cursor(next_cursor)
 
 
+def c_comments(gid, cursor):
+    """List user-written comments on a task (gid, author, timestamp, text).
+
+    The stories endpoint mixes actual comments in with system activity
+    (assignment, section moves, due-date changes, etc). Asana has no
+    server-side filter for this, so resource_subtype == "comment_added" is
+    applied locally per page, same as --status filtering on subtasks: a
+    page can print fewer (even zero) matching rows while still returning a
+    --cursor for more.
+    """
+    items, next_cursor = _fetch_page(
+        asana.StoriesApi(client()).get_stories_for_task, gid,
+        opts={"opt_fields": "text,resource_subtype,created_at,created_by.name"}, cursor=cursor, context="task %s" % gid,
+    )
+    for s in items:
+        if s.get("resource_subtype") != "comment_added":
+            continue
+        author = (s.get("created_by") or {}).get("name") or "?"
+        print("%s  %s  %s" % (s["gid"], s.get("created_at") or "", author))
+        print(s.get("text") or "")
+        print()
+    _print_cursor(next_cursor)
+
+
 def c_move(gid, section):
     """Move a task to a section within its project."""
     _call(asana.SectionsApi(client()).add_task_for_section, {"data": {"task": gid}}, section, {}, context="section %s" % section)
@@ -560,6 +584,9 @@ HELP = """asana — Asana API CLI (reads ASANA_PAT from ~/.config/asana-cli/.env
   asana tasks section|project <gid> [--status incomplete|complete|both] [--cursor <token>]
                                      one page (100) per call; --status defaults to incomplete
   asana subtasks <task> [--status incomplete|complete|both] [--cursor <token>]
+  asana comments <task> [--cursor <token>]
+                                     list user-written comments (excludes system activity
+                                     like assignment/section/due-date changes)
   asana move <task> <section>       move task to a section (same project)
   asana create-task <project> <name> [--section <gid>] [--notes -]
   asana create-subtask <parent> <name> [--notes -]
@@ -631,6 +658,9 @@ def main():
             cursor = opt("--cursor")
             status = _validate_status(opt("--status") or "incomplete")
             c_subtasks(rest[0], status, cursor)
+        elif cmd == "comments":
+            cursor = opt("--cursor")
+            c_comments(rest[0], cursor)
         elif cmd == "move":
             c_move(rest[0], rest[1])
         elif cmd == "create-task":
