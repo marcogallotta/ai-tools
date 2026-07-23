@@ -130,10 +130,10 @@ indirect process. If no permission prompt appears, stop; its absence is not appr
 
 ### Three or more writes
 
-Before making three or more writes in one authorized pass, use one batch instead of individual
-commands. A pass is the same authorized unit of Asana work; changing targets or crossing a turn
-boundary does not reset it, and its write count spans the parent and every delegated agent. Only a
-genuinely new instruction from Marco starts a new pass.
+Batch three or more writes in one authorized pass instead of sending them individually. A pass is
+one continuous authorization: it does not reset when the target changes or a turn boundary passes,
+and it spans the parent plus every delegated agent. Only a genuinely new instruction from Marco
+starts a new pass.
 
 ### Delegated work is plan-only
 
