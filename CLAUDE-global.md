@@ -141,21 +141,22 @@ starts a new pass.
 ### Delegated work is plan-only
 
 A background, forked, or otherwise delegated agent must never execute an Asana write, including
-`batch-apply`. It may read Asana and write structured operation fragments to an assigned scratch
-path, then return that path and a short summary up the chain. Only the top-level agent in Marco's
-visible conversation may combine all fragments with its own operations, resolve duplicates or
-conflicts, show the summary, and execute the resulting direct writes or single global batch.
+`batch-apply` — even when asked only to plan. A delegated agent has no access to Marco's chat
+context, so a write prompt coming from it reaches Marco with no way to tell what it's for; and each
+individual write bypasses the batching safeguard above. It may read Asana and write structured
+operation fragments to an assigned scratch path, then return that path and a short summary up the
+chain. Only the top-level agent in Marco's visible conversation may combine all fragments with its
+own operations, resolve duplicates or conflicts, show the summary, and execute the resulting direct
+writes or single global batch.
 
 This applies to Claude-dispatched delegated agents only (this file is shared with codex, which has
-its own dispatch mechanism this rule does not govern). The scratchpad is a shared filesystem with no
-locking: concurrent workers writing to the same or an ambiguous path can silently clobber each
-other, and the parent can merge a stale or wrong version. Before dispatching multiple delegated
-Claude agents in the same pass, the parent must mint one fresh, previously nonexistent pass
-directory (e.g. `scratchpad/asana-pass-<unique-id>/`) and assign each worker its own subdirectory
-within it (e.g. `worker-<agent-id>/operations.json`). Each worker writes only inside its assigned
-subdirectory and must not read or write another worker's subdirectory. The parent alone writes the
-combined plan (e.g. `combined-plan.json`) at the pass-directory level, after resolving duplicates or
-conflicts across the fragments.
+its own dispatch mechanism this rule does not govern). Before dispatching multiple delegated Claude
+agents in the same pass, the parent must mint one fresh, previously nonexistent pass directory (e.g.
+`scratchpad/asana-pass-<unique-id>/`) and assign each worker its own subdirectory within it (e.g.
+`worker-<agent-id>/operations.json`). Each worker writes only inside its assigned subdirectory and
+must not read or write another worker's subdirectory. The parent alone writes the combined plan
+(e.g. `combined-plan.json`) at the pass-directory level, after resolving duplicates or conflicts
+across the fragments.
 
 This rule does not override stricter repository- or task-contract rules. If a local contract
 prohibits batching an operation, execute it separately through its direct CLI permission prompt.
