@@ -255,3 +255,32 @@ def test_404_names_the_resource_gid(cli, run, monkeypatch, argv, api_cls, method
     msg = str(exc.value)
     assert "404" in msg
     assert gid in msg
+
+
+def test_projects_modified_since_filters_locally(cli, run, monkeypatch, capsys):
+    """/projects has no server-side modified_since param, so filtering must
+    happen client-side per page (same pattern as --status on subtasks)."""
+    page = {
+        "data": [
+            {"gid": "1", "name": "Old", "archived": False, "modified_at": "2026-07-01T00:00:00.000Z"},
+            {"gid": "2", "name": "New", "archived": False, "modified_at": "2026-07-22T00:00:00.000Z"},
+        ],
+        "next_page": None,
+    }
+    calls = _mock_list(monkeypatch, asana.ProjectsApi, "get_projects", page)
+    run(cli, ["projects", "--modified-since", "2026-07-20"])
+    out = capsys.readouterr().out
+    assert "New" in out
+    assert "Old" not in out
+    args, kwargs = calls[0]
+    opts = args[-1] if args and isinstance(args[-1], dict) else kwargs.get("opts", {})
+    assert "modified_at" in opts.get("opt_fields", "")
+
+
+def test_projects_without_modified_since_does_not_request_modified_at(cli, run, monkeypatch):
+    """Avoid asking the API for a field nothing will use when the flag is absent."""
+    calls = _mock_list(monkeypatch, asana.ProjectsApi, "get_projects", PAGE_LAST)
+    run(cli, ["projects"])
+    args, kwargs = calls[0]
+    opts = args[-1] if args and isinstance(args[-1], dict) else kwargs.get("opts", {})
+    assert "modified_at" not in opts.get("opt_fields", "")

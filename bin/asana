@@ -500,15 +500,24 @@ def c_search(kind, query, cursor):
     _print_cursor(next_cursor)
 
 
-def c_projects(cursor):
-    """List non-archived projects in the workspace (gid name)."""
+def c_projects(cursor, modified_since=None):
+    """List non-archived projects in the workspace (gid name).
+
+    The /projects endpoint has no server-side modified_since filter (unlike
+    /tasks), so --modified-since is applied locally per page: a page can
+    print fewer (even zero) matching rows while still returning a --cursor
+    for more, same as --status filtering on subtasks.
+    """
     ws = os.environ.get("ASANA_WORKSPACE", DEFAULT_WS)
+    opt_fields = "name,archived,modified_at" if modified_since else "name,archived"
     items, next_cursor = _fetch_page(
         asana.ProjectsApi(client()).get_projects,
-        opts={"workspace": ws, "opt_fields": "name,archived"}, cursor=cursor, context="workspace %s" % ws,
+        opts={"workspace": ws, "opt_fields": opt_fields}, cursor=cursor, context="workspace %s" % ws,
     )
     for p in items:
         if p.get("archived"):
+            continue
+        if modified_since and p.get("modified_at", "") < modified_since:
             continue
         print(p["gid"], p["name"])
     _print_cursor(next_cursor)
@@ -556,7 +565,10 @@ HELP = """asana — Asana API CLI (reads ASANA_PAT from ~/.config/asana-cli/.env
   asana create-subtask <parent> <name> [--notes -]
   asana batch-apply <plan.json>     short permission prompt, then apply on yes (3+ operations)
   asana search project|task <query> [--cursor <token>]
-  asana projects [--cursor <token>] list all (non-archived) workspace projects
+  asana projects [--cursor <token>] [--modified-since <ISO8601>]
+                                     list all (non-archived) workspace projects
+                                     --modified-since filters locally per page (compares
+                                     lexicographically, e.g. "2026-07-20" or full timestamp)
   asana raw <GET|PUT|POST|DELETE> <path>   JSON body from stdin, wrapped in {"data": ...}
       e.g. asana raw GET '/tasks/123?opt_fields=name,notes'
       unrestricted escape hatch (no method allowlist); relies on the Bash-tool
@@ -635,7 +647,8 @@ def main():
             c_search(rest[0], rest[1], cursor)
         elif cmd == "projects":
             cursor = opt("--cursor")
-            c_projects(cursor)
+            modified_since = opt("--modified-since")
+            c_projects(cursor, modified_since)
         elif cmd == "raw":
             c_raw(rest[0], rest[1])
         else:
