@@ -99,18 +99,22 @@ needed. The write-authorization rules above still apply to Git operations that c
 
 ## Documentation complexity budgets
 
-Protocol usability is itself a protection. Conceptual complexity -- branches, fields, exceptions,
-and overlapping rules -- is the real failure risk; line count is only a proxy. Do not add operating
-complexity unless comparable complexity is removed or consolidated elsewhere, except for a very
-strong evidenced reason where simplification would sacrifice a material protection. Do not compress
-wording mechanically to hit a count. After each editing iteration, review the file end to end for
-conceptual complexity -- branches, fields, exceptions, overlapping rules -- not for line count. Repeat
-that full review after every further edit the review itself produces, not just the first one; treat
-the file as converged only once a complete pass finds nothing left to change. Only then, as a
-secondary check, use the shared commit wrapper's count against the file's stated line-count band. At its stated explain-band, explain why further simplification would weaken
-clarity, reliability, or a required protection before committing. At its stated ceiling, the wrapper
-hard-rejects with no override. Work handoffs must carry this complexity constraint. Prefer moving
-history/rationale to an incident log or other reference file.
+Protocol usability is itself a protection. Judge these docs by conceptual complexity — branches,
+fields, exceptions, and overlapping rules — not by line or character count; line count is only a
+proxy, and squeezing text to fit a count (denser lines, cramped formatting) makes a file worse, not
+simpler. Do not add complexity unless comparable complexity is removed or consolidated elsewhere,
+except for a strong, evidenced reason where simplifying would sacrifice a real protection.
+
+After each edit, re-review the whole file end to end for conceptual complexity, including edits the
+review itself produced — not just the first pass. Treat the file as converged only once a complete
+read-through finds nothing left to change.
+
+Once converged, check the file's line count against its stated band as a secondary sanity check,
+via the shared commit wrapper. At the explain-band, explain in the commit why further simplification
+would weaken clarity, reliability, or a required protection. At the hard ceiling, the wrapper
+hard-rejects with no override. Work handoffs must carry this same complexity constraint; prefer
+moving history or rationale into an incident log or other reference file rather than trimming
+substance to fit.
 
 This file (loaded into every session, every project) follows this rule: target 120-150 lines,
 explain-band 150-180, hard reject 200.
