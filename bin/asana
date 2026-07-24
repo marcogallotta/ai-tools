@@ -218,7 +218,7 @@ def c_sections(gid, cursor):
     _print_cursor(next_cursor)
 
 
-def c_tasks(kind, gid, status, cursor):
+def c_tasks(kind, gid, status, cursor, modified_since=None):
     tasks_api = asana.TasksApi(client())
     fn = tasks_api.get_tasks_for_section if kind == "section" else tasks_api.get_tasks_for_project
     opts = {"opt_fields": "name,completed"}
@@ -226,6 +226,11 @@ def c_tasks(kind, gid, status, cursor):
         # Asana filters server-side here (unlike subtasks, below) so an
         # incomplete-only page is never diluted by completed tasks.
         opts["completed_since"] = "now"
+    if modified_since:
+        # Not listed in Asana's public API reference for this endpoint (only
+        # completed_since is), but a real, working server-side filter --
+        # an undocumented API feature, not a speculative one. Verified live.
+        opts["modified_since"] = modified_since
     items, next_cursor = _fetch_page(fn, gid, opts=opts, cursor=cursor, context="%s %s" % (kind, gid))
     for t in items:
         if _status_match(t, status):
@@ -582,7 +587,10 @@ HELP = """asana — Asana API CLI (reads ASANA_PAT from ~/.config/asana-cli/.env
   asana project <project>           name + notes
   asana sections <project> [--cursor <token>]
   asana tasks section|project <gid> [--status incomplete|complete|both] [--cursor <token>]
+                               [--modified-since <ISO8601>]
                                      one page (100) per call; --status defaults to incomplete
+                                     --modified-since is an undocumented but real, working
+                                     Asana API filter (verified live, not in their reference)
   asana subtasks <task> [--status incomplete|complete|both] [--cursor <token>]
   asana comments <task> [--cursor <token>]
                                      list user-written comments (excludes system activity
@@ -651,9 +659,10 @@ def main():
         elif cmd == "tasks":
             cursor = opt("--cursor")
             status = _validate_status(opt("--status") or "incomplete")
+            modified_since = opt("--modified-since")
             if len(rest) < 2 or rest[0] not in ("section", "project"):
-                sys.exit("usage: asana tasks section|project <gid> [--status incomplete|complete|both] [--cursor <token>]")
-            c_tasks(rest[0], rest[1], status, cursor)
+                sys.exit("usage: asana tasks section|project <gid> [--status incomplete|complete|both] [--cursor <token>] [--modified-since <ISO8601>]")
+            c_tasks(rest[0], rest[1], status, cursor, modified_since)
         elif cmd == "subtasks":
             cursor = opt("--cursor")
             status = _validate_status(opt("--status") or "incomplete")

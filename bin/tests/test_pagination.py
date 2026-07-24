@@ -174,6 +174,28 @@ def test_non_incomplete_status_omits_completed_since(cli, run, monkeypatch, argv
     assert "completed_since" not in opts
 
 
+@pytest.mark.parametrize("argv,api_cls,method_name", TASKS_ONLY_CASES)
+def test_modified_since_forwarded_server_side(cli, run, monkeypatch, argv, api_cls, method_name):
+    """Unlike /projects (no modified_since support at all), tasks-for-
+    section/project genuinely filters server-side on this param -- verified
+    live against production, despite it being absent from Asana's public
+    API reference for the endpoint. Forward it verbatim, no client filtering."""
+    calls = _mock_list(monkeypatch, api_cls, method_name, PAGE_LAST)
+    run(cli, argv + ["--modified-since", "2026-07-23T00:00:00.000Z"])
+    args, kwargs = calls[0]
+    opts = args[-1] if args and isinstance(args[-1], dict) else kwargs.get("opts", {})
+    assert opts.get("modified_since") == "2026-07-23T00:00:00.000Z"
+
+
+@pytest.mark.parametrize("argv,api_cls,method_name", TASKS_ONLY_CASES)
+def test_no_modified_since_by_default(cli, run, monkeypatch, argv, api_cls, method_name):
+    calls = _mock_list(monkeypatch, api_cls, method_name, PAGE_LAST)
+    run(cli, argv)
+    args, kwargs = calls[0]
+    opts = args[-1] if args and isinstance(args[-1], dict) else kwargs.get("opts", {})
+    assert "modified_since" not in opts
+
+
 def test_subtasks_does_not_send_completed_since(cli, run, monkeypatch):
     """The subtasks endpoint has no completed_since param (unlike
     get_tasks_for_{section,project}) -- must never send it."""
