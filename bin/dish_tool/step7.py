@@ -6,7 +6,7 @@ import sqlite3
 from typing import Any, Mapping
 
 from .constants import COOKING_PROJECT_GID
-from .database import mark_operation_completion, record_audit, transition_operation
+from .database import mark_operation_completion, record_audit, transition_operation, assert_fresh_verifier, record_actor_fact
 from .errors import DishRuleError
 from .models import VerifierIdentity, verification_actor_line, utc_now
 from .lifecycle import assert_transition, ready, require_status
@@ -78,7 +78,8 @@ def verification_read(
     if handoff is not None and handoff["completed_at"] is None:
         raise DishRuleError("WRONG_STATE", "Verification handoff is incomplete", rule="verification_handoff_incomplete")
     identity = VerifierIdentity(agent, run_id, independence_attestation)
-    identity.validate(editor_agent=op["editor_agent"], researcher_agent=op["researcher_agent"], constructor_run_id=op["run_id"])
+    identity.validate(editor_agent=op["editor_agent"], researcher_agent=op["researcher_agent"], constructor_run_id=None)
+    assert_fresh_verifier(conn, operation_id=operation_id, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     document = parse_task_document(f"{live.title}\n{live.notes}")
     validation = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
@@ -109,6 +110,7 @@ def verification_read(
         "UPDATE verification_cycles SET verifier_agent = ?, run_id = ?, independence_attestation = ? WHERE cycle_id = ?",
         (agent, str(run_id or "").strip() or None, str(independence_attestation or "").strip() or None, cycle["cycle_id"]),
     )
+    record_actor_fact(conn, operation_id=operation_id, task_gid=op["task_gid"], role="verifier", agent=agent, run_id=run_id, independence_attestation=independence_attestation, candidate_identity=live.identity, source_cycle_id=cycle["cycle_id"])
     record_audit(
         conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
         event_type="verification.review_started", actor_agent=agent,

@@ -28,7 +28,7 @@ RESEARCH_BASIS_PREFIXES = (
     "Source-backed dish", "Halal port of ", "Intentional test dish, human-approved",
 )
 DESTINATION_RE = re.compile(r"^(?P<name>.+?)\s+—\s+(?P<gid>[0-9]+)$")
-ACTOR_RE = re.compile(r"^ChatGPT — .+, \d{4}-\d{2}-\d{2}$")
+ACTOR_RE = re.compile(r"^(?:ChatGPT|Claude) — .+, \d{4}-\d{2}-\d{2}$")
 MATERIAL_CHANGE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+—\s+.+")
 
 

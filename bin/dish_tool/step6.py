@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import create_verification_cycle, transition_operation, declare_operation_step, complete_operation_step
+from .database import create_verification_cycle, transition_operation, declare_operation_step, complete_operation_step, record_actor_fact
 from .errors import DishRuleError
-from .models import ResolvedRelease, SectionRegistry, utc_now
+from .models import ResolvedRelease, SectionRegistry, utc_now, material_editor_line
 from .lifecycle import assert_transition, pending_verification
 from .releases import current_verification_protocol_release
 from .task_document import (
@@ -22,6 +22,7 @@ from .task_document import (
     validate_task_document,
 )
 from .task_store import LiveTask, move_exact, read_complete_task, write_exact_content
+from .governed_diff import require_governed_authorization
 
 
 def _candidate(path: str) -> str:
@@ -133,16 +134,21 @@ def prepare_live(
         verification_snapshot = current_verification_protocol_release(release.root)
         before_status = None if prior is None else prior.state.values["Status"]
         assert_transition(action="research_handoff", before=before_status, after="pending-verification")
-        state = pending_verification(candidate.state.values, protocol_release=verification_snapshot.identity)
+        state_values = dict(pending_verification(candidate.state.values, protocol_release=verification_snapshot.identity).values)
+        state_values["Self-verified"] = material_editor_line(agent, utc_now()[:10])
+        state = TaskState(state_values)
     elif op["operation_kind"] == "change" and body_changed:
         classification = str(material_classification or "").strip()
         if classification not in {"material", "non-material"}:
             raise DishRuleError("INVALID_ARGUMENT", "body edits require material or non-material classification", rule="material_classification_required")
         material_changes.append(f"{utc_now()[:10]} — {agent}: {classification}")
         if classification == "material":
+            require_governed_authorization(prior, candidate)
             verification_snapshot = current_verification_protocol_release(release.root)
             assert_transition(action="material_edit", before=prior.state.values["Status"], after="pending-verification")
-            state = pending_verification(candidate.state.values, protocol_release=verification_snapshot.identity)
+            state_values = dict(pending_verification(candidate.state.values, protocol_release=verification_snapshot.identity).values)
+            state_values["Self-verified"] = material_editor_line(agent, utc_now()[:10])
+            state = TaskState(state_values)
         else:
             assert_transition(action="non_material_edit", before=prior.state.values["Status"], after="ready")
             # A non-material edit cannot smuggle a lifecycle rewrite. Preserve the
@@ -170,6 +176,8 @@ def prepare_live(
         schema_version=release.schema_version,
     )
     complete_operation_step(conn, operation_id, "candidate_write")
+    if op["operation_kind"] == "initial" or (op["operation_kind"] == "change" and body_changed and str(material_classification or "").strip() == "material"):
+        record_actor_fact(conn, operation_id=operation_id, task_gid=live.gid, role="constructor" if op["operation_kind"] == "initial" else "material_editor", agent=agent, run_id=op["run_id"], candidate_identity=confirmed.identity)
     exact = parse_task_document(f"{confirmed.title}\n{confirmed.notes}")
     check = validate_task_document(exact, expected_schema_version=release.schema_version, schema=release.schema)
     if not check.ok:

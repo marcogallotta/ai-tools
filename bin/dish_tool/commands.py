@@ -1731,7 +1731,7 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, submission_id: str, 
     from .step8 import reject_route
     release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
-    data = reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema)
+    data = reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema, honest_root=release.root)
     actions = [] if data["two_pass_hold"] or route in {"evidence", "human-review"} else ["start"]
     return result_envelope(command="reject", task_gid=trace.task_gid, submission_id=operation_id, state="open", allowed_actions=actions, data=data)
 

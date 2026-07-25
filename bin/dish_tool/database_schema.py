@@ -413,7 +413,24 @@ CREATE TABLE operation_steps (
 CREATE INDEX operation_steps_pending_idx ON operation_steps(operation_id, completed_at);
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9}
+_MIGRATION_10 = """
+CREATE TABLE operation_actor_facts (
+    fact_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    task_gid TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('planner','constructor','material_editor','verifier','human')),
+    agent TEXT NOT NULL,
+    run_id TEXT,
+    independence_attestation TEXT,
+    candidate_identity TEXT,
+    source_cycle_id TEXT REFERENCES verification_cycles(cycle_id),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX operation_actor_facts_operation_idx ON operation_actor_facts(operation_id, created_at);
+CREATE INDEX operation_actor_facts_run_idx ON operation_actor_facts(operation_id, run_id);
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10}
 
 
 def _backup_legacy_database(db_path: Path) -> None:

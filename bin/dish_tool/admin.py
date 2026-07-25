@@ -358,7 +358,8 @@ def _step8_admin_reopen(self, *, trace: AdminTrace, submission_id: str, category
     if row is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     trace.submission_id = operation_id; trace.task_gid = row["task_gid"]; trace.state = "open"
-    data = reopen_two_pass(self.conn, self.backend, operation_id=operation_id, category=category, before=before, after=after, editor=editor, date=date)
+    release = None if self.release_loader is None else self.release_loader()
+    data = reopen_two_pass(self.conn, self.backend, operation_id=operation_id, category=category, before=before, after=after, editor=editor, date=date, honest_root=None if release is None else release.root)
     return result_envelope(command="reopen", task_gid=trace.task_gid, submission_id=operation_id, state="open", data=data)
 
 DishAdminApplication._command_reopen = _step8_admin_reopen

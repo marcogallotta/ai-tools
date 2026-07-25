@@ -7,12 +7,14 @@ from pathlib import Path
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import create_verification_cycle, record_audit
+from .database import create_verification_cycle, record_audit, record_actor_fact, transition_operation
 from .errors import DishRuleError
-from .models import utc_now
+from .models import utc_now, material_editor_line
 from .lifecycle import assert_transition, hold, pending_verification, require_status, resumed
 from .task_document import DocumentParseError, TaskState, parse_task_document, validate_task_document
 from .task_store import read_complete_task, write_exact_content
+from .releases import current_verification_protocol_release
+from .governed_diff import require_governed_authorization
 from .step7 import approve_live, assert_verifier_authority, bind_cycle_review
 
 ROUTES = {"large", "evidence", "human-review"}
@@ -77,7 +79,7 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     return approve_live(conn, backend, operation_id=operation_id, agent=agent, reviewed_identity=confirmed.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=run_id, independence_attestation=independence_attestation, schema=schema)
 
 
-def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, schema=None):
+def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, schema=None, honest_root=None):
     op, cycle = _rows(conn, operation_id)
     assert_verifier_authority(cycle, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
     route = str(route or "").strip()
@@ -100,11 +102,16 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     if route == "large":
         if not file_path:
             raise DishRuleError("INVALID_ARGUMENT", "Large correction requires a complete corrected candidate", rule="large_candidate_required")
-        document = _candidate(file_path)
+        corrected = _candidate(file_path)
+        require_governed_authorization(document, corrected)
+        if honest_root is None:
+            raise DishRuleError("INTERNAL_ERROR", "current Honest checkout is required for a new Verification cycle", rule="honest_root_required")
+        snapshot = current_verification_protocol_release(honest_root)
         assert_transition(action="large_correction", before="pending-verification", after="pending-verification")
-        state = dict(pending_verification(document.state.values, protocol_release=cycle["protocol_release"]).values)
-        changes = tuple(document.material_changes) + (f"{utc_now()[:10]} — {agent}: large verification correction — {reason}",)
-        document = dataclasses.replace(document, state=TaskState(state), material_changes=changes)
+        state = dict(pending_verification(corrected.state.values, protocol_release=snapshot.identity).values)
+        state["Self-verified"] = material_editor_line(agent, utc_now()[:10])
+        changes = tuple(corrected.material_changes) + (f"{utc_now()[:10]} — {agent}: large verification correction — {reason}",)
+        document = dataclasses.replace(corrected, state=TaskState(state), material_changes=changes)
     elif route == "evidence":
         if resume_status not in {"pending-verification", "pending-research"}:
             raise DishRuleError("INVALID_ARGUMENT", "Evidence route requires a valid resume status", rule="resume_status_required")
@@ -127,15 +134,17 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     conn.execute("UPDATE verification_cycles SET correction_class = ?, outcome = ?, route = ?, resume_state = ?, completed_at = ? WHERE cycle_id = ?", ("large" if route == "large" else None, outcome, {"evidence": "evidence", "human-review": "human_review"}.get(route), document.state.values["Resume status"], utc_now(), cycle["cycle_id"]))
     if route == "large" and not two_pass:
         next_number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
-        new_cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=next_number, protocol_release=document.state.values["Verification protocol release"], protocol_text=cycle["protocol_text"], route=None)
+        new_cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=next_number, protocol_release=snapshot.identity, protocol_text=snapshot.text, route=None)
+        record_actor_fact(conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor", agent=agent, run_id=cycle["run_id"], independence_attestation=cycle["independence_attestation"], candidate_identity=confirmed.identity, source_cycle_id=cycle["cycle_id"])
         conn.execute("UPDATE operations SET editor_agent = ?, verifier_agent = NULL, run_id = ?, independence_attestation = NULL WHERE operation_id = ?", (agent, cycle["run_id"], operation_id))
+        transition_operation(conn, operation_id, phase="await_verification")
     else:
         new_cycle = None
     record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "two_pass_hold": two_pass, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=independence_attestation)
     return {"operation_id": operation_id, "route": route, "two_pass_hold": two_pass, "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"], "task": dataclasses.asdict(confirmed)}
 
 
-def reopen_two_pass(conn: sqlite3.Connection, backend: Any, *, operation_id: str, category: str, before: str, after: str, editor: str, date: str):
+def reopen_two_pass(conn: sqlite3.Connection, backend: Any, *, operation_id: str, category: str, before: str, after: str, editor: str, date: str, honest_root=None):
     op = conn.execute("SELECT * FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     if op is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
@@ -145,11 +154,21 @@ def reopen_two_pass(conn: sqlite3.Connection, backend: Any, *, operation_id: str
     document = parse_task_document(f"{live.title}\n{live.notes}")
     if document.state.values["Status"] != "pending-human-review" or document.state.values["Resume status"] != "pending-verification":
         raise DishRuleError("WRONG_STATE", "task is not on the two-pass Verification hold", rule="two_pass_hold_required")
-    state = resumed(document.state.values)
+    if honest_root is None:
+        previous = conn.execute("SELECT protocol_release, protocol_text FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1", (operation_id,)).fetchone()
+        snapshot = type("Snapshot", (), {"identity": previous["protocol_release"], "text": previous["protocol_text"]})()
+    else:
+        snapshot = current_verification_protocol_release(honest_root)
+    state_values = dict(resumed(document.state.values).values)
+    state_values["Verification protocol release"] = snapshot.identity
+    if editor in {"gpt", "codex", "claude"}:
+        state_values["Self-verified"] = material_editor_line(editor, date)
     entry = f"{date} — {editor}: {category}; before: {before}; after: {after}"
-    document = dataclasses.replace(document, state=state, material_changes=tuple(document.material_changes) + (entry,))
+    document = dataclasses.replace(document, state=TaskState(state_values), material_changes=tuple(document.material_changes) + (entry,))
     confirmed = _write_document(conn, backend, op, live, document)
     number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
-    cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number, protocol_release=document.state.values["Verification protocol release"], protocol_text=conn.execute("SELECT protocol_text FROM verification_cycles WHERE operation_id = ? ORDER BY cycle_number DESC LIMIT 1", (operation_id,)).fetchone()[0], route=None)
+    cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number, protocol_release=snapshot.identity, protocol_text=snapshot.text, route=None)
+    record_actor_fact(conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor" if editor in {"gpt", "codex", "claude"} else "human", agent=editor, candidate_identity=confirmed.identity)
     conn.execute("UPDATE operations SET editor_agent = ?, verifier_agent = NULL, run_id = NULL, independence_attestation = NULL WHERE operation_id = ?", (editor, operation_id))
+    transition_operation(conn, operation_id, phase="await_verification")
     return {"operation_id": operation_id, "cycle_id": cycle["cycle_id"], "task": dataclasses.asdict(confirmed), "material_change": entry}

@@ -286,6 +286,12 @@ class VerifierIdentity:
             )
 
 
+
+def material_editor_line(agent: str, date: str) -> str:
+    agent_family(agent)
+    labels = {"gpt": "ChatGPT — GPT-5", "codex": "ChatGPT — Codex", "claude": "Claude — Claude"}
+    return f"{labels[agent]}, {date}"
+
 def verification_actor_line(agent: str, date: str) -> str:
     agent_family(agent)
     if agent not in {"gpt", "codex"}:
