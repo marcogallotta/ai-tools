@@ -224,6 +224,42 @@ class OperationActors:
     independence_attestation: str | None = None
 
 
+
+
+@dataclass(frozen=True)
+class VerifierIdentity:
+    agent: str
+    run_id: str | None = None
+    independence_attestation: str | None = None
+
+    def validate(self, *, editor_agent: str | None, researcher_agent: str | None) -> None:
+        agent_family(self.agent)
+        if self.agent in {editor_agent, researcher_agent}:
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "the constructor or material editor cannot verify the candidate",
+                rule="verifier_not_independent",
+                details={"verifier_agent": self.agent},
+            )
+        if not (str(self.run_id or "").strip() or str(self.independence_attestation or "").strip()):
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "a verifier run ID or independence attestation is required",
+                rule="verifier_identity_required",
+            )
+
+
+def verification_actor_line(agent: str, date: str) -> str:
+    agent_family(agent)
+    if agent not in {"gpt", "codex"}:
+        raise DishRuleError(
+            "AGENT_MISMATCH",
+            "Verification signoff requires ChatGPT",
+            rule="verification_requires_chatgpt",
+        )
+    return f"ChatGPT — GPT-5, {date}"
+
+
 @dataclass(frozen=True)
 class OperationRecord:
     operation_id: str

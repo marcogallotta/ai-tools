@@ -56,7 +56,9 @@ def build_parser() -> JsonArgumentParser:
     start = subparsers.add_parser("start")
     start.add_argument("task_gid")
     start.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
-    start.add_argument("--kind", required=True, choices=("planning", "initial", "change"))
+    start.add_argument("--kind", required=True, choices=("planning", "initial", "change", "verification"))
+    start.add_argument("--run-id")
+    start.add_argument("--independence-attestation")
     start.add_argument("--change-level", choices=("small", "large"))
     start.add_argument("--change-reason")
 
@@ -71,8 +73,11 @@ def build_parser() -> JsonArgumentParser:
     approve = subparsers.add_parser("approve")
     approve.add_argument("submission_id")
     approve.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
-    approve.add_argument("--file", dest="file_path", required=True)
+    approve.add_argument("--file", dest="file_path")
     approve.add_argument("--correction", required=True, choices=("none", "small"))
+    approve.add_argument("--reviewed-identity")
+    approve.add_argument("--semantic-review-complete", action="store_true")
+    approve.add_argument("--provenance-complete", action="store_true")
     _add_title_declaration(approve)
 
     reject = subparsers.add_parser("reject")

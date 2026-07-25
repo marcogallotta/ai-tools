@@ -68,10 +68,13 @@ class Backend:
     def update_task_content(self, *, task_gid, title, notes): self.writes += 1; self.title, self.notes = title, notes
     def move_task_to_section(self, *, task_gid, section_gid): self.moves += 1; self.section=section_gid
 
-def release(role=None):
-    return ResolvedRelease(version="1.0.1", commit="", root=Path("."), protocols={} if role is None else {role:f"{role} protocol"}, manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}", migration_metadata={}, requested_protocol_role=role)
+def release(root, role=None):
+    return ResolvedRelease(version="1.0.1", commit="", root=root, protocols={} if role is None else {role:f"{role} protocol"}, manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}", migration_metadata={}, requested_protocol_role=role)
 
-def app(tmp_path, backend): return DishApplication(initialize_database(tmp_path/"d.db"), backend, release_loader=lambda role=None: release(role))
+def app(tmp_path, backend):
+    honest = tmp_path / "honest"; honest.mkdir(exist_ok=True)
+    (honest / "dish-verification-protocol.md").write_text("verification protocol")
+    return DishApplication(initialize_database(tmp_path/"d.db"), backend, release_loader=lambda role=None: release(honest, role))
 
 def write(tmp_path, name, text):
     p=tmp_path/name; p.write_text(text); return str(p)
@@ -89,8 +92,8 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
     result=a.execute("prepare",agent="gpt",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
     assert result["ok"] and b.writes == 1 and b.moves == 1 and b.section == "vq"
     assert "Status: pending-verification" in b.notes
-    assert "Verification protocol release: 1.0.1" in b.notes
-    assert result["data"]["verification_cycle"]["protocol_release"] == "1.0.1"
+    assert "Verification protocol release: sha256:" in b.notes
+    assert result["data"]["verification_cycle"]["protocol_release"].startswith("sha256:")
 
 def test_stale_baseline_blocks_before_write(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)

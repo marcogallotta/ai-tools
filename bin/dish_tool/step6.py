@@ -10,6 +10,7 @@ from .constants import COOKING_PROJECT_GID
 from .database import create_verification_cycle
 from .errors import DishRuleError
 from .models import ResolvedRelease, SectionRegistry, utc_now
+from .releases import current_verification_protocol_release
 from .task_document import (
     DocumentParseError,
     PlanningBrief,
@@ -123,12 +124,14 @@ def prepare_live(
             raise DishRuleError("VALIDATION_FAILED", "live baseline is not canonical", rule=exc.rule) from exc
 
     state = dict(candidate.state.values)
+    verification_snapshot = None
     if op["operation_kind"] in {"initial", "change"}:
+        verification_snapshot = current_verification_protocol_release(release.root)
         state.update({
             "Status": "pending-verification",
             "Status detail": "None",
             "Resume status": "None",
-            "Verification protocol release": release.protocol_version,
+            "Verification protocol release": verification_snapshot.identity,
             "Verified by": "None",
         })
 
@@ -161,7 +164,7 @@ def prepare_live(
     cycle = None
     if exact.state.values["Status"] == "pending-verification":
         number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (live.gid,)).fetchone()[0]
-        cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=live.gid, cycle_number=number, protocol_release=release.protocol_version)
+        cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=live.gid, cycle_number=number, protocol_release=exact.state.values["Verification protocol release"])
         if confirmed.section_gid != registry.verification_queue_gid:
             confirmed = move_exact(
                 conn, backend, operation_id=operation_id, task_gid=live.gid,

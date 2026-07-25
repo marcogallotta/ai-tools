@@ -1744,3 +1744,91 @@ def _step6_prepare(self, *, trace: CommandTrace, agent: str, submission_id: str,
     return result_envelope(command="prepare", task_gid=trace.task_gid, submission_id=operation_id, state="open", allowed_actions=["approve", "reject"] if data.get("verification_cycle") else [], data=data)
 
 DishApplication._command_prepare = _step6_prepare
+
+# Step 7 exact-live Verification lifecycle.
+_step6_command_start = DishApplication._command_start
+_step6_command_approve = DishApplication._command_approve
+
+
+def _step7_start(
+    self,
+    *,
+    trace: CommandTrace,
+    agent: str,
+    task_gid: str,
+    kind: str,
+    change_level: str | None = None,
+    change_reason: str | None = None,
+    run_id: str | None = None,
+    independence_attestation: str | None = None,
+) -> dict[str, Any]:
+    if kind != "verification":
+        return _step6_command_start(
+            self, trace=trace, agent=agent, task_gid=task_gid, kind=kind,
+            change_level=change_level, change_reason=change_reason,
+        )
+    from .step7 import verification_read
+    agent_family(agent)
+    task_gid = _clean_required(task_gid, rule="task_gid_required", label="task GID")
+    trace.task_gid = task_gid
+    row = self.conn.execute(
+        "SELECT operation_id FROM operations WHERE task_gid = ? AND status = 'open' ORDER BY created_at DESC LIMIT 1",
+        (task_gid,),
+    ).fetchone()
+    if row is None:
+        raise DishRuleError("NOT_FOUND", "task has no open operation", rule="open_operation_missing")
+    operation_id = row["operation_id"]
+    release = self._load_release("verification")
+    data = verification_read(
+        self.conn, self.backend, operation_id=operation_id, agent=agent,
+        honest_root=release.root, run_id=run_id,
+        independence_attestation=independence_attestation,
+    )
+    trace.submission_id = operation_id
+    trace.state = "open"
+    return result_envelope(
+        command="start", task_gid=task_gid, submission_id=operation_id,
+        state="open", allowed_actions=["approve", "reject"], data=data,
+    )
+
+
+def _step7_approve(
+    self,
+    *,
+    trace: CommandTrace,
+    agent: str,
+    submission_id: str,
+    file_path: str | None = None,
+    correction: str = "none",
+    reviewed_identity: str | None = None,
+    semantic_review_complete: bool = False,
+    provenance_complete: bool = False,
+    **legacy: Any,
+) -> dict[str, Any]:
+    from .step7 import approve_live
+    operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
+    exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
+    if exists is None:
+        return _step6_command_approve(
+            self, trace=trace, agent=agent, submission_id=submission_id,
+            file_path=file_path or "", correction=correction, **legacy,
+        )
+    trace.submission_id = operation_id
+    trace.task_gid = exists["task_gid"]
+    clean_identity = _clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity")
+    data = approve_live(
+        self.conn, self.backend, operation_id=operation_id, agent=agent,
+        reviewed_identity=clean_identity,
+        semantic_review_complete=semantic_review_complete,
+        provenance_complete=provenance_complete,
+        correction_class=correction,
+    )
+    trace.state = "open"
+    return result_envelope(
+        command="approve", task_gid=trace.task_gid, submission_id=operation_id,
+        state="open", allowed_actions=["submit"], data=data,
+    )
+
+
+DishApplication._command_start = _step7_start
+DishApplication._command_approve = _step7_approve
