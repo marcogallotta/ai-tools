@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 from .constants import AGENT_FAMILIES
 from .errors import DishRuleError
@@ -76,6 +76,25 @@ class SectionRegistry:
     @property
     def queue_gids(self) -> frozenset[str]:
         return frozenset({self.research_queue_gid, self.verification_queue_gid})
+
+
+class ReadOnlyLegacyAdapter(Mapping[str, Any]):
+    """Explicit read-only view of deprecated validation metadata."""
+
+    def __init__(self, data: Mapping[str, Any]) -> None:
+        self._data = copy.deepcopy(dict(data))
+
+    def __getitem__(self, key: str) -> Any:
+        return copy.deepcopy(self._data[key])
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._data)
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def as_dict(self) -> dict[str, Any]:
+        return copy.deepcopy(self._data)
 
 
 @dataclass(frozen=True)

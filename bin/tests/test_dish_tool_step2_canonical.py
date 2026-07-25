@@ -111,14 +111,14 @@ def test_extra_top_level_section_fails_but_lower_heading_is_allowed():
         raise AssertionError("extra top-level section accepted")
 
 
-def test_schema_migration_does_not_write_target_version():
+def test_schema_migration_executes_declared_target_version_handler():
     source = TASK.replace("Schema version: 2", "Schema version: 1")
     migration = json.loads((BIN_DIR / "tests" / "fixtures" / "dish-version-current" / "dish-schema-migrations" / "0002-canonical-document.json").read_text())
     result = migrate_task_document(source, migration)
     assert result.ok
-    assert result.document.schema_version == "1"
-    assert "Schema version: 1" in result.transformed_content
-    assert "Schema version: 2" not in result.transformed_content
+    assert result.document.schema_version == "2"
+    assert "Schema version: 2" in result.transformed_content
+    assert "Schema version: 1" not in result.transformed_content
 
 
 def test_ambiguous_legacy_content_is_quarantined():

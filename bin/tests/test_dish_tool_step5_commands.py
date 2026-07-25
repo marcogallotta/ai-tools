@@ -60,7 +60,7 @@ class Backend:
     def move_task_to_section(self, *, task_gid, section_gid): self.section=section_gid
 
 def release(role=None, migrations=False):
-    return ResolvedRelease(version="1.0.2", commit="", root=Path("."), protocols={} if role is None else {role:f"{role} protocol"}, manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}", migration_metadata={"m.json":{"migration_id":"m","from_schema_version":"1","to_schema_version":"2","protocol_version":"1.0.2","automatic":False,"description":"x","source_ids":["x"],"operations":["x"]}} if migrations else {}, requested_protocol_role=role)
+    return ResolvedRelease(version="1.0.2", commit="", root=Path("."), protocols={} if role is None else {role:f"{role} protocol"}, manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}", migration_metadata={"m.json":{"migration_id":"m","from_schema_version":"1","to_schema_version":"2","protocol_version":"1.0.2","automatic":False,"description":"x","source_ids":["x"],"operations":[{"type":"canonical-parse-render","description":"test"}]}} if migrations else {}, requested_protocol_role=role)
 
 def app(tmp_path, backend): return DishApplication(initialize_database(tmp_path/"d.db"), backend, release_loader=lambda role=None: release(role))
 

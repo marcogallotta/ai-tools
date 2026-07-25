@@ -201,7 +201,7 @@ def validate_manifest_shape(
         raise ReleaseResolutionError(
             "manifest_malformed", f"{filename} has an unknown manifest_kind"
         )
-    if not isinstance(manifest, dict):
+    if not isinstance(manifest, Mapping):
         raise ReleaseResolutionError(
             "manifest_malformed", f"{filename} must contain a JSON object"
         )

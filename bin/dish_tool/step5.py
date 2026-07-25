@@ -1,7 +1,6 @@
 """Step 5 command primitives: exact reads, claims, inspection, and migration."""
 from __future__ import annotations
 
-import dataclasses
 import sqlite3
 from typing import Any, Mapping
 
@@ -9,6 +8,7 @@ from .constants import COOKING_PROJECT_GID
 from .database import confirm_task_content, create_operation, content_identity
 from .errors import DishRuleError
 from .models import OperationActors, ResolvedRelease
+from .migrations import migrate_task_document
 from .task_document import DocumentParseError, parse_task_document, validate_task_document
 from .task_store import LiveTask, read_complete_task, write_exact_content
 
@@ -79,10 +79,10 @@ def migrate_live_task(conn: sqlite3.Connection, backend, *, task_gid: str, relea
     migration = next((m for m in release.migration_metadata.values() if m["from_schema_version"] == document.schema_version and m["to_schema_version"] == release.schema_version), None)
     if migration is None:
         raise DishRuleError("VALIDATION_FAILED", "no supported migration path", rule="migration_path_missing", details={"from": document.schema_version, "to": release.schema_version})
-    candidate = dataclasses.replace(document, schema_version=release.schema_version)
-    validation = validate_task_document(candidate, expected_schema_version=release.schema_version, schema=release.schema)
-    if not validation.ok:
-        raise DishRuleError("VALIDATION_FAILED", "migrated candidate failed validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in validation.findings])
+    result = migrate_task_document(f"{live.title}\n{live.notes}", migration, schema=release.schema)
+    if not result.ok or result.document is None:
+        raise DishRuleError("VALIDATION_FAILED", "migration could not safely produce the current schema", rule="migration_quarantined", errors=[{"rule": f.rule, "kind": f.kind.value, "message": f.message} for f in result.findings])
+    candidate = result.document
     confirm_task_content(conn, task_gid=task_gid, title=live.title, notes=live.notes, schema_version=document.schema_version, boundary="migration_baseline")
     op = create_operation(conn, task_gid=task_gid, operation_kind="migration", expected_identity=live.identity, schema_version=document.schema_version)
     rendered = candidate.render().splitlines()

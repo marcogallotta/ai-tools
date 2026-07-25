@@ -21,7 +21,7 @@ from .constants import (
     TASK_SCHEMA_FILENAME,
 )
 from .errors import ReleaseResolutionError
-from .models import ResolvedRelease, VerificationProtocolSnapshot
+from .models import ReadOnlyLegacyAdapter, ResolvedRelease, VerificationProtocolSnapshot
 from .validation import validate_task_schema_shape
 
 _VERSION_KEYS = ("PROTOCOL_VERSION", "SCHEMA_VERSION")
@@ -308,9 +308,9 @@ def resolve_release(
                 schema_version=schema_version,
             )
 
-    adapters = copy.deepcopy(schema["legacy_validation_adapter"])
+    adapters = {kind: ReadOnlyLegacyAdapter(value) for kind, value in schema["legacy_validation_adapter"].items()}
     adapter_texts = {
-        kind: json.dumps(value, ensure_ascii=False, sort_keys=True)
+        kind: json.dumps(value.as_dict(), ensure_ascii=False, sort_keys=True)
         for kind, value in adapters.items()
     }
     return ResolvedRelease(
