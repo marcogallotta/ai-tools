@@ -402,7 +402,18 @@ WHEN (NEW.status IN ('completed','cancelled') AND NEW.phase != 'terminal')
 BEGIN SELECT RAISE(ABORT, 'operation terminal phase/status mismatch'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8}
+_MIGRATION_9 = """
+CREATE TABLE operation_steps (
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    step_name TEXT NOT NULL,
+    intended_json TEXT NOT NULL CHECK (json_valid(intended_json)),
+    completed_at TEXT,
+    PRIMARY KEY(operation_id, step_name)
+);
+CREATE INDEX operation_steps_pending_idx ON operation_steps(operation_id, completed_at);
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9}
 
 
 def _backup_legacy_database(db_path: Path) -> None:

@@ -74,6 +74,9 @@ def verification_read(
     schema: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     op, cycle = _operation_and_cycle(conn, operation_id)
+    handoff = conn.execute("SELECT completed_at FROM operation_steps WHERE operation_id=? AND step_name='verification_handoff'", (operation_id,)).fetchone()
+    if handoff is not None and handoff["completed_at"] is None:
+        raise DishRuleError("WRONG_STATE", "Verification handoff is incomplete", rule="verification_handoff_incomplete")
     identity = VerifierIdentity(agent, run_id, independence_attestation)
     identity.validate(editor_agent=op["editor_agent"], researcher_agent=op["researcher_agent"], constructor_run_id=op["run_id"])
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)

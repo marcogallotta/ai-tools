@@ -737,3 +737,18 @@ def legal_operation_actions(operation: Mapping[str, Any]) -> list[str]:
     if operation["status"] not in {"open", "uncertain"}:
         return []
     return list(_OPERATION_PHASE_ACTIONS.get(operation["phase"], ()))
+
+
+def declare_operation_step(conn: sqlite3.Connection, operation_id: str, step_name: str, intended: Mapping[str, Any]) -> sqlite3.Row:
+    conn.execute("INSERT OR IGNORE INTO operation_steps(operation_id, step_name, intended_json) VALUES (?, ?, ?)", (operation_id, step_name, json.dumps(dict(intended), sort_keys=True, separators=(",", ":"))))
+    return conn.execute("SELECT * FROM operation_steps WHERE operation_id=? AND step_name=?", (operation_id, step_name)).fetchone()
+
+def complete_operation_step(conn: sqlite3.Connection, operation_id: str, step_name: str) -> sqlite3.Row:
+    conn.execute("UPDATE operation_steps SET completed_at=COALESCE(completed_at, ?) WHERE operation_id=? AND step_name=?", (utc_now(), operation_id, step_name))
+    row=conn.execute("SELECT * FROM operation_steps WHERE operation_id=? AND step_name=?", (operation_id, step_name)).fetchone()
+    if row is None:
+        raise DishRuleError("INTERNAL_ERROR", "operation step intent is missing", rule="operation_step_missing")
+    return row
+
+def pending_operation_steps(conn: sqlite3.Connection, operation_id: str) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM operation_steps WHERE operation_id=? AND completed_at IS NULL ORDER BY rowid", (operation_id,)).fetchall()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import json
 import sqlite3
 from typing import Any
 
@@ -236,6 +237,33 @@ def recover_operation(
                 raise DishRuleError("CONFLICT", "live placement does not prove whether movement applied", rule="recovery_evidence_ambiguous", retryable=False)
     elif op["signoff_completed_at"] and op["movement_completed_at"] is None:
         movement_state = "confirmed_signoff_incomplete_movement"
+
+    # Resume only the missing suffix of a declared high-level workflow.
+    from .database import complete_operation_step, create_verification_cycle, pending_operation_steps, transition_operation
+    pending_steps = pending_operation_steps(conn, operation_id)
+    if requested_outcome == "applied":
+        for step in pending_steps:
+            intended = json.loads(step["intended_json"])
+            if step["step_name"] == "candidate_write":
+                if live.title == intended.get("title") and live.notes == intended.get("notes"):
+                    complete_operation_step(conn, operation_id, "candidate_write")
+                    actions.append({"kind": "workflow_step", "step": "candidate_write", "outcome": "confirmed"})
+                else:
+                    raise DishRuleError("CONFLICT", "live content does not satisfy candidate-write intent", rule="workflow_step_evidence_mismatch")
+            elif step["step_name"] == "verification_cycle":
+                existing = conn.execute("SELECT cycle_id FROM verification_cycles WHERE operation_id=? AND completed_at IS NULL ORDER BY cycle_number DESC LIMIT 1", (operation_id,)).fetchone()
+                if existing is None:
+                    number = conn.execute("SELECT COALESCE(MAX(cycle_number),0)+1 FROM verification_cycles WHERE task_gid=?", (op["task_gid"],)).fetchone()[0]
+                    existing = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number, protocol_release=intended["protocol_release"], protocol_text=intended.get("protocol_text"))
+                complete_operation_step(conn, operation_id, "verification_cycle")
+                actions.append({"kind": "workflow_step", "step": "verification_cycle", "outcome": "confirmed"})
+            elif step["step_name"] == "verification_handoff":
+                target = intended["section_gid"]
+                if live.section_gid != target:
+                    live = move_exact(conn, backend, operation_id=operation_id, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID, expected_identity=live.identity, expected_section_gid=live.section_gid, intended_section_gid=target, purpose="verification_handoff")
+                complete_operation_step(conn, operation_id, "verification_handoff")
+                transition_operation(conn, operation_id, phase="await_verification")
+                actions.append({"kind": "workflow_step", "step": "verification_handoff", "outcome": "confirmed"})
 
     refreshed = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
     record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import create_verification_cycle, transition_operation
+from .database import create_verification_cycle, transition_operation, declare_operation_step, complete_operation_step
 from .errors import DishRuleError
 from .models import ResolvedRelease, SectionRegistry, utc_now
 from .lifecycle import assert_transition, pending_verification
@@ -159,12 +159,17 @@ def prepare_live(
         raise DishRuleError("VALIDATION_FAILED", "candidate failed current validation", errors=[{"rule": f.rule, "kind": f.kind.value, "message": f.message, "location": f.location} for f in validation.findings])
 
     title, notes = _render_document(candidate)
+    declare_operation_step(conn, operation_id, "candidate_write", {"title": title, "notes": notes, "schema_version": release.schema_version})
+    if state.values["Status"] == "pending-verification":
+        declare_operation_step(conn, operation_id, "verification_cycle", {"protocol_release": state.values["Verification protocol release"], "protocol_text": verification_snapshot.text})
+        declare_operation_step(conn, operation_id, "verification_handoff", {"section_gid": registry.verification_queue_gid})
     confirmed = write_exact_content(
         conn, backend, operation_id=operation_id, task_gid=live.gid,
         project_gid=COOKING_PROJECT_GID, expected_identity=live.identity,
         expected_section_gid=live.section_gid, title=title, notes=notes,
         schema_version=release.schema_version,
     )
+    complete_operation_step(conn, operation_id, "candidate_write")
     exact = parse_task_document(f"{confirmed.title}\n{confirmed.notes}")
     check = validate_task_document(exact, expected_schema_version=release.schema_version, schema=release.schema)
     if not check.ok:
@@ -174,6 +179,7 @@ def prepare_live(
     if exact.state.values["Status"] == "pending-verification":
         number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (live.gid,)).fetchone()[0]
         cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=live.gid, cycle_number=number, protocol_release=exact.state.values["Verification protocol release"], protocol_text=verification_snapshot.text)
+        complete_operation_step(conn, operation_id, "verification_cycle")
         if confirmed.section_gid != registry.verification_queue_gid:
             confirmed = move_exact(
                 conn, backend, operation_id=operation_id, task_gid=live.gid,
@@ -181,6 +187,7 @@ def prepare_live(
                 expected_section_gid=confirmed.section_gid,
                 intended_section_gid=registry.verification_queue_gid, purpose="verification_handoff",
             )
+        complete_operation_step(conn, operation_id, "verification_handoff")
 
     if cycle is not None:
         transition_operation(conn, operation_id, phase="await_verification")
