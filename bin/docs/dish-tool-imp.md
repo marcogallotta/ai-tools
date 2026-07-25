@@ -1,3 +1,5 @@
+> **Superseded:** this original build plan is retained for history. The implemented rewrite is governed by `dish-tool-update.md`, `dish-tool-update-imp.md`, and `dish-tool-activation.md`.
+
 # Dish tool — V1 implementation plan
 
 **Superseded for the combined rollout.** `dish-tool-update-imp.md` carries the current staged build

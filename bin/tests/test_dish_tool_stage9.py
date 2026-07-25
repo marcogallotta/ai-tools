@@ -208,37 +208,31 @@ def test_tool_aware_beta_bundle_is_complete_consistent_and_agent_only():
     assert "batch-apply" not in combined
 
 
-def test_chatgpt_relay_pointer_is_short_and_uses_only_agent_facing_commands():
+def test_chatgpt_relay_is_mechanics_free_and_never_exposes_direct_asana():
     relay = RELAY_PATH.read_text(encoding="utf-8")
     lowered = relay.lower()
     assert len(relay.splitlines()) <= 70
-    assert "dish start" in lowered
     assert "--agent gpt" in lowered
-    assert "self-verified: gpt" in lowered
-    assert "dish prepare" in lowered
-    assert "dish submit" in lowered
-    assert "--dish-name" in lowered
-    assert "--recognition" in lowered
-    assert "--no-role-tags" in lowered
-    assert "--no-blockers" in lowered
-    assert "tool renders the canonical title" in lowered
-    assert "claude" in lowered
-    assert "dish-admin" not in lowered
-    assert "bin/asana" not in lowered
+    assert "does not access asana directly" in lowered
+    assert "generic asana cli" in lowered
+    assert "tool pass" in lowered
+    assert "protocol wins" in lowered
+    assert "asana set-notes" not in lowered
+    assert "batch-apply" not in lowered
 
 
-def test_activation_runbook_requires_exact_bundle_snapshot_and_single_cutover():
+def test_activation_document_is_the_complete_local_operating_contract():
     runbook = ACTIVATION_PATH.read_text(encoding="utf-8").lower()
-    assert "exact release bundle" in runbook
-    assert "dish-docs-design.md" in runbook
-    assert "snapshot" in runbook
-    assert "mixed production authority" in runbook
-    assert "one cutover" in runbook
-    assert "canonical structured grammar" in runbook
-    assert "[blockers unreviewed]" in runbook
-    assert "title and note changes" in runbook
-    assert "no live cooking-task write" in runbook
-
+    assert "authority and scope" in runbook
+    assert "bin/.venv/bin/python3" in runbook
+    assert "agent commands" in runbook
+    assert "json response contract" in runbook
+    assert "result codes and exit statuses" in runbook
+    assert "rerun rules" in runbook
+    assert "troubleshooting checklist" in runbook
+    assert "tool/protocol disagreement" in runbook
+    assert "single-agent local test path" in runbook
+    assert "step 11" in runbook
 
 def test_global_guide_does_not_expose_the_development_tool():
     guide = GLOBAL_GUIDE_PATH.read_text(encoding="utf-8").lower()

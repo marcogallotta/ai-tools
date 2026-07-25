@@ -90,7 +90,7 @@ def test_valid_current_pair_loads_schema_requested_protocol_and_migrations(tmp_p
         root, protocol_role="research", include_migrations=True
     )
 
-    assert release.protocol_version == "1.0.1"
+    assert release.protocol_version == "1.0.2"
     assert release.schema_version == "2"
     assert set(release.protocols) == {"research"}
     assert release.schema["schema_kind"] == "dish-task"
@@ -301,7 +301,7 @@ def test_git_commit_blocks_schema_change_without_both_bumps(tmp_path):
     schema_path = root / "dish-task-schema.json"
     schema_path.write_text(schema_path.read_text() + "\n")
     (root / "DISH_VERSION").write_text(
-        "PROTOCOL_VERSION=1.0.2\nSCHEMA_VERSION=2\n"
+        "PROTOCOL_VERSION=1.0.3\nSCHEMA_VERSION=2\n"
     )
 
     completed = run_commit_helper(root, "dish-task-schema.json", "DISH_VERSION")
@@ -315,7 +315,7 @@ def test_git_commit_allows_governed_change_with_required_bumps(tmp_path):
     init_git(root)
     (root / "dish-research-protocol.md").write_text("changed\n")
     (root / "DISH_VERSION").write_text(
-        "PROTOCOL_VERSION=1.0.2\nSCHEMA_VERSION=2\n"
+        "PROTOCOL_VERSION=1.0.3\nSCHEMA_VERSION=2\n"
     )
 
     completed = run_commit_helper(root, "dish-research-protocol.md", "DISH_VERSION")
