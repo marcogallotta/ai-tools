@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import uuid
 from pathlib import Path
@@ -11,7 +13,7 @@ from typing import Any, Iterable, Mapping
 
 from .constants import DEFAULT_DB_PATH, SUBMISSION_STATES
 from .errors import DishRuleError
-from .models import agent_family, utc_now
+from .models import ContentIdentity, OperationActors, agent_family, utc_now
 
 _MIGRATION_1 = f"""
 CREATE TABLE submissions (
@@ -80,7 +82,146 @@ UPDATE submissions
  WHERE task_content_written_at IS NULL
    AND notes_written_at IS NOT NULL;
 """
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2}
+_MIGRATION_3 = """
+CREATE TABLE task_content_state (
+    task_gid TEXT PRIMARY KEY,
+    last_confirmed_identity TEXT NOT NULL,
+    last_confirmed_title TEXT NOT NULL,
+    last_confirmed_notes TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    confirmed_at TEXT NOT NULL
+);
+
+CREATE TABLE operations (
+    operation_id TEXT PRIMARY KEY,
+    task_gid TEXT NOT NULL,
+    operation_kind TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('open','completed','cancelled','uncertain')),
+    editor_agent TEXT,
+    researcher_agent TEXT,
+    verifier_agent TEXT,
+    run_id TEXT,
+    independence_attestation TEXT,
+    expected_identity TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    content_write_completed_at TEXT,
+    signoff_completed_at TEXT,
+    movement_completed_at TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT
+);
+CREATE UNIQUE INDEX operations_one_open_per_task
+    ON operations(task_gid) WHERE status = 'open';
+CREATE INDEX operations_task_idx ON operations(task_gid, created_at);
+
+CREATE TABLE content_versions (
+    content_version_id TEXT PRIMARY KEY,
+    task_gid TEXT NOT NULL,
+    operation_id TEXT REFERENCES operations(operation_id),
+    boundary TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    title TEXT NOT NULL,
+    notes TEXT NOT NULL,
+    confirmed INTEGER NOT NULL CHECK (confirmed IN (0,1)),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX content_versions_task_idx ON content_versions(task_gid, created_at);
+CREATE INDEX content_versions_operation_idx ON content_versions(operation_id, created_at);
+
+CREATE TABLE verification_cycles (
+    cycle_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    task_gid TEXT NOT NULL,
+    cycle_number INTEGER NOT NULL CHECK (cycle_number > 0),
+    protocol_release TEXT NOT NULL,
+    verifier_agent TEXT,
+    run_id TEXT,
+    independence_attestation TEXT,
+    correction_class TEXT,
+    outcome TEXT,
+    route TEXT CHECK (route IS NULL OR route IN ('evidence','human_review')),
+    resume_state TEXT,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    UNIQUE(task_gid, cycle_number)
+);
+
+CREATE TABLE write_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    expected_identity TEXT NOT NULL,
+    intended_identity TEXT,
+    outcome TEXT NOT NULL CHECK (outcome IN ('started','confirmed','not_applied','uncertain')),
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+);
+
+CREATE TABLE movement_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    expected_section_gid TEXT,
+    intended_section_gid TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK (outcome IN ('started','confirmed','not_applied','uncertain')),
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+);
+
+CREATE TABLE legacy_submission_quarantine (
+    quarantine_id TEXT PRIMARY KEY,
+    submission_id TEXT NOT NULL,
+    task_gid TEXT NOT NULL,
+    legacy_status TEXT NOT NULL,
+    row_json TEXT NOT NULL CHECK (json_valid(row_json)),
+    quarantined_at TEXT NOT NULL
+);
+CREATE INDEX legacy_submission_quarantine_task_idx
+    ON legacy_submission_quarantine(task_gid, quarantined_at);
+
+ALTER TABLE audit_events ADD COLUMN operation_id TEXT REFERENCES operations(operation_id);
+ALTER TABLE audit_events ADD COLUMN result_code TEXT;
+ALTER TABLE audit_events ADD COLUMN result_ok INTEGER CHECK (result_ok IS NULL OR result_ok IN (0,1));
+
+INSERT INTO legacy_submission_quarantine (
+    quarantine_id, submission_id, task_gid, legacy_status, row_json, quarantined_at
+)
+SELECT lower(hex(randomblob(16))), submission_id, task_gid, status,
+       json_object(
+           'submission_id', submission_id,
+           'task_gid', task_gid,
+           'submission_kind', submission_kind,
+           'protocol_release', protocol_release,
+           'release_commit', release_commit,
+           'status', status,
+           'editor_agent', editor_agent,
+           'verifier_agent', verifier_agent,
+           'created_at', created_at
+       ),
+       strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  FROM submissions
+ WHERE status NOT IN ('consumed','discarded');
+
+UPDATE submissions
+   SET status = 'discarded', completed_at = COALESCE(completed_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+ WHERE status NOT IN ('consumed','discarded');
+"""
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3}
+
+
+def _backup_legacy_database(db_path: Path) -> None:
+    """Keep one byte-for-byte backup before the persistence redesign."""
+
+    if not db_path.exists() or str(db_path) == ":memory:":
+        return
+    backup = db_path.with_suffix(db_path.suffix + ".legacy-v2.bak")
+    if backup.exists():
+        return
+    probe = sqlite3.connect(str(db_path))
+    try:
+        version = int(probe.execute("PRAGMA user_version").fetchone()[0])
+    finally:
+        probe.close()
+    if version < 3:
+        shutil.copy2(db_path, backup)
 
 
 def initialize_database(
@@ -88,6 +229,7 @@ def initialize_database(
 ) -> sqlite3.Connection:
     db_path = Path(path).expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
+    _backup_legacy_database(db_path)
     conn = sqlite3.connect(str(db_path), timeout=5, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
@@ -135,6 +277,9 @@ def record_audit(
     actor_agent: str | None,
     details: Mapping[str, Any],
     created_at: str | None = None,
+    operation_id: str | None = None,
+    result_code: str | None = None,
+    result_ok: bool | None = None,
 ) -> str:
     if actor_agent is not None:
         agent_family(actor_agent)
@@ -143,8 +288,8 @@ def record_audit(
         """
         INSERT INTO audit_events (
             event_id, submission_id, task_gid, event_type,
-            actor_agent, details, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            actor_agent, details, created_at, operation_id, result_code, result_ok
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event_id,
@@ -154,6 +299,9 @@ def record_audit(
             actor_agent,
             json.dumps(dict(details), sort_keys=True, separators=(",", ":")),
             created_at or utc_now(),
+            operation_id,
+            result_code,
+            None if result_ok is None else int(result_ok),
         ),
     )
     return event_id
@@ -452,3 +600,231 @@ def transition_submission(
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
+
+
+def normalize_transport_text(value: str) -> str:
+    """Normalize only the proven CRLF transport difference."""
+
+    return str(value).replace("\r\n", "\n")
+
+
+def content_identity(title: str, notes: str) -> ContentIdentity:
+    clean_title = normalize_transport_text(title)
+    clean_notes = normalize_transport_text(notes)
+    payload = (
+        len(clean_title.encode("utf-8")).to_bytes(8, "big")
+        + clean_title.encode("utf-8")
+        + len(clean_notes.encode("utf-8")).to_bytes(8, "big")
+        + clean_notes.encode("utf-8")
+    )
+    return ContentIdentity(
+        digest=hashlib.sha256(payload).hexdigest(),
+        title=clean_title,
+        notes=clean_notes,
+    )
+
+
+def confirm_task_content(
+    conn: sqlite3.Connection,
+    *,
+    task_gid: str,
+    title: str,
+    notes: str,
+    schema_version: str,
+    operation_id: str | None = None,
+    boundary: str = "confirmed",
+) -> ContentIdentity:
+    identity = content_identity(title, notes)
+    now = utc_now()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            """
+            INSERT INTO content_versions (
+                content_version_id, task_gid, operation_id, boundary, identity,
+                title, notes, confirmed, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+            """,
+            (str(uuid.uuid4()), task_gid, operation_id, boundary, identity.digest,
+             identity.title, identity.notes, now),
+        )
+        conn.execute(
+            """
+            INSERT INTO task_content_state (
+                task_gid, last_confirmed_identity, last_confirmed_title,
+                last_confirmed_notes, schema_version, confirmed_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(task_gid) DO UPDATE SET
+                last_confirmed_identity=excluded.last_confirmed_identity,
+                last_confirmed_title=excluded.last_confirmed_title,
+                last_confirmed_notes=excluded.last_confirmed_notes,
+                schema_version=excluded.schema_version,
+                confirmed_at=excluded.confirmed_at
+            """,
+            (task_gid, identity.digest, identity.title, identity.notes, schema_version, now),
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    return identity
+
+
+def assert_expected_identity(
+    conn: sqlite3.Connection, *, task_gid: str, expected_identity: str
+) -> sqlite3.Row:
+    """Atomically reject stale callers before they can create an operation."""
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = conn.execute(
+            "SELECT * FROM task_content_state WHERE task_gid = ?", (task_gid,)
+        ).fetchone()
+        if row is None or row["last_confirmed_identity"] != expected_identity:
+            conn.execute("ROLLBACK")
+            raise DishRuleError(
+                "CONFLICT",
+                "live task content differs from the expected identity",
+                rule="stale_content_identity",
+                details={
+                    "expected_identity": expected_identity,
+                    "actual_identity": None if row is None else row["last_confirmed_identity"],
+                },
+            )
+        conn.execute("COMMIT")
+        return row
+    except DishRuleError:
+        raise
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
+def create_operation(
+    conn: sqlite3.Connection,
+    *,
+    task_gid: str,
+    operation_kind: str,
+    expected_identity: str,
+    schema_version: str,
+    actors: OperationActors = OperationActors(),
+) -> sqlite3.Row:
+    operation_id = str(uuid.uuid4())
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        state = conn.execute(
+            "SELECT last_confirmed_identity FROM task_content_state WHERE task_gid = ?",
+            (task_gid,),
+        ).fetchone()
+        actual = None if state is None else state["last_confirmed_identity"]
+        if actual != expected_identity:
+            raise DishRuleError(
+                "CONFLICT", "live task content differs from the expected identity",
+                rule="stale_content_identity",
+                details={"expected_identity": expected_identity, "actual_identity": actual},
+            )
+        try:
+            conn.execute(
+                """
+                INSERT INTO operations (
+                    operation_id, task_gid, operation_kind, status, editor_agent,
+                    researcher_agent, verifier_agent, run_id, independence_attestation,
+                    expected_identity, schema_version, created_at
+                ) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (operation_id, task_gid, operation_kind, actors.editor_agent,
+                 actors.researcher_agent, actors.verifier_agent, actors.run_id,
+                 actors.independence_attestation, expected_identity, schema_version, utc_now()),
+            )
+        except sqlite3.IntegrityError as exc:
+            if "operations.task_gid" in str(exc):
+                raise DishRuleError(
+                    "CONFLICT", "task already has an open operation",
+                    rule="open_operation_exists",
+                ) from exc
+            raise
+        row = conn.execute(
+            "SELECT * FROM operations WHERE operation_id = ?", (operation_id,)
+        ).fetchone()
+        record_audit(
+            conn, submission_id=None, task_gid=task_gid,
+            operation_id=operation_id, event_type="operation.created",
+            actor_agent=actors.editor_agent or actors.researcher_agent,
+            details={"operation_kind": operation_kind, "status": "open"},
+            result_code="OK", result_ok=True,
+        )
+        conn.execute("COMMIT")
+        return row
+    except DishRuleError:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
+def mark_operation_completion(
+    conn: sqlite3.Connection, operation_id: str, marker: str
+) -> sqlite3.Row:
+    columns = {
+        "content_write": "content_write_completed_at",
+        "signoff": "signoff_completed_at",
+        "movement": "movement_completed_at",
+    }
+    try:
+        column = columns[marker]
+    except KeyError as exc:
+        raise ValueError(f"unknown completion marker: {marker}") from exc
+    conn.execute(f"UPDATE operations SET {column} = ? WHERE operation_id = ?", (utc_now(), operation_id))
+    row = conn.execute("SELECT * FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
+    if row is None:
+        raise DishRuleError("NOT_FOUND", f"operation not found: {operation_id}", rule="operation_not_found")
+    record_audit(
+        conn, submission_id=None, task_gid=row["task_gid"], operation_id=operation_id,
+        event_type="operation.marker", actor_agent=None,
+        details={"marker": marker}, result_code="OK", result_ok=True,
+    )
+    return row
+
+
+def create_verification_cycle(
+    conn: sqlite3.Connection, *, operation_id: str, task_gid: str,
+    cycle_number: int, protocol_release: str, verifier_agent: str | None = None,
+    run_id: str | None = None, independence_attestation: str | None = None,
+    correction_class: str | None = None, outcome: str | None = None,
+    route: str | None = None, resume_state: str | None = None,
+) -> sqlite3.Row:
+    cycle_id = str(uuid.uuid4())
+    conn.execute(
+        """INSERT INTO verification_cycles (
+            cycle_id, operation_id, task_gid, cycle_number, protocol_release,
+            verifier_agent, run_id, independence_attestation, correction_class,
+            outcome, route, resume_state, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (cycle_id, operation_id, task_gid, cycle_number, protocol_release,
+         verifier_agent, run_id, independence_attestation, correction_class,
+         outcome, route, resume_state, utc_now()),
+    )
+    row = conn.execute("SELECT * FROM verification_cycles WHERE cycle_id = ?", (cycle_id,)).fetchone()
+    record_audit(
+        conn, submission_id=None, task_gid=task_gid, operation_id=operation_id,
+        event_type="verification_cycle.created", actor_agent=verifier_agent,
+        details={"cycle_number": cycle_number, "protocol_release": protocol_release},
+        result_code="OK", result_ok=True,
+    )
+    return row
+
+
+def inspect_legacy_submissions(conn: sqlite3.Connection, *, task_gid: str | None = None) -> list[sqlite3.Row]:
+    if task_gid is None:
+        return conn.execute(
+            "SELECT * FROM legacy_submission_quarantine ORDER BY quarantined_at, rowid"
+        ).fetchall()
+    return conn.execute(
+        "SELECT * FROM legacy_submission_quarantine WHERE task_gid = ? ORDER BY quarantined_at, rowid",
+        (task_gid,),
+    ).fetchall()

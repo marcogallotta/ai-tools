@@ -204,6 +204,49 @@ class TitleValidationResult:
         return not self.errors and self.title is not None and self.fields is not None
 
 
+
+
+@dataclass(frozen=True)
+class ContentIdentity:
+    """Stable identity of the exact live task title and notes."""
+
+    digest: str
+    title: str
+    notes: str
+
+
+@dataclass(frozen=True)
+class OperationActors:
+    editor_agent: str | None = None
+    researcher_agent: str | None = None
+    verifier_agent: str | None = None
+    run_id: str | None = None
+    independence_attestation: str | None = None
+
+
+@dataclass(frozen=True)
+class OperationRecord:
+    operation_id: str
+    task_gid: str
+    operation_kind: str
+    status: str
+    expected_identity: str
+    schema_version: str
+
+
+@dataclass(frozen=True)
+class VerificationCycleRecord:
+    cycle_id: str
+    operation_id: str
+    task_gid: str
+    cycle_number: int
+    protocol_release: str
+    correction_class: str | None
+    outcome: str | None
+    route: str | None
+    resume_state: str | None
+
+
 @dataclass(frozen=True)
 class ProcessIdentity:
     hostname: str
