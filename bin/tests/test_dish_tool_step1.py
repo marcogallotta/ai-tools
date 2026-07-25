@@ -90,12 +90,12 @@ def test_valid_current_pair_loads_schema_requested_protocol_and_migrations(tmp_p
         root, protocol_role="research", include_migrations=True
     )
 
-    assert release.protocol_version == "1.0.0"
-    assert release.schema_version == "1"
+    assert release.protocol_version == "1.0.1"
+    assert release.schema_version == "2"
     assert set(release.protocols) == {"research"}
     assert release.schema["schema_kind"] == "dish-task"
     assert set(release.migration_metadata) == {
-        "dish-schema-migrations/0001-initial.json"
+        "dish-schema-migrations/0002-canonical-document.json"
     }
     assert all(rule["id"] and rule["source"] for rule in release.schema["rules"])
 
@@ -119,7 +119,7 @@ def test_only_requested_stage_protocol_is_loaded(tmp_path, role):
 
 def test_migration_metadata_is_loaded_only_when_requested(tmp_path):
     root = copy_fixture(tmp_path)
-    (root / "dish-schema-migrations" / "0001-initial.json").unlink()
+    (root / "dish-schema-migrations" / "0002-canonical-document.json").unlink()
 
     assert resolve_release(root).migration_metadata == {}
     with pytest.raises(ReleaseResolutionError) as exc:
@@ -196,7 +196,7 @@ def test_schema_declared_version_mismatch_fails_closed(tmp_path):
     root = copy_fixture(tmp_path)
     schema_path = root / "dish-task-schema.json"
     schema = json.loads(schema_path.read_text())
-    schema["schema_version"] = "2"
+    schema["schema_version"] = "3"
     schema_path.write_text(json.dumps(schema))
 
     with pytest.raises(ReleaseResolutionError) as exc:
@@ -301,7 +301,7 @@ def test_git_commit_blocks_schema_change_without_both_bumps(tmp_path):
     schema_path = root / "dish-task-schema.json"
     schema_path.write_text(schema_path.read_text() + "\n")
     (root / "DISH_VERSION").write_text(
-        "PROTOCOL_VERSION=1.0.1\nSCHEMA_VERSION=1\n"
+        "PROTOCOL_VERSION=1.0.2\nSCHEMA_VERSION=2\n"
     )
 
     completed = run_commit_helper(root, "dish-task-schema.json", "DISH_VERSION")
@@ -315,7 +315,7 @@ def test_git_commit_allows_governed_change_with_required_bumps(tmp_path):
     init_git(root)
     (root / "dish-research-protocol.md").write_text("changed\n")
     (root / "DISH_VERSION").write_text(
-        "PROTOCOL_VERSION=1.0.1\nSCHEMA_VERSION=1\n"
+        "PROTOCOL_VERSION=1.0.2\nSCHEMA_VERSION=2\n"
     )
 
     completed = run_commit_helper(root, "dish-research-protocol.md", "DISH_VERSION")

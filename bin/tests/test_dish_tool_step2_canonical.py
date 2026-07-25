@@ -1,0 +1,128 @@
+import json
+import sys
+from pathlib import Path
+
+BIN_DIR = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BIN_DIR))
+
+from dish_tool.migrations import migrate_task_document
+from dish_tool.task_document import (
+    FindingKind,
+    parse_planning_brief,
+    parse_task_document,
+    validate_task_document,
+)
+
+
+PLANNING = """Dish candidate: Test dish
+Purpose: Compare texture
+Role: non-main — small side for comparison
+Priors: None
+Locks: Keep crisp
+Exemptions: None
+Research emphasis: Compare two hydration levels
+Destination section: Sichuan — 12345
+"""
+
+TASK = """[non-main] Test dish — crisp comparison side
+A compact side dish for testing texture.
+WHY COOK IT
+Compare hydration routes.
+## WHAT TO BUY
+None - pantry snapshot lists required items in stock
+## QUANTITIES
+Portions: one sitting
+100 g test ingredient
+### Mise en place
+Keep dry.
+## HOW TO COOK IT
+1. Cook it.
+## WHAT SUCCESS LOOKS LIKE
+Crisp and aromatic.
+---
+## PROCESS RECORD
+Status: pending-verification
+Status detail: None
+Resume status: None
+Verification protocol release: abc123
+Researched by: ChatGPT — GPT-5, 2026-07-25
+Verified by: None
+Self-verified: ChatGPT — GPT-5, 2026-07-25
+### Planning brief
+Dish candidate: Test dish
+Purpose: Compare texture
+Role: non-main — small side for comparison
+Priors: None
+Locks: Keep crisp
+Exemptions: None
+Research emphasis: Compare two hydration levels
+Destination section: Sichuan — 12345
+### Decisions
+Human — Marco: Use the smaller batch, 2026-07-25, to isolate texture
+### Research basis
+Classification: Source-backed dish
+source.example/test — Construction — hydration ratio — selected route is drier
+### Material changes
+2026-07-25 — ChatGPT/GPT-5 — tightened hydration — improve crispness — material — not independently verified
+Schema version: 2
+"""
+
+
+def test_planning_brief_round_trip_has_exact_eight_fields():
+    brief = parse_planning_brief(PLANNING)
+    assert list(brief.values) == [
+        "Dish candidate", "Purpose", "Role", "Priors", "Locks", "Exemptions",
+        "Research emphasis", "Destination section",
+    ]
+    assert parse_planning_brief(brief.render()).values == brief.values
+
+
+def test_complete_task_round_trip_and_lower_heading():
+    document = parse_task_document(TASK)
+    assert document.nutrition_scope == "out-of-scope"
+    assert "### Mise en place" in document.sections["QUANTITIES"]
+    assert parse_task_document(document.render()) == document
+    assert validate_task_document(document, expected_schema_version="2").ok
+
+
+def test_exact_once_state_fields_reject_duplicate():
+    bad = TASK.replace("Status: pending-verification", "Status: pending-verification\nStatus: ready")
+    try:
+        parse_task_document(bad)
+    except ValueError as exc:
+        assert getattr(exc, "rule") == "state_field_duplicate"
+    else:
+        raise AssertionError("duplicate state field accepted")
+
+
+def test_illegal_status_combination_is_distinct():
+    document = parse_task_document(TASK.replace("Status detail: None", "Status detail: still working"))
+    result = validate_task_document(document)
+    assert result.by_kind(FindingKind.ILLEGAL_COMBINATION)
+
+
+def test_extra_top_level_section_fails_but_lower_heading_is_allowed():
+    bad = TASK.replace("## HOW TO COOK IT", "## EXTRA\nNo.\n## HOW TO COOK IT")
+    try:
+        parse_task_document(bad)
+    except ValueError as exc:
+        assert getattr(exc, "rule") == "top_level_section_unknown"
+    else:
+        raise AssertionError("extra top-level section accepted")
+
+
+def test_schema_migration_does_not_write_target_version():
+    source = TASK.replace("Schema version: 2", "Schema version: 1")
+    migration = json.loads((BIN_DIR / "tests" / "fixtures" / "dish-version-current" / "dish-schema-migrations" / "0002-canonical-document.json").read_text())
+    result = migrate_task_document(source, migration)
+    assert result.ok
+    assert result.document.schema_version == "1"
+    assert "Schema version: 1" in result.transformed_content
+    assert "Schema version: 2" not in result.transformed_content
+
+
+def test_ambiguous_legacy_content_is_quarantined():
+    migration = {"from_schema_version": "1", "to_schema_version": "2"}
+    result = migrate_task_document("legacy free text", migration)
+    assert result.quarantined
+    assert result.findings[0].kind is FindingKind.SEMANTIC_REVIEW

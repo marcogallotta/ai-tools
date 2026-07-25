@@ -1,7 +1,7 @@
 {
   "schema_kind": "dish-task",
-  "protocol_version": "1.0.0",
-  "schema_version": "1",
+  "protocol_version": "1.0.1",
+  "schema_version": "2",
   "protocol_files": {
     "planning": "dish-planning-protocol.md",
     "research": "dish-research-protocol.md",
@@ -9,7 +9,7 @@
     "cooking": "dish-cooking-protocol.md"
   },
   "migration_files": [
-    "dish-schema-migrations/0001-initial.json"
+    "dish-schema-migrations/0002-canonical-document.json"
   ],
   "rules": [
     {
@@ -60,7 +60,44 @@
     "schema_metadata_label": "Schema version",
     "destination_serialization": "<section name> — <section gid>",
     "main_role_title_tag": null,
-    "non_main_role_title_tag": "non-main"
+    "non_main_role_title_tag": "non-main",
+    "required_sections": [
+      "WHAT TO BUY",
+      "QUANTITIES",
+      "HOW TO COOK IT",
+      "WHAT SUCCESS LOOKS LIKE",
+      "PROCESS RECORD"
+    ],
+    "optional_sections": [
+      "WHY COOK IT",
+      "CHECK BEFORE COOKING",
+      "WATCH OUT FOR",
+      "STORAGE"
+    ],
+    "process_subheadings": [
+      "Planning brief",
+      "Decisions",
+      "Research basis",
+      "Material changes"
+    ],
+    "allowed_statuses": [
+      "pending-research",
+      "pending-evidence",
+      "pending-human-review",
+      "pending-verification",
+      "ready"
+    ],
+    "research_basis_classifications": [
+      "Source-backed dish",
+      "Halal port",
+      "Intentional test dish"
+    ],
+    "human_decision_prefix": "Human — Marco:",
+    "material_change_format": "<YYYY-MM-DD> — <editor/model> — <what changed> — <why> — <material?> — <independently verified?>",
+    "destination_defect_markers": [
+      "destination missing",
+      "destination invalid"
+    ]
   },
   "legacy_validation_adapter": {
     "planning": {

@@ -303,3 +303,14 @@ def resolve_destination(name: str, gid: str, registry: SectionRegistry) -> Secti
             details={"name": clean_name, "gid": clean_gid},
         )
     return section_by_gid
+
+# Canonical task-document models live in a separate module to keep legacy
+# operation-state models isolated during the lifecycle rewrite.
+from .task_document import (  # noqa: E402,F401
+    CanonicalTaskDocument,
+    DocumentFinding,
+    DocumentValidation,
+    FindingKind,
+    PlanningBrief,
+    TaskState,
+)
