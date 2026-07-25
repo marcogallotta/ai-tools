@@ -134,7 +134,8 @@ def test_approval_signs_exact_reread_without_moving_and_requires_inputs(tmp_path
     assert backend.section == "vq" and backend.moves == 1
     assert result["allowed_actions"] == ["submit"]
     row = app.conn.execute("SELECT signoff_completed_at, movement_completed_at FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
-    assert row["signoff_completed_at"] is not None and row["movement_completed_at"] is not None  # prepare movement only
+    assert row["signoff_completed_at"] is not None
+    assert row["movement_completed_at"] is None  # verification handoff is not final submission movement
 
 
 def test_caller_cannot_forge_current_identity_after_review(tmp_path):

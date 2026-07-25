@@ -107,7 +107,7 @@ def prepare_live(
                 conn, backend, operation_id=operation_id, task_gid=live.gid,
                 project_gid=COOKING_PROJECT_GID, expected_identity=confirmed.identity,
                 expected_section_gid=confirmed.section_gid,
-                intended_section_gid=registry.research_queue_gid,
+                intended_section_gid=registry.research_queue_gid, purpose="planning_handoff",
             )
         return {"operation_id": operation_id, "task": dataclasses.asdict(confirmed), "handoff": "planning-to-research", "validation_scope": "structural-only"}
 
@@ -170,7 +170,7 @@ def prepare_live(
                 conn, backend, operation_id=operation_id, task_gid=live.gid,
                 project_gid=COOKING_PROJECT_GID, expected_identity=confirmed.identity,
                 expected_section_gid=confirmed.section_gid,
-                intended_section_gid=registry.verification_queue_gid,
+                intended_section_gid=registry.verification_queue_gid, purpose="verification_handoff",
             )
 
     return {

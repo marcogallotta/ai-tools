@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import socket
@@ -314,27 +315,31 @@ def begin_operation_write_attempt(
     operation_id: str,
     expected_identity: str,
     intended_identity: str | None,
+    intended_title: str | None = None,
+    intended_notes: str | None = None,
+    schema_version: str | None = None,
+    purpose: str = "content_write",
+    context: dict[str, object] | None = None,
 ) -> str:
-    """Persist write-attempt identity before the backend call can begin."""
-
+    """Persist the complete write intent before the backend call begins."""
     attempt_id = str(uuid.uuid4())
     conn.execute(
-        """
-        INSERT INTO write_attempts (
-            attempt_id, operation_id, expected_identity, intended_identity,
-            outcome, started_at
-        ) VALUES (?, ?, ?, ?, 'started', ?)
-        """,
-        (attempt_id, operation_id, expected_identity, intended_identity, utc_now()),
+        """INSERT INTO write_attempts (
+            attempt_id, operation_id, expected_identity, intended_identity, outcome, started_at,
+            purpose, intended_title, intended_notes, schema_version, context_json
+        ) VALUES (?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?)""",
+        (attempt_id, operation_id, expected_identity, intended_identity, utc_now(), purpose,
+         intended_title, intended_notes, schema_version,
+         None if context is None else json.dumps(context, sort_keys=True, separators=(",", ":"))),
     )
     task_gid = conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0]
     record_audit(
         conn, submission_id=None, task_gid=task_gid, operation_id=operation_id,
         event_type="write_attempt.started", actor_agent=None,
-        details={"attempt_id": attempt_id}, result_code="OK", result_ok=True,
+        details={"attempt_id": attempt_id, "purpose": purpose, "intended_identity": intended_identity},
+        result_code="OK", result_ok=True,
     )
     return attempt_id
-
 
 def finish_operation_write_attempt(
     conn: sqlite3.Connection,
@@ -377,31 +382,24 @@ def begin_movement_attempt(
     operation_id: str,
     expected_section_gid: str | None,
     intended_section_gid: str,
+    purpose: str = "unspecified",
 ) -> str:
     attempt_id = str(uuid.uuid4())
     conn.execute(
-        """
-        INSERT INTO movement_attempts (
-            attempt_id, operation_id, expected_section_gid,
-            intended_section_gid, outcome, started_at
-        ) VALUES (?, ?, ?, ?, 'started', ?)
-        """,
-        (
-            attempt_id,
-            operation_id,
-            expected_section_gid,
-            intended_section_gid,
-            utc_now(),
-        ),
+        """INSERT INTO movement_attempts (
+            attempt_id, operation_id, expected_section_gid, intended_section_gid,
+            outcome, started_at, purpose
+        ) VALUES (?, ?, ?, ?, 'started', ?, ?)""",
+        (attempt_id, operation_id, expected_section_gid, intended_section_gid, utc_now(), purpose),
     )
     task_gid = conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0]
     record_audit(
         conn, submission_id=None, task_gid=task_gid, operation_id=operation_id,
         event_type="movement_attempt.started", actor_agent=None,
-        details={"attempt_id": attempt_id}, result_code="OK", result_ok=True,
+        details={"attempt_id": attempt_id, "purpose": purpose, "intended_section_gid": intended_section_gid},
+        result_code="OK", result_ok=True,
     )
     return attempt_id
-
 
 def finish_movement_attempt(
     conn: sqlite3.Connection,

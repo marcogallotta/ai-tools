@@ -376,7 +376,7 @@ def _step9_admin_recover(self, *, trace: AdminTrace, submission_id: str, outcome
     from .step9 import recover_operation
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
-    data = recover_operation(self.conn, self.backend, operation_id=operation_id)
+    data = recover_operation(self.conn, self.backend, operation_id=operation_id, requested_outcome=outcome, reason=reason)
     trace.state = self.conn.execute("SELECT status FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0]
     return result_envelope(command="recover", task_gid=trace.task_gid, submission_id=operation_id, state=trace.state, data=data)
 

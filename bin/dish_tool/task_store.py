@@ -7,9 +7,11 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 
 from .database import (
-    confirm_task_content,
     content_identity,
-    mark_operation_completion,
+    finalize_confirmed_movement_attempt,
+    finalize_confirmed_write_attempt,
+    finalize_not_applied_movement_attempt,
+    finalize_not_applied_write_attempt,
 )
 from .errors import BackendFailure, DishRuleError
 from .recovery import (
@@ -123,12 +125,16 @@ def write_exact_content(
     title: str,
     notes: str,
     schema_version: str,
+    purpose: str = "content_write",
+    context: dict[str, object] | None = None,
 ) -> LiveTask:
     before = read_complete_task(backend, task_gid=task_gid, project_gid=project_gid)
     _assert_expected(before, expected_identity=expected_identity, expected_section_gid=expected_section_gid)
     intended = content_identity(title, notes)
     attempt_id = begin_operation_write_attempt(
-        conn, operation_id=operation_id, expected_identity=expected_identity, intended_identity=intended.digest
+        conn, operation_id=operation_id, expected_identity=expected_identity, intended_identity=intended.digest,
+        intended_title=intended.title, intended_notes=intended.notes, schema_version=schema_version,
+        purpose=purpose, context=context,
     )
     backend_error: BackendFailure | None = None
     try:
@@ -143,16 +149,14 @@ def write_exact_content(
         raise BackendFailure("BACKEND_UNCERTAIN", "content write outcome could not be confirmed by reread", retryable=False) from exc
 
     if after.identity == intended.digest and after.section_gid == expected_section_gid:
-        finish_operation_write_attempt(conn, attempt_id=attempt_id, outcome="confirmed")
-        confirm_task_content(
-            conn, task_gid=task_gid, title=after.title, notes=after.notes,
-            schema_version=schema_version, operation_id=operation_id, boundary="content_write",
+        finalize_confirmed_write_attempt(
+            conn, attempt_id=attempt_id, task_gid=task_gid, title=after.title, notes=after.notes,
+            schema_version=schema_version,
         )
-        mark_operation_completion(conn, operation_id, "content_write")
         return after
 
     if after.identity == before.identity and after.section_gid == before.section_gid:
-        finish_operation_write_attempt(conn, attempt_id=attempt_id, outcome="not_applied")
+        finalize_not_applied_write_attempt(conn, attempt_id=attempt_id)
         if backend_error is not None:
             raise BackendFailure("BACKEND_REJECTED", str(backend_error), status=backend_error.status, phase=backend_error.phase, retryable=True)
         raise BackendFailure("BACKEND_REJECTED", "content write was not applied", retryable=True)
@@ -185,12 +189,13 @@ def move_exact(
     expected_identity: str,
     expected_section_gid: str | None,
     intended_section_gid: str,
+    purpose: str = "unspecified",
 ) -> LiveTask:
     before = read_complete_task(backend, task_gid=task_gid, project_gid=project_gid)
     _assert_expected(before, expected_identity=expected_identity, expected_section_gid=expected_section_gid)
     attempt_id = begin_movement_attempt(
         conn, operation_id=operation_id, expected_section_gid=expected_section_gid,
-        intended_section_gid=intended_section_gid,
+        intended_section_gid=intended_section_gid, purpose=purpose,
     )
     backend_error: BackendFailure | None = None
     try:
@@ -208,11 +213,10 @@ def move_exact(
         finish_movement_attempt(conn, attempt_id=attempt_id, outcome="uncertain")
         raise BackendFailure("BACKEND_UNCERTAIN", "movement unexpectedly changed task content", retryable=False)
     if after.section_gid == intended_section_gid:
-        finish_movement_attempt(conn, attempt_id=attempt_id, outcome="confirmed")
-        mark_operation_completion(conn, operation_id, "movement")
+        finalize_confirmed_movement_attempt(conn, attempt_id=attempt_id, live_section_gid=after.section_gid)
         return after
     if after.section_gid == expected_section_gid:
-        finish_movement_attempt(conn, attempt_id=attempt_id, outcome="not_applied")
+        finalize_not_applied_movement_attempt(conn, attempt_id=attempt_id)
         if backend_error is not None:
             raise BackendFailure("BACKEND_REJECTED", str(backend_error), status=backend_error.status, phase=backend_error.phase, retryable=True)
         raise BackendFailure("BACKEND_REJECTED", "movement was not applied", retryable=True)

@@ -162,6 +162,7 @@ def approve_live(
         conn, backend, operation_id=operation_id, task_gid=live.gid, project_gid=COOKING_PROJECT_GID,
         expected_identity=live.identity, expected_section_gid=live.section_gid,
         title=lines[0], notes="\n".join(lines[1:]) + "\n", schema_version=op["schema_version"],
+        purpose="signoff", context={"cycle_id": cycle["cycle_id"], "correction_class": correction_class},
     )
     exact = parse_task_document(f"{confirmed.title}\n{confirmed.notes}")
     if exact.state.values["Status"] != "ready" or exact.state.values["Verified by"] == "None":
@@ -169,14 +170,6 @@ def approve_live(
     signed_version = _content_version_for_identity(
         conn, operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity
     )
-    conn.execute(
-        """UPDATE verification_cycles
-              SET correction_class = ?, outcome = 'approved', completed_at = ?,
-                  signed_content_version_id = ?, signed_identity = ?
-            WHERE cycle_id = ?""",
-        (correction_class, utc_now(), signed_version["content_version_id"], confirmed.identity, cycle["cycle_id"]),
-    )
-    mark_operation_completion(conn, operation_id, "signoff")
     record_audit(
         conn, submission_id=None, task_gid=live.gid, operation_id=operation_id,
         event_type="verification.approved", actor_agent=agent,
