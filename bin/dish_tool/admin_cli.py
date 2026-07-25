@@ -17,7 +17,7 @@ from .releases import configured_honest_path, resolve_release
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
-_ADMIN_COMMANDS = {"recover", "discard", "unblock", "migrate", "reopen"}
+_ADMIN_COMMANDS = {"recover", "discard", "unblock", "migrate", "reopen", "supply-evidence", "record-human-decision"}
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -58,6 +58,15 @@ def build_parser() -> JsonArgumentParser:
 
     migrate = subparsers.add_parser("migrate")
     migrate.add_argument("task_gid")
+
+    for name in ("supply-evidence", "record-human-decision"):
+        hold = subparsers.add_parser(name)
+        hold.add_argument("submission_id")
+        hold.add_argument("--detail", required=True)
+        hold.add_argument("--resume-status", required=True, choices=("pending-research", "pending-verification"))
+        hold.add_argument("--file", dest="file_path")
+        hold.add_argument("--editor", choices=("claude", "gpt", "codex"))
+        hold.add_argument("--run-id")
     return parser
 
 

@@ -89,6 +89,8 @@ def hold(values: Mapping[str, str], *, target: str, detail: str, resume_status: 
         raise DishRuleError("INTERNAL_ERROR", "invalid hold target", rule="invalid_hold_target")
     state = dict(values)
     state.update({"Status": target, "Status detail": detail, "Resume status": resume_status, "Verified by": NONE})
+    if resume_status == "pending-research":
+        state["Verification protocol release"] = NONE
     return TaskState(state)
 
 

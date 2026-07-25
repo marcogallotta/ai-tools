@@ -124,7 +124,16 @@ def prepare_live(
         try:
             prior = parse_task_document(f"{live.title}\n{live.notes}")
         except DocumentParseError as exc:
-            raise DishRuleError("VALIDATION_FAILED", "live baseline is not canonical", rule=exc.rule) from exc
+            if op["operation_kind"] == "initial":
+                try:
+                    brief = parse_planning_brief(live.notes)
+                except DocumentParseError:
+                    raise DishRuleError("VALIDATION_FAILED", "live baseline is neither canonical nor a Planning brief", rule=exc.rule) from exc
+                findings = validate_planning_brief(brief).findings
+                if findings:
+                    raise DishRuleError("VALIDATION_FAILED", "live Planning brief failed validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in findings])
+            else:
+                raise DishRuleError("VALIDATION_FAILED", "live baseline is not canonical", rule=exc.rule) from exc
 
     verification_snapshot = None
     material_changes = list(candidate.material_changes)

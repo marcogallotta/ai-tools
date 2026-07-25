@@ -130,6 +130,10 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         document = dataclasses.replace(document, state=hold(document.state.values, target="pending-human-review", detail=f"Two independent Verification passes ended without a signable task: {reason}", resume_status="pending-verification"))
 
     confirmed = _write_document(conn, backend, op, live, document, schema=schema)
+    if two_pass or route == "human-review":
+        transition_operation(conn, operation_id, phase="held_human")
+    elif route == "evidence":
+        transition_operation(conn, operation_id, phase="held_evidence")
     outcome = "two-pass-hold" if two_pass else "rejected"
     conn.execute("UPDATE verification_cycles SET correction_class = ?, outcome = ?, route = ?, resume_state = ?, completed_at = ? WHERE cycle_id = ?", ("large" if route == "large" else None, outcome, {"evidence": "evidence", "human-review": "human_review"}.get(route), document.state.values["Resume status"], utc_now(), cycle["cycle_id"]))
     if route == "large" and not two_pass:
@@ -172,3 +176,133 @@ def reopen_two_pass(conn: sqlite3.Connection, backend: Any, *, operation_id: str
     conn.execute("UPDATE operations SET editor_agent = ?, verifier_agent = NULL, run_id = NULL, independence_attestation = NULL WHERE operation_id = ?", (editor, operation_id))
     transition_operation(conn, operation_id, phase="await_verification")
     return {"operation_id": operation_id, "cycle_id": cycle["cycle_id"], "task": dataclasses.asdict(confirmed), "material_change": entry}
+
+
+def resolve_hold(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    operation_id: str,
+    resolution_kind: str,
+    detail: str,
+    resume_status: str,
+    honest_root,
+    schema=None,
+    file_path: str | None = None,
+    editor: str | None = None,
+    run_id: str | None = None,
+):
+    """Resolve an Evidence or Human Review hold from exact live state.
+
+    Resume-to-Research terminates the held operation so a fresh Research/change
+    operation can be claimed. Resume-to-Verification creates a new cycle; a
+    supplied candidate is treated as a material edit and freezes the current
+    Verification release.
+    """
+    if resolution_kind not in {"evidence", "human_review"}:
+        raise DishRuleError("INVALID_ARGUMENT", "invalid hold resolution kind", rule="invalid_hold_resolution")
+    if resume_status not in {"pending-research", "pending-verification"}:
+        raise DishRuleError("INVALID_ARGUMENT", "invalid hold resume status", rule="resume_status_required")
+    clean_detail = str(detail or "").strip()
+    if not clean_detail:
+        raise DishRuleError("INVALID_ARGUMENT", "resolution detail is required", rule="resolution_detail_required")
+    op = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
+    if op is None:
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    expected_phase = "held_evidence" if resolution_kind == "evidence" else "held_human"
+    if op["status"] != "open" or op["phase"] != expected_phase:
+        raise DishRuleError("WRONG_STATE", "operation is not on the requested hold", rule="hold_not_active")
+    cycle = conn.execute(
+        "SELECT * FROM verification_cycles WHERE operation_id=? AND route=? ORDER BY cycle_number DESC LIMIT 1",
+        (operation_id, resolution_kind),
+    ).fetchone()
+    if cycle is None:
+        raise DishRuleError("WRONG_STATE", "hold has no persisted Verification decision", rule="hold_cycle_missing")
+    live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
+    before_doc = parse_task_document(f"{live.title}\n{live.notes}")
+    expected_status = "pending-evidence" if resolution_kind == "evidence" else "pending-human-review"
+    if before_doc.state.values["Status"] != expected_status:
+        raise DishRuleError("WRONG_STATE", "live task does not match the persisted hold", rule="hold_state_mismatch")
+
+    material = bool(file_path)
+    snapshot = None
+    if material:
+        if not editor or editor not in {"gpt", "codex", "claude"}:
+            raise DishRuleError("INVALID_ARGUMENT", "material hold resolution requires a named editor agent", rule="hold_editor_required")
+        candidate = _candidate(file_path)
+        require_governed_authorization(before_doc, candidate)
+        snapshot = current_verification_protocol_release(honest_root)
+        values = dict(candidate.state.values)
+        values.update({
+            "Status": resume_status,
+            "Status detail": "None",
+            "Resume status": "None",
+            "Verified by": "None",
+            "Verification protocol release": snapshot.identity if resume_status == "pending-verification" else "None",
+            "Self-verified": material_editor_line(editor, utc_now()[:10]),
+        })
+        decision = f"Human-approved hold resolution — {resolution_kind}: {clean_detail}"
+        decisions = tuple(candidate.decisions)
+        if decision not in decisions:
+            decisions += (decision,)
+        document = dataclasses.replace(candidate, state=TaskState(values), decisions=decisions)
+    else:
+        values = dict(resumed(before_doc.state.values).values)
+        values["Status"] = resume_status
+        values["Verification protocol release"] = "None" if resume_status == "pending-research" else cycle["protocol_release"]
+        decision = f"Human-approved hold resolution — {resolution_kind}: {clean_detail}"
+        decisions = tuple(before_doc.decisions)
+        if decision not in decisions:
+            decisions += (decision,)
+        document = dataclasses.replace(before_doc, state=TaskState(values), decisions=decisions)
+
+    confirmed = _write_document(conn, backend, op, live, document, schema=schema)
+    record_audit(
+        conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
+        event_type="hold.resolved", actor_agent=editor if editor in {"gpt", "codex", "claude"} else None,
+        details={"kind": resolution_kind, "detail": clean_detail, "resume_status": resume_status, "material": material, "identity": confirmed.identity},
+        result_code="OK", result_ok=True, governed_kind="decision",
+        before_state={"status": expected_status, "resume_status": before_doc.state.values["Resume status"]},
+        after_state={"status": resume_status, "identity": confirmed.identity},
+        actor_run_id=run_id, actor_source="marco-hold-resolution",
+    )
+    if material:
+        record_actor_fact(
+            conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor",
+            agent=editor, run_id=run_id, candidate_identity=confirmed.identity,
+        )
+
+    if resume_status == "pending-research":
+        transition_operation(
+            conn, operation_id, phase="terminal", status="completed",
+            terminal_outcome=f"{resolution_kind}_resolved_to_research",
+        )
+        new_cycle = None
+    else:
+        number = conn.execute(
+            "SELECT COALESCE(MAX(cycle_number),0)+1 FROM verification_cycles WHERE task_gid=?",
+            (op["task_gid"],),
+        ).fetchone()[0]
+        if snapshot is None:
+            protocol_release = cycle["protocol_release"]
+            protocol_text = cycle["protocol_text"]
+        else:
+            protocol_release = snapshot.identity
+            protocol_text = snapshot.text
+        new_cycle = create_verification_cycle(
+            conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number,
+            protocol_release=protocol_release, protocol_text=protocol_text,
+        )
+        conn.execute(
+            "UPDATE operations SET verifier_agent=NULL, independence_attestation=NULL WHERE operation_id=?",
+            (operation_id,),
+        )
+        transition_operation(conn, operation_id, phase="await_verification")
+    return {
+        "operation_id": operation_id,
+        "resolution_kind": resolution_kind,
+        "resume_status": resume_status,
+        "material": material,
+        "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"],
+        "task": dataclasses.asdict(confirmed),
+    }

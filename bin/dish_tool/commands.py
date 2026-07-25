@@ -1575,7 +1575,17 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
             raise DishRuleError("VALIDATION_FAILED", "planning must start from a bare task", rule="planning_notes_not_empty")
     else:
         if diag["parsed"] is None:
-            raise DishRuleError("VALIDATION_FAILED", "task is not canonical", rule="canonical_task_required", errors=diag["validation"])
+            if kind == "initial":
+                from .task_document import parse_planning_brief, validate_planning_brief, DocumentParseError
+                try:
+                    brief = parse_planning_brief(live.notes)
+                    brief_findings = validate_planning_brief(brief).findings
+                except DocumentParseError:
+                    brief_findings = (object(),)
+                if brief_findings:
+                    raise DishRuleError("VALIDATION_FAILED", "task is neither canonical nor a valid Planning brief", rule="planning_brief_required", errors=diag["validation"])
+            else:
+                raise DishRuleError("VALIDATION_FAILED", "task is not canonical", rule="canonical_task_required", errors=diag["validation"])
         if diag["migration_required"]:
             raise DishRuleError("VALIDATION_FAILED", "task schema is older than the current schema; migration required", rule="migration_required", details={"task_schema_version": diag["schema_version"], "current_schema_version": release.schema_version})
         if diag["validation"]:

@@ -382,3 +382,56 @@ def _step9_admin_recover(self, *, trace: AdminTrace, submission_id: str, outcome
     return result_envelope(command="recover", task_gid=trace.task_gid, submission_id=operation_id, state=trace.state, data=data)
 
 DishAdminApplication._command_recover = _step9_admin_recover
+
+
+def _resolve_protocol_hold(
+    self,
+    *,
+    trace: AdminTrace,
+    submission_id: str,
+    resolution_kind: str,
+    detail: str,
+    resume_status: str,
+    file_path: str | None = None,
+    editor: str | None = None,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    if self.backend is None or self.release_loader is None:
+        raise DishRuleError("INTERNAL_ERROR", "hold resolution requires backend and Honest release", rule="hold_resolution_unavailable")
+    from .step8 import resolve_hold
+    operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
+    row = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
+    if row is None:
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    release = self.release_loader()
+    trace.submission_id = operation_id
+    trace.task_gid = row["task_gid"]
+    data = resolve_hold(
+        self.conn, self.backend, operation_id=operation_id, resolution_kind=resolution_kind,
+        detail=detail, resume_status=resume_status, honest_root=release.root,
+        schema=release.schema, file_path=file_path, editor=editor, run_id=run_id,
+    )
+    current = self.conn.execute("SELECT status FROM operations WHERE operation_id=?", (operation_id,)).fetchone()[0]
+    trace.state = current
+    return result_envelope(
+        command="supply-evidence" if resolution_kind == "evidence" else "record-human-decision",
+        task_gid=trace.task_gid, submission_id=operation_id, state=current, data=data,
+    )
+
+
+def _command_supply_evidence(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str, file_path: str | None = None, editor: str | None = None, run_id: str | None = None) -> dict[str, Any]:
+    return _resolve_protocol_hold(
+        self, trace=trace, submission_id=submission_id, resolution_kind="evidence",
+        detail=detail, resume_status=resume_status, file_path=file_path, editor=editor, run_id=run_id,
+    )
+
+
+def _command_record_human_decision(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str, file_path: str | None = None, editor: str | None = None, run_id: str | None = None) -> dict[str, Any]:
+    return _resolve_protocol_hold(
+        self, trace=trace, submission_id=submission_id, resolution_kind="human_review",
+        detail=detail, resume_status=resume_status, file_path=file_path, editor=editor, run_id=run_id,
+    )
+
+
+DishAdminApplication._command_supply_evidence = _command_supply_evidence
+DishAdminApplication._command_record_human_decision = _command_record_human_decision
