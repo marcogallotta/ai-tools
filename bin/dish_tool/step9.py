@@ -8,6 +8,7 @@ from typing import Any
 from .constants import COOKING_PROJECT_GID
 from .database import mark_operation_completion, record_audit
 from .errors import DishRuleError
+from .lifecycle import assert_transition, require_status
 from .models import SectionRegistry, resolve_destination, utc_now
 from .task_document import DESTINATION_RE, DocumentParseError, parse_task_document, validate_task_document
 from .task_store import move_exact, read_complete_task
@@ -80,8 +81,10 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str) ->
     except DocumentParseError as exc:
         raise DishRuleError("VALIDATION_FAILED", "signed task is no longer canonical", rule=exc.rule) from exc
     check = validate_task_document(document, expected_schema_version=op["schema_version"])
-    if not check.ok or document.state.values["Status"] != "ready" or document.state.values["Verified by"] == "None":
+    if not check.ok or document.state.values["Verified by"] == "None":
         raise DishRuleError("VALIDATION_FAILED", "live task is not a valid signed ready task", rule="signed_ready_required")
+    require_status(document.state, {"ready"}, action="submit")
+    assert_transition(action="submit", before="ready", after="ready")
 
     registry = SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
     destination, diagnostic = _destination(document, registry)

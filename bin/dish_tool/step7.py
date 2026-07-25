@@ -9,6 +9,7 @@ from .constants import COOKING_PROJECT_GID
 from .database import mark_operation_completion, record_audit
 from .errors import DishRuleError
 from .models import VerifierIdentity, verification_actor_line, utc_now
+from .lifecycle import assert_transition, ready, require_status
 from .releases import resolve_verification_protocol
 from .task_document import TaskState, parse_task_document, validate_task_document
 from .task_store import read_complete_task, write_exact_content
@@ -77,12 +78,13 @@ def verification_read(
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     document = parse_task_document(f"{live.title}\n{live.notes}")
     validation = validate_task_document(document, expected_schema_version=op["schema_version"])
-    if not validation.ok or document.state.values["Status"] != "pending-verification":
+    if not validation.ok:
         raise DishRuleError(
             "VALIDATION_FAILED", "live task is not a legal pending-verification candidate",
             rule="pending_verification_required",
             errors=[{"rule": f.rule, "kind": f.kind.value} for f in validation.findings],
         )
+    require_status(document.state, {"pending-verification"}, action="verification read")
     recorded = document.state.values["Verification protocol release"]
     if recorded != cycle["protocol_release"]:
         raise DishRuleError("CONFLICT", "task and cycle Verification releases disagree", rule="verification_release_mismatch")
@@ -148,12 +150,8 @@ def approve_live(
     check = validate_task_document(document, expected_schema_version=op["schema_version"])
     if not check.ok or document.state.values["Status"] != "pending-verification":
         raise DishRuleError("VALIDATION_FAILED", "exact live candidate failed pre-signoff validation", rule="pre_signoff_validation_failed", errors=[{"rule": f.rule, "kind": f.kind.value} for f in check.findings])
-    state = dict(document.state.values)
-    state.update({
-        "Status": "ready", "Status detail": "None", "Resume status": "None",
-        "Verified by": verification_actor_line(agent, utc_now()[:10]),
-    })
-    signed = dataclasses.replace(document, state=TaskState(state))
+    assert_transition(action="approve", before=document.state.values["Status"], after="ready")
+    signed = dataclasses.replace(document, state=ready(document.state.values, verified_by=verification_actor_line(agent, utc_now()[:10])))
     final_check = validate_task_document(signed, expected_schema_version=op["schema_version"])
     if not final_check.ok:
         raise DishRuleError("VALIDATION_FAILED", "ready state failed deterministic validation", rule="ready_state_invalid", errors=[{"rule": f.rule, "kind": f.kind.value} for f in final_check.findings])

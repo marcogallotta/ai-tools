@@ -10,6 +10,7 @@ from .constants import COOKING_PROJECT_GID
 from .database import create_verification_cycle
 from .errors import DishRuleError
 from .models import ResolvedRelease, SectionRegistry, utc_now
+from .lifecycle import assert_transition, pending_verification
 from .releases import current_verification_protocol_release
 from .task_document import (
     DocumentParseError,
@@ -123,28 +124,35 @@ def prepare_live(
         except DocumentParseError as exc:
             raise DishRuleError("VALIDATION_FAILED", "live baseline is not canonical", rule=exc.rule) from exc
 
-    state = dict(candidate.state.values)
     verification_snapshot = None
-    if op["operation_kind"] in {"initial", "change"}:
-        verification_snapshot = current_verification_protocol_release(release.root)
-        state.update({
-            "Status": "pending-verification",
-            "Status detail": "None",
-            "Resume status": "None",
-            "Verification protocol release": verification_snapshot.identity,
-            "Verified by": "None",
-        })
-
     material_changes = list(candidate.material_changes)
-    if op["operation_kind"] == "change" and prior is not None and _body_changed(prior, candidate):
+    body_changed = prior is not None and _body_changed(prior, candidate)
+
+    if op["operation_kind"] == "initial":
+        verification_snapshot = current_verification_protocol_release(release.root)
+        before_status = None if prior is None else prior.state.values["Status"]
+        assert_transition(action="research_handoff", before=before_status, after="pending-verification")
+        state = pending_verification(candidate.state.values, protocol_release=verification_snapshot.identity)
+    elif op["operation_kind"] == "change" and body_changed:
         classification = str(material_classification or "").strip()
         if classification not in {"material", "non-material"}:
             raise DishRuleError("INVALID_ARGUMENT", "body edits require material or non-material classification", rule="material_classification_required")
         material_changes.append(f"{utc_now()[:10]} — {agent}: {classification}")
-        if classification == "non-material":
-            state["Verified by"] = prior.state.values["Verified by"]
+        if classification == "material":
+            verification_snapshot = current_verification_protocol_release(release.root)
+            assert_transition(action="material_edit", before=prior.state.values["Status"], after="pending-verification")
+            state = pending_verification(candidate.state.values, protocol_release=verification_snapshot.identity)
+        else:
+            assert_transition(action="non_material_edit", before=prior.state.values["Status"], after="ready")
+            # A non-material edit cannot smuggle a lifecycle rewrite. Preserve the
+            # exact signed state block while recording the new confirmed version.
+            state = prior.state
+    elif prior is not None:
+        state = prior.state
+    else:
+        state = candidate.state
 
-    candidate = dataclasses.replace(candidate, state=TaskState(state), material_changes=tuple(material_changes))
+    candidate = dataclasses.replace(candidate, state=state, material_changes=tuple(material_changes))
     validation = validate_task_document(candidate, expected_schema_version=release.schema_version)
     if not validation.ok:
         raise DishRuleError("VALIDATION_FAILED", "candidate failed current validation", errors=[{"rule": f.rule, "kind": f.kind.value, "message": f.message, "location": f.location} for f in validation.findings])

@@ -10,6 +10,7 @@ from .constants import COOKING_PROJECT_GID
 from .database import create_verification_cycle, record_audit
 from .errors import DishRuleError
 from .models import utc_now
+from .lifecycle import assert_transition, hold, pending_verification, require_status, resumed
 from .task_document import DocumentParseError, TaskState, parse_task_document, validate_task_document
 from .task_store import read_complete_task, write_exact_content
 from .step7 import approve_live, bind_cycle_review
@@ -87,6 +88,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         raise DishRuleError("INVALID_ARGUMENT", "route reason is required", rule="rejection_reason_required")
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     document = parse_task_document(f"{live.title}\n{live.notes}")
+    require_status(document.state, {"pending-verification"}, action="Verification outcome")
     state = dict(document.state.values)
     changes = tuple(document.material_changes)
 
@@ -94,27 +96,26 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         if not file_path:
             raise DishRuleError("INVALID_ARGUMENT", "Large correction requires a complete corrected candidate", rule="large_candidate_required")
         document = _candidate(file_path)
-        state = dict(document.state.values)
-        state.update({"Status": "pending-verification", "Status detail": "None", "Resume status": "None", "Verified by": "None", "Verification protocol release": cycle["protocol_release"]})
+        assert_transition(action="large_correction", before="pending-verification", after="pending-verification")
+        state = dict(pending_verification(document.state.values, protocol_release=cycle["protocol_release"]).values)
         changes = tuple(document.material_changes) + (f"{utc_now()[:10]} — {agent}: large verification correction — {reason}",)
         document = dataclasses.replace(document, state=TaskState(state), material_changes=changes)
     elif route == "evidence":
         if resume_status not in {"pending-verification", "pending-research"}:
             raise DishRuleError("INVALID_ARGUMENT", "Evidence route requires a valid resume status", rule="resume_status_required")
-        state.update({"Status": "pending-evidence", "Status detail": reason, "Resume status": resume_status, "Verified by": "None"})
-        document = dataclasses.replace(document, state=TaskState(state))
+        assert_transition(action="request_evidence", before="pending-verification", after="pending-evidence")
+        document = dataclasses.replace(document, state=hold(state, target="pending-evidence", detail=reason, resume_status=resume_status))
     else:
         if resume_status not in {"pending-verification", "pending-research"}:
             raise DishRuleError("INVALID_ARGUMENT", "Human Review route requires a valid resume status", rule="resume_status_required")
-        state.update({"Status": "pending-human-review", "Status detail": reason, "Resume status": resume_status, "Verified by": "None"})
-        document = dataclasses.replace(document, state=TaskState(state))
+        assert_transition(action="request_human_review", before="pending-verification", after="pending-human-review")
+        document = dataclasses.replace(document, state=hold(state, target="pending-human-review", detail=reason, resume_status=resume_status))
 
     completed = conn.execute("SELECT COUNT(*) FROM verification_cycles WHERE operation_id = ? AND completed_at IS NOT NULL AND outcome != 'approved'", (operation_id,)).fetchone()[0]
     two_pass = completed + 1 >= 2 and route == "large"
     if two_pass:
-        state = dict(document.state.values)
-        state.update({"Status": "pending-human-review", "Status detail": f"Two independent Verification passes ended without a signable task: {reason}", "Resume status": "pending-verification", "Verified by": "None"})
-        document = dataclasses.replace(document, state=TaskState(state))
+        assert_transition(action="two_pass_hold", before="pending-verification", after="pending-human-review")
+        document = dataclasses.replace(document, state=hold(document.state.values, target="pending-human-review", detail=f"Two independent Verification passes ended without a signable task: {reason}", resume_status="pending-verification"))
 
     confirmed = _write_document(conn, backend, op, live, document)
     outcome = "two-pass-hold" if two_pass else "rejected"
@@ -139,10 +140,9 @@ def reopen_two_pass(conn: sqlite3.Connection, backend: Any, *, operation_id: str
     document = parse_task_document(f"{live.title}\n{live.notes}")
     if document.state.values["Status"] != "pending-human-review" or document.state.values["Resume status"] != "pending-verification":
         raise DishRuleError("WRONG_STATE", "task is not on the two-pass Verification hold", rule="two_pass_hold_required")
-    state = dict(document.state.values)
-    state.update({"Status": "pending-verification", "Status detail": "None", "Resume status": "None", "Verified by": "None"})
+    state = resumed(document.state.values)
     entry = f"{date} — {editor}: {category}; before: {before}; after: {after}"
-    document = dataclasses.replace(document, state=TaskState(state), material_changes=tuple(document.material_changes) + (entry,))
+    document = dataclasses.replace(document, state=state, material_changes=tuple(document.material_changes) + (entry,))
     confirmed = _write_document(conn, backend, op, live, document)
     number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
     cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number, protocol_release=document.state.values["Verification protocol release"], protocol_text=conn.execute("SELECT protocol_text FROM verification_cycles WHERE operation_id = ? ORDER BY cycle_number DESC LIMIT 1", (operation_id,)).fetchone()[0], route=None)
