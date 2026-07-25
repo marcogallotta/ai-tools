@@ -1861,3 +1861,20 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, submission_id: str, 
 
 DishApplication._command_approve = _step8_approve
 DishApplication._command_reject = _step8_reject
+
+# Step 9 movement-only submit.
+_step8_command_submit = DishApplication._command_submit
+
+def _step9_submit(self, *, trace: CommandTrace, submission_id: str, file_path: str | None = None) -> dict[str, Any]:
+    operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
+    exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
+    if exists is None:
+        return _step8_command_submit(self, trace=trace, submission_id=submission_id, file_path=file_path or "")
+    from .step9 import submit_live
+    trace.submission_id = operation_id
+    trace.task_gid = exists["task_gid"]
+    data = submit_live(self.conn, self.backend, operation_id=operation_id)
+    trace.state = "completed"
+    return result_envelope(command="submit", task_gid=trace.task_gid, submission_id=operation_id, state="completed", allowed_actions=[], data=data)
+
+DishApplication._command_submit = _step9_submit

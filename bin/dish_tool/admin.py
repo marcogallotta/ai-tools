@@ -362,3 +362,22 @@ def _step8_admin_reopen(self, *, trace: AdminTrace, submission_id: str, category
     return result_envelope(command="reopen", task_gid=trace.task_gid, submission_id=operation_id, state="open", data=data)
 
 DishAdminApplication._command_reopen = _step8_admin_reopen
+
+# Step 9 live-evidence recovery inspection for operation-backed work.
+_step8_admin_recover = DishAdminApplication._command_recover
+
+def _step9_admin_recover(self, *, trace: AdminTrace, submission_id: str, outcome: str = "inspect", reason: str = "live inspection") -> dict[str, Any]:
+    operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
+    exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
+    if exists is None:
+        return _step8_admin_recover(self, trace=trace, submission_id=submission_id, outcome=outcome, reason=reason)
+    if self.backend is None:
+        raise DishRuleError("INTERNAL_ERROR", "admin backend is required", rule="backend_required")
+    from .step9 import recover_operation
+    trace.submission_id = operation_id
+    trace.task_gid = exists["task_gid"]
+    data = recover_operation(self.conn, self.backend, operation_id=operation_id)
+    trace.state = self.conn.execute("SELECT status FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0]
+    return result_envelope(command="recover", task_gid=trace.task_gid, submission_id=operation_id, state=trace.state, data=data)
+
+DishAdminApplication._command_recover = _step9_admin_recover
