@@ -16,16 +16,22 @@ sessions invoke directly, plus design docs for tools in progress.
 - `bin/asana` — the CLI agents use to read and write Asana tasks/projects (get/set notes,
   move tasks between sections, batch-apply multi-step plans, etc). Reads the API token from
   `~/.config/asana-cli/.env`. Symlinked into `~/.claude/bin/asana`.
-- `bin/dish-tool.md` — design draft for an in-progress tool named `dish` that will be the one
+- `bin/docs/dish-tool.md` — design draft for an in-progress tool named `dish` that will be the one
   guarded, validated path for writing protocol-governed dish-task notes to
   Asana (structural validation, single-use write tokens, staleness checks, verifier routing). Not
   yet implemented as a CLI. **Scoped to v1 only** — everything not needed for v1 to exist and
   work lives in `dish-tool-future.md` instead (see below).
-- `bin/dish-tool-future.md` — everything about the same tool that is *not* v1: the
+- `bin/docs/dish-tool-future.md` — everything about the same tool that is *not* v1: the
   v1b enforcement flip, v2 candidate features, and ideas considered and rejected outright. Split
   out of the design doc above so that doc can stay focused on exactly what v1 needs.
-- `bin/dish-tool-imp.md` — the staged build plan (v1a) for that
+- `bin/docs/dish-tool-imp.md` — the staged build plan (v1a) for that
   tool: rollout steps, file/module layout, open implementation questions.
+- `bin/docs/dish-tool-update.md` / `bin/docs/dish-tool-update-imp.md` — the compatibility-analysis
+  and revised implementation plan bringing the tool design in line with the frozen protocols in
+  `~/honest-pantry-dish-rollout/`. Same design-doc/implementation-plan relationship as the pair
+  above.
+- `bin/docs/dish-tool-activation.md`, `bin/docs/dish-chatgpt-relay.md` — operator/activation and
+  ChatGPT-relay notes for the same tool.
 
   **These three docs are allowed to go stale relative to each other — that's fine, not a bug.**
   When actually iterating/designing on one doc (e.g. adding to the v1 design doc), just work on
