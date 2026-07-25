@@ -401,6 +401,13 @@ Do not allow agent code to call generic Asana mutation paths for managed tasks. 
 
 The tool can prove which exact live task content existed before and after every mutation.
 
+**This step owns drift detection end to end.** It is the only remaining protection against a write
+made outside the tool — the generic-CLI guard was dropped precisely because drift detection replaces
+it — so it is called out here rather than left implicit across Steps 3, 4 and 5. Do not close this
+step until a title or body edit is detected in all three cases: during an open operation, between
+two operations with none open, and on a signed `ready` task that has already been submitted and
+moved.
+
 ---
 
 ## Step 5 — `dish read`, `dish inspect`, `dish start`, and explicit migration
@@ -501,7 +508,7 @@ If any stage fails, the task must not be reported as migrated. Prefer a single c
 
 ### Completion gate
 
-Agents can begin a guarded operation only from a compatible, exact live task, and old tasks have an explicit safe migration path.
+Agents can begin a guarded operation only from a compatible, exact live task, and old tasks have an explicit safe migration path. `dish start` refuses to open an operation on a task whose live content has drifted from its stored task-scoped identity.
 
 ---
 
@@ -778,6 +785,11 @@ Signoff and destination movement are independently correct and recoverable.
 
 Update documentation only after command behaviour and result codes are stable.
 
+Document here only what Step 11 cannot invalidate: commands, arguments, structured output, result
+codes, rerun rules, protocol hooks, and reports. Leave the access path — how an agent reaches the
+tool, credentials, and local versus shared-service invocation — to Step 11, which changes it. Writing
+the whole activation contract here and rewriting it one step later is the failure this split avoids.
+
 ### Files
 
 - `bin/docs/dish-tool.md`
@@ -799,9 +811,11 @@ Update documentation only after command behaviour and result codes are stable.
 - result codes and process exit statuses;
 - pass, agent-correctable finding, possible Evidence/Human issue, execution error, and protocol/tool disagreement handling;
 - rerun rules;
-- local test mode versus shared-service live mode;
 - migration command and failure handling;
 - operational troubleshooting.
+
+Step 11 adds the access-path half: local test mode versus shared-service live mode, endpoint and
+credential handling, and the GPT Action surface.
 
 ### Protocol hooks
 
@@ -840,13 +854,15 @@ Replace obsolete reports with queries/metrics for:
 
 ### Completion gate
 
-An agent can follow one activation document from start through recovery without relying on undocumented command behaviour.
+An agent can follow one activation document from start through recovery without relying on undocumented command behaviour, given the local access path. The access-path half lands in Step 11.
 
 ---
 
 ## Step 11 — shared dish service and GPT Action live mode
 
 This step is the multi-agent go-live gate. Local Steps 0–10 may be tested with one active agent at a time.
+
+It also completes the activation document with the access-path material deferred from Step 10, so that document is written once against the final access path rather than rewritten here.
 
 ### Purpose
 
@@ -928,7 +944,7 @@ Network exposure and authentication for the Custom GPT Action are settled — se
 
 ### Completion gate
 
-All multi-agent access uses the shared service, the GPT Action connectivity path above is implemented and tested, and no agent path retains direct Asana credentials or a separate writable operation database.
+All multi-agent access uses the shared service, the GPT Action connectivity path above is implemented and tested, and no agent path retains direct Asana *write* credentials for governed tasks or a separate writable operation database. Planning's read of completed cooking history through the general `asana` CLI is the one deliberate exception and stays available.
 
 ---
 
@@ -967,7 +983,7 @@ Before multi-agent use:
 2. run the complete unit/integration suite;
 3. run service concurrency and restart tests;
 4. confirm GPT Action and CLI use the same endpoint and result contract;
-5. remove/disable direct agent Asana credentials and unsupported write paths;
+5. remove/disable direct agent Asana write credentials for governed tasks and unsupported write paths, keeping Planning's read access to cooking history;
 6. migrate the reviewed initial cohort;
 7. verify one complete live task lifecycle;
 8. open broader use only after the lock, drift, recovery, and audit checks pass.

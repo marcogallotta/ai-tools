@@ -50,7 +50,7 @@ Address Marco's concern about an honest agent carelessly declaring a material ed
 malicious caller gaming the trusted identity model. Use the diff telemetry considered in
 `dish-tool-imp.md`, if selected, to choose a narrow deterministic trigger from observed `small`
 changes. If it was not selected for v1, gather that evidence before choosing a trigger. The
-protection remains a speed bump, not opposite-family verification for every small edit and not
+protection remains a speed bump, not independent verification for every small edit and not
 inferred semantic classification.
 
 The trigger, the exact acknowledgement required, and warning-versus-blocking behaviour remain open

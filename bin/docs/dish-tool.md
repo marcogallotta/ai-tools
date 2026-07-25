@@ -62,8 +62,8 @@ prevention, is the guarantee.
 ## Submission kinds and change levels
 
 `planning` writes the compact Planning brief into a bare task. It receives only deterministic
-planning-template checks: no self-verification attestation and no opposite-family verification.
-`initial` constructs the first complete researched task and receives whole-task opposite-family
+planning-template checks: no self-verification attestation and no independent verification.
+`initial` constructs the first complete researched task and receives whole-task independent
 verification. `change` covers post-construction work and requires a change level.
 
 The tool-aware protocols use these same `small` and `large` terms; V1 does not carry forward the
@@ -87,7 +87,7 @@ At `start`, the editing agent declares either:
 --kind change --change-level small|large --change-reason "<brief explanation>"
 ```
 
-`large` requires an opposite-family verifier to `approve` before submission. `small` requires no
+`large` requires a fresh independent verifier to `approve` before submission. `small` requires no
 verifier at all — confirmed only by deterministic validation, not by a second agent (see Agent
 identity and verifier routing).
 
@@ -115,14 +115,16 @@ ChatGPT-authored submission routes the same as any other GPT-family edit. ChatGP
 itself; whoever runs `dish start`/`prepare` on its behalf declares `--agent gpt`; `submit` uses that
 recorded editor attribution and takes no agent flag.
 
-Planning receives scripted validation only. Initial construction and `large` changes require
-verification by the opposite family. `small` requires no verifier, and the task's existing
-`Verification` field is left as-is.
+Planning receives scripted validation only. Initial construction and `large` changes require a fresh
+independent verifier that did not construct or materially edit the exact candidate. `small` requires
+no verifier, and the task's existing `Verification` field is left as-is.
 
-The opposite-family requirement on `approve` makes `editor_agent == verifier_agent` structurally
-unreachable — it fails the family check before any further comparison would matter. The residual
-risk of one session dishonestly declaring different agent values for editing and verification is not
-detectable under the trusted-identity model (see Scope) and is not claimed to be caught here.
+The tool tracks constructor and material-editor identity and refuses an `approve` from either, so
+`editor_agent == verifier_agent` is unreachable. Where the platform run/session ID cannot be
+obtained — the manual ChatGPT relay — independence rests on the recorded attestation, which the tool
+cannot itself verify. The residual risk of one session dishonestly declaring different agent values
+for editing and verification is not detectable under the trusted-identity model (see Scope) and is
+not claimed to be caught here.
 
 Trusted submission/audit state records the kind, any change level, editor, routing, and governing
 protocol release. Initial construction has initial Verification but no post-construction Material
@@ -322,8 +324,8 @@ The tool:
    failure patterns are visible even before a validation pass.
 1. On a pass, advances the row out of `drafting`.
    - `planning` or `small` change → status `ready`, no verifier required.
-   - `initial` or `large` → status `research_handoff`, with `required_verifier_family` set to the
-     family opposite `editor_family`; for a task currently in Research Queue, the command moves it
+   - `initial` or `large` → status `research_handoff`, recording the constructor/material-editor
+     identity the verifier must differ from; for a task currently in Research Queue, the command moves it
      to Verification Queue. A task already there needs no move, and a task outside both queues is
      left in place as a manual override. After recording completion it advances to
      `awaiting_verification`. A retry from `research_handoff` completes only the missing move.
@@ -369,7 +371,7 @@ dish approve <submission-id> --agent <verifier-agent> --file <final-note> \
   --correction none|small
 ```
 
-- Requires `verifier-agent`'s family to be the submission's `required_verifier_family`.
+- Requires `verifier-agent` to differ from the recorded constructor and material editor.
 - `--correction small` declares a non-material verifier correction that may be rechecked and signed
   in the same pass. A material verifier correction cannot be approved in place.
 - Reruns template-shape, exemption-tag, and Destination validation on the verifier's complete final
@@ -381,7 +383,7 @@ dish approve <submission-id> --agent <verifier-agent> --file <final-note> \
   value, frozen protocol release, exemption scope, and truth of the recorded Human approval.
 - A Destination mismatch returns `VALIDATION_FAILED`, records the mismatch in the audit event, and
   leaves `prepare` as the sole legal next state-changing action.
-- On pass, records `verifier_agent`/`verifier_family` and sets status `ready`. Verification
+- On pass, records `verifier_agent` and its independence attestation, and sets status `ready`. Verification
   acceptance does not move the task out of Verification Queue.
 
 ```text
@@ -389,11 +391,11 @@ dish reject <submission-id> --agent <verifier-agent> --reason "<why not signable
   [--changed-since-prior "<what materially changed>"] [--take-ownership]
 ```
 
-- Requires `verifier-agent`'s family to be the submission's `required_verifier_family`, exactly as
-  `approve` does — rejection is part of the same routed review, not a separate unguarded action.
+- Requires `verifier-agent` to satisfy the same independence check as `approve` — rejection is part
+  of the same review, not a separate unguarded action.
 - `--take-ownership` declares that the verifier made or will make a material correction. The tool
-  records that verifier as the new editor, so the next successful `prepare` routes verification to
-  the opposite family. Without it, editor attribution and routing remain unchanged.
+  records that verifier as the new material editor, so it can no longer sign that candidate and the
+  next cycle requires another fresh verifier. Without it, editor attribution remains unchanged.
 - The first rejection in the current review cycle returns the submission to `drafting` and logs the
   reason. The lock remains held while the editor corrects the note and runs `prepare` again on the
   same submission; no new `start` is allowed.
@@ -551,14 +553,13 @@ guarded state at the next operation.
 - `destination_section_gid` (live-validated at the latest successful `prepare`)
 - `exemption_revision` (null unless `prepare` records a declared Marco-approved tag-set revision)
 - `editor_agent`
-- `editor_family`
 - `change_level` (null except for `change`)
 - `change_reason` (null except for `change`)
 - `failed_verification_passes` (initialized to zero; consecutive since the latest Human unblock)
 - `baseline_verification_line` (required only for `small`)
-- `required_verifier_family` (null for `planning` and `small`)
+- `constructor_identity` / `material_editor_identity` (the verifier must differ from both; null for `planning` and `small`)
 - `verifier_agent` (null until approved, or always null for `planning` and `small`)
-- `verifier_family`
+- `verifier_independence` (platform run/session ID where obtainable, otherwise the recorded attestation)
 - `status`
 - `write_attempt_id` (unique for the current notes mutation attempt; invalidated by recovery)
 - `in_flight_at`
@@ -683,13 +684,13 @@ Implementation follows TDD. Tests must cover:
   operation was open, compared against the task-scoped stored identity;
 - non-content writes (`due_on`, completion, other fields) remaining allowed and not registering as
   drift;
-- declared agent-name validation and agent-family routing;
+- declared agent-name validation and independence checking against recorded constructor/editor identity;
 - planning, initial, and change submission kinds; change-level arguments required only for change;
 - kind-specific start eligibility: empty notes for planning, a valid Planning brief for initial, and
   a valid complete task for change, always inside the managed Cooking scope;
 - planning receives its literal manifest and exemption-tag checks and advances directly to `ready`,
   with no `Self-verified:` or verifier requirement;
-- initial routes to whole-task opposite-family verification without a Material changes entry;
+- initial routes to whole-task independent verification without a Material changes entry;
 - small and large change-level handling and their Process Record and verifier-routing consequences;
 - the release resolver loads the complete checked-in protocol set, fails closed on missing,
   ambiguous, incomplete, or dirty sets, and chooses the correct role-specific manifest;
@@ -722,8 +723,8 @@ Implementation follows TDD. Tests must cover:
   escalation summary;
 - verifier `--take-ownership` updating the editor and flipping the family required after the next
   successful `prepare`, while `approve --correction small` retains same-pass signoff;
-- `dish reject` rejecting a call from an agent whose family does not match
-  `required_verifier_family`, exactly as `approve` does;
+- `dish reject` rejecting a call from the recorded constructor or material editor, exactly as
+  `approve` does;
 - concurrent `dish start` on a task with an already-open submission (including one still in
   `drafting`) rejected, both by application check and by the SQLite unique constraint — the lock;
 - `dish prepare`/`approve`/`reject`/`submit` called against a nonexistent or wrong-status

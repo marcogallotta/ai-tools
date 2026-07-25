@@ -169,8 +169,8 @@ Narrow value parsing is limited to:
 All other values remain verifier/editor responsibility. Report every structural failure in one
 attempt and leave the submission in `drafting`.
 
-On success, planning and `small` become `ready`. Initial and `large` set the opposite
-`required_verifier_family`, enter `research_handoff`, and conditionally move Research Queue to
+On success, planning and `small` become `ready`. Initial and `large` record the constructor and
+material-editor identity the verifier must differ from, enter `research_handoff`, and conditionally move Research Queue to
 Verification Queue. Already-in-Verification is success; a task outside both queues is a preserved
 manual override. After recording completion, advance to `awaiting_verification`. A retry from
 `research_handoff` performs only the missing move.
@@ -193,7 +193,8 @@ manual override. After recording completion, advance to `awaiting_verification`.
 
 ## Step 4 — verification, correction routing, and two-pass escalation
 
-`approve` requires `awaiting_verification` and the required opposite family. It accepts
+`approve` requires `awaiting_verification` and a verifier that did not construct or materially edit
+the exact candidate. It accepts
 `--correction none|small`, reruns deterministic validation, exemption equality, and live Destination
 resolution over the complete final file, records verifier attribution, and sets `ready`. The
 Destination name/GID must equal the pair accepted at `prepare`; a mismatch returns to `drafting` for
@@ -205,9 +206,9 @@ supply one complete replacement title declaration; the tool reruns title validat
 replaces the stored prepared fields. Partial title patches are never accepted. A material title
 correction follows rejection and a fresh `prepare`, like any other material correction.
 
-`reject` uses the same verifier-family check and records a complete reason. `--take-ownership`
-records the verifier as the new material editor, causing the next successful `prepare` to route to
-the opposite family; without it, editor attribution stays unchanged.
+`reject` uses the same independence check and records a complete reason. `--take-ownership`
+records the verifier as the new material editor, so it can no longer sign that candidate and the
+next cycle requires another fresh verifier; without it, editor attribution stays unchanged.
 
 The first rejection since start or the latest Human unblock increments
 `failed_verification_passes` and returns to `drafting`. The second requires
