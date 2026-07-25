@@ -65,6 +65,7 @@ def build_parser() -> JsonArgumentParser:
     prepare.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
     prepare.add_argument("--file", dest="file_path", required=True)
     prepare.add_argument("--exemption-revision")
+    prepare.add_argument("--material-classification", choices=("material", "non-material"))
     _add_title_declaration(prepare)
 
     approve = subparsers.add_parser("approve")

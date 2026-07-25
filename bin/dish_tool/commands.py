@@ -1727,3 +1727,20 @@ DishApplication._command_create = _step5_create
 DishApplication._command_read = _step5_read
 DishApplication._command_inspect = _step5_inspect
 DishApplication._command_start = _step5_start
+
+_legacy_command_prepare = DishApplication._command_prepare
+
+def _step6_prepare(self, *, trace: CommandTrace, agent: str, submission_id: str, file_path: str | None = None, material_classification: str | None = None, **legacy: Any) -> dict[str, Any]:
+    from .step6 import prepare_live
+    operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
+    exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
+    if exists is None:
+        return _legacy_command_prepare(self, trace=trace, agent=agent, submission_id=submission_id, file_path=file_path, **legacy)
+    trace.submission_id = operation_id
+    trace.task_gid = exists["task_gid"]
+    release = self._load_release("planning" if self.conn.execute("SELECT operation_kind FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0] == "planning" else "research")
+    data = prepare_live(self.conn, self.backend, operation_id=operation_id, agent=agent, file_path=file_path or "", release=release, material_classification=material_classification)
+    trace.state = "open"
+    return result_envelope(command="prepare", task_gid=trace.task_gid, submission_id=operation_id, state="open", allowed_actions=["approve", "reject"] if data.get("verification_cycle") else [], data=data)
+
+DishApplication._command_prepare = _step6_prepare
