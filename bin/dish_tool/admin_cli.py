@@ -12,10 +12,12 @@ from typing import Sequence
 from .admin import DishAdminApplication
 from .constants import DEFAULT_DB_PATH
 from .database import initialize_database
+from .backend import AsanaBackend
+from .releases import configured_honest_path, resolve_release
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
-_ADMIN_COMMANDS = {"recover", "discard", "unblock"}
+_ADMIN_COMMANDS = {"recover", "discard", "unblock", "migrate"}
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -45,24 +47,31 @@ def build_parser() -> JsonArgumentParser:
     unblock = subparsers.add_parser("unblock")
     unblock.add_argument("submission_id")
     unblock.add_argument("--reason", required=True)
+
+    migrate = subparsers.add_parser("migrate")
+    migrate.add_argument("task_gid")
     return parser
 
 
 def build_application() -> DishAdminApplication:
     db_path = Path(os.environ.get("DISH_DB_PATH", str(DEFAULT_DB_PATH))).expanduser()
-    return DishAdminApplication(initialize_database(db_path))
+    honest_root = configured_honest_path()
+    return DishAdminApplication(initialize_database(db_path), backend=AsanaBackend(), release_loader=lambda: resolve_release(honest_root, include_migrations=True))
 
 
 def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
     command = argv[0] if argv and not argv[0].startswith("-") else "unknown"
     submission_id = None
+    task_gid = None
     if (
         command in _ADMIN_COMMANDS
         and len(argv) > 1
         and not argv[1].startswith("-")
     ):
         submission_id = argv[1]
-    return {"command": command, "submission_id": submission_id}
+    if command == "migrate" and len(argv) > 1 and not argv[1].startswith("-"):
+        task_gid = argv[1]
+    return {"command": command, "submission_id": submission_id, "task_gid": task_gid}
 
 
 def main(

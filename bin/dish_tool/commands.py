@@ -1615,3 +1615,115 @@ class DishApplication:
             state=final["status"],
             data=data,
         )
+
+_legacy_command_create = DishApplication._command_create
+_legacy_command_read = DishApplication._command_read
+_legacy_command_inspect = DishApplication._command_inspect
+_legacy_command_start = DishApplication._command_start
+
+# Step 5 lifecycle replacements. Kept at module end so legacy later-stage handlers remain untouched.
+def _step5_sections(self, *, trace: CommandTrace, agent: str) -> dict[str, Any]:
+    agent_family(agent)
+    sections = self.backend.list_sections(COOKING_PROJECT_GID)
+    clean = [{"gid": _gid(item), "name": str(item.get("name") or "")} for item in sections]
+    return result_envelope(command="sections", data={"project_gid": COOKING_PROJECT_GID, "sections": clean})
+
+
+def _step5_create(self, *, trace: CommandTrace, agent: str, title: str) -> dict[str, Any]:
+    agent_family(agent)
+    clean_title = _clean_required(title, rule="title_required", label="title")
+    release = self._load_release(None)
+    from .constants import SUPPORTED_PROTOCOL_VERSION
+    if release.protocol_version != SUPPORTED_PROTOCOL_VERSION:
+        return _legacy_command_create(self, trace=trace, agent=agent, title=title)
+    registry = SectionRegistry.from_sections(self.backend.list_sections(COOKING_PROJECT_GID))
+    task = self.backend.create_bare_task(title=clean_title, project_gid=COOKING_PROJECT_GID, section_gid=registry.research_queue_gid)
+    task_gid = _clean_required(task.get("gid"), rule="created_task_gid_missing", label="created task GID")
+    trace.task_gid = task_gid
+    return result_envelope(command="create", task_gid=task_gid, data={"task_gid": task_gid, "schema_version": release.schema_version, "bare_task": True})
+
+
+def _step5_read(self, *, trace: CommandTrace, agent: str, task_gid: str) -> dict[str, Any]:
+    from .step5 import diagnostics_for
+    from .task_store import read_complete_task
+    agent_family(agent)
+    task_gid = _clean_required(task_gid, rule="task_gid_required", label="task GID")
+    trace.task_gid = task_gid
+    release = self._load_release(None)
+    from .constants import SUPPORTED_PROTOCOL_VERSION
+    if release.protocol_version != SUPPORTED_PROTOCOL_VERSION:
+        return _legacy_command_read(self, trace=trace, agent=agent, task_gid=task_gid)
+    _require_cooking_task(self._read_live_task(task_gid), task_gid)
+    live = read_complete_task(self.backend, task_gid=task_gid, project_gid=COOKING_PROJECT_GID)
+    diag = diagnostics_for(live, release)
+    stored = self.conn.execute("SELECT * FROM task_content_state WHERE task_gid = ?", (task_gid,)).fetchone()
+    drift = None if stored is None else stored["last_confirmed_identity"] != live.identity
+    return result_envelope(command="read", task_gid=task_gid, data={
+        "task": {"gid": live.gid, "title": live.title, "notes": live.notes, "section_gid": live.section_gid, "completed": live.completed, "modified_at": live.modified_at},
+        "parsed": diag["parsed"], "task_schema_version": diag["schema_version"],
+        "content_identity": live.identity, "stored_identity": None if stored is None else stored["last_confirmed_identity"],
+        "drift": drift, "migration_required": diag["migration_required"],
+        "placement": {"project_gid": COOKING_PROJECT_GID, "section_gid": live.section_gid},
+        "compatibility": {"protocol_version": release.protocol_version, "schema_version": release.schema_version},
+        "validation": diag["validation"],
+    })
+
+
+def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str) -> dict[str, Any]:
+    from .step5 import inspect_operation
+    agent_family(agent)
+    operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
+    exists = self.conn.execute("SELECT 1 FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
+    if exists is None:
+        return _legacy_command_inspect(self, trace=trace, agent=agent, submission_id=submission_id)
+    data = inspect_operation(self.conn, operation_id)
+    trace.submission_id = operation_id
+    trace.task_gid = data["operation"]["task_gid"]
+    trace.state = data["operation"]["status"]
+    return result_envelope(command="inspect", task_gid=trace.task_gid, submission_id=operation_id, state=trace.state, allowed_actions=data["legal_next_actions"], data=data)
+
+
+def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: str, change_level: str | None = None, change_reason: str | None = None) -> dict[str, Any]:
+    from .step5 import claim_operation, diagnostics_for
+    from .task_store import read_complete_task
+    agent_family(agent)
+    task_gid = _clean_required(task_gid, rule="task_gid_required", label="task GID")
+    trace.task_gid = task_gid
+    change_level, change_reason = self._validate_start_arguments(kind=kind, change_level=change_level, change_reason=change_reason)
+    role = "planning" if kind == "planning" else "research"
+    release = self._load_release(role)
+    from .constants import SUPPORTED_PROTOCOL_VERSION
+    if release.protocol_version != SUPPORTED_PROTOCOL_VERSION:
+        return _legacy_command_start(self, trace=trace, agent=agent, task_gid=task_gid, kind=kind, change_level=change_level, change_reason=change_reason)
+    _require_cooking_task(self._read_live_task(task_gid), task_gid)
+    live = read_complete_task(self.backend, task_gid=task_gid, project_gid=COOKING_PROJECT_GID)
+    registry = SectionRegistry.from_sections(self.backend.list_sections(COOKING_PROJECT_GID))
+    if not is_protocol_managed(live.section_gid, registry):
+        raise DishRuleError("UNMANAGED_TASK", f"task {task_gid} is in an excluded Cooking section", rule="task_in_excluded_section")
+    diag = diagnostics_for(live, release)
+    if kind == "planning":
+        if live.notes:
+            raise DishRuleError("VALIDATION_FAILED", "planning must start from a bare task", rule="planning_notes_not_empty")
+    else:
+        if diag["parsed"] is None:
+            raise DishRuleError("VALIDATION_FAILED", "task is not canonical", rule="canonical_task_required", errors=diag["validation"])
+        if diag["migration_required"]:
+            raise DishRuleError("VALIDATION_FAILED", "task schema is older than the current schema; migration required", rule="migration_required", details={"task_schema_version": diag["schema_version"], "current_schema_version": release.schema_version})
+        if diag["validation"]:
+            raise DishRuleError("VALIDATION_FAILED", "task failed current structural validation", errors=diag["validation"])
+    op = claim_operation(self.conn, live=live, release=release, kind=kind, agent=agent)
+    trace.submission_id = op["operation_id"]
+    trace.state = op["status"]
+    return result_envelope(command="start", task_gid=task_gid, submission_id=op["operation_id"], state=op["status"], allowed_actions=["prepare"], data={
+        "operation_id": op["operation_id"], "operation_kind": kind,
+        "expected_identity": live.identity, "placement": {"section_gid": live.section_gid},
+        "protocol": {"role": role, "version": release.protocol_version, "text": release.protocol_for_role(role)},
+        "schema": {"version": release.schema_version, "diagnostics": diag["validation"]},
+        "actors": {"editor": op["editor_agent"], "researcher": op["researcher_agent"]},
+    })
+
+DishApplication._command_sections = _step5_sections
+DishApplication._command_create = _step5_create
+DishApplication._command_read = _step5_read
+DishApplication._command_inspect = _step5_inspect
+DishApplication._command_start = _step5_start

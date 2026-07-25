@@ -62,12 +62,14 @@ class DishAdminApplication:
         *,
         now_provider: Callable[[], datetime] | None = None,
         process_liveness_checker: Callable[[ProcessIdentity], bool] | None = None,
+        backend: Any | None = None,
+        release_loader: Callable[[], Any] | None = None,
     ) -> None:
         self.conn = conn
         self.now_provider = now_provider or _utc_datetime_now
-        self.process_liveness_checker = (
-            process_liveness_checker or process_identity_is_live
-        )
+        self.process_liveness_checker = (process_liveness_checker or process_identity_is_live)
+        self.backend = backend
+        self.release_loader = release_loader
 
     def execute(self, command: str, **arguments: Any) -> dict[str, Any]:
         trace = AdminTrace(submission_id=arguments.get("submission_id"))
@@ -330,3 +332,17 @@ class DishAdminApplication:
             state=final["status"],
             data={"reason": clean_reason},
         )
+
+
+def _step5_admin_migrate(self, *, trace: AdminTrace, task_gid: str) -> dict[str, Any]:
+    from .step5 import migrate_live_task
+    clean = _clean_required(task_gid, rule="task_gid_required", label="task GID")
+    trace.task_gid = clean
+    if self.backend is None or self.release_loader is None:
+        raise DishRuleError("INTERNAL_ERROR", "migration backend is unavailable", rule="migration_backend_unavailable")
+    release = self.release_loader()
+    live = migrate_live_task(self.conn, self.backend, task_gid=clean, release=release)
+    trace.audit_details.update({"schema_version": release.schema_version, "confirmed_identity": live.identity})
+    return result_envelope(command="migrate", task_gid=clean, data={"task_gid": clean, "schema_version": release.schema_version, "content_identity": live.identity, "confirmed": True})
+
+DishAdminApplication._command_migrate = _step5_admin_migrate

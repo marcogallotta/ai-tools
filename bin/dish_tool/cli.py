@@ -42,6 +42,9 @@ def build_parser() -> JsonArgumentParser:
     create.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
     create.add_argument("--title", required=True)
 
+    sections = subparsers.add_parser("sections")
+    sections.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+
     read = subparsers.add_parser("read")
     read.add_argument("task_gid")
     read.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
