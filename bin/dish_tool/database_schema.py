@@ -271,7 +271,113 @@ BEFORE UPDATE OF status, completed_at ON operations
 WHEN NEW.status = 'completed' AND NEW.completed_at IS NULL
 BEGIN SELECT RAISE(ABORT, 'completed operation requires completed_at'); END;
 """
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6}
+
+_MIGRATION_7 = """
+DROP TRIGGER IF EXISTS verification_cycles_signed_pair_insert;
+DROP TRIGGER IF EXISTS verification_cycles_signed_pair_update;
+DROP TRIGGER IF EXISTS verification_cycles_reviewed_pair_update;
+DROP TRIGGER IF EXISTS verification_cycles_approved_complete_update;
+DROP TRIGGER IF EXISTS verification_cycles_route_resume_update;
+DROP TRIGGER IF EXISTS operations_signoff_requires_write_update;
+DROP TRIGGER IF EXISTS operations_destination_move_requires_attempt_update;
+DROP TRIGGER IF EXISTS operations_completed_requires_timestamp_update;
+
+CREATE TRIGGER verification_cycles_binding_insert
+BEFORE INSERT ON verification_cycles
+WHEN ((NEW.reviewed_content_version_id IS NULL) != (NEW.reviewed_identity IS NULL))
+  OR ((NEW.signed_content_version_id IS NULL) != (NEW.signed_identity IS NULL))
+  OR (NEW.reviewed_content_version_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM content_versions cv
+         WHERE cv.content_version_id = NEW.reviewed_content_version_id
+           AND cv.task_gid = NEW.task_gid
+           AND cv.operation_id = NEW.operation_id
+           AND cv.identity = NEW.reviewed_identity
+           AND cv.confirmed = 1))
+  OR (NEW.signed_content_version_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM content_versions cv
+         WHERE cv.content_version_id = NEW.signed_content_version_id
+           AND cv.task_gid = NEW.task_gid
+           AND cv.operation_id = NEW.operation_id
+           AND cv.identity = NEW.signed_identity
+           AND cv.confirmed = 1))
+BEGIN SELECT RAISE(ABORT, 'verification content binding is invalid'); END;
+
+CREATE TRIGGER verification_cycles_binding_update
+BEFORE UPDATE OF reviewed_content_version_id, reviewed_identity, signed_content_version_id, signed_identity, operation_id, task_gid
+ON verification_cycles
+WHEN ((NEW.reviewed_content_version_id IS NULL) != (NEW.reviewed_identity IS NULL))
+  OR ((NEW.signed_content_version_id IS NULL) != (NEW.signed_identity IS NULL))
+  OR (NEW.reviewed_content_version_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM content_versions cv
+         WHERE cv.content_version_id = NEW.reviewed_content_version_id
+           AND cv.task_gid = NEW.task_gid
+           AND cv.operation_id = NEW.operation_id
+           AND cv.identity = NEW.reviewed_identity
+           AND cv.confirmed = 1))
+  OR (NEW.signed_content_version_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM content_versions cv
+         WHERE cv.content_version_id = NEW.signed_content_version_id
+           AND cv.task_gid = NEW.task_gid
+           AND cv.operation_id = NEW.operation_id
+           AND cv.identity = NEW.signed_identity
+           AND cv.confirmed = 1))
+BEGIN SELECT RAISE(ABORT, 'verification content binding is invalid'); END;
+
+CREATE TRIGGER verification_cycles_state_insert
+BEFORE INSERT ON verification_cycles
+WHEN (NEW.outcome = 'approved' AND (NEW.completed_at IS NULL OR NEW.signed_content_version_id IS NULL OR NEW.signed_identity IS NULL))
+   OR (NEW.route IS NULL AND COALESCE(NEW.resume_state, 'None') != 'None' AND COALESCE(NEW.outcome, '') != 'two-pass-hold')
+   OR (NEW.route IS NOT NULL AND COALESCE(NEW.resume_state, 'None') = 'None')
+BEGIN SELECT RAISE(ABORT, 'verification cycle state is invalid'); END;
+
+CREATE TRIGGER verification_cycles_state_update
+BEFORE UPDATE OF outcome, completed_at, signed_content_version_id, signed_identity, route, resume_state
+ON verification_cycles
+WHEN (NEW.outcome = 'approved' AND (NEW.completed_at IS NULL OR NEW.signed_content_version_id IS NULL OR NEW.signed_identity IS NULL))
+   OR (NEW.route IS NULL AND COALESCE(NEW.resume_state, 'None') != 'None' AND COALESCE(NEW.outcome, '') != 'two-pass-hold')
+   OR (NEW.route IS NOT NULL AND COALESCE(NEW.resume_state, 'None') = 'None')
+BEGIN SELECT RAISE(ABORT, 'verification cycle state is invalid'); END;
+
+CREATE TRIGGER operations_state_insert
+BEFORE INSERT ON operations
+WHEN (NEW.signoff_completed_at IS NOT NULL AND NEW.content_write_completed_at IS NULL)
+   OR (NEW.status = 'completed' AND NEW.completed_at IS NULL)
+   OR (NEW.movement_completed_at IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM movement_attempts ma
+         WHERE ma.attempt_id = NEW.destination_movement_attempt_id
+           AND ma.operation_id = NEW.operation_id
+           AND ma.purpose = 'destination_submission'
+           AND ma.outcome = 'confirmed'
+           AND ma.confirmed_section_gid = ma.intended_section_gid))
+BEGIN SELECT RAISE(ABORT, 'operation state is invalid'); END;
+
+CREATE TRIGGER operations_state_update
+BEFORE UPDATE OF status, completed_at, content_write_completed_at, signoff_completed_at, movement_completed_at, destination_movement_attempt_id
+ON operations
+WHEN (NEW.signoff_completed_at IS NOT NULL AND NEW.content_write_completed_at IS NULL)
+   OR (NEW.status = 'completed' AND NEW.completed_at IS NULL)
+   OR (NEW.movement_completed_at IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM movement_attempts ma
+         WHERE ma.attempt_id = NEW.destination_movement_attempt_id
+           AND ma.operation_id = NEW.operation_id
+           AND ma.purpose = 'destination_submission'
+           AND ma.outcome = 'confirmed'
+           AND ma.confirmed_section_gid = ma.intended_section_gid))
+BEGIN SELECT RAISE(ABORT, 'operation state is invalid'); END;
+
+CREATE TRIGGER movement_attempt_final_evidence_update
+BEFORE UPDATE OF operation_id, purpose, outcome, intended_section_gid, confirmed_section_gid
+ON movement_attempts
+WHEN EXISTS (SELECT 1 FROM operations o WHERE o.destination_movement_attempt_id = OLD.attempt_id AND o.movement_completed_at IS NOT NULL)
+ AND (NEW.operation_id != OLD.operation_id
+      OR NEW.purpose != 'destination_submission'
+      OR NEW.outcome != 'confirmed'
+      OR NEW.confirmed_section_gid IS NULL
+      OR NEW.confirmed_section_gid != NEW.intended_section_gid)
+BEGIN SELECT RAISE(ABORT, 'final destination movement evidence cannot be weakened'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -306,30 +412,42 @@ def initialize_database(
     return conn
 
 
+def _execute_script_statements(conn: sqlite3.Connection, script: str) -> None:
+    statement = ""
+    for line in script.splitlines(keepends=True):
+        statement += line
+        if sqlite3.complete_statement(statement):
+            sql = statement.strip()
+            if sql:
+                conn.execute(sql)
+            statement = ""
+    if statement.strip():
+        raise sqlite3.OperationalError("incomplete migration SQL statement")
+
+
 def migrate_database(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-            version INTEGER PRIMARY KEY,
-            applied_at TEXT NOT NULL
+    # Hold one SQLite write lock across discovery and every migration. This makes
+    # concurrent initializers serialize instead of racing on CREATE/ALTER steps.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS schema_migrations (
+                   version INTEGER PRIMARY KEY,
+                   applied_at TEXT NOT NULL
+               )"""
         )
-        """
-    )
-    applied = {row[0] for row in conn.execute("SELECT version FROM schema_migrations")}
-    for version in sorted(MIGRATIONS):
-        if version in applied:
-            continue
-        script = MIGRATIONS[version]
-        applied_at = utc_now().replace("'", "''")
-        try:
-            conn.executescript(
-                "BEGIN IMMEDIATE;\n"
-                + script
-                + f"\nINSERT INTO schema_migrations(version, applied_at) VALUES ({version}, '{applied_at}');\n"
-                + f"PRAGMA user_version = {version};\n"
-                + "COMMIT;\n"
+        applied = {row[0] for row in conn.execute("SELECT version FROM schema_migrations")}
+        for version in sorted(MIGRATIONS):
+            if version in applied:
+                continue
+            _execute_script_statements(conn, MIGRATIONS[version])
+            conn.execute(
+                "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+                (version, utc_now()),
             )
-        except Exception:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
+            conn.execute(f"PRAGMA user_version = {version}")
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
