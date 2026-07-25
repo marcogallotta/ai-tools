@@ -73,7 +73,7 @@ class DishAdminApplication:
 
     def execute(self, command: str, **arguments: Any) -> dict[str, Any]:
         trace = AdminTrace(submission_id=arguments.get("submission_id"))
-        handler = getattr(self, f"_command_{command}", None)
+        handler = getattr(self, f"_command_{command.replace(chr(45), chr(95))}", None)
         try:
             if handler is None:
                 raise DishRuleError(

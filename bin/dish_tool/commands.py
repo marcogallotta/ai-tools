@@ -43,6 +43,8 @@ from .validation import (
 )
 
 
+from .application_service import OperationApplicationService
+
 from .command_support import (
     CommandBackend, CommandTrace, _clean_required, _decode_json,
     _frozen_release_data, _gid, _json_text, _require_cooking_task,
@@ -62,6 +64,7 @@ class DishApplication:
         self.conn = conn
         self.backend = backend
         self.release_loader = release_loader
+        self.operation_service = OperationApplicationService(conn)
         parameters = inspect.signature(release_loader).parameters.values()
         self._release_loader_accepts_role = any(
             parameter.kind
@@ -1586,9 +1589,9 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
                     raise DishRuleError("VALIDATION_FAILED", "task is neither canonical nor a valid Planning brief", rule="planning_brief_required", errors=diag["validation"])
             else:
                 raise DishRuleError("VALIDATION_FAILED", "task is not canonical", rule="canonical_task_required", errors=diag["validation"])
-        if diag["migration_required"]:
+        if diag["parsed"] is not None and diag["migration_required"]:
             raise DishRuleError("VALIDATION_FAILED", "task schema is older than the current schema; migration required", rule="migration_required", details={"task_schema_version": diag["schema_version"], "current_schema_version": release.schema_version})
-        if diag["validation"]:
+        if diag["parsed"] is not None and diag["validation"]:
             raise DishRuleError("VALIDATION_FAILED", "task failed current structural validation", errors=diag["validation"])
     op = claim_operation(self.conn, live=live, release=release, kind=kind, agent=agent, run_id=run_id)
     trace.submission_id = op["operation_id"]
@@ -1612,9 +1615,13 @@ _legacy_command_prepare = DishApplication._command_prepare
 def _step6_prepare(self, *, trace: CommandTrace, agent: str, submission_id: str, file_path: str | None = None, material_classification: str | None = None, **legacy: Any) -> dict[str, Any]:
     from .step6 import prepare_live
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
-    exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
-    if exists is None:
+    route_release = self._load_release(None)
+    routed = self.operation_service.route(operation_id, command="prepare", protocol_version=route_release.protocol_version)
+    exists = routed.row
+    if routed.generation == "legacy":
         return _legacy_command_prepare(self, trace=trace, agent=agent, submission_id=submission_id, file_path=file_path, **legacy)
+    if routed.generation == "missing":
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
     release = self._load_release("planning" if self.conn.execute("SELECT operation_kind FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0] == "planning" else "research")
@@ -1688,12 +1695,16 @@ def _step7_approve(
 ) -> dict[str, Any]:
     from .step7 import approve_live
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
-    exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
-    if exists is None:
+    route_release = self._load_release(None)
+    routed = self.operation_service.route(operation_id, command="approve", protocol_version=route_release.protocol_version)
+    exists = routed.row
+    if routed.generation == "legacy":
         return _step6_command_approve(
             self, trace=trace, agent=agent, submission_id=submission_id,
             file_path=file_path or "", correction=correction, **legacy,
         )
+    if routed.generation == "missing":
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
     clean_identity = _clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity")
@@ -1735,9 +1746,13 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, submission_id: str,
 
 def _step8_reject(self, *, trace: CommandTrace, agent: str, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, **legacy: Any) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
-    exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
-    if exists is None or route is None:
+    route_release = self._load_release(None)
+    routed = self.operation_service.route(operation_id, command="reject", protocol_version=route_release.protocol_version)
+    exists = routed.row
+    if routed.generation == "legacy" or route is None:
         return _step7_command_reject(self, trace=trace, agent=agent, submission_id=submission_id, reason=reason, **legacy)
+    if routed.generation == "missing":
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     from .step8 import reject_route
     release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
@@ -1753,9 +1768,13 @@ _step8_command_submit = DishApplication._command_submit
 
 def _step9_submit(self, *, trace: CommandTrace, submission_id: str, file_path: str | None = None) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
-    exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
-    if exists is None:
+    route_release = self._load_release(None)
+    routed = self.operation_service.route(operation_id, command="submit", protocol_version=route_release.protocol_version)
+    exists = routed.row
+    if routed.generation == "legacy":
         return _step8_command_submit(self, trace=trace, submission_id=submission_id, file_path=file_path or "")
+    if routed.generation == "missing":
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     from .step9 import submit_live
     release = self._load_release("verification")
     trace.submission_id = operation_id

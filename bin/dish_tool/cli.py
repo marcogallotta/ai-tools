@@ -96,7 +96,7 @@ def build_parser() -> JsonArgumentParser:
 
     submit = subparsers.add_parser("submit")
     submit.add_argument("submission_id")
-    submit.add_argument("--file", dest="file_path", required=True)
+    submit.add_argument("--file", dest="file_path")
     return parser
 
 

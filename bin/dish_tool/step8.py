@@ -241,7 +241,7 @@ def resolve_hold(
             "Verification protocol release": snapshot.identity if resume_status == "pending-verification" else "None",
             "Self-verified": material_editor_line(editor, utc_now()[:10]),
         })
-        decision = f"Human-approved hold resolution — {resolution_kind}: {clean_detail}"
+        decision = f"Human — Marco: {resolution_kind} resolved — {clean_detail}"
         decisions = tuple(candidate.decisions)
         if decision not in decisions:
             decisions += (decision,)
@@ -250,7 +250,7 @@ def resolve_hold(
         values = dict(resumed(before_doc.state.values).values)
         values["Status"] = resume_status
         values["Verification protocol release"] = "None" if resume_status == "pending-research" else cycle["protocol_release"]
-        decision = f"Human-approved hold resolution — {resolution_kind}: {clean_detail}"
+        decision = f"Human — Marco: {resolution_kind} resolved — {clean_detail}"
         decisions = tuple(before_doc.decisions)
         if decision not in decisions:
             decisions += (decision,)

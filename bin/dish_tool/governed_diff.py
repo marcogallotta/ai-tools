@@ -41,7 +41,7 @@ def require_governed_authorization(before, after) -> tuple[GovernedChange, ...]:
             if not set(before.decisions).issubset(set(after.decisions)):
                 missing.append("Decisions")
             continue
-        prefix = f"Human-approved change — {change.field}:"
+        prefix = f"Human — Marco: Authorizes {change.field} change:"
         if not any(item.startswith(prefix) for item in added_decisions):
             missing.append(change.field)
     if missing:
