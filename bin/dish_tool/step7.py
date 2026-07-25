@@ -206,5 +206,9 @@ def approve_live(
         conn, submission_id=None, task_gid=live.gid, operation_id=operation_id,
         event_type="verification.approved", actor_agent=agent,
         details={"cycle_id": cycle["cycle_id"], "signed_identity": confirmed.identity, "signed_content_version_id": signed_version["content_version_id"]}, result_code="OK", result_ok=True,
+        governed_kind="decision",
+        before_state={"outcome": None, "reviewed_identity": persisted_reviewed, "status": "pending-verification"},
+        after_state={"outcome": "approved", "signed_identity": confirmed.identity, "status": "ready"},
+        actor_run_id=run_id, actor_attestation=independence_attestation,
     )
     return {"operation_id": operation_id, "cycle_id": cycle["cycle_id"], "signed_identity": confirmed.identity, "task": dataclasses.asdict(confirmed)}

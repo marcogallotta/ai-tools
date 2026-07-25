@@ -6,12 +6,13 @@ import sqlite3
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import mark_operation_completion, record_audit
+from .database import finalize_confirmed_movement_attempt, record_audit
 from .errors import DishRuleError
 from .lifecycle import assert_transition, require_status
 from .models import SectionRegistry, resolve_destination, utc_now
 from .task_document import DESTINATION_RE, DocumentParseError, parse_task_document, validate_task_document
 from .task_store import move_exact, read_complete_task
+from .recovery import begin_movement_attempt
 
 
 def _operation(conn: sqlite3.Connection, operation_id: str):
@@ -97,7 +98,13 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
     elif current == destination.gid:
         handoff = "already_at_destination"
         if op["movement_completed_at"] is None:
-            mark_operation_completion(conn, operation_id, "movement")
+            attempt_id = begin_movement_attempt(
+                conn, operation_id=operation_id, expected_section_gid=current,
+                intended_section_gid=current, purpose="destination_submission",
+            )
+            finalize_confirmed_movement_attempt(
+                conn, attempt_id=attempt_id, live_section_gid=current,
+            )
     elif current == registry.verification_queue_gid:
         last = _latest_movement_attempt(conn, operation_id)
         if last is not None and last["intended_section_gid"] == destination.gid and last["outcome"] == "confirmed":
@@ -124,7 +131,10 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
         conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
         event_type="operation.submitted", actor_agent=None,
         details={"handoff": handoff, "moved": moved, "section_gid": live.section_gid, "destination_diagnostic": diagnostic},
-        result_code="OK", result_ok=True,
+        result_code="OK", result_ok=True, governed_kind="lock",
+        before_state={"operation_id": operation_id, "status": "open"},
+        after_state={"operation_id": operation_id, "status": "completed"},
+        actor_source="submission-command",
     )
     return {
         "operation_id": operation_id,

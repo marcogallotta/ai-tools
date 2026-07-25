@@ -43,7 +43,7 @@ def test_redesigned_schema_is_idempotent_and_complete(tmp_path):
         "audit_events",
         "legacy_submission_quarantine",
     } <= tables
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
 
 
 def test_content_identity_normalizes_crlf_only():
@@ -106,7 +106,7 @@ def test_one_open_operation_per_task_and_stale_identity_are_atomic(tmp_path):
     assert duplicate.value.rule == "open_operation_exists"
     assert conn.execute("SELECT count(*) FROM operations WHERE task_gid='task'").fetchone()[0] == 1
 
-    conn.execute("UPDATE operations SET status='completed' WHERE operation_id=?", (first["operation_id"],))
+    conn.execute("UPDATE operations SET status='completed', completed_at='now' WHERE operation_id=?", (first["operation_id"],))
     confirm_task_content(
         conn, task_gid="task", title="Externally edited", notes="Body", schema_version="2"
     )

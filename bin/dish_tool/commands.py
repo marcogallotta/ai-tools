@@ -320,7 +320,17 @@ class DishApplication:
             details["message"] = message
         if actor is not None and valid_actor is None:
             details["requested_agent"] = str(actor)
-        details.update(trace.audit_details)
+        governed = trace.audit_details.get("governed_audit")
+        details.update({k: v for k, v in trace.audit_details.items() if k != "governed_audit"})
+        audit_kwargs = {}
+        if isinstance(governed, dict) and bool(result["ok"]):
+            audit_kwargs = {
+                "governed_kind": governed.get("kind"),
+                "before_state": governed.get("before"),
+                "after_state": governed.get("after"),
+                "actor_run_id": governed.get("run_id"),
+                "actor_attestation": governed.get("attestation"),
+            }
         record_audit(
             self.conn,
             submission_id=trace.submission_id if trace.known_submission else None,
@@ -328,6 +338,7 @@ class DishApplication:
             event_type=f"dish.{command}",
             actor_agent=valid_actor,
             details=details,
+            **audit_kwargs,
         )
 
     def _command_create(
@@ -1030,6 +1041,11 @@ class DishApplication:
                 "validated prepare did not produce a title",
                 rule="prepared_title_missing",
             )
+        trace.audit_details["governed_audit"] = {
+            "kind": "exemption",
+            "before": {"tags": list(baseline_tags or ()), "revision": None},
+            "after": {"tags": list(prepared_tags or ()), "revision": clean_revision},
+        }
         updates = {
             "prepared_exemption_tags": json.dumps(list(prepared_tags or ()), separators=(",", ":")),
             "prepared_title": prepared_title,

@@ -226,7 +226,52 @@ ALTER TABLE operations ADD COLUMN destination_movement_attempt_id TEXT REFERENCE
 CREATE INDEX write_attempts_open_idx ON write_attempts(operation_id, outcome, started_at);
 CREATE INDEX movement_attempts_open_idx ON movement_attempts(operation_id, outcome, started_at);
 """
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5}
+
+_MIGRATION_6 = """
+ALTER TABLE audit_events ADD COLUMN governed_kind TEXT
+    CHECK (governed_kind IS NULL OR governed_kind IN ('lock','exemption','decision'));
+ALTER TABLE audit_events ADD COLUMN before_state TEXT
+    CHECK (before_state IS NULL OR json_valid(before_state));
+ALTER TABLE audit_events ADD COLUMN after_state TEXT
+    CHECK (after_state IS NULL OR json_valid(after_state));
+ALTER TABLE audit_events ADD COLUMN actor_provenance TEXT
+    CHECK (actor_provenance IS NULL OR json_valid(actor_provenance));
+
+CREATE TRIGGER verification_cycles_signed_pair_insert
+BEFORE INSERT ON verification_cycles
+WHEN (NEW.signed_content_version_id IS NULL) != (NEW.signed_identity IS NULL)
+BEGIN SELECT RAISE(ABORT, 'verification signed identity/version must be paired'); END;
+CREATE TRIGGER verification_cycles_signed_pair_update
+BEFORE UPDATE OF signed_content_version_id, signed_identity ON verification_cycles
+WHEN (NEW.signed_content_version_id IS NULL) != (NEW.signed_identity IS NULL)
+BEGIN SELECT RAISE(ABORT, 'verification signed identity/version must be paired'); END;
+CREATE TRIGGER verification_cycles_reviewed_pair_update
+BEFORE UPDATE OF reviewed_content_version_id, reviewed_identity ON verification_cycles
+WHEN (NEW.reviewed_content_version_id IS NULL) != (NEW.reviewed_identity IS NULL)
+BEGIN SELECT RAISE(ABORT, 'verification reviewed identity/version must be paired'); END;
+CREATE TRIGGER verification_cycles_approved_complete_update
+BEFORE UPDATE OF outcome, completed_at, signed_content_version_id, signed_identity ON verification_cycles
+WHEN NEW.outcome = 'approved' AND (NEW.completed_at IS NULL OR NEW.signed_content_version_id IS NULL OR NEW.signed_identity IS NULL)
+BEGIN SELECT RAISE(ABORT, 'approved verification requires completed signed content'); END;
+CREATE TRIGGER verification_cycles_route_resume_update
+BEFORE UPDATE OF route, resume_state, outcome ON verification_cycles
+WHEN (NEW.route IS NULL AND COALESCE(NEW.resume_state, 'None') != 'None' AND COALESCE(NEW.outcome, '') != 'two-pass-hold')
+   OR (NEW.route IS NOT NULL AND COALESCE(NEW.resume_state, 'None') = 'None')
+BEGIN SELECT RAISE(ABORT, 'verification route and resume state must be paired'); END;
+CREATE TRIGGER operations_signoff_requires_write_update
+BEFORE UPDATE OF signoff_completed_at ON operations
+WHEN NEW.signoff_completed_at IS NOT NULL AND NEW.content_write_completed_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'signoff completion requires content-write completion'); END;
+CREATE TRIGGER operations_destination_move_requires_attempt_update
+BEFORE UPDATE OF movement_completed_at, destination_movement_attempt_id ON operations
+WHEN NEW.movement_completed_at IS NOT NULL AND NEW.destination_movement_attempt_id IS NULL
+BEGIN SELECT RAISE(ABORT, 'destination movement completion requires confirmed attempt'); END;
+CREATE TRIGGER operations_completed_requires_timestamp_update
+BEFORE UPDATE OF status, completed_at ON operations
+WHEN NEW.status = 'completed' AND NEW.completed_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'completed operation requires completed_at'); END;
+"""
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -302,28 +347,42 @@ def record_audit(
     operation_id: str | None = None,
     result_code: str | None = None,
     result_ok: bool | None = None,
+    governed_kind: str | None = None,
+    before_state: Mapping[str, Any] | None = None,
+    after_state: Mapping[str, Any] | None = None,
+    actor_run_id: str | None = None,
+    actor_attestation: str | None = None,
+    actor_source: str = "command",
 ) -> str:
     if actor_agent is not None:
         agent_family(actor_agent)
+    if governed_kind not in {None, "lock", "exemption", "decision"}:
+        raise ValueError("invalid governed audit kind")
+    if governed_kind is not None and (before_state is None or after_state is None):
+        raise ValueError("governed audit events require before and after state")
+    provenance = {
+        "agent": actor_agent,
+        "run_id": str(actor_run_id or "").strip() or None,
+        "independence_attestation": str(actor_attestation or "").strip() or None,
+        "source": actor_source,
+    }
     event_id = str(uuid.uuid4())
     conn.execute(
         """
         INSERT INTO audit_events (
-            event_id, submission_id, task_gid, event_type,
-            actor_agent, details, created_at, operation_id, result_code, result_ok
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            event_id, submission_id, task_gid, event_type, actor_agent, details,
+            created_at, operation_id, result_code, result_ok, governed_kind,
+            before_state, after_state, actor_provenance
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            event_id,
-            submission_id,
-            task_gid,
-            event_type,
-            actor_agent,
+            event_id, submission_id, task_gid, event_type, actor_agent,
             json.dumps(dict(details), sort_keys=True, separators=(",", ":")),
-            created_at or utc_now(),
-            operation_id,
-            result_code,
-            None if result_ok is None else int(result_ok),
+            created_at or utc_now(), operation_id, result_code,
+            None if result_ok is None else int(result_ok), governed_kind,
+            None if before_state is None else json.dumps(dict(before_state), sort_keys=True, separators=(",", ":")),
+            None if after_state is None else json.dumps(dict(after_state), sort_keys=True, separators=(",", ":")),
+            json.dumps(provenance, sort_keys=True, separators=(",", ":")),
         ),
     )
     return event_id
@@ -895,7 +954,10 @@ def create_operation(
             operation_id=operation_id, event_type="operation.created",
             actor_agent=actors.editor_agent or actors.researcher_agent,
             details={"operation_kind": operation_kind, "status": "open"},
-            result_code="OK", result_ok=True,
+            result_code="OK", result_ok=True, governed_kind="lock",
+            before_state={"open_operation_id": None},
+            after_state={"open_operation_id": operation_id, "status": "open"},
+            actor_run_id=actors.run_id, actor_attestation=actors.independence_attestation,
         )
         conn.execute("COMMIT")
         return row
