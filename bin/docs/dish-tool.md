@@ -187,9 +187,10 @@ uniformly to new and pre-existing tasks; no separate enrollment or backfill pass
 Management is the tool's own concept: it decides which tasks the tool governs, refuses older-schema
 tasks, and scopes drift detection. The generic Asana CLI is not modified to consult it.
 
-Ordinary non-content operations on a managed task — scheduling or clearing `due_on`, marking the
-task complete after cooking, and other non-body fields — remain available outside the tool. Only the
-task body is guarded content. Generic section moves also remain available, but tool-aware agents use
+Title and body are both guarded content; a generic rename registers as drift exactly as a body edit
+does. Ordinary non-content operations on a managed task — scheduling or clearing `due_on`, marking
+the task complete after cooking, and other non-content fields — remain available outside the tool
+and never register as drift. Generic section moves also remain available, but tool-aware agents use
 only the conditional moves owned by `dish prepare` and `dish submit`.
 
 ## Workflow
@@ -677,9 +678,11 @@ Implementation follows TDD. Tests must cover:
   and exact legal next agent actions without claiming to store the controlled-handoff candidate;
 - the common JSON result envelope, stable outcome/rule codes, retryability, allowed-action mapping,
   and exit status for every success and failure class;
-- drift detection: a body change made outside the guarded path is caught at the next read, voids
-  signoff, and is logged as a drift event;
-- non-body writes (`due_on`, completion, other fields) remaining allowed throughout;
+- drift detection: a title or body change made outside the guarded path is caught at the next read
+  or `start`, voids signoff, and is logged as a drift event — including a change made while no
+  operation was open, compared against the task-scoped stored identity;
+- non-content writes (`due_on`, completion, other fields) remaining allowed and not registering as
+  drift;
 - declared agent-name validation and agent-family routing;
 - planning, initial, and change submission kinds; change-level arguments required only for change;
 - kind-specific start eligibility: empty notes for planning, a valid Planning brief for initial, and

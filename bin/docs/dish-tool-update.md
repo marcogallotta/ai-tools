@@ -149,7 +149,7 @@ The current tool treats a local candidate file and SQLite row as the working aut
 
 - `prepare()`, `_prepare_move_only()`, `approve()`, `submit()`, and candidate loading in `bin/dish_tool/commands.py`
 - submission/write fields in `bin/dish_tool/database.py`
-- generic-write advisory logic in `bin/dish_tool/advisory.py`
+- `bin/dish_tool/advisory.py`, which implements the dropped generic-write guard and is removed
 - lifecycle descriptions in `bin/docs/dish-tool.md` and `bin/docs/dish-tool-imp.md`
 
 **Governing requirement**
@@ -393,7 +393,7 @@ Material claims must have direct support; disagreements and rejected routes must
 
 **Mismatch**
 
-The old manifests use a larger role-tag vocabulary and `[blockers unreviewed]`; the current frozen Research wording forbids `[non-main]`; and nutrition rules are not scoped to the approved main/non-main distinction.
+The old manifests use a larger role-tag vocabulary and `[blockers unreviewed]`, and nutrition rules are not scoped to the main/non-main distinction. The protocol amendments for both landed on the rollout branch; the tool has not caught up.
 
 **Affected locations**
 
@@ -404,12 +404,12 @@ The old manifests use a larger role-tag vocabulary and `[blockers unreviewed]`; 
 
 **Governing requirement / approved amendment**
 
-For this rollout, untagged means main and main-dish nutrition requirements apply. `[non-main]` is the sole role classification and is exempt from those main-dish nutrition targets. Destination defects use the fixed diagnostic tags. `[main]`, old finer-grained role tags, and `[blockers unreviewed]` are rejected.
+Untagged means main and nutrition requirements apply. `[non-main]` is the sole role classification, assigned by Planning in the brief's `Role` field, and marks a dish that is not a lunch or dinner main at all — a dessert, a small side, a little test dish. Nutrition targets do not apply to it. A dish eaten as a main that misses a limit stays main and takes the matching `[nutrition-*]` exemption with Marco's approval; `[non-main]` is never a route around a nutrition limit. Destination defects use the fixed diagnostic tags. `[main]`, old finer-grained role tags, and `[blockers unreviewed]` are rejected.
 
 **Required change**
 
-- Land an explicit versioned protocol amendment for `[non-main]` and nutrition scope before generating schemas or activating the tool.
 - Keep title validation minimal: `[non-main]`, the two destination-defect tokens, and other brackets only where the governing task/protocol explicitly supports them.
+- Validate that `[non-main]` matches the brief's `Role` and that the task states which kind of non-main it is and why. Do not attempt to judge whether the classification is correct; that is protocol/agent work.
 - Do not invent a broader role taxonomy in this version.
 
 **Human input:** none; this policy is settled.

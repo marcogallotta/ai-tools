@@ -22,7 +22,7 @@ Its meaning changes:
 
 For protocol-managed tasks, agents do not access Asana directly: every read, write, correction, check-in, signoff, and move goes through `dish` in local test mode or through the shared dish service in live mode. The registry defines which tasks those are; unmanaged work such as the Pantry and Fermentation projects stays outside this rule.
 
-Only the task body is guarded content. Ordinary non-content operations — scheduling or clearing `due_on`, marking a task complete after cooking, other non-body fields — remain available outside the tool and never register as drift.
+Title and body are both guarded content: a generic rename registers as drift exactly as a body edit does, since title is part of the signed exact content and renaming is otherwise the cheapest way to invalidate a signature. Ordinary non-content operations — scheduling or clearing `due_on`, marking a task complete after cooking, other non-body fields — remain available outside the tool and never register as drift.
 
 Cooking is the one deliberate exception in this rollout. Cooking agents write cook-log entries — Asana comments today, a cook-log record once the backend changes — and never touch the task body, so a cook log can never invalidate exact-content signoff. A cooking-agent body edit takes the task out of guarded state and requires re-verification before further protocol work. A Marco-granted override is a cook-log entry naming exactly what was waived, not a tool bypass. Routing cooking through the tool is deferred; see `dish-tool-future.md`.
 
@@ -280,7 +280,7 @@ Persist enough information to recover and audit:
 - task GID and operation kind;
 - editor/researcher/verifier identities and run/session ID or independence attestation;
 - expected live title/body identity at each operation boundary;
-- last confirmed live title/body identity;
+- last confirmed live title/body identity, persisted at **task** scope and surviving the end of the operation that recorded it. Operation-scoped identity alone cannot detect an edit made while no operation is open — which is the whole exposure, since a signed `ready` task that has been submitted and moved has no open operation and, now that cooking writes only cook-log entries, may never have one again;
 - task `Schema version`;
 - Verification-cycle number and exact `Verification protocol release`;
 - correction class and outcome;
@@ -380,7 +380,7 @@ Every write operation must:
 7. confirm exact expected title/body and state;
 8. record the new content identity only after confirmation.
 
-Do not allow agent code to call generic Asana mutation paths for managed tasks. In local test mode this is a workflow rule plus guards; in live mode Step 11 makes the service the only credentialed path.
+Do not allow agent code to call generic Asana mutation paths for managed tasks. In local test mode this is a workflow rule only, enforced after the fact by drift detection; in live mode Step 11 makes the service the only credentialed path.
 
 ### Tests
 
@@ -392,7 +392,10 @@ Do not allow agent code to call generic Asana mutation paths for managed tasks. 
 - confirmed application is idempotently recorded;
 - movement never rewrites content;
 - content retry never repeats a confirmed write;
-- manual/out-of-band edit is detected as drift.
+- manual/out-of-band edit is detected as drift;
+- a generic body edit made between two operations — with no operation open — is detected at the next `dish start` and fails closed;
+- a generic rename of a signed task is detected as drift;
+- a `due_on` change or completion toggle is not.
 
 ### Completion gate
 
@@ -438,7 +441,7 @@ Return through the common JSON envelope:
 - exact live title and notes;
 - parsed canonical fields;
 - task `Schema version`;
-- current content identity;
+- current content identity, and its drift status against the stored task-scoped identity;
 - project/section placement;
 - compatibility and validation diagnostics.
 
@@ -465,7 +468,7 @@ Do not return a frozen whole-protocol bundle.
 - read the live task through the tool;
 - reject old task schema with `migration required`;
 - validate the task’s starting structure and state for the requested operation kind;
-- capture exact live content identity and placement;
+- compare exact live content identity against the stored task-scoped identity, and fail closed on a mismatch: an edit made outside the tool voids any signoff and the task must be re-verified before further protocol work. Only then record the new identity and placement;
 - claim the task in the local operation store;
 - return only the stage-specific current protocol text and schema diagnostics needed by that agent;
 - record the constructor/editor identity.
@@ -825,7 +828,7 @@ Replace obsolete reports with queries/metrics for:
 - post-signoff invalidations;
 - signoff versus movement outcomes;
 - tool/protocol disagreements;
-- local-mode advisory violations.
+- drift events, split by whether an operation was open at the time.
 
 ### Tests
 
