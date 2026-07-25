@@ -79,7 +79,7 @@ dish-admin reopen OPERATION_ID --category evidence|premise|method|scope \
 ```
 
 - `migrate` is only for an individually encountered older-schema task after cutover. It writes, rereads, validates, and records the new schema only after confirmation.
-- `recover` is evidence-based ambiguous-outcome recovery. Never guess an outcome.
+- `recover` reconciles an interrupted write or movement against a fresh live Asana reread. It records `confirmed` only when the live title/notes identity or section exactly matches the persisted intended mutation, and records `not_applied` only when live evidence proves the persisted expected state remains. A contradictory requested outcome fails closed; the command never repeats the mutation.
 - `reopen` is the only path out of the two-pass Human Review hold and requires a substantive reset recorded in `Material changes`.
 
 ## JSON response contract
@@ -141,10 +141,10 @@ The JSON `retryable` field is authoritative for mechanical retry advice. Even wh
 - Reread or inspect before deciding what to rerun.
 - A stale baseline requires a new exact operation; never overwrite the live edit.
 - A confirmed content write is naturally idempotent and must not be repeated.
-- A confirmed signoff and confirmed movement are independent completion facts; recovery may complete only the missing fact.
+- A confirmed content write, Verification signoff, and destination submission movement are independent completion facts. Recovery reconciles only interrupted backend attempts; it does not invent signoff or treat a Research/Verification handoff as destination submission.
 - A successful `approve` returns `submit`; the verifier runs it in the same pass.
-- If the task is already at its valid destination, `submit` completes idempotently.
-- Research Queue or manually positioned tasks remain where they are at signoff.
+- If the task is already at its valid destination, `submit` records a confirmed no-op `destination_submission` movement attempt and then completes idempotently.
+- Approval never implies final movement. Planning and Verification handoffs use their own movement purposes; only a confirmed `destination_submission` attempt satisfies final submission movement.
 - Missing/invalid destination leaves the task `ready` with diagnostics and blocks movement only.
 
 ## Troubleshooting checklist
@@ -154,7 +154,7 @@ The JSON `retryable` field is authoritative for mechanical retry advice. Even wh
 3. Compare the reported live identity, reviewed/signed identity, placement, schema version, and legal actions.
 4. For compatibility failure, confirm `DISH_HONEST_PATH`, `DISH_VERSION`, schema assets, and the exact supported protocol/schema pair.
 5. For migration required, stop normal commands and ask Marco to run `dish-admin migrate`.
-6. For uncertain write/movement, do not retry; use `dish-admin recover` only after live evidence establishes the outcome.
+6. For a `started` or `uncertain` write/movement, do not retry the backend mutation. Use `dish-admin recover` after a live reread; recovery must match persisted expected/intended evidence and records the reconciliation outcome durably.
 7. For tool/protocol disagreement, preserve the task unchanged and report both the protocol clause and tool rule.
 
 The corpus migration and live cutover remain separately authorized Step 12 work. This local contract does not authorize live Cooking-task writes or multi-agent activation.

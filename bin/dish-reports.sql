@@ -168,15 +168,50 @@ GROUP BY event_type, result_code, rule
 ORDER BY events DESC, latest_at DESC;
 -- end report
 
--- report: movement_outcomes
+-- report: movement_outcomes_by_purpose
 SELECT
+    m.purpose,
     m.outcome,
     count(*) AS attempts,
     count(DISTINCT o.task_gid) AS tasks,
-    sum(CASE WHEN o.signoff_completed_at IS NOT NULL THEN 1 ELSE 0 END)
-        AS attempts_after_signoff
+    sum(CASE WHEN m.finished_at IS NULL THEN 1 ELSE 0 END) AS unfinished_attempts,
+    sum(CASE WHEN m.purpose = 'destination_submission'
+              AND o.movement_completed_at IS NOT NULL THEN 1 ELSE 0 END)
+        AS final_submission_movements
 FROM movement_attempts AS m
 JOIN operations AS o USING (operation_id)
-GROUP BY m.outcome
-ORDER BY attempts DESC, m.outcome;
+GROUP BY m.purpose, m.outcome
+ORDER BY m.purpose, attempts DESC, m.outcome;
+-- end report
+
+-- report: recovery_reconciliations
+SELECT
+    event_type,
+    json_extract(details, '$.purpose') AS purpose,
+    json_extract(details, '$.outcome') AS reconciled_outcome,
+    count(*) AS reconciliations,
+    count(DISTINCT task_gid) AS tasks,
+    min(created_at) AS first_seen_at,
+    max(created_at) AS last_seen_at
+FROM audit_events
+WHERE event_type IN ('write_attempt.reconciled', 'movement_attempt.reconciled')
+GROUP BY event_type, purpose, reconciled_outcome
+ORDER BY event_type, purpose, reconciled_outcome;
+-- end report
+
+-- report: invalid_final_movement_semantics
+SELECT
+    o.operation_id,
+    o.task_gid,
+    o.status,
+    o.movement_completed_at,
+    max(CASE WHEN m.purpose = 'destination_submission'
+              AND m.outcome = 'confirmed' THEN 1 ELSE 0 END)
+        AS has_confirmed_destination_submission
+FROM operations AS o
+LEFT JOIN movement_attempts AS m USING (operation_id)
+WHERE o.movement_completed_at IS NOT NULL
+GROUP BY o.operation_id, o.task_gid, o.status, o.movement_completed_at
+HAVING has_confirmed_destination_submission = 0
+ORDER BY o.movement_completed_at DESC;
 -- end report
