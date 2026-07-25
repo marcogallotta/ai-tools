@@ -610,8 +610,8 @@ def create_operation(
                 INSERT INTO operations (
                     operation_id, task_gid, operation_kind, status, editor_agent,
                     researcher_agent, verifier_agent, run_id, independence_attestation,
-                    expected_identity, schema_version, created_at
-                ) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)
+                    expected_identity, schema_version, phase, created_at
+                ) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 'prepare_required', ?)
                 """,
                 (operation_id, task_gid, operation_kind, actors.editor_agent,
                  actors.researcher_agent, actors.verifier_agent, actors.run_id,
@@ -711,3 +711,29 @@ def inspect_legacy_submissions(conn: sqlite3.Connection, *, task_gid: str | None
         "SELECT * FROM legacy_submission_quarantine WHERE task_gid = ? ORDER BY quarantined_at, rowid",
         (task_gid,),
     ).fetchall()
+
+
+_OPERATION_PHASE_ACTIONS = {
+    "prepare_required": ("prepare",),
+    "await_verification": ("verify", "approve", "reject"),
+    "held_evidence": ("supply-evidence",),
+    "held_human": ("record-human-decision",),
+    "await_submission": ("submit",),
+    "terminal": (),
+}
+
+def transition_operation(conn: sqlite3.Connection, operation_id: str, *, phase: str, status: str | None = None, terminal_outcome: str | None = None, inherited_signoff_cycle_id: str | None = None) -> sqlite3.Row:
+    row = conn.execute("SELECT * FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
+    if row is None:
+        raise DishRuleError("NOT_FOUND", f"operation not found: {operation_id}", rule="operation_not_found")
+    next_status = status or row["status"]
+    completed_at = utc_now() if next_status in {"completed", "cancelled"} else row["completed_at"]
+    conn.execute("""UPDATE operations SET phase=?, status=?, terminal_outcome=COALESCE(?, terminal_outcome), inherited_signoff_cycle_id=COALESCE(?, inherited_signoff_cycle_id), completed_at=? WHERE operation_id=?""", (phase, next_status, terminal_outcome, inherited_signoff_cycle_id, completed_at, operation_id))
+    updated = conn.execute("SELECT * FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
+    record_audit(conn, submission_id=None, task_gid=row["task_gid"], operation_id=operation_id, event_type="operation.transition", actor_agent=None, details={"from_phase": row["phase"], "to_phase": phase, "from_status": row["status"], "to_status": next_status, "terminal_outcome": terminal_outcome}, result_code="OK", result_ok=True)
+    return updated
+
+def legal_operation_actions(operation: Mapping[str, Any]) -> list[str]:
+    if operation["status"] not in {"open", "uncertain"}:
+        return []
+    return list(_OPERATION_PHASE_ACTIONS.get(operation["phase"], ()))

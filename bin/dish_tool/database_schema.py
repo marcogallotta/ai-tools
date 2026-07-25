@@ -377,7 +377,32 @@ WHEN EXISTS (SELECT 1 FROM operations o WHERE o.destination_movement_attempt_id 
 BEGIN SELECT RAISE(ABORT, 'final destination movement evidence cannot be weakened'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7}
+_MIGRATION_8 = """
+ALTER TABLE operations ADD COLUMN phase TEXT NOT NULL DEFAULT 'prepare_required';
+ALTER TABLE operations ADD COLUMN terminal_outcome TEXT;
+ALTER TABLE operations ADD COLUMN inherited_signoff_cycle_id TEXT REFERENCES verification_cycles(cycle_id);
+UPDATE operations
+   SET phase = CASE
+       WHEN status IN ('completed','cancelled') THEN 'terminal'
+       WHEN movement_completed_at IS NOT NULL THEN 'terminal'
+       WHEN signoff_completed_at IS NOT NULL THEN 'await_submission'
+       WHEN content_write_completed_at IS NOT NULL THEN 'await_verification'
+       ELSE 'prepare_required'
+   END;
+CREATE INDEX operations_phase_idx ON operations(status, phase);
+CREATE TRIGGER operations_terminal_phase_insert
+BEFORE INSERT ON operations
+WHEN (NEW.status IN ('completed','cancelled') AND NEW.phase != 'terminal')
+  OR (NEW.phase = 'terminal' AND NEW.status NOT IN ('completed','cancelled'))
+BEGIN SELECT RAISE(ABORT, 'operation terminal phase/status mismatch'); END;
+CREATE TRIGGER operations_terminal_phase_update
+BEFORE UPDATE OF status, phase ON operations
+WHEN (NEW.status IN ('completed','cancelled') AND NEW.phase != 'terminal')
+  OR (NEW.phase = 'terminal' AND NEW.status NOT IN ('completed','cancelled'))
+BEGIN SELECT RAISE(ABORT, 'operation terminal phase/status mismatch'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8}
 
 
 def _backup_legacy_database(db_path: Path) -> None:

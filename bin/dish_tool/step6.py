@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import create_verification_cycle
+from .database import create_verification_cycle, transition_operation
 from .errors import DishRuleError
 from .models import ResolvedRelease, SectionRegistry, utc_now
 from .lifecycle import assert_transition, pending_verification
@@ -110,6 +110,7 @@ def prepare_live(
                 expected_section_gid=confirmed.section_gid,
                 intended_section_gid=registry.research_queue_gid, purpose="planning_handoff",
             )
+        transition_operation(conn, operation_id, phase="terminal", status="completed", terminal_outcome="planning_handoff_confirmed")
         return {"operation_id": operation_id, "task": dataclasses.asdict(confirmed), "handoff": "planning-to-research", "validation_scope": "structural-only"}
 
     try:
@@ -180,6 +181,12 @@ def prepare_live(
                 expected_section_gid=confirmed.section_gid,
                 intended_section_gid=registry.verification_queue_gid, purpose="verification_handoff",
             )
+
+    if cycle is not None:
+        transition_operation(conn, operation_id, phase="await_verification")
+    elif op["operation_kind"] == "change":
+        approved = conn.execute("SELECT cycle_id FROM verification_cycles WHERE task_gid=? AND outcome='approved' ORDER BY completed_at DESC LIMIT 1", (live.gid,)).fetchone()
+        transition_operation(conn, operation_id, phase="terminal", status="completed", terminal_outcome="non_material_checkin", inherited_signoff_cycle_id=None if approved is None else approved["cycle_id"])
 
     return {
         "operation_id": operation_id,

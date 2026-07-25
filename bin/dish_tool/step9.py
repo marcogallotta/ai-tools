@@ -6,7 +6,7 @@ import sqlite3
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import finalize_confirmed_movement_attempt, record_audit
+from .database import finalize_confirmed_movement_attempt, record_audit, transition_operation
 from .errors import DishRuleError
 from .lifecycle import assert_transition, require_status
 from .models import SectionRegistry, resolve_destination, utc_now
@@ -123,10 +123,7 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
     else:
         handoff = "manual_placement_preserved"
 
-    conn.execute(
-        "UPDATE operations SET status = 'completed', completed_at = ? WHERE operation_id = ? AND status = 'open'",
-        (utc_now(), operation_id),
-    )
+    transition_operation(conn, operation_id, phase="terminal", status="completed", terminal_outcome="destination_handled")
     record_audit(
         conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
         event_type="operation.submitted", actor_agent=None,

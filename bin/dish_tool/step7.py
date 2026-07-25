@@ -6,7 +6,7 @@ import sqlite3
 from typing import Any, Mapping
 
 from .constants import COOKING_PROJECT_GID
-from .database import mark_operation_completion, record_audit
+from .database import mark_operation_completion, record_audit, transition_operation
 from .errors import DishRuleError
 from .models import VerifierIdentity, verification_actor_line, utc_now
 from .lifecycle import assert_transition, ready, require_status

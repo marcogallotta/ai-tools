@@ -5,7 +5,7 @@ import sqlite3
 from typing import Any, Mapping
 
 from .constants import COOKING_PROJECT_GID
-from .database import confirm_task_content, create_operation, content_identity
+from .database import confirm_task_content, create_operation, content_identity, legal_operation_actions, transition_operation
 from .errors import DishRuleError
 from .models import OperationActors, ResolvedRelease
 from .migrations import migrate_task_document
@@ -55,9 +55,7 @@ def inspect_operation(conn: sqlite3.Connection, operation_id: str) -> dict[str, 
         raise DishRuleError("NOT_FOUND", f"operation not found: {operation_id}", rule="operation_not_found")
     state = conn.execute("SELECT * FROM task_content_state WHERE task_gid = ?", (op["task_gid"],)).fetchone()
     cycles = conn.execute("SELECT * FROM verification_cycles WHERE operation_id = ? ORDER BY cycle_number", (operation_id,)).fetchall()
-    actions = []
-    if op["status"] == "open":
-        actions = ["prepare"] if op["content_write_completed_at"] is None else (["approve", "reject"] if op["signoff_completed_at"] is None else ["submit"])
+    actions = legal_operation_actions(op)
     return {
         "operation": {k: op[k] for k in op.keys()},
         "content": None if state is None else {"expected_identity": op["expected_identity"], "confirmed_identity": state["last_confirmed_identity"], "schema_version": state["schema_version"]},
@@ -87,4 +85,6 @@ def migrate_live_task(conn: sqlite3.Connection, backend, *, task_gid: str, relea
     op = create_operation(conn, task_gid=task_gid, operation_kind="migration", expected_identity=live.identity, schema_version=document.schema_version)
     rendered = candidate.render().splitlines()
     title, notes = rendered[0], "\n".join(rendered[1:]) + "\n"
-    return write_exact_content(conn, backend, operation_id=op["operation_id"], task_gid=task_gid, project_gid=COOKING_PROJECT_GID, expected_identity=live.identity, expected_section_gid=live.section_gid, title=title, notes=notes, schema_version=release.schema_version)
+    confirmed = write_exact_content(conn, backend, operation_id=op["operation_id"], task_gid=task_gid, project_gid=COOKING_PROJECT_GID, expected_identity=live.identity, expected_section_gid=live.section_gid, title=title, notes=notes, schema_version=release.schema_version)
+    transition_operation(conn, op["operation_id"], phase="terminal", status="completed", terminal_outcome="migration_confirmed")
+    return confirmed
