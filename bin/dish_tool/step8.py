@@ -13,7 +13,7 @@ from .models import utc_now
 from .lifecycle import assert_transition, hold, pending_verification, require_status, resumed
 from .task_document import DocumentParseError, TaskState, parse_task_document, validate_task_document
 from .task_store import read_complete_task, write_exact_content
-from .step7 import approve_live, bind_cycle_review
+from .step7 import approve_live, assert_verifier_authority, bind_cycle_review
 
 ROUTES = {"large", "evidence", "human-review"}
 RESET_CATEGORIES = {"evidence", "premise", "method", "scope"}
@@ -45,11 +45,6 @@ def _render(document):
     return lines[0], "\n".join(lines[1:]) + "\n"
 
 
-def _verified_actor(op, agent: str):
-    if op["verifier_agent"] != agent:
-        raise DishRuleError("AGENT_MISMATCH", "command agent is not the recorded verifier", rule="verifier_actor_mismatch")
-
-
 def _write_document(conn, backend, op, live, document):
     check = validate_task_document(document, expected_schema_version=op["schema_version"])
     if not check.ok:
@@ -58,13 +53,18 @@ def _write_document(conn, backend, op, live, document):
     return write_exact_content(conn, backend, operation_id=op["operation_id"], task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID, expected_identity=live.identity, expected_section_gid=live.section_gid, title=title, notes=notes, schema_version=op["schema_version"])
 
 
-def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, file_path: str, reviewed_identity: str, semantic_review_complete: bool, provenance_complete: bool):
+def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, file_path: str, reviewed_identity: str, semantic_review_complete: bool, provenance_complete: bool, run_id: str | None = None, independence_attestation: str | None = None):
     op, cycle = _rows(conn, operation_id)
-    _verified_actor(op, agent)
+    assert_verifier_authority(cycle, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
     if not semantic_review_complete or not provenance_complete:
         raise DishRuleError("VALIDATION_FAILED", "semantic self-review and provenance completion are required", rule="verification_inputs_incomplete")
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
-    if live.identity != reviewed_identity:
+    persisted_reviewed = cycle["reviewed_identity"]
+    if not persisted_reviewed or not cycle["reviewed_content_version_id"]:
+        raise DishRuleError("WRONG_STATE", "Verification cycle has no persisted reviewed content", rule="reviewed_content_missing")
+    if reviewed_identity != persisted_reviewed:
+        raise DishRuleError("CONFLICT", "caller review identity does not match the persisted review", rule="reviewed_identity_mismatch")
+    if live.identity != persisted_reviewed:
         raise DishRuleError("CONFLICT", "live candidate changed after verifier review", rule="stale_verifier_review")
     corrected = _candidate(file_path)
     state = dict(corrected.state.values)
@@ -74,12 +74,12 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     confirmed = _write_document(conn, backend, op, live, corrected)
     bind_cycle_review(conn, cycle_id=cycle["cycle_id"], operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity)
     conn.execute("UPDATE verification_cycles SET correction_class = 'small' WHERE cycle_id = ?", (cycle["cycle_id"],))
-    return approve_live(conn, backend, operation_id=operation_id, agent=agent, reviewed_identity=confirmed.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small")
+    return approve_live(conn, backend, operation_id=operation_id, agent=agent, reviewed_identity=confirmed.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=run_id, independence_attestation=independence_attestation)
 
 
-def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None):
+def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None):
     op, cycle = _rows(conn, operation_id)
-    _verified_actor(op, agent)
+    assert_verifier_authority(cycle, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
     route = str(route or "").strip()
     reason = str(reason or "").strip()
     if route not in ROUTES:
@@ -87,6 +87,11 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     if not reason:
         raise DishRuleError("INVALID_ARGUMENT", "route reason is required", rule="rejection_reason_required")
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
+    persisted_reviewed = cycle["reviewed_identity"]
+    if not persisted_reviewed or not cycle["reviewed_content_version_id"]:
+        raise DishRuleError("WRONG_STATE", "Verification cycle has no persisted reviewed content", rule="reviewed_content_missing")
+    if live.identity != persisted_reviewed:
+        raise DishRuleError("CONFLICT", "live candidate changed after verifier review", rule="stale_verifier_review")
     document = parse_task_document(f"{live.title}\n{live.notes}")
     require_status(document.state, {"pending-verification"}, action="Verification outcome")
     state = dict(document.state.values)

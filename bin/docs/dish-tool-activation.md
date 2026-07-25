@@ -44,11 +44,13 @@ dish prepare OPERATION_ID --agent AGENT --file PATH \
 
 dish approve OPERATION_ID --agent AGENT --correction none|small \
   [--file PATH] [--reviewed-identity ID] \
+  [--run-id ID | --independence-attestation TEXT] \
   --semantic-review-complete --provenance-complete \
   [title-declaration arguments as above]
 
 dish reject OPERATION_ID --agent AGENT --reason TEXT \
   [--route large|evidence|human-review] [--file PATH] \
+  [--run-id ID | --independence-attestation TEXT] \
   [--resume-status pending-verification|pending-research] \
   [--changed-since-prior TEXT] [--take-ownership]
 
@@ -62,6 +64,7 @@ dish submit OPERATION_ID --file PATH
 - **Planning:** `start --kind planning`, perform protocol work, then `prepare` before Research handoff.
 - **Research:** `start --kind initial` or `change`, perform protocol work and self-review, then `prepare`. The command writes and confirms the complete `pending-verification` task before any Research Queue → Verification Queue move.
 - **Verification:** `start --kind verification`, perform semantic and provenance review, then `approve` or `reject`. After a successful approval, run the returned `submit` action in the same pass.
+  The decision command must repeat the exact verifier run ID or attestation recorded by Verification start; an agent-family label alone is not authority.
 - **Later edits:** begin a new `change` operation. Material edits invalidate prior Verification; explicitly non-material edits preserve it only when the protocol permits.
 
 ## Marco-only commands

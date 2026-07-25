@@ -115,7 +115,7 @@ def test_stale_candidate_blocks_approval(tmp_path):
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-2")
     backend.title += " changed"
     result = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
-        reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True)
+        reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True, run_id="run-2")
     assert result["code"] == "CONFLICT"
     assert backend.writes == 1
 
@@ -124,10 +124,10 @@ def test_approval_signs_exact_reread_without_moving_and_requires_inputs(tmp_path
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-3")
     missing = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
-        reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=False, provenance_complete=True)
+        reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=False, provenance_complete=True, run_id="run-3")
     assert missing["code"] == "VALIDATION_FAILED"
     result = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
-        reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True)
+        reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True, run_id="run-3")
     assert result["ok"]
     assert "Status: ready" in backend.notes
     assert "Verified by: ChatGPT — Codex," in backend.notes
@@ -145,7 +145,7 @@ def test_caller_cannot_forge_current_identity_after_review(tmp_path):
     from dish_tool.database import content_identity
     forged = content_identity(backend.title, backend.notes).digest
     result = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
-        reviewed_identity=forged, semantic_review_complete=True, provenance_complete=True)
+        reviewed_identity=forged, semantic_review_complete=True, provenance_complete=True, run_id="run-forge")
     assert result["code"] == "CONFLICT"
     assert result["errors"][0]["rule"] == "reviewed_identity_mismatch"
 
@@ -157,7 +157,7 @@ def test_review_and_signoff_bind_immutable_content_versions(tmp_path):
     assert cycle["reviewed_identity"] == review["data"]["reviewed_identity"]
     assert cycle["reviewed_content_version_id"]
     approved = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
-        reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True)
+        reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True, run_id="run-bind")
     assert approved["ok"]
     cycle = app.conn.execute("SELECT * FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()
     assert cycle["signed_identity"] == approved["data"]["signed_identity"]
@@ -177,3 +177,28 @@ def test_persisted_hash_protocol_text_survives_file_change(tmp_path):
     result = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="protocol-run")
     assert result["ok"]
     assert result["data"]["verification_protocol"]["text"] == protocol
+
+
+def test_approval_requires_exact_verifier_run_proof(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="proof-run")
+    result = app.execute(
+        "approve", agent="codex", submission_id=operation_id, correction="none",
+        reviewed_identity=review["data"]["reviewed_identity"],
+        semantic_review_complete=True, provenance_complete=True, run_id="other-run",
+    )
+    assert result["code"] == "AGENT_MISMATCH"
+    assert result["errors"][0]["rule"] == "verifier_proof_mismatch"
+
+
+def test_attestation_approval_requires_exact_recorded_attestation(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", independence_attestation="fresh independent run A")
+    result = app.execute(
+        "approve", agent="codex", submission_id=operation_id, correction="none",
+        reviewed_identity=review["data"]["reviewed_identity"],
+        semantic_review_complete=True, provenance_complete=True,
+        independence_attestation="fresh independent run B",
+    )
+    assert result["code"] == "AGENT_MISMATCH"
+    assert result["errors"][0]["rule"] == "verifier_proof_mismatch"

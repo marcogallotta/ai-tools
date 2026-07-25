@@ -16,7 +16,7 @@ def _signed(tmp_path):
     approved = app.execute(
         "approve", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"],
-        semantic_review_complete=True, provenance_complete=True,
+        semantic_review_complete=True, provenance_complete=True, run_id="submit-review",
     )
     assert approved["ok"]
     return app, backend, operation_id

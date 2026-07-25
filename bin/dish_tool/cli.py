@@ -76,6 +76,8 @@ def build_parser() -> JsonArgumentParser:
     approve.add_argument("--file", dest="file_path")
     approve.add_argument("--correction", required=True, choices=("none", "small"))
     approve.add_argument("--reviewed-identity")
+    approve.add_argument("--run-id")
+    approve.add_argument("--independence-attestation")
     approve.add_argument("--semantic-review-complete", action="store_true")
     approve.add_argument("--provenance-complete", action="store_true")
     _add_title_declaration(approve)
@@ -89,6 +91,8 @@ def build_parser() -> JsonArgumentParser:
     reject.add_argument("--resume-status", choices=("pending-verification", "pending-research"))
     reject.add_argument("--changed-since-prior")
     reject.add_argument("--take-ownership", action="store_true")
+    reject.add_argument("--run-id")
+    reject.add_argument("--independence-attestation")
 
     submit = subparsers.add_parser("submit")
     submit.add_argument("submission_id")

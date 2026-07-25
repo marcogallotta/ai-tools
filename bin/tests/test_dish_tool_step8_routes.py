@@ -24,7 +24,7 @@ def test_small_correction_is_written_rechecked_and_signed_same_pass(tmp_path):
         "approve", agent="codex", submission_id=operation_id,
         correction="small", file_path=str(candidate),
         reviewed_identity=review["data"]["reviewed_identity"],
-        semantic_review_complete=True, provenance_complete=True,
+        semantic_review_complete=True, provenance_complete=True, run_id="review",
     )
     assert result["ok"]
     assert "small verification correction" in backend.notes
@@ -37,13 +37,13 @@ def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     _review(app, "codex", run="first")
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK.replace("100 g", "120 g"))
-    first = app.execute("reject", agent="codex", submission_id=operation_id, route="large", reason="method needs replacement", file_path=str(candidate))
+    first = app.execute("reject", agent="codex", submission_id=operation_id, route="large", reason="method needs replacement", file_path=str(candidate), run_id="first")
     assert first["ok"] and first["data"]["new_cycle_id"]
     barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="first")
     assert barred["code"] == "AGENT_MISMATCH"
     _review(app, "gpt", run="second")
     candidate.write_text(TASK.replace("100 g", "130 g"))
-    second = app.execute("reject", agent="gpt", submission_id=operation_id, route="large", reason="premise still unresolved", file_path=str(candidate))
+    second = app.execute("reject", agent="gpt", submission_id=operation_id, route="large", reason="premise still unresolved", file_path=str(candidate), run_id="second")
     assert second["ok"] and second["data"]["two_pass_hold"]
     assert "Status: pending-human-review" in backend.notes
     assert "Resume status: pending-verification" in backend.notes
@@ -54,9 +54,9 @@ def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
 def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     _review(app, "codex")
-    bad = app.execute("reject", agent="codex", submission_id=operation_id, route="evidence", reason="missing source", resume_status=None)
+    bad = app.execute("reject", agent="codex", submission_id=operation_id, route="evidence", reason="missing source", resume_status=None, run_id="review")
     assert bad["code"] == "INVALID_ARGUMENT"
-    good = app.execute("reject", agent="codex", submission_id=operation_id, route="evidence", reason="Marco must confirm the factual input", resume_status="pending-verification")
+    good = app.execute("reject", agent="codex", submission_id=operation_id, route="evidence", reason="Marco must confirm the factual input", resume_status="pending-verification", run_id="review")
     assert good["ok"] and "Status: pending-evidence" in backend.notes
 
 
@@ -64,9 +64,9 @@ def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK)
     _review(app, "codex", run="one")
-    app.execute("reject", agent="codex", submission_id=operation_id, route="large", reason="first", file_path=str(candidate))
+    app.execute("reject", agent="codex", submission_id=operation_id, route="large", reason="first", file_path=str(candidate), run_id="one")
     _review(app, "gpt", run="two")
-    app.execute("reject", agent="gpt", submission_id=operation_id, route="large", reason="second", file_path=str(candidate))
+    app.execute("reject", agent="gpt", submission_id=operation_id, route="large", reason="second", file_path=str(candidate), run_id="two")
     admin = DishAdminApplication(app.conn, backend=backend)
     bad = admin.execute("reopen", submission_id=operation_id, category="hash", before="a", after="b", editor="Marco", date="2026-07-25")
     assert bad["code"] == "INVALID_ARGUMENT"
@@ -75,3 +75,29 @@ def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     assert "Status: pending-verification" in backend.notes
     assert "before: old premise; after: new premise" in backend.notes
     assert app.conn.execute("SELECT COUNT(*) FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()[0] == 3
+
+
+def test_small_correction_cannot_replace_unreviewed_live_content(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review = _review(app, "codex", run="small-proof")
+    backend.title = backend.title.replace("Test dish", "Externally changed dish")
+    candidate = tmp_path / "small-unreviewed.txt"
+    candidate.write_text(TASK.replace("1. Cook it.", "1. Cook it gently."))
+    result = app.execute(
+        "approve", agent="codex", submission_id=operation_id, correction="small",
+        file_path=str(candidate), reviewed_identity=review["data"]["reviewed_identity"],
+        semantic_review_complete=True, provenance_complete=True, run_id="small-proof",
+    )
+    assert result["code"] == "CONFLICT"
+    assert result["errors"][0]["rule"] == "stale_verifier_review"
+
+
+def test_reject_requires_exact_verifier_run_proof(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    _review(app, "codex", run="reject-proof")
+    result = app.execute(
+        "reject", agent="codex", submission_id=operation_id, route="evidence",
+        reason="missing evidence", resume_status="pending-verification", run_id="wrong-run",
+    )
+    assert result["code"] == "AGENT_MISMATCH"
+    assert result["errors"][0]["rule"] == "verifier_proof_mismatch"

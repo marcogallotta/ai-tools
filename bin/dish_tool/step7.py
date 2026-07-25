@@ -120,6 +120,34 @@ def verification_read(
     }
 
 
+
+
+def assert_verifier_authority(
+    cycle, *, agent: str, run_id: str | None, independence_attestation: str | None
+) -> None:
+    """Require the decision caller to match the exact persisted verifier proof."""
+    if cycle["verifier_agent"] != agent:
+        raise DishRuleError(
+            "AGENT_MISMATCH", "command agent is not the recorded verifier",
+            rule="verifier_actor_mismatch",
+        )
+    recorded_run = str(cycle["run_id"] or "").strip()
+    supplied_run = str(run_id or "").strip()
+    recorded_attestation = str(cycle["independence_attestation"] or "").strip()
+    supplied_attestation = str(independence_attestation or "").strip()
+    if recorded_run:
+        if supplied_run != recorded_run:
+            raise DishRuleError(
+                "AGENT_MISMATCH", "decision caller does not match the recorded verifier run",
+                rule="verifier_proof_mismatch",
+            )
+        return
+    if not recorded_attestation or supplied_attestation != recorded_attestation:
+        raise DishRuleError(
+            "AGENT_MISMATCH", "decision caller does not match the recorded verifier attestation",
+            rule="verifier_proof_mismatch",
+        )
+
 def approve_live(
     conn: sqlite3.Connection,
     backend: Any,
@@ -130,10 +158,14 @@ def approve_live(
     semantic_review_complete: bool,
     provenance_complete: bool,
     correction_class: str,
+    run_id: str | None = None,
+    independence_attestation: str | None = None,
 ) -> dict[str, Any]:
     op, cycle = _operation_and_cycle(conn, operation_id)
-    if op["verifier_agent"] != agent:
-        raise DishRuleError("AGENT_MISMATCH", "approve agent is not the recorded verifier", rule="verifier_actor_mismatch")
+    assert_verifier_authority(
+        cycle, agent=agent, run_id=run_id,
+        independence_attestation=independence_attestation,
+    )
     if not semantic_review_complete or not provenance_complete:
         raise DishRuleError("VALIDATION_FAILED", "explicit semantic self-review and provenance completion are required", rule="verification_inputs_incomplete")
     if correction_class not in {"none", "small"}:
