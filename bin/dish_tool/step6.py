@@ -164,7 +164,7 @@ def prepare_live(
     cycle = None
     if exact.state.values["Status"] == "pending-verification":
         number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (live.gid,)).fetchone()[0]
-        cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=live.gid, cycle_number=number, protocol_release=exact.state.values["Verification protocol release"])
+        cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=live.gid, cycle_number=number, protocol_release=exact.state.values["Verification protocol release"], protocol_text=verification_snapshot.text)
         if confirmed.section_gid != registry.verification_queue_gid:
             confirmed = move_exact(
                 conn, backend, operation_id=operation_id, task_gid=live.gid,

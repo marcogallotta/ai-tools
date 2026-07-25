@@ -39,13 +39,13 @@ def diagnostics_for(live: LiveTask, release: ResolvedRelease) -> dict[str, Any]:
     }
 
 
-def claim_operation(conn: sqlite3.Connection, *, live: LiveTask, release: ResolvedRelease, kind: str, agent: str):
+def claim_operation(conn: sqlite3.Connection, *, live: LiveTask, release: ResolvedRelease, kind: str, agent: str, run_id: str | None = None):
     existing = conn.execute("SELECT * FROM task_content_state WHERE task_gid = ?", (live.gid,)).fetchone()
     if existing is not None and existing["last_confirmed_identity"] != live.identity:
         raise DishRuleError("CONFLICT", "live task content changed outside the tool; re-verification is required", rule="live_task_drift", details={"expected_identity": existing["last_confirmed_identity"], "actual_identity": live.identity})
     if existing is None:
         confirm_task_content(conn, task_gid=live.gid, title=live.title, notes=live.notes, schema_version=release.schema_version, boundary="start_baseline")
-    actors = OperationActors(editor_agent=agent if kind in {"planning", "change"} else None, researcher_agent=agent if kind == "initial" else None)
+    actors = OperationActors(editor_agent=agent if kind in {"planning", "change"} else None, researcher_agent=agent if kind == "initial" else None, run_id=str(run_id or "").strip() or None)
     return create_operation(conn, task_gid=live.gid, operation_kind=kind, expected_identity=live.identity, schema_version=release.schema_version, actors=actors)
 
 

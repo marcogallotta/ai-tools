@@ -39,11 +39,11 @@ def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK.replace("100 g", "120 g"))
     first = app.execute("reject", agent="codex", submission_id=operation_id, route="large", reason="method needs replacement", file_path=str(candidate))
     assert first["ok"] and first["data"]["new_cycle_id"]
-    barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="same-verifier")
+    barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="first")
     assert barred["code"] == "AGENT_MISMATCH"
-    _review(app, "claude", run="second")
+    _review(app, "gpt", run="second")
     candidate.write_text(TASK.replace("100 g", "130 g"))
-    second = app.execute("reject", agent="claude", submission_id=operation_id, route="large", reason="premise still unresolved", file_path=str(candidate))
+    second = app.execute("reject", agent="gpt", submission_id=operation_id, route="large", reason="premise still unresolved", file_path=str(candidate))
     assert second["ok"] and second["data"]["two_pass_hold"]
     assert "Status: pending-human-review" in backend.notes
     assert "Resume status: pending-verification" in backend.notes
@@ -65,8 +65,8 @@ def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK)
     _review(app, "codex", run="one")
     app.execute("reject", agent="codex", submission_id=operation_id, route="large", reason="first", file_path=str(candidate))
-    _review(app, "claude", run="two")
-    app.execute("reject", agent="claude", submission_id=operation_id, route="large", reason="second", file_path=str(candidate))
+    _review(app, "gpt", run="two")
+    app.execute("reject", agent="gpt", submission_id=operation_id, route="large", reason="second", file_path=str(candidate))
     admin = DishAdminApplication(app.conn, backend=backend)
     bad = admin.execute("reopen", submission_id=operation_id, category="hash", before="a", after="b", editor="Marco", date="2026-07-25")
     assert bad["code"] == "INVALID_ARGUMENT"

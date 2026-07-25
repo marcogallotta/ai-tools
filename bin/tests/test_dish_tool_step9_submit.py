@@ -54,13 +54,15 @@ def test_research_and_manual_placement_are_preserved(tmp_path):
 
 def test_missing_destination_keeps_ready_and_reports_diagnostic(tmp_path):
     app, backend, operation_id = _signed(tmp_path)
+    # A post-signoff content edit must not be able to rebind signoff by inserting
+    # a later content version under the same operation.
     backend.notes = backend.notes.replace("Destination section: Sichuan — 12345", "Destination section: [destination missing]")
     backend.title = backend.title.replace("[non-main] ", "[non-main] [destination missing] ", 1)
-    # Rebind signoff identity to model a task signed with the canonical defect marker.
     from dish_tool.database import confirm_task_content
     confirm_task_content(app.conn, task_gid="t", title=backend.title, notes=backend.notes, schema_version="2", operation_id=operation_id, boundary="content_write")
     result = app.execute("submit", submission_id=operation_id, file_path="ignored")
-    assert result["ok"] and result["data"]["destination_diagnostic"] == "destination_missing"
+    assert result["code"] == "CONFLICT"
+    assert result["errors"][0]["rule"] == "post_signoff_content_drift"
     assert "Status: ready" in backend.notes and backend.section == "vq"
 
 

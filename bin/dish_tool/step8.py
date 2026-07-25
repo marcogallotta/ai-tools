@@ -12,7 +12,7 @@ from .errors import DishRuleError
 from .models import utc_now
 from .task_document import DocumentParseError, TaskState, parse_task_document, validate_task_document
 from .task_store import read_complete_task, write_exact_content
-from .step7 import approve_live
+from .step7 import approve_live, bind_cycle_review
 
 ROUTES = {"large", "evidence", "human-review"}
 RESET_CATEGORIES = {"evidence", "premise", "method", "scope"}
@@ -71,6 +71,7 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     changes = tuple(corrected.material_changes) + (f"{utc_now()[:10]} — {agent}: small verification correction; exact candidate replaced and self-reviewed",)
     corrected = dataclasses.replace(corrected, state=TaskState(state), material_changes=changes)
     confirmed = _write_document(conn, backend, op, live, corrected)
+    bind_cycle_review(conn, cycle_id=cycle["cycle_id"], operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity)
     conn.execute("UPDATE verification_cycles SET correction_class = 'small' WHERE cycle_id = ?", (cycle["cycle_id"],))
     return approve_live(conn, backend, operation_id=operation_id, agent=agent, reviewed_identity=confirmed.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small")
 
@@ -120,8 +121,8 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     conn.execute("UPDATE verification_cycles SET correction_class = ?, outcome = ?, route = ?, resume_state = ?, completed_at = ? WHERE cycle_id = ?", ("large" if route == "large" else None, outcome, {"evidence": "evidence", "human-review": "human_review"}.get(route), document.state.values["Resume status"], utc_now(), cycle["cycle_id"]))
     if route == "large" and not two_pass:
         next_number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
-        new_cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=next_number, protocol_release=document.state.values["Verification protocol release"], route=None)
-        conn.execute("UPDATE operations SET editor_agent = ?, verifier_agent = NULL, run_id = NULL, independence_attestation = NULL WHERE operation_id = ?", (agent, operation_id))
+        new_cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=next_number, protocol_release=document.state.values["Verification protocol release"], protocol_text=cycle["protocol_text"], route=None)
+        conn.execute("UPDATE operations SET editor_agent = ?, verifier_agent = NULL, run_id = ?, independence_attestation = NULL WHERE operation_id = ?", (agent, cycle["run_id"], operation_id))
     else:
         new_cycle = None
     record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "two_pass_hold": two_pass, "identity": confirmed.identity}, result_code="OK", result_ok=True)
@@ -144,6 +145,6 @@ def reopen_two_pass(conn: sqlite3.Connection, backend: Any, *, operation_id: str
     document = dataclasses.replace(document, state=TaskState(state), material_changes=tuple(document.material_changes) + (entry,))
     confirmed = _write_document(conn, backend, op, live, document)
     number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
-    cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number, protocol_release=document.state.values["Verification protocol release"], route=None)
+    cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number, protocol_release=document.state.values["Verification protocol release"], protocol_text=conn.execute("SELECT protocol_text FROM verification_cycles WHERE operation_id = ? ORDER BY cycle_number DESC LIMIT 1", (operation_id,)).fetchone()[0], route=None)
     conn.execute("UPDATE operations SET editor_agent = ?, verifier_agent = NULL, run_id = NULL, independence_attestation = NULL WHERE operation_id = ?", (editor, operation_id))
     return {"operation_id": operation_id, "cycle_id": cycle["cycle_id"], "task": dataclasses.asdict(confirmed), "material_change": entry}

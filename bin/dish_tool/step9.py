@@ -26,12 +26,21 @@ def _operation(conn: sqlite3.Connection, operation_id: str):
 
 def _signed_identity(conn: sqlite3.Connection, operation_id: str) -> str:
     row = conn.execute(
-        "SELECT identity FROM content_versions WHERE operation_id = ? AND confirmed = 1 ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        """SELECT signed_identity, signed_content_version_id
+             FROM verification_cycles
+            WHERE operation_id = ? AND outcome = 'approved' AND completed_at IS NOT NULL
+            ORDER BY cycle_number DESC LIMIT 1""",
         (operation_id,),
     ).fetchone()
-    if row is None:
-        raise DishRuleError("CONFLICT", "confirmed signed content identity is missing", rule="signed_identity_missing")
-    return row["identity"]
+    if row is None or not row["signed_identity"] or not row["signed_content_version_id"]:
+        raise DishRuleError("CONFLICT", "confirmed signed content version is missing", rule="signed_identity_missing")
+    version = conn.execute(
+        "SELECT identity FROM content_versions WHERE content_version_id = ? AND confirmed = 1",
+        (row["signed_content_version_id"],),
+    ).fetchone()
+    if version is None or version["identity"] != row["signed_identity"]:
+        raise DishRuleError("CONFLICT", "signed content binding is inconsistent", rule="signed_content_binding_invalid")
+    return row["signed_identity"]
 
 
 def _destination(document, registry: SectionRegistry):

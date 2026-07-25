@@ -1683,7 +1683,7 @@ def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str)
     return result_envelope(command="inspect", task_gid=trace.task_gid, submission_id=operation_id, state=trace.state, allowed_actions=data["legal_next_actions"], data=data)
 
 
-def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: str, change_level: str | None = None, change_reason: str | None = None) -> dict[str, Any]:
+def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: str, change_level: str | None = None, change_reason: str | None = None, run_id: str | None = None, **_extra: Any) -> dict[str, Any]:
     from .step5 import claim_operation, diagnostics_for
     from .task_store import read_complete_task
     agent_family(agent)
@@ -1711,7 +1711,7 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
             raise DishRuleError("VALIDATION_FAILED", "task schema is older than the current schema; migration required", rule="migration_required", details={"task_schema_version": diag["schema_version"], "current_schema_version": release.schema_version})
         if diag["validation"]:
             raise DishRuleError("VALIDATION_FAILED", "task failed current structural validation", errors=diag["validation"])
-    op = claim_operation(self.conn, live=live, release=release, kind=kind, agent=agent)
+    op = claim_operation(self.conn, live=live, release=release, kind=kind, agent=agent, run_id=run_id)
     trace.submission_id = op["operation_id"]
     trace.state = op["status"]
     return result_envelope(command="start", task_gid=task_gid, submission_id=op["operation_id"], state=op["status"], allowed_actions=["prepare"], data={
@@ -1765,7 +1765,7 @@ def _step7_start(
     if kind != "verification":
         return _step6_command_start(
             self, trace=trace, agent=agent, task_gid=task_gid, kind=kind,
-            change_level=change_level, change_reason=change_reason,
+            change_level=change_level, change_reason=change_reason, run_id=run_id,
         )
     from .step7 import verification_read
     agent_family(agent)

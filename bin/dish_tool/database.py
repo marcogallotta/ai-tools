@@ -204,7 +204,16 @@ UPDATE submissions
    SET status = 'discarded', completed_at = COALESCE(completed_at, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
  WHERE status NOT IN ('consumed','discarded');
 """
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3}
+_MIGRATION_4 = """
+ALTER TABLE verification_cycles ADD COLUMN protocol_text TEXT;
+ALTER TABLE verification_cycles ADD COLUMN reviewed_content_version_id TEXT REFERENCES content_versions(content_version_id);
+ALTER TABLE verification_cycles ADD COLUMN reviewed_identity TEXT;
+ALTER TABLE verification_cycles ADD COLUMN signed_content_version_id TEXT REFERENCES content_versions(content_version_id);
+ALTER TABLE verification_cycles ADD COLUMN signed_identity TEXT;
+CREATE INDEX verification_cycles_reviewed_version_idx ON verification_cycles(reviewed_content_version_id);
+CREATE INDEX verification_cycles_signed_version_idx ON verification_cycles(signed_content_version_id);
+"""
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -793,7 +802,8 @@ def mark_operation_completion(
 
 def create_verification_cycle(
     conn: sqlite3.Connection, *, operation_id: str, task_gid: str,
-    cycle_number: int, protocol_release: str, verifier_agent: str | None = None,
+    cycle_number: int, protocol_release: str, protocol_text: str | None = None,
+    verifier_agent: str | None = None,
     run_id: str | None = None, independence_attestation: str | None = None,
     correction_class: str | None = None, outcome: str | None = None,
     route: str | None = None, resume_state: str | None = None,
@@ -801,11 +811,11 @@ def create_verification_cycle(
     cycle_id = str(uuid.uuid4())
     conn.execute(
         """INSERT INTO verification_cycles (
-            cycle_id, operation_id, task_gid, cycle_number, protocol_release,
+            cycle_id, operation_id, task_gid, cycle_number, protocol_release, protocol_text,
             verifier_agent, run_id, independence_attestation, correction_class,
             outcome, route, resume_state, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (cycle_id, operation_id, task_gid, cycle_number, protocol_release,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (cycle_id, operation_id, task_gid, cycle_number, protocol_release, protocol_text,
          verifier_agent, run_id, independence_attestation, correction_class,
          outcome, route, resume_state, utc_now()),
     )

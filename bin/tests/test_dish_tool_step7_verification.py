@@ -86,7 +86,7 @@ def make_app(tmp_path):
             migration_metadata={}, requested_protocol_role=role)
     app = DishApplication(initialize_database(tmp_path / "dish.db"), backend, release_loader=release)
     candidate = tmp_path / "candidate.txt"; candidate.write_text(TASK)
-    start = app.execute("start", agent="gpt", task_gid="t", kind="initial", change_level=None, change_reason=None)
+    start = app.execute("start", agent="gpt", task_gid="t", kind="initial", change_level=None, change_reason=None, run_id="constructor-run")
     prepared = app.execute("prepare", agent="gpt", submission_id=start["submission_id"], file_path=str(candidate))
     assert prepared["ok"]
     return app, backend, start["submission_id"], verification_text
@@ -94,7 +94,7 @@ def make_app(tmp_path):
 
 def test_constructor_cannot_verify(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    result = app.execute("start", agent="gpt", task_gid="t", kind="verification", run_id="fresh-run")
+    result = app.execute("start", agent="gpt", task_gid="t", kind="verification", run_id="constructor-run")
     assert result["code"] == "AGENT_MISMATCH"
     assert backend.writes == 1
 
@@ -130,8 +130,49 @@ def test_approval_signs_exact_reread_without_moving_and_requires_inputs(tmp_path
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True)
     assert result["ok"]
     assert "Status: ready" in backend.notes
-    assert "Verified by: ChatGPT — GPT-5," in backend.notes
+    assert "Verified by: ChatGPT — Codex," in backend.notes
     assert backend.section == "vq" and backend.moves == 1
     assert result["allowed_actions"] == ["submit"]
     row = app.conn.execute("SELECT signoff_completed_at, movement_completed_at FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     assert row["signoff_completed_at"] is not None and row["movement_completed_at"] is not None  # prepare movement only
+
+
+def test_caller_cannot_forge_current_identity_after_review(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-forge")
+    backend.title = backend.title.replace("Test dish", "Changed dish")
+    from dish_tool.database import content_identity
+    forged = content_identity(backend.title, backend.notes).digest
+    result = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
+        reviewed_identity=forged, semantic_review_complete=True, provenance_complete=True)
+    assert result["code"] == "CONFLICT"
+    assert result["errors"][0]["rule"] == "reviewed_identity_mismatch"
+
+
+def test_review_and_signoff_bind_immutable_content_versions(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-bind")
+    cycle = app.conn.execute("SELECT * FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()
+    assert cycle["reviewed_identity"] == review["data"]["reviewed_identity"]
+    assert cycle["reviewed_content_version_id"]
+    approved = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
+        reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True)
+    assert approved["ok"]
+    cycle = app.conn.execute("SELECT * FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()
+    assert cycle["signed_identity"] == approved["data"]["signed_identity"]
+    assert cycle["signed_content_version_id"]
+
+
+def test_same_agent_different_run_can_verify(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    result = app.execute("start", agent="gpt", task_gid="t", kind="verification", run_id="fresh-verifier-run")
+    assert result["ok"]
+
+
+def test_persisted_hash_protocol_text_survives_file_change(tmp_path):
+    app, backend, operation_id, protocol = make_app(tmp_path)
+    honest = tmp_path / "honest"
+    (honest / "dish-verification-protocol.md").write_text("# changed later\n")
+    result = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="protocol-run")
+    assert result["ok"]
+    assert result["data"]["verification_protocol"]["text"] == protocol

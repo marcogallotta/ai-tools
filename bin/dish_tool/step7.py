@@ -29,6 +29,38 @@ def _operation_and_cycle(conn: sqlite3.Connection, operation_id: str):
     return op, cycle
 
 
+
+def _content_version_for_identity(
+    conn: sqlite3.Connection, *, operation_id: str, task_gid: str, identity: str
+):
+    row = conn.execute(
+        """SELECT * FROM content_versions
+             WHERE operation_id = ? AND task_gid = ? AND identity = ? AND confirmed = 1
+             ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+        (operation_id, task_gid, identity),
+    ).fetchone()
+    if row is None:
+        raise DishRuleError(
+            "CONFLICT", "confirmed content version is missing",
+            rule="content_version_missing", details={"identity": identity},
+        )
+    return row
+
+
+def bind_cycle_review(
+    conn: sqlite3.Connection, *, cycle_id: str, operation_id: str, task_gid: str, identity: str
+):
+    version = _content_version_for_identity(
+        conn, operation_id=operation_id, task_gid=task_gid, identity=identity
+    )
+    conn.execute(
+        """UPDATE verification_cycles
+              SET reviewed_content_version_id = ?, reviewed_identity = ?
+            WHERE cycle_id = ?""",
+        (version["content_version_id"], identity, cycle_id),
+    )
+    return version
+
 def verification_read(
     conn: sqlite3.Connection,
     backend: Any,
@@ -41,7 +73,7 @@ def verification_read(
 ) -> dict[str, Any]:
     op, cycle = _operation_and_cycle(conn, operation_id)
     identity = VerifierIdentity(agent, run_id, independence_attestation)
-    identity.validate(editor_agent=op["editor_agent"], researcher_agent=op["researcher_agent"])
+    identity.validate(editor_agent=op["editor_agent"], researcher_agent=op["researcher_agent"], constructor_run_id=op["run_id"])
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     document = parse_task_document(f"{live.title}\n{live.notes}")
     validation = validate_task_document(document, expected_schema_version=op["schema_version"])
@@ -54,10 +86,18 @@ def verification_read(
     recorded = document.state.values["Verification protocol release"]
     if recorded != cycle["protocol_release"]:
         raise DishRuleError("CONFLICT", "task and cycle Verification releases disagree", rule="verification_release_mismatch")
-    snapshot = resolve_verification_protocol(honest_root, recorded)
+    if cycle["protocol_text"]:
+        snapshot = type("Snapshot", (), {"identity": recorded, "text": cycle["protocol_text"], "source": "persisted"})()
+    else:
+        snapshot = resolve_verification_protocol(honest_root, recorded)
+        conn.execute("UPDATE verification_cycles SET protocol_text = ? WHERE cycle_id = ?", (snapshot.text, cycle["cycle_id"]))
+    reviewed_version = bind_cycle_review(
+        conn, cycle_id=cycle["cycle_id"], operation_id=operation_id,
+        task_gid=op["task_gid"], identity=live.identity,
+    )
     conn.execute(
-        "UPDATE operations SET verifier_agent = ?, run_id = ?, independence_attestation = ? WHERE operation_id = ?",
-        (agent, str(run_id or "").strip() or None, str(independence_attestation or "").strip() or None, operation_id),
+        "UPDATE operations SET verifier_agent = ?, independence_attestation = ? WHERE operation_id = ?",
+        (agent, str(independence_attestation or "").strip() or None, operation_id),
     )
     conn.execute(
         "UPDATE verification_cycles SET verifier_agent = ?, run_id = ?, independence_attestation = ? WHERE cycle_id = ?",
@@ -66,7 +106,7 @@ def verification_read(
     record_audit(
         conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
         event_type="verification.review_started", actor_agent=agent,
-        details={"cycle_id": cycle["cycle_id"], "reviewed_identity": live.identity}, result_code="OK", result_ok=True,
+        details={"cycle_id": cycle["cycle_id"], "reviewed_identity": live.identity, "reviewed_content_version_id": reviewed_version["content_version_id"]}, result_code="OK", result_ok=True,
     )
     return {
         "operation_id": operation_id,
@@ -97,8 +137,13 @@ def approve_live(
     if correction_class not in {"none", "small"}:
         raise DishRuleError("INVALID_ARGUMENT", "approval correction must be none or small", rule="invalid_correction")
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
-    if live.identity != reviewed_identity:
-        raise DishRuleError("CONFLICT", "live candidate changed after verifier review", rule="stale_verifier_review", details={"reviewed_identity": reviewed_identity, "actual_identity": live.identity})
+    persisted_reviewed = cycle["reviewed_identity"]
+    if not persisted_reviewed or not cycle["reviewed_content_version_id"]:
+        raise DishRuleError("WRONG_STATE", "Verification cycle has no persisted reviewed content", rule="reviewed_content_missing")
+    if reviewed_identity != persisted_reviewed:
+        raise DishRuleError("CONFLICT", "caller review identity does not match the persisted review", rule="reviewed_identity_mismatch", details={"persisted_reviewed_identity": persisted_reviewed, "supplied_identity": reviewed_identity})
+    if live.identity != persisted_reviewed:
+        raise DishRuleError("CONFLICT", "live candidate changed after verifier review", rule="stale_verifier_review", details={"reviewed_identity": persisted_reviewed, "actual_identity": live.identity})
     document = parse_task_document(f"{live.title}\n{live.notes}")
     check = validate_task_document(document, expected_schema_version=op["schema_version"])
     if not check.ok or document.state.values["Status"] != "pending-verification":
@@ -121,14 +166,20 @@ def approve_live(
     exact = parse_task_document(f"{confirmed.title}\n{confirmed.notes}")
     if exact.state.values["Status"] != "ready" or exact.state.values["Verified by"] == "None":
         raise DishRuleError("BACKEND_UNCERTAIN", "signoff reread did not confirm ready state", rule="signoff_not_confirmed")
+    signed_version = _content_version_for_identity(
+        conn, operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity
+    )
     conn.execute(
-        "UPDATE verification_cycles SET correction_class = ?, outcome = 'approved', completed_at = ? WHERE cycle_id = ?",
-        (correction_class, utc_now(), cycle["cycle_id"]),
+        """UPDATE verification_cycles
+              SET correction_class = ?, outcome = 'approved', completed_at = ?,
+                  signed_content_version_id = ?, signed_identity = ?
+            WHERE cycle_id = ?""",
+        (correction_class, utc_now(), signed_version["content_version_id"], confirmed.identity, cycle["cycle_id"]),
     )
     mark_operation_completion(conn, operation_id, "signoff")
     record_audit(
         conn, submission_id=None, task_gid=live.gid, operation_id=operation_id,
         event_type="verification.approved", actor_agent=agent,
-        details={"cycle_id": cycle["cycle_id"], "signed_identity": confirmed.identity}, result_code="OK", result_ok=True,
+        details={"cycle_id": cycle["cycle_id"], "signed_identity": confirmed.identity, "signed_content_version_id": signed_version["content_version_id"]}, result_code="OK", result_ok=True,
     )
     return {"operation_id": operation_id, "cycle_id": cycle["cycle_id"], "signed_identity": confirmed.identity, "task": dataclasses.asdict(confirmed)}

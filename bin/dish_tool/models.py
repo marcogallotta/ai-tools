@@ -232,20 +232,38 @@ class VerifierIdentity:
     run_id: str | None = None
     independence_attestation: str | None = None
 
-    def validate(self, *, editor_agent: str | None, researcher_agent: str | None) -> None:
+    def validate(
+        self, *, editor_agent: str | None, researcher_agent: str | None,
+        constructor_run_id: str | None = None,
+    ) -> None:
         agent_family(self.agent)
-        if self.agent in {editor_agent, researcher_agent}:
+        if self.agent not in {"gpt", "codex"}:
             raise DishRuleError(
-                "AGENT_MISMATCH",
-                "the constructor or material editor cannot verify the candidate",
-                rule="verifier_not_independent",
-                details={"verifier_agent": self.agent},
+                "AGENT_MISMATCH", "Verification requires a ChatGPT verifier",
+                rule="verification_requires_chatgpt",
             )
-        if not (str(self.run_id or "").strip() or str(self.independence_attestation or "").strip()):
+        run_id = str(self.run_id or "").strip()
+        attestation = str(self.independence_attestation or "").strip()
+        if not (run_id or attestation):
             raise DishRuleError(
                 "INVALID_ARGUMENT",
                 "a verifier run ID or independence attestation is required",
                 rule="verifier_identity_required",
+            )
+        constructor_run = str(constructor_run_id or "").strip()
+        if run_id and constructor_run and run_id == constructor_run:
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "the constructor or material editor run cannot verify the candidate",
+                rule="verifier_not_independent",
+                details={"verifier_run_id": run_id},
+            )
+        if not run_id and self.agent in {editor_agent, researcher_agent}:
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "attestation-only mode cannot prove independence from the constructor agent",
+                rule="verifier_not_independent",
+                details={"verifier_agent": self.agent, "trust_mode": "attestation-only"},
             )
 
 
@@ -257,7 +275,7 @@ def verification_actor_line(agent: str, date: str) -> str:
             "Verification signoff requires ChatGPT",
             rule="verification_requires_chatgpt",
         )
-    return f"ChatGPT — GPT-5, {date}"
+    return f"ChatGPT — {'GPT-5' if agent == 'gpt' else 'Codex'}, {date}"
 
 
 @dataclass(frozen=True)
