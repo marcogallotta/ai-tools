@@ -531,7 +531,7 @@ Change `prepare` from local candidate acceptance into the controlled live-task w
 - load an ephemeral candidate input supplied to the tool;
 - validate it against the current schema and the correct current stage protocol;
 - compare the live task to the baseline captured by `start` or the latest confirmed version;
-- record required `Material changes` for body edits;
+- record required `Material changes` for body edits, including the editor's material/non-material classification;
 - write the complete candidate to Asana;
 - reread and validate the exact live result;
 - record the new content identity;
@@ -579,7 +579,7 @@ Destination defects do not block this handoff.
 - move is not attempted if write/reread/check fails;
 - Verification release is current and cycle-specific;
 - destination missing/invalid still permits VQ handoff;
-- every body edit invalidates prior signoff and records Material changes.
+- a body edit recorded as material invalidates prior signoff; one recorded as non-material records a new content version and leaves `Verified by` intact; both record Material changes.
 
 ### Completion gate
 
@@ -634,7 +634,7 @@ A tool pass alone cannot authorize approval; the command requires the verifierâ€
 - approval signs only the reread exact content;
 - `ready` cannot be written without complete provenance and self-review;
 - approval never moves the task;
-- post-approval body edit invalidates the stored signoff on the next operation.
+- post-approval body edit recorded as material invalidates the stored signoff on the next operation; a non-material one does not.
 
 ### Completion gate
 

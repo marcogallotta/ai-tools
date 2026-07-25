@@ -266,7 +266,7 @@ The current workflow lets Small submissions bypass independent Verification, sen
 
 - Small is a verifier finding: the verifier fixes, self-reviews, rechecks, and signs the exact final task in the same pass.
 - Large is verifier-owned correction work, followed by a new Verification cycle and a different fresh verifier.
-- Every post-signoff body edit opens a new cycle.
+- Every post-signoff *material* body edit opens a new cycle; a non-material one records a new content version without clearing signoff.
 - Two failed independent passes stop further attempts and set `Status: pending-human-review` with `Resume status: pending-verification` and the reason in `Status detail`. Only Marco's admin action reopens it, after the concrete change in evidence, premise, method, or scope is recorded. An agent never clears this stop by its own record: the stop exists to end repeated verification cycling, which self-clearing would defeat. The hold is task-native rather than tool-local, so a reader outside the tool cannot mistake the task for one awaiting another verifier.
 
 **Required change**
@@ -274,7 +274,7 @@ The current workflow lets Small submissions bypass independent Verification, sen
 - Remove Small-as-bypass.
 - Implement Small as verifier-owned live-task correction, exact-content self-review, deterministic recheck, and independent signoff in the same pass. Use one recoverable transaction where practical.
 - Implement Large as: record defects → fix all resolvable defects → record material changes → self-review → clear signer → freeze new release → leave `pending-verification` → require another fresh verifier.
-- Apply the same reset to every post-signoff body edit.
+- Apply the same reset to every post-signoff material body edit.
 - Track pass count by candidate lineage. After two failed passes, write the task-native hold state, block agent workflow commands, and require both the approved structured reset evidence and a Marco-run `dish-admin` reopen before continuing.
 
 **Human input:** none.
@@ -379,7 +379,7 @@ Material claims must have direct support; disagreements and rejected routes must
 - Require one overall Research-basis classification: `Source-backed dish`, `Halal port`, or `Intentional test dish`.
 - Check that each source record carries its construction/later-validation kind, source and locator, used/conflicting/rejected status, affected claim, chosen route, limitation/reason, and future test where applicable. Do not enforce a fixed separator grammar or reject a record on format alone.
 - Preserve enough structured provenance to check locators, source status, affected claims, chosen routes, limitations, and routing integrity. Semantic support quality still requires ChatGPT Verification.
-- Require the approved `Material changes` line for every body edit and two-pass reset, tied to the resulting exact-content identity.
+- Require the approved `Material changes` line for every body edit and two-pass reset, carrying the editor's material/non-material classification. The resulting content identity is recorded in the tool's database, not in the line.
 
 **Recommended implementation**
 
@@ -548,7 +548,7 @@ The tool provides deterministic validation and workflow operations; it does not 
 - Add concise mandatory hooks to the agent protocols while leaving mechanics centralized:
   - **Planning:** run the Planning check before handing a task to Research; correct and rerun agent-owned failures. A pass does not establish substantive plan quality.
   - **Research:** run a pre-handoff check against the exact live candidate; correct, record material edits, write and re-read the complete task, then run the handoff transition/check against the resulting `pending-verification` task before any queue move. A pass is necessary but does not replace Research or self-review.
-  - **Verification:** run before semantic review, after every Small or Large correction, and immediately before signing the exact final task. Small may sign in the same pass after recheck; Large remains `pending-verification` for another fresh verifier, who reruns the tool. Every post-signoff body edit opens a new cycle. Apply the same boundary rules to full and compact instructions while both remain active. A passing `approve` result names `submit` as the required next action and the verifier runs it in the same pass — signoff and movement are separate recoverable operations, not separate obligations a verifier can leave undone, so a signed task never silently accumulates unmoved in Verification Queue.
+  - **Verification:** run before semantic review, after every Small or Large correction, and immediately before signing the exact final task. Small may sign in the same pass after recheck; Large remains `pending-verification` for another fresh verifier, who reruns the tool. Every post-signoff material body edit opens a new cycle. Apply the same boundary rules to full and compact instructions while both remain active. A passing `approve` result names `submit` as the required next action and the verifier runs it in the same pass — signoff and movement are separate recoverable operations, not separate obligations a verifier can leave undone, so a signed task never silently accumulates unmoved in Verification Queue.
 - Keep commands, environment setup, arguments, schemas, output fields, exit codes, and operational troubleshooting out of the protocols. They belong only in the activation document.
 
 **Human input:** none. The exact command names and exit codes are implementation outputs and must be documented after they exist.
