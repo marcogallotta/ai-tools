@@ -151,9 +151,13 @@ specific simpler behaviour is insufficient:
 
 These were considered and rejected outright, not placed in any future release:
 
-- `--confirm-independent-review` and dedicated self-verification-collision detection. The
-  opposite-family requirement already makes same-family approval structurally unreachable; the
-  residual dishonest-declaration risk is outside the trusted-identity model.
+- `--confirm-independent-review` and dedicated self-verification-collision detection. **Rationale
+  void as of `dish-tool-update.md`:** the original reasoning depended on opposite-family routing
+  making same-family approval structurally unreachable, but the protocol-compatibility update
+  removes opposite-family routing entirely (verification requires a fresh independent ChatGPT run,
+  not "the opposite family" of the editor). The residual dishonest-declaration risk is still outside
+  the trusted-identity model either way, so the drop itself still stands — but if this is
+  reconsidered later, reconsider it on that basis, not the original one.
 - A cached authoritative `managed_tasks` table. Management remains live-resolved.
 - A distinct adversarial self-review mechanism. The review log records that it was an assistant
   recommendation and was not approved; exact-source review and opposite-family verification remain.

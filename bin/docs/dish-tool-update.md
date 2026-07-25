@@ -1,6 +1,6 @@
 # Dish Tool Update Analysis
 
-**Scope:** compare the dish-tool implementation and documentation in `ai-tools(21)` with the frozen dish protocols in `honest(147)`.
+**Scope:** compare the dish-tool implementation and documentation in `~/ai-tools` with the frozen dish protocols in `~/honest-pantry-dish-rollout` (archive labels `ai-tools(21)`/`honest(147)` in the original analysis pass, resolved here to real paths for provenance).
 
 **Mode:** analysis and planning only. No tool code, existing tool documentation, or protocol file was changed. Explicit, versioned protocol amendments remain allowed where they make the implementation cleaner or safer.
 
@@ -8,7 +8,7 @@
 
 **Frozen authority**
 
-- `honest(147)/CLAUDE.md`
+- `~/honest-pantry-dish-rollout/CLAUDE.md`
 - `dish-planning-protocol.md`
 - `dish-research-protocol.md`
 - `dish-verification-protocol.md`
@@ -16,18 +16,18 @@
 
 **Current tool and documentation**
 
-- `ai-tools(21)/CLAUDE.md`
+- `~/ai-tools/CLAUDE.md`
 - `bin/dish`, `bin/dish-admin`, and `bin/dish_tool/*.py`
-- `bin/dish-tool-imp.md`
-- `bin/dish-tool.md`
-- `bin/dish-tool-activation.md`
-- `bin/dish-chatgpt-relay.md`
+- `bin/docs/dish-tool-imp.md`
+- `bin/docs/dish-tool.md`
+- `bin/docs/dish-tool-activation.md`
+- `bin/docs/dish-chatgpt-relay.md`
 - `bin/dish-reports.sql`
 - dish-tool tests and fixture protocol-release assets under `bin/tests/`
 
 ## Executive finding
 
-The current dish tool is not compatible with the frozen protocols. It implements an older lifecycle in which a detached candidate file and local database can remain the working authority, followed by one final Asana write, opposite model-family verification, a legacy `Verification:` field, obsolete Small/Large correction routes, automatic second-rejection escalation, and one protocol/schema bundle frozen at submission start.
+The current dish tool is not compatible with the frozen protocols. It implements an older lifecycle in which a detached candidate file and local database can remain the working authority, followed by one final Asana write, opposite model-family verification, a legacy `Verification:` field, obsolete Small/Large correction routes, and one protocol/schema bundle frozen at submission start.
 
 That release bundle is not random machinery: the old design deliberately used it to keep protocol text, manifests, and validator behaviour aligned. The mismatch is that it pins each task to the whole bundle selected at `dish start`. The settled replacement is a repository-level compatibility check, not task-lifetime protocol pinning: `honest` owns the current protocols, machine schema, migrations, and an uppercase `DISH_VERSION` file declaring `PROTOCOL_VERSION` and `SCHEMA_VERSION`; `ai-tools` is a generic engine that runs only when it supports those exact current versions. Each task stores only its `Schema version` for data compatibility. The separate `Verification protocol release` remains cycle-specific and is frozen whenever the live task enters `pending-verification`.
 
@@ -57,13 +57,13 @@ These decisions are approved for the first compatible rollout. They may later ch
 16. Missing or invalid destination remains visible in both the title and `Destination section`, using `[destination missing]` or `[destination invalid]`. It blocks only the final move.
 17. Lower-level subheadings are allowed inside canonical sections. Canonical top-level headings and Process Record labels remain fixed.
 18. Human decisions use `Human — Marco: <decision>; scope: <scope>; date: <YYYY-MM-DD>; reason: <reason>`.
-19. Source records use `Construction | Later validation — <source and locator> — status: used | conflicting | rejected — affects: <claim, ratio, method, or adaptation> — route: <chosen treatment> — reason: <reason or limitation> — future test: <test or None>`. The overall Research-basis classification—`Source-backed dish`, `Halal port`, or `Intentional test dish`—must also remain explicit.
+19. Source records must carry, in any readable form, whether the record is Construction or Later validation; the source and locator; whether the source was used, conflicting, or rejected; the affected claim, ratio, method, or adaptation; the chosen route; the reason or limitation; and any future test. No fixed separator grammar is required and the tool must not reject a record on format alone — field-value grammar remains deferred until real records justify a specific shape. The overall Research-basis classification—`Source-backed dish`, `Halal port`, or `Intentional test dish`—must also remain explicit.
 20. Material changes use `<YYYY-MM-DD> — ChatGPT — <model>: <concrete change>; reason: <reason>; verification: <state>; resulting version: <version ID>`. Two-pass resets append category and before/after details.
 21. The non-Git Verification-release form is `sha256:<64 lowercase hex>; read-at=<RFC3339 UTC timestamp>`.
 22. Nonterminal legacy tasks are quarantined and reconciled individually. Never infer `ready`; keep the old project untouched until migration is accepted.
 23. Planning, Research, and Verification have mandatory deterministic tool checks at defined phase boundaries. Their protocols own when checks are required and the agent's remaining semantic duties; `dish-tool-activation.md` owns commands, environment, arguments, output/exit semantics, and troubleshooting. A tool pass never authorizes a protocol transition or signoff by itself.
-24. Behaviour for a genuinely breaking protocol change while a submission is already open is deliberately deferred until such a change is encountered. Until that policy exists, protocol changes made while submissions are open must be limited to backward-compatible/minor changes; do not invent automatic restart, rebind, or migration behaviour.
-25. The shared service remains a V1 multi-agent go-live requirement. GPT Action connectivity is settled: Tailscale Funnel exposes the laptop-hosted service publicly, the Action authenticates with its own dedicated bearer token scoped only to the dish endpoints it may call (never shared with any CLI/admin credential), and it consumes a trimmed OpenAPI document exposing only that scoped surface — the same per-audience-token/Funnel/trimmed-OpenAPI pattern already used by `plant-monitoring`'s Assistant API (`ASSISTANT_API_TOKEN`, `/assistant-openapi.json`; see `~/plant-monitoring/docs/internals.md`).
+24. Breaking protocol changes during an open submission: deliberately deferred — see Remaining decisions.
+25. The shared service remains a V1 multi-agent go-live requirement. GPT Action connectivity is settled, not open — see C-02's V1 staging decision for the architecture (Tailscale Funnel, a dedicated scoped bearer token, and a trimmed OpenAPI surface).
 
 ## Requirement levels used below
 
@@ -97,7 +97,7 @@ The settled model keeps the safety check but removes task-lifetime protocol pinn
 - release creation and reuse in `bin/dish_tool/commands.py`
 - release columns in `bin/dish_tool/database.py`
 - fixture manifests under `bin/tests/`
-- `bin/dish-tool-imp.md`, `bin/dish-tool.md`, and `bin/dish-tool-activation.md`
+- `bin/docs/dish-tool-imp.md`, `bin/docs/dish-tool.md`, and `bin/docs/dish-tool-activation.md`
 
 **Governing requirement and approved rollout model**
 
@@ -135,7 +135,7 @@ The settled model keeps the safety check but removes task-lifetime protocol pinn
 - Require explicit, preferably scripted migrations. Write, reread, and validate the transformed live task before updating its `Schema version`; failure leaves the old version intact.
 - Retain old bundle/release fields only for legacy reading, reporting, or migration; they are not authoritative for new work.
 
-**Human input:** no immediate blocker. The policy for a genuinely breaking protocol change while a submission is already open is intentionally deferred. Until it is defined, restrict in-flight protocol changes to backward-compatible/minor changes. Exact filenames for the schema and migration scripts are implementation details.
+**Human input:** no immediate blocker. Breaking protocol changes during an open submission are deferred — see Remaining decisions. Exact filenames for the schema and migration scripts are implementation details.
 
 ## C-02 — Live-task authority, exact-content versions, and write lifecycle
 
@@ -150,7 +150,7 @@ The current tool treats a local candidate file and SQLite row as the working aut
 - `prepare()`, `_prepare_move_only()`, `approve()`, `submit()`, and candidate loading in `bin/dish_tool/commands.py`
 - submission/write fields in `bin/dish_tool/database.py`
 - generic-write advisory logic in `bin/dish_tool/advisory.py`
-- lifecycle descriptions in `bin/dish-tool.md` and `bin/dish-tool-imp.md`
+- lifecycle descriptions in `bin/docs/dish-tool.md` and `bin/docs/dish-tool-imp.md`
 
 **Governing requirement**
 
@@ -190,7 +190,7 @@ The implementation and fixtures rely on an obsolete `Verification:` line and too
 - state constants and transition checks in `bin/dish_tool/constants.py` and `commands.py`
 - schema and lifecycle fields in `bin/dish_tool/database.py`
 - fixture manifests and tests containing `Verification:`
-- readiness descriptions in `bin/dish-tool.md`
+- readiness descriptions in `bin/docs/dish-tool.md`
 
 **Governing requirement**
 
@@ -227,8 +227,8 @@ Research receives the Verification protocol; Verification is selected by opposit
 
 - protocol bundling in `bin/dish_tool/models.py` and `commands.py`
 - agent/family constants, CLI options, database fields, and verifier checks
-- `bin/dish-chatgpt-relay.md`
-- routing sections in `bin/dish-tool.md` and `bin/dish-tool-imp.md`
+- `bin/docs/dish-chatgpt-relay.md`
+- routing sections in `bin/docs/dish-tool.md` and `bin/docs/dish-tool-imp.md`
 
 **Governing requirement**
 
@@ -253,7 +253,7 @@ Research receives the Verification protocol; Verification is selected by opposit
 
 **Mismatch**
 
-The current workflow lets Small submissions bypass independent Verification, sends Large corrections back to generic drafting/ownership transfer, does not reset ready tasks correctly after body edits, and automatically turns a second rejection into Human Review.
+The current workflow lets Small submissions bypass independent Verification, sends Large corrections back to generic drafting/ownership transfer, and does not reset ready tasks correctly after body edits. Its two-pass hold is broadly right and is retained, but it must route to the protocol's distinct Human Review state and require the structured reset evidence.
 
 **Affected locations**
 
@@ -267,7 +267,7 @@ The current workflow lets Small submissions bypass independent Verification, sen
 - Small is a verifier finding: the verifier fixes, self-reviews, rechecks, and signs the exact final task in the same pass.
 - Large is verifier-owned correction work, followed by a new Verification cycle and a different fresh verifier.
 - Every post-signoff body edit opens a new cycle.
-- Two failed independent passes stop further identical-method attempts until evidence, premise, method, or scope changes; this is not automatically Human Review.
+- Two failed independent passes stop further attempts and hold the submission. Only Marco's admin action reopens it, after the concrete change in evidence, premise, method, or scope is recorded. An agent never clears this stop by its own record: the stop exists to end repeated verification cycling, which self-clearing would defeat.
 
 **Required change**
 
@@ -275,7 +275,7 @@ The current workflow lets Small submissions bypass independent Verification, sen
 - Implement Small as verifier-owned live-task correction, exact-content self-review, deterministic recheck, and independent signoff in the same pass. Use one recoverable transaction where practical.
 - Implement Large as: record defects → fix all resolvable defects → record material changes → self-review → clear signer → freeze new release → leave `pending-verification` → require another fresh verifier.
 - Apply the same reset to every post-signoff body edit.
-- Track pass count by candidate lineage and require the approved structured reset evidence before continuing after two failed passes.
+- Track pass count by candidate lineage. After two failed passes, block agent workflow commands and require both the approved structured reset evidence and a Marco-run `dish-admin` reopen before continuing.
 
 **Human input:** none.
 
@@ -325,7 +325,7 @@ The fixture Planning schema is obsolete, only some Planning data is preserved, a
 - `bin/tests/fixtures/protocol-release/dish-planning-manifest.json`
 - structural parsers in `bin/dish_tool/validation.py`
 - Planning snapshots in `commands.py` and `database.py`
-- structural rules in `bin/dish-tool.md` and `bin/dish-tool-imp.md`
+- structural rules in `bin/docs/dish-tool.md` and `bin/docs/dish-tool-imp.md`
 
 **Governing requirement**
 
@@ -374,7 +374,7 @@ Material claims must have direct support; disagreements and rejected routes must
 **Protocol-required behaviour and approved rollout decisions**
 
 - Require one overall Research-basis classification: `Source-backed dish`, `Halal port`, or `Intentional test dish`.
-- Parse and validate the approved structured source-record grammar, including used/conflicting/rejected status, affected claim, chosen route, limitation/reason, and future test where applicable.
+- Check that each source record carries its construction/later-validation kind, source and locator, used/conflicting/rejected status, affected claim, chosen route, limitation/reason, and future test where applicable. Do not enforce a fixed separator grammar or reject a record on format alone.
 - Preserve enough structured provenance to check locators, source status, affected claims, chosen routes, limitations, and routing integrity. Semantic support quality still requires ChatGPT Verification.
 - Require the approved `Material changes` line for every body edit and two-pass reset, tied to the resulting exact-content identity.
 
@@ -396,7 +396,7 @@ The old manifests use a larger role-tag vocabulary and `[blockers unreviewed]`; 
 
 - title parsing in `bin/dish_tool/validation.py`
 - complete-task fixture manifest and title tests
-- title assumptions in `bin/dish-tool-activation.md` and `bin/dish-tool-imp.md`
+- title assumptions in `bin/docs/dish-tool-activation.md` and `bin/docs/dish-tool-imp.md`
 - Planning, Research, and Verification protocol language governing title and nutrition checks
 
 **Governing requirement / approved amendment**
@@ -454,8 +454,8 @@ The database hard-codes obsolete families, levels, `baseline_verification_line`,
 - `bin/dish_tool/database.py`
 - `bin/dish_tool/recovery.py`
 - `bin/dish_tool/admin.py`
-- `bin/dish-tool-activation.md`
-- migration assumptions in `bin/dish-tool-imp.md`
+- `bin/docs/dish-tool-activation.md`
+- migration assumptions in `bin/docs/dish-tool-imp.md`
 
 **Governing requirement**
 
@@ -487,11 +487,11 @@ Repository instructions, operator docs, the old implementation plan, activation 
 
 **Affected locations**
 
-- `ai-tools(21)/CLAUDE.md`
-- `bin/dish-tool.md`
-- `bin/dish-tool-imp.md`
-- `bin/dish-tool-activation.md`
-- `bin/dish-chatgpt-relay.md`
+- `~/ai-tools/CLAUDE.md`
+- `bin/docs/dish-tool.md`
+- `bin/docs/dish-tool-imp.md`
+- `bin/docs/dish-tool-activation.md`
+- `bin/docs/dish-chatgpt-relay.md`
 - `bin/tests/fixtures/protocol-release/*`
 - dish-tool tests
 - `bin/dish-reports.sql`
@@ -523,10 +523,10 @@ The current activation guide is a cutover checklist, not an agent operating cont
 
 **Affected locations**
 
-- `bin/dish-tool-activation.md`
+- `bin/docs/dish-tool-activation.md`
 - command/result handling in `bin/dish`, `bin/dish_tool/cli.py`, `results.py`, and `errors.py`
 - the Planning, Research, full Verification, and compact Verification protocols
-- duplicated or conflicting operational guidance in `bin/dish-tool.md`, `bin/dish-tool-imp.md`, and the relay
+- duplicated or conflicting operational guidance in `bin/docs/dish-tool.md`, `bin/docs/dish-tool-imp.md`, and the relay
 
 **Governing requirement / approved rollout decision**
 
@@ -545,7 +545,7 @@ The tool provides deterministic validation and workflow operations; it does not 
 - Add concise mandatory hooks to the agent protocols while leaving mechanics centralized:
   - **Planning:** run the Planning check before handing a task to Research; correct and rerun agent-owned failures. A pass does not establish substantive plan quality.
   - **Research:** run a pre-handoff check against the exact live candidate; correct, record material edits, write and re-read the complete task, then run the handoff transition/check against the resulting `pending-verification` task before any queue move. A pass is necessary but does not replace Research or self-review.
-  - **Verification:** run before semantic review, after every Small or Large correction, and immediately before signing the exact final task. Small may sign in the same pass after recheck; Large remains `pending-verification` for another fresh verifier, who reruns the tool. Every post-signoff body edit opens a new cycle. Apply the same boundary rules to full and compact instructions while both remain active.
+  - **Verification:** run before semantic review, after every Small or Large correction, and immediately before signing the exact final task. Small may sign in the same pass after recheck; Large remains `pending-verification` for another fresh verifier, who reruns the tool. Every post-signoff body edit opens a new cycle. Apply the same boundary rules to full and compact instructions while both remain active. A passing `approve` result names `submit` as the required next action and the verifier runs it in the same pass — signoff and movement are separate recoverable operations, not separate obligations a verifier can leave undone, so a signed task never silently accumulates unmoved in Verification Queue.
 - Keep commands, environment setup, arguments, schemas, output fields, exit codes, and operational troubleshooting out of the protocols. They belong only in the activation document.
 
 **Human input:** none. The exact command names and exit codes are implementation outputs and must be documented after they exist.
@@ -561,7 +561,7 @@ A compatible implementation must satisfy all of the following:
 3. Tool-internal operation state never implies protocol readiness.
 4. Planning, Research, and Verification receive only their own protocol text.
 5. `honest/DISH_VERSION`, the schema in `honest`, and `ai-tools` capability agree exactly before the tool runs; `bin/git-commit` flags governed protocol/schema changes whose required version bump is missing; each task body contains a separate canonical `Schema version` metadata field, while every entry into `pending-verification` separately records the then-current exact Verification protocol.
-6. Verification signoff is by a fresh independent ChatGPT run bound to the exact candidate.
+6. Verification signoff is by a fresh independent ChatGPT run bound to the exact candidate. Independence is tool-enforced for edits the tool itself mediated (constructor/material-editor identity is tracked and checked against the verifier); for platform run/session IDs the tool cannot obtain (e.g. the manual ChatGPT relay), independence rests on the recorded attestation the tool cannot itself verify.
 7. `Researched by`, `Self-verified`, and `Verified by` obey their distinct provenance semantics.
 8. Small, Large, post-signoff, Evidence, Human Review, and two-pass workflows follow the governing routes above.
 9. Material support, source disagreements, Research-basis classification, and Material changes are preserved in the task.
@@ -575,7 +575,7 @@ A compatible implementation must satisfy all of the following:
 17. Planning, Research, and Verification run deterministic checks at their defined boundaries, but every semantic duty and routing decision remains agent/protocol-owned.
 18. One activation document owns actual commands, bundled-environment invocation, arguments, schemas, structured outputs, exit codes, rerun rules, and troubleshooting; protocols do not duplicate those mechanics.
 19. Tool results distinguish pass, agent-correctable finding, possible protocol stop state, execution error, and tool/protocol disagreement without converting tooling failures into dish blockers.
-20. Local V1 testing is restricted to one active agent at a time. Multi-agent live use is blocked until one shared laptop-hosted dish service owns the lock/lease, shared submission state, and all Asana access for both GPT Actions and CLI clients. GPT Action exposure/authentication is settled: Tailscale Funnel plus a dedicated scoped bearer token and trimmed OpenAPI surface, matching `plant-monitoring`'s Assistant API pattern.
+20. Local V1 testing is restricted to one active agent at a time. Multi-agent live use is blocked until one shared laptop-hosted dish service owns the lock/lease, shared submission state, and all Asana access for both GPT Actions and CLI clients. GPT Action exposure/authentication architecture: see C-02's V1 staging decision.
 
 # Recommended implementation order
 
@@ -590,7 +590,7 @@ A compatible implementation must satisfy all of the following:
 9. **Migration:** implement explicit, preferably scripted migration; refuse older-schema tasks during normal commands; migrate a task by writing, rereading, and validating before changing `Schema version`; quarantine and individually reconcile legacy tasks; retain old records/project as backup.
 10. **Replace tests and operational surfaces:** rebuild fixtures, tests, reports, admin flows, and relay. Add boundary tests for Planning, Research, and Verification plus every result-contract category.
 11. **Agent integration documentation:** update Planning, Research, full Verification, and compact Verification with concise mandatory hooks; replace `dish-tool-activation.md` with the actual command/environment/result contract; remove duplicated mechanics elsewhere.
-12. **Shared-service live mode:** add a small laptop-hosted dish API. Move lock/lease ownership, shared submission state, and all Asana access behind it; make GPT Actions and the CLI clients of the same API. Expose it via Tailscale Funnel; give the GPT Action its own dedicated bearer token scoped only to its endpoints and a trimmed OpenAPI document limited to that surface, matching `plant-monitoring`'s Assistant API pattern.
+12. **Shared-service live mode:** add a small laptop-hosted dish API. Move lock/lease ownership, shared submission state, and all Asana access behind it; make GPT Actions and the CLI clients of the same API, per C-02's V1 staging decision architecture.
 13. **Controlled activation:** sandbox Asana and run single-agent tests first; test drift/recovery and agent reruns; migrate a small reviewed cohort; permit proper multi-agent go-live only after the shared-service gate passes and no mixed old/new Asana path remains.
 
 # Remaining decisions
@@ -608,13 +608,13 @@ One decision is deliberately deferred:
 
 1. **Breaking protocol changes during an open submission.** Until a real case requires a policy, restrict changes made while submissions are open to backward-compatible/minor changes. A future breaking change must define whether open submissions restart, migrate, or follow another explicit route before that change is used.
 
-GPT Action connectivity is settled, not deferred: Tailscale Funnel plus a dedicated scoped bearer token and trimmed OpenAPI surface, matching `plant-monitoring`'s Assistant API pattern (`~/plant-monitoring/docs/internals.md`).
+GPT Action connectivity is settled, not deferred — see C-02's V1 staging decision for the architecture.
 
 Local single-agent testing can begin before the remaining deferred decision is needed. Low-risk serialization and file-layout details may be revised later without changing the settled invariants.
 
 # Test verification
 
-The tests were rerun against the analysed `ai-tools(21)` source using the Python executable and bundled dependencies from `ai-tools(24)`. The extracted virtual environment had been created under a different absolute path, so its bundled `site-packages` directory was supplied explicitly to the environment's interpreter.
+The tests were rerun against the analysed `~/ai-tools` source using the Python executable and bundled dependencies from a separate archived `~/ai-tools` snapshot (extracted independently for its `.venv`, hence the distinct label in the original analysis pass). The extracted virtual environment had been created under a different absolute path, so its bundled `site-packages` directory was supplied explicitly to the environment's interpreter — see the earlier conversation's finding that `.venv/bin/python3` in this repo is a symlink to system Python, not a portable interpreter, but every installed dependency is pure Python (no `.so` extensions), so pointing `PYTHONPATH` at the extracted `site-packages` works around it.
 
 Results:
 

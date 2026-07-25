@@ -37,7 +37,7 @@ Implementation must preserve all of these:
 9. Verification is performed by a fresh independent ChatGPT run against the exact live content.
 10. Small, Large, Evidence, Human Review, post-signoff reset, and two-pass behaviour follow the protocols.
 11. Signoff and destination movement are separate recoverable operations.
-12. Local V1 testing is single-agent only. Multi-agent live use requires one shared laptop-hosted service owning the lock, shared operation state, and Asana access. GPT Action network exposure and authentication is settled: Tailscale Funnel plus a dedicated scoped bearer token and trimmed OpenAPI surface, matching `plant-monitoring`'s Assistant API pattern.
+12. Local V1 testing is single-agent only. Multi-agent live use requires one shared laptop-hosted service owning the lock, shared operation state, and Asana access. GPT Action network exposure and authentication is settled — see `dish-tool-update.md` C-02's V1 staging decision for the architecture.
 
 ## Implementation sequence
 
@@ -57,7 +57,7 @@ Before changing behaviour, create a clear compatibility boundary.
 - `bin/dish_tool/results.py`
 - `bin/dish_tool/cli.py`
 - `bin/dish_tool/admin_cli.py`
-- `bin/dish-tool-activation.md`
+- `bin/docs/dish-tool-activation.md`
 - new temporary compatibility fixture under `bin/tests/fixtures/`
 
 ### Work
@@ -86,6 +86,10 @@ No current command can falsely claim compatibility with the new protocols while 
 Replace the wrapper-owned task-pinned release bundle with the settled current-release model.
 
 ### Files in `honest`
+
+All of the following land only on `~/honest-pantry-dish-rollout` (the rollout branch/worktree),
+never on production `~/honest-pantry` — `dish-docs-design.md` forbids a mixed production state, and
+production has no `DISH_VERSION` by design until deploy.
 
 - new uppercase `DISH_VERSION`
 - machine-readable task schema file or files
@@ -119,11 +123,19 @@ Use a deliberately simple parser:
 
 - Remove `protocol_release` as the general task/submission release identity.
 - Remove task-lifetime freezing of Planning, Research, Verification, and manifests at `dish start`.
-- Make the resolver locate the configured `honest` checkout and load:
-  - `DISH_VERSION`;
-  - the current machine schema;
-  - the stage-specific protocol requested by the command;
-  - schema migration metadata when migration is invoked.
+- There are two `honest` checkouts on disk — `~/honest-pantry` (production, still running the retired
+  `dish-protocol.md`, no `DISH_VERSION`) and `~/honest-pantry-dish-rollout` (the frozen three-way
+  protocols and the branch/worktree `DISH_VERSION` and schema actually land on). The resolver must not
+  guess between them: require an explicit configured path (config file or required env var, not a
+  default-if-unset), refuse to start without one, and fail closed with a distinct
+  `DISH_VERSION missing` error — never silently falling back to loading protocol text without a
+  version check — so a resolver mispointed at `~/honest-pantry` fails loudly instead of loading the
+  wrong protocol generation unversioned.
+  - Load, once bound to that path:
+    - `DISH_VERSION`;
+    - the current machine schema;
+    - the stage-specific protocol requested by the command;
+    - schema migration metadata when migration is invoked.
 - Add an `ai-tools` capability declaration for the exact supported `PROTOCOL_VERSION` and `SCHEMA_VERSION`.
 - Update `bin/git-commit` to inspect the staged diff for governed protocol, schema, and migration files:
   - a governed protocol change requires a staged `PROTOCOL_VERSION` bump;
@@ -140,6 +152,9 @@ Use a deliberately simple parser:
 
 - valid `DISH_VERSION` and schema load successfully;
 - missing, duplicate, malformed, or unknown version keys fail;
+- an unconfigured `honest` path refuses to start rather than defaulting;
+- a configured path with no `DISH_VERSION` (e.g. pointed at production `~/honest-pantry`) fails
+  closed with the distinct `DISH_VERSION missing` error, not a generic load failure;
 - unsupported protocol version fails;
 - unsupported schema version fails;
 - schema-declared version mismatch fails;
@@ -152,7 +167,7 @@ Use a deliberately simple parser:
 
 ### Deferred breaking-change policy
 
-Do not build an automatic restart/rebind policy for open submissions in V1. Until a real breaking protocol change requires one, operationally restrict protocol changes made while submissions are open to backward-compatible/minor changes. If a breaking change is proposed, stop and define the open-submission route before committing or using it.
+Do not build an automatic restart/rebind policy for open submissions in V1 — deferred per `dish-tool-update.md`'s Remaining decisions. Operationally, restrict in-flight protocol changes to backward-compatible/minor ones until that policy exists.
 
 ### Completion gate
 
@@ -315,6 +330,21 @@ The local database can safely support one-agent test mode and contains the recor
 
 Make every Asana interaction exact, guarded, and reread-confirmed.
 
+Drift/external-edit detection (steps 2–3 below) is V1-mandatory here, overriding
+`dish-tool-future.md`'s earlier "not the first post-v1 release" deferral: the frozen protocols'
+exact-content signoff makes it load-bearing now, not optional. Automated *recovery* from an
+uncertain outcome remains deferred per that doc; only detection is pulled forward.
+
+### Protocol-managed task registry
+
+The registry (live section-GID resolution for `Sourcing`/`Reference`, fail-closed-to-managed on an
+unresolvable section) survives this update unchanged in behaviour — see `dish-tool.md`'s Protocol-managed
+task registry section. What changes is only where its checks sit: resolution and the advisory/blocking
+generic-write check are schema/version-aware, running against the current `honest` `DISH_VERSION`
+rather than a task-pinned bundle. The v1a advisory-log / v1b hard-block flip is unchanged and does not
+wait for Step 11's shared service — it applies from Step 4 onward in local single-agent mode; Step 11
+only adds the shared service as the *sole* credentialed path once multi-agent use begins.
+
 ### Files
 
 - `bin/dish_tool/backend.py`
@@ -373,6 +403,17 @@ Rebuild the entry commands around current versions and exact live content.
 - `bin/dish_tool/commands.py`
 - `bin/dish_tool/admin_cli.py` or a new migration command surface
 - command tests
+
+### `dish create`
+
+The only V1 path from nothing to a bare task — `dish planning`/`dish start --kind planning` is the
+only path onward from there, so generic `create_task` with notes cannot bypass either step.
+
+- create one bare task in the Cooking project's Research Queue, no notes write;
+- return the task GID through the common JSON envelope;
+- a clear API failure returns `BACKEND_REJECTED`; an ambiguous outcome returns `BACKEND_UNCERTAIN`
+  rather than an automatic retry that risks a duplicate task;
+- stamp the created task's `Schema version` to the current `honest` `SCHEMA_VERSION` at creation time.
 
 ### `dish read`
 
@@ -552,7 +593,9 @@ When a verifier starts or reads a pending candidate:
 5. rewrite the complete state block to `ready` with valid `Verified by` and `Self-verified` semantics;
 6. write and reread the exact live task;
 7. record signoff against the resulting content identity;
-8. leave movement incomplete for `submit`.
+8. leave movement incomplete for `submit`, but return `submit` as the sole `allowed_actions` entry so
+   the result itself obliges the verifier to run it in the same pass rather than leaving a signed
+   task unmoved in Verification Queue.
 
 A tool pass alone cannot authorize approval; the command requires the verifier’s explicit protocol result.
 
@@ -619,17 +662,18 @@ Replace the old rejection-count/family logic with protocol routes.
 
 ### Two-pass reset
 
-Where the protocol requires a reset after repeated unsuccessful verification:
+After two independent passes without a signable task, hold the submission and block agent workflow
+commands. Only Marco's admin action reopens it; an agent never clears the stop by recording its own
+reset, since the stop exists to end repeated verification cycling. Reopening requires:
 
-- require a new Material changes entry;
-- require category `evidence`, `premise`, `method`, or `scope`;
-- require concrete before/after detail, editor, and date;
+- a new Material changes entry;
+- category `evidence`, `premise`, `method`, or `scope`;
+- concrete before/after detail, editor, and date;
 - a new hash/version alone is insufficient;
-- retain prior cycle history.
+- retained prior cycle history.
 
 Remove:
 
-- automatic escalation based only on a numeric second rejection;
 - `failed_verification_passes` as the routing authority;
 - opposite-family reassignment;
 - generic `awaiting_human` without protocol distinction.
@@ -642,6 +686,7 @@ Remove:
 - Evidence/Human states require matching underlying reasons;
 - execution errors preserve task state;
 - resume state works;
+- two-pass hold blocks agent workflow commands and cannot be cleared without Marco's admin reopen;
 - two-pass reset requires substantive category and before/after details;
 - prior Verification cycles and reasons remain auditable.
 
@@ -713,10 +758,10 @@ Update documentation only after command behaviour and result codes are stable.
 
 ### Files
 
-- `bin/dish-tool.md`
+- `bin/docs/dish-tool.md`
 - this implementation plan, if final command names differ
-- `bin/dish-tool-activation.md`
-- `bin/dish-chatgpt-relay.md`
+- `bin/docs/dish-tool-activation.md`
+- `bin/docs/dish-chatgpt-relay.md`
 - `bin/dish-reports.sql`
 - relevant protocol files in `honest`
 - `CLAUDE.md`/global routing only at authorized activation
@@ -803,7 +848,7 @@ Recommended layout:
 - one persistent shared database on Marco’s laptop;
 - laptop-hosted listener/service endpoint;
 - CLI client mode, likely using the local network or Tailscale path;
-- Custom GPT Action/OpenAPI surface, reached via Tailscale Funnel, authenticated with its own dedicated bearer token scoped only to its endpoints, and exposing a trimmed OpenAPI document limited to that surface — matching `plant-monitoring`'s Assistant API pattern (`~/plant-monitoring/docs/internals.md`);
+- Custom GPT Action/OpenAPI surface — architecture per `dish-tool-update.md` C-02's V1 staging decision (Tailscale Funnel, dedicated scoped bearer token, trimmed OpenAPI document);
 - Marco-only administrative endpoints kept separate from agent endpoints.
 
 ### Lock/lease requirements
@@ -857,7 +902,7 @@ Every response uses the same result envelope as the CLI. HTTP status is transpor
 
 ### GPT Action connectivity — settled
 
-Network exposure and authentication for the Custom GPT Action follow `plant-monitoring`'s Assistant API pattern (`~/plant-monitoring/docs/internals.md`): Tailscale Funnel gives the service public HTTPS ingress, the Action authenticates with its own dedicated bearer token scoped only to the dish endpoints it may call (never the CLI/admin credential), and a trimmed OpenAPI document exposing only that scoped surface is what the Action imports.
+Network exposure and authentication for the Custom GPT Action are settled — see `dish-tool-update.md` C-02's V1 staging decision for the architecture and its `plant-monitoring` precedent.
 
 ### Completion gate
 
@@ -879,12 +924,18 @@ Do not treat passing unit tests as activation authorization.
 
 ### Corpus migration
 
-- inventory protocol-managed tasks and their apparent schema;
-- migrate only active tasks intended to continue;
-- quarantine ambiguous or nonterminal legacy tasks;
-- never infer `ready`, provenance, Human decisions, or destination data;
-- retain the old project/database snapshot as backup until accepted;
-- record per-task migration result and unresolved disposition.
+The corpus-wide migration follows `dish-docs-design.md`'s already-approved procedure, not a
+separate live per-task flow: snapshot the complete target corpus to a tarball; give a fresh agent
+the snapshot and final protocol bundle to produce the migrated corpus locally, removing legacy
+structure without inventing content requiring judgment; run deterministic validation over every
+result and return every structural failure for correction until the corpus passes; upload through a
+script that stops rather than overwrites when a live task no longer matches its snapshot input;
+never infer `ready`, provenance, Human decisions, or destination data. Retain the old
+project/database snapshot as backup until accepted.
+
+`dish-admin migrate` (Step 5's explicit migration command) is scoped narrowly to the ongoing case
+this bulk procedure doesn't cover: a single older-schema task encountered individually after
+cutover, not the initial corpus.
 
 ### Live-mode cutover
 

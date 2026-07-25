@@ -408,7 +408,9 @@ dish reject <submission-id> --agent <verifier-agent> --reason "<why not signable
   and what must concretely change.
 - `dish-admin unblock` returns an `awaiting_human` submission to `drafting` only after Marco records
   the changed evidence, premise, method, or scope. It resets the consecutive-failed-pass counter for
-  the reopened cycle without erasing the audit history.
+  the reopened cycle without erasing the audit history. Marco's action is the gate because the stop
+  exists to end repeated verification cycling: an agent that could clear it by writing its own reset
+  record would turn the stop back into the loop it prevents. Do not relax this to a self-clear.
 
 ### 4. `dish submit`
 
