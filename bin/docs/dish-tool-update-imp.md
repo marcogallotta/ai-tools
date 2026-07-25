@@ -20,7 +20,9 @@ Its meaning changes:
 - `reject` applies only non-signing protocol routes against the exact live version: Large correction, Evidence, Human Review, or another explicit stop route. A corrected Small is rechecked and signed through `approve` in the same Verification pass.
 - `submit` performs only the remaining post-signoff movement or retryable completion work. It must never repeat an already-confirmed content write.
 
-Agents do not access Asana directly. Every read, write, correction, check-in, signoff, and move goes through `dish` in local test mode or through the shared dish service in live mode.
+For protocol-managed tasks, agents do not access Asana directly: every read, write, correction, check-in, signoff, and move goes through `dish` in local test mode or through the shared dish service in live mode. The registry defines which tasks those are; unmanaged work such as the Pantry and Fermentation projects stays outside this rule.
+
+Cooking is the one deliberate exception in this rollout. Cooking agents write cook-log entries — Asana comments today, a cook-log record once the backend changes — and never touch the task body, so a cook log can never invalidate exact-content signoff. A cooking-agent body edit takes the task out of guarded state and requires re-verification before further protocol work. A Marco-granted override is a cook-log entry naming exactly what was waived, not a tool bypass. Routing cooking through the tool is deferred; see `dish-tool-future.md`.
 
 ## Authority and non-negotiable invariants
 
@@ -137,6 +139,7 @@ Use a deliberately simple parser:
     - the stage-specific protocol requested by the command;
     - schema migration metadata when migration is invoked.
 - Add an `ai-tools` capability declaration for the exact supported `PROTOCOL_VERSION` and `SCHEMA_VERSION`.
+- Support commit-pinned retrieval of historical Verification protocol text. `Verification protocol release` records the Git commit, and the resolver reads the verification protocol file at that commit for an in-flight cycle. This is a read of past text, not a run against a past protocol, so it deliberately bypasses the current-version compatibility gate; without it, any routine edit to the verification protocol strands every submission already in `pending-verification`. Fail closed with a distinct error when the recorded commit is unreachable, matching the protocol's own instruction to stop when the exact text cannot be recovered.
 - Update `bin/git-commit` to inspect the staged diff for governed protocol, schema, and migration files:
   - a governed protocol change requires a staged `PROTOCOL_VERSION` bump;
   - a schema or migration change requires staged `SCHEMA_VERSION` and `PROTOCOL_VERSION` bumps;
@@ -153,6 +156,7 @@ Use a deliberately simple parser:
 - valid `DISH_VERSION` and schema load successfully;
 - missing, duplicate, malformed, or unknown version keys fail;
 - an unconfigured `honest` path refuses to start rather than defaulting;
+- historical verification text loads from its recorded commit while the current-version gate is unchanged, and an unreachable commit fails closed with its own error;
 - a configured path with no `DISH_VERSION` (e.g. pointed at production `~/honest-pantry`) fails
   closed with the distinct `DISH_VERSION missing` error, not a generic load failure;
 - unsupported protocol version fails;
@@ -662,9 +666,12 @@ Replace the old rejection-count/family logic with protocol routes.
 
 ### Two-pass reset
 
-After two independent passes without a signable task, hold the submission and block agent workflow
-commands. Only Marco's admin action reopens it; an agent never clears the stop by recording its own
-reset, since the stop exists to end repeated verification cycling. Reopening requires:
+After two independent passes without a signable task, write the task-native hold — `Status:
+pending-human-review`, `Resume status: pending-verification`, reason in `Status detail` — and block
+agent workflow commands. The hold must live on the task, not only in tool state, so a reader outside
+the tool does not see `pending-verification` and pick the task up as a fresh verifier. Only Marco's
+admin action reopens it; an agent never clears the stop by recording its own reset, since the stop
+exists to end repeated verification cycling. Reopening requires:
 
 - a new Material changes entry;
 - category `evidence`, `premise`, `method`, or `scope`;
@@ -686,7 +693,7 @@ Remove:
 - Evidence/Human states require matching underlying reasons;
 - execution errors preserve task state;
 - resume state works;
-- two-pass hold blocks agent workflow commands and cannot be cleared without Marco's admin reopen;
+- two-pass hold writes the task-native state, blocks agent workflow commands, and cannot be cleared without Marco's admin reopen;
 - two-pass reset requires substantive category and before/after details;
 - prior Verification cycles and reasons remain auditable.
 

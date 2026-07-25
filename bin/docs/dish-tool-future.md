@@ -126,6 +126,16 @@ Perform deterministic structural transformations, remove obsolete fields, stamp 
 the split's initial snapshot-backed, agent-led migration; it does not replace that rollout or claim
 semantic equivalence. Build it when a later release creates a repeated migration need.
 
+### Tool-mediated cooking
+
+Route cooking agents through `dish` rather than letting them write to Asana directly. In this
+rollout they write cook-log entries (Asana comments) and never touch the task body, which keeps
+signoff safe without needing a cooking command surface. Bringing cooking inside the tool is the
+prerequisite for the database backend below: once every agent path goes through `dish`, the backend
+can change without touching any agent workflow. Design then: the cook-log write command, how a
+Marco-granted override is recorded as a first-class operation, and whether cooking reads need
+anything beyond `dish read`.
+
 ### Database backend and separate frontend
 
 Replace Asana with a database-backed store and a separate human-facing frontend. The stable `dish`
@@ -160,7 +170,7 @@ These were considered and rejected outright, not placed in any future release:
   reconsidered later, reconsider it on that basis, not the original one.
 - A cached authoritative `managed_tasks` table. Management remains live-resolved.
 - A distinct adversarial self-review mechanism. The review log records that it was an assistant
-  recommendation and was not approved; exact-source review and opposite-family verification remain.
+  recommendation and was not approved; exact-source review and fresh independent verification remain.
 - Cryptographic agent authentication, recursive dependency audits, and a general-purpose remote or
   multi-user trust service beyond the bounded ChatGPT Action. No evidence changes their out-of-scope
   status.

@@ -47,18 +47,18 @@ These decisions are approved for the first compatible rollout. They may later ch
 6. A migration is complete only after the transformed live task is written, reread, and validated. Only then is its `Schema version` updated. A failed migration must leave the task on its prior schema version.
 7. A protocol change always bumps `PROTOCOL_VERSION`. A schema change also bumps `SCHEMA_VERSION`; a protocol-only change need not change the schema version. `bin/git-commit` must inspect staged changes to governed protocol, schema, and migration files and flag a missing required bump before commit. Automatic bumping may be added only where the required bump is unambiguous; the minimum V1 requirement is a blocking confirmation/check.
 8. The machine schema is traceable clause-by-clause to the governing prose. Prose wins over schema or tool output; disagreement fails closed.
-9. The task field `Verification protocol release` is separate from both version numbers. It records the exact Verification-protocol text used for that Verification cycle.
+9. The task field `Verification protocol release` is separate from both version numbers. It records the exact Verification-protocol text used for that Verification cycle, identified by Git commit so the text stays retrievable after the protocol moves on. Historical retrieval bypasses the current-version compatibility gate, which governs running against a protocol, not reading one.
 10. Destination is serialized as `Destination section: <section name> — <section gid>`.
 11. A platform run/session ID is stored when available. Otherwise a tool-recorded independence attestation is sufficient. The verifier must not have constructed or materially edited the candidate.
 12. Other agents may assist with retrieval or mechanical work, but the recorded constructor or material editor must be the ChatGPT run that reviews the exact candidate.
-13. Every task-body edit invalidates exact-content signoff. Even a typo opens a fresh Verification cycle.
+13. A material task-body edit invalidates exact-content signoff and opens a fresh Verification cycle. A non-material edit records a new content version without clearing `Verified by`. The editor records the classification in `Material changes`; anything ambiguous counts as material. The tool cannot judge materiality, so this is an agent duty backed by the version record, not a deterministic check.
 14. A two-pass reset requires a new `Material changes` entry naming category (`evidence`, `premise`, `method`, or `scope`), concrete before/after change, editor, and date. A new hash alone is insufficient.
 15. Role classification is binary. Main is the unmarked default. Only non-main tasks carry `[non-main]`; main-dish nutrition requirements apply only to main tasks. This requires explicit amendments to the current protocol wording before activation.
 16. Missing or invalid destination remains visible in both the title and `Destination section`, using `[destination missing]` or `[destination invalid]`. It blocks only the final move.
 17. Lower-level subheadings are allowed inside canonical sections. Canonical top-level headings and Process Record labels remain fixed.
 18. Human decisions use `Human — Marco: <decision>; scope: <scope>; date: <YYYY-MM-DD>; reason: <reason>`.
 19. Source records must carry, in any readable form, whether the record is Construction or Later validation; the source and locator; whether the source was used, conflicting, or rejected; the affected claim, ratio, method, or adaptation; the chosen route; the reason or limitation; and any future test. No fixed separator grammar is required and the tool must not reject a record on format alone — field-value grammar remains deferred until real records justify a specific shape. The overall Research-basis classification—`Source-backed dish`, `Halal port`, or `Intentional test dish`—must also remain explicit.
-20. Material changes use `<YYYY-MM-DD> — ChatGPT — <model>: <concrete change>; reason: <reason>; verification: <state>; resulting version: <version ID>`. Two-pass resets append category and before/after details.
+20. Material changes use `<YYYY-MM-DD> — ChatGPT — <model>: <concrete change>; reason: <reason>; material: yes | no; verification: <state>`. Two-pass resets append category and before/after details. Content-version identity lives in the tool's database and is never written into the task body.
 21. The non-Git Verification-release form is `sha256:<64 lowercase hex>; read-at=<RFC3339 UTC timestamp>`.
 22. Nonterminal legacy tasks are quarantined and reconciled individually. Never infer `ready`; keep the old project untouched until migration is accepted.
 23. Planning, Research, and Verification have mandatory deterministic tool checks at defined phase boundaries. Their protocols own when checks are required and the agent's remaining semantic duties; `dish-tool-activation.md` owns commands, environment, arguments, output/exit semantics, and troubleshooting. A tool pass never authorizes a protocol transition or signoff by itself.
@@ -267,7 +267,7 @@ The current workflow lets Small submissions bypass independent Verification, sen
 - Small is a verifier finding: the verifier fixes, self-reviews, rechecks, and signs the exact final task in the same pass.
 - Large is verifier-owned correction work, followed by a new Verification cycle and a different fresh verifier.
 - Every post-signoff body edit opens a new cycle.
-- Two failed independent passes stop further attempts and hold the submission. Only Marco's admin action reopens it, after the concrete change in evidence, premise, method, or scope is recorded. An agent never clears this stop by its own record: the stop exists to end repeated verification cycling, which self-clearing would defeat.
+- Two failed independent passes stop further attempts and set `Status: pending-human-review` with `Resume status: pending-verification` and the reason in `Status detail`. Only Marco's admin action reopens it, after the concrete change in evidence, premise, method, or scope is recorded. An agent never clears this stop by its own record: the stop exists to end repeated verification cycling, which self-clearing would defeat. The hold is task-native rather than tool-local, so a reader outside the tool cannot mistake the task for one awaiting another verifier.
 
 **Required change**
 
@@ -275,7 +275,7 @@ The current workflow lets Small submissions bypass independent Verification, sen
 - Implement Small as verifier-owned live-task correction, exact-content self-review, deterministic recheck, and independent signoff in the same pass. Use one recoverable transaction where practical.
 - Implement Large as: record defects → fix all resolvable defects → record material changes → self-review → clear signer → freeze new release → leave `pending-verification` → require another fresh verifier.
 - Apply the same reset to every post-signoff body edit.
-- Track pass count by candidate lineage. After two failed passes, block agent workflow commands and require both the approved structured reset evidence and a Marco-run `dish-admin` reopen before continuing.
+- Track pass count by candidate lineage. After two failed passes, write the task-native hold state, block agent workflow commands, and require both the approved structured reset evidence and a Marco-run `dish-admin` reopen before continuing.
 
 **Human input:** none.
 
