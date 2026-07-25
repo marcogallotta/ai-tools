@@ -87,6 +87,8 @@ def load_tool_aware_release() -> ResolvedRelease:
             "planning": json.loads(planning_text),
             "complete_task": json.loads(complete_text),
         },
+        schema_version="1",
+        schema={"schema_kind": "dish-task"},
         manifest_texts={
             "planning": planning_text,
             "complete_task": complete_text,
@@ -263,12 +265,13 @@ def test_planning_workflow_uses_exact_tool_aware_bundle_end_to_end(tmp_path):
         kind="planning",
     )
     assert started["ok"] is True
-    frozen = started["data"]["frozen_release"]
-    assert frozen["protocol_release"] == "fixture-v1b-structured-title"
-    assert frozen["protocol_bundle"]["planning"] == (
+    compatibility = started["data"]["current_compatibility"]
+    assert compatibility["protocol_version"] == "fixture-v1b-structured-title"
+    assert compatibility["schema_version"] == "1"
+    assert compatibility["stage_protocol"]["planning"] == (
         BUNDLE_DIR / "dish-planning-protocol.md"
     ).read_text(encoding="utf-8")
-    assert frozen["canonical_manifest_text"] == (
+    assert compatibility["legacy_validation_adapter_text"] == (
         BUNDLE_DIR / "dish-planning-manifest.json"
     ).read_text(encoding="utf-8")
 
@@ -304,17 +307,15 @@ def test_initial_workflow_uses_exact_tool_aware_bundle_end_to_end(tmp_path):
         kind="initial",
     )
     assert started["state"] == "drafting"
-    frozen = started["data"]["frozen_release"]
-    assert frozen["protocol_release"] == "fixture-v1b-structured-title"
-    assert frozen["protocol_bundle"] == {
+    compatibility = started["data"]["current_compatibility"]
+    assert compatibility["protocol_version"] == "fixture-v1b-structured-title"
+    assert compatibility["schema_version"] == "1"
+    assert compatibility["stage_protocol"] == {
         "research": (BUNDLE_DIR / "dish-research-protocol.md").read_text(
             encoding="utf-8"
-        ),
-        "verification": (
-            BUNDLE_DIR / "dish-verification-protocol.md"
-        ).read_text(encoding="utf-8"),
+        )
     }
-    assert frozen["canonical_manifest_text"] == (
+    assert compatibility["legacy_validation_adapter_text"] == (
         BUNDLE_DIR / "dish-complete-task-manifest.json"
     ).read_text(encoding="utf-8")
 

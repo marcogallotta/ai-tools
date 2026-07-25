@@ -10,14 +10,13 @@ from pathlib import Path
 import pytest
 
 BIN_DIR = Path(__file__).resolve().parent.parent
-FIXTURE_RELEASE_DIR = Path(__file__).resolve().parent / "fixtures" / "protocol-release"
+FIXTURE_RELEASE_DIR = Path(__file__).resolve().parent / "fixtures" / "dish-version-current"
 sys.path.insert(0, str(BIN_DIR))
 from dish_tool.backend import AsanaBackend, load_asana_pat, map_backend_exception  # noqa: E402
 from dish_tool.constants import (  # noqa: E402
     ASANA_REQUEST_TIMEOUT,
     CONNECT_TIMEOUT_SECONDS,
     EXIT_STATUS_BY_CODE,
-    GOVERNED_RELEASE_FILENAMES,
     MAX_REQUEST_LIFETIME_SECONDS,
     NONTERMINAL_STATES,
     READ_TIMEOUT_SECONDS,
@@ -178,7 +177,16 @@ def write_release(repo, version="fixture-v1", *, malformed=None, mismatch=None):
 
 
 def commit_release(repo, message="fixture release"):
-    run_git(repo, "add", "protocol_release", *GOVERNED_RELEASE_FILENAMES)
+    files = [
+        "DISH_VERSION",
+        "dish-task-schema.json",
+        "dish-schema-migrations/0001-initial.json",
+        "dish-planning-protocol.md",
+        "dish-research-protocol.md",
+        "dish-verification-protocol.md",
+        "dish-cooking-protocol.md",
+    ]
+    run_git(repo, "add", *files)
     run_git(repo, "commit", "-m", message)
     return run_git(repo, "rev-parse", "HEAD")
 
@@ -262,181 +270,17 @@ def test_partial_unique_index_releases_for_terminal_states(tmp_path):
         insert_submission(conn, f"new-{index}", task_gid, "drafting")
 
 
-def test_resolver_accepts_complete_clean_committed_release(release_repo):
-    repo, commit = release_repo
-    release = resolve_release(repo)
+def test_resolver_loads_external_schema_adapter_for_legacy_note_checks(release_repo):
+    repo, _ = release_repo
+    release = resolve_release(repo, protocol_role="planning")
 
-    assert release.version == "fixture-v2-structured-title"
-    assert release.commit == commit
-    assert set(release.protocols) == {"planning", "research", "verification"}
+    assert release.protocol_version == "1.0.0"
+    assert release.schema_version == "1"
+    assert set(release.protocols) == {"planning"}
     assert set(release.manifests) == {"planning", "complete_task"}
     assert release.bundle_for_submission("planning") == {
         "planning": release.protocols["planning"]
     }
-    assert set(release.bundle_for_submission("initial")) == {"research", "verification"}
-
-
-@pytest.mark.parametrize("missing", GOVERNED_RELEASE_FILENAMES)
-def test_resolver_rejects_incomplete_release(release_repo, missing):
-    repo, _ = release_repo
-    run_git(repo, "rm", missing)
-    run_git(repo, "commit", "-m", f"remove {missing}")
-
-    with pytest.raises(ReleaseResolutionError) as exc:
-        resolve_release(repo)
-    assert exc.value.rule == "release_incomplete"
-
-
-def test_resolver_rejects_dirty_governed_file(release_repo):
-    repo, _ = release_repo
-    (repo / "dish-research-protocol.md").write_text("dirty\n")
-
-    with pytest.raises(ReleaseResolutionError) as exc:
-        resolve_release(repo)
-    assert exc.value.rule == "release_dirty"
-
-
-def test_resolver_rejects_ambiguous_release_file(release_repo):
-    repo, _ = release_repo
-    nested = repo / "old-release"
-    nested.mkdir()
-    (nested / "protocol_release").write_text("old\n")
-    run_git(repo, "add", "old-release/protocol_release")
-    run_git(repo, "commit", "-m", "ambiguous wrapper")
-
-    with pytest.raises(ReleaseResolutionError) as exc:
-        resolve_release(repo)
-    assert exc.value.rule == "release_ambiguous"
-
-
-def test_resolver_rejects_malformed_manifest(tmp_path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    run_git(repo, "init", "-b", "main")
-    run_git(repo, "config", "user.name", "Fixture")
-    run_git(repo, "config", "user.email", "fixture@example.invalid")
-    write_release(repo, malformed="dish-planning-manifest.json")
-    commit_release(repo)
-
-    with pytest.raises(ReleaseResolutionError) as exc:
-        resolve_release(repo)
-    assert exc.value.rule == "manifest_malformed"
-
-
-def test_resolver_rejects_manifest_version_mismatch(tmp_path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    run_git(repo, "init", "-b", "main")
-    run_git(repo, "config", "user.name", "Fixture")
-    run_git(repo, "config", "user.email", "fixture@example.invalid")
-    write_release(repo, mismatch="dish-complete-task-manifest.json")
-    commit_release(repo)
-
-    with pytest.raises(ReleaseResolutionError) as exc:
-        resolve_release(repo)
-    assert exc.value.rule == "release_version_mismatch"
-
-
-def test_resolver_accepts_unchanged_files_from_earlier_commit(release_repo):
-    repo, _ = release_repo
-    version = "fixture-v2"
-    (repo / "protocol_release").write_text(version + "\n")
-    research = (repo / "dish-research-protocol.md").read_text() + "New rule.\n"
-    (repo / "dish-research-protocol.md").write_text(research)
-    for filename, manifest in (
-        ("dish-planning-manifest.json", planning_manifest(version)),
-        ("dish-complete-task-manifest.json", complete_manifest(version)),
-    ):
-        (repo / filename).write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n"
-        )
-    run_git(
-        repo,
-        "add",
-        "protocol_release",
-        "dish-research-protocol.md",
-        "dish-planning-manifest.json",
-        "dish-complete-task-manifest.json",
-    )
-    commit = run_git(repo, "commit", "-m", "fixture v2 partial content change")
-    del commit
-
-    release = resolve_release(repo)
-    assert release.version == version
-    assert release.protocols["planning"] == PROTOCOLS["dish-planning-protocol.md"]
-    assert (
-        release.protocols["verification"] == PROTOCOLS["dish-verification-protocol.md"]
-    )
-    assert release.protocols["research"] == research
-
-
-def test_resolver_rejects_non_atomic_release_advance(release_repo):
-    repo, _ = release_repo
-    (repo / "dish-research-protocol.md").write_text("changed early\n")
-    run_git(repo, "add", "dish-research-protocol.md")
-    run_git(repo, "commit", "-m", "premature governed change")
-
-    version = "fixture-v2"
-    (repo / "protocol_release").write_text(version + "\n")
-    for filename, manifest in (
-        ("dish-planning-manifest.json", planning_manifest(version)),
-        ("dish-complete-task-manifest.json", complete_manifest(version)),
-    ):
-        (repo / filename).write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n"
-        )
-    run_git(
-        repo,
-        "add",
-        "protocol_release",
-        "dish-planning-manifest.json",
-        "dish-complete-task-manifest.json",
-    )
-    run_git(repo, "commit", "-m", "late wrapper advance")
-
-    with pytest.raises(ReleaseResolutionError) as exc:
-        resolve_release(repo)
-    assert exc.value.rule == "release_commit_mismatch"
-
-
-def test_resolver_rejects_reused_release_version(release_repo):
-    repo, _ = release_repo
-    (repo / "protocol_release").write_text("fixture-v2-structured-title\n\n")
-    (repo / "dish-research-protocol.md").write_text("changed\n")
-    run_git(repo, "add", "protocol_release", "dish-research-protocol.md")
-    run_git(repo, "commit", "-m", "reuse release version")
-
-    with pytest.raises(ReleaseResolutionError) as exc:
-        resolve_release(repo)
-    assert exc.value.rule == "release_version_not_advanced"
-
-
-def test_resolver_rejects_governed_change_without_wrapper_advance(release_repo):
-    repo, _ = release_repo
-    (repo / "dish-research-protocol.md").write_text("changed without release bump\n")
-    run_git(repo, "add", "dish-research-protocol.md")
-    run_git(repo, "commit", "-m", "bad partial release")
-
-    with pytest.raises(ReleaseResolutionError) as exc:
-        resolve_release(repo)
-    assert exc.value.rule == "release_commit_mismatch"
-
-
-def test_frozen_release_survives_later_current_release_changes(release_repo):
-    repo, old_commit = release_repo
-    frozen = resolve_release(repo)
-    old_protocol = frozen.protocols["research"]
-
-    write_release(repo, version="fixture-v2")
-    new_commit = commit_release(repo, "fixture v2")
-    current = resolve_release(repo)
-
-    assert frozen.version == "fixture-v2-structured-title"
-    assert frozen.commit == old_commit
-    assert frozen.protocols["research"] == old_protocol
-    assert current.version == "fixture-v2"
-    assert current.commit == new_commit
-    assert current.protocols["research"] != old_protocol
 
 
 @pytest.mark.parametrize(
@@ -643,17 +487,12 @@ def test_begin_write_attempt_records_identity_and_compare_and_swap(tmp_path):
     )
 
 
-def test_resolver_preserves_committed_protocol_bytes_exactly(release_repo):
+def test_resolver_preserves_requested_protocol_bytes_exactly(release_repo):
     repo, _ = release_repo
     exact = "# Research protocol\nTrailing spaces stay.   \n\n"
     (repo / "dish-research-protocol.md").write_text(exact)
-    # The release wrapper advances atomically with every governed file, so rewrite
-    # all release files in one commit while preserving this exact protocol body.
-    write_release(repo, version="fixture-v2")
-    (repo / "dish-research-protocol.md").write_text(exact)
-    commit_release(repo, "exact fixture release")
 
-    release = resolve_release(repo)
+    release = resolve_release(repo, protocol_role="research")
     assert release.protocols["research"] == exact
 
 

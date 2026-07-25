@@ -141,8 +141,111 @@ fi
 
 if [[ -n "$repo" ]]; then
   git -C "$repo" add -- "${files[@]}"
-  git -C "$repo" commit "${commit_args[@]}"
 else
   git add -- "${files[@]}"
+fi
+
+# Honest protocol/schema changes are governed by the root DISH_VERSION file.
+# Inspect the actual staged diff after staging and block missing bumps; never
+# guess or auto-increment a version. Repositories without DISH_VERSION are
+# unaffected.
+python3 - "$repo_root" <<'PY_GUARD'
+import subprocess
+import sys
+from pathlib import Path
+
+repo = Path(sys.argv[1])
+
+
+def git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "-C", str(repo), *args],
+        check=check,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def show(spec: str) -> str | None:
+    completed = git("show", spec, check=False)
+    if completed.returncode != 0:
+        return None
+    return completed.stdout
+
+
+def parse_version(text: str | None, *, source: str) -> dict[str, str] | None:
+    if text is None:
+        return None
+    values: dict[str, str] = {}
+    allowed = {"PROTOCOL_VERSION", "SCHEMA_VERSION"}
+    for line_number, raw in enumerate(text.splitlines(), start=1):
+        if not raw.strip():
+            continue
+        if raw.count("=") != 1:
+            raise SystemExit(
+                f"Error: {source} line {line_number} must be KEY=VALUE"
+            )
+        key, value = raw.split("=", 1)
+        if key not in allowed:
+            raise SystemExit(f"Error: {source} has unknown key {key!r}")
+        if key in values:
+            raise SystemExit(f"Error: {source} contains duplicate key {key}")
+        if not value or value != value.strip():
+            raise SystemExit(f"Error: {source} has invalid value for {key}")
+        values[key] = value
+    missing = sorted(allowed - set(values))
+    if missing:
+        raise SystemExit(
+            f"Error: {source} is missing required key(s): {', '.join(missing)}"
+        )
+    return values
+
+staged_raw = git(
+    "diff", "--cached", "--name-only", "--diff-filter=ACMRD", "-z"
+).stdout
+staged = {item for item in staged_raw.split("\0") if item}
+protocol_files = {
+    "dish-planning-protocol.md",
+    "dish-research-protocol.md",
+    "dish-verification-protocol.md",
+    "dish-cooking-protocol.md",
+}
+protocol_changed = bool(staged & protocol_files)
+schema_changed = (
+    "dish-task-schema.json" in staged
+    or any(path.startswith("dish-schema-migrations/") for path in staged)
+)
+if not protocol_changed and not schema_changed:
+    raise SystemExit(0)
+
+new = parse_version(show(":DISH_VERSION"), source="staged DISH_VERSION")
+if new is None:
+    raise SystemExit(
+        "Error: governed dish protocol/schema changes require staged DISH_VERSION"
+    )
+old = parse_version(show("HEAD:DISH_VERSION"), source="HEAD DISH_VERSION")
+
+# Initial baseline introduction has no prior value to compare against.
+if old is None:
+    raise SystemExit(0)
+
+protocol_bumped = new["PROTOCOL_VERSION"] != old["PROTOCOL_VERSION"]
+schema_bumped = new["SCHEMA_VERSION"] != old["SCHEMA_VERSION"]
+if schema_changed and (not protocol_bumped or not schema_bumped):
+    raise SystemExit(
+        "Error: staged dish schema/migration changes require both "
+        "PROTOCOL_VERSION and SCHEMA_VERSION bumps in DISH_VERSION"
+    )
+if protocol_changed and not protocol_bumped:
+    raise SystemExit(
+        "Error: staged governed protocol changes require a "
+        "PROTOCOL_VERSION bump in DISH_VERSION"
+    )
+PY_GUARD
+
+if [[ -n "$repo" ]]; then
+  git -C "$repo" commit "${commit_args[@]}"
+else
   git commit "${commit_args[@]}"
 fi

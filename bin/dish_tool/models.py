@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -80,37 +80,89 @@ class SectionRegistry:
 
 @dataclass(frozen=True)
 class ResolvedRelease:
+    """One current Honest compatibility resolution.
+
+    ``protocols`` contains at most the single stage protocol requested by the
+    caller. ``manifests`` is a transitional projection from the authoritative
+    Honest task schema for commands not yet converted by later rollout steps.
+    """
+
     version: str
     commit: str
     root: Path
     protocols: Mapping[str, str]
     manifests: Mapping[str, Mapping[str, Any]]
     manifest_texts: Mapping[str, str]
+    schema_version: str = ""
+    schema: Mapping[str, Any] = field(default_factory=dict)
+    schema_text: str = ""
+    migration_metadata: Mapping[str, Mapping[str, Any]] = field(
+        default_factory=dict
+    )
+    requested_protocol_role: str | None = None
+
+    @property
+    def protocol_version(self) -> str:
+        return self.version
+
+    def protocol_for_role(self, role: str) -> str:
+        try:
+            return self.protocols[role]
+        except KeyError as exc:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                f"the {role} protocol was not loaded for this command",
+                rule="protocol_not_loaded",
+                details={"requested_role": role},
+            ) from exc
 
     def bundle_for_submission(self, submission_kind: str) -> dict[str, str]:
+        """Return the one stage protocol needed by the legacy start envelope.
+
+        This method deliberately no longer returns a Research+Verification
+        bundle. It exists only until the later command-lifecycle rewrite removes
+        the legacy database column.
+        """
+
         if submission_kind == "planning":
-            return {"planning": self.protocols["planning"]}
-        if submission_kind in {"initial", "change"}:
-            return {
-                "research": self.protocols["research"],
-                "verification": self.protocols["verification"],
-            }
-        raise DishRuleError(
-            "INVALID_ARGUMENT",
-            f"unknown submission kind: {submission_kind!r}",
-            rule="invalid_submission_kind",
-        )
+            role = "planning"
+        elif submission_kind in {"initial", "change"}:
+            role = "research"
+        else:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                f"unknown submission kind: {submission_kind!r}",
+                rule="invalid_submission_kind",
+            )
+        return {role: self.protocol_for_role(role)}
 
     def manifest_for_submission(self, submission_kind: str) -> Mapping[str, Any]:
         if submission_kind == "planning":
-            return copy.deepcopy(self.manifests["planning"])
-        if submission_kind in {"initial", "change"}:
-            return copy.deepcopy(self.manifests["complete_task"])
-        raise DishRuleError(
-            "INVALID_ARGUMENT",
-            f"unknown submission kind: {submission_kind!r}",
-            rule="invalid_submission_kind",
-        )
+            key = "planning"
+        elif submission_kind in {"initial", "change"}:
+            key = "complete_task"
+        else:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                f"unknown submission kind: {submission_kind!r}",
+                rule="invalid_submission_kind",
+            )
+        try:
+            return copy.deepcopy(self.manifests[key])
+        except KeyError as exc:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "the current task schema has no legacy validation adapter",
+                rule="schema_adapter_missing",
+                details={"adapter": key},
+            ) from exc
+
+
+@dataclass(frozen=True)
+class VerificationProtocolSnapshot:
+    identity: str
+    text: str
+    source: str
 
 
 @dataclass(frozen=True)

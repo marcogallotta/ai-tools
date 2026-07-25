@@ -1,35 +1,323 @@
-"""Committed protocol-release resolution."""
+"""Current Honest protocol/schema compatibility resolution."""
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .constants import (
-    GOVERNED_RELEASE_FILENAMES,
-    MANIFEST_FILENAMES,
+    DISH_VERSION_FILENAME,
+    HONEST_PATH_ENV,
     PROTOCOL_FILENAMES,
-    RELEASE_VERSION_FILENAME,
+    SUPPORTED_PROTOCOL_VERSION,
+    SUPPORTED_TASK_SCHEMA_VERSION,
+    TASK_SCHEMA_FILENAME,
 )
 from .errors import ReleaseResolutionError
-from .models import ResolvedRelease
-from .validation import validate_manifest_shape
+from .models import ResolvedRelease, VerificationProtocolSnapshot
+from .validation import validate_task_schema_shape
 
-_RELEASE_VERSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_VERSION_KEYS = ("PROTOCOL_VERSION", "SCHEMA_VERSION")
+_GIT_RELEASE_RE = re.compile(r"^(?:git:)?(?P<commit>[0-9a-f]{7,64})$")
+_HASH_RELEASE_RE = re.compile(
+    r"^sha256:(?P<digest>[0-9a-f]{64}); "
+    r"read-at=(?P<read_at>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z)$"
+)
 
 
-def _git(
-    repo: Path, *args: str, check: bool = True, preserve_output: bool = False
-) -> str:
+def configured_honest_path(
+    environ: Mapping[str, str] | None = None,
+) -> Path:
+    """Return the explicitly configured rollout checkout or fail closed."""
+
+    env = os.environ if environ is None else environ
+    raw = str(env.get(HONEST_PATH_ENV, "")).strip()
+    if not raw:
+        raise ReleaseResolutionError(
+            "honest_path_unconfigured",
+            f"{HONEST_PATH_ENV} must name the Honest rollout checkout",
+            environment_variable=HONEST_PATH_ENV,
+        )
+    return Path(raw).expanduser().resolve()
+
+
+def parse_dish_version(text: str) -> dict[str, str]:
+    """Parse the deliberately tiny two-key ``DISH_VERSION`` format."""
+
+    values: dict[str, str] = {}
+    for line_number, raw_line in enumerate(text.splitlines(), start=1):
+        if not raw_line.strip():
+            continue
+        if raw_line.count("=") != 1:
+            raise ReleaseResolutionError(
+                "dish_version_malformed",
+                f"DISH_VERSION line {line_number} must be KEY=VALUE",
+                line=line_number,
+            )
+        key, value = raw_line.split("=", 1)
+        if key not in _VERSION_KEYS:
+            raise ReleaseResolutionError(
+                "dish_version_unknown_key",
+                f"DISH_VERSION line {line_number} has unknown key {key!r}",
+                line=line_number,
+                key=key,
+            )
+        if key in values:
+            raise ReleaseResolutionError(
+                "dish_version_duplicate_key",
+                f"DISH_VERSION contains duplicate key {key}",
+                key=key,
+            )
+        if not value:
+            raise ReleaseResolutionError(
+                "dish_version_empty_value",
+                f"DISH_VERSION key {key} has an empty value",
+                key=key,
+            )
+        if value != value.strip():
+            raise ReleaseResolutionError(
+                "dish_version_malformed",
+                f"DISH_VERSION value for {key} must not contain surrounding whitespace",
+                key=key,
+            )
+        values[key] = value
+
+    missing = [key for key in _VERSION_KEYS if key not in values]
+    if missing:
+        raise ReleaseResolutionError(
+            "dish_version_missing_key",
+            "DISH_VERSION is missing required key(s)",
+            keys=missing,
+        )
+    return values
+
+
+def _read_required_text(path: Path, *, rule: str, label: str) -> str:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ReleaseResolutionError(rule, f"missing {label}: {path.name}") from exc
+    except (OSError, UnicodeError) as exc:
+        raise ReleaseResolutionError(
+            rule, f"unable to read {label}: {path.name}"
+        ) from exc
+    if not text.strip():
+        raise ReleaseResolutionError(rule, f"{label} is empty: {path.name}")
+    return text
+
+
+def _load_json(path: Path, *, missing_rule: str, malformed_rule: str) -> tuple[str, Any]:
+    raw = _read_required_text(path, rule=missing_rule, label=path.name)
+    try:
+        return raw, json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ReleaseResolutionError(
+            malformed_rule,
+            f"invalid JSON in {path.name}",
+            line=exc.lineno,
+            column=exc.colno,
+        ) from exc
+
+
+def _validate_migration(
+    metadata: Any,
+    *,
+    filename: str,
+    protocol_version: str,
+    schema_version: str,
+) -> dict[str, Any]:
+    if not isinstance(metadata, dict):
+        raise ReleaseResolutionError(
+            "migration_malformed", f"{filename} must contain a JSON object"
+        )
+    required = {
+        "migration_id",
+        "from_schema_version",
+        "to_schema_version",
+        "protocol_version",
+        "automatic",
+        "description",
+        "source_ids",
+        "operations",
+    }
+    if set(metadata) != required:
+        raise ReleaseResolutionError(
+            "migration_malformed",
+            f"{filename} has the wrong keys",
+            missing=sorted(required - set(metadata)),
+            unknown=sorted(set(metadata) - required),
+        )
+    if metadata["to_schema_version"] != schema_version:
+        raise ReleaseResolutionError(
+            "migration_version_mismatch",
+            f"{filename} targets the wrong schema version",
+            expected=schema_version,
+            actual=metadata["to_schema_version"],
+        )
+    if metadata["protocol_version"] != protocol_version:
+        raise ReleaseResolutionError(
+            "migration_version_mismatch",
+            f"{filename} declares the wrong protocol version",
+            expected=protocol_version,
+            actual=metadata["protocol_version"],
+        )
+    if metadata["automatic"] is not False:
+        raise ReleaseResolutionError(
+            "migration_malformed",
+            f"{filename} must be explicitly non-automatic in V1",
+        )
+    for key in ("migration_id", "description"):
+        if not isinstance(metadata[key], str) or not metadata[key].strip():
+            raise ReleaseResolutionError(
+                "migration_malformed", f"{filename} has an empty {key}"
+            )
+    for key in ("source_ids", "operations"):
+        value = metadata[key]
+        if not isinstance(value, list) or not value:
+            raise ReleaseResolutionError(
+                "migration_malformed", f"{filename} {key} must be a non-empty list"
+            )
+    return copy.deepcopy(metadata)
+
+
+def resolve_release(
+    worktree: str | os.PathLike[str] | None,
+    *,
+    protocol_role: str | None = None,
+    include_migrations: bool = False,
+) -> ResolvedRelease:
+    """Resolve one supported current Honest protocol/schema pair.
+
+    The checkout need not be a Git worktree. Only the requested stage protocol is
+    loaded; migration files are read only for an explicit migration operation.
+    """
+
+    if worktree is None or not str(worktree).strip():
+        raise ReleaseResolutionError(
+            "honest_path_unconfigured",
+            "an explicit Honest rollout path is required",
+        )
+    root = Path(worktree).expanduser().resolve()
+    if not root.is_dir():
+        raise ReleaseResolutionError(
+            "honest_path_missing", f"Honest rollout path does not exist: {root}"
+        )
+
+    version_path = root / DISH_VERSION_FILENAME
+    try:
+        version_text = version_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise ReleaseResolutionError(
+            "dish_version_missing",
+            f"DISH_VERSION missing in configured Honest checkout: {root}",
+        ) from exc
+    except (OSError, UnicodeError) as exc:
+        raise ReleaseResolutionError(
+            "dish_version_unreadable", "unable to read DISH_VERSION"
+        ) from exc
+    versions = parse_dish_version(version_text)
+    protocol_version = versions["PROTOCOL_VERSION"]
+    schema_version = versions["SCHEMA_VERSION"]
+
+    if protocol_version != SUPPORTED_PROTOCOL_VERSION:
+        raise ReleaseResolutionError(
+            "protocol_version_unsupported",
+            "configured Honest protocol version is unsupported",
+            expected=SUPPORTED_PROTOCOL_VERSION,
+            actual=protocol_version,
+        )
+    if schema_version != SUPPORTED_TASK_SCHEMA_VERSION:
+        raise ReleaseResolutionError(
+            "schema_version_unsupported",
+            "configured Honest schema version is unsupported",
+            expected=SUPPORTED_TASK_SCHEMA_VERSION,
+            actual=schema_version,
+        )
+
+    schema_text, raw_schema = _load_json(
+        root / TASK_SCHEMA_FILENAME,
+        missing_rule="schema_missing",
+        malformed_rule="schema_malformed",
+    )
+    schema = validate_task_schema_shape(raw_schema, filename=TASK_SCHEMA_FILENAME)
+    if schema["protocol_version"] != protocol_version:
+        raise ReleaseResolutionError(
+            "schema_protocol_version_mismatch",
+            "task schema protocol_version disagrees with DISH_VERSION",
+            dish_version=protocol_version,
+            schema=schema["protocol_version"],
+        )
+    if schema["schema_version"] != schema_version:
+        raise ReleaseResolutionError(
+            "schema_version_mismatch",
+            "task schema schema_version disagrees with DISH_VERSION",
+            dish_version=schema_version,
+            schema=schema["schema_version"],
+        )
+
+    protocols: dict[str, str] = {}
+    if protocol_role is not None:
+        if protocol_role not in PROTOCOL_FILENAMES:
+            raise ReleaseResolutionError(
+                "protocol_role_unknown",
+                f"unknown protocol role: {protocol_role}",
+                role=protocol_role,
+            )
+        filename = schema["protocol_files"][protocol_role]
+        protocols[protocol_role] = _read_required_text(
+            root / filename,
+            rule="protocol_missing",
+            label=f"{protocol_role} protocol",
+        )
+
+    migrations: dict[str, dict[str, Any]] = {}
+    if include_migrations:
+        for relative in schema["migration_files"]:
+            path = root / relative
+            _, raw_metadata = _load_json(
+                path,
+                missing_rule="migration_missing",
+                malformed_rule="migration_malformed",
+            )
+            migrations[relative] = _validate_migration(
+                raw_metadata,
+                filename=relative,
+                protocol_version=protocol_version,
+                schema_version=schema_version,
+            )
+
+    adapters = copy.deepcopy(schema["legacy_validation_adapter"])
+    adapter_texts = {
+        kind: json.dumps(value, ensure_ascii=False, sort_keys=True)
+        for kind, value in adapters.items()
+    }
+    return ResolvedRelease(
+        version=protocol_version,
+        commit="",
+        root=root,
+        protocols=protocols,
+        manifests=adapters,
+        manifest_texts=adapter_texts,
+        schema_version=schema_version,
+        schema=copy.deepcopy(schema),
+        schema_text=schema_text,
+        migration_metadata=migrations,
+        requested_protocol_role=protocol_role,
+    )
+
+
+def _git(repo: Path, *args: str, preserve_output: bool = False) -> str:
     try:
         completed = subprocess.run(
             ["git", "-C", str(repo), *args],
-            check=check,
+            check=True,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -37,205 +325,123 @@ def _git(
     except (OSError, subprocess.CalledProcessError) as exc:
         stderr = getattr(exc, "stderr", "") or ""
         raise ReleaseResolutionError(
-            "release_git_error",
-            "unable to inspect protocol release Git worktree",
+            "verification_release_unreachable",
+            "recorded Verification protocol release is unreachable",
             stderr=stderr.strip(),
         ) from exc
     return completed.stdout if preserve_output else completed.stdout.strip()
 
 
-def _find_release_file(git_root: Path) -> Path:
-    matches = [
-        path
-        for path in git_root.rglob(RELEASE_VERSION_FILENAME)
-        if ".git" not in path.parts and path.is_file()
-    ]
-    if not matches:
-        raise ReleaseResolutionError(
-            "release_missing", f"missing {RELEASE_VERSION_FILENAME}"
-        )
-    if len(matches) != 1:
-        raise ReleaseResolutionError(
-            "release_ambiguous",
-            f"found {len(matches)} {RELEASE_VERSION_FILENAME} files",
-            paths=[str(path.relative_to(git_root)) for path in matches],
-        )
-    return matches[0]
+def current_verification_protocol_release(
+    worktree: str | os.PathLike[str],
+    *,
+    read_at: datetime | None = None,
+) -> VerificationProtocolSnapshot:
+    """Resolve the current exact Verification protocol identity."""
 
-
-def resolve_release(worktree: str | os.PathLike[str]) -> ResolvedRelease:
-    requested = Path(worktree).expanduser().resolve()
-    if not requested.exists():
-        raise ReleaseResolutionError(
-            "release_missing", f"protocol worktree does not exist: {requested}"
-        )
-    try:
-        git_root = Path(_git(requested, "rev-parse", "--show-toplevel")).resolve()
-    except ReleaseResolutionError as exc:
-        raise ReleaseResolutionError(
-            "release_git_error", "protocol release path is not a Git worktree"
-        ) from exc
-
-    release_file = _find_release_file(git_root)
-    release_root = release_file.parent
-    required_paths = [release_file] + [
-        release_root / filename for filename in GOVERNED_RELEASE_FILENAMES
-    ]
-    missing = [path.name for path in required_paths if not path.is_file()]
-    if missing:
-        raise ReleaseResolutionError(
-            "release_incomplete", "protocol release is incomplete", files=missing
-        )
-
-    relative_paths = [str(path.relative_to(git_root)) for path in required_paths]
-    dirty = _git(git_root, "status", "--porcelain", "--", *relative_paths)
-    if dirty:
-        raise ReleaseResolutionError(
-            "release_dirty",
-            "protocol release has uncommitted or untracked changes",
-            status=dirty.splitlines(),
-        )
-    for relative in relative_paths:
-        try:
-            _git(git_root, "ls-files", "--error-unmatch", "--", relative)
-        except ReleaseResolutionError as exc:
-            raise ReleaseResolutionError(
-                "release_incomplete",
-                "protocol release contains an untracked governed file",
-                file=relative,
-            ) from exc
-
-    release_relative = str(release_file.relative_to(git_root))
-    release_commits = _git(
-        git_root, "log", "--format=%H", "--", release_relative
-    ).splitlines()
-    if not release_commits:
-        raise ReleaseResolutionError(
-            "release_incomplete", "protocol_release has no commit binding"
-        )
-    release_commit = release_commits[0]
-    previous_release_commit = release_commits[1] if len(release_commits) > 1 else None
-
-    governed_relative = [
-        str((release_root / filename).relative_to(git_root))
-        for filename in GOVERNED_RELEASE_FILENAMES
-    ]
-    later_governed_commits = _git(
-        git_root,
-        "log",
-        "--format=%H",
-        f"{release_commit}..HEAD",
-        "--",
-        *governed_relative,
+    root = Path(worktree).expanduser().resolve()
+    path = root / PROTOCOL_FILENAMES["verification"]
+    text = _read_required_text(
+        path, rule="protocol_missing", label="verification protocol"
     )
-    if later_governed_commits:
-        raise ReleaseResolutionError(
-            "release_commit_mismatch",
-            "governed files changed after the current protocol_release commit",
-            commits=later_governed_commits.splitlines(),
-        )
-    if previous_release_commit is None:
-        initial_commits = {
-            _git(git_root, "log", "-1", "--format=%H", "--", relative)
-            for relative in governed_relative
-        }
-        if initial_commits != {release_commit}:
-            raise ReleaseResolutionError(
-                "release_commit_mismatch",
-                "the initial governed release was not committed atomically",
-                commits=sorted(initial_commits),
-            )
-    else:
-        release_window_commits = set(
-            _git(
+    try:
+        git_root = Path(_git(root, "rev-parse", "--show-toplevel")).resolve()
+        relative = path.resolve().relative_to(git_root).as_posix()
+        commit = _git(git_root, "log", "-1", "--format=%H", "--", relative)
+        if commit:
+            committed_text = _git(
                 git_root,
-                "log",
-                "--format=%H",
-                f"{previous_release_commit}..{release_commit}",
-                "--",
-                *governed_relative,
-            ).splitlines()
-        )
-        if not release_window_commits <= {release_commit}:
-            raise ReleaseResolutionError(
-                "release_commit_mismatch",
-                "governed files changed before the wrapper advanced atomically",
-                commits=sorted(release_window_commits),
+                "show",
+                f"{commit}:{relative}",
+                preserve_output=True,
             )
-    for relative in relative_paths:
-        try:
-            _git(git_root, "cat-file", "-e", f"{release_commit}:{relative}")
-        except ReleaseResolutionError as exc:
-            raise ReleaseResolutionError(
-                "release_incomplete",
-                "a governed file did not exist at the protocol_release commit",
-                file=relative,
-            ) from exc
+            if committed_text == text:
+                return VerificationProtocolSnapshot(
+                    identity=commit,
+                    text=text,
+                    source="git",
+                )
+    except (ReleaseResolutionError, ValueError):
+        pass
 
-    committed_text = {
-        path.name: _git(
+    timestamp = read_at or datetime.now(timezone.utc)
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    stamp = timestamp.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return VerificationProtocolSnapshot(
+        identity=f"sha256:{digest}; read-at={stamp}",
+        text=text,
+        source="sha256",
+    )
+
+
+def resolve_verification_protocol(
+    worktree: str | os.PathLike[str], recorded_release: str
+) -> VerificationProtocolSnapshot:
+    """Recover exact Verification text without consulting current compatibility."""
+
+    root = Path(worktree).expanduser().resolve()
+    path = root / PROTOCOL_FILENAMES["verification"]
+    recorded = str(recorded_release or "").strip()
+
+    git_match = _GIT_RELEASE_RE.fullmatch(recorded)
+    if git_match:
+        commit = git_match.group("commit")
+        try:
+            git_root = Path(_git(root, "rev-parse", "--show-toplevel")).resolve()
+            relative = path.resolve().relative_to(git_root).as_posix()
+        except (ReleaseResolutionError, ValueError) as exc:
+            raise ReleaseResolutionError(
+                "verification_release_unreachable",
+                "recorded Verification Git release is unreachable",
+                release=recorded,
+            ) from exc
+        text = _git(
             git_root,
             "show",
-            f"{release_commit}:{path.relative_to(git_root).as_posix()}",
+            f"{commit}:{relative}",
             preserve_output=True,
         )
-        for path in required_paths
-    }
-    version = committed_text[RELEASE_VERSION_FILENAME].strip()
-    if not version or not _RELEASE_VERSION_RE.fullmatch(version):
-        raise ReleaseResolutionError(
-            "release_malformed", "protocol_release contains an invalid version"
+        if not text.strip():
+            raise ReleaseResolutionError(
+                "verification_release_unreachable",
+                "recorded Verification protocol text is empty",
+                release=recorded,
+            )
+        return VerificationProtocolSnapshot(
+            identity=recorded,
+            text=text,
+            source="git",
         )
-    if previous_release_commit is not None:
-        previous_version = _git(
-            git_root,
-            "show",
-            f"{previous_release_commit}:{release_relative}",
-            preserve_output=True,
-        ).strip()
-        if previous_version == version:
-            raise ReleaseResolutionError(
-                "release_version_not_advanced",
-                "protocol_release version was reused instead of advanced",
-                version=version,
-            )
 
-    protocols: dict[str, str] = {}
-    for role, filename in PROTOCOL_FILENAMES.items():
-        content = committed_text[filename]
-        if not content.strip():
-            raise ReleaseResolutionError(
-                "release_incomplete", f"protocol file is empty: {filename}"
-            )
-        protocols[role] = content
-
-    manifests: dict[str, dict[str, Any]] = {}
-    manifest_texts: dict[str, str] = {}
-    for kind, filename in MANIFEST_FILENAMES.items():
-        raw = committed_text[filename]
+    hash_match = _HASH_RELEASE_RE.fullmatch(recorded)
+    if hash_match:
         try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
+            datetime.fromisoformat(hash_match.group("read_at").replace("Z", "+00:00"))
+        except ValueError as exc:
             raise ReleaseResolutionError(
-                "manifest_malformed",
-                f"invalid JSON in {filename}",
-                line=exc.lineno,
-                column=exc.colno,
+                "verification_release_malformed",
+                "recorded Verification hash release has an invalid timestamp",
             ) from exc
-        parsed = validate_manifest_shape(parsed, expected_kind=kind, filename=filename)
-        if parsed.get("protocol_release") != version:
+        text = _read_required_text(
+            path, rule="verification_release_unreachable", label="verification protocol"
+        )
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if digest != hash_match.group("digest"):
             raise ReleaseResolutionError(
-                "release_version_mismatch",
-                f"{filename} is not bound to protocol_release {version}",
+                "verification_release_unreachable",
+                "recorded Verification hash no longer matches recoverable text",
+                release=recorded,
             )
-        manifests[kind] = parsed
-        manifest_texts[kind] = raw
+        return VerificationProtocolSnapshot(
+            identity=recorded,
+            text=text,
+            source="sha256",
+        )
 
-    return ResolvedRelease(
-        version=version,
-        commit=release_commit,
-        root=release_root,
-        protocols=copy.deepcopy(protocols),
-        manifests=copy.deepcopy(manifests),
-        manifest_texts=copy.deepcopy(manifest_texts),
+    raise ReleaseResolutionError(
+        "verification_release_malformed",
+        "Verification protocol release must be a Git commit or canonical sha256/read-at value",
+        release=recorded,
     )

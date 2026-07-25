@@ -1,0 +1,193 @@
+{
+  "schema_kind": "dish-task",
+  "protocol_version": "1.0.0",
+  "schema_version": "1",
+  "protocol_files": {
+    "planning": "dish-planning-protocol.md",
+    "research": "dish-research-protocol.md",
+    "verification": "dish-verification-protocol.md",
+    "cooking": "dish-cooking-protocol.md"
+  },
+  "migration_files": [
+    "dish-schema-migrations/0001-initial.json"
+  ],
+  "rules": [
+    {
+      "id": "planning.brief.exact-fields",
+      "source": "dish-planning-protocol.md#Handoff",
+      "kind": "syntax",
+      "description": "Planning brief has the approved exact field set."
+    },
+    {
+      "id": "research.canonical-task",
+      "source": "dish-research-protocol.md#Canonical task",
+      "kind": "syntax",
+      "description": "Research writes one canonical task document."
+    },
+    {
+      "id": "verification.state-block",
+      "source": "dish-verification-protocol.md#Fixed state block",
+      "kind": "transition",
+      "description": "The seven state fields use only legal combinations."
+    },
+    {
+      "id": "cooking.readiness",
+      "source": "dish-cooking-protocol.md#Readiness gate",
+      "kind": "semantic",
+      "description": "Cooking proceeds only from Status ready unless Marco overrides."
+    }
+  ],
+  "task_document": {
+    "planning_brief_fields": [
+      "Dish candidate",
+      "Purpose",
+      "Role",
+      "Priors",
+      "Locks",
+      "Exemptions",
+      "Research emphasis",
+      "Destination section"
+    ],
+    "state_fields": [
+      "Status",
+      "Status detail",
+      "Resume status",
+      "Verification protocol release",
+      "Researched by",
+      "Verified by",
+      "Self-verified"
+    ],
+    "schema_metadata_label": "Schema version",
+    "destination_serialization": "<section name> — <section gid>",
+    "main_role_title_tag": null,
+    "non_main_role_title_tag": "non-main"
+  },
+  "legacy_validation_adapter": {
+    "planning": {
+      "contextual_labels": [],
+      "destination_section": {
+        "label": "Destination section",
+        "pattern": "^(?P<name>[^()]+?)\\s*\\((?P<gid>[0-9]+)\\)$"
+      },
+      "exemptions": {
+        "allowed_tags": [
+          "nutrition-kcal",
+          "nutrition-protein",
+          "nutrition-fat"
+        ],
+        "label": "Exemptions",
+        "none_value": "None"
+      },
+      "headings": {
+        "allowed": [
+          "# PLANNING BRIEF"
+        ],
+        "exactly_once": [
+          "# PLANNING BRIEF"
+        ],
+        "optional": [],
+        "required": [
+          "# PLANNING BRIEF"
+        ]
+      },
+      "labels": {
+        "allowed": [
+          "Destination section",
+          "Exemptions",
+          "Research notes"
+        ],
+        "exactly_once": [
+          "Destination section",
+          "Exemptions"
+        ],
+        "optional": [
+          "Research notes"
+        ],
+        "required": [
+          "Destination section",
+          "Exemptions"
+        ]
+      },
+      "manifest_kind": "planning"
+    },
+    "complete_task": {
+      "contextual_labels": [
+        {
+          "heading": "## QUANTITIES",
+          "required_label": "Portions"
+        }
+      ],
+      "destination_section": {
+        "label": "Destination section",
+        "pattern": "^(?P<name>[^()]+?)\\s*\\((?P<gid>[0-9]+)\\)$"
+      },
+      "exemptions": {
+        "allowed_tags": [
+          "nutrition-kcal",
+          "nutrition-protein",
+          "nutrition-fat"
+        ],
+        "label": "Exemptions",
+        "none_value": "None"
+      },
+      "headings": {
+        "allowed": [
+          "# DISH",
+          "## QUANTITIES",
+          "## PROCESS RECORD"
+        ],
+        "exactly_once": [
+          "# DISH",
+          "## PROCESS RECORD"
+        ],
+        "optional": [
+          "## QUANTITIES"
+        ],
+        "required": [
+          "# DISH",
+          "## PROCESS RECORD"
+        ]
+      },
+      "labels": {
+        "allowed": [
+          "Exemptions",
+          "Destination section",
+          "Self-verified",
+          "Verification",
+          "Portions"
+        ],
+        "exactly_once": [
+          "Exemptions",
+          "Destination section",
+          "Self-verified",
+          "Verification"
+        ],
+        "optional": [
+          "Portions"
+        ],
+        "required": [
+          "Exemptions",
+          "Destination section",
+          "Self-verified",
+          "Verification"
+        ]
+      },
+      "manifest_kind": "complete_task",
+      "title": {
+        "marker_pattern": "^[^\\[\\]\\r\\n]+$",
+        "marker_prefix": "[",
+        "marker_suffix": "]",
+        "role_tags": [
+          "side",
+          "dessert",
+          "component",
+          "condiment",
+          "benchmark",
+          "comparison"
+        ],
+        "separator": " — ",
+        "unreviewed_blocker": "blockers unreviewed"
+      }
+    }
+  }
+}

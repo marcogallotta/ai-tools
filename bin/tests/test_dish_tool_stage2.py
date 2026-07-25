@@ -66,6 +66,8 @@ def release_fixture() -> ResolvedRelease:
             "planning": json.loads(planning_text),
             "complete_task": json.loads(complete_text),
         },
+        schema_version="1",
+        schema={"schema_kind": "dish-task"},
         manifest_texts={
             "planning": planning_text,
             "complete_task": complete_text,
@@ -263,7 +265,8 @@ def test_read_returns_complete_excluded_cooking_task(tmp_path):
         "canonical": True,
         "fields": CANONICAL_TITLE_FIELDS,
         "errors": [],
-        "protocol_release": "fixture-v2-structured-title",
+        "protocol_version": "fixture-v2-structured-title",
+        "schema_version": "1",
     }
     assert result["task_gid"] == "ref-task"
     assert len(audit_rows(application)) == 1
@@ -320,12 +323,13 @@ def test_start_accepts_each_valid_starting_shape(
 
     assert result["ok"] is True
     assert result["state"] == "drafting"
-    frozen = result["data"]["frozen_release"]
-    assert frozen["protocol_release"] == "fixture-v2-structured-title"
-    assert frozen["release_commit"] == "fixture-commit"
-    assert frozen["protocol_bundle"]
-    assert frozen["canonical_manifest"]["protocol_release"] == "fixture-v2-structured-title"
-    assert frozen["canonical_manifest_text"] == release_fixture().manifest_texts[
+    compatibility = result["data"]["current_compatibility"]
+    assert compatibility["protocol_version"] == "fixture-v2-structured-title"
+    assert compatibility["schema_version"] == "1"
+    expected_role = "planning" if kind == "planning" else "research"
+    assert set(compatibility["stage_protocol"]) == {expected_role}
+    assert compatibility["legacy_validation_adapter"]
+    assert compatibility["legacy_validation_adapter_text"] == release_fixture().manifest_texts[
         "planning" if kind == "planning" else "complete_task"
     ]
     row = application.conn.execute("SELECT * FROM submissions").fetchone()
@@ -533,8 +537,9 @@ def test_failed_start_audit_keeps_release_and_all_validation_rules(tmp_path):
 
     details = json.loads(audit_rows(application)[0]["details"])
     assert result["code"] == "VALIDATION_FAILED"
-    assert details["protocol_release"] == "fixture-v2-structured-title"
-    assert details["release_commit"] == "fixture-commit"
+    assert details["protocol_version"] == "fixture-v2-structured-title"
+    assert details["schema_version"] == "1"
+    assert details["protocol_role"] == "research"
     assert details["submission_kind"] == "initial"
     assert details["errors"] == result["errors"]
 

@@ -1,0 +1,19 @@
+{
+  "migration_id": "0001-initial",
+  "from_schema_version": null,
+  "to_schema_version": "1",
+  "protocol_version": "1.0.0",
+  "automatic": false,
+  "description": "Establish schema version 1; legacy tasks require individual reconciliation and are never inferred ready.",
+  "source_ids": [
+    "planning.brief.exact-fields",
+    "research.canonical-task",
+    "verification.state-block"
+  ],
+  "operations": [
+    {
+      "type": "manual-reconciliation",
+      "description": "Build and validate the canonical current task before setting Schema version 1."
+    }
+  ]
+}

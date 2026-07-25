@@ -10,7 +10,6 @@ EXCLUDED_SECTION_GIDS = frozenset(
     {SOURCING_SECTION_GID, REFERENCE_SECTION_GID}
 )
 DEFAULT_DB_PATH = Path("~/ai-tools/var/dish-tool.db").expanduser()
-DEFAULT_PROTOCOL_WORKTREE = Path("~/honest-pantry").expanduser()
 
 AGENT_FAMILIES = {
     "claude": "claude",
@@ -96,18 +95,31 @@ assert RECOVERY_QUARANTINE_SECONDS > (
     MAX_REQUEST_LIFETIME_SECONDS + RECOVERY_SAFETY_MARGIN_SECONDS
 )
 
-RELEASE_VERSION_FILENAME = "protocol_release"
+# Current Honest compatibility contract. These are engine capabilities, not a
+# task-pinned protocol release. The exact pair must match Honest/DISH_VERSION.
+HONEST_PATH_ENV = "DISH_HONEST_PATH"
+DISH_VERSION_FILENAME = "DISH_VERSION"
+TASK_SCHEMA_FILENAME = "dish-task-schema.json"
+SCHEMA_MIGRATION_DIRECTORY = "dish-schema-migrations"
+SUPPORTED_PROTOCOL_VERSION = "1.0.0"
+SUPPORTED_TASK_SCHEMA_VERSION = "1"
+
 PROTOCOL_FILENAMES = {
     "planning": "dish-planning-protocol.md",
     "research": "dish-research-protocol.md",
     "verification": "dish-verification-protocol.md",
+    "cooking": "dish-cooking-protocol.md",
 }
-MANIFEST_FILENAMES = {
-    "planning": "dish-planning-manifest.json",
-    "complete_task": "dish-complete-task-manifest.json",
-}
-GOVERNED_RELEASE_FILENAMES = tuple(PROTOCOL_FILENAMES.values()) + tuple(
-    MANIFEST_FILENAMES.values()
-)
 
+# Retained only as a transitional adapter for the pre-rewrite command lifecycle.
+# The authoritative validation configuration is TASK_SCHEMA_FILENAME in Honest.
+MANIFEST_FILENAMES = {
+    "planning": "planning",
+    "complete_task": "complete_task",
+}
+
+GOVERNED_PROTOCOL_FILENAMES = tuple(PROTOCOL_FILENAMES.values())
+GOVERNED_SCHEMA_FILENAMES = (TASK_SCHEMA_FILENAME,)
+
+# Local SQLite schema version; unrelated to Honest's task SCHEMA_VERSION.
 SCHEMA_VERSION = 2

@@ -11,10 +11,10 @@ from typing import Sequence
 
 from .backend import AsanaBackend
 from .commands import DishApplication
-from .constants import DEFAULT_DB_PATH, DEFAULT_PROTOCOL_WORKTREE
+from .constants import DEFAULT_DB_PATH
 from .database import initialize_database
 from .errors import DishRuleError
-from .releases import resolve_release
+from .releases import configured_honest_path, resolve_release
 from .results import error_envelope, exit_status
 
 
@@ -86,14 +86,14 @@ def build_parser() -> JsonArgumentParser:
 
 def build_application() -> DishApplication:
     db_path = Path(os.environ.get("DISH_DB_PATH", str(DEFAULT_DB_PATH))).expanduser()
-    release_root = Path(
-        os.environ.get("DISH_PROTOCOL_WORKTREE", str(DEFAULT_PROTOCOL_WORKTREE))
-    ).expanduser()
+    honest_root = configured_honest_path()
     conn = initialize_database(db_path)
     return DishApplication(
         conn,
         AsanaBackend(),
-        release_loader=lambda: resolve_release(release_root),
+        release_loader=lambda role=None: resolve_release(
+            honest_root, protocol_role=role
+        ),
     )
 
 
@@ -132,6 +132,10 @@ def main(
     owned_application = application is None
     try:
         app = application or build_application()
+    except DishRuleError as exc:
+        result = error_envelope(context["command"] or "unknown", exc)
+        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        return exit_status(result["code"])
     except Exception:
         error = DishRuleError(
             "INTERNAL_ERROR",

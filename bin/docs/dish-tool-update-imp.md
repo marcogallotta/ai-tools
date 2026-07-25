@@ -47,43 +47,9 @@ Implementation must preserve all of these:
 
 ## Implementation sequence
 
-Land Steps 0–12 as independently testable commits. A later step may depend on earlier database or schema migrations, but each commit must leave the repository testable. Do not activate multi-agent use before Step 11’s shared-service gate passes.
+Land Steps 1–12 as independently testable commits. A later step may depend on earlier database or schema migrations, but each commit must leave the repository testable. Do not activate multi-agent use before Step 11’s shared-service gate passes.
 
 The existing passing suite is a regression baseline, not a conformance certificate. Preserve unrelated `asana`, hook, and CLI behaviour while replacing dish tests that encode obsolete requirements.
-
----
-
-## Step 0 — freeze the target baseline and block false compatibility claims
-
-Before changing behaviour, create a clear compatibility boundary.
-
-### Files
-
-- `bin/dish_tool/constants.py`
-- `bin/dish_tool/results.py`
-- `bin/dish_tool/cli.py`
-- `bin/dish_tool/admin_cli.py`
-- `bin/docs/dish-tool-activation.md`
-- new temporary compatibility fixture under `bin/tests/fixtures/`
-
-### Work
-
-- Add one explicit incompatibility result for the currently installed old workflow when used against the new protocol/schema baseline.
-- Ensure no command can return a result implying protocol `ready`, valid Verification, or compatible handoff until the new compatibility layer is implemented.
-- Keep `dish read` available for diagnostic reads through the tool, but label output with the unsupported/legacy workflow state where applicable.
-- Add a temporary feature gate or supported-version check that can be replaced in Step 1. Do not add a task-pinned release fallback.
-- Preserve the existing JSON result envelope and make incompatibility non-retryable until code/schema versions match.
-
-### Tests
-
-- old fixtures cannot be mistaken for current conformance;
-- diagnostic reads remain available;
-- mutating commands fail before backend mutation;
-- every incompatibility path emits one audit event and a stable result code.
-
-### Completion gate
-
-No current command can falsely claim compatibility with the new protocols while the rewrite is incomplete.
 
 ---
 
@@ -860,7 +826,7 @@ An agent can follow one activation document from start through recovery without 
 
 ## Step 11 — shared dish service and GPT Action live mode
 
-This step is the multi-agent go-live gate. Local Steps 0–10 may be tested with one active agent at a time.
+This step is the multi-agent go-live gate. Local Steps 1–10 may be tested with one active agent at a time.
 
 It also completes the activation document with the access-path material deferred from Step 10, so that document is written once against the final access path rather than rewritten here.
 
@@ -1036,19 +1002,18 @@ Prefer one commit per implementation step. Where `honest` and `ai-tools` must ch
 
 Suggested commit sequence:
 
-1. compatibility stop;
-2. `honest` version/schema baseline and resolver;
-3. parser/renderer/migrations;
-4. persistence/content identity;
-5. backend transactions;
-6. read/inspect/start/migrate;
-7. prepare/live handoff;
-8. Verification approve;
-9. correction/stop routes;
-10. movement/recovery;
-11. docs/reports/agent hooks;
-12. shared service and clients;
-13. migration rehearsal and activation assets.
+1. `honest` version/schema baseline and resolver;
+2. parser/renderer/migrations;
+3. persistence/content identity;
+4. backend transactions;
+5. read/inspect/start/migrate;
+6. prepare/live handoff;
+7. Verification approve;
+8. correction/stop routes;
+9. movement/recovery;
+10. docs/reports/agent hooks;
+11. shared service and clients;
+12. migration rehearsal and activation assets.
 
 ## Out of scope for this update
 

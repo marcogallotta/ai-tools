@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import sqlite3
 from dataclasses import dataclass, field
@@ -139,16 +140,19 @@ def _require_cooking_task(task: Mapping[str, Any], task_gid: str) -> None:
 def _frozen_release_data(
     release: ResolvedRelease, submission_kind: str
 ) -> dict[str, Any]:
+    """Transitional start payload without task-lifetime protocol authority."""
+
+    role = "planning" if submission_kind == "planning" else "research"
+    manifest_key = "planning" if submission_kind == "planning" else "complete_task"
     return {
-        "protocol_release": release.version,
-        "release_commit": release.commit,
-        "protocol_bundle": release.bundle_for_submission(submission_kind),
-        "canonical_manifest": dict(
+        "protocol_version": release.protocol_version,
+        "schema_version": release.schema_version,
+        "stage_protocol": {role: release.protocol_for_role(role)},
+        "task_schema": dict(release.schema),
+        "legacy_validation_adapter": dict(
             release.manifest_for_submission(submission_kind)
         ),
-        "canonical_manifest_text": release.manifest_texts[
-            "planning" if submission_kind == "planning" else "complete_task"
-        ],
+        "legacy_validation_adapter_text": release.manifest_texts[manifest_key],
     }
 
 
@@ -201,11 +205,26 @@ class DishApplication:
         conn: sqlite3.Connection,
         backend: CommandBackend,
         *,
-        release_loader: Callable[[], ResolvedRelease],
+        release_loader: Callable[..., ResolvedRelease],
     ) -> None:
         self.conn = conn
         self.backend = backend
         self.release_loader = release_loader
+        parameters = inspect.signature(release_loader).parameters.values()
+        self._release_loader_accepts_role = any(
+            parameter.kind
+            in {
+                inspect.Parameter.POSITIONAL_ONLY,
+                inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                inspect.Parameter.VAR_POSITIONAL,
+            }
+            for parameter in parameters
+        )
+
+    def _load_release(self, protocol_role: str | None) -> ResolvedRelease:
+        if self._release_loader_accepts_role:
+            return self.release_loader(protocol_role)
+        return self.release_loader()
 
     def execute(self, command: str, **arguments: Any) -> dict[str, Any]:
         trace = CommandTrace(
@@ -362,7 +381,7 @@ class DishApplication:
         task = self._read_live_task(task_gid)
         _require_cooking_task(task, task_gid)
         raw_title = task.get("name")
-        release = self.release_loader()
+        release = self._load_release(None)
         parsed_title = parse_canonical_title(
             raw_title, release.manifests["complete_task"]
         )
@@ -380,7 +399,8 @@ class DishApplication:
                         else None
                     ),
                     "errors": list(parsed_title.errors),
-                    "protocol_release": release.version,
+                    "protocol_version": release.protocol_version,
+                    "schema_version": release.schema_version,
                 },
             },
         )
@@ -577,11 +597,13 @@ class DishApplication:
                 details={"section_gid": current_section_gid},
             )
 
-        release = self.release_loader()
+        protocol_role = "planning" if kind == "planning" else "research"
+        release = self._load_release(protocol_role)
         trace.audit_details.update(
             {
-                "protocol_release": release.version,
-                "release_commit": release.commit,
+                "protocol_version": release.protocol_version,
+                "schema_version": release.schema_version,
+                "protocol_role": protocol_role,
                 "change_level": change_level,
                 "change_reason": change_reason,
             }
@@ -683,7 +705,7 @@ class DishApplication:
             state=row["status"],
             data={
                 "submission_id": row["submission_id"],
-                "frozen_release": frozen,
+                "current_compatibility": frozen,
                 "candidate_handoff": {
                     "stored_by_tool": False,
                     "author_supplies_complete_file": True,

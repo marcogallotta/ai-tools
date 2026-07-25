@@ -6,12 +6,192 @@ import copy
 import re
 from typing import Any, Mapping, Sequence
 
-from .constants import MANIFEST_FILENAMES
+from .constants import MANIFEST_FILENAMES, PROTOCOL_FILENAMES
 from .errors import ReleaseResolutionError
 from .models import TitleFields, TitleValidationResult, ValidationResult
 
 _LABEL_RE = re.compile(r"^([A-Za-z][A-Za-z0-9 /_-]*):(?:[ \t]*(.*))$")
 _TAG_AT_START_RE = re.compile(r"\A\s*\[([^\]]+)\]")
+
+
+def validate_task_schema_shape(
+    schema: Any, *, filename: str = "dish-task-schema.json"
+) -> dict[str, Any]:
+    """Validate the current external Honest schema envelope.
+
+    Step 1 validates compatibility metadata, source traceability, protocol file
+    routing, migrations, and the temporary legacy-validation projection. The
+    canonical task grammar itself is implemented in Step 2.
+    """
+
+    if not isinstance(schema, dict):
+        raise ReleaseResolutionError(
+            "schema_malformed", f"{filename} must contain a JSON object"
+        )
+
+    required = {
+        "schema_kind",
+        "protocol_version",
+        "schema_version",
+        "protocol_files",
+        "migration_files",
+        "rules",
+        "task_document",
+        "legacy_validation_adapter",
+    }
+    missing = sorted(required - set(schema))
+    if missing:
+        raise ReleaseResolutionError(
+            "schema_malformed",
+            f"{filename} is missing required keys",
+            keys=missing,
+        )
+    unknown = sorted(set(schema) - required)
+    if unknown:
+        raise ReleaseResolutionError(
+            "schema_malformed",
+            f"{filename} contains unknown top-level keys",
+            keys=unknown,
+        )
+    if schema["schema_kind"] != "dish-task":
+        raise ReleaseResolutionError(
+            "schema_malformed", f"{filename} has the wrong schema_kind"
+        )
+    for key in ("protocol_version", "schema_version"):
+        value = schema[key]
+        if not isinstance(value, str) or not value.strip() or value != value.strip():
+            raise ReleaseResolutionError(
+                "schema_malformed", f"{filename} {key} must be a non-empty string"
+            )
+
+    protocol_files = schema["protocol_files"]
+    if not isinstance(protocol_files, dict) or set(protocol_files) != set(
+        PROTOCOL_FILENAMES
+    ):
+        raise ReleaseResolutionError(
+            "schema_malformed",
+            f"{filename} protocol_files must declare exactly the supported roles",
+            roles=sorted(PROTOCOL_FILENAMES),
+        )
+    for role, expected in PROTOCOL_FILENAMES.items():
+        if protocol_files.get(role) != expected:
+            raise ReleaseResolutionError(
+                "schema_protocol_disagreement",
+                f"{filename} maps {role} to an unexpected protocol file",
+                role=role,
+                expected=expected,
+                actual=protocol_files.get(role),
+            )
+
+    migration_files = schema["migration_files"]
+    if (
+        not isinstance(migration_files, list)
+        or not migration_files
+        or not all(isinstance(item, str) and item.strip() == item and item for item in migration_files)
+        or len(migration_files) != len(set(migration_files))
+    ):
+        raise ReleaseResolutionError(
+            "schema_malformed", f"{filename} migration_files is malformed"
+        )
+
+    rules = schema["rules"]
+    if not isinstance(rules, list) or not rules:
+        raise ReleaseResolutionError(
+            "schema_malformed", f"{filename} rules must be a non-empty list"
+        )
+    rule_ids: set[str] = set()
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict) or set(rule) != {
+            "id",
+            "source",
+            "kind",
+            "description",
+        }:
+            raise ReleaseResolutionError(
+                "schema_malformed",
+                f"{filename} rule {index} is malformed",
+            )
+        for key in ("id", "source", "kind", "description"):
+            value = rule[key]
+            if not isinstance(value, str) or not value.strip():
+                raise ReleaseResolutionError(
+                    "schema_malformed",
+                    f"{filename} rule {index} has an empty {key}",
+                )
+        if rule["id"] in rule_ids:
+            raise ReleaseResolutionError(
+                "schema_malformed",
+                f"{filename} contains duplicate rule identifiers",
+                rule_id=rule["id"],
+            )
+        rule_ids.add(rule["id"] )
+        source_file = rule["source"].split("#", 1)[0]
+        if source_file not in set(PROTOCOL_FILENAMES.values()):
+            raise ReleaseResolutionError(
+                "schema_protocol_disagreement",
+                f"{filename} rule source is not a governed protocol",
+                rule_id=rule["id"],
+                source=rule["source"],
+            )
+
+    task_document = schema["task_document"]
+    if not isinstance(task_document, dict):
+        raise ReleaseResolutionError(
+            "schema_malformed", f"{filename} task_document must be an object"
+        )
+    expected_planning = [
+        "Dish candidate",
+        "Purpose",
+        "Role",
+        "Priors",
+        "Locks",
+        "Exemptions",
+        "Research emphasis",
+        "Destination section",
+    ]
+    expected_state = [
+        "Status",
+        "Status detail",
+        "Resume status",
+        "Verification protocol release",
+        "Researched by",
+        "Verified by",
+        "Self-verified",
+    ]
+    if task_document.get("planning_brief_fields") != expected_planning:
+        raise ReleaseResolutionError(
+            "schema_protocol_disagreement",
+            f"{filename} does not declare the approved eight-field Planning brief",
+        )
+    if task_document.get("state_fields") != expected_state:
+        raise ReleaseResolutionError(
+            "schema_protocol_disagreement",
+            f"{filename} does not declare the approved seven-field state block",
+        )
+    if task_document.get("schema_metadata_label") != "Schema version":
+        raise ReleaseResolutionError(
+            "schema_protocol_disagreement",
+            f"{filename} has the wrong task schema metadata label",
+        )
+
+    adapters = schema["legacy_validation_adapter"]
+    if not isinstance(adapters, dict) or set(adapters) != set(MANIFEST_FILENAMES):
+        raise ReleaseResolutionError(
+            "schema_malformed",
+            f"{filename} legacy_validation_adapter is malformed",
+        )
+    checked_adapters = {
+        kind: validate_manifest_shape(
+            adapters[kind],
+            expected_kind=kind,
+            filename=f"{filename} legacy_validation_adapter.{kind}",
+        )
+        for kind in MANIFEST_FILENAMES
+    }
+
+    checked = copy.deepcopy(schema)
+    checked["legacy_validation_adapter"] = checked_adapters
+    return checked
 
 
 def validate_manifest_shape(
