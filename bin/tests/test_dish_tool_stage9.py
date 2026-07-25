@@ -16,9 +16,10 @@ from dish_tool.validation import validate_manifest_shape  # noqa: E402
 
 
 BUNDLE_DIR = Path(__file__).parent / "fixtures" / "protocol-release-tool-aware"
-RELAY_PATH = Path(__file__).parent.parent / "dish-chatgpt-relay.md"
-ACTIVATION_PATH = Path(__file__).parent.parent / "dish-tool-activation.md"
-IMPLEMENTATION_PLAN_PATH = Path(__file__).parent.parent / "dish-tool-imp.md"
+DOCS_DIR = BIN_DIR / "docs"
+RELAY_PATH = DOCS_DIR / "dish-chatgpt-relay.md"
+ACTIVATION_PATH = DOCS_DIR / "dish-tool-activation.md"
+IMPLEMENTATION_PLAN_PATH = DOCS_DIR / "dish-tool-imp.md"
 GLOBAL_GUIDE_PATH = Path(__file__).parents[2] / "CLAUDE-global.md"
 
 SECTIONS = [
