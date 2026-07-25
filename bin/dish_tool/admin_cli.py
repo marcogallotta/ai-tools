@@ -17,7 +17,7 @@ from .releases import configured_honest_path, resolve_release
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
-_ADMIN_COMMANDS = {"recover", "discard", "unblock", "migrate"}
+_ADMIN_COMMANDS = {"recover", "discard", "unblock", "migrate", "reopen"}
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -47,6 +47,14 @@ def build_parser() -> JsonArgumentParser:
     unblock = subparsers.add_parser("unblock")
     unblock.add_argument("submission_id")
     unblock.add_argument("--reason", required=True)
+
+    reopen = subparsers.add_parser("reopen")
+    reopen.add_argument("submission_id")
+    reopen.add_argument("--category", required=True, choices=("evidence", "premise", "method", "scope"))
+    reopen.add_argument("--before", required=True)
+    reopen.add_argument("--after", required=True)
+    reopen.add_argument("--editor", required=True)
+    reopen.add_argument("--date", required=True)
 
     migrate = subparsers.add_parser("migrate")
     migrate.add_argument("task_gid")

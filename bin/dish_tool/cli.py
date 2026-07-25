@@ -84,6 +84,9 @@ def build_parser() -> JsonArgumentParser:
     reject.add_argument("submission_id")
     reject.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
     reject.add_argument("--reason", required=True)
+    reject.add_argument("--route", choices=("large", "evidence", "human-review"))
+    reject.add_argument("--file", dest="file_path")
+    reject.add_argument("--resume-status", choices=("pending-verification", "pending-research"))
     reject.add_argument("--changed-since-prior")
     reject.add_argument("--take-ownership", action="store_true")
 

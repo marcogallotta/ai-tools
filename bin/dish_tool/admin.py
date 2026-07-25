@@ -346,3 +346,19 @@ def _step5_admin_migrate(self, *, trace: AdminTrace, task_gid: str) -> dict[str,
     return result_envelope(command="migrate", task_gid=clean, data={"task_gid": clean, "schema_version": release.schema_version, "content_identity": live.identity, "confirmed": True})
 
 DishAdminApplication._command_migrate = _step5_admin_migrate
+
+
+# Step 8 Marco-only two-pass hold reopen.
+def _step8_admin_reopen(self, *, trace: AdminTrace, submission_id: str, category: str, before: str, after: str, editor: str, date: str) -> dict[str, Any]:
+    if self.backend is None:
+        raise DishRuleError("INTERNAL_ERROR", "admin backend is required", rule="backend_required")
+    from .step8 import reopen_two_pass
+    operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
+    row = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
+    if row is None:
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    trace.submission_id = operation_id; trace.task_gid = row["task_gid"]; trace.state = "open"
+    data = reopen_two_pass(self.conn, self.backend, operation_id=operation_id, category=category, before=before, after=after, editor=editor, date=date)
+    return result_envelope(command="reopen", task_gid=trace.task_gid, submission_id=operation_id, state="open", data=data)
+
+DishAdminApplication._command_reopen = _step8_admin_reopen

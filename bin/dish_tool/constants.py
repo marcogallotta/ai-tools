@@ -19,6 +19,8 @@ AGENT_FAMILIES = {
 FAMILIES = frozenset(AGENT_FAMILIES.values())
 SUBMISSION_KINDS = frozenset({"planning", "initial", "change"})
 CHANGE_LEVELS = frozenset({"small", "large"})
+VERIFICATION_ROUTES = frozenset({"small", "large", "evidence", "human-review"})
+RESET_CATEGORIES = frozenset({"evidence", "premise", "method", "scope"})
 SUBMISSION_STATES = frozenset(
     {
         "drafting",
