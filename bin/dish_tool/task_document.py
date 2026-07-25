@@ -258,9 +258,18 @@ def validate_planning_brief(brief: PlanningBrief) -> DocumentValidation:
     return DocumentValidation(tuple(findings))
 
 
-def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_version: str | None = None) -> DocumentValidation:
+def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_version: str | None = None, schema: Mapping[str, object] | None = None) -> DocumentValidation:
     findings: list[DocumentFinding] = list(validate_planning_brief(document.planning_brief).findings)
-    for section in REQUIRED_SECTIONS:
+    task_schema = schema.get("task_document") if schema else None
+    if schema and not isinstance(task_schema, Mapping):
+        findings.append(DocumentFinding("schema.runtime-shape", FindingKind.SYNTAX, "runtime task schema is missing task_document", "schema"))
+        task_schema = {}
+    required_sections = tuple(name for name in task_schema.get("required_sections", REQUIRED_SECTIONS) if name != "PROCESS RECORD") if isinstance(task_schema, Mapping) else REQUIRED_SECTIONS
+    allowed_statuses = frozenset(task_schema.get("allowed_statuses", ALLOWED_STATUSES)) if isinstance(task_schema, Mapping) else ALLOWED_STATUSES
+    classifications = tuple(task_schema.get("research_basis_classifications", RESEARCH_BASIS_PREFIXES)) if isinstance(task_schema, Mapping) else RESEARCH_BASIS_PREFIXES
+    human_prefix = str(task_schema.get("human_decision_prefix", "Human — Marco:")) if isinstance(task_schema, Mapping) else "Human — Marco:"
+    destination_markers = tuple(task_schema.get("destination_defect_markers", ("destination missing", "destination invalid"))) if isinstance(task_schema, Mapping) else ("destination missing", "destination invalid")
+    for section in required_sections:
         if not document.sections.get(section):
             findings.append(DocumentFinding("document.required-section", FindingKind.SYNTAX, f"missing required section {section}", section))
     if document.is_non_main:
@@ -273,14 +282,14 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
     if " — " not in document.title:
         findings.append(DocumentFinding("title.recognition", FindingKind.SYNTAX, "title requires dish name — recognition phrase", "title"))
     destination = document.planning_brief.values["Destination section"]
-    for marker in ("destination missing", "destination invalid"):
+    for marker in destination_markers:
         in_title = f"[{marker}]" in document.title
         in_field = destination == f"[{marker}]"
         if in_title != in_field:
             findings.append(DocumentFinding("title.destination-marker", FindingKind.AGENT_CORRECTABLE, "destination marker must agree between title and Destination section", "title"))
 
     status = document.state.values["Status"]
-    if status not in ALLOWED_STATUSES:
+    if status not in allowed_statuses:
         findings.append(DocumentFinding("state.status", FindingKind.SYNTAX, f"unknown Status {status}", "Status"))
     else:
         detail, resume = document.state.values["Status detail"], document.state.values["Resume status"]
@@ -300,10 +309,10 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
             findings.append(DocumentFinding("state.actor-format", FindingKind.SYNTAX, f"invalid {field_name} format", field_name))
     if expected_schema_version is not None and document.schema_version != expected_schema_version:
         findings.append(DocumentFinding("schema.version-mismatch", FindingKind.SCHEMA_VERSION, f"task declares schema {document.schema_version}; expected {expected_schema_version}", "Schema version"))
-    if not any("Classification:" in line and line.split("Classification:", 1)[1].strip().startswith(RESEARCH_BASIS_PREFIXES) for line in document.research_basis):
+    if not any("Classification:" in line and line.split("Classification:", 1)[1].strip().startswith(classifications) for line in document.research_basis):
         findings.append(DocumentFinding("research-basis.classification", FindingKind.SYNTAX, "Research basis requires an explicit approved classification", "Research basis"))
     for line in document.decisions:
-        if not line.startswith("Human — Marco: "):
+        if not line.startswith(human_prefix + " "):
             findings.append(DocumentFinding("decisions.human-format", FindingKind.SYNTAX, "Decisions entries must use Human — Marco format", "Decisions"))
     for line in document.material_changes:
         if not MATERIAL_CHANGE_RE.match(line):

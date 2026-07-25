@@ -48,6 +48,21 @@ def configured_honest_path(
     return Path(raw).expanduser().resolve()
 
 
+
+def _confined_asset(root: Path, relative: str, *, rule: str, label: str) -> Path:
+    """Resolve a governed Honest asset without permitting checkout escape."""
+    raw = str(relative or "").strip()
+    candidate = Path(raw)
+    if not raw or candidate.is_absolute():
+        raise ReleaseResolutionError(rule, f"{label} must be a relative path inside the configured Honest checkout", path=raw)
+    resolved = (root / candidate).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ReleaseResolutionError(rule, f"{label} escapes the configured Honest checkout", path=raw) from exc
+    return resolved
+
+
 def parse_dish_version(text: str) -> dict[str, str]:
     """Parse the deliberately tiny two-key ``DISH_VERSION`` format."""
 
@@ -210,7 +225,7 @@ def resolve_release(
             "honest_path_missing", f"Honest rollout path does not exist: {root}"
         )
 
-    version_path = root / DISH_VERSION_FILENAME
+    version_path = _confined_asset(root, DISH_VERSION_FILENAME, rule="honest_asset_outside_checkout", label="DISH_VERSION")
     try:
         version_text = version_path.read_text(encoding="utf-8")
     except FileNotFoundError as exc:
@@ -242,7 +257,7 @@ def resolve_release(
         )
 
     schema_text, raw_schema = _load_json(
-        root / TASK_SCHEMA_FILENAME,
+        _confined_asset(root, TASK_SCHEMA_FILENAME, rule="honest_asset_outside_checkout", label="task schema"),
         missing_rule="schema_missing",
         malformed_rule="schema_malformed",
     )
@@ -272,7 +287,7 @@ def resolve_release(
             )
         filename = schema["protocol_files"][protocol_role]
         protocols[protocol_role] = _read_required_text(
-            root / filename,
+            _confined_asset(root, filename, rule="honest_asset_outside_checkout", label=f"{protocol_role} protocol"),
             rule="protocol_missing",
             label=f"{protocol_role} protocol",
         )
@@ -280,7 +295,7 @@ def resolve_release(
     migrations: dict[str, dict[str, Any]] = {}
     if include_migrations:
         for relative in schema["migration_files"]:
-            path = root / relative
+            path = _confined_asset(root, relative, rule="honest_asset_outside_checkout", label="schema migration")
             _, raw_metadata = _load_json(
                 path,
                 missing_rule="migration_missing",

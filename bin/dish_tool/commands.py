@@ -1782,7 +1782,7 @@ def _step7_start(
     data = verification_read(
         self.conn, self.backend, operation_id=operation_id, agent=agent,
         honest_root=release.root, run_id=run_id,
-        independence_attestation=independence_attestation,
+        independence_attestation=independence_attestation, schema=release.schema,
     )
     trace.submission_id = operation_id
     trace.state = "open"
@@ -1818,6 +1818,7 @@ def _step7_approve(
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
     clean_identity = _clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity")
+    release = self._load_release("verification")
     data = approve_live(
         self.conn, self.backend, operation_id=operation_id, agent=agent,
         reviewed_identity=clean_identity,
@@ -1825,7 +1826,7 @@ def _step7_approve(
         provenance_complete=provenance_complete,
         correction_class=correction,
         run_id=run_id,
-        independence_attestation=independence_attestation,
+        independence_attestation=independence_attestation, schema=release.schema,
     )
     trace.state = "open"
     return result_envelope(
@@ -1848,8 +1849,9 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, submission_id: str,
     if exists is None or correction != "small" or not file_path:
         return _step7_command_approve(self, trace=trace, agent=agent, submission_id=submission_id, file_path=file_path, correction=correction, reviewed_identity=reviewed_identity, semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation, **legacy)
     from .step8 import approve_small
+    release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
-    data = approve_small(self.conn, self.backend, operation_id=operation_id, agent=agent, file_path=file_path, reviewed_identity=_clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity"), semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation)
+    data = approve_small(self.conn, self.backend, operation_id=operation_id, agent=agent, file_path=file_path, reviewed_identity=_clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity"), semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema)
     return result_envelope(command="approve", task_gid=trace.task_gid, submission_id=operation_id, state="open", allowed_actions=["submit"], data=data)
 
 def _step8_reject(self, *, trace: CommandTrace, agent: str, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, **legacy: Any) -> dict[str, Any]:
@@ -1858,8 +1860,9 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, submission_id: str, 
     if exists is None or route is None:
         return _step7_command_reject(self, trace=trace, agent=agent, submission_id=submission_id, reason=reason, **legacy)
     from .step8 import reject_route
+    release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
-    data = reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=independence_attestation)
+    data = reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema)
     actions = [] if data["two_pass_hold"] or route in {"evidence", "human-review"} else ["start"]
     return result_envelope(command="reject", task_gid=trace.task_gid, submission_id=operation_id, state="open", allowed_actions=actions, data=data)
 
@@ -1875,9 +1878,10 @@ def _step9_submit(self, *, trace: CommandTrace, submission_id: str, file_path: s
     if exists is None:
         return _step8_command_submit(self, trace=trace, submission_id=submission_id, file_path=file_path or "")
     from .step9 import submit_live
+    release = self._load_release("verification")
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
-    data = submit_live(self.conn, self.backend, operation_id=operation_id)
+    data = submit_live(self.conn, self.backend, operation_id=operation_id, schema=release.schema)
     trace.state = "completed"
     return result_envelope(command="submit", task_gid=trace.task_gid, submission_id=operation_id, state="completed", allowed_actions=[], data=data)
 

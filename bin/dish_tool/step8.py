@@ -45,15 +45,15 @@ def _render(document):
     return lines[0], "\n".join(lines[1:]) + "\n"
 
 
-def _write_document(conn, backend, op, live, document):
-    check = validate_task_document(document, expected_schema_version=op["schema_version"])
+def _write_document(conn, backend, op, live, document, *, schema=None):
+    check = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not check.ok:
         raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in check.findings])
     title, notes = _render(document)
     return write_exact_content(conn, backend, operation_id=op["operation_id"], task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID, expected_identity=live.identity, expected_section_gid=live.section_gid, title=title, notes=notes, schema_version=op["schema_version"])
 
 
-def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, file_path: str, reviewed_identity: str, semantic_review_complete: bool, provenance_complete: bool, run_id: str | None = None, independence_attestation: str | None = None):
+def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, file_path: str, reviewed_identity: str, semantic_review_complete: bool, provenance_complete: bool, run_id: str | None = None, independence_attestation: str | None = None, schema=None):
     op, cycle = _rows(conn, operation_id)
     assert_verifier_authority(cycle, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
     if not semantic_review_complete or not provenance_complete:
@@ -71,13 +71,13 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     state.update({"Status": "pending-verification", "Status detail": "None", "Resume status": "None", "Verified by": "None", "Verification protocol release": cycle["protocol_release"]})
     changes = tuple(corrected.material_changes) + (f"{utc_now()[:10]} — {agent}: small verification correction; exact candidate replaced and self-reviewed",)
     corrected = dataclasses.replace(corrected, state=TaskState(state), material_changes=changes)
-    confirmed = _write_document(conn, backend, op, live, corrected)
+    confirmed = _write_document(conn, backend, op, live, corrected, schema=schema)
     bind_cycle_review(conn, cycle_id=cycle["cycle_id"], operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity)
     conn.execute("UPDATE verification_cycles SET correction_class = 'small' WHERE cycle_id = ?", (cycle["cycle_id"],))
-    return approve_live(conn, backend, operation_id=operation_id, agent=agent, reviewed_identity=confirmed.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=run_id, independence_attestation=independence_attestation)
+    return approve_live(conn, backend, operation_id=operation_id, agent=agent, reviewed_identity=confirmed.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=run_id, independence_attestation=independence_attestation, schema=schema)
 
 
-def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None):
+def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, schema=None):
     op, cycle = _rows(conn, operation_id)
     assert_verifier_authority(cycle, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
     route = str(route or "").strip()
@@ -122,7 +122,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         assert_transition(action="two_pass_hold", before="pending-verification", after="pending-human-review")
         document = dataclasses.replace(document, state=hold(document.state.values, target="pending-human-review", detail=f"Two independent Verification passes ended without a signable task: {reason}", resume_status="pending-verification"))
 
-    confirmed = _write_document(conn, backend, op, live, document)
+    confirmed = _write_document(conn, backend, op, live, document, schema=schema)
     outcome = "two-pass-hold" if two_pass else "rejected"
     conn.execute("UPDATE verification_cycles SET correction_class = ?, outcome = ?, route = ?, resume_state = ?, completed_at = ? WHERE cycle_id = ?", ("large" if route == "large" else None, outcome, {"evidence": "evidence", "human-review": "human_review"}.get(route), document.state.values["Resume status"], utc_now(), cycle["cycle_id"]))
     if route == "large" and not two_pass:

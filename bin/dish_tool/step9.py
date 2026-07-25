@@ -66,7 +66,7 @@ def _latest_movement_attempt(conn: sqlite3.Connection, operation_id: str):
     ).fetchone()
 
 
-def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str) -> dict[str, Any]:
+def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, schema=None) -> dict[str, Any]:
     op = _operation(conn, operation_id)
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     signed_identity = _signed_identity(conn, operation_id)
@@ -80,7 +80,7 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str) ->
         document = parse_task_document(f"{live.title}\n{live.notes}")
     except DocumentParseError as exc:
         raise DishRuleError("VALIDATION_FAILED", "signed task is no longer canonical", rule=exc.rule) from exc
-    check = validate_task_document(document, expected_schema_version=op["schema_version"])
+    check = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not check.ok or document.state.values["Verified by"] == "None":
         raise DishRuleError("VALIDATION_FAILED", "live task is not a valid signed ready task", rule="signed_ready_required")
     require_status(document.state, {"ready"}, action="submit")

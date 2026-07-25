@@ -22,7 +22,7 @@ def diagnostics_for(live: LiveTask, release: ResolvedRelease) -> dict[str, Any]:
         document = parse_live_document(live)
     except DocumentParseError as exc:
         return {"parsed": None, "validation": [{"rule": exc.rule, "message": str(exc)}], "schema_version": None, "migration_required": bool(live.notes)}
-    validation = validate_task_document(document, expected_schema_version=release.schema_version)
+    validation = validate_task_document(document, expected_schema_version=release.schema_version, schema=release.schema)
     return {
         "parsed": {
             "title": document.title,
@@ -80,7 +80,7 @@ def migrate_live_task(conn: sqlite3.Connection, backend, *, task_gid: str, relea
     if migration is None:
         raise DishRuleError("VALIDATION_FAILED", "no supported migration path", rule="migration_path_missing", details={"from": document.schema_version, "to": release.schema_version})
     candidate = dataclasses.replace(document, schema_version=release.schema_version)
-    validation = validate_task_document(candidate, expected_schema_version=release.schema_version)
+    validation = validate_task_document(candidate, expected_schema_version=release.schema_version, schema=release.schema)
     if not validation.ok:
         raise DishRuleError("VALIDATION_FAILED", "migrated candidate failed validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in validation.findings])
     confirm_task_content(conn, task_gid=task_gid, title=live.title, notes=live.notes, schema_version=document.schema_version, boundary="migration_baseline")

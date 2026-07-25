@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import sqlite3
-from typing import Any
+from typing import Any, Mapping
 
 from .constants import COOKING_PROJECT_GID
 from .database import mark_operation_completion, record_audit
@@ -71,13 +71,14 @@ def verification_read(
     honest_root,
     run_id: str | None,
     independence_attestation: str | None,
+    schema: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     op, cycle = _operation_and_cycle(conn, operation_id)
     identity = VerifierIdentity(agent, run_id, independence_attestation)
     identity.validate(editor_agent=op["editor_agent"], researcher_agent=op["researcher_agent"], constructor_run_id=op["run_id"])
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     document = parse_task_document(f"{live.title}\n{live.notes}")
-    validation = validate_task_document(document, expected_schema_version=op["schema_version"])
+    validation = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not validation.ok:
         raise DishRuleError(
             "VALIDATION_FAILED", "live task is not a legal pending-verification candidate",
@@ -160,6 +161,7 @@ def approve_live(
     correction_class: str,
     run_id: str | None = None,
     independence_attestation: str | None = None,
+    schema: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     op, cycle = _operation_and_cycle(conn, operation_id)
     assert_verifier_authority(
@@ -179,12 +181,12 @@ def approve_live(
     if live.identity != persisted_reviewed:
         raise DishRuleError("CONFLICT", "live candidate changed after verifier review", rule="stale_verifier_review", details={"reviewed_identity": persisted_reviewed, "actual_identity": live.identity})
     document = parse_task_document(f"{live.title}\n{live.notes}")
-    check = validate_task_document(document, expected_schema_version=op["schema_version"])
+    check = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not check.ok or document.state.values["Status"] != "pending-verification":
         raise DishRuleError("VALIDATION_FAILED", "exact live candidate failed pre-signoff validation", rule="pre_signoff_validation_failed", errors=[{"rule": f.rule, "kind": f.kind.value} for f in check.findings])
     assert_transition(action="approve", before=document.state.values["Status"], after="ready")
     signed = dataclasses.replace(document, state=ready(document.state.values, verified_by=verification_actor_line(agent, utc_now()[:10])))
-    final_check = validate_task_document(signed, expected_schema_version=op["schema_version"])
+    final_check = validate_task_document(signed, expected_schema_version=op["schema_version"], schema=schema)
     if not final_check.ok:
         raise DishRuleError("VALIDATION_FAILED", "ready state failed deterministic validation", rule="ready_state_invalid", errors=[{"rule": f.rule, "kind": f.kind.value} for f in final_check.findings])
     lines = signed.render().splitlines()

@@ -153,7 +153,7 @@ def prepare_live(
         state = candidate.state
 
     candidate = dataclasses.replace(candidate, state=state, material_changes=tuple(material_changes))
-    validation = validate_task_document(candidate, expected_schema_version=release.schema_version)
+    validation = validate_task_document(candidate, expected_schema_version=release.schema_version, schema=release.schema)
     if not validation.ok:
         raise DishRuleError("VALIDATION_FAILED", "candidate failed current validation", errors=[{"rule": f.rule, "kind": f.kind.value, "message": f.message, "location": f.location} for f in validation.findings])
 
@@ -165,7 +165,7 @@ def prepare_live(
         schema_version=release.schema_version,
     )
     exact = parse_task_document(f"{confirmed.title}\n{confirmed.notes}")
-    check = validate_task_document(exact, expected_schema_version=release.schema_version)
+    check = validate_task_document(exact, expected_schema_version=release.schema_version, schema=release.schema)
     if not check.ok:
         raise DishRuleError("BACKEND_UNCERTAIN", "confirmed live candidate failed deterministic handoff validation", rule="handoff_validation_failed")
 
