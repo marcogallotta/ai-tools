@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""Generate deterministic recovery acceptance fixtures with truthful identities."""
+from __future__ import annotations
+
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+BIN = HERE.parents[2]
+sys.path.insert(0, str(BIN))
+
+from dish_tool.database import content_identity
+from dish_tool.database_schema import initialize_database
+
+DB_PATH = HERE / "dish-tool-recovery-v6.sqlite"
+SIDECAR_PATH = HERE / "live-tasks.json"
+MATRIX_PATH = HERE / "fixture-matrix.json"
+NOW = "2026-07-25T12:00:00+00:00"
+
+
+def ident(title: str, notes: str) -> str:
+    return content_identity(title, notes).digest
+
+
+def add_operation(conn: sqlite3.Connection, *, op: str, task: str, expected: str,
+                  status: str = "open", completed: bool = False,
+                  content_done: bool = False, signoff_done: bool = False) -> None:
+    conn.execute(
+        """INSERT INTO operations(
+            operation_id, task_gid, operation_kind, status, editor_agent,
+            researcher_agent, verifier_agent, run_id, independence_attestation,
+            expected_identity, schema_version, content_write_completed_at,
+            signoff_completed_at, movement_completed_at, created_at, completed_at,
+            destination_movement_attempt_id
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (op, task, "change", status, "gpt", "gpt", "codex", f"run-{op}", None,
+         expected, "2", NOW if content_done else None, NOW if signoff_done else None,
+         None, NOW, NOW if completed else None, None),
+    )
+
+
+def add_version(conn: sqlite3.Connection, *, version: str, task: str, op: str,
+                boundary: str, title: str, notes: str, confirmed: int = 1) -> str:
+    digest = ident(title, notes)
+    conn.execute(
+        """INSERT INTO content_versions(
+            content_version_id, task_gid, operation_id, boundary, identity,
+            title, notes, confirmed, created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?)""",
+        (version, task, op, boundary, digest, title, notes, confirmed, NOW),
+    )
+    return digest
+
+
+def add_state(conn: sqlite3.Connection, *, task: str, title: str, notes: str) -> str:
+    digest = ident(title, notes)
+    conn.execute(
+        """INSERT INTO task_content_state(
+            task_gid, last_confirmed_identity, last_confirmed_title,
+            last_confirmed_notes, schema_version, confirmed_at
+        ) VALUES(?,?,?,?,?,?)""",
+        (task, digest, title, notes, "2", NOW),
+    )
+    return digest
+
+
+def build() -> None:
+    DB_PATH.unlink(missing_ok=True)
+    conn = initialize_database(DB_PATH)
+    sidecars: list[dict[str, object]] = []
+    scenarios: list[dict[str, object]] = []
+
+    # Interrupted write: live state proves application.
+    task, op = "task-write-applied", "op-write-applied"
+    old_t, old_n = "Dish A", "baseline notes"
+    new_t, new_n = "Dish A", "updated notes"
+    old_id = add_state(conn, task=task, title=old_t, notes=old_n)
+    add_operation(conn, op=op, task=task, expected=old_id)
+    conn.execute("""INSERT INTO write_attempts(
+        attempt_id, operation_id, expected_identity, intended_identity, outcome,
+        started_at, purpose, intended_title, intended_notes, schema_version, context_json
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        ("wa-applied", op, old_id, ident(new_t, new_n), "started", NOW,
+         "content_write", new_t, new_n, "2", json.dumps({"scenario": "applied"})))
+    sidecars.append({"task_gid": task, "title": new_t, "notes": new_n,
+                     "section_gid": "verification", "expected_recovery": "applied"})
+    scenarios.append({"id": "write-applied", "task_gid": task,
+                      "covers": ["started write", "live applied", "truthful identities"]})
+
+    # Interrupted write: live state proves non-application.
+    task, op = "task-write-not-applied", "op-write-not-applied"
+    old_t, old_n = "Dish B", "baseline notes"
+    new_t, new_n = "Dish B", "proposed notes"
+    old_id = add_state(conn, task=task, title=old_t, notes=old_n)
+    add_operation(conn, op=op, task=task, expected=old_id)
+    conn.execute("""INSERT INTO write_attempts(
+        attempt_id, operation_id, expected_identity, intended_identity, outcome,
+        started_at, purpose, intended_title, intended_notes, schema_version, context_json
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        ("wa-not-applied", op, old_id, ident(new_t, new_n), "started", NOW,
+         "content_write", new_t, new_n, "2", json.dumps({"scenario": "not_applied"})))
+    sidecars.append({"task_gid": task, "title": old_t, "notes": old_n,
+                     "section_gid": "verification", "expected_recovery": "not_applied"})
+    scenarios.append({"id": "write-not-applied", "task_gid": task,
+                      "covers": ["started write", "live not applied", "truthful identities"]})
+
+    # Interrupted write: divergent live state remains uncertain.
+    task, op = "task-write-uncertain", "op-write-uncertain"
+    old_t, old_n = "Dish C", "baseline notes"
+    new_t, new_n = "Dish C", "proposed notes"
+    live_t, live_n = "Dish C externally edited", "third state"
+    old_id = add_state(conn, task=task, title=old_t, notes=old_n)
+    add_operation(conn, op=op, task=task, expected=old_id, status="uncertain")
+    conn.execute("""INSERT INTO write_attempts(
+        attempt_id, operation_id, expected_identity, intended_identity, outcome,
+        started_at, purpose, intended_title, intended_notes, schema_version, context_json
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        ("wa-uncertain", op, old_id, ident(new_t, new_n), "uncertain", NOW,
+         "content_write", new_t, new_n, "2", json.dumps({"scenario": "uncertain"})))
+    sidecars.append({"task_gid": task, "title": live_t, "notes": live_n,
+                     "section_gid": "verification", "expected_recovery": "uncertain"})
+    scenarios.append({"id": "write-uncertain", "task_gid": task,
+                      "covers": ["uncertain write", "divergent live task", "multiple identities"]})
+
+    # Destination movement applied and not applied.
+    for suffix, live_section, expected in [
+        ("applied", "destination", "applied"),
+        ("not-applied", "verification", "not_applied"),
+    ]:
+        task, op = f"task-move-{suffix}", f"op-move-{suffix}"
+        title, notes = f"Dish move {suffix}", "ready notes"
+        cid = add_state(conn, task=task, title=title, notes=notes)
+        add_operation(conn, op=op, task=task, expected=cid)
+        conn.execute("""INSERT INTO movement_attempts(
+            attempt_id, operation_id, expected_section_gid, intended_section_gid,
+            outcome, started_at, purpose
+        ) VALUES(?,?,?,?,?,?,?)""",
+            (f"ma-{suffix}", op, "verification", "destination", "started", NOW,
+             "destination_submission"))
+        sidecars.append({"task_gid": task, "title": title, "notes": notes,
+                         "section_gid": live_section, "expected_recovery": expected})
+        scenarios.append({"id": f"movement-{suffix}", "task_gid": task,
+                          "covers": ["destination movement", f"live {expected}"]})
+
+    # Confirmed and not-applied attempts, plus multiple content versions and signed binding.
+    task, op = "task-signed", "op-signed"
+    base_t, base_n = "Dish signed", "version one"
+    signed_t, signed_n = "Dish signed", "version two signed"
+    base_id = add_state(conn, task=task, title=base_t, notes=base_n)
+    add_operation(conn, op=op, task=task, expected=base_id, status="completed",
+                  completed=True, content_done=True, signoff_done=True)
+    v1 = "cv-signed-1"; v2 = "cv-signed-2"
+    add_version(conn, version=v1, task=task, op=op, boundary="baseline",
+                title=base_t, notes=base_n)
+    signed_id = add_version(conn, version=v2, task=task, op=op, boundary="signed",
+                            title=signed_t, notes=signed_n)
+    conn.execute("""UPDATE task_content_state SET
+        last_confirmed_identity=?, last_confirmed_title=?, last_confirmed_notes=?
+        WHERE task_gid=?""", (signed_id, signed_t, signed_n, task))
+    conn.execute("""INSERT INTO write_attempts(
+        attempt_id, operation_id, expected_identity, intended_identity, outcome,
+        started_at, finished_at, purpose, intended_title, intended_notes,
+        schema_version, context_json, confirmed_content_version_id
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        ("wa-confirmed", op, base_id, signed_id, "confirmed", NOW, NOW,
+         "verification_signoff", signed_t, signed_n, "2",
+         json.dumps({"cycle_id": "cycle-signed"}), v2))
+    conn.execute("""INSERT INTO verification_cycles(
+        cycle_id, operation_id, task_gid, cycle_number, protocol_release,
+        verifier_agent, run_id, correction_class, outcome, created_at, completed_at,
+        protocol_text, reviewed_content_version_id, reviewed_identity,
+        signed_content_version_id, signed_identity
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        ("cycle-signed", op, task, 1, "1.0.2", "codex", "run-op-signed",
+         "small", "approved", NOW, NOW, "verification protocol", v2, signed_id, v2, signed_id))
+    sidecars.append({"task_gid": task, "title": signed_t, "notes": signed_n,
+                     "section_gid": "destination", "expected_recovery": "none"})
+    scenarios.append({"id": "signed-binding", "task_gid": task,
+                      "covers": ["signed binding", "multiple content versions", "confirmed write"]})
+
+    task, op = "task-attempt-not-applied", "op-attempt-not-applied"
+    title, notes = "Dish attempt", "stable notes"
+    cid = add_state(conn, task=task, title=title, notes=notes)
+    add_operation(conn, op=op, task=task, expected=cid)
+    conn.execute("""INSERT INTO write_attempts(
+        attempt_id, operation_id, expected_identity, intended_identity, outcome,
+        started_at, finished_at, purpose, intended_title, intended_notes, schema_version
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        ("wa-closed-not-applied", op, cid, ident(title, notes + " proposed"),
+         "not_applied", NOW, NOW, "content_write", title, notes + " proposed", "2"))
+    sidecars.append({"task_gid": task, "title": title, "notes": notes,
+                     "section_gid": "verification", "expected_recovery": "none"})
+    scenarios.append({"id": "closed-not-applied-attempt", "task_gid": task,
+                      "covers": ["not-applied attempt"]})
+
+    # Evidence and human-review holds, including a two-pass hold.
+    for route, outcome in [("evidence", "evidence-hold"), ("human_review", "two-pass-hold")]:
+        task, op = f"task-{route}-hold", f"op-{route}-hold"
+        title, notes = f"Dish {route}", "reviewed notes"
+        cid = add_state(conn, task=task, title=title, notes=notes)
+        add_operation(conn, op=op, task=task, expected=cid)
+        vid = f"cv-{route}-reviewed"
+        add_version(conn, version=vid, task=task, op=op, boundary="verification_read",
+                    title=title, notes=notes)
+        conn.execute("""INSERT INTO verification_cycles(
+            cycle_id, operation_id, task_gid, cycle_number, protocol_release,
+            verifier_agent, run_id, outcome, route, resume_state, created_at,
+            protocol_text, reviewed_content_version_id, reviewed_identity
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (f"cycle-{route}", op, task, 1, "1.0.2", "codex", f"run-{route}",
+             outcome, route, "pending-verification", NOW, "verification protocol", vid, cid))
+        sidecars.append({"task_gid": task, "title": title, "notes": notes,
+                         "section_gid": "verification", "expected_recovery": "held"})
+        scenarios.append({"id": f"{route}-hold", "task_gid": task,
+                          "covers": [f"{route} review", outcome, "reviewed binding"]})
+
+    conn.commit()
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+    conn.close()
+    if integrity != "ok":
+        raise RuntimeError(f"fixture integrity failed: {integrity}")
+
+    SIDECAR_PATH.write_text(json.dumps({"schema": 1, "tasks": sidecars}, indent=2) + "\n")
+    MATRIX_PATH.write_text(json.dumps({
+        "schema": 1,
+        "database": DB_PATH.name,
+        "live_sidecar": SIDECAR_PATH.name,
+        "identity_algorithm": "dish_tool.database.content_identity",
+        "scenarios": scenarios,
+    }, indent=2) + "\n")
+
+
+if __name__ == "__main__":
+    build()

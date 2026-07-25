@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "tasks": [
+    {
+      "task_gid": "task-write-applied",
+      "title": "Dish A",
+      "notes": "updated notes",
+      "section_gid": "verification",
+      "expected_recovery": "applied"
+    },
+    {
+      "task_gid": "task-write-not-applied",
+      "title": "Dish B",
+      "notes": "baseline notes",
+      "section_gid": "verification",
+      "expected_recovery": "not_applied"
+    },
+    {
+      "task_gid": "task-write-uncertain",
+      "title": "Dish C externally edited",
+      "notes": "third state",
+      "section_gid": "verification",
+      "expected_recovery": "uncertain"
+    },
+    {
+      "task_gid": "task-move-applied",
+      "title": "Dish move applied",
+      "notes": "ready notes",
+      "section_gid": "destination",
+      "expected_recovery": "applied"
+    },
+    {
+      "task_gid": "task-move-not-applied",
+      "title": "Dish move not-applied",
+      "notes": "ready notes",
+      "section_gid": "verification",
+      "expected_recovery": "not_applied"
+    },
+    {
+      "task_gid": "task-signed",
+      "title": "Dish signed",
+      "notes": "version two signed",
+      "section_gid": "destination",
+      "expected_recovery": "none"
+    },
+    {
+      "task_gid": "task-attempt-not-applied",
+      "title": "Dish attempt",
+      "notes": "stable notes",
+      "section_gid": "verification",
+      "expected_recovery": "none"
+    },
+    {
+      "task_gid": "task-evidence-hold",
+      "title": "Dish evidence",
+      "notes": "reviewed notes",
+      "section_gid": "verification",
+      "expected_recovery": "held"
+    },
+    {
+      "task_gid": "task-human_review-hold",
+      "title": "Dish human_review",
+      "notes": "reviewed notes",
+      "section_gid": "verification",
+      "expected_recovery": "held"
+    }
+  ]
+}

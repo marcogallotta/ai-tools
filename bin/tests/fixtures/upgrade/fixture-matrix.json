@@ -1,0 +1,85 @@
+{
+  "schema": 1,
+  "database": "dish-tool-recovery-v6.sqlite",
+  "live_sidecar": "live-tasks.json",
+  "identity_algorithm": "dish_tool.database.content_identity",
+  "scenarios": [
+    {
+      "id": "write-applied",
+      "task_gid": "task-write-applied",
+      "covers": [
+        "started write",
+        "live applied",
+        "truthful identities"
+      ]
+    },
+    {
+      "id": "write-not-applied",
+      "task_gid": "task-write-not-applied",
+      "covers": [
+        "started write",
+        "live not applied",
+        "truthful identities"
+      ]
+    },
+    {
+      "id": "write-uncertain",
+      "task_gid": "task-write-uncertain",
+      "covers": [
+        "uncertain write",
+        "divergent live task",
+        "multiple identities"
+      ]
+    },
+    {
+      "id": "movement-applied",
+      "task_gid": "task-move-applied",
+      "covers": [
+        "destination movement",
+        "live applied"
+      ]
+    },
+    {
+      "id": "movement-not-applied",
+      "task_gid": "task-move-not-applied",
+      "covers": [
+        "destination movement",
+        "live not_applied"
+      ]
+    },
+    {
+      "id": "signed-binding",
+      "task_gid": "task-signed",
+      "covers": [
+        "signed binding",
+        "multiple content versions",
+        "confirmed write"
+      ]
+    },
+    {
+      "id": "closed-not-applied-attempt",
+      "task_gid": "task-attempt-not-applied",
+      "covers": [
+        "not-applied attempt"
+      ]
+    },
+    {
+      "id": "evidence-hold",
+      "task_gid": "task-evidence-hold",
+      "covers": [
+        "evidence review",
+        "evidence-hold",
+        "reviewed binding"
+      ]
+    },
+    {
+      "id": "human_review-hold",
+      "task_gid": "task-human_review-hold",
+      "covers": [
+        "human_review review",
+        "two-pass-hold",
+        "reviewed binding"
+      ]
+    }
+  ]
+}
