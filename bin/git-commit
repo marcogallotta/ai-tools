@@ -211,11 +211,46 @@ protocol_files = {
     "dish-verification-protocol.md",
     "dish-cooking-protocol.md",
 }
-protocol_changed = bool(staged & protocol_files)
-schema_changed = (
-    "dish-task-schema.json" in staged
-    or any(path.startswith("dish-schema-migrations/") for path in staged)
-)
+schema_assets = {
+    path
+    for path in staged
+    if path == "dish-task-schema.json"
+    or path.startswith("dish-schema-migrations/")
+}
+protocol_changed = bool(staged & protocol_files) or bool(schema_assets)
+
+
+def schema_asset_has_structural_change(path: str) -> bool:
+    status = git(
+        "diff",
+        "--cached",
+        "--name-status",
+        "--find-renames",
+        "--",
+        path,
+    ).stdout.splitlines()
+    if not status or any(not line.startswith("M\t") for line in status):
+        return True
+
+    diff = git(
+        "diff",
+        "--cached",
+        "--unified=0",
+        "--no-color",
+        "--",
+        path,
+    ).stdout
+    for line in diff.splitlines():
+        if not line.startswith(("+", "-")) or line.startswith(("+++", "---")):
+            continue
+        changed = line[1:].strip()
+        if changed.startswith('"protocol_version"'):
+            continue
+        return True
+    return False
+
+
+schema_changed = any(schema_asset_has_structural_change(path) for path in schema_assets)
 if not protocol_changed and not schema_changed:
     raise SystemExit(0)
 
