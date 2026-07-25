@@ -2,7 +2,7 @@
 
 **Purpose:** Sort work that is not in the current v1 design into the first real post-v1 release and
 later work that still needs usage evidence or additional design. `dish-tool.md` remains the v1
-design; bounded additions still worth considering before v1a is frozen now live at the end of
+design; bounded additions still worth considering before V1 is frozen now live at the end of
 `dish-tool-imp.md`.
 
 **Status:** This is design triage, not implementation authorization. Building any item still
@@ -25,22 +25,22 @@ the release value need not be a combined hash. `tool_version` remains separate; 
 fixes change only that version, while schema or semantic compatibility changes require both versions
 to advance.
 
-**v1a — build and soft-launch.** The full guarded path (`create` / `read` / `start` / `prepare` /
+**V1 ships as one release.** The full guarded path (`create` / `read` / `start` / `prepare` /
 `approve` / `reject` / `submit` plus `dish-admin recover` / `discard` / `unblock`) is implemented,
-tested, and usable end-to-end against live tasks. It performs real Asana writes through the guarded,
-single-use submission path, but the generic Asana CLI's managed-task check is advisory/log-only.
-This proves the validators, submission state machine, verifier correction/return flow, and manual
-recovery under real conditions.
+tested, and usable end-to-end against live tasks, performing real Asana writes through the guarded,
+single-use submission path.
 
-**v1b — enforce.** Once v1a has run cleanly against real usage, flip that same managed-task check
-from advisory to blocking. This is a configuration/rollout change on v1a's logged evidence, not a
-new mechanism and not v2.
+The earlier v1a/v1b split staged one thing — a managed-task guard in the generic Asana CLI, advisory
+first and blocking later. Both the split and the guard are dropped: the guard covered only the local
+CLI agents, which already prompt Marco before any Asana write, and never ChatGPT, which writes
+through its own Asana integration. Drift detection carries that protection instead, and catches what
+the guard could not.
 
 ## Earmarked: v2 — first release soon after v1
 
 V2 adds a small content-sensitive layer on top of v1's controlled structural path and removes the
-manual relay between ChatGPT and the tool. It should begin only after v1a is proven and v1b's
-enforcement path is operational. The items below have either recorded incident evidence, an
+manual relay between ChatGPT and the tool. It should begin only after V1 is proven in real use. The
+items below have either recorded incident evidence, an
 approved bounded direction, or a proven implementation pattern; they do not turn the tool into a
 semantic recipe judge or a general remote platform.
 

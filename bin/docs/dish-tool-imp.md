@@ -1,14 +1,13 @@
-# Dish tool — v1a implementation plan
+# Dish tool — V1 implementation plan
 
-Scope: build and development-test the complete v1a guarded workflow specified by `dish-tool.md`.
-When separately authorized for production, v1a performs real backend writes but leaves the generic
-Asana CLI's managed-task guard advisory-only; v1b later flips that existing guard to blocking.
+**Superseded for the combined rollout.** `dish-tool-update-imp.md` carries the current staged build
+plan, revised for protocol compatibility. This document predates that revision; where the two
+disagree, the update plan wins. It is kept for the design detail the update plan does not restate.
 
-The tool-independent three-way protocols ship first. Tool development can proceed against fixtures,
-but live rollout waits for the later tool-aware beta of `dish-planning-protocol.md`,
-`dish-research-protocol.md`, and `dish-verification-protocol.md`. That beta supplies the final
-agent-facing command workflow and governed machine-readable manifest. Do not add tool instructions
-to the current tool-independent beta.
+Scope: build and development-test the complete V1 guarded workflow specified by `dish-tool.md`.
+
+The protocols and the tool ship together as one combined rollout, so this plan's steps land against
+the rollout branch rather than waiting for a later tool-aware beta.
 
 This plan implements decisions settled in `dish-tool.md`,
 `~/honest-pantry/dish-docs-design.md`, and Marco's later decision that V1 owns structured titles;
@@ -16,9 +15,10 @@ it does not reopen them. In particular:
 
 - the tool owns governed task creation, reads, complete title-and-notes writes, and both queue moves;
 - Asana is a backend detail, not part of the tool-aware agent workflow;
-- the second unsuccessful verification pass escalates to Human Review in v1a;
+- two unsuccessful verification passes set `Status: pending-human-review`, cleared only by Marco;
 - every multi-step operation resumes only missing work;
-- exact-content binding, live-baseline comparison, and external-edit detection remain deferred.
+- exact-content binding and drift detection are part of V1, and are what catches an edit made
+  outside the guarded path; the generic Asana CLI is not modified to police writes.
 
 ## Implementation sequence
 
@@ -48,7 +48,7 @@ implementation must not fall back to `dish-protocol.md` or invent a compatibilit
 
 Create `bin/dish_lib.py`, shared by the separate `dish` and `dish-admin` executables:
 
-- a small Asana client/auth/error layer contained in `dish_lib.py` for v1a;
+- a small Asana client/auth/error layer contained in `dish_lib.py`;
 - SQLite setup and migrations for `~/ai-tools/var/dish-tool.db`, with `var/` gitignored;
 - release resolution from the honest-pantry Git worktree;
 - manifest parsing and literal title/note validation;
@@ -242,8 +242,8 @@ counter, and returns to `drafting` without erasing prior events or releasing the
 `submit` accepts `ready` or `written`. From `ready`, it creates a unique write-attempt ID and
 conditionally enters `in_flight`, recording its timestamp, hostname, PID, and process-start token
 before making one backend request that updates the stored prepared title and supplied complete
-notes together. It continues to trust the supplied controlled-handoff note file: v1a does not hash
-it or compare it with a saved live baseline. Every later state update uses the attempt ID in its
+notes together. See `dish-tool-update-imp.md` for the exact-content baseline and drift check that
+now apply here. Every later state update uses the attempt ID in its
 conditional update so a stale process cannot commit an outcome after recovery.
 
 Classify outcomes conservatively:
@@ -292,24 +292,28 @@ Tests cover every accepted/rejected source state, live/dead/PID-reuse process id
 boundaries, attempt invalidation, retained audit attribution, absence of backend mutation, and the
 separation between `dish` and `dish-admin` command surfaces.
 
-## Step 7 — generic CLI advisory integration
+## Step 7 — drift detection
 
-Before every generic title or note mutation, `bin/asana` consults `dish_lib.is_managed`. In v1a a
-managed or unresolved target produces an advisory bypass event and the write proceeds. Cover task
-rename/name updates, `set-notes`, `append`, `replace`, title- or note-bearing batch operations, raw
-`name`/`notes`/`html_notes`, and title- or note-bearing task creation. Tool-owned bare creation with
-its working title remains allowed; unrelated non-content operations remain allowed. Section identity
-uses pinned GIDs, not mutable names.
+`bin/asana` is not modified. A guard there would cover only the local CLI agents, which already
+prompt Marco before any Asana write, and never ChatGPT, which writes through its own Asana
+integration — cost without coverage.
 
-Tests cover all mutation surfaces, excluded sections, renamed sections, unresolved membership,
-tool-owned bare creation, and unrelated non-content writes. V1b changes only the advisory outcome
-to a block.
+Instead, the tool compares the live title and body against its recorded exact-content version on
+every read. A mismatch is a drift event: it voids any signoff, drops the task out of guarded state,
+and is logged with the task and the invalidated signoff. Section identity uses pinned GIDs, not
+mutable names.
+
+Non-body operations — `due_on`, completion, other fields — remain freely available outside the tool
+and never trigger drift.
+
+Tests cover detection on title and on body, excluded sections, renamed sections, unresolved
+membership, tool-owned bare creation, and non-body writes not registering as drift.
 
 ## Step 8 — reporting
 
 Ship `bin/dish-reports.sql` with tested queries for command counts (including `inspect`) by
 actor/kind/level, validation failure rates by rule, rejection and repeated-rejection rates, Human
-escalation/unblock rates, submit outcomes, and advisory bypasses by task/agent.
+escalation/unblock rates, submit outcomes, and drift events by task.
 Include title-validation failures and title-versus-note generic bypasses distinctly.
 
 ## Step 9 — documentation and release preparation
@@ -354,8 +358,7 @@ Then perform one deliberate cutover:
    writes.
 
 Do not leave mixed production authority. If cutover verification fails, restore the recorded
-snapshot and previous governing release before reopening writes. V1a begins with the generic CLI
-guard advisory-only; the separately authorized v1b rollout changes that existing guard to blocking.
+snapshot and previous governing release before reopening writes.
 
 The initial migration establishes canonical title syntax but does not invent missing semantic
 knowledge. Normalize known role and blocker markers mechanically. Where the snapshot cannot support

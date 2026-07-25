@@ -47,13 +47,13 @@ These decisions are approved for the first compatible rollout. They may later ch
 6. A migration is complete only after the transformed live task is written, reread, and validated. Only then is its `Schema version` updated. A failed migration must leave the task on its prior schema version.
 7. A protocol change always bumps `PROTOCOL_VERSION`. A schema change also bumps `SCHEMA_VERSION`; a protocol-only change need not change the schema version. `bin/git-commit` must inspect staged changes to governed protocol, schema, and migration files and flag a missing required bump before commit. Automatic bumping may be added only where the required bump is unambiguous; the minimum V1 requirement is a blocking confirmation/check.
 8. The machine schema is traceable clause-by-clause to the governing prose. Prose wins over schema or tool output; disagreement fails closed.
-9. The task field `Verification protocol release` is separate from both version numbers. It records the exact Verification-protocol text used for that Verification cycle, identified by Git commit so the text stays retrievable after the protocol moves on. Historical retrieval bypasses the current-version compatibility gate, which governs running against a protocol, not reading one.
+9. The task field `Verification protocol release` is separate from both version numbers. It records the exact Verification-protocol text used for that Verification cycle. The verification protocol owns its form and lifetime; do not restate or reinterpret them here.
 10. Destination is serialized as `Destination section: <section name> — <section gid>`.
 11. A platform run/session ID is stored when available. Otherwise a tool-recorded independence attestation is sufficient. The verifier must not have constructed or materially edited the candidate.
 12. Other agents may assist with retrieval or mechanical work, but the recorded constructor or material editor must be the ChatGPT run that reviews the exact candidate.
 13. A material task-body edit invalidates exact-content signoff and opens a fresh Verification cycle. A non-material edit records a new content version without clearing `Verified by`. The editor records the classification in `Material changes`; anything ambiguous counts as material. The tool cannot judge materiality, so this is an agent duty backed by the version record, not a deterministic check.
 14. A two-pass reset requires a new `Material changes` entry naming category (`evidence`, `premise`, `method`, or `scope`), concrete before/after change, editor, and date. A new hash alone is insufficient.
-15. Role classification is binary. Main is the unmarked default. Only non-main tasks carry `[non-main]`; main-dish nutrition requirements apply only to main tasks. This requires explicit amendments to the current protocol wording before activation.
+15. Role classification is binary and assigned by Planning in the brief's `Role` field. Main is the unmarked default; only non-main tasks carry `[non-main]`, and nutrition requirements apply only to main tasks. The test is what the dish is, not whether it meets nutrition: a dessert, small side, or little test dish is non-main, while a real lunch or dinner main that misses a limit stays main and takes the matching `[nutrition-*]` exemption. `[non-main]` is never a route around a nutrition limit, and a non-main task states which kind it is and why.
 16. Missing or invalid destination remains visible in both the title and `Destination section`, using `[destination missing]` or `[destination invalid]`. It blocks only the final move.
 17. Lower-level subheadings are allowed inside canonical sections. Canonical top-level headings and Process Record labels remain fixed.
 18. Human decisions use `Human — Marco: <decision>; scope: <scope>; date: <YYYY-MM-DD>; reason: <reason>`.
@@ -329,10 +329,12 @@ The fixture Planning schema is obsolete, only some Planning data is preserved, a
 
 **Governing requirement**
 
-The Planning brief has exactly six fields:
+The Planning brief has exactly eight fields:
 
 - `Dish candidate`
 - `Purpose`
+- `Role`
+- `Priors`
 - `Locks`
 - `Exemptions`
 - `Research emphasis`
@@ -342,8 +344,9 @@ The canonical task has fixed top-level sections, a divider between cooking brief
 
 **Required change**
 
-- Replace the old Planning manifest with exact parsing/rendering for the six fields.
-- Preserve all six through Research and reconcile them with the final title, brief, quantities, Decisions, and blockers.
+- Replace the old Planning manifest with exact parsing/rendering for the eight fields.
+- Preserve all eight through Research and reconcile them with the final title, brief, quantities, Decisions, and blockers.
+- `Role` is `main` or `non-main`; a `non-main` value carries the kind of non-main and the reason. `Priors` is informational and never binds Research on its own.
 - Treat Dish candidate, Purpose, explicit Locks, and Exemptions according to their protocol lock semantics; do not automatically escalate harmless destination or emphasis refinement.
 - Validate canonical top-level structure and divider.
 - Allow arbitrary lower-level subheadings inside canonical sections, but reject added top-level sections or invented Process Record labels.
@@ -557,7 +560,7 @@ The tool provides deterministic validation and workflow operations; it does not 
 A compatible implementation must satisfy all of the following:
 
 1. The live Asana task is the content authority, and every agent read, write, correction, check-in, signoff, and move is mediated by the dish tool or its shared service; stale content is detected before mutation or signoff.
-2. The six-field Planning brief, canonical task structure, separate task-body `Schema version` metadata field, and seven-field state block parse and render deterministically.
+2. The eight-field Planning brief, canonical task structure, closing task-body `Schema version` line, and seven-field state block parse and render deterministically.
 3. Tool-internal operation state never implies protocol readiness.
 4. Planning, Research, and Verification receive only their own protocol text.
 5. `honest/DISH_VERSION`, the schema in `honest`, and `ai-tools` capability agree exactly before the tool runs; `bin/git-commit` flags governed protocol/schema changes whose required version bump is missing; each task body contains a separate canonical `Schema version` metadata field, while every entry into `pending-verification` separately records the then-current exact Verification protocol.

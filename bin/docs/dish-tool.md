@@ -4,13 +4,12 @@
 protocol-governed dish tasks. Asana is the initial backend, not part of the agent-facing workflow.
 
 **Status:** Initial design, v1 scope only. No implementation or production changes are authorized by
-this document. Everything not needed for v1 to exist and work — v1b's enforcement flip, v2 candidate
-features, and ideas considered and rejected outright — lives in `dish-tool-future.md`, not here.
+this document. Everything not needed for v1 to exist and work — v2 candidate features and ideas
+considered and rejected outright — lives in `dish-tool-future.md`, not here.
 
-V1 ships only after the tool-independent three-way protocol split is live. A later tool-aware beta
-of those three protocols supplies the command-facing workflow and machine-readable manifest used
-here; the current beta remains intentionally usable without this tool and is not retrofitted during
-tool implementation.
+V1 ships together with the protocol update as one combined rollout; the protocols and the tool are
+built, tested, and deployed as a single bundle rather than as a tool-independent beta followed by a
+tool-aware one.
 
 ## Scope
 
@@ -18,24 +17,26 @@ This tool governs the agent-facing lifecycle of protocol-managed dish tasks: tas
 reads, complete notes writes, and the two conditional queue moves. Agents using the tool-aware
 protocols do not call the generic Asana CLI or depend on Asana-specific concepts.
 
-It is separate from the general-purpose Asana CLI. The existing CLI must consult this tool's live
-managed-task determination before performing a generic note mutation — during v1a that consultation
-is advisory/log-only (see `dish-tool-future.md`, Versioning plan); v1b makes it a hard block.
+It is separate from the general-purpose Asana CLI, which is not modified to police it. A guard there
+would cover only the local CLI agents, which already prompt Marco before any Asana write, and never
+ChatGPT, which writes through its own Asana integration. Content drift is the protection instead: a
+write from outside this tool voids exact-content signoff and drops the task out of guarded state at
+the next operation.
 
 This design does not attempt adversarial security. Agents are trusted to identify themselves and
 describe their work honestly. Mechanical controls exist to prevent concurrent controlled
 submissions, repeated writes, and incomplete validation.
 
-Direct web or integration edits are not prevented and are not generally identifiable as bypasses.
+Direct web or integration edits are not prevented, and the protocol must not claim they are.
 `dish start` claims an exclusive lock; while it is held, no other `dish` CLI caller can start work
-on the same task. V1 assumes no edits are made outside this controlled workflow during the cycle. It
-does not hash candidate content, save a live-notes baseline, or detect external edits; those
-protections may be reconsidered for V2 if usage justifies them.
+on the same task. V1 does detect them after the fact: exact-content identity is tracked, so a change
+made outside this workflow voids signoff and is caught at the next operation. Detection, not
+prevention, is the guarantee.
 
 ## Current design decisions, pending formal approval
 
-- Protocol-managed notes cannot be changed through generic note-writing commands once v1b is
-  enabled; in v1a the restriction is advisory/logged only.
+- Protocol-managed notes are not mechanically protected from generic note-writing commands. Such a
+  write is detected after the fact by content drift, not prevented.
 - Agent identity is supplied explicitly as a trusted CLI flag, not cryptographically authenticated.
 - Trusted state is stored in a local SQLite database at `~/ai-tools/var/dish-tool.db`, gitignored,
   shared by every locally-invoked agent regardless of family.
@@ -56,7 +57,7 @@ protections may be reconsidered for V2 if usage justifies them.
 - A successful write consumes a single-use submission; an identical second write is rejected.
 - A submission gets exactly one notes write; a second `submit` attempt on an already-`consumed`
   submission is rejected (see `dish submit`). No incident evidences a need for a multi-write
-  escalation budget or reset mechanism — see `dish-tool-future.md` if v1a's logging shows otherwise.
+  escalation budget or reset mechanism — see `dish-tool-future.md` if real usage shows otherwise.
 
 ## Submission kinds and change levels
 
@@ -183,20 +184,13 @@ GID matches one of those two — every other section defaults to managed. If sec
 be resolved to a GID at all, the tool fails closed and treats the task as managed. This applies
 uniformly to new and pre-existing tasks; no separate enrollment or backfill pass is needed.
 
-**v1a:** the generic CLI still performs a live check before a note mutation on a managed task, but
-only to log an advisory bypass event (task GID, command used, agent if known) — the write proceeds.
-**v1b:** the same check rejects the write instead.
+Management is the tool's own concept: it decides which tasks the tool governs, refuses older-schema
+tasks, and scopes drift detection. The generic Asana CLI is not modified to consult it.
 
-The check applies to `set-notes`, `append`, `replace`, batch operations updating notes, `raw` writes
-containing `notes`/`html_notes`, and `create_task` when it supplies notes for a task whose intended
-Cooking section is managed. An unresolved intended section fails closed to managed. Generic creation
-of a bare managed task remains allowed during the rollout, but tool-aware agents use `dish create`.
-Unrelated operations (rename, complete, other fields) remain outside this protocol unless later
-expanded. Generic section moves remain available, but tool-aware agents use only the conditional
-moves owned by `dish prepare` and `dish submit`.
-
-The dish-tool submission path uses an internal guarded write operation after all checks pass; it
-does not go through the generic-command guard at all, in either v1a or v1b.
+Ordinary non-content operations on a managed task — scheduling or clearing `due_on`, marking the
+task complete after cooking, and other non-body fields — remain available outside the tool. Only the
+task body is guarded content. Generic section moves also remain available, but tool-aware agents use
+only the conditional moves owned by `dish prepare` and `dish submit`.
 
 ## Workflow
 
@@ -350,7 +344,7 @@ grammar, tolerant schemas, and tool-generated values are V2 questions to design 
 automation needs them.
 
 The canonical allowlist is parsed from the machine-readable manifest in the frozen protocol release
-set, not duplicated by hand in this tool — required as part of v1a's scope, not a later addition. A
+set, not duplicated by hand in this tool — required as part of v1's scope, not a later addition. A
 hand-maintained hardcoded allowlist would recreate, inside the validator meant to eliminate this
 exact failure mode, the same silent-drift risk the tool exists to remove from the protocol's own
 prose rules.
@@ -498,7 +492,7 @@ have begun moves the submission to `uncertain`. If the tool's own process dies w
 the lock stays held and the task simply stays unavailable for a new `start` until recovered. This
 does not block other tasks' submissions.
 
-No incident evidences a crashed process or an ambiguous Asana outcome happening in practice. v1a
+No incident evidences a crashed process or an ambiguous Asana outcome happening in practice. V1
 logs the `uncertain` state and leaves recovery to Marco checking the live task directly. Recovery is
 refused while the recorded process identity is still live or until a fixed quarantine interval has
 elapsed; that interval must exceed the client's maximum request lifetime plus a documented safety
@@ -534,10 +528,9 @@ security" framing in Scope.
 
 Revoking a task's protocol-managed status is not a feature of `dish-admin`, or of this design at
 all. If a managed task genuinely needs a one-off manual edit outside the guarded workflow, Marco
-makes it directly through the Asana web UI instead — the same documented bypass named in Scope: a
-direct edit there is neither prevented nor detected by V1. The general-purpose Asana CLI gives Marco
-no bypass either, once v1b's block is active — nothing about being Marco is authenticated or
-distinguishable to it.
+makes it directly, through the Asana web UI or the general-purpose CLI — neither is prevented. The
+edit is not silent: it changes exact content, so it voids any signoff and the task drops out of
+guarded state at the next operation.
 
 ## SQLite model
 
@@ -584,7 +577,7 @@ A partial unique index on `submissions(task_gid)` for non-terminal `status` valu
 ### `audit_events`
 
 - `event_id`
-- `submission_id` (nullable — an advisory bypass event from the generic CLI has no submission; a
+- `submission_id` (nullable — a drift event detected outside any submission has none; a
   failed `prepare` validation does, since `start` already opened the row it attaches to)
 - `task_gid` (populated whenever known, even without a submission)
 - `event_type`
@@ -596,10 +589,10 @@ A partial unique index on `submissions(task_gid)` for non-terminal `status` valu
 SQLite transactions protect local state changes and prevent two local submissions from consuming the
 same row.
 
-## Logging and observability (v1a)
+## Logging and observability
 
-v1a exists to prove the mechanism and learn real usage before enforcing anything, so logging is a
-first-class requirement, not an afterthought on top of `audit_events`.
+V1 exists partly to learn real usage, so logging is a first-class requirement, not an afterthought
+on top of `audit_events`.
 
 Every `dish` command execution logs an event regardless of outcome:
 
@@ -620,11 +613,9 @@ Every `dish` command execution logs an event regardless of outcome:
 `inspect` logs the attributed reader and returned state but not a duplicate copy of the frozen
 bundle. Every logged outcome uses the same stable code returned in the CLI JSON envelope.
 
-The generic Asana CLI's managed-task check also logs during v1a even though it does not yet block:
-every note-write to a section-managed task made *outside* the guarded `dish` path is logged as an
-advisory bypass event (task GID, command used, agent if known). This is the direct evidence for the
-v1a-to-v1b decision — whether it's safe to flip the block on depends on how much real, legitimate
-traffic would have been blocked, not a guess.
+A body change made outside the guarded path is logged when the tool next reads the task and finds
+the content no longer matches its recorded version. That drift event is the record of an external
+edit; it names the task and what signoff it invalidated, since the writer itself cannot be observed.
 
 A periodic summary — a query over `audit_events`, not a new mechanism — should be able to answer at
 minimum:
@@ -633,19 +624,16 @@ minimum:
   agent, submission kind, and change level where applicable;
 - validation failure rate, broken down by which specific rule failed most often;
 - rejection rate, repeated-rejection-on-same-task rate, and Human-escalation/unblock rate;
-- how many advisory bypass events occurred outside the guarded path, and on which tasks/agents.
+- how many drift events occurred, and on which tasks.
 
 Further queries (small-change diff characterization, write/reset frequency) are v2 candidates, tied
-to mechanisms not built in v1a either — see `dish-tool-future.md`.
+to mechanisms not built in V1 either — see `dish-tool-future.md`.
 
 ## Integration with the existing Asana CLI
 
 The dish tool and general Asana CLI may share SDK client construction, task reads, task updates, and
-error formatting. They must not share unguarded note-writing behaviour.
-
-The general CLI consults the dish tool's live managed-task determination before changing notes —
-advisory/logged in v1a, blocking in v1b (see `dish-tool-future.md`, Versioning plan;
-Protocol-managed task registry, above).
+error formatting. The general CLI is not modified to consult the dish tool, and does not police
+writes to managed tasks — see Protocol-managed task registry above for why.
 
 The dish tool performs its final update through a separate guarded gateway that cannot be called
 without a valid, `ready` submission.
@@ -678,7 +666,7 @@ behalf:
 ChatGPT cannot declare its own `--agent` value or run any command itself — a human or local agent
 does so on its behalf, honestly reflecting who actually authored and reviewed the note.
 
-## Testing requirements (v1a)
+## Testing requirements
 
 Implementation follows TDD. Tests must cover:
 
@@ -689,10 +677,9 @@ Implementation follows TDD. Tests must cover:
   and exact legal next agent actions without claiming to store the controlled-handoff candidate;
 - the common JSON result envelope, stable outcome/rule codes, retryability, allowed-action mapping,
   and exit status for every success and failure class;
-- generic note-write advisory logging in v1a, and blocking once v1b is enabled, including
-  `create_task` with notes for a managed or unresolved destination while bare creation remains
-  allowed;
-- non-note generic writes remaining allowed in both v1a and v1b;
+- drift detection: a body change made outside the guarded path is caught at the next read, voids
+  signoff, and is logged as a drift event;
+- non-body writes (`due_on`, completion, other fields) remaining allowed throughout;
 - declared agent-name validation and agent-family routing;
 - planning, initial, and change submission kinds; change-level arguments required only for change;
 - kind-specific start eligibility: empty notes for planning, a valid Planning brief for initial, and
@@ -774,8 +761,7 @@ Implementation follows TDD. Tests must cover:
 - Research Queue → Verification Queue at accepted Research and Verification Queue → validated
   Destination after the notes write, including idempotent retries and manual-position overrides;
 - every command execution produces an `audit_events` row, including failed `prepare` attempts on an
-  already-open (`drafting`) submission and advisory bypass events from the generic CLI, which has no
-  submission at all;
+  already-open (`drafting`) submission and drift events detected outside any submission;
 - the periodic-summary queries listed in Logging and observability return correct counts against a
   seeded `audit_events` fixture.
 
@@ -792,5 +778,5 @@ Implementation follows TDD. Tests must cover:
 - documenting the dish admin tool's location or invocation for agents;
 - providing a dedicated revoke-management command (Marco uses the Asana web UI directly instead);
 - a speed bump against an honest agent carelessly mis-declaring a material change as `small`
-  (Marco's standing concern) — tracked in `dish-tool-future.md` for v2, once v1a's logging of what
+  (Marco's standing concern) — tracked in `dish-tool-future.md` for v2, once V1's logging of what
   real `small`-declared diffs touch gives the input needed to design it.

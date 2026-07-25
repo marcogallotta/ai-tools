@@ -22,7 +22,11 @@ Its meaning changes:
 
 For protocol-managed tasks, agents do not access Asana directly: every read, write, correction, check-in, signoff, and move goes through `dish` in local test mode or through the shared dish service in live mode. The registry defines which tasks those are; unmanaged work such as the Pantry and Fermentation projects stays outside this rule.
 
+Only the task body is guarded content. Ordinary non-content operations — scheduling or clearing `due_on`, marking a task complete after cooking, other non-body fields — remain available outside the tool and never register as drift.
+
 Cooking is the one deliberate exception in this rollout. Cooking agents write cook-log entries — Asana comments today, a cook-log record once the backend changes — and never touch the task body, so a cook log can never invalidate exact-content signoff. A cooking-agent body edit takes the task out of guarded state and requires re-verification before further protocol work. A Marco-granted override is a cook-log entry naming exactly what was waived, not a tool bypass. Routing cooking through the tool is deferred; see `dish-tool-future.md`.
+
+Planning reads Asana cooking history directly through the general `asana` CLI to populate the brief's `Priors`. That is not a breach of the rule above: it reads completed, unmanaged history rather than governed task content.
 
 ## Authority and non-negotiable invariants
 
@@ -139,7 +143,7 @@ Use a deliberately simple parser:
     - the stage-specific protocol requested by the command;
     - schema migration metadata when migration is invoked.
 - Add an `ai-tools` capability declaration for the exact supported `PROTOCOL_VERSION` and `SCHEMA_VERSION`.
-- Support commit-pinned retrieval of historical Verification protocol text. `Verification protocol release` records the Git commit, and the resolver reads the verification protocol file at that commit for an in-flight cycle. This is a read of past text, not a run against a past protocol, so it deliberately bypasses the current-version compatibility gate; without it, any routine edit to the verification protocol strands every submission already in `pending-verification`. Fail closed with a distinct error when the recorded commit is unreachable, matching the protocol's own instruction to stop when the exact text cannot be recovered.
+- Retrieve the verification protocol text recorded in `Verification protocol release` — by Git commit, or by the recorded hash and read time without Git. The verification protocol requires verifying against that exact text and stopping if it cannot be recovered, so retrieval must work independently of the current-version compatibility gate. Fail closed with a distinct error when the recorded release is unreachable.
 - Update `bin/git-commit` to inspect the staged diff for governed protocol, schema, and migration files:
   - a governed protocol change requires a staged `PROTOCOL_VERSION` bump;
   - a schema or migration change requires staged `SCHEMA_VERSION` and `PROTOCOL_VERSION` bumps;
@@ -197,7 +201,7 @@ Implement the current task structure before changing lifecycle commands.
 
 Implement deterministic parse/render support for:
 
-- the six-field Planning brief;
+- the eight-field Planning brief;
 - canonical complete-task top-level sections;
 - permitted lower-level subheadings;
 - fixed Process Record labels;
@@ -343,11 +347,10 @@ uncertain outcome remains deferred per that doc; only detection is pulled forwar
 
 The registry (live section-GID resolution for `Sourcing`/`Reference`, fail-closed-to-managed on an
 unresolvable section) survives this update unchanged in behaviour — see `dish-tool.md`'s Protocol-managed
-task registry section. What changes is only where its checks sit: resolution and the advisory/blocking
-generic-write check are schema/version-aware, running against the current `honest` `DISH_VERSION`
-rather than a task-pinned bundle. The v1a advisory-log / v1b hard-block flip is unchanged and does not
-wait for Step 11's shared service — it applies from Step 4 onward in local single-agent mode; Step 11
-only adds the shared service as the *sole* credentialed path once multi-agent use begins.
+task registry section. What changes is only where its checks sit: resolution is schema/version-aware,
+running against the current `honest` `DISH_VERSION` rather than a task-pinned bundle. The registry is
+now purely the tool's own scoping concept; the generic Asana CLI is not modified to consult it, and
+drift detection catches writes made outside the guarded path.
 
 ### Files
 
@@ -418,6 +421,15 @@ only path onward from there, so generic `create_task` with notes cannot bypass e
 - a clear API failure returns `BACKEND_REJECTED`; an ambiguous outcome returns `BACKEND_UNCERTAIN`
   rather than an automatic retry that risks a duplicate task;
 - stamp the created task's `Schema version` to the current `honest` `SCHEMA_VERSION` at creation time.
+
+### `dish sections`
+
+Planning must record a `Destination section` name and gid and cannot invent one.
+
+- list the Cooking project's sections with names and gids, read-only;
+- scoped to Cooking by construction — it must not be usable to query Pantry or Fermentation, which
+  the planning protocol calls out explicitly;
+- no dedupe search command is provided: Planning assumes the dish does not already exist.
 
 ### `dish read`
 
@@ -519,7 +531,7 @@ The candidate file is an input only and may be deleted after the operation. It i
 
 ### Planning handoff
 
-- validate the six-field Planning brief;
+- validate the eight-field Planning brief;
 - preserve locks/exemptions explicitly;
 - write and reread the live Planning task;
 - leave it in the correct Research Queue state for Research pickup;
