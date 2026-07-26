@@ -89,6 +89,8 @@ class CurrentWorkflowService:
             live_section_gid=live.section_gid,
             verification_queue_gid=registry.verification_queue_gid,
             cycle_reviewed=cycle_reviewed,
+            latest_cycle_outcome=None if cycle is None else cycle["outcome"],
+            latest_cycle_route=None if cycle is None else cycle["route"],
             validation_rules=tuple(validation_rules),
         )
         facts = {
@@ -157,18 +159,7 @@ class CurrentWorkflowService:
         return self.mutate(operation_id, action, executor, schema=schema)
 
     def reopen_two_pass(self, operation_id: str, executor: Callable[[], T], *, schema=None):
-        view = self.authoritative_view(operation_id, schema=schema)
-        cycle = self.conn.execute(
-            "SELECT outcome, route FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1",
-            (operation_id,),
-        ).fetchone()
-        if view["phase"] != "held_human" or cycle is None or cycle["outcome"] != "two-pass-hold":
-            raise DishRuleError(
-                "WRONG_STATE", "reopen is legal only for a two-pass human hold",
-                rule="two_pass_hold_required", details={"authoritative_view": view},
-            )
-        result = executor()
-        return result, self.authoritative_view(operation_id, schema=schema)
+        return self.mutate(operation_id, "reopen", executor, schema=schema)
 
     def recover(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         self.operation(operation_id)

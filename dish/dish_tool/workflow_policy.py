@@ -14,6 +14,8 @@ class WorkflowSnapshot:
     live_section_gid: str | None
     verification_queue_gid: str | None
     cycle_reviewed: bool
+    latest_cycle_outcome: str | None
+    latest_cycle_route: str | None
     validation_rules: tuple[str, ...]
 
 
@@ -39,7 +41,13 @@ def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
         return []
     if phase == "held_evidence" and snapshot.live_status != "pending-evidence":
         return []
-    if phase == "held_human" and snapshot.live_status != "pending-human-review":
+    if phase == "held_human":
+        if snapshot.live_status != "pending-human-review":
+            return []
+        if snapshot.latest_cycle_outcome == "two-pass-hold":
+            return ["reopen"]
+        if snapshot.latest_cycle_route == "human_review":
+            return ["record-human-decision"]
         return []
     if phase == "prepare_required" and snapshot.operation_status != "open":
         return []
