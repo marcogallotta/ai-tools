@@ -52,13 +52,30 @@ class SidecarBackend:
         ]
 
 
+def _semantic_snapshot(path: Path):
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    tables = [row[0] for row in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name"
+    )]
+    snapshot = {}
+    for table in tables:
+        columns = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+        order = ",".join(columns)
+        rows = [tuple(row[col] for col in columns) for row in conn.execute(f"SELECT * FROM {table} ORDER BY {order}")]
+        snapshot[table] = {"columns": columns, "rows": rows}
+    conn.close()
+    return snapshot
+
+
 def test_recovery_fixture_generator_is_reproducible(tmp_path):
-    # Execute the committed generator against the current schema. This catches
-    # stale fixture code rather than merely accepting a previously committed DB.
     import runpy
     namespace = runpy.run_path(str(FIXTURES / "generate_recovery_fixtures.py"))
-    namespace["build"]()
-    assert (FIXTURES / DB_NAME).exists()
+    namespace["build"](tmp_path)
+    generated_db = tmp_path / DB_NAME
+    assert _semantic_snapshot(generated_db) == _semantic_snapshot(FIXTURES / DB_NAME)
+    assert (tmp_path / "live-tasks.json").read_bytes() == (FIXTURES / "live-tasks.json").read_bytes()
+    assert (tmp_path / "fixture-matrix.json").read_bytes() == (FIXTURES / "fixture-matrix.json").read_bytes()
 
 
 def test_recovery_fixture_identities_and_live_sidecars_are_truthful():

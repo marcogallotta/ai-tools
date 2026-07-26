@@ -68,9 +68,15 @@ def add_state(conn: sqlite3.Connection, *, task: str, title: str, notes: str) ->
     return digest
 
 
-def build() -> None:
-    DB_PATH.unlink(missing_ok=True)
-    conn = initialize_database(DB_PATH)
+def build(output_dir: str | Path | None = None) -> None:
+    root = HERE if output_dir is None else Path(output_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    db_path = root / DB_PATH.name
+    sidecar_path = root / SIDECAR_PATH.name
+    matrix_path = root / MATRIX_PATH.name
+    db_path.unlink(missing_ok=True)
+    conn = initialize_database(db_path)
+    conn.execute("UPDATE schema_migrations SET applied_at=?", (NOW,))
     sidecars: list[dict[str, object]] = []
     scenarios: list[dict[str, object]] = []
 
@@ -261,11 +267,11 @@ def build() -> None:
     if integrity != "ok":
         raise RuntimeError(f"fixture integrity failed: {integrity}")
 
-    SIDECAR_PATH.write_text(json.dumps({"schema": 1, "tasks": sidecars}, indent=2) + "\n")
-    MATRIX_PATH.write_text(json.dumps({
+    sidecar_path.write_text(json.dumps({"schema": 1, "tasks": sidecars}, indent=2) + "\n")
+    matrix_path.write_text(json.dumps({
         "schema": 1,
-        "database": DB_PATH.name,
-        "live_sidecar": SIDECAR_PATH.name,
+        "database": db_path.name,
+        "live_sidecar": sidecar_path.name,
         "identity_algorithm": "dish_tool.database.content_identity",
         "scenarios": scenarios,
     }, indent=2) + "\n")
