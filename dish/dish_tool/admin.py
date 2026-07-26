@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 from .application_service import OperationApplicationService
-from .database import record_audit
+from .database import process_command_audit_repairs, record_audit
+from .invocation_audit import record_invocation_audit
 from .errors import DishRuleError
 from .results import error_envelope, result_envelope
 
@@ -48,6 +49,10 @@ class DishAdminApplication:
         self.operation_service = None if backend is None else OperationApplicationService(conn, backend)
 
     def execute(self, command: str, **arguments: Any) -> dict[str, Any]:
+        try:
+            process_command_audit_repairs(self.conn)
+        except Exception:
+            pass
         trace = AdminTrace(submission_id=arguments.get("submission_id"))
         handler = getattr(self, f"_command_{command.replace(chr(45), chr(95))}", None)
         try:
@@ -113,27 +118,17 @@ class DishAdminApplication:
         trace: AdminTrace,
         result: Mapping[str, Any],
     ) -> None:
-        details = {
-            "command": command,
-            "actor_role": "marco",
-            "ok": bool(result["ok"]),
-            "code": result["code"],
-            "state": result["state"],
-            "retryable": bool(result["retryable"]),
-            "errors": list(result["errors"]),
-        }
-        message = result.get("data", {}).get("message")
-        if message:
-            details["message"] = message
-        details.update(trace.audit_details)
-        record_audit(
+        record_invocation_audit(
             self.conn,
-            submission_id=trace.submission_id if trace.known_submission else None,
+            surface="dish-admin",
+            command=command,
+            result=result,
             task_gid=trace.task_gid,
-            event_type=f"dish-admin.{command}",
-            actor_agent=None,
-            details=details,
+            submission_id=trace.submission_id,
+            actor_role="marco",
+            audit_details=trace.audit_details,
         )
+
 
 
 

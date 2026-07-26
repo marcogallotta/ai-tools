@@ -107,22 +107,22 @@ def test_completed_evidence_and_consumed_authorization_are_immutable(tmp_path):
 
 
 def test_audit_repair_fallback_is_imported_and_completed(monkeypatch, tmp_path):
-    import dish_tool.commands as commands
+    import dish_tool.invocation_audit as invocation_audit
     from tests.test_dish_tool_step7_verification import make_app
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="verify-run")
-    original_audit = commands.record_audit
-    original_repair = commands.record_command_audit_repair
-    monkeypatch.setattr(commands, "record_audit", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("audit down")))
-    monkeypatch.setattr(commands, "record_command_audit_repair", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("repair insert down")))
+    original_audit = invocation_audit.record_audit
+    original_repair = invocation_audit.record_command_audit_repair
+    monkeypatch.setattr(invocation_audit, "record_audit", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("audit down")))
+    monkeypatch.setattr(invocation_audit, "record_command_audit_repair", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("repair insert down")))
     result = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
         provenance_complete=True, run_id="verify-run")
     assert result["ok"]
     assert result["data"]["audit_repair_required"] is True
     assert result["data"]["audit_repair_persisted_in_database"] is False
-    monkeypatch.setattr(commands, "record_audit", original_audit)
-    monkeypatch.setattr(commands, "record_command_audit_repair", original_repair)
+    monkeypatch.setattr(invocation_audit, "record_audit", original_audit)
+    monkeypatch.setattr(invocation_audit, "record_command_audit_repair", original_repair)
     app.execute("inspect", agent="gpt", submission_id=operation_id)
     row = app.conn.execute("SELECT operation_id,repaired_at FROM command_audit_repairs WHERE repair_id=?", (result["data"]["audit_repair_id"],)).fetchone()
     assert row["operation_id"] == operation_id

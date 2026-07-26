@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any, Mapping
 
-from .constants import ASANA_REQUEST_TIMEOUT
+from .constants import ASANA_REQUEST_TIMEOUT, COOKING_PROJECT_GID
 from .errors import BackendFailure, DishRuleError
 from .models import RequestPhase, RequestPhaseTracker
 
@@ -325,7 +325,7 @@ class AsanaBackend:
             context=f"section {section_gid}",
         )
         after = self.read_task(task_gid)
-        if self._section_for_project(after) != section_gid:
+        if self._section_for_project(after, COOKING_PROJECT_GID) != section_gid:
             raise BackendFailure(
                 "BACKEND_UNCERTAIN",
                 "section placement was not confirmed by exact reread",

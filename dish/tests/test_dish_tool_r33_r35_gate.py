@@ -4,6 +4,7 @@ import pytest
 import asana
 
 from dish_tool.backend import AsanaBackend
+from dish_tool.constants import COOKING_PROJECT_GID
 from dish_tool.errors import DishRuleError
 from dish_tool.governed_diff import explicit_material_reasons, require_small_scope
 from dish_tool.task_document import parse_task_document
@@ -44,8 +45,8 @@ def test_installed_asana_section_signature_matches_contract():
 def test_backend_move_uses_real_sdk_shape_and_rereads(monkeypatch):
     backend = AsanaBackend(api_client=object())
     reads = iter([
-        {"gid":"t", "name":"Dish", "notes":"N", "memberships":[{"project":{"gid":"p"},"section":{"gid":"old"}}]},
-        {"gid":"t", "name":"Dish", "notes":"N", "memberships":[{"project":{"gid":"p"},"section":{"gid":"new"}}]},
+        {"gid":"t", "name":"Dish", "notes":"N", "memberships":[{"project":{"gid":COOKING_PROJECT_GID},"section":{"gid":"old"}}]},
+        {"gid":"t", "name":"Dish", "notes":"N", "memberships":[{"project":{"gid":COOKING_PROJECT_GID},"section":{"gid":"new"}}]},
     ])
     monkeypatch.setattr(backend, "read_task", lambda gid: next(reads))
     seen = {}

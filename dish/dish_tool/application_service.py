@@ -241,6 +241,41 @@ class CurrentWorkflowService:
             )
         return view
 
+    def _post_operation_view(
+        self,
+        operation_id: str,
+        result: T,
+        *,
+        schema=None,
+    ) -> tuple[T, dict[str, object]]:
+        """Return a post-operation view without converting committed success into failure."""
+        try:
+            return result, self.authoritative_view(operation_id, schema=schema)
+        except Exception as exc:
+            try:
+                op = self.operation(operation_id)
+                status = op["status"]
+                phase = op["phase"]
+            except Exception:
+                status = None
+                phase = None
+            error = {"type": type(exc).__name__, "message": str(exc)}
+            if isinstance(result, dict):
+                result = dict(result)
+                result.update({
+                    "view_refresh_required": True,
+                    "view_refresh_error": error,
+                })
+            fallback = {
+                "status": status,
+                "phase": phase,
+                "legal_actions": [],
+                "recovery_required": False,
+                "view_refresh_required": True,
+                "view_refresh_error": error,
+            }
+            return result, fallback
+
     def mutate(
         self,
         operation_id: str,
@@ -252,7 +287,7 @@ class CurrentWorkflowService:
         """Authorize, execute one use case, and return a fresh post-operation view."""
         self.assert_action(operation_id, action, schema=schema)
         result = executor()
-        return result, self.authoritative_view(operation_id, schema=schema)
+        return self._post_operation_view(operation_id, result, schema=schema)
 
     def prepare(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         return self.mutate(operation_id, "prepare", executor, schema=schema)
@@ -284,19 +319,19 @@ class CurrentWorkflowService:
     def recover(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         self.operation(operation_id)
         result = executor()
-        return result, self.authoritative_view(operation_id, schema=schema)
+        return self._post_operation_view(operation_id, result, schema=schema)
 
     def cancel(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         op = self.operation(operation_id)
         if op["status"] not in {"open", "uncertain"}:
             raise DishRuleError("WRONG_STATE", "operation is not cancellable", rule="operation_not_cancellable")
         result = executor()
-        return result, self.authoritative_view(operation_id, schema=schema)
+        return self._post_operation_view(operation_id, result, schema=schema)
 
     def authorize_governed_change(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         self.operation(operation_id)
         result = executor()
-        return result, self.authoritative_view(operation_id, schema=schema)
+        return self._post_operation_view(operation_id, result, schema=schema)
 
 
 class OperationApplicationService:

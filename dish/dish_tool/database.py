@@ -1053,16 +1053,28 @@ def process_command_audit_repairs(conn: sqlite3.Connection, *, limit: int = 100)
     repaired = 0
     for row in rows:
         result = json.loads(row["result_json"])
-        details = {
-            "command": row["command"],
-            "ok": bool(result.get("ok")),
-            "code": result.get("code"),
-            "state": result.get("state"),
-            "retryable": bool(result.get("retryable")),
-            "errors": list(result.get("errors") or ()),
+        payload = result.get("_audit_payload") if isinstance(result, dict) else None
+        if isinstance(payload, dict):
+            event_type = str(payload.get("event_type") or row["command"])
+            details = dict(payload.get("details") or {})
+            audit_kwargs = dict(payload.get("audit_kwargs") or {})
+        else:
+            event_type = str(row["command"])
+            if not (event_type.startswith("dish.") or event_type.startswith("dish-admin.")):
+                event_type = f"dish.{event_type}"
+            details = {
+                "command": row["command"],
+                "ok": bool(result.get("ok")),
+                "code": result.get("code"),
+                "state": result.get("state"),
+                "retryable": bool(result.get("retryable")),
+                "errors": list(result.get("errors") or ()),
+            }
+            audit_kwargs = {}
+        details.update({
             "repaired_from": row["repair_id"],
             "original_audit_error": row["audit_error"],
-        }
+        })
         conn.execute("SAVEPOINT audit_repair")
         try:
             record_audit(
@@ -1070,12 +1082,13 @@ def process_command_audit_repairs(conn: sqlite3.Connection, *, limit: int = 100)
                 submission_id=row["submission_id"],
                 task_gid=row["task_gid"],
                 operation_id=row["operation_id"],
-                event_type=f"dish.{row['command']}",
+                event_type=event_type,
                 actor_agent=row["actor_agent"],
                 details=details,
                 result_code=result.get("code"),
                 result_ok=bool(result.get("ok")),
                 actor_source="audit-repair-worker",
+                **audit_kwargs,
             )
             conn.execute(
                 "UPDATE command_audit_repairs SET repaired_at=? WHERE repair_id=? AND repaired_at IS NULL",
