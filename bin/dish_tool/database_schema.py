@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import time
 import sqlite3
 import uuid
 from pathlib import Path
@@ -541,14 +542,32 @@ def initialize_database(
     conn = sqlite3.connect(str(db_path), timeout=30, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 30000")
-    try:
-        conn.execute("PRAGMA journal_mode = WAL")
-    except sqlite3.OperationalError as exc:
+    conn.execute("PRAGMA busy_timeout = 100")
+    journal_exc: sqlite3.OperationalError | None = None
+    # A second initializer can briefly collide with the first while SQLite is
+    # establishing WAL mode. Retry only this narrow busy/locked boundary; after
+    # the bounded window, a persistent reader is reported as a structured lock.
+    for attempt in range(20):
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            journal_exc = None
+            break
+        except sqlite3.OperationalError as exc:
+            text = str(exc).lower()
+            if "locked" not in text and "busy" not in text:
+                conn.close()
+                raise
+            journal_exc = exc
+            time.sleep(min(0.01 * (attempt + 1), 0.1))
+    if journal_exc is not None:
         conn.close()
-        if "locked" in str(exc).lower() or "busy" in str(exc).lower():
-            raise DishRuleError("BACKEND_REJECTED", "database journal mode could not be established while another reader holds the file", rule="database_reader_lock", retryable=True) from exc
-        raise
+        raise DishRuleError(
+            "BACKEND_REJECTED",
+            "database journal mode could not be established while another reader holds the file",
+            rule="database_reader_lock",
+            retryable=True,
+        ) from journal_exc
+    conn.execute("PRAGMA busy_timeout = 30000")
     migrate_database(conn)
     _validate_current_database(conn)
     return conn

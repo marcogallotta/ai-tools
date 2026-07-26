@@ -171,3 +171,34 @@ def test_database_rejects_stronger_impossible_states(tmp_path: Path) -> None:
             conn.execute("UPDATE movement_attempts SET outcome='uncertain' WHERE attempt_id='move'")
     finally:
         conn.close()
+
+
+def test_many_concurrent_initializers_all_converge(tmp_path: Path) -> None:
+    db_path = tmp_path / "concurrent-many-v2.sqlite"
+    _make_v2(db_path)
+    count = 8
+    barrier = threading.Barrier(count)
+    errors: list[BaseException] = []
+
+    def worker() -> None:
+        try:
+            barrier.wait(timeout=5)
+            conn = initialize_database(db_path)
+            conn.close()
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=worker) for _ in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=20)
+
+    assert not errors
+    assert not any(thread.is_alive() for thread in threads)
+    conn = sqlite3.connect(db_path)
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == max(MIGRATIONS)
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        conn.close()
