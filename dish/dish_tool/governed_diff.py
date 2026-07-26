@@ -50,6 +50,33 @@ def require_governed_authorization(conn, before, after, *, task_gid: str, operat
     return tuple(row["authorization_id"] for row in rows)
 
 
+
+
+EXPLICIT_MATERIAL_SECTIONS = ("QUANTITIES",)
+SENSITIVE_TERMS = (
+    "portion", "serving", "ratio", "nutrition", "calorie", "protein",
+    "halal", "allergen", "safety", "unsafe", "source", "sourcing",
+    "feasibility", "risk", "equipment", "temperature",
+)
+
+def _changed_sensitive_lines(before_text: str, after_text: str) -> bool:
+    before_lines = {line.strip().lower() for line in before_text.splitlines()}
+    after_lines = {line.strip().lower() for line in after_text.splitlines()}
+    changed = before_lines.symmetric_difference(after_lines)
+    return any(any(term in line for term in SENSITIVE_TERMS) for line in changed)
+
+def explicit_material_reasons(before, after) -> tuple[str, ...]:
+    """Return protocol categories that are deterministically always material."""
+    reasons: list[str] = []
+    if before.title != after.title:
+        reasons.append("title_or_identity")
+    for name in EXPLICIT_MATERIAL_SECTIONS:
+        if before.sections.get(name) != after.sections.get(name):
+            reasons.append(name.lower().replace(" ", "_"))
+    if _changed_sensitive_lines(before.render(), after.render()):
+        reasons.append("safety_halal_sourcing_or_risk")
+    return tuple(dict.fromkeys(reasons))
+
 def require_small_scope(before, after) -> None:
     """Small correction may repair recipe content, not replace workflow facts."""
     immutable = {
@@ -60,6 +87,12 @@ def require_small_scope(before, after) -> None:
         "researched_by": (before.state.values["Researched by"], after.state.values["Researched by"]),
     }
     changed = [name for name, (old, new) in immutable.items() if old != new]
-    if changed:
+    material = list(explicit_material_reasons(before, after))
+    if changed or material:
         from .errors import DishRuleError
-        raise DishRuleError("VALIDATION_FAILED", "Small correction exceeds its permitted scope", rule="small_correction_scope", details={"fields": changed})
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "Small correction exceeds its permitted scope and requires Large correction",
+            rule="large_correction_required",
+            details={"fields": changed, "material_reasons": material},
+        )

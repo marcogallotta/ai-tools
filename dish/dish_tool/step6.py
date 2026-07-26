@@ -22,7 +22,7 @@ from .task_document import (
     validate_task_document,
 )
 from .task_store import LiveTask, move_exact, read_complete_task, write_exact_content
-from .governed_diff import require_governed_authorization
+from .governed_diff import explicit_material_reasons, require_governed_authorization
 
 
 def _candidate(path: str) -> str:
@@ -163,7 +163,14 @@ def prepare_live(
         classification = str(material_classification or "").strip()
         if classification not in {"material", "non-material"}:
             raise DishRuleError("INVALID_ARGUMENT", "body edits require material or non-material classification", rule="material_classification_required")
-        material_changes.append(f"{utc_now()[:10]} — {agent}: {classification}")
+        requested_classification = classification
+        forced_reasons = explicit_material_reasons(prior, candidate)
+        if classification == "non-material" and forced_reasons:
+            classification = "material"
+        material_changes.append(
+            f"{utc_now()[:10]} — {agent}: requested {requested_classification}; enforced {classification}"
+            + (f" ({', '.join(forced_reasons)})" if forced_reasons else "")
+        )
         if classification == "material":
             verification_snapshot = current_verification_protocol_release(release.root)
             assert_transition(action="material_edit", before=prior.state.values["Status"], after="pending-verification")
@@ -213,7 +220,7 @@ def prepare_live(
         context={"authorization_ids": list(authorization_ids)} if authorization_ids else None,
     )
     complete_operation_step(conn, operation_id, "candidate_write")
-    if op["operation_kind"] == "initial" or (op["operation_kind"] == "change" and body_changed and str(material_classification or "").strip() == "material"):
+    if op["operation_kind"] == "initial" or (op["operation_kind"] == "change" and body_changed and state.values["Status"] == "pending-verification"):
         record_actor_fact(conn, operation_id=operation_id, task_gid=live.gid, role="constructor" if op["operation_kind"] == "initial" else "material_editor", agent=agent, run_id=op["run_id"], candidate_identity=confirmed.identity)
     exact = parse_task_document(f"{confirmed.title}\n{confirmed.notes}")
     check = validate_task_document(exact, expected_schema_version=release.schema_version, schema=release.schema)

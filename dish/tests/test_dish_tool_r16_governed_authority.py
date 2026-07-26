@@ -28,7 +28,7 @@ def test_small_cannot_self_authorize_lock_change(tmp_path):
         semantic_review_complete=True, provenance_complete=True, run_id="review",
     )
     assert result["code"] == "VALIDATION_FAILED"
-    assert result["errors"][0]["rule"] in {"small_correction_scope", "governed_change_unauthorized"}
+    assert result["errors"][0]["rule"] in {"small_correction_scope", "governed_change_unauthorized", "large_correction_required"}
 
 
 def test_task_level_constructor_run_remains_barred(tmp_path):
