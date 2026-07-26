@@ -13,6 +13,7 @@ from dish_tool.database import (
     initialize_database,
     inspect_legacy_submissions,
     mark_operation_completion,
+    finalize_confirmed_movement_attempt,
 )
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
@@ -43,7 +44,7 @@ def test_redesigned_schema_is_idempotent_and_complete(tmp_path):
         "audit_events",
         "legacy_submission_quarantine",
     } <= tables
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 10
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
 
 
 def test_content_identity_normalizes_crlf_only():
@@ -158,9 +159,8 @@ def test_markers_verification_cycle_and_attempts_are_independent_and_audited(tmp
     assert marked["content_write_completed_at"]
     assert marked["signoff_completed_at"] is None
     assert marked["movement_completed_at"] is None
-    marked = mark_operation_completion(conn, op_id, "signoff")
-    assert marked["signoff_completed_at"]
-    assert marked["movement_completed_at"] is None
+    with pytest.raises(sqlite3.IntegrityError, match="approved signed cycle"):
+        mark_operation_completion(conn, op_id, "signoff")
 
     write_id = begin_operation_write_attempt(
         conn,
@@ -175,7 +175,7 @@ def test_markers_verification_cycle_and_attempts_are_independent_and_audited(tmp
         expected_section_gid="old",
         intended_section_gid="new",
     )
-    assert finish_movement_attempt(conn, attempt_id=move_id, outcome="confirmed")["outcome"] == "confirmed"
+    assert finalize_confirmed_movement_attempt(conn, attempt_id=move_id, live_section_gid="new")["outcome"] == "confirmed"
 
     events = conn.execute(
         "SELECT event_type, result_code, result_ok FROM audit_events WHERE operation_id=? ORDER BY rowid",
@@ -185,11 +185,10 @@ def test_markers_verification_cycle_and_attempts_are_independent_and_audited(tmp
         "operation.created",
         "verification_cycle.created",
         "operation.marker",
-        "operation.marker",
         "write_attempt.started",
         "write_attempt.finished",
         "movement_attempt.started",
-        "movement_attempt.finished",
+        "movement_attempt.reconciled",
     ]
     assert all(row["result_code"] == "OK" and row["result_ok"] == 1 for row in events)
 
