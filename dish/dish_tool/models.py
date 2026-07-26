@@ -287,12 +287,40 @@ class VerifierIdentity:
 
 
 
-def material_editor_line(agent: str, date: str) -> str:
-    agent_family(agent)
-    labels = {"gpt": "ChatGPT — GPT-5", "codex": "ChatGPT — Codex", "claude": "Claude — Claude"}
-    return f"{labels[agent]}, {date}"
+FAMILY_DISPLAY_NAMES = {"claude": "Claude", "gpt": "ChatGPT", "codex": "ChatGPT"}
 
-def verification_actor_line(agent: str, date: str) -> str:
+MAX_ACTOR_MODEL_LENGTH = 80
+
+
+def validate_actor_model(model: str) -> str:
+    clean = str(model or "").strip()
+    if not clean:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "a model is required to record actor provenance",
+            rule="model_required",
+        )
+    if len(clean) > MAX_ACTOR_MODEL_LENGTH:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            f"model exceeds the maximum length of {MAX_ACTOR_MODEL_LENGTH} characters",
+            rule="model_too_long",
+        )
+    if "—" in clean or "," in clean:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "model must not contain an em dash or comma",
+            rule="model_invalid_characters",
+        )
+    return clean
+
+
+def material_editor_line(agent: str, model: str, date: str) -> str:
+    agent_family(agent)
+    clean_model = validate_actor_model(model)
+    return f"{FAMILY_DISPLAY_NAMES[agent]} — {clean_model}, {date}"
+
+def verification_actor_line(agent: str, model: str, date: str) -> str:
     agent_family(agent)
     if agent not in {"gpt", "codex"}:
         raise DishRuleError(
@@ -300,7 +328,8 @@ def verification_actor_line(agent: str, date: str) -> str:
             "Verification signoff requires ChatGPT",
             rule="verification_requires_chatgpt",
         )
-    return f"ChatGPT — {'GPT-5' if agent == 'gpt' else 'Codex'}, {date}"
+    clean_model = validate_actor_model(model)
+    return f"ChatGPT — {clean_model}, {date}"
 
 
 @dataclass(frozen=True)

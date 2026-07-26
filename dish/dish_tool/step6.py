@@ -78,6 +78,7 @@ def prepare_live(
     *,
     operation_id: str,
     agent: str,
+    model: str,
     file_path: str,
     release: ResolvedRelease,
     material_classification: str | None = None,
@@ -164,7 +165,7 @@ def prepare_live(
         before_status = None if prior is None else prior.state.values["Status"]
         assert_transition(action="research_handoff", before=before_status, after="pending-verification")
         state_values = dict(pending_verification(candidate.state.values, protocol_release=verification_snapshot.identity).values)
-        actor_line = material_editor_line(agent, utc_now()[:10])
+        actor_line = material_editor_line(agent, model, utc_now()[:10])
         state_values["Researched by"] = actor_line
         state_values["Self-verified"] = actor_line
         state = TaskState(state_values)

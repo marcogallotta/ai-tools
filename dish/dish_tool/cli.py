@@ -35,7 +35,7 @@ Planning's only tool responsibility is the boundary check before handing the exa
 Planning task to Research:
 
   1. dish start TASK_GID --agent AGENT --kind planning
-  2. dish prepare SUBMISSION_ID --agent AGENT --file PATH
+  2. dish prepare SUBMISSION_ID --agent AGENT --model MODEL --file PATH
 
 A passing `prepare` establishes deterministic structural conformance only -- it does not
 authorize handoff by itself; Planning judgment still governs.
@@ -52,7 +52,10 @@ dish research -- stage walkthrough (not a governed operation; this command only 
 
   1. dish start TASK_GID --agent AGENT --kind initial|change
   2. perform Research and self-review against the exact live task
-  3. dish prepare SUBMISSION_ID --agent AGENT --file PATH
+  3. dish prepare SUBMISSION_ID --agent AGENT --model MODEL --file PATH
+
+`--model` names the exact model you are running as (e.g. `gpt-5.6-sol`) -- it is recorded
+verbatim in Researched by / Self-verified and must not contain an em dash or comma.
 
 A successful `prepare` writes and confirms the complete `pending-verification` task before any
 Research Queue -> Verification Queue move -- the tool owns that move, not the agent.
@@ -72,14 +75,19 @@ dish verification -- stage walkthrough (not a governed operation; this command o
   1. dish start TASK_GID --agent AGENT --kind verification \\
        --run-id RUN_ID | --independence-attestation TEXT
   2. review the exact frozen live task for semantic and provenance conformance
-  3. dish approve SUBMISSION_ID --agent AGENT --correction none|small \\
+  3. dish approve SUBMISSION_ID --agent AGENT --model MODEL --correction none|small \\
        --semantic-review-complete --provenance-complete \\
        --reviewed-identity CONTENT_IDENTITY --run-id RUN_ID
      -- or --
-     dish reject SUBMISSION_ID --agent AGENT --reason TEXT --route large|evidence|human-review
+     dish reject SUBMISSION_ID --agent AGENT --reason TEXT --route large|evidence|human-review \\
+       [--model MODEL]
 
 `--reviewed-identity` is the `content_identity` returned by `read`/`start` for the exact task
 you reviewed; `approve` and `reject` both require the verifier identity recorded by `start`.
+`--model` names the exact model you are running as (e.g. `gpt-5.6-sol`); it is recorded
+verbatim in Verified by (and Self-verified for a Large correction or small correction) and
+must not contain an em dash or comma. `reject --route large` requires it; `approve` always
+requires it.
 
 A successful `approve` returns `submit` as the next action -- run it in the same pass:
   4. dish submit SUBMISSION_ID
@@ -173,18 +181,38 @@ def build_parser() -> JsonArgumentParser:
     start.add_argument("--change-reason")
 
     prepare = subparsers.add_parser(
-        "prepare", help="submit the completed candidate for this operation and advance its state"
+        "prepare",
+        help="submit the completed candidate for this operation and advance its state",
+        description=(
+            "Submit the completed candidate for this operation and advance its state. "
+            "SUBMISSION_ID is the operation identifier `start` returned -- it appears there "
+            "as both `submission_id` and `data.operation_id`; the two are the same value. "
+            "A Planning submission (--kind planning) needs only --agent, --model, and --file; "
+            "every other option below applies to a Research or change submission. --model names "
+            "the exact model you are running as (e.g. `gpt-5.6-sol`); it is recorded verbatim in "
+            "Researched by / Self-verified and must not contain an em dash or comma."
+        ),
     )
     prepare.add_argument("submission_id")
     prepare.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    prepare.add_argument("--model", required=True)
     prepare.add_argument("--file", dest="file_path", required=True)
     prepare.add_argument("--exemption-revision")
     prepare.add_argument("--material-classification", choices=("material", "non-material"))
     _add_title_declaration(prepare)
 
-    approve = subparsers.add_parser("approve", help="sign or small-correct a Verification candidate")
+    approve = subparsers.add_parser(
+        "approve",
+        help="sign or small-correct a Verification candidate",
+        description=(
+            "Sign or small-correct a Verification candidate. --model names the exact model "
+            "you are running as (e.g. `gpt-5.6-sol`); it is recorded verbatim in Verified by "
+            "(and, for a small correction, Self-verified) and must not contain an em dash or comma."
+        ),
+    )
     approve.add_argument("submission_id")
     approve.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    approve.add_argument("--model", required=True)
     approve.add_argument("--file", dest="file_path")
     approve.add_argument(
         "--correction",
@@ -200,10 +228,17 @@ def build_parser() -> JsonArgumentParser:
     _add_title_declaration(approve)
 
     reject = subparsers.add_parser(
-        "reject", help="stop signoff: a Large correction, Evidence gap, or Human Review"
+        "reject",
+        help="stop signoff: a Large correction, Evidence gap, or Human Review",
+        description=(
+            "Stop signoff: a Large correction, Evidence gap, or Human Review. --route large "
+            "requires --model naming the exact model you are running as (e.g. `gpt-5.6-sol`); "
+            "it is recorded verbatim in Self-verified and must not contain an em dash or comma."
+        ),
     )
     reject.add_argument("submission_id")
     reject.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    reject.add_argument("--model")
     reject.add_argument("--reason", required=True)
     reject.add_argument(
         "--route",

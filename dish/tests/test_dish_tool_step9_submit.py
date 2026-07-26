@@ -14,7 +14,7 @@ def _signed(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="submit-review")
     approved = app.execute(
-        "approve", agent="codex", submission_id=operation_id, correction="none",
+        "approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="submit-review",
     )

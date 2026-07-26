@@ -69,7 +69,7 @@ def _write_document(conn, backend, op, live, document, *, schema=None, authoriza
         raise
 
 
-def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, file_path: str, reviewed_identity: str, semantic_review_complete: bool, provenance_complete: bool, run_id: str | None = None, independence_attestation: str | None = None, schema=None):
+def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, file_path: str, reviewed_identity: str, semantic_review_complete: bool, provenance_complete: bool, run_id: str | None = None, independence_attestation: str | None = None, schema=None):
     op, cycle = _rows(conn, operation_id)
     assert_verifier_authority(cycle, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
     if not semantic_review_complete or not provenance_complete:
@@ -89,7 +89,7 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     corrected = dataclasses.replace(corrected, state=TaskState(corrected_state))
     require_small_scope(reviewed_document, corrected)
     state = dict(corrected.state.values)
-    state.update({"Status": "pending-verification", "Status detail": "None", "Resume status": "None", "Verified by": "None", "Verification protocol release": cycle["protocol_release"], "Self-verified": material_editor_line(agent, utc_now()[:10])})
+    state.update({"Status": "pending-verification", "Status detail": "None", "Resume status": "None", "Verified by": "None", "Verification protocol release": cycle["protocol_release"], "Self-verified": material_editor_line(agent, model, utc_now()[:10])})
     changes = tuple(corrected.material_changes) + (f"{utc_now()[:10]} — {agent}: small verification correction; exact candidate replaced and self-reviewed",)
     corrected = dataclasses.replace(corrected, state=TaskState(state), material_changes=changes)
     precheck = validate_task_document(corrected, expected_schema_version=op["schema_version"], schema=schema)
@@ -108,12 +108,12 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     bind_cycle_review(conn, cycle_id=cycle["cycle_id"], operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity)
     complete_operation_step(conn, operation_id, "small_review_binding")
     conn.execute("UPDATE verification_cycles SET correction_class = 'small' WHERE cycle_id = ?", (cycle["cycle_id"],))
-    result = approve_live(conn, backend, operation_id=operation_id, agent=agent, reviewed_identity=confirmed.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=run_id, independence_attestation=independence_attestation, schema=schema)
+    result = approve_live(conn, backend, operation_id=operation_id, agent=agent, model=model, reviewed_identity=confirmed.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=run_id, independence_attestation=independence_attestation, schema=schema)
     complete_operation_step(conn, operation_id, "small_signoff")
     return result
 
 
-def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, schema=None, honest_root=None):
+def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, schema=None, honest_root=None):
     op, cycle = _rows(conn, operation_id)
     assert_verifier_authority(cycle, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
     route = str(route or "").strip()
@@ -145,7 +145,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         snapshot = current_verification_protocol_release(honest_root)
         assert_transition(action="large_correction", before="pending-verification", after="pending-verification")
         state = dict(pending_verification(corrected.state.values, protocol_release=snapshot.identity).values)
-        state["Self-verified"] = material_editor_line(agent, utc_now()[:10])
+        state["Self-verified"] = material_editor_line(agent, model, utc_now()[:10])
         changes = tuple(corrected.material_changes) + (f"{utc_now()[:10]} — {agent}: large verification correction — {reason}",)
         document = dataclasses.replace(corrected, state=TaskState(state), material_changes=changes)
     elif route == "evidence":
@@ -307,6 +307,7 @@ def reopen_two_pass(
     before: str,
     after: str,
     editor: str,
+    model: str,
     run_id: str,
     file_path: str,
     date: str,
@@ -348,7 +349,7 @@ def reopen_two_pass(
         "Resume status": "None",
         "Verification protocol release": snapshot.identity,
         "Verified by": "None",
-        "Self-verified": material_editor_line(editor, date),
+        "Self-verified": material_editor_line(editor, model, date),
     })
     entry = f"{date} — {editor}: {category}; path: {changed_path}; before: {before}; after: {after}"
     document = dataclasses.replace(
@@ -419,6 +420,7 @@ def resolve_hold(
     schema=None,
     file_path: str | None = None,
     editor: str | None = None,
+    model: str | None = None,
     run_id: str | None = None,
 ):
     """Resolve an Evidence or Human Review hold from exact live state.
@@ -470,7 +472,7 @@ def resolve_hold(
             "Resume status": "None",
             "Verified by": "None",
             "Verification protocol release": snapshot.identity if resume_status == "pending-verification" else "None",
-            "Self-verified": material_editor_line(editor, utc_now()[:10]),
+            "Self-verified": material_editor_line(editor, model, utc_now()[:10]),
         })
         decision = f"Human — Marco: {resolution_kind} resolved — {clean_detail}"
         authorization_decisions = tuple(candidate.decisions)

@@ -1701,7 +1701,7 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
 
 _legacy_command_prepare = DishApplication._command_prepare
 
-def _step6_prepare(self, *, trace: CommandTrace, agent: str, submission_id: str, file_path: str | None = None, material_classification: str | None = None, **legacy: Any) -> dict[str, Any]:
+def _step6_prepare(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, file_path: str | None = None, material_classification: str | None = None, **legacy: Any) -> dict[str, Any]:
     from .step6 import prepare_live
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     route_release = self._load_release(None)
@@ -1716,11 +1716,16 @@ def _step6_prepare(self, *, trace: CommandTrace, agent: str, submission_id: str,
     release = self._load_release("planning" if self.conn.execute("SELECT operation_kind FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0] == "planning" else "research")
     data, view = self.operation_service.current.prepare(
         operation_id,
-        lambda: prepare_live(self.conn, self.backend, operation_id=operation_id, agent=agent, file_path=file_path or "", release=release, material_classification=material_classification),
+        lambda: prepare_live(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, file_path=file_path or "", release=release, material_classification=material_classification),
         schema=release.schema,
     )
     trace.state = view["status"]
-    return result_envelope(command="prepare", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
+    legal_actions = view["legal_actions"]
+    if not legal_actions and data.get("handoff") == "planning-to-research":
+        # Planning's operation is finished, but the task's next legal command is
+        # the Research `start`. Naming it keeps the "do not guess one" rule true.
+        legal_actions = ["start"]
+    return result_envelope(command="prepare", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=legal_actions, data=data)
 
 
 # Step 7 exact-live Verification lifecycle.
@@ -1779,6 +1784,7 @@ def _step7_approve(
     *,
     trace: CommandTrace,
     agent: str,
+    model: str | None = None,
     submission_id: str,
     file_path: str | None = None,
     correction: str = "none",
@@ -1808,7 +1814,7 @@ def _step7_approve(
     data, view = self.operation_service.current.approve(
         operation_id,
         lambda: approve_live(
-            self.conn, self.backend, operation_id=operation_id, agent=agent,
+            self.conn, self.backend, operation_id=operation_id, agent=agent, model=model,
             reviewed_identity=clean_identity,
             semantic_review_complete=semantic_review_complete,
             provenance_complete=provenance_complete,
@@ -1831,23 +1837,23 @@ def _step7_approve(
 _step7_command_approve = _step7_approve
 _step7_command_reject = DishApplication._command_reject
 
-def _step8_approve(self, *, trace: CommandTrace, agent: str, submission_id: str, file_path: str | None = None, correction: str = "none", reviewed_identity: str | None = None, semantic_review_complete: bool = False, provenance_complete: bool = False, run_id: str | None = None, independence_attestation: str | None = None, **legacy: Any) -> dict[str, Any]:
+def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, file_path: str | None = None, correction: str = "none", reviewed_identity: str | None = None, semantic_review_complete: bool = False, provenance_complete: bool = False, run_id: str | None = None, independence_attestation: str | None = None, **legacy: Any) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     if exists is None or correction != "small" or not file_path:
-        return _step7_command_approve(self, trace=trace, agent=agent, submission_id=submission_id, file_path=file_path, correction=correction, reviewed_identity=reviewed_identity, semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation, **legacy)
+        return _step7_command_approve(self, trace=trace, agent=agent, model=model, submission_id=submission_id, file_path=file_path, correction=correction, reviewed_identity=reviewed_identity, semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation, **legacy)
     from .step8 import approve_small
     release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
     data, view = self.operation_service.current.approve(
         operation_id,
-        lambda: approve_small(self.conn, self.backend, operation_id=operation_id, agent=agent, file_path=file_path, reviewed_identity=_clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity"), semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema),
+        lambda: approve_small(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, file_path=file_path, reviewed_identity=_clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity"), semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema),
         schema=release.schema,
     )
     trace.state = view["status"]
     return result_envelope(command="approve", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
-def _step8_reject(self, *, trace: CommandTrace, agent: str, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, **legacy: Any) -> dict[str, Any]:
+def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, **legacy: Any) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     route_release = self._load_release(None)
     routed = self.operation_service.route(operation_id, command="reject", protocol_version=route_release.protocol_version)
@@ -1861,7 +1867,7 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, submission_id: str, 
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
     data, view = self.operation_service.current.reject(
         operation_id,
-        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema, honest_root=release.root),
+        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema, honest_root=release.root),
         schema=release.schema,
     )
     trace.state = view["status"]

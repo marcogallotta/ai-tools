@@ -23,7 +23,7 @@ def test_small_cannot_self_authorize_lock_change(tmp_path):
         "Decisions:\nNone", "Decisions:\nHuman — Marco: Authorizes Locks change: remove crispness"
     ))
     result = app.execute(
-        "approve", agent="codex", submission_id=operation_id, correction="small",
+        "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="small",
         file_path=str(candidate), reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review",
     )

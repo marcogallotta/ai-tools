@@ -365,7 +365,7 @@ def _step5_admin_migrate(self, *, trace: AdminTrace, task_gid: str) -> dict[str,
 
 
 # Step 8 Marco-only two-pass hold reopen.
-def _step8_admin_reopen(self, *, trace: AdminTrace, submission_id: str, category: str, before: str, after: str, editor: str, date: str, run_id: str | None = None, file_path: str | None = None) -> dict[str, Any]:
+def _step8_admin_reopen(self, *, trace: AdminTrace, submission_id: str, category: str, before: str, after: str, editor: str, model: str, date: str, run_id: str | None = None, file_path: str | None = None) -> dict[str, Any]:
     if self.backend is None:
         raise DishRuleError("INTERNAL_ERROR", "admin backend is required", rule="backend_required")
     from .step8 import reopen_two_pass
@@ -380,7 +380,7 @@ def _step8_admin_reopen(self, *, trace: AdminTrace, submission_id: str, category
         operation_id,
         lambda: reopen_two_pass(
             self.conn, self.backend, operation_id=operation_id, category=category,
-            before=before, after=after, editor=editor, run_id=run_id,
+            before=before, after=after, editor=editor, model=model, run_id=run_id,
             file_path=file_path, date=date, honest_root=None if release is None else release.root,
             schema=schema,
         ),
@@ -422,6 +422,7 @@ def _resolve_protocol_hold(
     resume_status: str,
     file_path: str | None = None,
     editor: str | None = None,
+    model: str | None = None,
     run_id: str | None = None,
 ) -> dict[str, Any]:
     if self.backend is None or self.release_loader is None:
@@ -440,7 +441,7 @@ def _resolve_protocol_hold(
         lambda: resolve_hold(
             self.conn, self.backend, operation_id=operation_id, resolution_kind=resolution_kind,
             detail=detail, resume_status=resume_status, honest_root=release.root,
-            schema=release.schema, file_path=file_path, editor=editor, run_id=run_id,
+            schema=release.schema, file_path=file_path, editor=editor, model=model, run_id=run_id,
         ),
         schema=release.schema,
     )
@@ -451,17 +452,17 @@ def _resolve_protocol_hold(
     )
 
 
-def _command_supply_evidence(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str, file_path: str | None = None, editor: str | None = None, run_id: str | None = None) -> dict[str, Any]:
+def _command_supply_evidence(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str, file_path: str | None = None, editor: str | None = None, model: str | None = None, run_id: str | None = None) -> dict[str, Any]:
     return _resolve_protocol_hold(
         self, trace=trace, submission_id=submission_id, resolution_kind="evidence",
-        detail=detail, resume_status=resume_status, file_path=file_path, editor=editor, run_id=run_id,
+        detail=detail, resume_status=resume_status, file_path=file_path, editor=editor, model=model, run_id=run_id,
     )
 
 
-def _command_record_human_decision(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str, file_path: str | None = None, editor: str | None = None, run_id: str | None = None) -> dict[str, Any]:
+def _command_record_human_decision(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str, file_path: str | None = None, editor: str | None = None, model: str | None = None, run_id: str | None = None) -> dict[str, Any]:
     return _resolve_protocol_hold(
         self, trace=trace, submission_id=submission_id, resolution_kind="human_review",
-        detail=detail, resume_status=resume_status, file_path=file_path, editor=editor, run_id=run_id,
+        detail=detail, resume_status=resume_status, file_path=file_path, editor=editor, model=model, run_id=run_id,
     )
 
 

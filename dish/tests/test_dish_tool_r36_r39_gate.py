@@ -80,7 +80,7 @@ def test_completed_evidence_and_consumed_authorization_are_immutable(tmp_path):
     from tests.test_dish_tool_step7_verification import make_app
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="verify-run")
-    approved = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
+    approved = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
         provenance_complete=True, run_id="verify-run")
     assert approved["ok"]
@@ -114,7 +114,7 @@ def test_audit_repair_fallback_is_imported_and_completed(monkeypatch, tmp_path):
     original_repair = commands.record_command_audit_repair
     monkeypatch.setattr(commands, "record_audit", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("audit down")))
     monkeypatch.setattr(commands, "record_command_audit_repair", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("repair insert down")))
-    result = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
+    result = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
         provenance_complete=True, run_id="verify-run")
     assert result["ok"]
@@ -196,7 +196,7 @@ def test_null_upgraded_placement_baseline_is_checked_unconditionally(tmp_path):
     started = app.execute("start", agent="gpt", task_gid="t", kind="initial", run_id="run")
     app.conn.execute("UPDATE operations SET expected_section_gid=NULL WHERE operation_id=?", (started["submission_id"],))
     candidate = tmp_path / "candidate.txt"; candidate.write_text(TASK)
-    result = app.execute("prepare", agent="gpt", submission_id=started["submission_id"], file_path=str(candidate))
+    result = app.execute("prepare", model="gpt-5.6-sol", agent="gpt", submission_id=started["submission_id"], file_path=str(candidate))
     assert result["code"] == "CONFLICT"
     assert result["errors"][0]["rule"] == "live_task_placement_drift"
     assert backend.writes == 0 and backend.moves == 0
@@ -206,7 +206,7 @@ def test_completed_persistence_evidence_is_fully_immutable(tmp_path):
     from tests.test_dish_tool_step7_verification import make_app
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="verify-run")
-    approved = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
+    approved = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
         provenance_complete=True, run_id="verify-run")
     assert approved["ok"]

@@ -152,10 +152,10 @@ def ready_submission(app, tmp_path, *, kind="initial"):
     }
     if kind != "planning":
         prepare_kwargs.update(TITLE_ARGS)
-    prepared = app.execute("prepare", **prepare_kwargs)
+    prepared = app.execute("prepare", model="gpt-5.6-sol", **prepare_kwargs)
     if prepared["state"] == "awaiting_verification":
         approved = app.execute(
-            "approve",
+            "approve", model="gpt-5.6-sol",
             agent="gpt",
             submission_id=sid,
             file_path=candidate(tmp_path, COMPLETE_NOTE, "approved.md"),

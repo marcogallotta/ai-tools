@@ -183,6 +183,7 @@ def approve_live(
     *,
     operation_id: str,
     agent: str,
+    model: str | None = None,
     reviewed_identity: str,
     semantic_review_complete: bool,
     provenance_complete: bool,
@@ -213,7 +214,7 @@ def approve_live(
     if not check.ok or document.state.values["Status"] != "pending-verification":
         raise DishRuleError("VALIDATION_FAILED", "exact live candidate failed pre-signoff validation", rule="pre_signoff_validation_failed", errors=[finding_payload(f) for f in check.findings])
     assert_transition(action="approve", before=document.state.values["Status"], after="ready")
-    signed = dataclasses.replace(document, state=ready(document.state.values, verified_by=verification_actor_line(agent, utc_now()[:10])))
+    signed = dataclasses.replace(document, state=ready(document.state.values, verified_by=verification_actor_line(agent, model, utc_now()[:10])))
     signed_lines = signed.render().splitlines()
     intended_title = signed_lines[0]
     intended_notes = "\n".join(signed_lines[1:]) + "\n"

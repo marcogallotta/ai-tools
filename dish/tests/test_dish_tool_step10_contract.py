@@ -23,9 +23,9 @@ def test_documented_agent_examples_match_current_parser_surface():
         ["read", "123", "--agent", "gpt"],
         ["inspect", "op", "--agent", "gpt"],
         ["start", "123", "--agent", "gpt", "--kind", "planning"],
-        ["prepare", "op", "--agent", "gpt", "--file", "candidate.md"],
+        ["prepare", "op", "--agent", "gpt", "--model", "gpt-5.6-sol", "--file", "candidate.md"],
         [
-            "approve", "op", "--agent", "gpt", "--correction", "none",
+            "approve", "op", "--agent", "gpt", "--model", "gpt-5.6-sol", "--correction", "none",
             "--semantic-review-complete", "--provenance-complete",
         ],
         ["reject", "op", "--agent", "gpt", "--reason", "reason"],
@@ -44,7 +44,8 @@ def test_documented_admin_examples_match_current_parser_surface():
         ["unblock", "op", "--reason", "resolved"],
         [
             "reopen", "op", "--category", "method", "--before", "old",
-            "--after", "new", "--editor", "codex", "--run-id", "editor-run",
+            "--after", "new", "--editor", "codex", "--model", "gpt-5.6-sol",
+            "--run-id", "editor-run",
             "--file", "corrected.md", "--date", "2026-07-25",
         ],
     ]

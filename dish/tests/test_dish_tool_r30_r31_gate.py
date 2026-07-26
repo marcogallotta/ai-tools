@@ -67,7 +67,7 @@ def test_large_route_actor_is_recoverable_before_cycle_is_usable(monkeypatch, tm
 
     monkeypatch.setattr(step8, "record_actor_fact", fail_once)
     failed = app.execute(
-        "reject", agent="codex", submission_id=operation_id, route="large",
+        "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="material correction", file_path=str(candidate), run_id="large-editor",
     )
     assert not failed["ok"]
@@ -101,7 +101,7 @@ def test_two_pass_hold_advertises_reopen_not_human_decision(tmp_path):
     candidate.write_text(TASK.replace("100 g", "120 g"))
     _review(app, "codex", "first")
     first = app.execute(
-        "reject", agent="codex", submission_id=operation_id, route="large",
+        "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="first failure", file_path=str(candidate), run_id="first",
     )
     assert first["ok"]
@@ -109,7 +109,7 @@ def test_two_pass_hold_advertises_reopen_not_human_decision(tmp_path):
     _review(app, "gpt", "second")
     candidate.write_text(TASK.replace("100 g", "130 g"))
     second = app.execute(
-        "reject", agent="gpt", submission_id=operation_id, route="large",
+        "reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="second failure", file_path=str(candidate), run_id="second",
     )
     assert second["ok"] and second["data"]["two_pass_hold"]

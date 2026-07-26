@@ -16,7 +16,7 @@ def test_planning_handoff_allows_next_research_operation(tmp_path):
     app = planning_app(tmp_path, backend)
     planning = app.execute("start", agent="gpt", task_gid="t", kind="planning", run_id="plan-run")
     prepared = app.execute(
-        "prepare", agent="gpt", submission_id=planning["submission_id"],
+        "prepare", model="gpt-5.6-sol", agent="gpt", submission_id=planning["submission_id"],
         file_path=write(tmp_path, "planning.txt", PLANNING),
     )
     assert prepared["ok"]
@@ -35,7 +35,7 @@ def test_large_cycle_freezes_current_release_and_preserves_all_run_lineage(tmp_p
     candidate = tmp_path / "large.txt"
     candidate.write_text(TASK.replace("100 g", "120 g"))
     result = app.execute(
-        "reject", agent="codex", submission_id=operation_id, route="large",
+        "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="material correction", file_path=str(candidate), run_id="editor-run",
     )
     assert result["ok"]
@@ -55,7 +55,7 @@ def test_governed_lock_change_requires_human_authorization(tmp_path):
     candidate = tmp_path / "bad-large.txt"
     candidate.write_text(TASK.replace("Locks: Keep crisp", "Locks: Remove crispness constraint"))
     result = app.execute(
-        "reject", agent="codex", submission_id=operation_id, route="large",
+        "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="change lock", file_path=str(candidate), run_id="review-run",
     )
     assert result["code"] == "VALIDATION_FAILED"

@@ -94,20 +94,20 @@ def test_real_sdk_full_placement_lifecycle(tmp_path):
     planning = app.execute("start", agent="gpt", task_gid=task_gid, kind="planning", run_id="planning-run")
     planning_file = tmp_path / "planning.txt"
     planning_file.write_text(PLANNING.replace("Sichuan — 12345", "Planned — 333"))
-    planned = app.execute("prepare", agent="gpt", submission_id=planning["submission_id"], file_path=str(planning_file))
+    planned = app.execute("prepare", model="gpt-5.6-sol", agent="gpt", submission_id=planning["submission_id"], file_path=str(planning_file))
     assert planned["ok"], planned
     assert transport.tasks[task_gid]["section"] == "rq"
 
     research = app.execute("start", agent="gpt", task_gid=task_gid, kind="initial", run_id="research-run")
     candidate = tmp_path / "candidate.txt"
     candidate.write_text(TASK.replace("Sichuan — 12345", "Planned — 333"))
-    prepared = app.execute("prepare", agent="gpt", submission_id=research["submission_id"], file_path=str(candidate))
+    prepared = app.execute("prepare", model="gpt-5.6-sol", agent="gpt", submission_id=research["submission_id"], file_path=str(candidate))
     assert prepared["ok"] and transport.tasks[task_gid]["section"] == "vq"
 
     review = app.execute("start", agent="codex", task_gid=task_gid, kind="verification", run_id="verify-run")
     assert review["ok"]
     approved = app.execute(
-        "approve", agent="codex", submission_id=research["submission_id"], correction="none",
+        "approve", model="gpt-5.6-sol", agent="codex", submission_id=research["submission_id"], correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
         provenance_complete=True, run_id="verify-run",
     )

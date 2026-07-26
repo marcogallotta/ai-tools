@@ -87,7 +87,7 @@ def make_app(tmp_path):
     app = DishApplication(initialize_database(tmp_path / "dish.db"), backend, release_loader=release)
     candidate = tmp_path / "candidate.txt"; candidate.write_text(TASK)
     start = app.execute("start", agent="gpt", task_gid="t", kind="initial", change_level=None, change_reason=None, run_id="constructor-run")
-    prepared = app.execute("prepare", agent="gpt", submission_id=start["submission_id"], file_path=str(candidate))
+    prepared = app.execute("prepare", agent="gpt", model="gpt-5.6-sol", submission_id=start["submission_id"], file_path=str(candidate))
     assert prepared["ok"]
     return app, backend, start["submission_id"], verification_text
 
@@ -114,7 +114,7 @@ def test_stale_candidate_blocks_approval(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-2")
     backend.title += " changed"
-    result = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
+    result = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True, run_id="run-2")
     assert result["code"] == "CONFLICT"
     assert backend.writes == 1
@@ -123,19 +123,43 @@ def test_stale_candidate_blocks_approval(tmp_path):
 def test_approval_signs_exact_reread_without_moving_and_requires_inputs(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-3")
-    missing = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
+    missing = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=False, provenance_complete=True, run_id="run-3")
     assert missing["code"] == "VALIDATION_FAILED"
-    result = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
+    result = app.execute("approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True, run_id="run-3")
     assert result["ok"]
     assert "Status: ready" in backend.notes
-    assert "Verified by: ChatGPT — Codex," in backend.notes
+    assert "Verified by: ChatGPT — gpt-5.6-sol," in backend.notes
     assert backend.section == "vq" and backend.moves == 1
     assert result["allowed_actions"] == ["submit"]
     row = app.conn.execute("SELECT signoff_completed_at, movement_completed_at FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     assert row["signoff_completed_at"] is not None
     assert row["movement_completed_at"] is None  # verification handoff is not final submission movement
+
+
+def test_approval_requires_model(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-model")
+    result = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
+        reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True, run_id="run-model")
+    assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_required"
+
+
+def test_approval_rejects_model_with_em_dash(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-model-dash")
+    result = app.execute("approve", agent="codex", model="gpt — 5.6", submission_id=operation_id, correction="none",
+        reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True, run_id="run-model-dash")
+    assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_invalid_characters"
+
+
+def test_approval_rejects_model_with_comma(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-model-comma")
+    result = app.execute("approve", agent="codex", model="gpt-5.6, sol", submission_id=operation_id, correction="none",
+        reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True, run_id="run-model-comma")
+    assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_invalid_characters"
 
 
 def test_caller_cannot_forge_current_identity_after_review(tmp_path):
@@ -144,7 +168,7 @@ def test_caller_cannot_forge_current_identity_after_review(tmp_path):
     backend.title = backend.title.replace("Test dish", "Changed dish")
     from dish_tool.database import content_identity
     forged = content_identity(backend.title, backend.notes).digest
-    result = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
+    result = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=forged, semantic_review_complete=True, provenance_complete=True, run_id="run-forge")
     assert result["code"] == "CONFLICT"
     assert result["errors"][0]["rule"] == "reviewed_identity_mismatch"
@@ -156,7 +180,7 @@ def test_review_and_signoff_bind_immutable_content_versions(tmp_path):
     cycle = app.conn.execute("SELECT * FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()
     assert cycle["reviewed_identity"] == review["data"]["reviewed_identity"]
     assert cycle["reviewed_content_version_id"]
-    approved = app.execute("approve", agent="codex", submission_id=operation_id, correction="none",
+    approved = app.execute("approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True, run_id="run-bind")
     assert approved["ok"]
     cycle = app.conn.execute("SELECT * FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()
@@ -183,7 +207,7 @@ def test_approval_requires_exact_verifier_run_proof(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="proof-run")
     result = app.execute(
-        "approve", agent="codex", submission_id=operation_id, correction="none",
+        "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="other-run",
     )
@@ -195,7 +219,7 @@ def test_attestation_approval_requires_exact_recorded_attestation(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", independence_attestation="fresh independent run A")
     result = app.execute(
-        "approve", agent="codex", submission_id=operation_id, correction="none",
+        "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True,
         independence_attestation="fresh independent run B",

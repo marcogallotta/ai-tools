@@ -215,7 +215,7 @@ def test_successful_change_prepare_audits_diff_against_current_live_notes(
     backend.item["notes"] = live_notes
 
     result = app.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=submission_id,
         file_path=write_candidate(tmp_path, candidate),
@@ -239,7 +239,7 @@ def test_non_change_and_failed_prepare_events_have_no_diff_summary(tmp_path) -> 
     )
     initial_id = initial["submission_id"]
     passed = app.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=initial_id,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE),
@@ -251,7 +251,7 @@ def test_non_change_and_failed_prepare_events_have_no_diff_summary(tmp_path) -> 
     app2, _ = make_app(tmp_path / "failed", COMPLETE_NOTE)
     change_id = start_change(app2)
     failed = app2.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=change_id,
         file_path=write_candidate(tmp_path / "failed", "invalid"),
@@ -270,7 +270,7 @@ def test_move_only_retry_copies_diff_to_successful_prepare_audit(tmp_path) -> No
     backend.fail_move = True
 
     first = app.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=submission_id,
         file_path=write_candidate(tmp_path, candidate),
@@ -281,7 +281,7 @@ def test_move_only_retry_copies_diff_to_successful_prepare_audit(tmp_path) -> No
 
     backend.fail_move = False
     second = app.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=submission_id,
         file_path="not-read-on-retry",
@@ -299,7 +299,7 @@ def test_telemetry_read_failure_never_blocks_change_prepare(tmp_path) -> None:
     backend.fail_read_calls.add(2)
 
     result = app.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=submission_id,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE),
@@ -319,7 +319,7 @@ def test_move_only_retry_copies_unavailable_reason_to_success(tmp_path) -> None:
     backend.fail_move = True
 
     first = app.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=submission_id,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE),
@@ -333,7 +333,7 @@ def test_move_only_retry_copies_unavailable_reason_to_success(tmp_path) -> None:
 
     backend.fail_move = False
     second = app.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=submission_id,
         file_path="not-read-on-retry",

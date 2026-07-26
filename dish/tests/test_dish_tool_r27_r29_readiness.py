@@ -19,7 +19,7 @@ def _review(app, run: str, agent: str = "codex"):
 def _approve_and_submit(app, operation_id: str, run: str = "review"):
     review = _review(app, run)
     approved = app.execute(
-        "approve", agent="codex", submission_id=operation_id, correction="none",
+        "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id=run,
     )
@@ -34,12 +34,12 @@ def test_reopen_recovery_records_editor_before_cycle_is_usable(tmp_path, monkeyp
     candidate.write_text(TASK)
     _review(app, "one")
     assert app.execute(
-        "reject", agent="codex", submission_id=operation_id, route="large",
+        "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="first", file_path=str(candidate), run_id="one",
     )["ok"]
     _review(app, "two", agent="gpt")
     assert app.execute(
-        "reject", agent="gpt", submission_id=operation_id, route="large",
+        "reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="second", file_path=str(candidate), run_id="two",
     )["ok"]
 
@@ -58,7 +58,7 @@ def test_reopen_recovery_records_editor_before_cycle_is_usable(tmp_path, monkeyp
     monkeypatch.setattr(step8, "record_actor_fact", crash_before_actor)
     admin = DishAdminApplication(app.conn, backend=backend)
     failed = admin.execute(
-        "reopen", submission_id=operation_id, category="premise",
+        "reopen", model="gpt-5.6-sol", submission_id=operation_id, category="premise",
         before="Compare hydration routes.",
         after="Compare hydration routes after a substantive premise reset.",
         editor="codex", run_id="reopen-run", file_path=str(corrected), date="2026-07-25",
@@ -101,7 +101,7 @@ def test_material_hold_resolution_recovery_records_editor_before_cycle(tmp_path,
     failed = admin.execute(
         "supply-evidence", submission_id=operation_id, detail="Marco confirmed source",
         resume_status="pending-verification", file_path=str(corrected),
-        editor="codex", run_id="hold-editor",
+        editor="codex", model="gpt-5.6-sol", run_id="hold-editor",
     )
     assert failed["code"] == "INTERNAL_ERROR"
     monkeypatch.setattr(step8, "record_actor_fact", original)
@@ -131,7 +131,7 @@ def test_non_material_terminal_phase_recovers_after_confirmed_write(tmp_path, mo
 
     monkeypatch.setattr(step6, "transition_operation", crash_before_terminal)
     failed = app.execute(
-        "prepare", agent="codex", submission_id=started["submission_id"],
+        "prepare", model="gpt-5.6-sol", agent="codex", submission_id=started["submission_id"],
         file_path=str(candidate), material_classification="non-material",
     )
     assert failed["code"] == "INTERNAL_ERROR"

@@ -21,7 +21,7 @@ def test_small_correction_is_written_rechecked_and_signed_same_pass(tmp_path):
     candidate = tmp_path / "small.txt"
     candidate.write_text(TASK.replace("1. Cook it.", "1. Cook it gently."))
     result = app.execute(
-        "approve", agent="codex", submission_id=operation_id,
+        "approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
         correction="small", file_path=str(candidate),
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review",
@@ -37,13 +37,13 @@ def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     _review(app, "codex", run="first")
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK.replace("100 g", "120 g"))
-    first = app.execute("reject", agent="codex", submission_id=operation_id, route="large", reason="method needs replacement", file_path=str(candidate), run_id="first")
+    first = app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="method needs replacement", file_path=str(candidate), run_id="first")
     assert first["ok"] and first["data"]["new_cycle_id"]
     barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="first")
     assert barred["code"] == "AGENT_MISMATCH"
     _review(app, "gpt", run="second")
     candidate.write_text(TASK.replace("100 g", "130 g"))
-    second = app.execute("reject", agent="gpt", submission_id=operation_id, route="large", reason="premise still unresolved", file_path=str(candidate), run_id="second")
+    second = app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="premise still unresolved", file_path=str(candidate), run_id="second")
     assert second["ok"] and second["data"]["two_pass_hold"]
     assert "Status: pending-human-review" in backend.notes
     assert "Resume status: pending-verification" in backend.notes
@@ -64,11 +64,11 @@ def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK)
     _review(app, "codex", run="one")
-    app.execute("reject", agent="codex", submission_id=operation_id, route="large", reason="first", file_path=str(candidate), run_id="one")
+    app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="first", file_path=str(candidate), run_id="one")
     _review(app, "gpt", run="two")
-    app.execute("reject", agent="gpt", submission_id=operation_id, route="large", reason="second", file_path=str(candidate), run_id="two")
+    app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="second", file_path=str(candidate), run_id="two")
     admin = DishAdminApplication(app.conn, backend=backend)
-    bad = admin.execute("reopen", submission_id=operation_id, category="hash", before="a", after="b", editor="codex", run_id="reopen-run", file_path=str(candidate), date="2026-07-25")
+    bad = admin.execute("reopen", submission_id=operation_id, category="hash", before="a", after="b", editor="codex", model="gpt-5.6-sol", run_id="reopen-run", file_path=str(candidate), date="2026-07-25")
     assert bad["code"] == "INVALID_ARGUMENT"
     corrected = tmp_path / "reopened.txt"
     corrected.write_text(f"{backend.title}\n{backend.notes}".replace("Compare hydration routes.", "Compare hydration routes with a rested-starch reset."))
@@ -76,7 +76,7 @@ def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
         "reopen", submission_id=operation_id, category="premise",
         before="Compare hydration routes.",
         after="Compare hydration routes with a rested-starch reset.",
-        editor="codex", run_id="reopen-run", file_path=str(corrected), date="2026-07-25",
+        editor="codex", model="gpt-5.6-sol", run_id="reopen-run", file_path=str(corrected), date="2026-07-25",
     )
     assert result["ok"]
     assert "Status: pending-verification" in backend.notes
@@ -91,7 +91,7 @@ def test_small_correction_cannot_replace_unreviewed_live_content(tmp_path):
     candidate = tmp_path / "small-unreviewed.txt"
     candidate.write_text(TASK.replace("1. Cook it.", "1. Cook it gently."))
     result = app.execute(
-        "approve", agent="codex", submission_id=operation_id, correction="small",
+        "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="small",
         file_path=str(candidate), reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="small-proof",
     )

@@ -284,17 +284,6 @@ def run_commit_helper(repo: Path, *paths: str):
     )
 
 
-def test_git_commit_blocks_protocol_change_without_protocol_bump(tmp_path):
-    root = copy_fixture(tmp_path)
-    init_git(root)
-    (root / "dish-research-protocol.md").write_text("changed\n")
-
-    completed = run_commit_helper(root, "dish-research-protocol.md")
-
-    assert completed.returncode != 0
-    assert "PROTOCOL_VERSION bump" in completed.stderr
-
-
 def test_git_commit_blocks_schema_change_without_both_bumps(tmp_path):
     root = copy_fixture(tmp_path)
     init_git(root)

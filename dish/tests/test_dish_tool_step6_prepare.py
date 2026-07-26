@@ -82,24 +82,45 @@ def write(tmp_path, name, text):
 def test_planning_prepare_writes_live_and_preserves_research_queue(tmp_path):
     b=Backend(); a=app(tmp_path,b)
     started=a.execute("start",agent="gpt",task_gid="t",kind="planning",change_level=None,change_reason=None)
-    result=a.execute("prepare",agent="gpt",submission_id=started["submission_id"],file_path=write(tmp_path,"p.txt",PLANNING))
+    result=a.execute("prepare", model="gpt-5.6-sol",agent="gpt",submission_id=started["submission_id"],file_path=write(tmp_path,"p.txt",PLANNING))
     assert result["ok"] and b.writes == 1 and b.section == "rq"
     assert "Locks: Keep crisp" in b.notes and "Exemptions: None" in b.notes
 
 def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
     started=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
-    result=a.execute("prepare",agent="gpt",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
+    result=a.execute("prepare", agent="gpt",model="gpt-5.6-sol",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
     assert result["ok"] and b.writes == 1 and b.moves == 1 and b.section == "vq"
     assert "Status: pending-verification" in b.notes
     assert "Verification protocol release: sha256:" in b.notes
     assert result["data"]["verification_cycle"]["protocol_release"].startswith("sha256:")
 
+def test_initial_prepare_requires_model(tmp_path):
+    lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
+    started=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
+    result=a.execute("prepare", agent="gpt",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
+    assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_required"
+    assert b.writes == 0
+
+def test_initial_prepare_rejects_model_with_em_dash(tmp_path):
+    lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
+    started=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
+    result=a.execute("prepare", agent="gpt",model="gpt — 5.6",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
+    assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_invalid_characters"
+    assert b.writes == 0
+
+def test_initial_prepare_rejects_model_with_comma(tmp_path):
+    lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
+    started=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
+    result=a.execute("prepare", agent="gpt",model="gpt-5.6, sol",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
+    assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_invalid_characters"
+    assert b.writes == 0
+
 def test_stale_baseline_blocks_before_write(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
     started=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
     b.title = b.title + " changed"
-    result=a.execute("prepare",agent="gpt",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
+    result=a.execute("prepare", model="gpt-5.6-sol",agent="gpt",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
     assert result["code"] == "CONFLICT" and b.writes == 0 and b.moves == 0
 
 
@@ -153,6 +174,7 @@ def test_prepare_rejects_placement_drift_for_all_operation_kinds(tmp_path):
                 b,
                 operation_id=op["operation_id"],
                 agent="gpt",
+                model="gpt-5.6-sol",
                 file_path=candidate,
                 release=release(case / "honest"),
                 material_classification="non-material" if kind == "change" else None,

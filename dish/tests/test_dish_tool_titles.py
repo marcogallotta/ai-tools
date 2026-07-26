@@ -275,7 +275,7 @@ def test_planning_preserves_working_title_and_rejects_title_declaration(tmp_path
     candidate = write_candidate(tmp_path, "planning.md", PLANNING_NOTE)
 
     rejected = app.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=started["submission_id"],
         file_path=candidate,
@@ -287,7 +287,7 @@ def test_planning_preserves_working_title_and_rejects_title_declaration(tmp_path
     }
 
     prepared = app.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=started["submission_id"],
         file_path=candidate,
@@ -304,7 +304,7 @@ def test_verifier_can_replace_only_a_complete_structured_title(tmp_path):
     started = app.execute("start", agent="claude", task_gid="task", kind="initial")
     candidate = write_candidate(tmp_path, "complete.md", COMPLETE_NOTE)
     prepared = app.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=started["submission_id"],
         file_path=candidate,
@@ -313,7 +313,7 @@ def test_verifier_can_replace_only_a_complete_structured_title(tmp_path):
     assert prepared["state"] == "awaiting_verification"
 
     partial = app.execute(
-        "approve",
+        "approve", model="gpt-5.6-sol",
         agent="gpt",
         submission_id=started["submission_id"],
         file_path=candidate,
@@ -333,7 +333,7 @@ def test_verifier_can_replace_only_a_complete_structured_title(tmp_path):
         no_blockers=True,
     )
     approved = app.execute(
-        "approve",
+        "approve", model="gpt-5.6-sol",
         agent="gpt",
         submission_id=started["submission_id"],
         file_path=candidate,

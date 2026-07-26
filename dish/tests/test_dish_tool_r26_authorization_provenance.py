@@ -69,9 +69,9 @@ def test_initial_prepare_owns_researched_by(tmp_path):
         "Researched by: ChatGPT — GPT-5, 2026-07-25", "Researched by: None"
     )
     result = application.execute(
-        "prepare", agent="codex", submission_id=started["submission_id"],
+        "prepare", model="gpt-5.6-sol", agent="codex", submission_id=started["submission_id"],
         file_path=write(tmp_path, "hostile.txt", hostile),
     )
     assert result["ok"]
     assert "Researched by: None" not in backend.notes
-    assert "Researched by: ChatGPT — Codex" in backend.notes
+    assert "Researched by: ChatGPT — gpt-5.6-sol" in backend.notes

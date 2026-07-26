@@ -97,7 +97,7 @@ def start(application, kind, **kwargs):
 def test_planning_prepare_goes_ready_without_move(tmp_path):
     app, backend = make_app(tmp_path, "")
     sid = start(app, "planning")
-    result = app.execute("prepare", agent="claude", submission_id=sid, file_path=write_candidate(tmp_path, PLANNING_NOTE))
+    result = app.execute("prepare", model="gpt-5.6-sol", agent="claude", submission_id=sid, file_path=write_candidate(tmp_path, PLANNING_NOTE))
     assert result["state"] == "ready"
     assert backend.moves == []
 
@@ -106,7 +106,7 @@ def test_initial_prepare_routes_to_opposite_family_and_moves(tmp_path):
     app, backend = make_app(tmp_path, PLANNING_NOTE)
     sid = start(app, "initial")
     result = app.execute(
-        "prepare", agent="claude", submission_id=sid,
+        "prepare", model="gpt-5.6-sol", agent="claude", submission_id=sid,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE), **TITLE_ARGS
     )
     assert result["state"] == "awaiting_verification"
@@ -121,7 +121,7 @@ def test_prepare_reports_multiple_validation_failures_and_stays_drafting(tmp_pat
     app, _ = make_app(tmp_path, PLANNING_NOTE)
     sid = start(app, "initial")
     result = app.execute(
-        "prepare", agent="claude", submission_id=sid,
+        "prepare", model="gpt-5.6-sol", agent="claude", submission_id=sid,
         file_path=write_candidate(tmp_path, "bad"), **TITLE_ARGS
     )
     assert result["code"] == "VALIDATION_FAILED"
@@ -134,7 +134,7 @@ def test_small_change_preserves_verification_and_exemptions(tmp_path):
     sid = start(app, "change", change_level="small", change_reason="typo")
     changed = COMPLETE_NOTE.replace("Verification: original verification text", "Verification: changed")
     result = app.execute(
-        "prepare", agent="claude", submission_id=sid,
+        "prepare", model="gpt-5.6-sol", agent="claude", submission_id=sid,
         file_path=write_candidate(tmp_path, changed), **TITLE_ARGS
     )
     assert result["code"] == "VALIDATION_FAILED"
@@ -148,12 +148,12 @@ def test_large_exemption_change_requires_revision(tmp_path):
     changed = COMPLETE_NOTE.replace("[nutrition-fat] Marco approved lower fat target", "None")
     path = write_candidate(tmp_path, changed)
     failed = app.execute(
-        "prepare", agent="claude", submission_id=sid,
+        "prepare", model="gpt-5.6-sol", agent="claude", submission_id=sid,
         file_path=path, **TITLE_ARGS
     )
     assert any(e["rule"] == "exemption_revision_required" for e in failed["errors"])
     passed = app.execute(
-        "prepare", agent="claude", submission_id=sid, file_path=path,
+        "prepare", model="gpt-5.6-sol", agent="claude", submission_id=sid, file_path=path,
         exemption_revision="Marco, 2026-07-21: removed exemption", **TITLE_ARGS
     )
     assert passed["state"] == "awaiting_verification"
@@ -164,13 +164,13 @@ def test_research_handoff_retry_skips_validation_and_only_moves(tmp_path):
     sid = start(app, "initial")
     backend.fail_move = True
     first = app.execute(
-        "prepare", agent="claude", submission_id=sid,
+        "prepare", model="gpt-5.6-sol", agent="claude", submission_id=sid,
         file_path=write_candidate(tmp_path, COMPLETE_NOTE), **TITLE_ARGS
     )
     assert first["code"] == "INTERNAL_ERROR"
     row = app.conn.execute("SELECT status FROM submissions WHERE submission_id=?", (sid,)).fetchone()
     assert row["status"] == "research_handoff"
     backend.fail_move = False
-    second = app.execute("prepare", agent="claude", submission_id=sid, file_path="missing-does-not-matter")
+    second = app.execute("prepare", model="gpt-5.6-sol", agent="claude", submission_id=sid, file_path="missing-does-not-matter")
     assert second["state"] == "awaiting_verification"
     assert len(backend.moves) == 2

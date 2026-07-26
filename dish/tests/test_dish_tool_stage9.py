@@ -257,7 +257,7 @@ def test_planning_workflow_uses_exact_tool_aware_bundle_end_to_end(tmp_path):
 
     candidate = write_candidate(tmp_path, "planning.md", PLANNING_NOTE)
     prepared = application.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=started["submission_id"],
         file_path=candidate,
@@ -303,7 +303,7 @@ def test_initial_workflow_uses_exact_tool_aware_bundle_end_to_end(tmp_path):
         tmp_path, "complete-prepared.md", PREPARED_COMPLETE_NOTE
     )
     prepared = application.execute(
-        "prepare",
+        "prepare", model="gpt-5.6-sol",
         agent="claude",
         submission_id=started["submission_id"],
         file_path=prepared_candidate,
@@ -316,7 +316,7 @@ def test_initial_workflow_uses_exact_tool_aware_bundle_end_to_end(tmp_path):
         tmp_path, "complete-approved.md", APPROVED_COMPLETE_NOTE
     )
     approved = application.execute(
-        "approve",
+        "approve", model="gpt-5.6-sol",
         agent="gpt",
         submission_id=started["submission_id"],
         file_path=approved_candidate,

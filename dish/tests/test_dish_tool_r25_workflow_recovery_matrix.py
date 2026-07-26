@@ -23,7 +23,7 @@ def test_approval_crash_after_signoff_recovers_await_submission(tmp_path, monkey
 
     monkeypatch.setattr(step7, "transition_operation", crash_before_phase)
     result = app.execute(
-        "approve",
+        "approve", model="gpt-5.6-sol",
         agent="codex",
         submission_id=operation_id,
         correction="none",
@@ -57,6 +57,7 @@ def test_large_crash_before_new_cycle_recovers_missing_suffix(tmp_path, monkeypa
     result = app.execute(
         "reject",
         agent="codex",
+        model="gpt-5.6-sol",
         submission_id=operation_id,
         route="large",
         reason="replace method",

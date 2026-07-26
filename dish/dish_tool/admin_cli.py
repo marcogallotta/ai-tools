@@ -75,6 +75,7 @@ def build_parser() -> JsonArgumentParser:
     reopen.add_argument("--before", required=True)
     reopen.add_argument("--after", required=True)
     reopen.add_argument("--editor", required=True, choices=("claude", "gpt", "codex"))
+    reopen.add_argument("--model", required=True)
     reopen.add_argument("--run-id", required=True)
     reopen.add_argument("--file", dest="file_path", required=True)
     reopen.add_argument("--date", required=True)
@@ -105,6 +106,7 @@ def build_parser() -> JsonArgumentParser:
         hold.add_argument("--resume-status", required=True, choices=("pending-research", "pending-verification"))
         hold.add_argument("--file", dest="file_path")
         hold.add_argument("--editor", choices=("claude", "gpt", "codex"))
+        hold.add_argument("--model")
         hold.add_argument("--run-id")
     return parser
 
