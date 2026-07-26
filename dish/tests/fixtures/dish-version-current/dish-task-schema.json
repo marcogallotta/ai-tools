@@ -1,6 +1,6 @@
 {
   "schema_kind": "dish-task",
-  "protocol_version": "1.0.9",
+  "protocol_version": "1.0.10",
   "schema_version": "2",
   "protocol_files": {
     "planning": "dish-planning-protocol.md",

@@ -2,7 +2,7 @@
   "migration_id": "0002-canonical-document",
   "from_schema_version": "1",
   "to_schema_version": "2",
-  "protocol_version": "1.0.9",
+  "protocol_version": "1.0.10",
   "automatic": false,
   "description": "Parse schema-1 content, quarantine ambiguity, and validate a canonical schema-2 candidate without writing the target Schema version.",
   "source_ids": [
