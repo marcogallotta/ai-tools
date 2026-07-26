@@ -17,11 +17,14 @@ class WorkflowSnapshot:
     latest_cycle_outcome: str | None
     latest_cycle_route: str | None
     validation_rules: tuple[str, ...]
+    pending_steps: tuple[str, ...] = ()
 
 
 def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
     """Return the sole legal-action answer for current workflow state."""
     if snapshot.operation_status not in {"open", "uncertain"}:
+        return []
+    if snapshot.pending_steps:
         return []
     phase = snapshot.operation_phase
     # Preparation is the route that turns a bare Planning task or Planning brief

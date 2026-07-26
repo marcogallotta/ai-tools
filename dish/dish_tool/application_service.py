@@ -92,6 +92,7 @@ class CurrentWorkflowService:
             latest_cycle_outcome=None if cycle is None else cycle["outcome"],
             latest_cycle_route=None if cycle is None else cycle["route"],
             validation_rules=tuple(validation_rules),
+            pending_steps=tuple(row["step_name"] for row in self.repository.pending_steps(operation_id)),
         )
         facts = {
             "status": op["status"],
@@ -99,6 +100,8 @@ class CurrentWorkflowService:
             "live_status": live_status,
             "live_section_gid": live.section_gid,
             "validation_rules": validation_rules,
+            "pending_steps": list(snapshot.pending_steps),
+            "recovery_required": bool(snapshot.pending_steps),
         }
         return snapshot, facts
 

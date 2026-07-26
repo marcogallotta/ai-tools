@@ -230,6 +230,44 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     return {"operation_id": operation_id, "route": route, "two_pass_hold": two_pass, "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"], "task": dataclasses.asdict(confirmed)}
 
 
+
+
+def _reset_path(document, category: str) -> dict[str, str]:
+    if category == "method":
+        return {"sections.HOW TO COOK IT": document.sections.get("HOW TO COOK IT", "")}
+    if category == "evidence":
+        return {"research_basis": "\n".join(document.research_basis)}
+    if category == "premise":
+        return {
+            "recognition": document.recognition,
+            "introduction": "\n".join(document.introduction),
+            "sections.WHY COOK IT": document.sections.get("WHY COOK IT", ""),
+            "planning.Purpose": document.planning_brief.values.get("Purpose", ""),
+            "planning.Research emphasis": document.planning_brief.values.get("Research emphasis", ""),
+            "decisions": "\n".join(document.decisions),
+        }
+    if category == "scope":
+        return {
+            "sections.QUANTITIES": document.sections.get("QUANTITIES", ""),
+            "planning.Role": document.planning_brief.values.get("Role", ""),
+            "planning.Purpose": document.planning_brief.values.get("Purpose", ""),
+        }
+    return {}
+
+def _prove_reset(original, candidate, category: str, before: str, after: str) -> str:
+    old_paths = _reset_path(original, category)
+    new_paths = _reset_path(candidate, category)
+    for path, old_value in old_paths.items():
+        new_value = new_paths.get(path, "")
+        if old_value != new_value and before in old_value and after in new_value:
+            return path
+    raise DishRuleError(
+        "VALIDATION_FAILED",
+        "corrected candidate does not demonstrate the declared substantive reset",
+        rule="two_pass_reset_not_applied",
+        details={"category": category, "before": before, "after": after},
+    )
+
 def reopen_two_pass(
     conn: sqlite3.Connection,
     backend: Any,
@@ -264,15 +302,7 @@ def reopen_two_pass(
     candidate_state = dict(candidate.state.values)
     candidate_state["Researched by"] = original.state.values["Researched by"]
     candidate = dataclasses.replace(candidate, state=TaskState(candidate_state))
-    original_text = original.render()
-    candidate_text = candidate.render()
-    if before not in original_text or after not in candidate_text or candidate_text == original_text:
-        raise DishRuleError(
-            "VALIDATION_FAILED",
-            "corrected candidate does not demonstrate the declared substantive reset",
-            rule="two_pass_reset_not_applied",
-            details={"category": category, "before": before, "after": after},
-        )
+    changed_path = _prove_reset(original, candidate, category, before, after)
     if honest_root is None:
         previous = conn.execute(
             "SELECT protocol_release, protocol_text FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1",
@@ -290,7 +320,7 @@ def reopen_two_pass(
         "Verified by": "None",
         "Self-verified": material_editor_line(editor, date),
     })
-    entry = f"{date} — {editor}: {category}; before: {before}; after: {after}"
+    entry = f"{date} — {editor}: {category}; path: {changed_path}; before: {before}; after: {after}"
     document = dataclasses.replace(
         candidate,
         state=TaskState(state_values),
@@ -308,7 +338,7 @@ def reopen_two_pass(
     )
     intended_title, intended_notes = _render(document)
     intended_identity = content_identity(intended_title, intended_notes).digest
-    declare_operation_step(conn, operation_id, "reopen_write", {"title": intended_title, "notes": intended_notes})
+    declare_operation_step(conn, operation_id, "reopen_write", {"title": intended_title, "notes": intended_notes, "reset_path": changed_path})
     declare_operation_step(conn, operation_id, "reopen_actor", {
         "role": "material_editor", "agent": editor, "run_id": run_id,
         "candidate_identity": intended_identity,
