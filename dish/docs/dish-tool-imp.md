@@ -1,4 +1,4 @@
-> **Superseded:** this original build plan is retained for history. The implemented rewrite is governed by `dish-tool-update.md`, `dish-tool-update-imp.md`, and `dish-tool-activation.md`.
+> **Superseded:** this original build plan is retained for history. The implemented rewrite is governed by `dish-tool-update.md`, `dish-tool-update-imp.md`, and `runtime-contract.md`.
 
 # Dish tool — V1 implementation plan
 

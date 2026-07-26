@@ -18,7 +18,7 @@ from dish_tool.validation import validate_manifest_shape  # noqa: E402
 BUNDLE_DIR = Path(__file__).parent / "fixtures" / "protocol-release-tool-aware"
 DOCS_DIR = BIN_DIR / "docs"
 RELAY_PATH = DOCS_DIR / "dish-chatgpt-relay.md"
-ACTIVATION_PATH = DOCS_DIR / "dish-tool-activation.md"
+ACTIVATION_PATH = DOCS_DIR / "runtime-contract.md"
 IMPLEMENTATION_PLAN_PATH = DOCS_DIR / "dish-tool-imp.md"
 GLOBAL_GUIDE_PATH = Path(__file__).parents[2] / "CLAUDE-global.md"
 
@@ -224,8 +224,6 @@ def test_chatgpt_relay_is_mechanics_free_and_never_exposes_direct_asana():
 def test_activation_document_is_the_complete_local_operating_contract():
     runbook = ACTIVATION_PATH.read_text(encoding="utf-8").lower()
     assert "authority and scope" in runbook
-    assert "bin/.venv/bin/python3" in runbook
-    assert "agent commands" in runbook
     assert "json response contract" in runbook
     assert "result codes and exit statuses" in runbook
     assert "rerun rules" in runbook

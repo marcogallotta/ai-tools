@@ -30,27 +30,48 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
 
 def build_parser() -> JsonArgumentParser:
-    parser = JsonArgumentParser(prog="dish-admin")
+    parser = JsonArgumentParser(
+        prog="dish-admin",
+        description=(
+            "Marco-only recovery and override commands for the dish tool. Agents do not run "
+            "these; they exist for reconciling an interrupted write/movement, discarding a "
+            "stale operation, clearing a stuck state, or reopening a two-pass Human Review hold."
+        ),
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    recover = subparsers.add_parser("recover")
+    recover = subparsers.add_parser(
+        "recover",
+        help="reconcile an interrupted write/movement against a fresh live Asana reread",
+    )
     recover.add_argument("submission_id")
     recover.add_argument(
-        "--outcome", required=True, choices=("not-applied", "applied")
+        "--outcome",
+        required=True,
+        choices=("not-applied", "applied"),
+        help="record only what the live reread proves; a contradictory outcome fails closed",
     )
     recover.add_argument("--reason", required=True)
 
-    discard = subparsers.add_parser("discard")
+    discard = subparsers.add_parser("discard", help="abandon a stale open operation without applying it")
     discard.add_argument("submission_id")
     discard.add_argument("--reason", required=True)
 
-    unblock = subparsers.add_parser("unblock")
+    unblock = subparsers.add_parser("unblock", help="clear a stuck operation-level block")
     unblock.add_argument("submission_id")
     unblock.add_argument("--reason", required=True)
 
-    reopen = subparsers.add_parser("reopen")
+    reopen = subparsers.add_parser(
+        "reopen",
+        help="the only path out of the two-pass Verification Human Review hold",
+    )
     reopen.add_argument("submission_id")
-    reopen.add_argument("--category", required=True, choices=("evidence", "premise", "method", "scope"))
+    reopen.add_argument(
+        "--category",
+        required=True,
+        choices=("evidence", "premise", "method", "scope"),
+        help="what concretely changed to make another Verification cycle worthwhile",
+    )
     reopen.add_argument("--before", required=True)
     reopen.add_argument("--after", required=True)
     reopen.add_argument("--editor", required=True, choices=("claude", "gpt", "codex"))
@@ -58,10 +79,14 @@ def build_parser() -> JsonArgumentParser:
     reopen.add_argument("--file", dest="file_path", required=True)
     reopen.add_argument("--date", required=True)
 
-    migrate = subparsers.add_parser("migrate")
+    migrate = subparsers.add_parser(
+        "migrate", help="migrate one individually encountered older-schema task after cutover"
+    )
     migrate.add_argument("task_gid")
 
-    authorize = subparsers.add_parser("authorize-governed-change")
+    authorize = subparsers.add_parser(
+        "authorize-governed-change", help="authorize a single field change the tool would otherwise block"
+    )
     authorize.add_argument("submission_id")
     authorize.add_argument("--field", required=True)
     authorize.add_argument("--before", required=True)
@@ -69,8 +94,12 @@ def build_parser() -> JsonArgumentParser:
     authorize.add_argument("--reason", required=True)
     authorize.add_argument("--run-id")
 
-    for name in ("supply-evidence", "record-human-decision"):
-        hold = subparsers.add_parser(name)
+    _hold_help = {
+        "supply-evidence": "resume a pending-evidence operation with Marco-supplied evidence",
+        "record-human-decision": "resume a pending-human-review operation with Marco's recorded decision",
+    }
+    for name, help_text in _hold_help.items():
+        hold = subparsers.add_parser(name, help=help_text)
         hold.add_argument("submission_id")
         hold.add_argument("--detail", required=True)
         hold.add_argument("--resume-status", required=True, choices=("pending-research", "pending-verification"))
@@ -107,6 +136,10 @@ def main(
     application: DishAdminApplication | None = None,
 ) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+
+    if "-h" in arguments or "--help" in arguments:
+        build_parser().parse_args(arguments)  # prints help and raises SystemExit(0)
+
     context = _argument_context(arguments)
     owned_application = application is None
     try:

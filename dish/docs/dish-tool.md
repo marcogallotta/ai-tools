@@ -15,7 +15,7 @@ The implementation provides:
 - destination-nonblocking readiness and movement-only submission;
 - explicit older-schema migration and evidence-based uncertain recovery.
 
-The canonical command syntax, JSON result envelope, exit statuses, rerun rules, and troubleshooting are in `dish-tool-activation.md`. Agent protocols contain only mandatory boundary hooks and semantic responsibilities. The ChatGPT relay contains only relay-specific constraints.
+The canonical command syntax, JSON result envelope, exit statuses, rerun rules, and troubleshooting are in `runtime-contract.md`. Agent protocols contain only mandatory boundary hooks and semantic responsibilities. The ChatGPT relay contains only relay-specific constraints.
 
 ## Safety boundary
 

@@ -10,7 +10,7 @@ from dish_tool.constants import EXIT_STATUS_BY_CODE
 from dish_tool.database import initialize_database
 
 ROOT = Path(__file__).resolve().parents[1]
-ACTIVATION = ROOT / "docs" / "dish-tool-activation.md"
+ACTIVATION = ROOT / "docs" / "runtime-contract.md"
 RELAY = ROOT / "docs" / "dish-chatgpt-relay.md"
 REPORTS = ROOT / "dish-reports.sql"
 

@@ -1,6 +1,6 @@
 # ChatGPT relay for the local dish workflow
 
-ChatGPT does not access Asana directly. A local runner invokes `dish` and attributes the work to the ChatGPT run with `--agent gpt`. Command syntax, result codes, retries, and troubleshooting live only in `dish-tool-activation.md`.
+ChatGPT does not access Asana directly. A local runner invokes `dish` and attributes the work to the ChatGPT run with `--agent gpt`. Command syntax, result codes, retries, and troubleshooting live only in `runtime-contract.md`.
 
 1. The runner starts the exact task and stage before ChatGPT authors or verifies anything. For Verification, supply a platform run ID when available; otherwise record an explicit independence attestation.
 2. Relay only the stage protocol and exact live task returned by the tool. Do not expose another stage’s protocol, the generic Asana CLI, or `dish-admin`.

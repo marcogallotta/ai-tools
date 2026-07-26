@@ -760,7 +760,7 @@ the whole activation contract here and rewriting it one step later is the failur
 
 - `bin/docs/dish-tool.md`
 - this implementation plan, if final command names differ
-- `bin/docs/dish-tool-activation.md`
+- `bin/docs/runtime-contract.md`
 - `bin/docs/dish-chatgpt-relay.md`
 - `bin/dish-reports.sql`
 - relevant protocol files in `honest`

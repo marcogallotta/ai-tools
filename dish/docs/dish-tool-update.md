@@ -20,7 +20,7 @@
 - `bin/dish`, `bin/dish-admin`, and `bin/dish_tool/*.py`
 - `bin/docs/dish-tool-imp.md`
 - `bin/docs/dish-tool.md`
-- `bin/docs/dish-tool-activation.md`
+- `bin/docs/runtime-contract.md`
 - `bin/docs/dish-chatgpt-relay.md`
 - `bin/dish-reports.sql`
 - dish-tool tests and fixture protocol-release assets under `bin/tests/`
@@ -61,7 +61,7 @@ These decisions are approved for the first compatible rollout. They may later ch
 20. Material changes use `<YYYY-MM-DD> — ChatGPT — <model>: <concrete change>; reason: <reason>; material: yes | no; verification: <state>`. Two-pass resets append category and before/after details. Content-version identity lives in the tool's database and is never written into the task body.
 21. The non-Git Verification-release form is `sha256:<64 lowercase hex>; read-at=<RFC3339 UTC timestamp>`.
 22. Nonterminal legacy tasks are quarantined and reconciled individually. Never infer `ready`; keep the old project untouched until migration is accepted.
-23. Planning, Research, and Verification have mandatory deterministic tool checks at defined phase boundaries. Their protocols own when checks are required and the agent's remaining semantic duties; `dish-tool-activation.md` owns commands, environment, arguments, output/exit semantics, and troubleshooting. A tool pass never authorizes a protocol transition or signoff by itself.
+23. Planning, Research, and Verification have mandatory deterministic tool checks at defined phase boundaries. Their protocols own when checks are required and the agent's remaining semantic duties; `runtime-contract.md` owns commands, environment, arguments, output/exit semantics, and troubleshooting. A tool pass never authorizes a protocol transition or signoff by itself.
 24. Breaking protocol changes during an open submission: deliberately deferred — see Remaining decisions.
 25. The shared service remains a V1 multi-agent go-live requirement. GPT Action connectivity is settled, not open — see C-02's V1 staging decision for the architecture (Tailscale Funnel, a dedicated scoped bearer token, and a trimmed OpenAPI surface).
 
@@ -97,7 +97,7 @@ The settled model keeps the safety check but removes task-lifetime protocol pinn
 - release creation and reuse in `bin/dish_tool/commands.py`
 - release columns in `bin/dish_tool/database.py`
 - fixture manifests under `bin/tests/`
-- `bin/docs/dish-tool-imp.md`, `bin/docs/dish-tool.md`, and `bin/docs/dish-tool-activation.md`
+- `bin/docs/dish-tool-imp.md`, `bin/docs/dish-tool.md`, and `bin/docs/runtime-contract.md`
 
 **Governing requirement and approved rollout model**
 
@@ -399,7 +399,7 @@ The old manifests use a larger role-tag vocabulary and `[blockers unreviewed]`, 
 
 - title parsing in `bin/dish_tool/validation.py`
 - complete-task fixture manifest and title tests
-- title assumptions in `bin/docs/dish-tool-activation.md` and `bin/docs/dish-tool-imp.md`
+- title assumptions in `bin/docs/runtime-contract.md` and `bin/docs/dish-tool-imp.md`
 - Planning, Research, and Verification protocol language governing title and nutrition checks
 
 **Governing requirement / approved amendment**
@@ -457,7 +457,7 @@ The database hard-codes obsolete families, levels, `baseline_verification_line`,
 - `bin/dish_tool/database.py`
 - `bin/dish_tool/recovery.py`
 - `bin/dish_tool/admin.py`
-- `bin/docs/dish-tool-activation.md`
+- `bin/docs/runtime-contract.md`
 - migration assumptions in `bin/docs/dish-tool-imp.md`
 
 **Governing requirement**
@@ -493,7 +493,7 @@ Repository instructions, operator docs, the old implementation plan, activation 
 - `~/ai-tools/CLAUDE.md`
 - `bin/docs/dish-tool.md`
 - `bin/docs/dish-tool-imp.md`
-- `bin/docs/dish-tool-activation.md`
+- `bin/docs/runtime-contract.md`
 - `bin/docs/dish-chatgpt-relay.md`
 - `bin/tests/fixtures/protocol-release/*`
 - dish-tool tests
@@ -526,7 +526,7 @@ The current activation guide is a cutover checklist, not an agent operating cont
 
 **Affected locations**
 
-- `bin/docs/dish-tool-activation.md`
+- `bin/docs/runtime-contract.md`
 - command/result handling in `bin/dish`, `bin/dish_tool/cli.py`, `results.py`, and `errors.py`
 - the Planning, Research, full Verification, and compact Verification protocols
 - duplicated or conflicting operational guidance in `bin/docs/dish-tool.md`, `bin/docs/dish-tool-imp.md`, and the relay
@@ -592,7 +592,7 @@ A compatible implementation must satisfy all of the following:
 8. **Destination and movement:** implement nonblocking diagnostics and the exact queue/manual-placement rules.
 9. **Migration:** implement explicit, preferably scripted migration; refuse older-schema tasks during normal commands; migrate a task by writing, rereading, and validating before changing `Schema version`; quarantine and individually reconcile legacy tasks; retain old records/project as backup.
 10. **Replace tests and operational surfaces:** rebuild fixtures, tests, reports, admin flows, and relay. Add boundary tests for Planning, Research, and Verification plus every result-contract category.
-11. **Agent integration documentation:** update Planning, Research, full Verification, and compact Verification with concise mandatory hooks; replace `dish-tool-activation.md` with the actual command/environment/result contract; remove duplicated mechanics elsewhere.
+11. **Agent integration documentation:** update Planning, Research, full Verification, and compact Verification with concise mandatory hooks; replace `runtime-contract.md` with the actual command/environment/result contract; remove duplicated mechanics elsewhere.
 12. **Shared-service live mode:** add a small laptop-hosted dish API. Move lock/lease ownership, shared submission state, and all Asana access behind it; make GPT Actions and the CLI clients of the same API, per C-02's V1 staging decision architecture.
 13. **Controlled activation:** sandbox Asana and run single-agent tests first; test drift/recovery and agent reruns; migrate a small reviewed cohort; permit proper multi-agent go-live only after the shared-service gate passes and no mixed old/new Asana path remains.
 
