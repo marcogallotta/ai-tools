@@ -1,13 +1,34 @@
-#!/home/marco/ai-tools/bin/.venv/bin/python3
+#!/usr/bin/env python3
 """asana — minimal Asana API CLI.
 
 Reads ASANA_PAT from ~/.config/asana-cli/.env (override with $ASANA_PAT or $ASANA_ENV).
-Transport: python-asana SDK (see requirements.txt for pinned version).
+Transport: python-asana SDK (see dish/requirements.txt for pinned version).
 Run `asana help` for usage.
 """
 import json
 import os
 import sys
+from pathlib import Path
+
+SCRIPT = Path(__file__).resolve()
+# Shares dish's virtualenv: it pins the asana SDK and holds the dish_tool package.
+DISH_ROOT = SCRIPT.parent.parent / "dish"
+VENV_PYTHON = DISH_ROOT / ".venv" / "bin" / "python"
+
+if not VENV_PYTHON.exists():
+    sys.exit(
+        f"asana: no virtualenv at {VENV_PYTHON}\n"
+        f"Create it with:\n"
+        f"  python3 -m venv {DISH_ROOT / '.venv'}\n"
+        f"  {VENV_PYTHON} -m pip install -r {DISH_ROOT / 'requirements.txt'}"
+    )
+
+# Compare sys.prefix, not sys.executable: a venv's bin/python is a symlink to the
+# system interpreter, so resolved executables are identical inside and outside.
+if Path(sys.prefix).resolve() != (DISH_ROOT / ".venv").resolve():
+    os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), str(SCRIPT), *sys.argv[1:]])
+
+sys.path.insert(0, str(DISH_ROOT))
 
 import asana
 from asana.rest import ApiException

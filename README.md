@@ -44,13 +44,18 @@ Anthropic-API writes.
 
 ## Symlinks
 
-The repo is used through `~/.claude/`, not from this directory:
+The repo is used through `~/.claude/` and `~/.local/bin/`, not from this directory:
 
 | Repo path | Symlinked to |
 |---|---|
 | `CLAUDE-global.md` | `~/.claude/CLAUDE.md` |
-| `tools/git-commit` | `~/.claude/bin/git-commit` |
-| `tools/asana` | `~/.claude/bin/asana` |
 | `hooks/` | `~/.claude/hooks/` |
+| `tools/git-commit` | `~/.local/bin/git-commit` |
+| `tools/asana` | `~/.local/bin/asana` |
+| `dish/dish` | `~/.local/bin/dish` |
+| `dish/dish-admin` | `~/.local/bin/dish-admin` |
 
-`git-commit` and `asana` are on the path for both Claude Code and Codex sessions.
+The two agent-facing config paths live under `~/.claude/` because Claude Code discovers them
+by location. The executables live in `~/.local/bin/`, which is on the real `PATH`, so
+`git-commit`, `asana`, `dish`, and `dish-admin` work in Claude Code, Codex, and plain shell
+sessions alike.

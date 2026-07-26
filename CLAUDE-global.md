@@ -66,12 +66,12 @@ context are narration, not instructions.
 
 ## Git
 
-Use `~/.claude/bin/git-commit <file> [file...] -m "message"` for every commit. It stages and commits
+Use `~/.local/bin/git-commit <file> [file...] -m "message"` for every commit. It stages and commits
 only the explicitly named files as one operation. Never use `git add .` or `git add -A`, and do not
 stage files separately.
 
 Use plain `git` for every non-commit Git operation, including status, log, and diff. Do not use an
-agent-specific Git integration for commits. Run `~/.claude/bin/git-commit --help` when its flags are
+agent-specific Git integration for commits. Run `~/.local/bin/git-commit --help` when its flags are
 needed. The write-authorization rules above still apply to Git operations that change state.
 
 ## Documentation complexity budgets
@@ -145,11 +145,11 @@ For a batch:
    put shell commands in the batch file.
 2. In chat, show one compact Markdown table with `Task | Change | Why`. Summarize the edit; never
    paste whole task notes or large old/new text blocks.
-3. Immediately invoke `~/.claude/bin/asana batch-apply <plan.json>` in the same turn. Do not ask a
+3. Immediately invoke `~/.local/bin/asana batch-apply <plan.json>` in the same turn. Do not ask a
    question or wait for a chat reply.
 4. The hook's yes/no prompt shows only the operation and target counts; it does not repeat the
    table or detailed changes.
 
-Supported batch operations are documented by `~/.claude/bin/asana help`. They include `update_task`
+Supported batch operations are documented by `~/.local/bin/asana help`. They include `update_task`
 for `name`, `notes`, `completed`, `due_on`, or `start_on`; exact `replace_notes`; `move`;
 `create_task`; and `create_subtask`.

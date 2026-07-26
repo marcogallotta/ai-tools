@@ -43,7 +43,7 @@ WRITE_SUBCOMMANDS = {
 RAW_WRITE_VERBS = {"put", "post", "delete"}
 SCRIPT_RUNNERS = {"bash", "sh", "zsh", "python", "python3", "node", "ruby", "perl", "php", "source"}
 ENV_INNER_RUNNERS = {"bash", "sh", "zsh", "python", "python3", "node", "ruby", "perl", "php"}
-ASANA_BIN = "/home/marco/.claude/bin/asana"
+ASANA_BIN = "/home/marco/.local/bin/asana"
 
 # Argv-list literal forms found in embedded scripts, e.g.
 # subprocess.run(["/path/to/asana", "rename", ...]). This scans arbitrary

@@ -16,7 +16,7 @@ if not VENV_PYTHON.exists():
         f"  {VENV_PYTHON} -m pip install -r {ROOT / 'requirements.txt'}"
     )
 
-if Path(sys.executable).resolve() != VENV_PYTHON.resolve():
+if Path(sys.prefix).resolve() != (ROOT / ".venv").resolve():
     os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), str(SCRIPT), *sys.argv[1:]])
 
 sys.path.insert(0, str(ROOT))
