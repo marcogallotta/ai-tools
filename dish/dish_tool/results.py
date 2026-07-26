@@ -80,32 +80,5 @@ def error_envelope(
 
 
 
-def label_unsupported_legacy_workflow(
-    result: Mapping[str, Any], *, diagnostic_read: bool = False
-) -> dict[str, Any]:
-    """Attach the explicit read-only compatibility contract to a result."""
-    from .constants import (
-        LEGACY_WORKFLOW_NAME,
-        PROTOCOL_INCOMPATIBLE_MESSAGE,
-        UNSUPPORTED_WORKFLOW_STATE,
-    )
-
-    labelled = dict(result)
-    original_state = labelled.get("state")
-    data = dict(labelled.get("data") or {})
-    if original_state is not None and original_state != UNSUPPORTED_WORKFLOW_STATE:
-        data.setdefault("legacy_state", original_state)
-    data["compatibility"] = {
-        "status": "unsupported",
-        "workflow": LEGACY_WORKFLOW_NAME,
-        "diagnostic_read_only": bool(diagnostic_read),
-        "message": PROTOCOL_INCOMPATIBLE_MESSAGE,
-    }
-    labelled["data"] = data
-    labelled["state"] = UNSUPPORTED_WORKFLOW_STATE
-    labelled["retryable"] = False
-    labelled["allowed_actions"] = []
-    return labelled
-
 def exit_status(code: str) -> int:
     return EXIT_STATUS_BY_CODE.get(code, 1)

@@ -14,14 +14,6 @@ EXCLUDED_SECTION_GIDS = frozenset(
 )
 DEFAULT_DB_PATH = Path("~/ai-tools/var/dish-tool.db").expanduser()
 
-# Read-only compatibility labels retained for legacy result envelopes.
-LEGACY_WORKFLOW_NAME = "task-pinned-release-v1a"
-UNSUPPORTED_WORKFLOW_STATE = "unsupported_legacy_workflow"
-PROTOCOL_INCOMPATIBLE_MESSAGE = (
-    "the installed dish workflow is a legacy task-pinned release implementation "
-    "and is not compatible with the current dish protocol/schema baseline"
-)
-
 AGENT_FAMILIES = {
     "claude": "claude",
     "gpt": "gpt",

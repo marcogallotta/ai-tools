@@ -41,7 +41,6 @@ def test_documented_admin_examples_match_current_parser_surface():
         ["migrate", "123"],
         ["recover", "op", "--outcome", "applied", "--reason", "reread"],
         ["discard", "op", "--reason", "abandoned"],
-        ["unblock", "op", "--reason", "resolved"],
         [
             "reopen", "op", "--category", "method", "--before", "old",
             "--after", "new", "--editor", "codex", "--model", "gpt-5.6-sol",

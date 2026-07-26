@@ -17,7 +17,7 @@ from .releases import configured_honest_path, resolve_release
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
-_ADMIN_COMMANDS = {"recover", "discard", "unblock", "migrate", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change"}
+_ADMIN_COMMANDS = {"recover", "discard", "migrate", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change"}
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -56,10 +56,6 @@ def build_parser() -> JsonArgumentParser:
     discard = subparsers.add_parser("discard", help="abandon a stale open operation without applying it")
     discard.add_argument("submission_id")
     discard.add_argument("--reason", required=True)
-
-    unblock = subparsers.add_parser("unblock", help="clear a stuck operation-level block")
-    unblock.add_argument("submission_id")
-    unblock.add_argument("--reason", required=True)
 
     reopen = subparsers.add_parser(
         "reopen",
