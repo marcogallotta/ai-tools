@@ -196,6 +196,15 @@ def prepare_live(
     if state.values["Status"] == "pending-verification":
         declare_operation_step(conn, operation_id, "verification_cycle", {"protocol_release": state.values["Verification protocol release"], "protocol_text": verification_snapshot.text})
         declare_operation_step(conn, operation_id, "verification_handoff", {"section_gid": registry.verification_queue_gid})
+        declare_operation_step(conn, operation_id, "verification_phase", {"phase": "await_verification", "status": "open"})
+    if op["operation_kind"] == "change" and state.values["Status"] != "pending-verification":
+        approved = conn.execute("SELECT cycle_id FROM verification_cycles WHERE task_gid=? AND outcome='approved' ORDER BY completed_at DESC LIMIT 1", (live.gid,)).fetchone()
+        declare_operation_step(conn, operation_id, "non_material_terminal", {
+            "phase": "terminal", "status": "completed",
+            "terminal_outcome": "non_material_checkin",
+            "inherited_signoff_cycle_id": None if approved is None else approved["cycle_id"],
+        })
+
     confirmed = write_exact_content(
         conn, backend, operation_id=operation_id, task_gid=live.gid,
         project_gid=COOKING_PROJECT_GID, expected_identity=live.identity,
@@ -227,9 +236,13 @@ def prepare_live(
 
     if cycle is not None:
         transition_operation(conn, operation_id, phase="await_verification")
+        complete_operation_step(conn, operation_id, "verification_phase")
     elif op["operation_kind"] == "change":
-        approved = conn.execute("SELECT cycle_id FROM verification_cycles WHERE task_gid=? AND outcome='approved' ORDER BY completed_at DESC LIMIT 1", (live.gid,)).fetchone()
-        transition_operation(conn, operation_id, phase="terminal", status="completed", terminal_outcome="non_material_checkin", inherited_signoff_cycle_id=None if approved is None else approved["cycle_id"])
+        terminal_step = conn.execute("SELECT intended_json FROM operation_steps WHERE operation_id=? AND step_name='non_material_terminal'", (operation_id,)).fetchone()
+        import json as _json
+        intended = _json.loads(terminal_step["intended_json"])
+        transition_operation(conn, operation_id, phase=intended["phase"], status=intended["status"], terminal_outcome=intended["terminal_outcome"], inherited_signoff_cycle_id=intended.get("inherited_signoff_cycle_id"))
+        complete_operation_step(conn, operation_id, "non_material_terminal")
 
     return {
         "operation_id": operation_id,

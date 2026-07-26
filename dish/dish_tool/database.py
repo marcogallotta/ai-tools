@@ -642,7 +642,7 @@ def create_operation(
         role = "planner" if operation_kind == "planning" else ("constructor" if operation_kind == "initial" else "material_editor")
         actor = actors.researcher_agent or actors.editor_agent
         if actor:
-            record_actor_fact(conn, operation_id=operation_id, task_gid=task_gid, role=role, agent=actor, run_id=actors.run_id, independence_attestation=actors.independence_attestation, candidate_identity=expected_identity)
+            record_actor_fact(conn, operation_id=operation_id, task_gid=task_gid, role=role, agent=actor, run_id=actors.run_id, independence_attestation=actors.independence_attestation, candidate_identity=None)
         record_audit(
             conn, submission_id=None, task_gid=task_gid,
             operation_id=operation_id, event_type="operation.created",
@@ -788,8 +788,43 @@ def pending_operation_steps(conn: sqlite3.Connection, operation_id: str) -> list
 
 
 def record_actor_fact(conn: sqlite3.Connection, *, operation_id: str, task_gid: str, role: str, agent: str, run_id: str | None = None, independence_attestation: str | None = None, candidate_identity: str | None = None, source_cycle_id: str | None = None) -> sqlite3.Row:
+    """Record an immutable actor fact idempotently.
+
+    Recovery may replay a local suffix after the external content effect is already
+    confirmed. The same exact actor/candidate fact is therefore a no-op; a
+    conflicting fact for the same run and role fails closed.
+    """
+    clean_run = str(run_id or '').strip() or None
+    clean_attestation = str(independence_attestation or '').strip() or None
+    if clean_run is not None:
+        existing = conn.execute(
+            "SELECT * FROM operation_actor_facts WHERE task_gid=? AND role=? AND run_id=? ORDER BY created_at LIMIT 1",
+            (task_gid, role, clean_run),
+        ).fetchone()
+        if existing is not None:
+            if existing["agent"] != agent or existing["operation_id"] != operation_id:
+                raise DishRuleError(
+                    "CONFLICT", "actor lineage fact conflicts with persisted history",
+                    rule="actor_fact_conflict",
+                    details={"role": role, "run_id": clean_run},
+                )
+            operation = conn.execute("SELECT expected_identity FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
+            replaceable_identity = existing["candidate_identity"] is None or (operation is not None and existing["candidate_identity"] == operation["expected_identity"])
+            if replaceable_identity and candidate_identity is not None:
+                conn.execute(
+                    "UPDATE operation_actor_facts SET candidate_identity=? WHERE fact_id=?",
+                    (candidate_identity, existing["fact_id"]),
+                )
+                return conn.execute("SELECT * FROM operation_actor_facts WHERE fact_id=?", (existing["fact_id"],)).fetchone()
+            if existing["candidate_identity"] != candidate_identity:
+                raise DishRuleError(
+                    "CONFLICT", "actor lineage fact conflicts with persisted candidate",
+                    rule="actor_fact_conflict",
+                    details={"role": role, "run_id": clean_run},
+                )
+            return existing
     fact_id = str(uuid.uuid4())
-    conn.execute("""INSERT INTO operation_actor_facts(fact_id,operation_id,task_gid,role,agent,run_id,independence_attestation,candidate_identity,source_cycle_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""", (fact_id, operation_id, task_gid, role, agent, str(run_id or '').strip() or None, str(independence_attestation or '').strip() or None, candidate_identity, source_cycle_id, utc_now()))
+    conn.execute("""INSERT INTO operation_actor_facts(fact_id,operation_id,task_gid,role,agent,run_id,independence_attestation,candidate_identity,source_cycle_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""", (fact_id, operation_id, task_gid, role, agent, clean_run, clean_attestation, candidate_identity, source_cycle_id, utc_now()))
     return conn.execute("SELECT * FROM operation_actor_facts WHERE fact_id=?", (fact_id,)).fetchone()
 
 def assert_fresh_verifier(conn: sqlite3.Connection, *, operation_id: str, agent: str, run_id: str | None, independence_attestation: str | None) -> None:

@@ -44,7 +44,7 @@ def test_redesigned_schema_is_idempotent_and_complete(tmp_path):
         "audit_events",
         "legacy_submission_quarantine",
     } <= tables
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 12
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
 
 
 def test_content_identity_normalizes_crlf_only():

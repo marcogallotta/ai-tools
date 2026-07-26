@@ -287,13 +287,23 @@ def reopen_two_pass(
         conn, original, document, task_gid=op["task_gid"], operation_id=operation_id
     )
     intended_title, intended_notes = _render(document)
+    intended_identity = content_identity(intended_title, intended_notes).digest
     declare_operation_step(conn, operation_id, "reopen_write", {"title": intended_title, "notes": intended_notes})
+    declare_operation_step(conn, operation_id, "reopen_actor", {
+        "role": "material_editor", "agent": editor, "run_id": run_id,
+        "candidate_identity": intended_identity,
+    })
     declare_operation_step(conn, operation_id, "reopen_cycle", {"protocol_release": snapshot.identity, "protocol_text": snapshot.text})
     declare_operation_step(conn, operation_id, "reopen_phase", {"phase": "await_verification"})
     confirmed = _write_document(
         conn, backend, op, live, document, schema=schema, authorization_ids=authorization_ids
     )
     complete_operation_step(conn, operation_id, "reopen_write")
+    record_actor_fact(
+        conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor",
+        agent=editor, run_id=run_id, candidate_identity=confirmed.identity,
+    )
+    complete_operation_step(conn, operation_id, "reopen_actor")
     number = conn.execute(
         "SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?",
         (op["task_gid"],),
@@ -303,10 +313,6 @@ def reopen_two_pass(
         protocol_release=snapshot.identity, protocol_text=snapshot.text, route=None,
     )
     complete_operation_step(conn, operation_id, "reopen_cycle")
-    record_actor_fact(
-        conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor",
-        agent=editor, run_id=run_id, candidate_identity=confirmed.identity,
-    )
     conn.execute(
         "UPDATE operations SET editor_agent=?, verifier_agent=NULL, run_id=?, independence_attestation=NULL WHERE operation_id=?",
         (editor, run_id, operation_id),
@@ -413,6 +419,12 @@ def resolve_hold(
     intended_title, intended_notes = _render(document)
     declare_operation_step(conn, operation_id, "hold_resolution_write", {"title": intended_title, "notes": intended_notes, "resolution_kind": resolution_kind})
     declare_operation_step(conn, operation_id, "hold_resolution_decision", {"detail": clean_detail, "resume_status": resume_status, "material": material})
+    if material:
+        intended_identity = content_identity(intended_title, intended_notes).digest
+        declare_operation_step(conn, operation_id, "hold_resolution_actor", {
+            "role": "material_editor", "agent": editor, "run_id": run_id,
+            "candidate_identity": intended_identity,
+        })
     if resume_status == "pending-verification":
         if snapshot is None:
             next_release, next_text = cycle["protocol_release"], cycle["protocol_text"]
@@ -439,6 +451,7 @@ def resolve_hold(
             conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor",
             agent=editor, run_id=run_id, candidate_identity=confirmed.identity,
         )
+        complete_operation_step(conn, operation_id, "hold_resolution_actor")
 
     if resume_status == "pending-research":
         transition_operation(

@@ -68,12 +68,19 @@ def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     _review(app, "gpt", run="two")
     app.execute("reject", agent="gpt", submission_id=operation_id, route="large", reason="second", file_path=str(candidate), run_id="two")
     admin = DishAdminApplication(app.conn, backend=backend)
-    bad = admin.execute("reopen", submission_id=operation_id, category="hash", before="a", after="b", editor="Marco", date="2026-07-25")
+    bad = admin.execute("reopen", submission_id=operation_id, category="hash", before="a", after="b", editor="codex", run_id="reopen-run", file_path=str(candidate), date="2026-07-25")
     assert bad["code"] == "INVALID_ARGUMENT"
-    result = admin.execute("reopen", submission_id=operation_id, category="premise", before="old premise", after="new premise", editor="Marco", date="2026-07-25")
+    corrected = tmp_path / "reopened.txt"
+    corrected.write_text(f"{backend.title}\n{backend.notes}".replace("Compare hydration routes.", "Compare hydration routes with a rested-starch reset."))
+    result = admin.execute(
+        "reopen", submission_id=operation_id, category="premise",
+        before="Compare hydration routes.",
+        after="Compare hydration routes with a rested-starch reset.",
+        editor="codex", run_id="reopen-run", file_path=str(corrected), date="2026-07-25",
+    )
     assert result["ok"]
     assert "Status: pending-verification" in backend.notes
-    assert "before: old premise; after: new premise" in backend.notes
+    assert "before: Compare hydration routes.; after: Compare hydration routes with a rested-starch reset." in backend.notes
     assert app.conn.execute("SELECT COUNT(*) FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()[0] == 3
 
 

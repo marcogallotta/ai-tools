@@ -7,7 +7,7 @@ import sqlite3
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import finalize_confirmed_movement_attempt, record_audit, transition_operation, declare_operation_step, complete_operation_step
+from .database import finalize_confirmed_movement_attempt, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step
 from .errors import DishRuleError
 from .lifecycle import assert_transition, require_status
 from .models import SectionRegistry, resolve_destination, utc_now
@@ -305,6 +305,16 @@ def recover_operation(
                     )
                 complete_operation_step(conn, operation_id, step["step_name"])
                 actions.append({"kind": "workflow_step", "step": "route_cycle_finalize", "outcome": "confirmed"})
+            elif step["step_name"] in {"reopen_actor", "hold_resolution_actor"}:
+                if live.identity != intended["candidate_identity"]:
+                    raise DishRuleError("CONFLICT", "live candidate does not match actor-lineage intent", rule="workflow_step_evidence_mismatch")
+                record_actor_fact(
+                    conn, operation_id=operation_id, task_gid=op["task_gid"],
+                    role=intended["role"], agent=intended["agent"],
+                    run_id=intended.get("run_id"), candidate_identity=intended["candidate_identity"],
+                )
+                complete_operation_step(conn, operation_id, step["step_name"])
+                actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
             elif step["step_name"] in {"reopen_cycle", "hold_resolution_cycle"} or step["step_name"].startswith("route_new_cycle:"):
                 existing = conn.execute(
                     "SELECT cycle_id FROM verification_cycles WHERE operation_id=? AND completed_at IS NULL AND protocol_release=? ORDER BY cycle_number DESC LIMIT 1",
@@ -339,12 +349,16 @@ def recover_operation(
                 transition_operation(conn, operation_id, phase="await_submission")
                 complete_operation_step(conn, operation_id, "signoff_finalize")
                 actions.append({"kind": "workflow_step", "step": "signoff_finalize", "outcome": "confirmed"})
-            elif step["step_name"] in {"reopen_phase", "hold_resolution_phase", "submission_terminal", "planning_terminal", "migration_terminal"} or step["step_name"].startswith("route_phase:"):
+            elif step["step_name"] in {"reopen_phase", "hold_resolution_phase", "submission_terminal", "planning_terminal", "migration_terminal", "verification_phase", "non_material_terminal"} or step["step_name"].startswith("route_phase:"):
                 if step["step_name"] == "submission_terminal":
                     unresolved = conn.execute("SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain') LIMIT 1", (operation_id,)).fetchone()
                     if unresolved is not None:
                         raise DishRuleError("CONFLICT", "submission movement still requires recovery", rule="workflow_movement_incomplete")
-                transition_operation(conn, operation_id, phase=intended.get("phase", "terminal"), status=intended.get("status"), terminal_outcome=intended.get("terminal_outcome"))
+                transition_operation(
+                    conn, operation_id, phase=intended.get("phase", "terminal"),
+                    status=intended.get("status"), terminal_outcome=intended.get("terminal_outcome"),
+                    inherited_signoff_cycle_id=intended.get("inherited_signoff_cycle_id"),
+                )
                 complete_operation_step(conn, operation_id, step["step_name"])
                 actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
 

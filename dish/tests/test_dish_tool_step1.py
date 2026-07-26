@@ -9,7 +9,7 @@ import pytest
 
 BIN_DIR = Path(__file__).resolve().parent.parent
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "dish-version-current"
-GIT_COMMIT = BIN_DIR / "git-commit"
+GIT_COMMIT = BIN_DIR.parent / "tools" / "git-commit"
 sys.path.insert(0, str(BIN_DIR))
 
 from dish_tool import cli as dish_cli  # noqa: E402
