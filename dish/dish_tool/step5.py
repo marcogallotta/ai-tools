@@ -1,6 +1,7 @@
 """Step 5 command primitives: exact reads, claims, inspection, and migration."""
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import Any, Mapping
 
@@ -9,19 +10,44 @@ from .database import confirm_task_content, create_operation, content_identity, 
 from .errors import DishRuleError
 from .models import OperationActors, ResolvedRelease
 from .migrations import migrate_task_document
-from .task_document import DocumentParseError, parse_task_document, validate_task_document, finding_payload
+from .task_document import DocumentParseError, parse_planning_brief, parse_task_document, validate_task_document, finding_payload
 from .task_store import LiveTask, read_complete_task, write_exact_content
+
+_SCHEMA_VERSION_LINE = re.compile(r"^Schema version:\s*(.+)$", re.MULTILINE)
 
 
 def parse_live_document(live: LiveTask):
     return parse_task_document(f"{live.title}\n{live.notes}")
 
 
+def _unparseable_migration_required(live: LiveTask, release: ResolvedRelease) -> bool:
+    """Fallback migration signal for documents that failed structural parse.
+
+    A parse failure means the document is malformed or mid-stage, not
+    necessarily stale-schema. An empty task (nothing written yet) and a bare
+    Planning brief are both stage-appropriate and never need migration.
+    Anything else is judged by comparing its own Schema version line (if any)
+    against the current release; a missing line is the genuine
+    pre-schema/legacy case migration exists for.
+    """
+    if not live.notes.strip():
+        return False
+    try:
+        parse_planning_brief(live.notes)
+        return False
+    except DocumentParseError:
+        pass
+    match = _SCHEMA_VERSION_LINE.search(live.notes)
+    if match is None:
+        return True
+    return match.group(1).strip() != release.schema_version
+
+
 def diagnostics_for(live: LiveTask, release: ResolvedRelease) -> dict[str, Any]:
     try:
         document = parse_live_document(live)
     except DocumentParseError as exc:
-        return {"parsed": None, "validation": [{"rule": exc.rule, "message": str(exc)}], "schema_version": None, "migration_required": bool(live.notes)}
+        return {"parsed": None, "validation": [{"rule": exc.rule, "message": str(exc)}], "schema_version": None, "migration_required": _unparseable_migration_required(live, release)}
     validation = validate_task_document(document, expected_schema_version=release.schema_version, schema=release.schema)
     return {
         "parsed": {

@@ -78,6 +78,54 @@ def test_read_reports_exact_state_and_migration_required(tmp_path):
     assert result["data"]["migration_required"] is True
     assert result["data"]["content_identity"]
 
+def test_read_bare_task_is_not_migration_required(tmp_path):
+    b=Backend(); result=app(tmp_path,b).execute("read",agent="gpt",task_gid="t")
+    assert result["data"]["parsed"] is None
+    assert result["data"]["task_schema_version"] is None
+    assert result["data"]["migration_required"] is False
+
+def test_read_planning_stage_brief_is_not_migration_required(tmp_path):
+    notes = (
+        "### Planning brief\n"
+        "Dish candidate: Test dish\n"
+        "Purpose: Compare texture\n"
+        "Role: non-main — small side for comparison\n"
+        "Priors: None\n"
+        "Locks: Keep crisp\n"
+        "Exemptions: None\n"
+        "Research emphasis: Compare two hydration levels\n"
+        "Destination section: Sichuan — 12345\n"
+    )
+    b=Backend("Bare", notes)
+    result=app(tmp_path,b).execute("read",agent="gpt",task_gid="t")
+    assert result["data"]["parsed"] is None
+    assert any(v["rule"] == "process_separator_missing" for v in result["data"]["validation"])
+    assert result["data"]["migration_required"] is False
+
+def test_read_current_schema_canonical_task_is_not_migration_required(tmp_path):
+    lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n")
+    result=app(tmp_path,b).execute("read",agent="gpt",task_gid="t")
+    assert result["data"]["parsed"] is not None
+    assert result["data"]["migration_required"] is False
+
+def test_read_unparseable_task_with_no_schema_line_is_migration_required(tmp_path):
+    lines=TASK.replace("Schema version: 2\n","").splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n")
+    result=app(tmp_path,b).execute("read",agent="gpt",task_gid="t")
+    assert result["data"]["parsed"] is None
+    assert result["data"]["migration_required"] is True
+
+def test_read_malformed_but_current_schema_task_is_not_migration_required(tmp_path):
+    duplicated = TASK.replace(
+        "## WHAT TO BUY\nNone - pantry snapshot lists required items in stock\n",
+        "## WHAT TO BUY\nNone - pantry snapshot lists required items in stock\n"
+        "## WHAT TO BUY\nNone - pantry snapshot lists required items in stock\n",
+    )
+    lines=duplicated.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n")
+    result=app(tmp_path,b).execute("read",agent="gpt",task_gid="t")
+    assert result["data"]["parsed"] is None
+    assert any(v["rule"] == "section_duplicate" for v in result["data"]["validation"])
+    assert result["data"]["migration_required"] is False
+
 def test_start_claims_once_and_returns_only_stage_protocol(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n") ; a=app(tmp_path,b)
     first=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
