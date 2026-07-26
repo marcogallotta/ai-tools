@@ -141,21 +141,41 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         assert_transition(action="two_pass_hold", before="pending-verification", after="pending-human-review")
         document = dataclasses.replace(document, state=hold(document.state.values, target="pending-human-review", detail=f"Two independent Verification passes ended without a signable task: {reason}", resume_status="pending-verification"))
 
+    intended_title, intended_notes = _render(document)
+    outcome = "two-pass-hold" if two_pass else "rejected"
+    target_phase = "held_human" if (two_pass or route == "human-review") else ("held_evidence" if route == "evidence" else "await_verification")
+    route_suffix = cycle["cycle_id"]
+    route_write_step = f"route_write:{route_suffix}"
+    route_cycle_step = f"route_cycle_finalize:{route_suffix}"
+    route_new_cycle_step = f"route_new_cycle:{route_suffix}"
+    route_phase_step = f"route_phase:{route_suffix}"
+    declare_operation_step(conn, operation_id, route_write_step, {"title": intended_title, "notes": intended_notes, "route": route})
+    declare_operation_step(conn, operation_id, route_cycle_step, {
+        "cycle_id": cycle["cycle_id"], "correction_class": "large" if route == "large" else None,
+        "outcome": outcome, "route": {"evidence": "evidence", "human-review": "human_review"}.get(route),
+        "resume_state": document.state.values["Resume status"],
+    })
+    if route == "large" and not two_pass:
+        declare_operation_step(conn, operation_id, route_new_cycle_step, {"protocol_release": snapshot.identity, "protocol_text": snapshot.text})
+    declare_operation_step(conn, operation_id, route_phase_step, {"phase": target_phase})
     confirmed = _write_document(conn, backend, op, live, document, schema=schema)
+    complete_operation_step(conn, operation_id, route_write_step)
     if two_pass or route == "human-review":
         transition_operation(conn, operation_id, phase="held_human")
     elif route == "evidence":
         transition_operation(conn, operation_id, phase="held_evidence")
-    outcome = "two-pass-hold" if two_pass else "rejected"
     conn.execute("UPDATE verification_cycles SET correction_class = ?, outcome = ?, route = ?, resume_state = ?, completed_at = ? WHERE cycle_id = ?", ("large" if route == "large" else None, outcome, {"evidence": "evidence", "human-review": "human_review"}.get(route), document.state.values["Resume status"], utc_now(), cycle["cycle_id"]))
+    complete_operation_step(conn, operation_id, route_cycle_step)
     if route == "large" and not two_pass:
         next_number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
         new_cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=next_number, protocol_release=snapshot.identity, protocol_text=snapshot.text, route=None)
+        complete_operation_step(conn, operation_id, route_new_cycle_step)
         record_actor_fact(conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor", agent=agent, run_id=cycle["run_id"], independence_attestation=cycle["independence_attestation"], candidate_identity=confirmed.identity, source_cycle_id=cycle["cycle_id"])
         conn.execute("UPDATE operations SET editor_agent = ?, verifier_agent = NULL, run_id = ?, independence_attestation = NULL WHERE operation_id = ?", (agent, cycle["run_id"], operation_id))
         transition_operation(conn, operation_id, phase="await_verification")
     else:
         new_cycle = None
+    complete_operation_step(conn, operation_id, route_phase_step)
     record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "two_pass_hold": two_pass, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=independence_attestation)
     return {"operation_id": operation_id, "route": route, "two_pass_hold": two_pass, "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"], "task": dataclasses.asdict(confirmed)}
 
@@ -181,12 +201,19 @@ def reopen_two_pass(conn: sqlite3.Connection, backend: Any, *, operation_id: str
         state_values["Self-verified"] = material_editor_line(editor, date)
     entry = f"{date} — {editor}: {category}; before: {before}; after: {after}"
     document = dataclasses.replace(document, state=TaskState(state_values), material_changes=tuple(document.material_changes) + (entry,))
+    intended_title, intended_notes = _render(document)
+    declare_operation_step(conn, operation_id, "reopen_write", {"title": intended_title, "notes": intended_notes})
+    declare_operation_step(conn, operation_id, "reopen_cycle", {"protocol_release": snapshot.identity, "protocol_text": snapshot.text})
+    declare_operation_step(conn, operation_id, "reopen_phase", {"phase": "await_verification"})
     confirmed = _write_document(conn, backend, op, live, document)
+    complete_operation_step(conn, operation_id, "reopen_write")
     number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
     cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number, protocol_release=snapshot.identity, protocol_text=snapshot.text, route=None)
+    complete_operation_step(conn, operation_id, "reopen_cycle")
     record_actor_fact(conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor" if editor in {"gpt", "codex", "claude"} else "human", agent=editor, candidate_identity=confirmed.identity)
     conn.execute("UPDATE operations SET editor_agent = ?, verifier_agent = NULL, run_id = NULL, independence_attestation = NULL WHERE operation_id = ?", (editor, operation_id))
     transition_operation(conn, operation_id, phase="await_verification")
+    complete_operation_step(conn, operation_id, "reopen_phase")
     return {"operation_id": operation_id, "cycle_id": cycle["cycle_id"], "task": dataclasses.asdict(confirmed), "material_change": entry}
 
 
@@ -268,7 +295,20 @@ def resolve_hold(
             decisions += (decision,)
         document = dataclasses.replace(before_doc, state=TaskState(values), decisions=decisions)
 
+    intended_title, intended_notes = _render(document)
+    declare_operation_step(conn, operation_id, "hold_resolution_write", {"title": intended_title, "notes": intended_notes, "resolution_kind": resolution_kind})
+    declare_operation_step(conn, operation_id, "hold_resolution_decision", {"detail": clean_detail, "resume_status": resume_status, "material": material})
+    if resume_status == "pending-verification":
+        if snapshot is None:
+            next_release, next_text = cycle["protocol_release"], cycle["protocol_text"]
+        else:
+            next_release, next_text = snapshot.identity, snapshot.text
+        declare_operation_step(conn, operation_id, "hold_resolution_cycle", {"protocol_release": next_release, "protocol_text": next_text})
+        declare_operation_step(conn, operation_id, "hold_resolution_phase", {"phase": "await_verification", "status": "open"})
+    else:
+        declare_operation_step(conn, operation_id, "hold_resolution_phase", {"phase": "terminal", "status": "completed", "terminal_outcome": f"{resolution_kind}_resolved_to_research"})
     confirmed = _write_document(conn, backend, op, live, document, schema=schema)
+    complete_operation_step(conn, operation_id, "hold_resolution_write")
     record_audit(
         conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
         event_type="hold.resolved", actor_agent=editor if editor in {"gpt", "codex", "claude"} else None,
@@ -278,6 +318,7 @@ def resolve_hold(
         after_state={"status": resume_status, "identity": confirmed.identity},
         actor_run_id=run_id, actor_source="marco-hold-resolution",
     )
+    complete_operation_step(conn, operation_id, "hold_resolution_decision")
     if material:
         record_actor_fact(
             conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor",
@@ -290,6 +331,7 @@ def resolve_hold(
             terminal_outcome=f"{resolution_kind}_resolved_to_research",
         )
         new_cycle = None
+        complete_operation_step(conn, operation_id, "hold_resolution_phase")
     else:
         number = conn.execute(
             "SELECT COALESCE(MAX(cycle_number),0)+1 FROM verification_cycles WHERE task_gid=?",
@@ -305,11 +347,13 @@ def resolve_hold(
             conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number,
             protocol_release=protocol_release, protocol_text=protocol_text,
         )
+        complete_operation_step(conn, operation_id, "hold_resolution_cycle")
         conn.execute(
             "UPDATE operations SET verifier_agent=NULL, independence_attestation=NULL WHERE operation_id=?",
             (operation_id,),
         )
         transition_operation(conn, operation_id, phase="await_verification")
+        complete_operation_step(conn, operation_id, "hold_resolution_phase")
     return {
         "operation_id": operation_id,
         "resolution_kind": resolution_kind,

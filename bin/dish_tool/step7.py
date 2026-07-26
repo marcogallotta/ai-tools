@@ -6,7 +6,7 @@ import sqlite3
 from typing import Any, Mapping
 
 from .constants import COOKING_PROJECT_GID
-from .database import mark_operation_completion, record_audit, transition_operation, assert_fresh_verifier, record_actor_fact
+from .database import mark_operation_completion, record_audit, transition_operation, assert_fresh_verifier, record_actor_fact, declare_operation_step, complete_operation_step, content_identity
 from .errors import DishRuleError
 from .models import VerifierIdentity, verification_actor_line, utc_now, SectionRegistry
 from .lifecycle import assert_transition, ready, require_status
@@ -194,10 +194,21 @@ def approve_live(
         raise DishRuleError("VALIDATION_FAILED", "exact live candidate failed pre-signoff validation", rule="pre_signoff_validation_failed", errors=[{"rule": f.rule, "kind": f.kind.value} for f in check.findings])
     assert_transition(action="approve", before=document.state.values["Status"], after="ready")
     signed = dataclasses.replace(document, state=ready(document.state.values, verified_by=verification_actor_line(agent, utc_now()[:10])))
+    signed_lines = signed.render().splitlines()
+    intended_title = signed_lines[0]
+    intended_notes = "\n".join(signed_lines[1:]) + "\n"
+    declare_operation_step(
+        conn, operation_id, "signoff_write",
+        {"title": intended_title, "notes": intended_notes, "cycle_id": cycle["cycle_id"], "correction_class": correction_class},
+    )
+    declare_operation_step(
+        conn, operation_id, "signoff_finalize",
+        {"phase": "await_submission", "cycle_id": cycle["cycle_id"]},
+    )
     final_check = validate_task_document(signed, expected_schema_version=op["schema_version"], schema=schema)
     if not final_check.ok:
         raise DishRuleError("VALIDATION_FAILED", "ready state failed deterministic validation", rule="ready_state_invalid", errors=[{"rule": f.rule, "kind": f.kind.value} for f in final_check.findings])
-    lines = signed.render().splitlines()
+    lines = signed_lines
     confirmed = write_exact_content(
         conn, backend, operation_id=operation_id, task_gid=live.gid, project_gid=COOKING_PROJECT_GID,
         expected_identity=live.identity, expected_section_gid=live.section_gid,
@@ -207,10 +218,12 @@ def approve_live(
     exact = parse_task_document(f"{confirmed.title}\n{confirmed.notes}")
     if exact.state.values["Status"] != "ready" or exact.state.values["Verified by"] == "None":
         raise DishRuleError("BACKEND_UNCERTAIN", "signoff reread did not confirm ready state", rule="signoff_not_confirmed")
+    complete_operation_step(conn, operation_id, "signoff_write")
     signed_version = _content_version_for_identity(
         conn, operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity
     )
     transition_operation(conn, operation_id, phase="await_submission")
+    complete_operation_step(conn, operation_id, "signoff_finalize")
     record_audit(
         conn, submission_id=None, task_gid=live.gid, operation_id=operation_id,
         event_type="verification.approved", actor_agent=agent,

@@ -7,7 +7,7 @@ import sqlite3
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import finalize_confirmed_movement_attempt, record_audit, transition_operation
+from .database import finalize_confirmed_movement_attempt, record_audit, transition_operation, declare_operation_step, complete_operation_step
 from .errors import DishRuleError
 from .lifecycle import assert_transition, require_status
 from .models import SectionRegistry, resolve_destination, utc_now
@@ -93,6 +93,10 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
     current = live.section_gid
     handoff = diagnostic
     moved = False
+    declare_operation_step(
+        conn, operation_id, "submission_terminal",
+        {"phase": "terminal", "status": "completed", "terminal_outcome": "destination_handled"},
+    )
 
     if destination is None:
         handoff = diagnostic
@@ -125,6 +129,7 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
         handoff = "manual_placement_preserved"
 
     transition_operation(conn, operation_id, phase="terminal", status="completed", terminal_outcome="destination_handled")
+    complete_operation_step(conn, operation_id, "submission_terminal")
     record_audit(
         conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
         event_type="operation.submitted", actor_agent=None,
@@ -257,7 +262,7 @@ def recover_operation(
                     existing = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number, protocol_release=intended["protocol_release"], protocol_text=intended.get("protocol_text"))
                 complete_operation_step(conn, operation_id, "verification_cycle")
                 actions.append({"kind": "workflow_step", "step": "verification_cycle", "outcome": "confirmed"})
-            elif step["step_name"] in {"planning_write", "migration_write", "small_corrected_write", "hold_write", "large_write", "reopen_write"}:
+            elif step["step_name"] in {"planning_write", "migration_write", "small_corrected_write", "hold_write", "large_write", "reopen_write", "hold_resolution_write", "signoff_write"} or step["step_name"].startswith("route_write:"):
                 if live.title == intended.get("title") and live.notes == intended.get("notes"):
                     complete_operation_step(conn, operation_id, step["step_name"])
                     actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
@@ -289,8 +294,57 @@ def recover_operation(
                     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
                     complete_operation_step(conn, operation_id, "small_signoff")
                 actions.append({"kind": "workflow_step", "step": "small_signoff", "outcome": "confirmed"})
-            elif step["step_name"] in {"planning_terminal", "migration_terminal"}:
-                transition_operation(conn, operation_id, phase=intended.get("phase", "terminal"), status=intended.get("status", "completed"), terminal_outcome=intended.get("terminal_outcome"))
+            elif step["step_name"].startswith("route_cycle_finalize:"):
+                cycle = conn.execute("SELECT * FROM verification_cycles WHERE cycle_id=?", (intended["cycle_id"],)).fetchone()
+                if cycle is None:
+                    raise DishRuleError("CONFLICT", "route cycle is missing", rule="workflow_cycle_missing")
+                if cycle["completed_at"] is None:
+                    conn.execute(
+                        "UPDATE verification_cycles SET correction_class=?, outcome=?, route=?, resume_state=?, completed_at=? WHERE cycle_id=?",
+                        (intended.get("correction_class"), intended["outcome"], intended.get("route"), intended.get("resume_state"), utc_now(), intended["cycle_id"]),
+                    )
+                complete_operation_step(conn, operation_id, step["step_name"])
+                actions.append({"kind": "workflow_step", "step": "route_cycle_finalize", "outcome": "confirmed"})
+            elif step["step_name"] in {"reopen_cycle", "hold_resolution_cycle"} or step["step_name"].startswith("route_new_cycle:"):
+                existing = conn.execute(
+                    "SELECT cycle_id FROM verification_cycles WHERE operation_id=? AND completed_at IS NULL AND protocol_release=? ORDER BY cycle_number DESC LIMIT 1",
+                    (operation_id, intended["protocol_release"]),
+                ).fetchone()
+                if existing is None:
+                    number = conn.execute("SELECT COALESCE(MAX(cycle_number),0)+1 FROM verification_cycles WHERE task_gid=?", (op["task_gid"],)).fetchone()[0]
+                    existing = create_verification_cycle(
+                        conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number,
+                        protocol_release=intended["protocol_release"], protocol_text=intended.get("protocol_text"),
+                    )
+                complete_operation_step(conn, operation_id, step["step_name"])
+                actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed", "cycle_id": existing["cycle_id"]})
+            elif step["step_name"] == "hold_resolution_decision":
+                prior = conn.execute(
+                    "SELECT 1 FROM audit_events WHERE operation_id=? AND event_type='hold.resolved' LIMIT 1",
+                    (operation_id,),
+                ).fetchone()
+                if prior is None:
+                    record_audit(
+                        conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
+                        event_type="hold.resolved", actor_agent=None, details=dict(intended),
+                        result_code="OK", result_ok=True, governed_kind="decision", actor_source="recovery",
+                    )
+                complete_operation_step(conn, operation_id, "hold_resolution_decision")
+                actions.append({"kind": "workflow_step", "step": "hold_resolution_decision", "outcome": "confirmed"})
+            elif step["step_name"] == "signoff_finalize":
+                refreshed_op = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
+                cycle = conn.execute("SELECT * FROM verification_cycles WHERE cycle_id=?", (intended["cycle_id"],)).fetchone()
+                if refreshed_op["signoff_completed_at"] is None or cycle is None or cycle["outcome"] != "approved":
+                    raise DishRuleError("CONFLICT", "signoff evidence is incomplete", rule="workflow_signoff_incomplete")
+                transition_operation(conn, operation_id, phase="await_submission")
+                complete_operation_step(conn, operation_id, "signoff_finalize")
+                actions.append({"kind": "workflow_step", "step": "signoff_finalize", "outcome": "confirmed"})
+            elif step["step_name"] in {"reopen_phase", "hold_resolution_phase", "submission_terminal", "planning_terminal", "migration_terminal"} or step["step_name"].startswith("route_phase:"):
+                if step["step_name"] == "submission_terminal":
+                    unresolved = conn.execute("SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain') LIMIT 1", (operation_id,)).fetchone()
+                    if unresolved is not None:
+                        raise DishRuleError("CONFLICT", "submission movement still requires recovery", rule="workflow_movement_incomplete")
+                transition_operation(conn, operation_id, phase=intended.get("phase", "terminal"), status=intended.get("status"), terminal_outcome=intended.get("terminal_outcome"))
                 complete_operation_step(conn, operation_id, step["step_name"])
                 actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
 
