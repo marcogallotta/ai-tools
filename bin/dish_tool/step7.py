@@ -8,7 +8,7 @@ from typing import Any, Mapping
 from .constants import COOKING_PROJECT_GID
 from .database import mark_operation_completion, record_audit, transition_operation, assert_fresh_verifier, record_actor_fact
 from .errors import DishRuleError
-from .models import VerifierIdentity, verification_actor_line, utc_now
+from .models import VerifierIdentity, verification_actor_line, utc_now, SectionRegistry
 from .lifecycle import assert_transition, ready, require_status
 from .releases import resolve_verification_protocol
 from .task_document import TaskState, parse_task_document, validate_task_document
@@ -81,6 +81,9 @@ def verification_read(
     identity.validate(editor_agent=op["editor_agent"], researcher_agent=op["researcher_agent"], constructor_run_id=None)
     assert_fresh_verifier(conn, operation_id=operation_id, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
+    registry = SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
+    if live.section_gid != registry.verification_queue_gid:
+        raise DishRuleError("WRONG_STATE", "live task is not currently in Verification Queue", rule="verification_placement_required", details={"actual_section_gid": live.section_gid, "expected_section_gid": registry.verification_queue_gid})
     document = parse_task_document(f"{live.title}\n{live.notes}")
     validation = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not validation.ok:
@@ -207,6 +210,7 @@ def approve_live(
     signed_version = _content_version_for_identity(
         conn, operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity
     )
+    transition_operation(conn, operation_id, phase="await_submission")
     record_audit(
         conn, submission_id=None, task_gid=live.gid, operation_id=operation_id,
         event_type="verification.approved", actor_agent=agent,

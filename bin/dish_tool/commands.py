@@ -1541,6 +1541,11 @@ def _step5_read(self, *, trace: CommandTrace, agent: str, task_gid: str) -> dict
     })
 
 
+def _current_operation_view(self, operation_id: str, *, schema=None) -> dict[str, Any]:
+    from .application_service import derive_operation_state
+    return derive_operation_state(self.conn, self.backend, operation_id, schema=schema)
+
+
 def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str) -> dict[str, Any]:
     from .step5 import inspect_operation
     agent_family(agent)
@@ -1549,10 +1554,14 @@ def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str)
     if exists is None:
         return _legacy_command_inspect(self, trace=trace, agent=agent, submission_id=submission_id)
     data = inspect_operation(self.conn, operation_id)
+    release = self._load_release(None)
+    view = _current_operation_view(self, operation_id, schema=release.schema)
+    data["legal_next_actions"] = view["legal_actions"]
+    data["authoritative_view"] = view
     trace.submission_id = operation_id
     trace.task_gid = data["operation"]["task_gid"]
-    trace.state = data["operation"]["status"]
-    return result_envelope(command="inspect", task_gid=trace.task_gid, submission_id=operation_id, state=trace.state, allowed_actions=data["legal_next_actions"], data=data)
+    trace.state = view["status"]
+    return result_envelope(command="inspect", task_gid=trace.task_gid, submission_id=operation_id, state=trace.state, allowed_actions=view["legal_actions"], data=data)
 
 
 def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: str, change_level: str | None = None, change_reason: str | None = None, run_id: str | None = None, **_extra: Any) -> dict[str, Any]:
@@ -1626,8 +1635,9 @@ def _step6_prepare(self, *, trace: CommandTrace, agent: str, submission_id: str,
     trace.task_gid = exists["task_gid"]
     release = self._load_release("planning" if self.conn.execute("SELECT operation_kind FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0] == "planning" else "research")
     data = prepare_live(self.conn, self.backend, operation_id=operation_id, agent=agent, file_path=file_path or "", release=release, material_classification=material_classification)
-    trace.state = "open"
-    return result_envelope(command="prepare", task_gid=trace.task_gid, submission_id=operation_id, state="open", allowed_actions=["approve", "reject"] if data.get("verification_cycle") else [], data=data)
+    view = _current_operation_view(self, operation_id, schema=release.schema)
+    trace.state = view["status"]
+    return result_envelope(command="prepare", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
 DishApplication._command_prepare = _step6_prepare
 
@@ -1671,10 +1681,11 @@ def _step7_start(
         independence_attestation=independence_attestation, schema=release.schema,
     )
     trace.submission_id = operation_id
-    trace.state = "open"
+    view = _current_operation_view(self, operation_id, schema=release.schema)
+    trace.state = view["status"]
     return result_envelope(
         command="start", task_gid=task_gid, submission_id=operation_id,
-        state="open", allowed_actions=["approve", "reject"], data=data,
+        state=view["status"], allowed_actions=view["legal_actions"], data=data,
     )
 
 
@@ -1718,10 +1729,11 @@ def _step7_approve(
         run_id=run_id,
         independence_attestation=independence_attestation, schema=release.schema,
     )
-    trace.state = "open"
+    view = _current_operation_view(self, operation_id, schema=release.schema)
+    trace.state = view["status"]
     return result_envelope(
         command="approve", task_gid=trace.task_gid, submission_id=operation_id,
-        state="open", allowed_actions=["submit"], data=data,
+        state=view["status"], allowed_actions=view["legal_actions"], data=data,
     )
 
 
@@ -1742,7 +1754,9 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, submission_id: str,
     release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
     data = approve_small(self.conn, self.backend, operation_id=operation_id, agent=agent, file_path=file_path, reviewed_identity=_clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity"), semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema)
-    return result_envelope(command="approve", task_gid=trace.task_gid, submission_id=operation_id, state="open", allowed_actions=["submit"], data=data)
+    view = _current_operation_view(self, operation_id, schema=release.schema)
+    trace.state = view["status"]
+    return result_envelope(command="approve", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
 def _step8_reject(self, *, trace: CommandTrace, agent: str, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, **legacy: Any) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
@@ -1757,8 +1771,9 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, submission_id: str, 
     release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
     data = reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema, honest_root=release.root)
-    actions = [] if data["two_pass_hold"] or route in {"evidence", "human-review"} else ["start"]
-    return result_envelope(command="reject", task_gid=trace.task_gid, submission_id=operation_id, state="open", allowed_actions=actions, data=data)
+    view = _current_operation_view(self, operation_id, schema=release.schema)
+    trace.state = view["status"]
+    return result_envelope(command="reject", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
 DishApplication._command_approve = _step8_approve
 DishApplication._command_reject = _step8_reject
@@ -1780,7 +1795,8 @@ def _step9_submit(self, *, trace: CommandTrace, submission_id: str, file_path: s
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
     data = submit_live(self.conn, self.backend, operation_id=operation_id, schema=release.schema)
-    trace.state = "completed"
-    return result_envelope(command="submit", task_gid=trace.task_gid, submission_id=operation_id, state="completed", allowed_actions=[], data=data)
+    view = _current_operation_view(self, operation_id, schema=release.schema)
+    trace.state = view["status"]
+    return result_envelope(command="submit", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
 DishApplication._command_submit = _step9_submit

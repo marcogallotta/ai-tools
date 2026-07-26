@@ -297,8 +297,18 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
         verified, self_verified = document.state.values["Verified by"], document.state.values["Self-verified"]
         illegal = False
         if status == "pending-research": illegal = _none(detail) or not (_none(resume) and _none(release) and _none(verified))
-        elif status == "pending-evidence": illegal = _none(detail) or resume not in {"pending-research", "pending-verification"} or not _none(verified)
-        elif status == "pending-human-review": illegal = _none(detail) or resume not in {"pending-research", "pending-verification"}
+        elif status == "pending-evidence":
+            illegal = _none(detail) or resume not in {"pending-research", "pending-verification"} or not _none(verified)
+            if resume == "pending-research":
+                illegal = illegal or not _none(release)
+            elif resume == "pending-verification":
+                illegal = illegal or _none(release) or _none(self_verified)
+        elif status == "pending-human-review":
+            illegal = _none(detail) or resume not in {"pending-research", "pending-verification"} or not _none(verified)
+            if resume == "pending-research":
+                illegal = illegal or not _none(release)
+            elif resume == "pending-verification":
+                illegal = illegal or _none(release) or _none(self_verified)
         elif status == "pending-verification": illegal = not (_none(detail) and _none(resume) and not _none(release) and _none(verified) and not _none(self_verified))
         elif status == "ready": illegal = not (_none(detail) and _none(resume) and not _none(release) and not _none(verified) and not _none(self_verified))
         if illegal:
