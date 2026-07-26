@@ -64,7 +64,7 @@ class DishApplication:
         self.conn = conn
         self.backend = backend
         self.release_loader = release_loader
-        self.operation_service = OperationApplicationService(conn)
+        self.operation_service = OperationApplicationService(conn, backend)
         parameters = inspect.signature(release_loader).parameters.values()
         self._release_loader_accepts_role = any(
             parameter.kind
@@ -1542,8 +1542,7 @@ def _step5_read(self, *, trace: CommandTrace, agent: str, task_gid: str) -> dict
 
 
 def _current_operation_view(self, operation_id: str, *, schema=None) -> dict[str, Any]:
-    from .application_service import derive_operation_state
-    return derive_operation_state(self.conn, self.backend, operation_id, schema=schema)
+    return self.operation_service.authoritative_view(operation_id, schema=schema)
 
 
 def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str) -> dict[str, Any]:
