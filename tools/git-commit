@@ -145,7 +145,7 @@ else
   git add -- "${files[@]}"
 fi
 
-# Honest protocol/schema changes are governed by the root DISH_VERSION file.
+# Honest dish schema/migration changes are governed by the root DISH_VERSION file.
 # Inspect the actual staged diff after staging and block missing bumps; never
 # guess or auto-increment a version. Repositories without DISH_VERSION are
 # unaffected.
@@ -205,19 +205,12 @@ staged_raw = git(
     "diff", "--cached", "--name-only", "--diff-filter=ACMRD", "-z"
 ).stdout
 staged = {item for item in staged_raw.split("\0") if item}
-protocol_files = {
-    "dish-planning-protocol.md",
-    "dish-research-protocol.md",
-    "dish-verification-protocol.md",
-    "dish-cooking-protocol.md",
-}
 schema_assets = {
     path
     for path in staged
     if path == "dish-task-schema.json"
     or path.startswith("dish-schema-migrations/")
 }
-protocol_changed = bool(staged & protocol_files) or bool(schema_assets)
 
 
 def schema_asset_has_structural_change(path: str) -> bool:
@@ -251,7 +244,7 @@ def schema_asset_has_structural_change(path: str) -> bool:
 
 
 schema_changed = any(schema_asset_has_structural_change(path) for path in schema_assets)
-if not protocol_changed and not schema_changed:
+if not schema_changed:
     raise SystemExit(0)
 
 new = parse_version(show(":DISH_VERSION"), source="staged DISH_VERSION")
@@ -267,15 +260,10 @@ if old is None:
 
 protocol_bumped = new["PROTOCOL_VERSION"] != old["PROTOCOL_VERSION"]
 schema_bumped = new["SCHEMA_VERSION"] != old["SCHEMA_VERSION"]
-if schema_changed and (not protocol_bumped or not schema_bumped):
+if not protocol_bumped or not schema_bumped:
     raise SystemExit(
         "Error: staged dish schema/migration changes require both "
         "PROTOCOL_VERSION and SCHEMA_VERSION bumps in DISH_VERSION"
-    )
-if protocol_changed and not protocol_bumped:
-    raise SystemExit(
-        "Error: staged governed protocol changes require a "
-        "PROTOCOL_VERSION bump in DISH_VERSION"
     )
 PY_GUARD
 
