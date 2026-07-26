@@ -63,7 +63,7 @@ def test_start_returns_environment_specific_runtime_context(tmp_path, monkeypatc
     honest = tmp_path / "honest"; honest.mkdir()
     (honest / "dish-verification-protocol.md").write_text("# Verification\n")
     def release(role=None):
-        return ResolvedRelease(version="1.0.6", commit="", root=honest,
+        return ResolvedRelease(version="1.0.8", commit="", root=honest,
             protocols={} if role is None else {role: f"{role} protocol"},
             manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}",
             migration_metadata={}, requested_protocol_role=role)

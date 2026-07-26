@@ -80,7 +80,7 @@ def make_app(tmp_path):
     verification_text = "# Exact frozen Verification protocol\n"
     (honest / "dish-verification-protocol.md").write_text(verification_text)
     def release(role=None):
-        return ResolvedRelease(version="1.0.6", commit="", root=honest,
+        return ResolvedRelease(version="1.0.8", commit="", root=honest,
             protocols={} if role is None else {role: verification_text if role == "verification" else f"{role} protocol"},
             manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}",
             migration_metadata={}, requested_protocol_role=role)

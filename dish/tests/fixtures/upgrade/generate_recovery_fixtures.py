@@ -181,7 +181,7 @@ def build(output_dir: str | Path | None = None) -> None:
         protocol_text, reviewed_content_version_id, reviewed_identity,
         signed_content_version_id, signed_identity
     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        ("cycle-signed", op, task, 1, "1.0.6", "codex", "run-op-signed",
+        ("cycle-signed", op, task, 1, "1.0.8", "codex", "run-op-signed",
          "small", "approved", NOW, NOW, "verification protocol", v2, signed_id, v2, signed_id))
     conn.execute("""UPDATE operations SET signoff_completed_at=?, status='completed', phase='terminal',
         completed_at=?, terminal_outcome='submitted' WHERE operation_id=?""", (NOW, NOW, op))
@@ -219,7 +219,7 @@ def build(output_dir: str | Path | None = None) -> None:
             verifier_agent, run_id, outcome, route, resume_state, created_at,
             protocol_text, reviewed_content_version_id, reviewed_identity
         ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (f"cycle-{route}", op, task, 1, "1.0.6", "codex", f"run-{route}",
+            (f"cycle-{route}", op, task, 1, "1.0.8", "codex", f"run-{route}",
              outcome, route, "pending-verification", NOW, "verification protocol", vid, cid))
         sidecars.append({"task_gid": task, "title": title, "notes": notes,
                          "section_gid": "verification", "expected_recovery": "held"})
