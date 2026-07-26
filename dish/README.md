@@ -7,6 +7,14 @@ routes work between author and verifier so nobody approves their own submission.
 
 ## Setup
 
+`dish` and `dish-admin` re-exec themselves under `.venv/bin/python`, so the virtualenv has to
+exist — they refuse to run without it rather than falling back to system python:
+
+```
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
 `DISH_HONEST_PATH` must be set, pointing at the `honest` checkout that carries `DISH_VERSION`
 and the machine schema. There is no default — unset, `dish` refuses to start; pointed at a
 checkout without `DISH_VERSION`, it fails closed rather than loading protocol text unversioned.
@@ -47,7 +55,7 @@ hold. All of them demand a `--reason`.
 ## Tests
 
 ```
-cd dish && pytest
+.venv/bin/pytest
 ```
 
 ## Design docs
