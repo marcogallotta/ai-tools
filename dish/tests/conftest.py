@@ -12,7 +12,7 @@ from importlib.machinery import SourceFileLoader
 
 import pytest
 
-CLI_PATH = pathlib.Path(__file__).resolve().parent.parent / "asana"
+CLI_PATH = pathlib.Path(__file__).resolve().parent.parent.parent / "tools" / "asana"
 
 
 def _load_cli_module():
