@@ -69,16 +69,6 @@ def test_activation_has_guidance_for_every_result_code_and_exit_status():
         assert required in text
 
 
-def test_relay_never_directs_agents_to_generic_asana_or_admin():
-    text = RELAY.read_text(encoding="utf-8").lower()
-    assert "does not access asana directly" in text
-    assert "generic asana cli" in text
-    assert "do not expose" in text
-    assert "dish-admin" in text  # only as a forbidden surface
-    assert "asana set-notes" not in text
-    assert "batch-apply" not in text
-
-
 def _report_queries(text: str) -> list[str]:
     return [
         match.group(2).strip()

@@ -69,8 +69,10 @@ hold. All of them demand a `--reason`.
 - `docs/dish-tool-update.md` / `docs/dish-tool-update-imp.md` — compatibility analysis and
   revised plan, aligning the design with the frozen protocols in `~/honest-pantry-dish-rollout/`.
   Same design-doc/implementation-plan pairing as the two above.
-- `docs/runtime-contract.md`, `docs/dish-chatgpt-relay.md` — operator/activation and
-  ChatGPT-relay notes.
+- `docs/runtime-contract.md` — operator/activation notes.
+
+ChatGPT-relay notes live in `~/honest-pantry-dish-rollout/dish-chatgpt-relay.md` (protocol repo,
+not here — that's what's actually handed to ChatGPT).
 
 Outside this repo: `~/honest-pantry/dish-docs-design.md` records which enforcement direction
 Marco has approved (upstream of all of the above), and `~/honest-pantry/dish-protocol.md` is the

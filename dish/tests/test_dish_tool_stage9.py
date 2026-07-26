@@ -17,7 +17,6 @@ from dish_tool.validation import validate_manifest_shape  # noqa: E402
 
 BUNDLE_DIR = Path(__file__).parent / "fixtures" / "protocol-release-tool-aware"
 DOCS_DIR = BIN_DIR / "docs"
-RELAY_PATH = DOCS_DIR / "dish-chatgpt-relay.md"
 ACTIVATION_PATH = DOCS_DIR / "runtime-contract.md"
 IMPLEMENTATION_PLAN_PATH = DOCS_DIR / "dish-tool-imp.md"
 GLOBAL_GUIDE_PATH = Path(__file__).parents[2] / "CLAUDE-global.md"
@@ -208,17 +207,6 @@ def test_tool_aware_beta_bundle_is_complete_consistent_and_agent_only():
     assert "batch-apply" not in combined
 
 
-def test_chatgpt_relay_is_mechanics_free_and_never_exposes_direct_asana():
-    relay = RELAY_PATH.read_text(encoding="utf-8")
-    lowered = relay.lower()
-    assert len(relay.splitlines()) <= 70
-    assert "--agent gpt" in lowered
-    assert "does not access asana directly" in lowered
-    assert "generic asana cli" in lowered
-    assert "tool pass" in lowered
-    assert "protocol wins" in lowered
-    assert "asana set-notes" not in lowered
-    assert "batch-apply" not in lowered
 
 
 def test_activation_document_is_the_complete_local_operating_contract():
