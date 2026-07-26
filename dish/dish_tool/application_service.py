@@ -1,13 +1,17 @@
-"""Transport-neutral boundary for current dish operations and legacy records."""
+"""Transport-neutral authority for current dish workflow operations."""
 from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from typing import Callable, TypeVar
 
-from .constants import SUPPORTED_PROTOCOL_VERSION
 from .errors import DishRuleError
+from .legacy_adapter import LegacyReadOnlyAdapter
+from .task_gateway import ExactTaskGateway
+from .workflow_policy import WorkflowSnapshot, legal_actions
+from .workflow_repository import WorkflowRepository
 
-_MUTATING_COMMANDS = frozenset({"prepare", "approve", "reject", "submit", "discard", "unblock"})
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -16,57 +20,28 @@ class RoutedTarget:
     row: sqlite3.Row | None
 
 
-class LegacyReadOnlyAdapter:
-    """Legacy records are inspectable; current-protocol mutation is forbidden."""
-
-    def __init__(self, conn: sqlite3.Connection) -> None:
-        self.conn = conn
-
-    def get(self, submission_id: str) -> sqlite3.Row | None:
-        return self.conn.execute(
-            "SELECT * FROM submissions WHERE submission_id=?", (submission_id,)
-        ).fetchone()
-
-    def assert_command_allowed(self, command: str, *, protocol_version: str) -> None:
-        if command in _MUTATING_COMMANDS and protocol_version == SUPPORTED_PROTOCOL_VERSION:
-            raise DishRuleError(
-                "WRONG_STATE",
-                "legacy submissions are read-only under the current protocol",
-                rule="legacy_record_read_only",
-            )
-
-
 class CurrentWorkflowService:
-    """Authoritative live-state and legal-action service for current operations.
-
-    CLI and future HTTP transports call this boundary instead of independently
-    interpreting operation phase, task status, placement, cycle, and signoff.
-    """
+    """Single authorization and result-state boundary for current mutations."""
 
     def __init__(self, conn: sqlite3.Connection, backend) -> None:
         self.conn = conn
         self.backend = backend
+        self.repository = WorkflowRepository(conn)
+        self.gateway = ExactTaskGateway(conn, backend)
 
     def operation(self, operation_id: str) -> sqlite3.Row:
-        row = self.conn.execute(
-            "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
-        ).fetchone()
+        row = self.repository.operation(operation_id)
         if row is None:
             raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
         return row
 
-    def authoritative_view(self, operation_id: str, *, schema=None) -> dict[str, object]:
+    def _snapshot(self, operation_id: str, *, schema=None) -> tuple[WorkflowSnapshot, dict[str, object]]:
         from .constants import COOKING_PROJECT_GID
-        from .database import legal_operation_actions
         from .models import SectionRegistry
         from .task_document import parse_task_document, validate_task_document
-        from .task_store import read_complete_task
 
         op = self.operation(operation_id)
-        actions = legal_operation_actions(op)
-        live = read_complete_task(
-            self.backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
-        )
+        live = self.gateway.read(task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
         live_status = None
         validation_rules: list[str] = []
         try:
@@ -83,61 +58,122 @@ class CurrentWorkflowService:
         except Exception:
             validation_rules = ["canonical_task_required"]
 
-        registry = SectionRegistry.from_sections(
-            self.backend.list_sections(COOKING_PROJECT_GID)
+        registry = SectionRegistry.from_sections(self.backend.list_sections(COOKING_PROJECT_GID))
+        cycle = self.conn.execute(
+            """SELECT reviewed_identity FROM verification_cycles
+               WHERE operation_id=? AND completed_at IS NULL
+               ORDER BY cycle_number DESC LIMIT 1""",
+            (operation_id,),
+        ).fetchone()
+        snapshot = WorkflowSnapshot(
+            operation_status=op["status"],
+            operation_phase=op["phase"],
+            persisted_actions=tuple(self.repository.legal_actions(op)),
+            live_status=live_status,
+            live_section_gid=live.section_gid,
+            verification_queue_gid=registry.verification_queue_gid,
+            cycle_reviewed=bool(cycle is not None and cycle["reviewed_identity"]),
+            validation_rules=tuple(validation_rules),
         )
-        phase = op["phase"]
-        if validation_rules:
-            actions = []
-        elif phase == "await_verification" and (
-            live_status != "pending-verification"
-            or live.section_gid != registry.verification_queue_gid
-        ):
-            actions = []
-        elif phase == "await_verification":
-            cycle = self.conn.execute(
-                """SELECT reviewed_identity FROM verification_cycles
-                   WHERE operation_id=? AND completed_at IS NULL
-                   ORDER BY cycle_number DESC LIMIT 1""",
-                (operation_id,),
-            ).fetchone()
-            actions = (
-                ["approve", "reject"]
-                if cycle is not None and cycle["reviewed_identity"]
-                else ["verify"]
-            )
-        elif phase == "await_submission" and live_status != "ready":
-            actions = []
-        elif phase == "held_evidence" and live_status != "pending-evidence":
-            actions = []
-        elif phase == "held_human" and live_status != "pending-human-review":
-            actions = []
-        elif phase == "prepare_required" and op["status"] != "open":
-            actions = []
-
-        return {
+        facts = {
             "status": op["status"],
-            "phase": phase,
-            "legal_actions": list(actions),
+            "phase": op["phase"],
             "live_status": live_status,
             "live_section_gid": live.section_gid,
             "validation_rules": validation_rules,
         }
+        return snapshot, facts
+
+    def authoritative_view(self, operation_id: str, *, schema=None) -> dict[str, object]:
+        snapshot, facts = self._snapshot(operation_id, schema=schema)
+        facts["legal_actions"] = legal_actions(snapshot)
+        return facts
 
     def assert_action(self, operation_id: str, action: str, *, schema=None) -> dict[str, object]:
         view = self.authoritative_view(operation_id, schema=schema)
         if action not in view["legal_actions"]:
+            rule = "operation_action_not_allowed"
+            message = f"{action} is not legal for the current operation state"
+            if action == "verify" and view["phase"] == "await_verification":
+                rule = "verification_placement_required"
+                message = "task must currently be in Verification Queue"
             raise DishRuleError(
-                "WRONG_STATE",
-                f"{action} is not legal for the current operation state",
-                rule="operation_action_not_allowed",
+                "WRONG_STATE", message, rule=rule,
                 details={"action": action, "authoritative_view": view},
             )
         return view
 
+    def mutate(
+        self,
+        operation_id: str,
+        action: str,
+        executor: Callable[[], T],
+        *,
+        schema=None,
+    ) -> tuple[T, dict[str, object]]:
+        """Authorize, execute one use case, and return a fresh post-operation view."""
+        self.assert_action(operation_id, action, schema=schema)
+        result = executor()
+        return result, self.authoritative_view(operation_id, schema=schema)
+
+    def prepare(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+        return self.mutate(operation_id, "prepare", executor, schema=schema)
+
+    def start_verification(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+        return self.mutate(operation_id, "verify", executor, schema=schema)
+
+    def approve(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+        return self.mutate(operation_id, "approve", executor, schema=schema)
+
+    def reject(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+        return self.mutate(operation_id, "reject", executor, schema=schema)
+
+    def submit(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+        return self.mutate(operation_id, "submit", executor, schema=schema)
+
+    def create_task(self, executor: Callable[[], T]) -> T:
+        return executor()
+
+    def start_operation(self, executor: Callable[[], T]) -> T:
+        return executor()
+
+    def resolve_hold(self, operation_id: str, action: str, executor: Callable[[], T], *, schema=None):
+        return self.mutate(operation_id, action, executor, schema=schema)
+
+    def reopen_two_pass(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+        view = self.authoritative_view(operation_id, schema=schema)
+        cycle = self.conn.execute(
+            "SELECT outcome, route FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1",
+            (operation_id,),
+        ).fetchone()
+        if view["phase"] != "held_human" or cycle is None or cycle["outcome"] != "two-pass-hold":
+            raise DishRuleError(
+                "WRONG_STATE", "reopen is legal only for a two-pass human hold",
+                rule="two_pass_hold_required", details={"authoritative_view": view},
+            )
+        result = executor()
+        return result, self.authoritative_view(operation_id, schema=schema)
+
+    def recover(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+        self.operation(operation_id)
+        result = executor()
+        return result, self.authoritative_view(operation_id, schema=schema)
+
+    def cancel(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+        op = self.operation(operation_id)
+        if op["status"] not in {"open", "uncertain"}:
+            raise DishRuleError("WRONG_STATE", "operation is not cancellable", rule="operation_not_cancellable")
+        result = executor()
+        return result, self.authoritative_view(operation_id, schema=schema)
+
+    def authorize_governed_change(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+        self.operation(operation_id)
+        result = executor()
+        return result, self.authoritative_view(operation_id, schema=schema)
+
 
 class OperationApplicationService:
-    """Single generation router plus current-workflow service boundary."""
+    """Generation router plus the current workflow mutation authority."""
 
     def __init__(self, conn: sqlite3.Connection, backend=None) -> None:
         self.conn = conn

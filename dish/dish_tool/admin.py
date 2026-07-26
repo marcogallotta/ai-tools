@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from .database import get_submission, record_audit, transition_submission
+from .application_service import OperationApplicationService
 from .constants import LEGACY_WORKFLOW_NAME
 from .errors import DishRuleError
 from .models import ProcessIdentity, utc_now
@@ -71,6 +72,7 @@ class DishAdminApplication:
         self.process_liveness_checker = (process_liveness_checker or process_identity_is_live)
         self.backend = backend
         self.release_loader = release_loader
+        self.operation_service = None if backend is None else OperationApplicationService(conn, backend)
 
     def execute(self, command: str, **arguments: Any) -> dict[str, Any]:
         trace = AdminTrace(submission_id=arguments.get("submission_id"))
@@ -354,11 +356,12 @@ def _step5_admin_migrate(self, *, trace: AdminTrace, task_gid: str) -> dict[str,
     if self.backend is None or self.release_loader is None:
         raise DishRuleError("INTERNAL_ERROR", "migration backend is unavailable", rule="migration_backend_unavailable")
     release = self.release_loader()
-    live = migrate_live_task(self.conn, self.backend, task_gid=clean, release=release)
+    live = self.operation_service.current.start_operation(
+        lambda: migrate_live_task(self.conn, self.backend, task_gid=clean, release=release)
+    )
     trace.audit_details.update({"schema_version": release.schema_version, "confirmed_identity": live.identity})
     return result_envelope(command="migrate", task_gid=clean, data={"task_gid": clean, "schema_version": release.schema_version, "content_identity": live.identity, "confirmed": True})
 
-DishAdminApplication._command_migrate = _step5_admin_migrate
 
 
 # Step 8 Marco-only two-pass hold reopen.
@@ -372,15 +375,20 @@ def _step8_admin_reopen(self, *, trace: AdminTrace, submission_id: str, category
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     trace.submission_id = operation_id; trace.task_gid = row["task_gid"]; trace.state = "open"
     release = None if self.release_loader is None else self.release_loader()
-    data = reopen_two_pass(
-        self.conn, self.backend, operation_id=operation_id, category=category,
-        before=before, after=after, editor=editor, run_id=run_id,
-        file_path=file_path, date=date, honest_root=None if release is None else release.root,
-        schema=None if release is None else release.schema,
+    schema = None if release is None else release.schema
+    data, view = self.operation_service.current.reopen_two_pass(
+        operation_id,
+        lambda: reopen_two_pass(
+            self.conn, self.backend, operation_id=operation_id, category=category,
+            before=before, after=after, editor=editor, run_id=run_id,
+            file_path=file_path, date=date, honest_root=None if release is None else release.root,
+            schema=schema,
+        ),
+        schema=schema,
     )
-    return result_envelope(command="reopen", task_gid=trace.task_gid, submission_id=operation_id, state="open", data=data)
+    trace.state = view["status"]
+    return result_envelope(command="reopen", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
-DishAdminApplication._command_reopen = _step8_admin_reopen
 
 # Step 9 live-evidence recovery inspection for operation-backed work.
 _step8_admin_recover = DishAdminApplication._command_recover
@@ -395,11 +403,13 @@ def _step9_admin_recover(self, *, trace: AdminTrace, submission_id: str, outcome
     from .step9 import recover_operation
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
-    data = recover_operation(self.conn, self.backend, operation_id=operation_id, requested_outcome=outcome, reason=reason)
-    trace.state = self.conn.execute("SELECT status FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0]
-    return result_envelope(command="recover", task_gid=trace.task_gid, submission_id=operation_id, state=trace.state, data=data)
+    data, view = self.operation_service.current.recover(
+        operation_id,
+        lambda: recover_operation(self.conn, self.backend, operation_id=operation_id, requested_outcome=outcome, reason=reason),
+    )
+    trace.state = view["status"]
+    return result_envelope(command="recover", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
-DishAdminApplication._command_recover = _step9_admin_recover
 
 
 def _resolve_protocol_hold(
@@ -424,16 +434,20 @@ def _resolve_protocol_hold(
     release = self.release_loader()
     trace.submission_id = operation_id
     trace.task_gid = row["task_gid"]
-    data = resolve_hold(
-        self.conn, self.backend, operation_id=operation_id, resolution_kind=resolution_kind,
-        detail=detail, resume_status=resume_status, honest_root=release.root,
-        schema=release.schema, file_path=file_path, editor=editor, run_id=run_id,
+    action = "supply-evidence" if resolution_kind == "evidence" else "record-human-decision"
+    data, view = self.operation_service.current.resolve_hold(
+        operation_id, action,
+        lambda: resolve_hold(
+            self.conn, self.backend, operation_id=operation_id, resolution_kind=resolution_kind,
+            detail=detail, resume_status=resume_status, honest_root=release.root,
+            schema=release.schema, file_path=file_path, editor=editor, run_id=run_id,
+        ),
+        schema=release.schema,
     )
-    current = self.conn.execute("SELECT status FROM operations WHERE operation_id=?", (operation_id,)).fetchone()[0]
-    trace.state = current
+    trace.state = view["status"]
     return result_envelope(
-        command="supply-evidence" if resolution_kind == "evidence" else "record-human-decision",
-        task_gid=trace.task_gid, submission_id=operation_id, state=current, data=data,
+        command=action, task_gid=trace.task_gid, submission_id=operation_id,
+        state=view["status"], allowed_actions=view["legal_actions"], data=data,
     )
 
 
@@ -451,8 +465,6 @@ def _command_record_human_decision(self, *, trace: AdminTrace, submission_id: st
     )
 
 
-DishAdminApplication._command_supply_evidence = _command_supply_evidence
-DishAdminApplication._command_record_human_decision = _command_record_human_decision
 
 
 def _command_authorize_governed_change(self, *, trace: AdminTrace, submission_id: str, field: str, before: str, after: str, reason: str, run_id: str | None = None) -> dict[str, Any]:
@@ -471,7 +483,6 @@ def _command_authorize_governed_change(self, *, trace: AdminTrace, submission_id
     trace.state = op["status"]
     return result_envelope(command="authorize-governed-change", task_gid=op["task_gid"], submission_id=operation_id, state=op["status"], data={"authorization_id": row["authorization_id"], "field": row["field_name"]})
 
-DishAdminApplication._command_authorize_governed_change = _command_authorize_governed_change
 
 # Current-operation cancellation. Legacy discard remains available only for
 # quarantined older records through the original handler.
@@ -515,4 +526,16 @@ def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, r
     trace.submission_id=operation_id; trace.task_gid=op["task_gid"]; trace.state=final["status"]
     return result_envelope(command="discard", task_gid=op["task_gid"], submission_id=operation_id, state=final["status"], data={"reason": reason})
 
-DishAdminApplication._command_discard = _current_operation_discard
+class CurrentDishAdminApplication(DishAdminApplication):
+    """Current admin transport; unsupported legacy methods remain on the base."""
+
+    _command_migrate = _step5_admin_migrate
+    _command_reopen = _step8_admin_reopen
+    _command_recover = _step9_admin_recover
+    _command_supply_evidence = _command_supply_evidence
+    _command_record_human_decision = _command_record_human_decision
+    _command_authorize_governed_change = _command_authorize_governed_change
+    _command_discard = _current_operation_discard
+
+
+DishAdminApplication = CurrentDishAdminApplication

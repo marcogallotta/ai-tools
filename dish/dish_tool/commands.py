@@ -1534,7 +1534,9 @@ def _step5_create(self, *, trace: CommandTrace, agent: str, title: str) -> dict[
     if release.protocol_version != SUPPORTED_PROTOCOL_VERSION:
         return _legacy_command_create(self, trace=trace, agent=agent, title=title)
     registry = SectionRegistry.from_sections(self.backend.list_sections(COOKING_PROJECT_GID))
-    task = self.backend.create_bare_task(title=clean_title, project_gid=COOKING_PROJECT_GID, section_gid=registry.research_queue_gid)
+    task = self.operation_service.current.create_task(
+        lambda: self.backend.create_bare_task(title=clean_title, project_gid=COOKING_PROJECT_GID, section_gid=registry.research_queue_gid)
+    )
     task_gid = _clean_required(task.get("gid"), rule="created_task_gid_missing", label="created task GID")
     trace.task_gid = task_gid
     return result_envelope(command="create", task_gid=task_gid, data={"task_gid": task_gid, "schema_version": release.schema_version, "bare_task": True})
@@ -1626,7 +1628,9 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
             raise DishRuleError("VALIDATION_FAILED", "task schema is older than the current schema; migration required", rule="migration_required", details={"task_schema_version": diag["schema_version"], "current_schema_version": release.schema_version})
         if diag["parsed"] is not None and diag["validation"]:
             raise DishRuleError("VALIDATION_FAILED", "task failed current structural validation", errors=diag["validation"])
-    op = claim_operation(self.conn, live=live, release=release, kind=kind, agent=agent, run_id=run_id)
+    op = self.operation_service.current.start_operation(
+        lambda: claim_operation(self.conn, live=live, release=release, kind=kind, agent=agent, run_id=run_id)
+    )
     trace.submission_id = op["operation_id"]
     trace.state = op["status"]
     return result_envelope(command="start", task_gid=task_gid, submission_id=op["operation_id"], state=op["status"], allowed_actions=["prepare"], data={
@@ -1637,11 +1641,6 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
         "actors": {"editor": op["editor_agent"], "researcher": op["researcher_agent"]},
     })
 
-DishApplication._command_sections = _step5_sections
-DishApplication._command_create = _step5_create
-DishApplication._command_read = _step5_read
-DishApplication._command_inspect = _step5_inspect
-DishApplication._command_start = _step5_start
 
 _legacy_command_prepare = DishApplication._command_prepare
 
@@ -1658,15 +1657,17 @@ def _step6_prepare(self, *, trace: CommandTrace, agent: str, submission_id: str,
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
     release = self._load_release("planning" if self.conn.execute("SELECT operation_kind FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0] == "planning" else "research")
-    data = prepare_live(self.conn, self.backend, operation_id=operation_id, agent=agent, file_path=file_path or "", release=release, material_classification=material_classification)
-    view = _current_operation_view(self, operation_id, schema=release.schema)
+    data, view = self.operation_service.current.prepare(
+        operation_id,
+        lambda: prepare_live(self.conn, self.backend, operation_id=operation_id, agent=agent, file_path=file_path or "", release=release, material_classification=material_classification),
+        schema=release.schema,
+    )
     trace.state = view["status"]
     return result_envelope(command="prepare", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
-DishApplication._command_prepare = _step6_prepare
 
 # Step 7 exact-live Verification lifecycle.
-_step6_command_start = DishApplication._command_start
+_step6_command_start = _step5_start
 _step6_command_approve = DishApplication._command_approve
 
 
@@ -1699,13 +1700,16 @@ def _step7_start(
         raise DishRuleError("NOT_FOUND", "task has no open operation", rule="open_operation_missing")
     operation_id = row["operation_id"]
     release = self._load_release("verification")
-    data = verification_read(
-        self.conn, self.backend, operation_id=operation_id, agent=agent,
-        honest_root=release.root, run_id=run_id,
-        independence_attestation=independence_attestation, schema=release.schema,
+    data, view = self.operation_service.current.start_verification(
+        operation_id,
+        lambda: verification_read(
+            self.conn, self.backend, operation_id=operation_id, agent=agent,
+            honest_root=release.root, run_id=run_id,
+            independence_attestation=independence_attestation, schema=release.schema,
+        ),
+        schema=release.schema,
     )
     trace.submission_id = operation_id
-    view = _current_operation_view(self, operation_id, schema=release.schema)
     trace.state = view["status"]
     return result_envelope(
         command="start", task_gid=task_gid, submission_id=operation_id,
@@ -1744,16 +1748,19 @@ def _step7_approve(
     trace.task_gid = exists["task_gid"]
     clean_identity = _clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity")
     release = self._load_release("verification")
-    data = approve_live(
-        self.conn, self.backend, operation_id=operation_id, agent=agent,
-        reviewed_identity=clean_identity,
-        semantic_review_complete=semantic_review_complete,
-        provenance_complete=provenance_complete,
-        correction_class=correction,
-        run_id=run_id,
-        independence_attestation=independence_attestation, schema=release.schema,
+    data, view = self.operation_service.current.approve(
+        operation_id,
+        lambda: approve_live(
+            self.conn, self.backend, operation_id=operation_id, agent=agent,
+            reviewed_identity=clean_identity,
+            semantic_review_complete=semantic_review_complete,
+            provenance_complete=provenance_complete,
+            correction_class=correction,
+            run_id=run_id,
+            independence_attestation=independence_attestation, schema=release.schema,
+        ),
+        schema=release.schema,
     )
-    view = _current_operation_view(self, operation_id, schema=release.schema)
     trace.state = view["status"]
     return result_envelope(
         command="approve", task_gid=trace.task_gid, submission_id=operation_id,
@@ -1761,12 +1768,10 @@ def _step7_approve(
     )
 
 
-DishApplication._command_start = _step7_start
-DishApplication._command_approve = _step7_approve
 
 
 # Step 8 protocol-native rejection routes and Small same-pass correction.
-_step7_command_approve = DishApplication._command_approve
+_step7_command_approve = _step7_approve
 _step7_command_reject = DishApplication._command_reject
 
 def _step8_approve(self, *, trace: CommandTrace, agent: str, submission_id: str, file_path: str | None = None, correction: str = "none", reviewed_identity: str | None = None, semantic_review_complete: bool = False, provenance_complete: bool = False, run_id: str | None = None, independence_attestation: str | None = None, **legacy: Any) -> dict[str, Any]:
@@ -1777,8 +1782,11 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, submission_id: str,
     from .step8 import approve_small
     release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
-    data = approve_small(self.conn, self.backend, operation_id=operation_id, agent=agent, file_path=file_path, reviewed_identity=_clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity"), semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema)
-    view = _current_operation_view(self, operation_id, schema=release.schema)
+    data, view = self.operation_service.current.approve(
+        operation_id,
+        lambda: approve_small(self.conn, self.backend, operation_id=operation_id, agent=agent, file_path=file_path, reviewed_identity=_clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity"), semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema),
+        schema=release.schema,
+    )
     trace.state = view["status"]
     return result_envelope(command="approve", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
@@ -1794,13 +1802,14 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, submission_id: str, 
     from .step8 import reject_route
     release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
-    data = reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema, honest_root=release.root)
-    view = _current_operation_view(self, operation_id, schema=release.schema)
+    data, view = self.operation_service.current.reject(
+        operation_id,
+        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema, honest_root=release.root),
+        schema=release.schema,
+    )
     trace.state = view["status"]
     return result_envelope(command="reject", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
-DishApplication._command_approve = _step8_approve
-DishApplication._command_reject = _step8_reject
 
 # Step 9 movement-only submit.
 _step8_command_submit = DishApplication._command_submit
@@ -1818,9 +1827,26 @@ def _step9_submit(self, *, trace: CommandTrace, submission_id: str, file_path: s
     release = self._load_release("verification")
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
-    data = submit_live(self.conn, self.backend, operation_id=operation_id, schema=release.schema)
-    view = _current_operation_view(self, operation_id, schema=release.schema)
+    data, view = self.operation_service.current.submit(
+        operation_id,
+        lambda: submit_live(self.conn, self.backend, operation_id=operation_id, schema=release.schema),
+        schema=release.schema,
+    )
     trace.state = view["status"]
     return result_envelope(command="submit", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
-DishApplication._command_submit = _step9_submit
+class CurrentDishApplication(DishApplication):
+    """Current-model dispatcher; legacy behavior remains on the base class."""
+
+    _command_sections = _step5_sections
+    _command_create = _step5_create
+    _command_read = _step5_read
+    _command_inspect = _step5_inspect
+    _command_start = _step7_start
+    _command_prepare = _step6_prepare
+    _command_approve = _step8_approve
+    _command_reject = _step8_reject
+    _command_submit = _step9_submit
+
+
+DishApplication = CurrentDishApplication
