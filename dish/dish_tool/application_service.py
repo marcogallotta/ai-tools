@@ -60,11 +60,27 @@ class CurrentWorkflowService:
 
         registry = SectionRegistry.from_sections(self.backend.list_sections(COOKING_PROJECT_GID))
         cycle = self.conn.execute(
-            """SELECT reviewed_identity FROM verification_cycles
-               WHERE operation_id=? AND completed_at IS NULL
+            """SELECT * FROM verification_cycles
+               WHERE operation_id=?
                ORDER BY cycle_number DESC LIMIT 1""",
             (operation_id,),
         ).fetchone()
+        cycle_reviewed = False
+        if cycle is not None and cycle["completed_at"] is None:
+            proof_ok = bool(str(cycle["run_id"] or "").strip() or str(cycle["independence_attestation"] or "").strip())
+            binding_ok = bool(cycle["reviewed_content_version_id"] and cycle["reviewed_identity"] and cycle["verifier_agent"] and proof_ok)
+            actor = None
+            if binding_ok:
+                actor = self.conn.execute(
+                    """SELECT 1 FROM operation_actor_facts
+                         WHERE task_gid=? AND operation_id=? AND role='verifier'
+                           AND agent=? AND candidate_identity=?
+                           AND COALESCE(run_id,'')=COALESCE(?, '')
+                           AND COALESCE(independence_attestation,'')=COALESCE(?, '')
+                         LIMIT 1""",
+                    (op["task_gid"], operation_id, cycle["verifier_agent"], cycle["reviewed_identity"], cycle["run_id"], cycle["independence_attestation"]),
+                ).fetchone()
+            cycle_reviewed = bool(binding_ok and actor is not None)
         snapshot = WorkflowSnapshot(
             operation_status=op["status"],
             operation_phase=op["phase"],
@@ -72,7 +88,7 @@ class CurrentWorkflowService:
             live_status=live_status,
             live_section_gid=live.section_gid,
             verification_queue_gid=registry.verification_queue_gid,
-            cycle_reviewed=bool(cycle is not None and cycle["reviewed_identity"]),
+            cycle_reviewed=cycle_reviewed,
             validation_rules=tuple(validation_rules),
         )
         facts = {

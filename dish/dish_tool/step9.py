@@ -305,13 +305,14 @@ def recover_operation(
                     )
                 complete_operation_step(conn, operation_id, step["step_name"])
                 actions.append({"kind": "workflow_step", "step": "route_cycle_finalize", "outcome": "confirmed"})
-            elif step["step_name"] in {"reopen_actor", "hold_resolution_actor"}:
+            elif step["step_name"] in {"reopen_actor", "hold_resolution_actor"} or step["step_name"].startswith("route_actor:"):
                 if live.identity != intended["candidate_identity"]:
                     raise DishRuleError("CONFLICT", "live candidate does not match actor-lineage intent", rule="workflow_step_evidence_mismatch")
                 record_actor_fact(
                     conn, operation_id=operation_id, task_gid=op["task_gid"],
                     role=intended["role"], agent=intended["agent"],
-                    run_id=intended.get("run_id"), candidate_identity=intended["candidate_identity"],
+                    run_id=intended.get("run_id"), independence_attestation=intended.get("independence_attestation"),
+                    candidate_identity=intended["candidate_identity"], source_cycle_id=intended.get("source_cycle_id"),
                 )
                 complete_operation_step(conn, operation_id, step["step_name"])
                 actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})

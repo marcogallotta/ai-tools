@@ -176,10 +176,20 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     target_phase = "held_human" if (two_pass or route == "human-review") else ("held_evidence" if route == "evidence" else "await_verification")
     route_suffix = cycle["cycle_id"]
     route_write_step = f"route_write:{route_suffix}"
+    route_actor_step = f"route_actor:{route_suffix}"
     route_cycle_step = f"route_cycle_finalize:{route_suffix}"
     route_new_cycle_step = f"route_new_cycle:{route_suffix}"
     route_phase_step = f"route_phase:{route_suffix}"
     declare_operation_step(conn, operation_id, route_write_step, {"title": intended_title, "notes": intended_notes, "route": route})
+    if route == "large":
+        declare_operation_step(conn, operation_id, route_actor_step, {
+            "role": "material_editor",
+            "agent": agent,
+            "run_id": cycle["run_id"],
+            "independence_attestation": cycle["independence_attestation"],
+            "candidate_identity": content_identity(intended_title, intended_notes).digest,
+            "source_cycle_id": cycle["cycle_id"],
+        })
     declare_operation_step(conn, operation_id, route_cycle_step, {
         "cycle_id": cycle["cycle_id"], "correction_class": "large" if route == "large" else None,
         "outcome": outcome, "route": {"evidence": "evidence", "human-review": "human_review"}.get(route),
@@ -190,6 +200,18 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     declare_operation_step(conn, operation_id, route_phase_step, {"phase": target_phase})
     confirmed = _write_document(conn, backend, op, live, document, schema=schema, authorization_ids=authorization_ids)
     complete_operation_step(conn, operation_id, route_write_step)
+    if route == "large":
+        record_actor_fact(
+            conn, operation_id=operation_id, task_gid=op["task_gid"],
+            role="material_editor", agent=agent, run_id=cycle["run_id"],
+            independence_attestation=cycle["independence_attestation"],
+            candidate_identity=confirmed.identity, source_cycle_id=cycle["cycle_id"],
+        )
+        complete_operation_step(conn, operation_id, route_actor_step)
+        conn.execute(
+            "UPDATE operations SET editor_agent=?, verifier_agent=NULL, run_id=?, independence_attestation=? WHERE operation_id=?",
+            (agent, cycle["run_id"], cycle["independence_attestation"], operation_id),
+        )
     if two_pass or route == "human-review":
         transition_operation(conn, operation_id, phase="held_human")
     elif route == "evidence":
@@ -200,8 +222,6 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         next_number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
         new_cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=next_number, protocol_release=snapshot.identity, protocol_text=snapshot.text, route=None)
         complete_operation_step(conn, operation_id, route_new_cycle_step)
-        record_actor_fact(conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor", agent=agent, run_id=cycle["run_id"], independence_attestation=cycle["independence_attestation"], candidate_identity=confirmed.identity, source_cycle_id=cycle["cycle_id"])
-        conn.execute("UPDATE operations SET editor_agent = ?, verifier_agent = NULL, run_id = ?, independence_attestation = NULL WHERE operation_id = ?", (agent, cycle["run_id"], operation_id))
         transition_operation(conn, operation_id, phase="await_verification")
     else:
         new_cycle = None

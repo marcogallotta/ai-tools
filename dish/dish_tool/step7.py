@@ -100,25 +100,45 @@ def verification_read(
         snapshot = type("Snapshot", (), {"identity": recorded, "text": cycle["protocol_text"], "source": "persisted"})()
     else:
         snapshot = resolve_verification_protocol(honest_root, recorded)
-        conn.execute("UPDATE verification_cycles SET protocol_text = ? WHERE cycle_id = ?", (snapshot.text, cycle["cycle_id"]))
-    reviewed_version = bind_cycle_review(
-        conn, cycle_id=cycle["cycle_id"], operation_id=operation_id,
-        task_gid=op["task_gid"], identity=live.identity,
-    )
-    conn.execute(
-        "UPDATE operations SET verifier_agent = ?, independence_attestation = ? WHERE operation_id = ?",
-        (agent, str(independence_attestation or "").strip() or None, operation_id),
-    )
-    conn.execute(
-        "UPDATE verification_cycles SET verifier_agent = ?, run_id = ?, independence_attestation = ? WHERE cycle_id = ?",
-        (agent, str(run_id or "").strip() or None, str(independence_attestation or "").strip() or None, cycle["cycle_id"]),
-    )
-    record_actor_fact(conn, operation_id=operation_id, task_gid=op["task_gid"], role="verifier", agent=agent, run_id=run_id, independence_attestation=independence_attestation, candidate_identity=live.identity, source_cycle_id=cycle["cycle_id"])
-    record_audit(
-        conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
-        event_type="verification.review_started", actor_agent=agent,
-        details={"cycle_id": cycle["cycle_id"], "reviewed_identity": live.identity, "reviewed_content_version_id": reviewed_version["content_version_id"]}, result_code="OK", result_ok=True,
-    )
+
+    # The external read is complete. Persist every local review-authority fact as
+    # one atomic unit so a crash leaves either no review binding or a complete one.
+    conn.execute("SAVEPOINT verification_read_local")
+    try:
+        if not cycle["protocol_text"]:
+            conn.execute(
+                "UPDATE verification_cycles SET protocol_text = ? WHERE cycle_id = ?",
+                (snapshot.text, cycle["cycle_id"]),
+            )
+        reviewed_version = bind_cycle_review(
+            conn, cycle_id=cycle["cycle_id"], operation_id=operation_id,
+            task_gid=op["task_gid"], identity=live.identity,
+        )
+        conn.execute(
+            "UPDATE operations SET verifier_agent = ?, independence_attestation = ? WHERE operation_id = ?",
+            (agent, str(independence_attestation or "").strip() or None, operation_id),
+        )
+        conn.execute(
+            "UPDATE verification_cycles SET verifier_agent = ?, run_id = ?, independence_attestation = ? WHERE cycle_id = ?",
+            (agent, str(run_id or "").strip() or None, str(independence_attestation or "").strip() or None, cycle["cycle_id"]),
+        )
+        record_actor_fact(
+            conn, operation_id=operation_id, task_gid=op["task_gid"], role="verifier",
+            agent=agent, run_id=run_id, independence_attestation=independence_attestation,
+            candidate_identity=live.identity, source_cycle_id=cycle["cycle_id"],
+        )
+        record_audit(
+            conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
+            event_type="verification.review_started", actor_agent=agent,
+            details={"cycle_id": cycle["cycle_id"], "reviewed_identity": live.identity, "reviewed_content_version_id": reviewed_version["content_version_id"]},
+            result_code="OK", result_ok=True,
+        )
+    except Exception:
+        conn.execute("ROLLBACK TO verification_read_local")
+        conn.execute("RELEASE verification_read_local")
+        raise
+    else:
+        conn.execute("RELEASE verification_read_local")
     return {
         "operation_id": operation_id,
         "cycle_id": cycle["cycle_id"],
