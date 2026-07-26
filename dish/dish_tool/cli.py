@@ -42,7 +42,8 @@ authorize handoff by itself; Planning judgment still governs.
 
 `allowed_actions` in every JSON response names the next legal command -- do not guess one.
 Correct any agent-owned failure `prepare` reports and rerun it. On tool/protocol disagreement,
-preserve the live task and stop the transition; the protocol wins.
+or any failed or uncertain tool result, stop, leave the task exactly as the tool left it, and
+report; never repair it by hand. The protocol wins.
 
 See `dish start --help` and `dish prepare --help` for the full argument reference.
 """,
@@ -105,9 +106,11 @@ def build_parser() -> JsonArgumentParser:
     parser = JsonArgumentParser(
         prog="dish",
         description=(
-            "Sole governed interface to protocol-managed Cooking tasks. Every read, write, "
-            "correction, signoff, and movement goes through this tool; the live Asana task "
-            "is content authority, this tool never replaces protocol or agent judgment."
+            "Sole governed interface to protocol-managed Cooking tasks. Every "
+            "protocol-managed task operation -- read, write, correction, signoff, and "
+            "movement -- goes through this tool; the live Asana task is content authority, "
+            "this tool never replaces protocol or agent judgment. Every governed command "
+            "requires --agent claude|gpt|codex naming the agent family you are running as."
         ),
         epilog=(
             "For a stage workflow walkthrough (not a governed operation), run:\n"
