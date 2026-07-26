@@ -69,12 +69,17 @@ See `dish start --help` and `dish prepare --help` for the full argument referenc
     "verification": """\
 dish verification -- stage walkthrough (not a governed operation; this command only prints this text)
 
-  1. dish start TASK_GID --agent AGENT --kind verification
+  1. dish start TASK_GID --agent AGENT --kind verification \\
+       --run-id RUN_ID | --independence-attestation TEXT
   2. review the exact frozen live task for semantic and provenance conformance
   3. dish approve SUBMISSION_ID --agent AGENT --correction none|small \\
-       --semantic-review-complete --provenance-complete
+       --semantic-review-complete --provenance-complete \\
+       --reviewed-identity CONTENT_IDENTITY --run-id RUN_ID
      -- or --
      dish reject SUBMISSION_ID --agent AGENT --reason TEXT --route large|evidence|human-review
+
+`--reviewed-identity` is the `content_identity` returned by `read`/`start` for the exact task
+you reviewed; `approve` and `reject` both require the verifier identity recorded by `start`.
 
 A successful `approve` returns `submit` as the next action -- run it in the same pass:
   4. dish submit SUBMISSION_ID
