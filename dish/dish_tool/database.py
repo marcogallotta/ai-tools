@@ -413,6 +413,7 @@ def confirm_task_content(
 ) -> ContentIdentity:
     identity = content_identity(title, notes)
     now = utc_now()
+    version_id = str(uuid.uuid4())
     conn.execute("BEGIN IMMEDIATE")
     try:
         conn.execute(
@@ -422,23 +423,25 @@ def confirm_task_content(
                 title, notes, confirmed, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
             """,
-            (str(uuid.uuid4()), task_gid, operation_id, boundary, identity.digest,
+            (version_id, task_gid, operation_id, boundary, identity.digest,
              identity.title, identity.notes, now),
         )
         conn.execute(
             """
             INSERT INTO task_content_state (
                 task_gid, last_confirmed_identity, last_confirmed_title,
-                last_confirmed_notes, schema_version, confirmed_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                last_confirmed_notes, schema_version, confirmed_at,
+                last_confirmed_content_version_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(task_gid) DO UPDATE SET
                 last_confirmed_identity=excluded.last_confirmed_identity,
                 last_confirmed_title=excluded.last_confirmed_title,
                 last_confirmed_notes=excluded.last_confirmed_notes,
                 schema_version=excluded.schema_version,
-                confirmed_at=excluded.confirmed_at
+                confirmed_at=excluded.confirmed_at,
+                last_confirmed_content_version_id=excluded.last_confirmed_content_version_id
             """,
-            (task_gid, identity.digest, identity.title, identity.notes, schema_version, now),
+            (task_gid, identity.digest, identity.title, identity.notes, schema_version, now, version_id),
         )
         conn.execute("COMMIT")
     except Exception:
@@ -475,19 +478,47 @@ def finalize_confirmed_write_attempt(
             raise DishRuleError("CONFLICT", "write attempt cannot be confirmed from its current state", rule="stale_write_attempt")
         if attempt["intended_identity"] != identity.digest:
             raise DishRuleError("CONFLICT", "live content does not match the durable write intent", rule="write_intent_mismatch")
-        version_id = str(uuid.uuid4())
+        version = None
+        version_id = attempt["confirmed_content_version_id"]
+        if version_id:
+            version = conn.execute(
+                "SELECT * FROM content_versions WHERE content_version_id = ?", (version_id,)
+            ).fetchone()
+            if (
+                version is None
+                or version["confirmed"] != 1
+                or version["operation_id"] != attempt["operation_id"]
+                or version["task_gid"] != task_gid
+                or version["identity"] != identity.digest
+                or version["title"] != identity.title
+                or version["notes"] != identity.notes
+            ):
+                raise DishRuleError(
+                    "CONFLICT",
+                    "pre-existing write binding is inconsistent",
+                    rule="write_attempt_partial_binding_invalid",
+                )
+        else:
+            version_id = str(uuid.uuid4())
+            conn.execute(
+                """INSERT INTO content_versions (content_version_id, task_gid, operation_id, boundary, identity, title, notes, confirmed, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)""",
+                (version_id, task_gid, attempt["operation_id"], attempt["purpose"], identity.digest, identity.title, identity.notes, now),
+            )
         conn.execute(
-            """INSERT INTO content_versions (content_version_id, task_gid, operation_id, boundary, identity, title, notes, confirmed, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)""",
-            (version_id, task_gid, attempt["operation_id"], attempt["purpose"], identity.digest, identity.title, identity.notes, now),
-        )
-        conn.execute(
-            """INSERT INTO task_content_state (task_gid, last_confirmed_identity, last_confirmed_title, last_confirmed_notes, schema_version, confirmed_at)
-               VALUES (?, ?, ?, ?, ?, ?)
+            """INSERT INTO task_content_state (
+                   task_gid, last_confirmed_identity, last_confirmed_title,
+                   last_confirmed_notes, schema_version, confirmed_at,
+                   last_confirmed_content_version_id
+               ) VALUES (?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(task_gid) DO UPDATE SET
-                 last_confirmed_identity=excluded.last_confirmed_identity, last_confirmed_title=excluded.last_confirmed_title,
-                 last_confirmed_notes=excluded.last_confirmed_notes, schema_version=excluded.schema_version, confirmed_at=excluded.confirmed_at""",
-            (task_gid, identity.digest, identity.title, identity.notes, schema_version, now),
+                 last_confirmed_identity=excluded.last_confirmed_identity,
+                 last_confirmed_title=excluded.last_confirmed_title,
+                 last_confirmed_notes=excluded.last_confirmed_notes,
+                 schema_version=excluded.schema_version,
+                 confirmed_at=excluded.confirmed_at,
+                 last_confirmed_content_version_id=excluded.last_confirmed_content_version_id""",
+            (task_gid, identity.digest, identity.title, identity.notes, schema_version, now, version_id),
         )
         conn.execute("UPDATE write_attempts SET outcome='confirmed', finished_at=?, confirmed_content_version_id=? WHERE attempt_id=?", (now, version_id, attempt_id))
         conn.execute("UPDATE operations SET content_write_completed_at=COALESCE(content_write_completed_at, ?) WHERE operation_id=?", (now, attempt["operation_id"]))
@@ -625,10 +656,17 @@ def create_operation(
     conn.execute("BEGIN IMMEDIATE")
     try:
         state = conn.execute(
-            "SELECT last_confirmed_identity FROM task_content_state WHERE task_gid = ?",
+            """SELECT last_confirmed_identity, last_confirmed_content_version_id
+                 FROM task_content_state WHERE task_gid = ?""",
             (task_gid,),
         ).fetchone()
         actual = None if state is None else state["last_confirmed_identity"]
+        if state is not None and not state["last_confirmed_content_version_id"]:
+            raise DishRuleError(
+                "CONFLICT",
+                "task content baseline lacks exact confirmed evidence",
+                rule="task_content_baseline_unproven",
+            )
         if actual != expected_identity:
             raise DishRuleError(
                 "CONFLICT", "live task content differs from the expected identity",

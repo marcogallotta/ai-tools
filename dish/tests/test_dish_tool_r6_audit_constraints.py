@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from dish_tool.database import create_operation, initialize_database, record_audit
+from dish_tool.database import confirm_task_content, create_operation, initialize_database, record_audit
 from dish_tool.models import OperationActors
 
 
@@ -24,8 +24,8 @@ def test_governed_audit_requires_before_after_and_persists_actor_provenance(tmp_
 
 def test_operation_lock_audit_has_governed_diff(tmp_path):
     conn = initialize_database(tmp_path / "dish.db")
-    conn.execute("INSERT INTO task_content_state VALUES ('t','identity','title','notes','2.0.0','now')")
-    op = create_operation(conn, task_gid="t", operation_kind="research", expected_identity="identity", schema_version="2.0.0", actors=OperationActors(editor_agent="gpt", run_id="editor-1"))
+    identity = confirm_task_content(conn, task_gid="t", title="title", notes="notes", schema_version="2.0.0")
+    op = create_operation(conn, task_gid="t", operation_kind="research", expected_identity=identity.digest, schema_version="2.0.0", actors=OperationActors(editor_agent="gpt", run_id="editor-1"))
     row = conn.execute("SELECT * FROM audit_events WHERE operation_id=? AND governed_kind='lock'", (op["operation_id"],)).fetchone()
     assert json.loads(row["before_state"])["open_operation_id"] is None
     assert json.loads(row["after_state"])["open_operation_id"] == op["operation_id"]
@@ -34,8 +34,8 @@ def test_operation_lock_audit_has_governed_diff(tmp_path):
 
 def test_database_rejects_impossible_verification_and_operation_combinations(tmp_path):
     conn = initialize_database(tmp_path / "dish.db")
-    conn.execute("INSERT INTO task_content_state VALUES ('t','identity','title','notes','2.0.0','now')")
-    op = create_operation(conn, task_gid="t", operation_kind="research", expected_identity="identity", schema_version="2.0.0")
+    identity = confirm_task_content(conn, task_gid="t", title="title", notes="notes", schema_version="2.0.0")
+    op = create_operation(conn, task_gid="t", operation_kind="research", expected_identity=identity.digest, schema_version="2.0.0")
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE operations SET signoff_completed_at='now' WHERE operation_id=?", (op["operation_id"],))
     with pytest.raises(sqlite3.IntegrityError):

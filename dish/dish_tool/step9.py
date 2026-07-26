@@ -281,7 +281,10 @@ def recover_operation(
                 from .step7 import bind_cycle_review
                 if live.identity != intended["identity"]:
                     raise DishRuleError("CONFLICT", "live correction does not match review-binding intent", rule="workflow_step_evidence_mismatch")
-                bind_cycle_review(conn, cycle_id=intended["cycle_id"], operation_id=operation_id, task_gid=op["task_gid"], identity=live.identity)
+                bind_cycle_review(
+                    conn, cycle_id=intended["cycle_id"], operation_id=operation_id,
+                    task_gid=op["task_gid"], identity=live.identity, correction_class="small",
+                )
                 complete_operation_step(conn, operation_id, "small_review_binding")
                 actions.append({"kind": "workflow_step", "step": "small_review_binding", "outcome": "confirmed"})
             elif step["step_name"] == "small_signoff":

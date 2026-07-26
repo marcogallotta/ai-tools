@@ -49,17 +49,31 @@ def _content_version_for_identity(
 
 
 def bind_cycle_review(
-    conn: sqlite3.Connection, *, cycle_id: str, operation_id: str, task_gid: str, identity: str
+    conn: sqlite3.Connection,
+    *,
+    cycle_id: str,
+    operation_id: str,
+    task_gid: str,
+    identity: str,
+    correction_class: str | None = None,
 ):
     version = _content_version_for_identity(
         conn, operation_id=operation_id, task_gid=task_gid, identity=identity
     )
-    conn.execute(
-        """UPDATE verification_cycles
-              SET reviewed_content_version_id = ?, reviewed_identity = ?
-            WHERE cycle_id = ?""",
-        (version["content_version_id"], identity, cycle_id),
-    )
+    if correction_class is None:
+        conn.execute(
+            """UPDATE verification_cycles
+                  SET reviewed_content_version_id = ?, reviewed_identity = ?
+                WHERE cycle_id = ?""",
+            (version["content_version_id"], identity, cycle_id),
+        )
+    else:
+        conn.execute(
+            """UPDATE verification_cycles
+                  SET reviewed_content_version_id = ?, reviewed_identity = ?, correction_class = ?
+                WHERE cycle_id = ?""",
+            (version["content_version_id"], identity, correction_class, cycle_id),
+        )
     return version
 
 def verification_read(

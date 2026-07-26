@@ -27,7 +27,8 @@ def ident(title: str, notes: str) -> str:
 def add_operation(conn: sqlite3.Connection, *, op: str, task: str, expected: str,
                   status: str = "open", completed: bool = False,
                   content_done: bool = False, signoff_done: bool = False,
-                  phase: str | None = None, terminal_outcome: str | None = None) -> None:
+                  phase: str | None = None, terminal_outcome: str | None = None,
+                  expected_section_gid: str = "verification") -> None:
     resolved_phase = phase or ("terminal" if completed or status in {"completed", "cancelled"} else "prepare_required")
     conn.execute(
         """INSERT INTO operations(
@@ -35,11 +36,13 @@ def add_operation(conn: sqlite3.Connection, *, op: str, task: str, expected: str
             researcher_agent, verifier_agent, run_id, independence_attestation,
             expected_identity, schema_version, content_write_completed_at,
             signoff_completed_at, movement_completed_at, created_at, completed_at,
-            destination_movement_attempt_id, phase, terminal_outcome
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            destination_movement_attempt_id, phase, terminal_outcome,
+            expected_section_gid
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (op, task, "change", status, "gpt", "gpt", "codex", f"run-{op}", None,
          expected, "2", NOW if content_done else None, NOW if signoff_done else None,
-         None, NOW, NOW if completed else None, None, resolved_phase, terminal_outcome),
+         None, NOW, NOW if completed else None, None, resolved_phase, terminal_outcome,
+         expected_section_gid),
     )
 
 
@@ -58,12 +61,21 @@ def add_version(conn: sqlite3.Connection, *, version: str, task: str, op: str,
 
 def add_state(conn: sqlite3.Connection, *, task: str, title: str, notes: str) -> str:
     digest = ident(title, notes)
+    version_id = f"head-{task}"
+    conn.execute(
+        """INSERT INTO content_versions(
+            content_version_id, task_gid, operation_id, boundary, identity,
+            title, notes, confirmed, created_at
+        ) VALUES(?,?,NULL,'fixture_task_head',?,?,?,1,?)""",
+        (version_id, task, digest, title, notes, NOW),
+    )
     conn.execute(
         """INSERT INTO task_content_state(
             task_gid, last_confirmed_identity, last_confirmed_title,
-            last_confirmed_notes, schema_version, confirmed_at
-        ) VALUES(?,?,?,?,?,?)""",
-        (task, digest, title, notes, "2", NOW),
+            last_confirmed_notes, schema_version, confirmed_at,
+            last_confirmed_content_version_id
+        ) VALUES(?,?,?,?,?,?,?)""",
+        (task, digest, title, notes, "2", NOW, version_id),
     )
     return digest
 
@@ -165,8 +177,9 @@ def build(output_dir: str | Path | None = None) -> None:
     signed_id = add_version(conn, version=v2, task=task, op=op, boundary="signed",
                             title=signed_t, notes=signed_n)
     conn.execute("""UPDATE task_content_state SET
-        last_confirmed_identity=?, last_confirmed_title=?, last_confirmed_notes=?
-        WHERE task_gid=?""", (signed_id, signed_t, signed_n, task))
+        last_confirmed_identity=?, last_confirmed_title=?, last_confirmed_notes=?,
+        last_confirmed_content_version_id=?
+        WHERE task_gid=?""", (signed_id, signed_t, signed_n, v2, task))
     conn.execute("""INSERT INTO write_attempts(
         attempt_id, operation_id, expected_identity, intended_identity, outcome,
         started_at, finished_at, purpose, intended_title, intended_notes,

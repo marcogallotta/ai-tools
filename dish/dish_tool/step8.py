@@ -105,9 +105,11 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     declare_operation_step(conn, operation_id, "small_signoff", {"cycle_id": cycle["cycle_id"], "agent": agent, "run_id": run_id, "independence_attestation": independence_attestation})
     confirmed = _write_document(conn, backend, op, live, corrected, schema=schema, authorization_ids=authorization_ids)
     complete_operation_step(conn, operation_id, "small_corrected_write")
-    bind_cycle_review(conn, cycle_id=cycle["cycle_id"], operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity)
+    bind_cycle_review(
+        conn, cycle_id=cycle["cycle_id"], operation_id=operation_id,
+        task_gid=op["task_gid"], identity=confirmed.identity, correction_class="small",
+    )
     complete_operation_step(conn, operation_id, "small_review_binding")
-    conn.execute("UPDATE verification_cycles SET correction_class = 'small' WHERE cycle_id = ?", (cycle["cycle_id"],))
     result = approve_live(conn, backend, operation_id=operation_id, agent=agent, model=model, reviewed_identity=confirmed.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=run_id, independence_attestation=independence_attestation, schema=schema)
     complete_operation_step(conn, operation_id, "small_signoff")
     return result

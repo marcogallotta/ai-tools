@@ -156,19 +156,31 @@ def test_database_rejects_stronger_impossible_states(tmp_path: Path) -> None:
                 "UPDATE operations SET movement_completed_at='now', destination_movement_attempt_id='move' WHERE operation_id='op'"
             )
 
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                """
+                UPDATE movement_attempts
+                   SET intended_section_gid='destination', confirmed_section_gid='destination',
+                       purpose='destination_submission', outcome='confirmed', finished_at='now'
+                 WHERE attempt_id='move'
+                """
+            )
+
         conn.execute(
             """
-            UPDATE movement_attempts
-               SET intended_section_gid='destination', confirmed_section_gid='destination',
-                   purpose='destination_submission', outcome='confirmed'
-             WHERE attempt_id='move'
+            INSERT INTO movement_attempts (
+                attempt_id, operation_id, expected_section_gid,
+                intended_section_gid, outcome, started_at, finished_at, purpose,
+                confirmed_section_gid
+            ) VALUES ('move-destination', 'op', 'verification', 'destination',
+                      'confirmed', 'now', 'now', 'destination_submission', 'destination')
             """
         )
         conn.execute(
-            "UPDATE operations SET movement_completed_at='now', destination_movement_attempt_id='move' WHERE operation_id='op'"
+            "UPDATE operations SET movement_completed_at='now', destination_movement_attempt_id='move-destination' WHERE operation_id='op'"
         )
         with pytest.raises(sqlite3.IntegrityError):
-            conn.execute("UPDATE movement_attempts SET outcome='uncertain' WHERE attempt_id='move'")
+            conn.execute("UPDATE movement_attempts SET outcome='uncertain' WHERE attempt_id='move-destination'")
     finally:
         conn.close()
 

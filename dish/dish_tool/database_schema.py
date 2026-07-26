@@ -727,7 +727,301 @@ WHEN OLD.status='completed' AND NEW.expected_section_gid IS NOT OLD.expected_sec
 BEGIN SELECT RAISE(ABORT, 'completed operation placement baseline is immutable'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17}
+
+_MIGRATION_18 = """
+ALTER TABLE task_content_state
+    ADD COLUMN last_confirmed_content_version_id TEXT
+        REFERENCES content_versions(content_version_id);
+ALTER TABLE operations
+    ADD COLUMN migration_reconciliation_required INTEGER NOT NULL DEFAULT 0
+        CHECK (migration_reconciliation_required IN (0,1));
+ALTER TABLE operations ADD COLUMN migration_reconciliation_reason TEXT;
+
+-- Migration 8 made old terminal rows structurally terminal but did not record
+-- why they were terminal. Temporarily lower the completed-row guard only for
+-- this one deterministic backfill, then restore the canonical trigger.
+DROP TRIGGER operations_completed_fully_immutable_update;
+UPDATE operations
+   SET terminal_outcome = CASE
+       WHEN status = 'cancelled' THEN 'legacy_cancelled'
+       ELSE 'legacy_completed'
+   END
+ WHERE status IN ('completed','cancelled')
+   AND terminal_outcome IS NULL;
+
+CREATE TRIGGER operations_completed_fully_immutable_update
+BEFORE UPDATE ON operations
+WHEN OLD.status='completed' AND (
+    NEW.task_gid IS NOT OLD.task_gid OR NEW.operation_kind IS NOT OLD.operation_kind OR
+    NEW.status IS NOT OLD.status OR NEW.editor_agent IS NOT OLD.editor_agent OR
+    NEW.researcher_agent IS NOT OLD.researcher_agent OR NEW.verifier_agent IS NOT OLD.verifier_agent OR
+    NEW.run_id IS NOT OLD.run_id OR NEW.independence_attestation IS NOT OLD.independence_attestation OR
+    NEW.expected_identity IS NOT OLD.expected_identity OR NEW.schema_version IS NOT OLD.schema_version OR
+    NEW.content_write_completed_at IS NOT OLD.content_write_completed_at OR
+    NEW.signoff_completed_at IS NOT OLD.signoff_completed_at OR
+    NEW.movement_completed_at IS NOT OLD.movement_completed_at OR
+    NEW.created_at IS NOT OLD.created_at OR NEW.completed_at IS NOT OLD.completed_at OR
+    NEW.destination_movement_attempt_id IS NOT OLD.destination_movement_attempt_id OR
+    NEW.phase IS NOT OLD.phase OR NEW.terminal_outcome IS NOT OLD.terminal_outcome OR
+    NEW.inherited_signoff_cycle_id IS NOT OLD.inherited_signoff_cycle_id
+)
+BEGIN SELECT RAISE(ABORT, 'completed operation is immutable'); END;
+
+-- Give every persisted task head an exact append-only provenance record.
+INSERT INTO content_versions (
+    content_version_id, task_gid, operation_id, boundary, identity,
+    title, notes, confirmed, created_at
+)
+SELECT 'migration-head-' || lower(hex(randomblob(16))),
+       state.task_gid, NULL, 'migration_task_head',
+       state.last_confirmed_identity, state.last_confirmed_title,
+       state.last_confirmed_notes, 1, state.confirmed_at
+  FROM task_content_state AS state
+ WHERE NOT EXISTS (
+       SELECT 1 FROM content_versions AS version
+        WHERE version.task_gid = state.task_gid
+          AND version.confirmed = 1
+          AND version.identity = state.last_confirmed_identity
+          AND version.title = state.last_confirmed_title
+          AND version.notes = state.last_confirmed_notes
+ );
+
+UPDATE task_content_state
+   SET last_confirmed_content_version_id = (
+       SELECT version.content_version_id
+         FROM content_versions AS version
+        WHERE version.task_gid = task_content_state.task_gid
+          AND version.confirmed = 1
+          AND version.identity = task_content_state.last_confirmed_identity
+          AND version.title = task_content_state.last_confirmed_title
+          AND version.notes = task_content_state.last_confirmed_notes
+        ORDER BY version.created_at DESC, version.rowid DESC
+        LIMIT 1
+   );
+
+-- Historical active operations predate actor facts. Backfill the best exact
+-- lineage available from the operation row; absence remains a quarantine fact.
+INSERT INTO operation_actor_facts (
+    fact_id, operation_id, task_gid, role, agent, run_id,
+    independence_attestation, candidate_identity, source_cycle_id, created_at
+)
+SELECT 'migration-actor-' || lower(hex(randomblob(16))),
+       operation.operation_id, operation.task_gid,
+       CASE operation.operation_kind
+           WHEN 'planning' THEN 'planner'
+           WHEN 'initial' THEN 'constructor'
+           ELSE 'material_editor'
+       END,
+       COALESCE(operation.researcher_agent, operation.editor_agent),
+       operation.run_id, operation.independence_attestation,
+       operation.expected_identity, NULL, operation.created_at
+  FROM operations AS operation
+ WHERE operation.status IN ('open','uncertain')
+   AND COALESCE(operation.researcher_agent, operation.editor_agent) IS NOT NULL
+   AND NOT EXISTS (
+       SELECT 1 FROM operation_actor_facts AS fact
+        WHERE fact.operation_id = operation.operation_id
+          AND fact.role IN ('planner','constructor','material_editor')
+   );
+
+UPDATE operations
+   SET migration_reconciliation_required = 1,
+       migration_reconciliation_reason = 'missing_expected_section_gid'
+ WHERE status IN ('open','uncertain')
+   AND expected_section_gid IS NULL;
+
+UPDATE operations
+   SET migration_reconciliation_required = 1,
+       migration_reconciliation_reason = CASE
+           WHEN migration_reconciliation_reason IS NULL
+               THEN 'missing_actor_lineage'
+           ELSE migration_reconciliation_reason || ',missing_actor_lineage'
+       END
+ WHERE status IN ('open','uncertain')
+   AND NOT EXISTS (
+       SELECT 1 FROM operation_actor_facts AS fact
+        WHERE fact.operation_id = operations.operation_id
+          AND fact.role IN ('planner','constructor','material_editor')
+   );
+
+DROP INDEX operations_one_open_per_task;
+CREATE UNIQUE INDEX operations_one_active_per_task
+    ON operations(task_gid) WHERE status IN ('open','uncertain');
+
+CREATE TRIGGER operations_creation_facts_immutable_update
+BEFORE UPDATE ON operations
+WHEN NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.operation_kind IS NOT OLD.operation_kind
+  OR NEW.expected_identity IS NOT OLD.expected_identity
+  OR NEW.schema_version IS NOT OLD.schema_version
+  OR NEW.expected_section_gid IS NOT OLD.expected_section_gid
+  OR NEW.created_at IS NOT OLD.created_at
+  OR NEW.migration_reconciliation_required IS NOT OLD.migration_reconciliation_required
+  OR NEW.migration_reconciliation_reason IS NOT OLD.migration_reconciliation_reason
+BEGIN SELECT RAISE(ABORT, 'operation creation facts are immutable'); END;
+CREATE TRIGGER operations_append_only_delete
+BEFORE DELETE ON operations
+BEGIN SELECT RAISE(ABORT, 'operations are append-only'); END;
+
+CREATE TRIGGER write_attempt_intent_immutable_update
+BEFORE UPDATE ON write_attempts
+WHEN NEW.attempt_id IS NOT OLD.attempt_id
+  OR NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.expected_identity IS NOT OLD.expected_identity
+  OR NEW.intended_identity IS NOT OLD.intended_identity
+  OR NEW.started_at IS NOT OLD.started_at
+  OR NEW.purpose IS NOT OLD.purpose
+  OR NEW.intended_title IS NOT OLD.intended_title
+  OR NEW.intended_notes IS NOT OLD.intended_notes
+  OR NEW.schema_version IS NOT OLD.schema_version
+  OR NEW.context_json IS NOT OLD.context_json
+BEGIN SELECT RAISE(ABORT, 'write attempt intent is immutable'); END;
+CREATE TRIGGER write_attempt_outcome_monotonic_update
+BEFORE UPDATE ON write_attempts
+WHEN NOT (
+    NEW.outcome = OLD.outcome
+    OR (OLD.outcome = 'started' AND NEW.outcome IN ('confirmed','not_applied','uncertain'))
+    OR (OLD.outcome = 'uncertain' AND NEW.outcome IN ('confirmed','not_applied'))
+)
+OR (OLD.finished_at IS NOT NULL AND NEW.finished_at IS NOT OLD.finished_at)
+OR (OLD.confirmed_content_version_id IS NOT NULL
+    AND NEW.confirmed_content_version_id IS NOT OLD.confirmed_content_version_id)
+OR (NEW.outcome IN ('confirmed','not_applied') AND NEW.finished_at IS NULL)
+OR (NEW.outcome != 'confirmed' AND NEW.confirmed_content_version_id IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'write attempt outcome is monotonic'); END;
+CREATE TRIGGER write_attempt_append_only_delete
+BEFORE DELETE ON write_attempts
+BEGIN SELECT RAISE(ABORT, 'write attempts are append-only'); END;
+
+CREATE TRIGGER movement_attempt_intent_immutable_update
+BEFORE UPDATE ON movement_attempts
+WHEN NEW.attempt_id IS NOT OLD.attempt_id
+  OR NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.expected_section_gid IS NOT OLD.expected_section_gid
+  OR NEW.intended_section_gid IS NOT OLD.intended_section_gid
+  OR NEW.started_at IS NOT OLD.started_at
+  OR NEW.purpose IS NOT OLD.purpose
+BEGIN SELECT RAISE(ABORT, 'movement attempt intent is immutable'); END;
+CREATE TRIGGER movement_attempt_outcome_monotonic_update
+BEFORE UPDATE ON movement_attempts
+WHEN NOT (
+    NEW.outcome = OLD.outcome
+    OR (OLD.outcome = 'started' AND NEW.outcome IN ('confirmed','not_applied','uncertain'))
+    OR (OLD.outcome = 'uncertain' AND NEW.outcome IN ('confirmed','not_applied'))
+)
+OR (OLD.finished_at IS NOT NULL AND NEW.finished_at IS NOT OLD.finished_at)
+OR (OLD.confirmed_section_gid IS NOT NULL
+    AND NEW.confirmed_section_gid IS NOT OLD.confirmed_section_gid)
+OR (NEW.outcome IN ('confirmed','not_applied') AND NEW.finished_at IS NULL)
+OR (NEW.outcome != 'confirmed' AND NEW.confirmed_section_gid IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'movement attempt outcome is monotonic'); END;
+CREATE TRIGGER movement_attempt_append_only_delete
+BEFORE DELETE ON movement_attempts
+BEGIN SELECT RAISE(ABORT, 'movement attempts are append-only'); END;
+
+CREATE TRIGGER marco_authorizations_grant_immutable_update
+BEFORE UPDATE ON marco_authorizations
+WHEN NEW.authorization_id IS NOT OLD.authorization_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.field_name IS NOT OLD.field_name
+  OR NEW.before_json IS NOT OLD.before_json
+  OR NEW.after_json IS NOT OLD.after_json
+  OR NEW.reason IS NOT OLD.reason
+  OR NEW.actor_run_id IS NOT OLD.actor_run_id
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'Marco authorization grant is immutable'); END;
+CREATE TRIGGER marco_authorizations_append_only_delete
+BEFORE DELETE ON marco_authorizations
+BEGIN SELECT RAISE(ABORT, 'Marco authorizations are append-only'); END;
+
+CREATE TRIGGER verification_cycles_creation_facts_immutable_update
+BEFORE UPDATE ON verification_cycles
+WHEN NEW.cycle_id IS NOT OLD.cycle_id
+  OR NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.cycle_number IS NOT OLD.cycle_number
+  OR NEW.protocol_release IS NOT OLD.protocol_release
+  OR (OLD.protocol_text IS NOT NULL AND NEW.protocol_text IS NOT OLD.protocol_text)
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'verification cycle creation facts are immutable'); END;
+CREATE TRIGGER verification_cycles_review_binding_monotonic_update
+BEFORE UPDATE ON verification_cycles
+WHEN (OLD.verifier_agent IS NOT NULL AND NEW.verifier_agent IS NOT OLD.verifier_agent)
+  OR (OLD.run_id IS NOT NULL AND NEW.run_id IS NOT OLD.run_id)
+  OR (OLD.independence_attestation IS NOT NULL
+      AND NEW.independence_attestation IS NOT OLD.independence_attestation)
+  OR (
+      (
+          OLD.reviewed_content_version_id IS NOT NULL
+          AND NEW.reviewed_content_version_id IS NOT OLD.reviewed_content_version_id
+      )
+      OR (OLD.reviewed_identity IS NOT NULL AND NEW.reviewed_identity IS NOT OLD.reviewed_identity)
+  ) AND NOT (
+      OLD.completed_at IS NULL
+      AND OLD.outcome IS NULL
+      AND OLD.signed_content_version_id IS NULL
+      AND OLD.signed_identity IS NULL
+      AND OLD.correction_class IS NULL
+      AND NEW.correction_class = 'small'
+  )
+BEGIN SELECT RAISE(ABORT, 'verification review binding is monotonic'); END;
+CREATE TRIGGER verification_cycles_outcome_monotonic_update
+BEFORE UPDATE ON verification_cycles
+WHEN (OLD.completed_at IS NOT NULL AND NEW.completed_at IS NOT OLD.completed_at)
+  OR (OLD.outcome IS NOT NULL AND NEW.outcome IS NOT OLD.outcome)
+  OR (OLD.route IS NOT NULL AND NEW.route IS NOT OLD.route)
+  OR (OLD.resume_state IS NOT NULL AND NEW.resume_state IS NOT OLD.resume_state)
+  OR (OLD.signed_content_version_id IS NOT NULL
+      AND NEW.signed_content_version_id IS NOT OLD.signed_content_version_id)
+  OR (OLD.signed_identity IS NOT NULL AND NEW.signed_identity IS NOT OLD.signed_identity)
+BEGIN SELECT RAISE(ABORT, 'verification cycle outcome is monotonic'); END;
+CREATE TRIGGER verification_cycles_append_only_delete
+BEFORE DELETE ON verification_cycles
+BEGIN SELECT RAISE(ABORT, 'verification cycles are append-only'); END;
+
+CREATE TRIGGER task_content_state_exact_binding_insert
+BEFORE INSERT ON task_content_state
+WHEN NEW.last_confirmed_content_version_id IS NULL
+  OR NOT EXISTS (
+      SELECT 1 FROM content_versions AS version
+       WHERE version.content_version_id = NEW.last_confirmed_content_version_id
+         AND version.task_gid = NEW.task_gid
+         AND version.confirmed = 1
+         AND version.identity = NEW.last_confirmed_identity
+         AND version.title = NEW.last_confirmed_title
+         AND version.notes = NEW.last_confirmed_notes
+  )
+BEGIN SELECT RAISE(ABORT, 'task content head requires exact confirmed content evidence'); END;
+CREATE TRIGGER task_content_state_exact_binding_update
+BEFORE UPDATE ON task_content_state
+WHEN NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.last_confirmed_content_version_id IS NULL
+  OR NOT EXISTS (
+      SELECT 1 FROM content_versions AS version
+       WHERE version.content_version_id = NEW.last_confirmed_content_version_id
+         AND version.task_gid = NEW.task_gid
+         AND version.confirmed = 1
+         AND version.identity = NEW.last_confirmed_identity
+         AND version.title = NEW.last_confirmed_title
+         AND version.notes = NEW.last_confirmed_notes
+  )
+  OR NEW.confirmed_at < OLD.confirmed_at
+  OR (
+      SELECT created_at FROM content_versions
+       WHERE content_version_id = NEW.last_confirmed_content_version_id
+  ) < (
+      SELECT created_at FROM content_versions
+       WHERE content_version_id = OLD.last_confirmed_content_version_id
+  )
+BEGIN SELECT RAISE(ABORT, 'task content head requires monotonic exact evidence'); END;
+CREATE TRIGGER task_content_state_append_only_delete
+BEFORE DELETE ON task_content_state
+BEGIN SELECT RAISE(ABORT, 'task content heads are append-only'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -871,6 +1165,21 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
     for row in conn.execute("SELECT * FROM content_versions WHERE confirmed=1"):
         if _content_digest(row["title"], row["notes"]) != row["identity"]:
             problems.append({"kind": "content_identity_mismatch", "id": row["content_version_id"]})
+    for row in conn.execute("SELECT * FROM task_content_state"):
+        bound = conn.execute(
+            """SELECT task_gid, identity, title, notes, confirmed
+                 FROM content_versions WHERE content_version_id=?""",
+            (row["last_confirmed_content_version_id"],),
+        ).fetchone()
+        if (
+            bound is None
+            or bound["confirmed"] != 1
+            or bound["task_gid"] != row["task_gid"]
+            or bound["identity"] != row["last_confirmed_identity"]
+            or bound["title"] != row["last_confirmed_title"]
+            or bound["notes"] != row["last_confirmed_notes"]
+        ):
+            problems.append({"kind": "task_content_head_binding", "id": row["task_gid"]})
     for row in conn.execute("SELECT * FROM write_attempts WHERE outcome='confirmed'"):
         bound = conn.execute(
             "SELECT identity,confirmed,operation_id FROM content_versions WHERE content_version_id=?",
@@ -902,6 +1211,11 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
     for row in conn.execute("SELECT * FROM operations"):
         if row["status"] == "completed" and (row["completed_at"] is None or row["phase"] != "terminal" or not row["terminal_outcome"] or not row["schema_version"] or not row["expected_identity"]):
             problems.append({"kind": "completed_operation_state", "id": row["operation_id"]})
+        if row["status"] in {"open", "uncertain"}:
+            if row["expected_section_gid"] is None and row["migration_reconciliation_required"] != 1:
+                problems.append({"kind": "active_operation_placement_unbound", "id": row["operation_id"]})
+            if row["migration_reconciliation_required"] == 1 and not str(row["migration_reconciliation_reason"] or "").strip():
+                problems.append({"kind": "migration_reconciliation_reason_missing", "id": row["operation_id"]})
         if row["signoff_completed_at"] is not None:
             approved = conn.execute(
                 "SELECT 1 FROM verification_cycles WHERE operation_id=? AND outcome='approved' AND signed_identity IS NOT NULL AND signed_content_version_id IS NOT NULL",

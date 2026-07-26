@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from dish_tool.database import initialize_database
+from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.governed_diff import explicit_material_reasons, require_small_scope
 from dish_tool.task_document import parse_task_document, validate_planning_brief, parse_planning_brief, finding_payload
 from dish_tool.errors import DishRuleError
@@ -41,7 +42,7 @@ def test_planning_finding_payload_is_actionable():
 
 def test_schema_v16_and_audit_repair_table(tmp_path):
     conn = initialize_database(tmp_path / "db.sqlite")
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 17
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='verification_cycles_completed_fully_immutable_update'").fetchone()
 
 
@@ -182,7 +183,7 @@ def test_database_reopens_with_timestamped_protocol_release(tmp_path):
     reopened.close()
 
 
-def test_null_upgraded_placement_baseline_is_checked_unconditionally(tmp_path):
+def test_current_operation_placement_baseline_is_immutable(tmp_path):
     from tests.test_dish_tool_step7_verification import Backend
     from dish_tool.commands import DishApplication
     from dish_tool.models import ResolvedRelease
@@ -194,12 +195,11 @@ def test_null_upgraded_placement_baseline_is_checked_unconditionally(tmp_path):
         schema_version="2", schema={}, schema_text="{}", migration_metadata={}, requested_protocol_role=role)
     app = DishApplication(initialize_database(tmp_path / "dish.db"), backend, release_loader=release)
     started = app.execute("start", agent="gpt", task_gid="t", kind="initial", run_id="run")
-    app.conn.execute("UPDATE operations SET expected_section_gid=NULL WHERE operation_id=?", (started["submission_id"],))
-    candidate = tmp_path / "candidate.txt"; candidate.write_text(TASK)
-    result = app.execute("prepare", model="gpt-5.6-sol", agent="gpt", submission_id=started["submission_id"], file_path=str(candidate))
-    assert result["code"] == "CONFLICT"
-    assert result["errors"][0]["rule"] == "live_task_placement_drift"
-    assert backend.writes == 0 and backend.moves == 0
+    with pytest.raises(sqlite3.IntegrityError):
+        app.conn.execute(
+            "UPDATE operations SET expected_section_gid=NULL WHERE operation_id=?",
+            (started["submission_id"],),
+        )
 
 
 def test_completed_persistence_evidence_is_fully_immutable(tmp_path):
