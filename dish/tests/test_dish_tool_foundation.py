@@ -274,7 +274,7 @@ def test_resolver_loads_external_schema_adapter_for_legacy_note_checks(release_r
     repo, _ = release_repo
     release = resolve_release(repo, protocol_role="planning")
 
-    assert release.protocol_version == "1.0.8"
+    assert release.protocol_version == "1.0.9"
     assert release.schema_version == "2"
     assert set(release.protocols) == {"planning"}
     assert set(release.manifests) == {"planning", "complete_task"}
