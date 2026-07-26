@@ -185,7 +185,7 @@ def prepare_live(
             verification_snapshot = current_verification_protocol_release(release.root)
             assert_transition(action="material_edit", before=prior.state.values["Status"], after="pending-verification")
             state_values = dict(pending_verification(candidate.state.values, protocol_release=verification_snapshot.identity).values)
-            state_values["Self-verified"] = material_editor_line(agent, utc_now()[:10])
+            state_values["Self-verified"] = material_editor_line(agent, model, utc_now()[:10])
             state = TaskState(state_values)
         else:
             assert_transition(action="non_material_edit", before=prior.state.values["Status"], after="ready")
@@ -215,11 +215,31 @@ def prepare_live(
         declare_operation_step(conn, operation_id, "verification_handoff", {"section_gid": registry.verification_queue_gid})
         declare_operation_step(conn, operation_id, "verification_phase", {"phase": "await_verification", "status": "open"})
     if op["operation_kind"] == "change" and state.values["Status"] != "pending-verification":
-        approved = conn.execute("SELECT cycle_id FROM verification_cycles WHERE task_gid=? AND outcome='approved' ORDER BY completed_at DESC LIMIT 1", (live.gid,)).fetchone()
+        approved = conn.execute(
+            """SELECT cycle.cycle_id
+                 FROM verification_cycles AS cycle
+                 JOIN content_versions AS version
+                   ON version.content_version_id=cycle.signed_content_version_id
+                WHERE cycle.task_gid=? AND cycle.outcome='approved'
+                  AND cycle.completed_at IS NOT NULL
+                  AND cycle.signed_identity=?
+                  AND version.confirmed=1
+                  AND version.task_gid=cycle.task_gid
+                  AND version.identity=cycle.signed_identity
+                ORDER BY cycle.completed_at DESC LIMIT 1""",
+            (live.gid, op["expected_identity"]),
+        ).fetchone()
+        if approved is None:
+            raise DishRuleError(
+                "CONFLICT",
+                "non-material check-in requires an exact locally approved baseline",
+                rule="non_material_signed_baseline_missing",
+                details={"baseline_identity": op["expected_identity"]},
+            )
         declare_operation_step(conn, operation_id, "non_material_terminal", {
             "phase": "terminal", "status": "completed",
             "terminal_outcome": "non_material_checkin",
-            "inherited_signoff_cycle_id": None if approved is None else approved["cycle_id"],
+            "inherited_signoff_cycle_id": approved["cycle_id"],
         })
 
     confirmed = write_exact_content(

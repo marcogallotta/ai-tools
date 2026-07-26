@@ -1021,7 +1021,164 @@ BEFORE DELETE ON task_content_state
 BEGIN SELECT RAISE(ABORT, 'task content heads are append-only'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18}
+
+_MIGRATION_19 = """
+ALTER TABLE verification_cycles ADD COLUMN hold_content_version_id TEXT
+    REFERENCES content_versions(content_version_id);
+ALTER TABLE verification_cycles ADD COLUMN hold_identity TEXT;
+ALTER TABLE verification_cycles ADD COLUMN hold_section_gid TEXT;
+
+-- Backfill locally provable inherited signoff before restoring the completed-row guard.
+DROP TRIGGER operations_completed_fully_immutable_update;
+UPDATE operations
+   SET inherited_signoff_cycle_id=(
+       SELECT cycle.cycle_id
+         FROM verification_cycles AS cycle
+         JOIN content_versions AS version
+           ON version.content_version_id=cycle.signed_content_version_id
+        WHERE cycle.task_gid=operations.task_gid
+          AND cycle.outcome='approved'
+          AND cycle.completed_at IS NOT NULL
+          AND cycle.signed_identity=operations.expected_identity
+          AND version.confirmed=1
+          AND version.task_gid=operations.task_gid
+          AND version.identity=operations.expected_identity
+        ORDER BY cycle.completed_at DESC LIMIT 1
+   )
+ WHERE status='completed' AND terminal_outcome='non_material_checkin'
+   AND inherited_signoff_cycle_id IS NULL;
+CREATE TRIGGER operations_completed_fully_immutable_update
+BEFORE UPDATE ON operations
+WHEN OLD.status='completed' AND (
+    NEW.task_gid IS NOT OLD.task_gid OR NEW.operation_kind IS NOT OLD.operation_kind OR
+    NEW.status IS NOT OLD.status OR NEW.editor_agent IS NOT OLD.editor_agent OR
+    NEW.researcher_agent IS NOT OLD.researcher_agent OR NEW.verifier_agent IS NOT OLD.verifier_agent OR
+    NEW.run_id IS NOT OLD.run_id OR NEW.independence_attestation IS NOT OLD.independence_attestation OR
+    NEW.expected_identity IS NOT OLD.expected_identity OR NEW.schema_version IS NOT OLD.schema_version OR
+    NEW.content_write_completed_at IS NOT OLD.content_write_completed_at OR
+    NEW.signoff_completed_at IS NOT OLD.signoff_completed_at OR
+    NEW.movement_completed_at IS NOT OLD.movement_completed_at OR
+    NEW.created_at IS NOT OLD.created_at OR NEW.completed_at IS NOT OLD.completed_at OR
+    NEW.destination_movement_attempt_id IS NOT OLD.destination_movement_attempt_id OR
+    NEW.phase IS NOT OLD.phase OR NEW.terminal_outcome IS NOT OLD.terminal_outcome OR
+    NEW.inherited_signoff_cycle_id IS NOT OLD.inherited_signoff_cycle_id
+)
+BEGIN SELECT RAISE(ABORT, 'completed operation is immutable'); END;
+
+CREATE TABLE two_pass_resets (
+    reset_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    source_cycle_id TEXT NOT NULL REFERENCES verification_cycles(cycle_id),
+    candidate_identity TEXT NOT NULL,
+    canonical_path TEXT NOT NULL,
+    category TEXT NOT NULL CHECK(category IN ('evidence','premise','method','scope')),
+    before_json TEXT NOT NULL,
+    after_json TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(operation_id, candidate_identity)
+);
+CREATE INDEX two_pass_resets_operation_idx ON two_pass_resets(operation_id, created_at);
+CREATE TRIGGER two_pass_resets_append_only_update
+BEFORE UPDATE ON two_pass_resets
+BEGIN SELECT RAISE(ABORT, 'two-pass reset evidence is append-only'); END;
+CREATE TRIGGER two_pass_resets_append_only_delete
+BEFORE DELETE ON two_pass_resets
+BEGIN SELECT RAISE(ABORT, 'two-pass reset evidence is append-only'); END;
+
+-- Historical active holds have no independently persisted placement snapshot.
+-- They must be reconciled rather than treating the missing baseline as a wildcard.
+DROP TRIGGER operations_creation_facts_immutable_update;
+UPDATE operations
+   SET migration_reconciliation_required=1,
+       migration_reconciliation_reason=CASE
+           WHEN migration_reconciliation_reason IS NULL THEN 'missing_hold_baseline'
+           WHEN instr(migration_reconciliation_reason, 'missing_hold_baseline')=0
+               THEN migration_reconciliation_reason || ',missing_hold_baseline'
+           ELSE migration_reconciliation_reason
+       END
+ WHERE status IN ('open','uncertain')
+   AND EXISTS (
+       SELECT 1 FROM verification_cycles AS cycle
+        WHERE cycle.operation_id=operations.operation_id
+          AND cycle.completed_at IS NOT NULL
+          AND (cycle.route IN ('evidence','human_review') OR cycle.outcome='two-pass-hold')
+          AND cycle.hold_content_version_id IS NULL
+   );
+CREATE TRIGGER operations_creation_facts_immutable_update
+BEFORE UPDATE ON operations
+WHEN NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.operation_kind IS NOT OLD.operation_kind
+  OR NEW.expected_identity IS NOT OLD.expected_identity
+  OR NEW.schema_version IS NOT OLD.schema_version
+  OR NEW.expected_section_gid IS NOT OLD.expected_section_gid
+  OR NEW.created_at IS NOT OLD.created_at
+  OR NEW.migration_reconciliation_required IS NOT OLD.migration_reconciliation_required
+  OR NEW.migration_reconciliation_reason IS NOT OLD.migration_reconciliation_reason
+BEGIN SELECT RAISE(ABORT, 'operation creation facts are immutable'); END;
+
+CREATE TRIGGER verification_cycles_hold_binding_required_insert
+BEFORE INSERT ON verification_cycles
+WHEN NEW.completed_at IS NOT NULL
+ AND (NEW.route IN ('evidence','human_review') OR NEW.outcome='two-pass-hold')
+ AND (
+     NEW.hold_content_version_id IS NULL OR NEW.hold_identity IS NULL OR NEW.hold_section_gid IS NULL
+     OR NOT EXISTS (
+         SELECT 1 FROM content_versions AS version
+          WHERE version.content_version_id=NEW.hold_content_version_id
+            AND version.operation_id=NEW.operation_id
+            AND version.task_gid=NEW.task_gid
+            AND version.confirmed=1
+            AND version.identity=NEW.hold_identity
+     )
+ )
+BEGIN SELECT RAISE(ABORT, 'hold outcome requires exact content and placement evidence'); END;
+CREATE TRIGGER verification_cycles_hold_binding_required_update
+BEFORE UPDATE ON verification_cycles
+WHEN NEW.completed_at IS NOT NULL
+ AND (NEW.route IN ('evidence','human_review') OR NEW.outcome='two-pass-hold')
+ AND (
+     NEW.hold_content_version_id IS NULL OR NEW.hold_identity IS NULL OR NEW.hold_section_gid IS NULL
+     OR NOT EXISTS (
+         SELECT 1 FROM content_versions AS version
+          WHERE version.content_version_id=NEW.hold_content_version_id
+            AND version.operation_id=NEW.operation_id
+            AND version.task_gid=NEW.task_gid
+            AND version.confirmed=1
+            AND version.identity=NEW.hold_identity
+     )
+ )
+BEGIN SELECT RAISE(ABORT, 'hold outcome requires exact content and placement evidence'); END;
+CREATE TRIGGER verification_cycles_hold_binding_immutable_update
+BEFORE UPDATE ON verification_cycles
+WHEN (OLD.hold_content_version_id IS NOT NULL AND NEW.hold_content_version_id IS NOT OLD.hold_content_version_id)
+  OR (OLD.hold_identity IS NOT NULL AND NEW.hold_identity IS NOT OLD.hold_identity)
+  OR (OLD.hold_section_gid IS NOT NULL AND NEW.hold_section_gid IS NOT OLD.hold_section_gid)
+BEGIN SELECT RAISE(ABORT, 'hold baseline is immutable'); END;
+
+CREATE TRIGGER operations_non_material_signoff_required
+BEFORE UPDATE ON operations
+WHEN NEW.status='completed' AND NEW.terminal_outcome='non_material_checkin'
+ AND (
+     NEW.inherited_signoff_cycle_id IS NULL
+     OR NOT EXISTS (
+         SELECT 1 FROM verification_cycles AS cycle
+          JOIN content_versions AS version
+            ON version.content_version_id=cycle.signed_content_version_id
+          WHERE cycle.cycle_id=NEW.inherited_signoff_cycle_id
+            AND cycle.task_gid=NEW.task_gid
+            AND cycle.outcome='approved'
+            AND cycle.completed_at IS NOT NULL
+            AND cycle.signed_identity=OLD.expected_identity
+            AND version.confirmed=1
+            AND version.identity=OLD.expected_identity
+            AND version.task_gid=NEW.task_gid
+     )
+ )
+BEGIN SELECT RAISE(ABORT, 'non-material completion requires exact local signed baseline'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -1199,6 +1356,25 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
     for row in conn.execute("SELECT * FROM marco_authorizations WHERE consumed_at IS NOT NULL"):
         if not row["consumed_identity"] or not row["reserved_by_operation_id"] or not row["reserved_at"]:
             problems.append({"kind": "consumed_authorization_binding", "id": row["authorization_id"]})
+    for row in conn.execute(
+        """SELECT cycle.*, operation.migration_reconciliation_required
+             FROM verification_cycles AS cycle
+             JOIN operations AS operation ON operation.operation_id=cycle.operation_id
+            WHERE cycle.completed_at IS NOT NULL
+              AND (cycle.route IN ('evidence','human_review') OR cycle.outcome='two-pass-hold')"""
+    ):
+        held = conn.execute(
+            "SELECT task_gid,operation_id,identity,confirmed FROM content_versions WHERE content_version_id=?",
+            (row["hold_content_version_id"],),
+        ).fetchone()
+        valid = bool(
+            row["hold_identity"] and row["hold_section_gid"] and held is not None
+            and held["confirmed"] == 1 and held["task_gid"] == row["task_gid"]
+            and held["operation_id"] == row["operation_id"]
+            and held["identity"] == row["hold_identity"]
+        )
+        if not valid and row["migration_reconciliation_required"] != 1:
+            problems.append({"kind": "hold_baseline_binding", "id": row["cycle_id"]})
     for row in conn.execute("SELECT * FROM verification_cycles WHERE outcome='approved'"):
         signed = conn.execute(
             "SELECT identity,confirmed,operation_id,task_gid FROM content_versions WHERE content_version_id=?",
@@ -1216,6 +1392,25 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 problems.append({"kind": "active_operation_placement_unbound", "id": row["operation_id"]})
             if row["migration_reconciliation_required"] == 1 and not str(row["migration_reconciliation_reason"] or "").strip():
                 problems.append({"kind": "migration_reconciliation_reason_missing", "id": row["operation_id"]})
+        if row["terminal_outcome"] == "non_material_checkin":
+            inherited = conn.execute(
+                """SELECT cycle.signed_identity, cycle.signed_content_version_id,
+                          cycle.outcome, cycle.completed_at, version.identity,
+                          version.confirmed, version.task_gid
+                     FROM verification_cycles AS cycle
+                     LEFT JOIN content_versions AS version
+                       ON version.content_version_id=cycle.signed_content_version_id
+                    WHERE cycle.cycle_id=?""",
+                (row["inherited_signoff_cycle_id"],),
+            ).fetchone()
+            if (
+                inherited is None or inherited["outcome"] != "approved"
+                or inherited["completed_at"] is None
+                or inherited["signed_identity"] != row["expected_identity"]
+                or inherited["identity"] != row["expected_identity"]
+                or inherited["confirmed"] != 1 or inherited["task_gid"] != row["task_gid"]
+            ):
+                problems.append({"kind": "non_material_signoff_binding", "id": row["operation_id"]})
         if row["signoff_completed_at"] is not None:
             approved = conn.execute(
                 "SELECT 1 FROM verification_cycles WHERE operation_id=? AND outcome='approved' AND signed_identity IS NOT NULL AND signed_content_version_id IS NOT NULL",
@@ -1223,6 +1418,18 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             ).fetchone()
             if approved is None:
                 problems.append({"kind": "operation_signoff_binding", "id": row["operation_id"]})
+    for row in conn.execute("SELECT * FROM two_pass_resets"):
+        version = conn.execute(
+            """SELECT 1 FROM content_versions
+                 WHERE operation_id=? AND identity=? AND confirmed=1 LIMIT 1""",
+            (row["operation_id"], row["candidate_identity"]),
+        ).fetchone()
+        cycle = conn.execute(
+            "SELECT 1 FROM verification_cycles WHERE cycle_id=? AND operation_id=? AND outcome='two-pass-hold'",
+            (row["source_cycle_id"], row["operation_id"]),
+        ).fetchone()
+        if version is None or cycle is None:
+            problems.append({"kind": "two_pass_reset_binding", "id": row["reset_id"]})
     if problems:
         raise DishRuleError(
             "VALIDATION_FAILED", "database durable evidence is semantically inconsistent",

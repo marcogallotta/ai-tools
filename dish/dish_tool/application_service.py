@@ -81,6 +81,69 @@ class CurrentWorkflowService:
                     (op["task_gid"], operation_id, cycle["verifier_agent"], cycle["reviewed_identity"], cycle["run_id"], cycle["independence_attestation"]),
                 ).fetchone()
             cycle_reviewed = bool(binding_ok and actor is not None)
+
+        task_head = self.conn.execute(
+            "SELECT last_confirmed_identity FROM task_content_state WHERE task_gid=?",
+            (op["task_gid"],),
+        ).fetchone()
+        required_identity = None if task_head is None else task_head["last_confirmed_identity"]
+        required_section_gid = op["expected_section_gid"]
+        required_cycle_exists = True
+        signoff_bound = True
+        held_baseline_matches = True
+        phase = op["phase"]
+        if phase == "await_verification":
+            required_cycle_exists = bool(cycle is not None and cycle["completed_at"] is None)
+            if cycle_reviewed:
+                required_identity = cycle["reviewed_identity"]
+            required_section_gid = registry.verification_queue_gid
+        elif phase == "await_submission":
+            approved = self.conn.execute(
+                """SELECT * FROM verification_cycles
+                     WHERE operation_id=? AND outcome='approved'
+                     ORDER BY completed_at DESC LIMIT 1""",
+                (operation_id,),
+            ).fetchone()
+            signoff_bound = bool(
+                approved is not None
+                and approved["signed_identity"]
+                and approved["signed_content_version_id"]
+                and op["signoff_completed_at"] is not None
+            )
+            required_identity = None if approved is None else approved["signed_identity"]
+            # Submission deliberately preserves a manual placement or recognises
+            # an already-applied destination move. Exact signed content remains mandatory.
+            required_section_gid = None
+        elif phase in {"held_evidence", "held_human"}:
+            held = self.conn.execute(
+                """SELECT * FROM verification_cycles
+                     WHERE operation_id=? AND completed_at IS NOT NULL
+                       AND (route IN ('evidence','human_review') OR outcome='two-pass-hold')
+                     ORDER BY cycle_number DESC LIMIT 1""",
+                (operation_id,),
+            ).fetchone()
+            required_cycle_exists = held is not None
+            required_identity = None if held is None else held["hold_identity"]
+            required_section_gid = None if held is None else held["hold_section_gid"]
+            held_baseline_matches = bool(
+                held is not None and held["hold_identity"] and held["hold_section_gid"]
+                and live.identity == held["hold_identity"]
+                and live.section_gid == held["hold_section_gid"]
+            )
+        identity_matches = required_identity is None or live.identity == required_identity
+        placement_matches = required_section_gid is None or live.section_gid == required_section_gid
+        unresolved_rows = self.conn.execute(
+            """SELECT 'write:' || attempt_id AS item FROM write_attempts
+                 WHERE operation_id=? AND outcome IN ('started','uncertain')
+               UNION ALL
+               SELECT 'movement:' || attempt_id AS item FROM movement_attempts
+                 WHERE operation_id=? AND outcome IN ('started','uncertain')
+               ORDER BY item""",
+            (operation_id, operation_id),
+        ).fetchall()
+        unresolved_attempts = tuple(row["item"] for row in unresolved_rows)
+        pending_steps = tuple(row["step_name"] for row in self.repository.pending_steps(operation_id))
+        migration_required = bool(op["migration_reconciliation_required"])
         snapshot = WorkflowSnapshot(
             operation_status=op["status"],
             operation_phase=op["phase"],
@@ -92,16 +155,42 @@ class CurrentWorkflowService:
             latest_cycle_outcome=None if cycle is None else cycle["outcome"],
             latest_cycle_route=None if cycle is None else cycle["route"],
             validation_rules=tuple(validation_rules),
-            pending_steps=tuple(row["step_name"] for row in self.repository.pending_steps(operation_id)),
+            pending_steps=pending_steps,
+            unresolved_attempts=unresolved_attempts,
+            migration_reconciliation_required=migration_required,
+            identity_matches=identity_matches,
+            placement_matches=placement_matches,
+            required_cycle_exists=required_cycle_exists,
+            signoff_bound=signoff_bound,
+            held_baseline_matches=held_baseline_matches,
         )
+        recovery_reasons: list[str] = []
+        if op["status"] == "uncertain":
+            recovery_reasons.append("operation_uncertain")
+        if pending_steps:
+            recovery_reasons.append("pending_workflow_steps")
+        if unresolved_attempts:
+            recovery_reasons.append("unresolved_external_attempts")
+        if migration_required:
+            recovery_reasons.append(str(op["migration_reconciliation_reason"] or "migration_reconciliation_required"))
         facts = {
             "status": op["status"],
             "phase": op["phase"],
             "live_status": live_status,
+            "live_identity": live.identity,
+            "required_identity": required_identity,
+            "identity_matches": identity_matches,
             "live_section_gid": live.section_gid,
+            "required_section_gid": required_section_gid,
+            "placement_matches": placement_matches,
             "validation_rules": validation_rules,
-            "pending_steps": list(snapshot.pending_steps),
-            "recovery_required": bool(snapshot.pending_steps),
+            "pending_steps": list(pending_steps),
+            "unresolved_attempts": list(unresolved_attempts),
+            "required_cycle_exists": required_cycle_exists,
+            "signoff_bound": signoff_bound,
+            "held_baseline_matches": held_baseline_matches,
+            "recovery_required": bool(recovery_reasons),
+            "recovery_reasons": recovery_reasons,
         }
         return snapshot, facts
 
@@ -113,16 +202,41 @@ class CurrentWorkflowService:
     def assert_action(self, operation_id: str, action: str, *, schema=None) -> dict[str, object]:
         view = self.authoritative_view(operation_id, schema=schema)
         if action not in view["legal_actions"]:
+            code = "WRONG_STATE"
             rule = "operation_action_not_allowed"
             message = f"{action} is not legal for the current operation state"
-            if view.get("recovery_required"):
+            # Terminal operations remain terminal even if their live task later
+            # drifts. Report the lifecycle error before active-operation drift
+            # diagnostics so retries receive a stable WRONG_STATE result.
+            if view.get("status") not in {"open", "uncertain"}:
+                pass
+            elif view.get("recovery_required"):
                 rule = "workflow_recovery_required"
-                message = "operation has an incomplete durable workflow suffix; run recovery before any ordinary action"
-            elif action == "verify" and view["phase"] == "await_verification":
-                rule = "verification_placement_required"
-                message = "task must currently be in Verification Queue"
+                message = "operation requires recovery or migration reconciliation before any ordinary action"
+            elif not view.get("identity_matches", True):
+                code = "CONFLICT"
+                if view.get("phase") == "await_submission":
+                    rule = "post_signoff_content_drift"
+                    message = "live content no longer matches the exact signed candidate"
+                else:
+                    rule = "live_task_drift"
+                    message = "live task content does not match the authoritative workflow identity"
+            elif not view.get("placement_matches", True):
+                if view.get("phase") == "await_verification":
+                    rule = "verification_placement_required"
+                    message = "task must currently be in Verification Queue"
+                else:
+                    code = "CONFLICT"
+                    rule = "live_task_placement_drift"
+                    message = "live task placement does not match the authoritative workflow placement"
+            elif not view.get("required_cycle_exists", True):
+                rule = "verification_cycle_missing"
+                message = "the required Verification cycle is missing"
+            elif not view.get("signoff_bound", True):
+                rule = "signoff_not_completed"
+                message = "submission requires durable exact-content signoff"
             raise DishRuleError(
-                "WRONG_STATE", message, rule=rule,
+                code, message, rule=rule,
                 details={"action": action, "authoritative_view": view},
             )
         return view

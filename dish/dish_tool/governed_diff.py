@@ -38,18 +38,44 @@ def require_governed_authorization(conn, before, after, *, task_gid: str, operat
     return tuple(row["authorization_id"] for row in rows)
 
 
-# Structured signatures are intentionally derived from canonical content fields,
-# not from caller classifications or a handful of literal changed lines.
-_QUANTITY_RE = re.compile(r"(?<!\w)(?:\d+(?:[.,]\d+)?|\d+\s*/\s*\d+)\s*(?:kg|g|mg|l|ml|cl|tsp|tbsp|teaspoons?|tablespoons?|cups?|oz|lb|°c|°f|minutes?|mins?|hours?|hrs?)\b", re.I)
-_RATIO_RE = re.compile(r"(?<!\w)\d+(?:[.,]\d+)?\s*(?::|/|\bto\b)\s*\d+(?:[.,]\d+)?", re.I)
+# Canonical materiality is path-first. Text signatures only explain why a
+# changed method is material; they never decide whether governed fields count.
+_QUANTITY_RE = re.compile(r"(?<!\w)(?:\d+(?:[.,]\d+)?|\d+\s*/\s*\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:kg|g|mg|l|ml|cl|tsp|tbsp|teaspoons?|tablespoons?|cups?|oz|lb|eggs?|cloves?|pieces?|minutes?|mins?|hours?|hrs?)\b", re.I)
+_RATIO_RE = re.compile(r"(?:\b(?:equal parts?|one|two|three|four|five|six|seven|eight|nine|ten|\d+(?:[.,]\d+)?)\b\s*(?::|/|\bto\b|\bparts?\b)\s*\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+(?:[.,]\d+)?)\b)", re.I)
 _PORTION_RE = re.compile(r"\b(?:portion|portions|serving|servings|sittings?|feeds?|people|persons?)\b", re.I)
 _NUTRITION_RE = re.compile(r"\b(?:nutrition|nutritional|calorie|calories|kcal|protein|carbohydrate|carbs?|fat|fibre|fiber|sodium)\b", re.I)
-_HALAL_SAFETY_RE = re.compile(r"\b(?:halal|haram|pork|bacon|ham|lard|wine|beer|sherry|mirin|alcohol|allergen|allergy|unsafe|safety|cross[- ]contamination|raw|internal temperature)\b", re.I)
+_HALAL_SAFETY_RE = re.compile(r"\b(?:halal|haram|pork|bacon|ham|lard|prosciutto|salami|pepperoni|wine|beer|sherry|mirin|alcohol|allergen|allergy|unsafe|safety|cross[- ]contamination|internal temperature)\b", re.I)
 _SOURCING_RE = re.compile(r"\b(?:source|sourcing|supplier|import|availability|available|unavailable|substitut(?:e|ion)|brand)\b", re.I)
 _EQUIPMENT_RE = re.compile(r"\b(?:wok|oven|stovetop|hob|grill|broiler|air fryer|fryer|pressure cooker|instant pot|slow cooker|sous vide|blender|food processor|mortar|pan|pot)\b", re.I)
-_RISK_RE = re.compile(r"\b(?:feasib(?:le|ility)|risk|constraint|equipment|temperature|timing|hold time)\b", re.I)
-_METHOD_ACTION_RE = re.compile(r"\b(?:add|mix|bake|boil|fry|grill|roast|steam|blend|whisk|knead|marinate|reduce|simmer|sear|toast|chop|slice|dice)\b", re.I)
-_METHOD_IGNORED_TOKENS = {"a", "an", "and", "the", "it", "then", "until", "to", "of", "in", "on", "for", "with", "gently", "carefully", "briefly", "well", "thoroughly"}
+_RISK_RE = re.compile(r"\b(?:feasib(?:le|ility)|risk|constraint|temperature|timing|hold time)\b", re.I)
+
+_PLANNING_MATERIAL = {
+    "Dish candidate": "dish_candidate",
+    "Purpose": "purpose_or_test",
+    "Role": "role_or_identity",
+    "Locks": "locks",
+    "Exemptions": "exemptions",
+    "Research emphasis": "research_basis",
+    "Destination section": "destination",
+}
+_SECTION_MATERIAL = {
+    "WHY COOK IT": "purpose_or_test",
+    "WHAT TO BUY": "ingredient_identity",
+    "QUANTITIES": "quantities",
+    "WHAT SUCCESS LOOKS LIKE": "success_criteria",
+}
+_HANDLING_WORDS = {
+    "gently", "carefully", "briefly", "fresh", "freshly", "separate", "separately",
+    "serving", "serve", "sitting", "sittings", "per", "last", "minute", "minutes",
+    "immediately", "just", "before", "finish", "finished", "finishing", "early",
+    "ahead", "crisp", "raw", "undressed", "unmixed", "covered", "uncovered",
+}
+_HANDLING_LINE_RE = re.compile(
+    r"^(?:(?:\d+[.)]|[-*])\s*)?(?:keep|store|hold|finish|add|mix|dress|combine|serve|prepare)\b.*"
+    r"(?:fresh|freshly|separate|separately|per sitting|at serving|before serving|last minute|"
+    r"do not .* early|until serving|just before serving)",
+    re.I,
+)
 
 
 def _canonical_body(document) -> dict[str, str]:
@@ -58,11 +84,11 @@ def _canonical_body(document) -> dict[str, str]:
         "title": document.title,
         "recognition": document.recognition,
         "introduction": "\n".join(document.introduction),
-        "planning.Purpose": document.planning_brief.values.get("Purpose", ""),
-        "planning.Role": document.planning_brief.values.get("Role", ""),
-        "planning.Locks": document.planning_brief.values.get("Locks", ""),
-        "planning.Exemptions": document.planning_brief.values.get("Exemptions", ""),
-        "planning.Research emphasis": document.planning_brief.values.get("Research emphasis", ""),
+        **{
+            f"planning.{field}": str(document.planning_brief.values.get(field, ""))
+            for field in document.planning_brief.values
+            if field != "Priors"
+        },
         "decisions": "\n".join(document.decisions),
         "research_basis": "\n".join(document.research_basis),
     })
@@ -71,75 +97,114 @@ def _canonical_body(document) -> dict[str, str]:
 
 def canonical_diff(before, after) -> dict[str, tuple[str, str]]:
     old, new = _canonical_body(before), _canonical_body(after)
-    return {path: (old.get(path, ""), new.get(path, "")) for path in sorted(set(old) | set(new)) if old.get(path, "") != new.get(path, "")}
+    return {
+        path: (old.get(path, ""), new.get(path, ""))
+        for path in sorted(set(old) | set(new))
+        if old.get(path, "") != new.get(path, "")
+    }
 
 
 def _signature(pattern: re.Pattern[str], text: str) -> tuple[str, ...]:
-    return tuple(sorted({m.group(0).lower().replace(" ", "") for m in pattern.finditer(text)}))
+    return tuple(sorted({m.group(0).casefold().replace(" ", "") for m in pattern.finditer(text)}))
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r"[a-z]+|\d+(?:[.,]\d+)?", text.casefold())
+
+
+def _handling_only_method_change(old: str, new: str) -> bool:
+    """Recognise narrowly scoped serving/freshness handling without semantic rewrite."""
+    if any(
+        _signature(pattern, old) != _signature(pattern, new)
+        for pattern in (_QUANTITY_RE, _RATIO_RE, _HALAL_SAFETY_RE, _EQUIPMENT_RE, _RISK_RE)
+    ):
+        return False
+    import difflib
+    old_lines = [line.strip() for line in old.splitlines() if line.strip()]
+    new_lines = [line.strip() for line in new.splitlines() if line.strip()]
+    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            continue
+        removed = old_lines[i1:i2]
+        added = new_lines[j1:j2]
+        if tag == "insert" and added and all(_HANDLING_LINE_RE.search(line) for line in added):
+            continue
+        if tag == "delete" and removed and all(_HANDLING_LINE_RE.search(line) for line in removed):
+            continue
+        old_tokens = _tokens(" ".join(removed))
+        new_tokens = _tokens(" ".join(added))
+        common = list(old_tokens)
+        for token in new_tokens:
+            if token in common:
+                common.remove(token)
+        added_tokens = list(new_tokens)
+        for token in old_tokens:
+            if token in added_tokens:
+                added_tokens.remove(token)
+        removed_tokens = common
+        if not added_tokens and not removed_tokens:
+            if old_tokens != new_tokens:
+                return False
+            continue
+        if not set(added_tokens + removed_tokens) <= _HANDLING_WORDS:
+            return False
+    return True
 
 
 def explicit_material_reasons(before, after) -> tuple[str, ...]:
-    """Return deterministic protocol-level reasons that require fresh Verification.
-
-    Canonical governed fields and substantive recipe sections are classified by
-    structure first. Regex signatures are only supplementary evidence; they are
-    never the sole protection for method, scope, research, or approved decisions.
-    """
+    """Classify protocol-defined material changes from canonical field ownership."""
     reasons: list[str] = []
     diff = canonical_diff(before, after)
-    changed = set(diff)
-    if changed & {"title", "recognition"}:
-        reasons.append("title_or_identity")
-    if "section.QUANTITIES" in changed:
-        reasons.append("quantities")
-    if "research_basis" in changed or "planning.Research emphasis" in changed:
-        reasons.append("research_basis")
-    governed = {
-        "planning.Locks": "locks",
-        "planning.Exemptions": "exemptions",
-        "decisions": "decisions",
-        "planning.Purpose": "purpose_or_test",
-        "planning.Role": "role_or_identity",
-    }
-    for path, reason in governed.items():
-        if path in changed:
-            reasons.append(reason)
     for path, (old, new) in diff.items():
-        if path == "section.HOW TO COOK IT":
-            old_actions = _signature(_METHOD_ACTION_RE, old)
-            new_actions = _signature(_METHOD_ACTION_RE, new)
-            token = re.compile(r"[a-zA-Z]+|\d+")
-            old_terms = tuple(t for t in (x.casefold() for x in token.findall(old)) if t not in _METHOD_IGNORED_TOKENS)
-            new_terms = tuple(t for t in (x.casefold() for x in token.findall(new)) if t not in _METHOD_IGNORED_TOKENS)
-            if old_actions != new_actions or old_terms != new_terms:
+        if path in {"title", "recognition", "introduction"}:
+            reasons.append("title_or_identity" if path != "introduction" else "premise")
+            continue
+        if path == "decisions":
+            reasons.append("decisions")
+            continue
+        if path == "research_basis":
+            reasons.append("research_basis")
+            continue
+        if path.startswith("planning."):
+            field = path.split(".", 1)[1]
+            reason = _PLANNING_MATERIAL.get(field)
+            if reason:
+                reasons.append(reason)
+            continue
+        if path.startswith("section."):
+            section = path.split(".", 1)[1]
+            if section == "HOW TO COOK IT":
+                if _handling_only_method_change(old, new):
+                    continue
                 reasons.append("method")
-        if _signature(_QUANTITY_RE, old) != _signature(_QUANTITY_RE, new):
-            reasons.append("quantity")
-        if _signature(_RATIO_RE, old) != _signature(_RATIO_RE, new):
-            reasons.append("ratio")
+            else:
+                reasons.append(_SECTION_MATERIAL.get(section, f"section:{section.casefold().replace(' ', '_')}"))
+        # Supplementary explanations for changed values. These do not exempt a
+        # structurally material path when the same keyword remains on both sides.
         for name, pattern in (
+            ("quantity", _QUANTITY_RE), ("ratio", _RATIO_RE),
             ("portions", _PORTION_RE), ("nutrition", _NUTRITION_RE),
             ("halal_or_safety", _HALAL_SAFETY_RE), ("sourcing", _SOURCING_RE),
             ("equipment_or_method", _EQUIPMENT_RE), ("feasibility_or_risk", _RISK_RE),
         ):
-            if _signature(pattern, old) != _signature(pattern, new):
-                reasons.append(name)
+            if pattern.search(old) or pattern.search(new):
+                if _signature(pattern, old) != _signature(pattern, new) or old != new:
+                    reasons.append(name)
     return tuple(dict.fromkeys(reasons))
 
 
 def require_small_scope(before, after) -> None:
-    immutable = {
-        "title": (before.title, after.title),
-        "planning_brief": (dict(before.planning_brief.values), dict(after.planning_brief.values)),
-        "decisions": (tuple(before.decisions), tuple(after.decisions)),
-        "research_basis": (tuple(before.research_basis), tuple(after.research_basis)),
-        "researched_by": (before.state.values["Researched by"], after.state.values["Researched by"]),
-    }
-    changed = [name for name, (old, new) in immutable.items() if old != new]
+    changed = []
+    if before.state.values["Researched by"] != after.state.values["Researched by"]:
+        changed.append("researched_by")
     material = list(explicit_material_reasons(before, after))
     if changed or material:
         from .errors import DishRuleError
         raise DishRuleError(
-            "VALIDATION_FAILED", "Small correction exceeds its permitted scope and requires Large correction",
-            rule="large_correction_required", details={"fields": changed, "material_reasons": material},
+            "VALIDATION_FAILED",
+            "Small correction exceeds its permitted handling-only scope and requires Large correction",
+            rule="large_correction_required",
+            details={"fields": changed, "material_reasons": material},
         )
+

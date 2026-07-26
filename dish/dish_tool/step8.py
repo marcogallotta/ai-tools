@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import dataclasses
+import difflib
+import json
 import re
 import sqlite3
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +49,59 @@ def _candidate(path: str):
 def _render(document):
     lines = document.render().splitlines()
     return lines[0], "\n".join(lines[1:]) + "\n"
+
+
+def _confirmed_version(conn: sqlite3.Connection, *, operation_id: str, task_gid: str, identity: str):
+    row = conn.execute(
+        """SELECT * FROM content_versions
+             WHERE operation_id=? AND task_gid=? AND identity=? AND confirmed=1
+             ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+        (operation_id, task_gid, identity),
+    ).fetchone()
+    if row is None:
+        raise DishRuleError(
+            "CONFLICT", "confirmed content evidence is missing",
+            rule="content_version_missing", details={"identity": identity},
+        )
+    return row
+
+
+def _held_document(conn: sqlite3.Connection, *, cycle, live):
+    if not cycle["hold_content_version_id"] or not cycle["hold_identity"] or not cycle["hold_section_gid"]:
+        raise DishRuleError(
+            "WRONG_STATE",
+            "held operation requires migration reconciliation before it can resume",
+            rule="hold_baseline_reconciliation_required",
+            details={"cycle_id": cycle["cycle_id"]},
+        )
+    version = conn.execute(
+        "SELECT * FROM content_versions WHERE content_version_id=?",
+        (cycle["hold_content_version_id"],),
+    ).fetchone()
+    if (
+        version is None
+        or version["confirmed"] != 1
+        or version["operation_id"] != cycle["operation_id"]
+        or version["task_gid"] != cycle["task_gid"]
+        or version["identity"] != cycle["hold_identity"]
+    ):
+        raise DishRuleError(
+            "CONFLICT", "persisted hold baseline is inconsistent",
+            rule="hold_baseline_invalid", details={"cycle_id": cycle["cycle_id"]},
+        )
+    if live.identity != cycle["hold_identity"]:
+        raise DishRuleError(
+            "CONFLICT", "live task content changed while the hold was open",
+            rule="hold_content_drift",
+            details={"expected_identity": cycle["hold_identity"], "actual_identity": live.identity},
+        )
+    if live.section_gid != cycle["hold_section_gid"]:
+        raise DishRuleError(
+            "CONFLICT", "live task placement changed while the hold was open",
+            rule="hold_placement_drift",
+            details={"expected_section_gid": cycle["hold_section_gid"], "actual_section_gid": live.section_gid},
+        )
+    return parse_task_document(f"{version['title']}\n{version['notes']}")
 
 
 def _write_document(conn, backend, op, live, document, *, schema=None, authorization_ids=()):
@@ -197,6 +253,8 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         "cycle_id": cycle["cycle_id"], "correction_class": "large" if route == "large" else None,
         "outcome": outcome, "route": {"evidence": "evidence", "human-review": "human_review"}.get(route),
         "resume_state": document.state.values["Resume status"],
+        "hold_identity": content_identity(intended_title, intended_notes).digest if (two_pass or route in {"evidence", "human-review"}) else None,
+        "hold_section_gid": live.section_gid if (two_pass or route in {"evidence", "human-review"}) else None,
     })
     if route == "large" and not two_pass:
         declare_operation_step(conn, operation_id, route_new_cycle_step, {"protocol_release": snapshot.identity, "protocol_text": snapshot.text})
@@ -219,7 +277,25 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         transition_operation(conn, operation_id, phase="held_human")
     elif route == "evidence":
         transition_operation(conn, operation_id, phase="held_evidence")
-    conn.execute("UPDATE verification_cycles SET correction_class = ?, outcome = ?, route = ?, resume_state = ?, completed_at = ? WHERE cycle_id = ?", ("large" if route == "large" else None, outcome, {"evidence": "evidence", "human-review": "human_review"}.get(route), document.state.values["Resume status"], utc_now(), cycle["cycle_id"]))
+    hold_fields = (None, None, None)
+    if two_pass or route in {"evidence", "human-review"}:
+        hold_version = _confirmed_version(
+            conn, operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity
+        )
+        hold_fields = (hold_version["content_version_id"], confirmed.identity, confirmed.section_gid)
+    conn.execute(
+        """UPDATE verification_cycles
+              SET correction_class=?, outcome=?, route=?, resume_state=?, completed_at=?,
+                  hold_content_version_id=?, hold_identity=?, hold_section_gid=?
+            WHERE cycle_id=?""",
+        (
+            "large" if route == "large" else None,
+            outcome,
+            {"evidence": "evidence", "human-review": "human_review"}.get(route),
+            document.state.values["Resume status"], utc_now(),
+            hold_fields[0], hold_fields[1], hold_fields[2], cycle["cycle_id"],
+        ),
+    )
     complete_operation_step(conn, operation_id, route_cycle_step)
     if route == "large" and not two_pass:
         next_number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
@@ -259,22 +335,44 @@ def _reset_path(document, category: str) -> dict[str, str]:
 
 
 
+_RESET_QUANTITY_RE = re.compile(r"(?<!\w)(\d+(?:[.,]\d+)?)\s*(kg|g|mg|l|ml|cl)\b", re.I)
+
+
 def _reset_normal_form(value: str) -> str:
+    from decimal import Decimal
+
+    def canonical_quantity(match: re.Match[str]) -> str:
+        amount = Decimal(match.group(1).replace(",", "."))
+        unit = match.group(2).casefold()
+        if unit == "kg":
+            amount *= 1000
+            unit = "g"
+        elif unit == "mg":
+            amount /= 1000
+            unit = "g"
+        elif unit == "l":
+            amount *= 1000
+            unit = "ml"
+        elif unit == "cl":
+            amount *= 10
+            unit = "ml"
+        text = format(amount.normalize(), "f")
+        if "." in text:
+            text = text.rstrip("0").rstrip(".")
+        return f"{text}{unit}"
+
     value = str(value).casefold().replace("\u00a0", " ")
-    value = re.sub(r"(?<=\d)\s+(?=(?:kg|g|mg|l|ml|cl|tsp|tbsp|oz|lb)\b)", "", value)
+    value = _RESET_QUANTITY_RE.sub(canonical_quantity, value)
     value = re.sub(r"\s+", " ", value)
     return value.strip()
 
 
 def _prove_reset(original, candidate, category: str, before: str, after: str) -> str:
-    """Prove an exact replacement at one category-owned canonical path.
-
-    Merely adding an ``after`` claim while leaving the operative ``before``
-    value in place is not a reset. Generated metadata is not present in these
-    path maps and therefore cannot serve as evidence.
-    """
+    """Prove one operative replacement hunk at a category-owned canonical path."""
     before = str(before).strip()
     after = str(after).strip()
+    before_norm = _reset_normal_form(before)
+    after_norm = _reset_normal_form(after)
     old_paths = _reset_path(original, category)
     new_paths = _reset_path(candidate, category)
     matches: list[str] = []
@@ -282,20 +380,29 @@ def _prove_reset(original, candidate, category: str, before: str, after: str) ->
         new_value = new_paths.get(path, "")
         if old_value == new_value:
             continue
-        old_norm = _reset_normal_form(old_value)
-        new_norm = _reset_normal_form(new_value)
-        before_norm = _reset_normal_form(before)
-        after_norm = _reset_normal_form(after)
-        if before_norm not in old_norm or after_norm not in new_norm:
-            continue
-        if before_norm in new_norm or after_norm in old_norm:
-            continue
-        matches.append(path)
+        old_lines = [_reset_normal_form(line) for line in str(old_value).splitlines() if line.strip()]
+        new_lines = [_reset_normal_form(line) for line in str(new_value).splitlines() if line.strip()]
+        matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+        path_matches = 0
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag not in {"replace", "delete", "insert"}:
+                continue
+            deleted = "\n".join(old_lines[i1:i2])
+            inserted = "\n".join(new_lines[j1:j2])
+            if (
+                before_norm in deleted
+                and after_norm in inserted
+                and before_norm not in inserted
+                and after_norm not in deleted
+            ):
+                path_matches += 1
+        if path_matches == 1:
+            matches.append(path)
     if len(matches) == 1:
         return matches[0]
     raise DishRuleError(
         "VALIDATION_FAILED",
-        "corrected candidate must replace the declared value at one category-owned canonical path",
+        "corrected candidate must replace the declared operative value in one diff hunk",
         rule="two_pass_reset_not_applied",
         details={"category": category, "before": before, "after": after, "matching_paths": matches},
     )
@@ -327,8 +434,16 @@ def reopen_two_pass(
         )
     if editor not in {"gpt", "codex", "claude"}:
         raise DishRuleError("INVALID_ARGUMENT", "reopen editor must be an agent", rule="reopen_editor_required")
+    cycle = conn.execute(
+        """SELECT * FROM verification_cycles
+             WHERE operation_id=? AND outcome='two-pass-hold'
+             ORDER BY cycle_number DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    if cycle is None:
+        raise DishRuleError("WRONG_STATE", "operation has no two-pass hold", rule="two_pass_hold_required")
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
-    original = parse_task_document(f"{live.title}\n{live.notes}")
+    original = _held_document(conn, cycle=cycle, live=live)
     if original.state.values["Status"] != "pending-human-review" or original.state.values["Resume status"] != "pending-verification":
         raise DishRuleError("WRONG_STATE", "task is not on the two-pass Verification hold", rule="two_pass_hold_required")
     candidate = _candidate(file_path)
@@ -372,6 +487,11 @@ def reopen_two_pass(
     intended_title, intended_notes = _render(document)
     intended_identity = content_identity(intended_title, intended_notes).digest
     declare_operation_step(conn, operation_id, "reopen_write", {"title": intended_title, "notes": intended_notes, "reset_path": changed_path})
+    declare_operation_step(conn, operation_id, "reopen_reset", {
+        "source_cycle_id": cycle["cycle_id"], "candidate_identity": intended_identity,
+        "canonical_path": changed_path, "category": category,
+        "before": before, "after": after,
+    })
     declare_operation_step(conn, operation_id, "reopen_actor", {
         "role": "material_editor", "agent": editor, "run_id": run_id,
         "candidate_identity": intended_identity,
@@ -382,6 +502,17 @@ def reopen_two_pass(
         conn, backend, op, live, document, schema=schema, authorization_ids=authorization_ids
     )
     complete_operation_step(conn, operation_id, "reopen_write")
+    conn.execute(
+        """INSERT OR IGNORE INTO two_pass_resets(
+               reset_id, operation_id, source_cycle_id, candidate_identity,
+               canonical_path, category, before_json, after_json, created_at
+           ) VALUES(?,?,?,?,?,?,?,?,?)""",
+        (
+            str(uuid.uuid4()), operation_id, cycle["cycle_id"], confirmed.identity,
+            changed_path, category, json.dumps(before), json.dumps(after), utc_now(),
+        ),
+    )
+    complete_operation_step(conn, operation_id, "reopen_reset")
     record_actor_fact(
         conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor",
         agent=editor, run_id=run_id, candidate_identity=confirmed.identity,
@@ -452,7 +583,7 @@ def resolve_hold(
     if cycle is None:
         raise DishRuleError("WRONG_STATE", "hold has no persisted Verification decision", rule="hold_cycle_missing")
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
-    before_doc = parse_task_document(f"{live.title}\n{live.notes}")
+    before_doc = _held_document(conn, cycle=cycle, live=live)
     expected_status = "pending-evidence" if resolution_kind == "evidence" else "pending-human-review"
     if before_doc.state.values["Status"] != expected_status:
         raise DishRuleError("WRONG_STATE", "live task does not match the persisted hold", rule="hold_state_mismatch")

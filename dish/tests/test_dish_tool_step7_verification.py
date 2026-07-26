@@ -171,7 +171,7 @@ def test_caller_cannot_forge_current_identity_after_review(tmp_path):
     result = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=forged, semantic_review_complete=True, provenance_complete=True, run_id="run-forge")
     assert result["code"] == "CONFLICT"
-    assert result["errors"][0]["rule"] == "reviewed_identity_mismatch"
+    assert result["errors"][0]["rule"] == "live_task_drift"
 
 
 def test_review_and_signoff_bind_immutable_content_versions(tmp_path):

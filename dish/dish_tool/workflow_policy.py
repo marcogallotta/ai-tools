@@ -18,32 +18,50 @@ class WorkflowSnapshot:
     latest_cycle_route: str | None
     validation_rules: tuple[str, ...]
     pending_steps: tuple[str, ...] = ()
+    unresolved_attempts: tuple[str, ...] = ()
+    migration_reconciliation_required: bool = False
+    identity_matches: bool = True
+    placement_matches: bool = True
+    required_cycle_exists: bool = True
+    signoff_bound: bool = True
+    held_baseline_matches: bool = True
 
 
 def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
-    """Return the sole legal-action answer for current workflow state."""
-    if snapshot.operation_status not in {"open", "uncertain"}:
+    """Return actions that are executable against the same authoritative snapshot."""
+    if snapshot.operation_status != "open":
         return []
-    if snapshot.pending_steps:
+    if (
+        snapshot.pending_steps
+        or snapshot.unresolved_attempts
+        or snapshot.migration_reconciliation_required
+        or not snapshot.identity_matches
+        or not snapshot.placement_matches
+        or not snapshot.held_baseline_matches
+    ):
         return []
     phase = snapshot.operation_phase
-    # Preparation is the route that turns a bare Planning task or Planning brief
-    # into governed content, so pre-candidate canonical findings cannot suppress it.
     if phase == "prepare_required":
-        return list(snapshot.persisted_actions) if snapshot.operation_status == "open" else []
+        return list(snapshot.persisted_actions)
     if snapshot.validation_rules:
         return []
     if phase == "await_verification":
+        if not snapshot.required_cycle_exists:
+            return []
         if (
             snapshot.live_status != "pending-verification"
             or snapshot.live_section_gid != snapshot.verification_queue_gid
         ):
             return []
         return ["approve", "reject"] if snapshot.cycle_reviewed else ["verify"]
-    if phase == "await_submission" and snapshot.live_status != "ready":
-        return []
-    if phase == "held_evidence" and snapshot.live_status != "pending-evidence":
-        return []
+    if phase == "await_submission":
+        if snapshot.live_status != "ready" or not snapshot.signoff_bound:
+            return []
+        return list(snapshot.persisted_actions)
+    if phase == "held_evidence":
+        if snapshot.live_status != "pending-evidence":
+            return []
+        return list(snapshot.persisted_actions)
     if phase == "held_human":
         if snapshot.live_status != "pending-human-review":
             return []
@@ -51,8 +69,6 @@ def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
             return ["reopen"]
         if snapshot.latest_cycle_route == "human_review":
             return ["record-human-decision"]
-        return []
-    if phase == "prepare_required" and snapshot.operation_status != "open":
         return []
     return list(snapshot.persisted_actions)
 

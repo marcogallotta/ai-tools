@@ -86,8 +86,8 @@ def build_parser() -> JsonArgumentParser:
     )
     authorize.add_argument("submission_id")
     authorize.add_argument("--field", required=True)
-    authorize.add_argument("--before", required=True)
-    authorize.add_argument("--after", required=True)
+    authorize.add_argument("--before", required=True, type=json.loads, help="typed JSON value before the change")
+    authorize.add_argument("--after", required=True, type=json.loads, help="typed JSON value after the change")
     authorize.add_argument("--reason", required=True)
     authorize.add_argument("--run-id")
 

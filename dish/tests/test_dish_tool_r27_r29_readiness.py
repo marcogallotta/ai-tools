@@ -121,7 +121,7 @@ def test_non_material_terminal_phase_recovers_after_confirmed_write(tmp_path, mo
     candidate = tmp_path / "non-material.txt"
     candidate.write_text(
         f"{backend.title}\n{backend.notes}".replace(
-            "Crisp and aromatic.", "Crisp and aromatic, with a brighter finish."
+            "1. Cook it.", "1. Cook it gently."
         )
     )
     original = step6.transition_operation

@@ -230,10 +230,12 @@ def build(output_dir: str | Path | None = None) -> None:
         conn.execute("""INSERT INTO verification_cycles(
             cycle_id, operation_id, task_gid, cycle_number, protocol_release,
             verifier_agent, run_id, outcome, route, resume_state, created_at,
-            protocol_text, reviewed_content_version_id, reviewed_identity
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            protocol_text, reviewed_content_version_id, reviewed_identity,
+            hold_content_version_id, hold_identity, hold_section_gid
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (f"cycle-{route}", op, task, 1, "1.0.10", "codex", f"run-{route}",
-             outcome, route, "pending-verification", NOW, "verification protocol", vid, cid))
+             outcome, route, "pending-verification", NOW, "verification protocol", vid, cid,
+             vid, cid, "verification"))
         sidecars.append({"task_gid": task, "title": title, "notes": notes,
                          "section_gid": "verification", "expected_recovery": "held"})
         scenarios.append({"id": f"{route}-hold", "task_gid": task,

@@ -25,6 +25,6 @@ def test_current_workflow_service_rejects_action_after_live_placement_drift(tmp_
     try:
         service.assert_action(operation_id, "approve", schema=app._load_release(None).schema)
     except DishRuleError as exc:
-        assert exc.rule == "operation_action_not_allowed"
+        assert exc.rule == "verification_placement_required"
     else:
         raise AssertionError("drifted operation unexpectedly allowed approval")

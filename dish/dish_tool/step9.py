@@ -287,6 +287,24 @@ def recover_operation(
                 )
                 complete_operation_step(conn, operation_id, "small_review_binding")
                 actions.append({"kind": "workflow_step", "step": "small_review_binding", "outcome": "confirmed"})
+            elif step["step_name"] == "reopen_reset":
+                if live.identity != intended["candidate_identity"]:
+                    raise DishRuleError("CONFLICT", "live reopen candidate does not match reset intent", rule="workflow_step_evidence_mismatch")
+                import uuid
+                conn.execute(
+                    """INSERT OR IGNORE INTO two_pass_resets(
+                           reset_id, operation_id, source_cycle_id, candidate_identity,
+                           canonical_path, category, before_json, after_json, created_at
+                       ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                    (
+                        str(uuid.uuid4()), operation_id, intended["source_cycle_id"],
+                        intended["candidate_identity"], intended["canonical_path"],
+                        intended["category"], json.dumps(intended["before"]),
+                        json.dumps(intended["after"]), utc_now(),
+                    ),
+                )
+                complete_operation_step(conn, operation_id, "reopen_reset")
+                actions.append({"kind": "workflow_step", "step": "reopen_reset", "outcome": "confirmed"})
             elif step["step_name"] == "small_signoff":
                 cycle = conn.execute("SELECT * FROM verification_cycles WHERE cycle_id=?", (intended["cycle_id"],)).fetchone()
                 if cycle is not None and cycle["outcome"] == "approved":
@@ -302,9 +320,32 @@ def recover_operation(
                 if cycle is None:
                     raise DishRuleError("CONFLICT", "route cycle is missing", rule="workflow_cycle_missing")
                 if cycle["completed_at"] is None:
+                    hold_version_id = None
+                    hold_identity = intended.get("hold_identity")
+                    hold_section_gid = intended.get("hold_section_gid")
+                    if hold_identity:
+                        hold_version = conn.execute(
+                            """SELECT content_version_id FROM content_versions
+                                 WHERE operation_id=? AND task_gid=? AND identity=? AND confirmed=1
+                                 ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+                            (operation_id, op["task_gid"], hold_identity),
+                        ).fetchone()
+                        if hold_version is None:
+                            raise DishRuleError(
+                                "CONFLICT", "hold write lacks confirmed content evidence",
+                                rule="workflow_step_evidence_mismatch",
+                            )
+                        hold_version_id = hold_version["content_version_id"]
                     conn.execute(
-                        "UPDATE verification_cycles SET correction_class=?, outcome=?, route=?, resume_state=?, completed_at=? WHERE cycle_id=?",
-                        (intended.get("correction_class"), intended["outcome"], intended.get("route"), intended.get("resume_state"), utc_now(), intended["cycle_id"]),
+                        """UPDATE verification_cycles
+                              SET correction_class=?, outcome=?, route=?, resume_state=?, completed_at=?,
+                                  hold_content_version_id=?, hold_identity=?, hold_section_gid=?
+                            WHERE cycle_id=?""",
+                        (
+                            intended.get("correction_class"), intended["outcome"], intended.get("route"),
+                            intended.get("resume_state"), utc_now(), hold_version_id, hold_identity,
+                            hold_section_gid, intended["cycle_id"],
+                        ),
                     )
                 complete_operation_step(conn, operation_id, step["step_name"])
                 actions.append({"kind": "workflow_step", "step": "route_cycle_finalize", "outcome": "confirmed"})

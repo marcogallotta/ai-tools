@@ -96,7 +96,7 @@ def test_small_correction_cannot_replace_unreviewed_live_content(tmp_path):
         semantic_review_complete=True, provenance_complete=True, run_id="small-proof",
     )
     assert result["code"] == "CONFLICT"
-    assert result["errors"][0]["rule"] == "stale_verifier_review"
+    assert result["errors"][0]["rule"] == "live_task_drift"
 
 
 def test_reject_requires_exact_verifier_run_proof(tmp_path):
