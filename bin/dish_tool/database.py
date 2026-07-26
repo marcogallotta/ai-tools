@@ -744,7 +744,24 @@ def legal_operation_actions(operation: Mapping[str, Any]) -> list[str]:
 
 
 def declare_operation_step(conn: sqlite3.Connection, operation_id: str, step_name: str, intended: Mapping[str, Any]) -> sqlite3.Row:
-    conn.execute("INSERT OR IGNORE INTO operation_steps(operation_id, step_name, intended_json) VALUES (?, ?, ?)", (operation_id, step_name, json.dumps(dict(intended), sort_keys=True, separators=(",", ":"))))
+    intended_json = json.dumps(dict(intended), sort_keys=True, separators=(",", ":"))
+    existing = conn.execute(
+        "SELECT * FROM operation_steps WHERE operation_id=? AND step_name=?",
+        (operation_id, step_name),
+    ).fetchone()
+    if existing is not None:
+        if existing["intended_json"] != intended_json:
+            raise DishRuleError(
+                "CONFLICT",
+                "workflow retry intent differs from the persisted operation step",
+                rule="operation_step_intent_mismatch",
+                details={"step_name": step_name, "persisted": json.loads(existing["intended_json"]), "requested": dict(intended)},
+            )
+        return existing
+    conn.execute(
+        "INSERT INTO operation_steps(operation_id, step_name, intended_json) VALUES (?, ?, ?)",
+        (operation_id, step_name, intended_json),
+    )
     return conn.execute("SELECT * FROM operation_steps WHERE operation_id=? AND step_name=?", (operation_id, step_name)).fetchone()
 
 def complete_operation_step(conn: sqlite3.Connection, operation_id: str, step_name: str) -> sqlite3.Row:

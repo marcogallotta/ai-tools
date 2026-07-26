@@ -322,6 +322,17 @@ def begin_operation_write_attempt(
     context: dict[str, object] | None = None,
 ) -> str:
     """Persist the complete write intent before the backend call begins."""
+    unresolved = conn.execute(
+        "SELECT attempt_id, outcome FROM write_attempts WHERE operation_id=? AND outcome IN ('started','uncertain') ORDER BY started_at LIMIT 1",
+        (operation_id,),
+    ).fetchone()
+    if unresolved is not None:
+        raise DishRuleError(
+            "CONFLICT",
+            "an earlier write attempt must be recovered before another write can begin",
+            rule="unresolved_write_attempt",
+            details={"attempt_id": unresolved["attempt_id"], "outcome": unresolved["outcome"]},
+        )
     attempt_id = str(uuid.uuid4())
     conn.execute(
         """INSERT INTO write_attempts (
@@ -384,6 +395,17 @@ def begin_movement_attempt(
     intended_section_gid: str,
     purpose: str = "unspecified",
 ) -> str:
+    unresolved = conn.execute(
+        "SELECT attempt_id, outcome FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain') ORDER BY started_at LIMIT 1",
+        (operation_id,),
+    ).fetchone()
+    if unresolved is not None:
+        raise DishRuleError(
+            "CONFLICT",
+            "an earlier movement attempt must be recovered before another movement can begin",
+            rule="unresolved_movement_attempt",
+            details={"attempt_id": unresolved["attempt_id"], "outcome": unresolved["outcome"]},
+        )
     attempt_id = str(uuid.uuid4())
     conn.execute(
         """INSERT INTO movement_attempts (
