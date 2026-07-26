@@ -6,14 +6,30 @@
       "title": "Dish A",
       "notes": "updated notes",
       "section_gid": "verification",
-      "expected_recovery": "applied"
+      "expected_recovery": "applied",
+      "contradictory_request": "not-applied",
+      "expected_row_diff": {
+        "table": "write_attempts",
+        "id": "wa-applied",
+        "column": "outcome",
+        "before": "started",
+        "after": "confirmed"
+      }
     },
     {
       "task_gid": "task-write-not-applied",
       "title": "Dish B",
       "notes": "baseline notes",
       "section_gid": "verification",
-      "expected_recovery": "not_applied"
+      "expected_recovery": "not_applied",
+      "contradictory_request": "applied",
+      "expected_row_diff": {
+        "table": "write_attempts",
+        "id": "wa-not-applied",
+        "column": "outcome",
+        "before": "started",
+        "after": "not_applied"
+      }
     },
     {
       "task_gid": "task-write-uncertain",
@@ -63,6 +79,34 @@
       "notes": "reviewed notes",
       "section_gid": "verification",
       "expected_recovery": "held"
+    },
+    {
+      "task_gid": "task-move-ambiguous",
+      "title": "Dish ambiguous move",
+      "notes": "stable notes",
+      "section_gid": "third-section",
+      "expected_recovery": "uncertain",
+      "expected_row_diff": {
+        "table": "movement_attempts",
+        "id": "ma-ambiguous",
+        "column": "outcome",
+        "before": "uncertain",
+        "after": "uncertain"
+      }
+    },
+    {
+      "task_gid": "task-partial-write",
+      "title": "Dish partial",
+      "notes": "new notes",
+      "section_gid": "verification",
+      "expected_recovery": "applied",
+      "expected_row_diff": {
+        "table": "write_attempts",
+        "id": "wa-partial",
+        "column": "outcome",
+        "before": "uncertain",
+        "after": "confirmed"
+      }
     }
   ]
 }

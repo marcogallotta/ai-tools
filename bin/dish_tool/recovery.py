@@ -347,8 +347,8 @@ def finish_operation_write_attempt(
     attempt_id: str,
     outcome: str,
 ) -> sqlite3.Row:
-    if outcome not in {"confirmed", "not_applied", "uncertain"}:
-        raise ValueError("write-attempt outcome must be confirmed, not_applied, or uncertain")
+    if outcome not in {"not_applied", "uncertain"}:
+        raise ValueError("confirmed writes must use finalize_confirmed_write_attempt with exact live evidence")
     cursor = conn.execute(
         """
         UPDATE write_attempts
@@ -407,8 +407,8 @@ def finish_movement_attempt(
     attempt_id: str,
     outcome: str,
 ) -> sqlite3.Row:
-    if outcome not in {"confirmed", "not_applied", "uncertain"}:
-        raise ValueError("movement-attempt outcome must be confirmed, not_applied, or uncertain")
+    if outcome not in {"not_applied", "uncertain"}:
+        raise ValueError("confirmed movements must use finalize_confirmed_movement_attempt with exact live evidence")
     cursor = conn.execute(
         """
         UPDATE movement_attempts

@@ -14,7 +14,7 @@ sys.path.insert(0, str(BIN))
 from dish_tool.database import content_identity
 from dish_tool.database_schema import initialize_database
 
-DB_PATH = HERE / "dish-tool-recovery-v6.sqlite"
+DB_PATH = HERE / "dish-tool-recovery-v12.sqlite"
 SIDECAR_PATH = HERE / "live-tasks.json"
 MATRIX_PATH = HERE / "fixture-matrix.json"
 NOW = "2026-07-25T12:00:00+00:00"
@@ -26,18 +26,20 @@ def ident(title: str, notes: str) -> str:
 
 def add_operation(conn: sqlite3.Connection, *, op: str, task: str, expected: str,
                   status: str = "open", completed: bool = False,
-                  content_done: bool = False, signoff_done: bool = False) -> None:
+                  content_done: bool = False, signoff_done: bool = False,
+                  phase: str | None = None, terminal_outcome: str | None = None) -> None:
+    resolved_phase = phase or ("terminal" if completed or status in {"completed", "cancelled"} else "prepare_required")
     conn.execute(
         """INSERT INTO operations(
             operation_id, task_gid, operation_kind, status, editor_agent,
             researcher_agent, verifier_agent, run_id, independence_attestation,
             expected_identity, schema_version, content_write_completed_at,
             signoff_completed_at, movement_completed_at, created_at, completed_at,
-            destination_movement_attempt_id
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            destination_movement_attempt_id, phase, terminal_outcome
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (op, task, "change", status, "gpt", "gpt", "codex", f"run-{op}", None,
          expected, "2", NOW if content_done else None, NOW if signoff_done else None,
-         None, NOW, NOW if completed else None, None),
+         None, NOW, NOW if completed else None, None, resolved_phase, terminal_outcome),
     )
 
 
@@ -85,7 +87,7 @@ def build() -> None:
         ("wa-applied", op, old_id, ident(new_t, new_n), "started", NOW,
          "content_write", new_t, new_n, "2", json.dumps({"scenario": "applied"})))
     sidecars.append({"task_gid": task, "title": new_t, "notes": new_n,
-                     "section_gid": "verification", "expected_recovery": "applied"})
+                     "section_gid": "verification", "expected_recovery": "applied", "contradictory_request": "not-applied", "expected_row_diff": {"table": "write_attempts", "id": "wa-applied", "column": "outcome", "before": "started", "after": "confirmed"}})
     scenarios.append({"id": "write-applied", "task_gid": task,
                       "covers": ["started write", "live applied", "truthful identities"]})
 
@@ -102,7 +104,7 @@ def build() -> None:
         ("wa-not-applied", op, old_id, ident(new_t, new_n), "started", NOW,
          "content_write", new_t, new_n, "2", json.dumps({"scenario": "not_applied"})))
     sidecars.append({"task_gid": task, "title": old_t, "notes": old_n,
-                     "section_gid": "verification", "expected_recovery": "not_applied"})
+                     "section_gid": "verification", "expected_recovery": "not_applied", "contradictory_request": "applied", "expected_row_diff": {"table": "write_attempts", "id": "wa-not-applied", "column": "outcome", "before": "started", "after": "not_applied"}})
     scenarios.append({"id": "write-not-applied", "task_gid": task,
                       "covers": ["started write", "live not applied", "truthful identities"]})
 
@@ -150,7 +152,7 @@ def build() -> None:
     signed_t, signed_n = "Dish signed", "version two signed"
     base_id = add_state(conn, task=task, title=base_t, notes=base_n)
     add_operation(conn, op=op, task=task, expected=base_id, status="completed",
-                  completed=True, content_done=True, signoff_done=True)
+                  completed=True, content_done=True, signoff_done=False, terminal_outcome="submitted")
     v1 = "cv-signed-1"; v2 = "cv-signed-2"
     add_version(conn, version=v1, task=task, op=op, boundary="baseline",
                 title=base_t, notes=base_n)
@@ -175,6 +177,7 @@ def build() -> None:
     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         ("cycle-signed", op, task, 1, "1.0.2", "codex", "run-op-signed",
          "small", "approved", NOW, NOW, "verification protocol", v2, signed_id, v2, signed_id))
+    conn.execute("UPDATE operations SET signoff_completed_at=? WHERE operation_id=?", (NOW, op))
     sidecars.append({"task_gid": task, "title": signed_t, "notes": signed_n,
                      "section_gid": "destination", "expected_recovery": "none"})
     scenarios.append({"id": "signed-binding", "task_gid": task,
@@ -200,7 +203,7 @@ def build() -> None:
         task, op = f"task-{route}-hold", f"op-{route}-hold"
         title, notes = f"Dish {route}", "reviewed notes"
         cid = add_state(conn, task=task, title=title, notes=notes)
-        add_operation(conn, op=op, task=task, expected=cid)
+        add_operation(conn, op=op, task=task, expected=cid, phase="held_evidence" if route == "evidence" else "held_human")
         vid = f"cv-{route}-reviewed"
         add_version(conn, version=vid, task=task, op=op, boundary="verification_read",
                     title=title, notes=notes)
@@ -215,6 +218,41 @@ def build() -> None:
                          "section_gid": "verification", "expected_recovery": "held"})
         scenarios.append({"id": f"{route}-hold", "task_gid": task,
                           "covers": [f"{route} review", outcome, "reviewed binding"]})
+
+    # Checked-in/handoff movement ambiguity: live placement is neither side.
+    task, op = "task-move-ambiguous", "op-move-ambiguous"
+    title, notes = "Dish ambiguous move", "stable notes"
+    cid = add_state(conn, task=task, title=title, notes=notes)
+    add_operation(conn, op=op, task=task, expected=cid, status="uncertain", phase="await_verification")
+    conn.execute("""INSERT INTO movement_attempts(
+        attempt_id, operation_id, expected_section_gid, intended_section_gid,
+        outcome, started_at, purpose
+    ) VALUES(?,?,?,?,?,?,?)""", ("ma-ambiguous", op, "research", "verification", "uncertain", NOW, "verification_handoff"))
+    sidecars.append({"task_gid": task, "title": title, "notes": notes,
+                     "section_gid": "third-section", "expected_recovery": "uncertain",
+                     "expected_row_diff": {"table": "movement_attempts", "id": "ma-ambiguous", "column": "outcome", "before": "uncertain", "after": "uncertain"}})
+    scenarios.append({"id": "checked-in-movement-ambiguity", "task_gid": task,
+                      "covers": ["checked-in movement ambiguity", "contradictory recovery decisions", "exact row diff"]})
+
+    # Partially finalized write: content-version evidence exists but attempt is uncertain.
+    task, op = "task-partial-write", "op-partial-write"
+    old_t, old_n = "Dish partial", "old notes"
+    new_t, new_n = "Dish partial", "new notes"
+    old_id = add_state(conn, task=task, title=old_t, notes=old_n)
+    add_operation(conn, op=op, task=task, expected=old_id, status="uncertain")
+    version_id = "cv-partial-intended"
+    new_id = add_version(conn, version=version_id, task=task, op=op, boundary="content_write", title=new_t, notes=new_n)
+    conn.execute("""INSERT INTO write_attempts(
+        attempt_id, operation_id, expected_identity, intended_identity, outcome,
+        started_at, purpose, intended_title, intended_notes, schema_version,
+        confirmed_content_version_id
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""", ("wa-partial", op, old_id, new_id, "uncertain", NOW,
+        "content_write", new_t, new_n, "2", version_id))
+    sidecars.append({"task_gid": task, "title": new_t, "notes": new_n,
+                     "section_gid": "verification", "expected_recovery": "applied",
+                     "expected_row_diff": {"table": "write_attempts", "id": "wa-partial", "column": "outcome", "before": "uncertain", "after": "confirmed"}})
+    scenarios.append({"id": "partially-finalized-write", "task_gid": task,
+                      "covers": ["partially finalized attempt", "exact row diff"]})
 
     conn.commit()
     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")

@@ -447,7 +447,72 @@ CREATE INDEX marco_authorizations_lookup_idx
     ON marco_authorizations(task_gid, operation_id, field_name, consumed_at, created_at);
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11}
+_MIGRATION_12 = """
+CREATE TRIGGER write_attempt_confirmed_binding_insert
+BEFORE INSERT ON write_attempts
+WHEN NEW.outcome = 'confirmed' AND (
+    NEW.confirmed_content_version_id IS NULL OR
+    NOT EXISTS (
+        SELECT 1 FROM content_versions cv
+        JOIN operations o ON o.operation_id = NEW.operation_id
+        WHERE cv.content_version_id = NEW.confirmed_content_version_id
+          AND cv.operation_id = NEW.operation_id
+          AND cv.task_gid = o.task_gid
+          AND cv.confirmed = 1
+          AND cv.identity = NEW.intended_identity
+    )
+)
+BEGIN SELECT RAISE(ABORT, 'confirmed write attempt requires exact content-version evidence'); END;
+CREATE TRIGGER write_attempt_confirmed_binding_update
+BEFORE UPDATE OF outcome, confirmed_content_version_id, intended_identity, operation_id ON write_attempts
+WHEN NEW.outcome = 'confirmed' AND (
+    NEW.confirmed_content_version_id IS NULL OR
+    NOT EXISTS (
+        SELECT 1 FROM content_versions cv
+        JOIN operations o ON o.operation_id = NEW.operation_id
+        WHERE cv.content_version_id = NEW.confirmed_content_version_id
+          AND cv.operation_id = NEW.operation_id
+          AND cv.task_gid = o.task_gid
+          AND cv.confirmed = 1
+          AND cv.identity = NEW.intended_identity
+    )
+)
+BEGIN SELECT RAISE(ABORT, 'confirmed write attempt requires exact content-version evidence'); END;
+CREATE TRIGGER movement_attempt_confirmed_binding_insert
+BEFORE INSERT ON movement_attempts
+WHEN NEW.outcome = 'confirmed' AND (
+    NEW.confirmed_section_gid IS NULL OR NEW.confirmed_section_gid != NEW.intended_section_gid
+)
+BEGIN SELECT RAISE(ABORT, 'confirmed movement attempt requires exact placement evidence'); END;
+CREATE TRIGGER movement_attempt_confirmed_binding_update
+BEFORE UPDATE OF outcome, confirmed_section_gid, intended_section_gid ON movement_attempts
+WHEN NEW.outcome = 'confirmed' AND (
+    NEW.confirmed_section_gid IS NULL OR NEW.confirmed_section_gid != NEW.intended_section_gid
+)
+BEGIN SELECT RAISE(ABORT, 'confirmed movement attempt requires exact placement evidence'); END;
+CREATE TRIGGER operations_signoff_requires_approved_cycle_insert
+BEFORE INSERT ON operations
+WHEN NEW.signoff_completed_at IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM verification_cycles vc
+     WHERE vc.operation_id = NEW.operation_id AND vc.outcome='approved'
+       AND vc.completed_at IS NOT NULL
+       AND vc.signed_content_version_id IS NOT NULL
+       AND vc.signed_identity IS NOT NULL
+)
+BEGIN SELECT RAISE(ABORT, 'signoff completion requires an approved signed cycle'); END;
+CREATE TRIGGER operations_signoff_requires_approved_cycle_update
+BEFORE UPDATE OF signoff_completed_at ON operations
+WHEN NEW.signoff_completed_at IS NOT NULL AND NOT EXISTS (
+    SELECT 1 FROM verification_cycles vc
+     WHERE vc.operation_id = NEW.operation_id AND vc.outcome='approved'
+       AND vc.completed_at IS NOT NULL
+       AND vc.signed_content_version_id IS NOT NULL
+       AND vc.signed_identity IS NOT NULL
+)
+BEGIN SELECT RAISE(ABORT, 'signoff completion requires an approved signed cycle'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -473,12 +538,19 @@ def initialize_database(
     db_path = Path(path).expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     _backup_legacy_database(db_path)
-    conn = sqlite3.connect(str(db_path), timeout=5, isolation_level=None)
+    conn = sqlite3.connect(str(db_path), timeout=30, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 5000")
-    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.OperationalError as exc:
+        conn.close()
+        if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+            raise DishRuleError("BACKEND_REJECTED", "database journal mode could not be established while another reader holds the file", rule="database_reader_lock", retryable=True) from exc
+        raise
     migrate_database(conn)
+    _validate_current_database(conn)
     return conn
 
 
@@ -495,11 +567,51 @@ def _execute_script_statements(conn: sqlite3.Connection, script: str) -> None:
         raise sqlite3.OperationalError("incomplete migration SQL statement")
 
 
+def _schema_version_state(conn: sqlite3.Connection) -> tuple[int, int | None]:
+    user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    has_ledger = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'").fetchone() is not None
+    ledger_version = None
+    if has_ledger:
+        ledger_version = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+        ledger_version = None if ledger_version is None else int(ledger_version)
+    return user_version, ledger_version
+
+
+def _validate_version_claims(conn: sqlite3.Connection, *, allow_empty: bool = False) -> None:
+    current = max(MIGRATIONS)
+    user_version, ledger_version = _schema_version_state(conn)
+    if user_version > current:
+        raise DishRuleError("VALIDATION_FAILED", "database user_version is newer than this release", rule="database_future_user_version", details={"user_version": user_version, "current": current})
+    if ledger_version is not None and ledger_version > current:
+        raise DishRuleError("VALIDATION_FAILED", "database migration ledger is newer than this release", rule="database_future_ledger", details={"ledger_version": ledger_version, "current": current})
+    if ledger_version is not None and ledger_version != user_version:
+        raise DishRuleError("VALIDATION_FAILED", "database migration ledger and user_version disagree", rule="database_version_disagreement", details={"user_version": user_version, "ledger_version": ledger_version})
+    if not allow_empty and user_version > 0 and ledger_version is None:
+        raise DishRuleError("VALIDATION_FAILED", "versioned database is missing its migration ledger", rule="database_ledger_missing", details={"user_version": user_version})
+
+
+def _validate_current_database(conn: sqlite3.Connection) -> None:
+    current = max(MIGRATIONS)
+    _validate_version_claims(conn)
+    user_version, ledger_version = _schema_version_state(conn)
+    if user_version != current or ledger_version != current:
+        raise DishRuleError("VALIDATION_FAILED", "database did not converge to the current schema", rule="database_schema_not_current", details={"user_version": user_version, "ledger_version": ledger_version, "current": current})
+    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations"}
+    actual = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    missing = sorted(required - actual)
+    if missing:
+        raise DishRuleError("VALIDATION_FAILED", "current-version database is missing required tables", rule="database_schema_incomplete", details={"missing_tables": missing})
+
+
 def migrate_database(conn: sqlite3.Connection) -> None:
     # Hold one SQLite write lock across discovery and every migration. This makes
     # concurrent initializers serialize instead of racing on CREATE/ALTER steps.
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # Validate existing claims before creating or applying anything. A truly
+        # empty database is the only permitted ledger-less state.
+        existing_tables = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchone()[0]
+        _validate_version_claims(conn, allow_empty=not bool(existing_tables))
         conn.execute(
             """CREATE TABLE IF NOT EXISTS schema_migrations (
                    version INTEGER PRIMARY KEY,
