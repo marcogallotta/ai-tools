@@ -25,7 +25,7 @@ if not VENV_PYTHON.exists():
 
 # Compare sys.prefix, not sys.executable: a venv's bin/python is a symlink to the
 # system interpreter, so resolved executables are identical inside and outside.
-if Path(sys.prefix).resolve() != (DISH_ROOT / ".venv").resolve():
+if __name__ == "__main__" and Path(sys.prefix).resolve() != (DISH_ROOT / ".venv").resolve():
     os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), str(SCRIPT), *sys.argv[1:]])
 
 sys.path.insert(0, str(DISH_ROOT))

@@ -6,6 +6,7 @@ module instance (loaded, not cached in sys.modules) so the script's module-
 level globals (_CLIENT, _PAT) never leak state between tests.
 """
 import importlib.util
+import os
 import pathlib
 import sys
 from importlib.machinery import SourceFileLoader
@@ -25,9 +26,16 @@ def _load_cli_module():
 
 @pytest.fixture
 def cli(monkeypatch):
-    """A freshly loaded asana CLI module with ASANA_PAT set."""
+    """A freshly loaded asana CLI module with ASANA_PAT set.
+
+    The production script re-execs into its pinned virtualenv when imported
+    outside that environment. Tests intentionally load the module in-process,
+    so suppress only that re-exec boundary; the installed SDK contract remains
+    real and is covered separately.
+    """
     monkeypatch.setenv("ASANA_PAT", "test-pat-token")
     monkeypatch.delenv("ASANA_ENV", raising=False)
+    monkeypatch.setattr(os, "execv", lambda *_args, **_kwargs: None)
     module = _load_cli_module()
 
     class NoopAdvisoryGuard:
