@@ -83,6 +83,7 @@ def test_read_bare_task_is_not_migration_required(tmp_path):
     assert result["data"]["parsed"] is None
     assert result["data"]["task_schema_version"] is None
     assert result["data"]["migration_required"] is False
+    assert result["data"]["validation"] == []
 
 def test_read_planning_stage_brief_is_not_migration_required(tmp_path):
     notes = (
@@ -99,7 +100,7 @@ def test_read_planning_stage_brief_is_not_migration_required(tmp_path):
     b=Backend("Bare", notes)
     result=app(tmp_path,b).execute("read",agent="gpt",task_gid="t")
     assert result["data"]["parsed"] is None
-    assert any(v["rule"] == "process_separator_missing" for v in result["data"]["validation"])
+    assert result["data"]["validation"] == []
     assert result["data"]["migration_required"] is False
 
 def test_read_current_schema_canonical_task_is_not_migration_required(tmp_path):
@@ -125,6 +126,45 @@ def test_read_malformed_but_current_schema_task_is_not_migration_required(tmp_pa
     assert result["data"]["parsed"] is None
     assert any(v["rule"] == "section_duplicate" for v in result["data"]["validation"])
     assert result["data"]["migration_required"] is False
+
+def test_read_canonical_document_with_corrupted_state_block_is_not_masked_as_planning_stage(tmp_path):
+    # The Planning brief block is intact and would parse cleanly on its own, but
+    # the document carries process-record markers ("---" / "## PROCESS RECORD"),
+    # so it is asserting canonical shape. A broken state block here must still
+    # be reported as a real finding, not silently reinterpreted as an
+    # ordinary Planning-stage brief just because the brief substring is valid.
+    corrupted = TASK.replace(
+        "Status: pending-verification\n",
+        "Status: pending-verification\nStatus: pending-verification\n",
+    )
+    lines=corrupted.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n")
+    result=app(tmp_path,b).execute("read",agent="gpt",task_gid="t")
+    assert result["data"]["parsed"] is None
+    assert any(v["rule"] == "state_field_duplicate" for v in result["data"]["validation"])
+    assert result["data"]["migration_required"] is False
+
+def test_start_planning_on_bare_task_reports_no_diagnostics(tmp_path):
+    b=Backend(); a=app(tmp_path,b)
+    result=a.execute("start",agent="gpt",task_gid="t",kind="planning",change_level=None,change_reason=None)
+    assert result["ok"]
+    assert result["data"]["schema"]["diagnostics"] == []
+
+def test_start_research_on_planning_stage_brief_reports_no_diagnostics(tmp_path):
+    notes = (
+        "### Planning brief\n"
+        "Dish candidate: Test dish\n"
+        "Purpose: Compare texture\n"
+        "Role: non-main — small side for comparison\n"
+        "Priors: None\n"
+        "Locks: Keep crisp\n"
+        "Exemptions: None\n"
+        "Research emphasis: Compare two hydration levels\n"
+        "Destination section: Sichuan — 12345\n"
+    )
+    b=Backend("Bare", notes); a=app(tmp_path,b)
+    result=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
+    assert result["ok"]
+    assert result["data"]["schema"]["diagnostics"] == []
 
 def test_start_claims_once_and_returns_only_stage_protocol(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n") ; a=app(tmp_path,b)

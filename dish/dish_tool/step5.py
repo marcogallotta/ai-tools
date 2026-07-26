@@ -10,7 +10,7 @@ from .database import confirm_task_content, create_operation, content_identity, 
 from .errors import DishRuleError
 from .models import OperationActors, ResolvedRelease
 from .migrations import migrate_task_document
-from .task_document import DocumentParseError, parse_planning_brief, parse_task_document, validate_task_document, finding_payload
+from .task_document import DocumentParseError, document_shape, parse_planning_brief, parse_task_document, validate_task_document, finding_payload
 from .task_store import LiveTask, read_complete_task, write_exact_content
 
 _SCHEMA_VERSION_LINE = re.compile(r"^Schema version:\s*(.+)$", re.MULTILINE)
@@ -44,6 +44,23 @@ def _unparseable_migration_required(live: LiveTask, release: ResolvedRelease) ->
 
 
 def diagnostics_for(live: LiveTask, release: ResolvedRelease) -> dict[str, Any]:
+    """Report validation findings against the grammar the document actually claims.
+
+    Shape is decided by marker presence (`document_shape`), not by trying a
+    canonical parse and retrying as a Planning brief on failure: a document
+    with process-record markers is asserting canonical shape, so any parse
+    failure on it is a genuine defect and must be reported as one, never
+    reinterpreted as an ordinary Planning-stage document.
+    """
+    shape = document_shape(live.notes)
+    if shape == "bare":
+        return {"parsed": None, "validation": [], "schema_version": None, "migration_required": False}
+    if shape == "planning_brief":
+        try:
+            parse_planning_brief(live.notes)
+        except DocumentParseError as exc:
+            return {"parsed": None, "validation": [{"rule": exc.rule, "message": str(exc)}], "schema_version": None, "migration_required": False}
+        return {"parsed": None, "validation": [], "schema_version": None, "migration_required": False}
     try:
         document = parse_live_document(live)
     except DocumentParseError as exc:

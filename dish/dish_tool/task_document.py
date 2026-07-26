@@ -166,6 +166,23 @@ def parse_planning_brief(text: str) -> PlanningBrief:
     return PlanningBrief(_parse_exact_fields(lines, PLANNING_FIELDS, context="planning"))
 
 
+def document_shape(notes: str) -> str:
+    """Classify live task notes by structural markers, without attempting a parse.
+
+    Marker presence, not a catch-and-retry parse, decides which grammar governs:
+    notes containing either process-record marker are asserting canonical shape,
+    so a canonical parse failure on them is a genuine defect and must never fall
+    through to being read as a Planning brief. Marker-absent notes can only
+    legitimately be a Planning-stage brief or nothing at all.
+    """
+    if not notes.strip():
+        return "bare"
+    lines = notes.splitlines()
+    if "---" in lines or "## PROCESS RECORD" in lines:
+        return "canonical"
+    return "planning_brief"
+
+
 def _split_process(lines: Sequence[str]) -> tuple[list[str], list[str], list[str], list[str]]:
     indexes = {line: i for i, line in enumerate(lines) if line in {"### Planning brief", "### Decisions", "### Research basis", "### Material changes"}}
     required = ("### Planning brief", "### Research basis")
