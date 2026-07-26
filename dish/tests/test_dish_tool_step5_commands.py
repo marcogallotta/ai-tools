@@ -60,7 +60,7 @@ class Backend:
     def move_task_to_section(self, *, task_gid, section_gid): self.section=section_gid
 
 def release(role=None, migrations=False):
-    return ResolvedRelease(version="1.0.4", commit="", root=Path("."), protocols={} if role is None else {role:f"{role} protocol"}, manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}", migration_metadata={"m.json":{"migration_id":"m","from_schema_version":"1","to_schema_version":"2","protocol_version":"1.0.4","automatic":False,"description":"x","source_ids":["x"],"operations":[{"type":"canonical-parse-render","description":"test"}]}} if migrations else {}, requested_protocol_role=role)
+    return ResolvedRelease(version="1.0.6", commit="", root=Path("."), protocols={} if role is None else {role:f"{role} protocol"}, manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}", migration_metadata={"m.json":{"migration_id":"m","from_schema_version":"1","to_schema_version":"2","protocol_version":"1.0.6","automatic":False,"description":"x","source_ids":["x"],"operations":[{"type":"canonical-parse-render","description":"test"}]}} if migrations else {}, requested_protocol_role=role)
 
 def app(tmp_path, backend): return DishApplication(initialize_database(tmp_path/"d.db"), backend, release_loader=lambda role=None: release(role))
 
@@ -81,7 +81,7 @@ def test_read_reports_exact_state_and_migration_required(tmp_path):
 def test_start_claims_once_and_returns_only_stage_protocol(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n") ; a=app(tmp_path,b)
     first=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
-    assert first["ok"] and first["data"]["protocol"] == {"role":"research","version":"1.0.4","text":"research protocol"}
+    assert first["ok"] and first["data"]["protocol"] == {"role":"research","version":"1.0.6","text":"research protocol"}
     second=a.execute("start",agent="claude",task_gid="t",kind="initial",change_level=None,change_reason=None)
     assert second["code"] == "CONFLICT"
     inspected=a.execute("inspect",agent="claude",submission_id=first["submission_id"])

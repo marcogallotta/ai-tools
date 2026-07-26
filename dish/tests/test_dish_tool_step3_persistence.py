@@ -142,7 +142,7 @@ def test_markers_verification_cycle_and_attempts_are_independent_and_audited(tmp
         operation_id=op_id,
         task_gid="task",
         cycle_number=2,
-        protocol_release="1.0.4",
+        protocol_release="1.0.6",
         verifier_agent="gpt",
         run_id="verify-1",
         independence_attestation="independent",
@@ -152,7 +152,7 @@ def test_markers_verification_cycle_and_attempts_are_independent_and_audited(tmp
         resume_state="awaiting_human_review",
     )
     assert cycle["cycle_number"] == 2
-    assert cycle["protocol_release"] == "1.0.4"
+    assert cycle["protocol_release"] == "1.0.6"
     assert cycle["verifier_agent"] == "gpt"
 
     marked = mark_operation_completion(conn, op_id, "content_write")
