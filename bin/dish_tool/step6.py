@@ -141,6 +141,11 @@ def prepare_live(
             else:
                 raise DishRuleError("VALIDATION_FAILED", "live baseline is not canonical", rule=exc.rule) from exc
 
+    if prior is not None and op["operation_kind"] == "change":
+        candidate_state = dict(candidate.state.values)
+        candidate_state["Researched by"] = prior.state.values["Researched by"]
+        candidate = dataclasses.replace(candidate, state=TaskState(candidate_state))
+
     verification_snapshot = None
     material_changes = list(candidate.material_changes)
     body_changed = prior is not None and _body_changed(prior, candidate)
@@ -150,14 +155,15 @@ def prepare_live(
         before_status = None if prior is None else prior.state.values["Status"]
         assert_transition(action="research_handoff", before=before_status, after="pending-verification")
         state_values = dict(pending_verification(candidate.state.values, protocol_release=verification_snapshot.identity).values)
-        state_values["Self-verified"] = material_editor_line(agent, utc_now()[:10])
+        actor_line = material_editor_line(agent, utc_now()[:10])
+        state_values["Researched by"] = actor_line
+        state_values["Self-verified"] = actor_line
         state = TaskState(state_values)
     elif op["operation_kind"] == "change" and body_changed:
         classification = str(material_classification or "").strip()
         if classification not in {"material", "non-material"}:
             raise DishRuleError("INVALID_ARGUMENT", "body edits require material or non-material classification", rule="material_classification_required")
         material_changes.append(f"{utc_now()[:10]} — {agent}: {classification}")
-        require_governed_authorization(conn, prior, candidate, task_gid=op["task_gid"], operation_id=operation_id)
         if classification == "material":
             verification_snapshot = current_verification_protocol_release(release.root)
             assert_transition(action="material_edit", before=prior.state.values["Status"], after="pending-verification")
@@ -179,6 +185,12 @@ def prepare_live(
     if not validation.ok:
         raise DishRuleError("VALIDATION_FAILED", "candidate failed current validation", errors=[{"rule": f.rule, "kind": f.kind.value, "message": f.message, "location": f.location} for f in validation.findings])
 
+    authorization_ids = ()
+    if prior is not None and body_changed:
+        authorization_ids = require_governed_authorization(
+            conn, prior, candidate, task_gid=op["task_gid"], operation_id=operation_id
+        )
+
     title, notes = _render_document(candidate)
     declare_operation_step(conn, operation_id, "candidate_write", {"title": title, "notes": notes, "schema_version": release.schema_version})
     if state.values["Status"] == "pending-verification":
@@ -189,6 +201,7 @@ def prepare_live(
         project_gid=COOKING_PROJECT_GID, expected_identity=live.identity,
         expected_section_gid=live.section_gid, title=title, notes=notes,
         schema_version=release.schema_version,
+        context={"authorization_ids": list(authorization_ids)} if authorization_ids else None,
     )
     complete_operation_step(conn, operation_id, "candidate_write")
     if op["operation_kind"] == "initial" or (op["operation_kind"] == "change" and body_changed and str(material_classification or "").strip() == "material"):

@@ -53,7 +53,9 @@ def build_parser() -> JsonArgumentParser:
     reopen.add_argument("--category", required=True, choices=("evidence", "premise", "method", "scope"))
     reopen.add_argument("--before", required=True)
     reopen.add_argument("--after", required=True)
-    reopen.add_argument("--editor", required=True)
+    reopen.add_argument("--editor", required=True, choices=("claude", "gpt", "codex"))
+    reopen.add_argument("--run-id", required=True)
+    reopen.add_argument("--file", dest="file_path", required=True)
     reopen.add_argument("--date", required=True)
 
     migrate = subparsers.add_parser("migrate")

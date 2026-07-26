@@ -44,7 +44,8 @@ def test_documented_admin_examples_match_current_parser_surface():
         ["unblock", "op", "--reason", "resolved"],
         [
             "reopen", "op", "--category", "method", "--before", "old",
-            "--after", "new", "--editor", "Marco", "--date", "2026-07-25",
+            "--after", "new", "--editor", "codex", "--run-id", "editor-run",
+            "--file", "corrected.md", "--date", "2026-07-25",
         ],
     ]
     for argv in examples:

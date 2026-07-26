@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from .database import consume_marco_authorization
+from .database import reserve_marco_authorizations
 
 
 @dataclass(frozen=True)
@@ -31,19 +31,23 @@ def governed_changes(before, after) -> tuple[GovernedChange, ...]:
     return tuple(changes)
 
 
-def require_governed_authorization(conn, before, after, *, task_gid: str, operation_id: str) -> tuple[GovernedChange, ...]:
-    """Require independently persisted Marco facts for every governed change.
+def require_governed_authorization(conn, before, after, *, task_gid: str, operation_id: str) -> tuple[str, ...]:
+    """Atomically reserve exact Marco facts for every governed change.
 
-    Candidate-authored Decisions text is never authority. Authorizations are
-    consumed exactly once and must match the exact before/after values.
+    Candidate-authored Decisions text is never authority. The reservation is
+    all-or-nothing and is consumed only when the exact external write is
+    confirmed.
     """
     changes = governed_changes(before, after)
-    for change in changes:
-        consume_marco_authorization(
-            conn, task_gid=task_gid, operation_id=operation_id,
-            field_name=change.field, before=change.before, after=change.after,
-        )
-    return changes
+    if not changes:
+        return ()
+    rows = reserve_marco_authorizations(
+        conn,
+        task_gid=task_gid,
+        operation_id=operation_id,
+        changes=tuple({"field": change.field, "before": change.before, "after": change.after} for change in changes),
+    )
+    return tuple(row["authorization_id"] for row in rows)
 
 
 def require_small_scope(before, after) -> None:

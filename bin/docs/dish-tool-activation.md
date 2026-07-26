@@ -75,12 +75,13 @@ dish-admin recover OPERATION_ID --outcome not-applied|applied --reason TEXT
 dish-admin discard OPERATION_ID --reason TEXT
 dish-admin unblock OPERATION_ID --reason TEXT
 dish-admin reopen OPERATION_ID --category evidence|premise|method|scope \
-  --before TEXT --after TEXT --editor TEXT --date DATE
+  --before TEXT --after TEXT --editor gpt|codex|claude --run-id RUN_ID \
+  --file CORRECTED_CANDIDATE --date DATE
 ```
 
 - `migrate` is only for an individually encountered older-schema task after cutover. It writes, rereads, validates, and records the new schema only after confirmation.
 - `recover` reconciles an interrupted write or movement against a fresh live Asana reread. It records `confirmed` only when the live title/notes identity or section exactly matches the persisted intended mutation, and records `not_applied` only when live evidence proves the persisted expected state remains. A contradictory requested outcome fails closed; the command never repeats the mutation.
-- `reopen` is the only path out of the two-pass Human Review hold and requires a substantive reset recorded in `Material changes`.
+- `reopen` is the only path out of the two-pass Human Review hold. It requires a complete corrected candidate that demonstrates the declared substantive reset, plus the material editor's run proof; the tool records the reset in `Material changes`.
 
 ## JSON response contract
 
@@ -120,6 +121,7 @@ Every invocation writes exactly one compact JSON object to stdout:
 | `WRONG_STATE` | 3 | Inspect the live task and operation; take only a returned legal action. |
 | `AGENT_MISMATCH` | 3 | The caller is not the recorded actor. Use the correct actor or a protocol-valid ownership route. |
 | `VERIFIER_FAMILY_MISMATCH` | 3 | Legacy compatibility code; treat as a closed transition and inspect. Current Verification independence is identity/attestation based, not opposite-family routing. |
+| `PROTOCOL_INCOMPATIBLE` | 3 | The record belongs to an explicitly unsupported legacy workflow. Diagnostic reads remain available, but mutations are blocked; preserve the record and use the documented migration or manual disposition route. |
 | `CONFLICT` | 3 | Stale identity, open-operation conflict, placement conflict, or another exact-state conflict. Preserve live content and restart/inspect as directed. |
 | `HUMAN_ACTION_REQUIRED` | 3 | Stop normal agent workflow. This is valid only when the underlying protocol condition independently requires Marco; a tool message alone never creates Evidence or Human Review. |
 | `BACKEND_REJECTED` | 4 | Backend proved non-application. Preserve state, diagnose, and rerun only when the reported cause is corrected. |

@@ -6,7 +6,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Mapping, Sequence
 
 from .constants import SUBMISSION_STATES
 from .database_schema import MIGRATIONS, initialize_database, migrate_database
@@ -473,8 +473,8 @@ def finalize_confirmed_write_attempt(
         )
         conn.execute("UPDATE write_attempts SET outcome='confirmed', finished_at=?, confirmed_content_version_id=? WHERE attempt_id=?", (now, version_id, attempt_id))
         conn.execute("UPDATE operations SET content_write_completed_at=COALESCE(content_write_completed_at, ?) WHERE operation_id=?", (now, attempt["operation_id"]))
+        context = json.loads(attempt["context_json"] or "{}")
         if attempt["purpose"] == "signoff":
-            context = json.loads(attempt["context_json"] or "{}")
             cycle_id = context.get("cycle_id")
             correction_class = context.get("correction_class")
             if not cycle_id:
@@ -486,6 +486,12 @@ def finalize_confirmed_write_attempt(
                 (correction_class, now, version_id, identity.digest, cycle_id),
             )
             conn.execute("UPDATE operations SET signoff_completed_at=COALESCE(signoff_completed_at, ?) WHERE operation_id=?", (now, attempt["operation_id"]))
+        authorization_ids = tuple(context.get("authorization_ids") or ())
+        if authorization_ids:
+            consume_reserved_marco_authorizations(
+                conn, operation_id=attempt["operation_id"],
+                authorization_ids=authorization_ids, candidate_identity=identity.digest,
+            )
         record_audit(conn, submission_id=None, task_gid=task_gid, operation_id=attempt["operation_id"],
                      event_type="write_attempt.reconciled", actor_agent=None,
                      details={"attempt_id": attempt_id, "outcome": "confirmed", "purpose": attempt["purpose"], "content_version_id": version_id},
@@ -508,6 +514,12 @@ def finalize_not_applied_write_attempt(conn: sqlite3.Connection, *, attempt_id: 
         if row["outcome"] not in {"started", "uncertain", "not_applied"}:
             raise DishRuleError("CONFLICT", "write attempt cannot be marked not applied", rule="stale_write_attempt")
         conn.execute("UPDATE write_attempts SET outcome='not_applied', finished_at=COALESCE(finished_at, ?) WHERE attempt_id=?", (utc_now(), attempt_id))
+        context = json.loads(row["context_json"] or "{}")
+        authorization_ids = tuple(context.get("authorization_ids") or ())
+        if authorization_ids:
+            release_marco_authorization_reservations(
+                conn, operation_id=row["operation_id"], authorization_ids=authorization_ids,
+            )
         record_audit(conn, submission_id=None, task_gid=conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (row["operation_id"],)).fetchone()[0], operation_id=row["operation_id"], event_type="write_attempt.reconciled", actor_agent=None, details={"attempt_id": attempt_id, "outcome": "not_applied", "purpose": row["purpose"]}, result_code="OK", result_ok=True)
         out=conn.execute("SELECT * FROM write_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
         conn.execute("COMMIT")
@@ -809,18 +821,100 @@ def record_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, opera
                  governed_kind="decision", before_state={field_name: before}, after_state={field_name: after}, actor_run_id=actor_run_id, actor_source="marco-admin")
     return conn.execute("SELECT * FROM marco_authorizations WHERE authorization_id=?", (authorization_id,)).fetchone()
 
-def consume_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, operation_id: str, field_name: str, before: Any, after: Any) -> sqlite3.Row:
-    before_json = json.dumps(before, sort_keys=True)
-    after_json = json.dumps(after, sort_keys=True)
-    row = conn.execute(
-        """SELECT * FROM marco_authorizations
-             WHERE task_gid=? AND (operation_id IS NULL OR operation_id=?) AND field_name=?
-               AND before_json=? AND after_json=? AND consumed_at IS NULL
-             ORDER BY created_at LIMIT 1""",
-        (task_gid, operation_id, field_name, before_json, after_json),
-    ).fetchone()
-    if row is None:
-        raise DishRuleError("VALIDATION_FAILED", "candidate changes governed facts without persisted Marco authorization",
-                            rule="governed_change_unauthorized", details={"field": field_name})
-    conn.execute("UPDATE marco_authorizations SET consumed_at=? WHERE authorization_id=?", (utc_now(), row["authorization_id"]))
-    return conn.execute("SELECT * FROM marco_authorizations WHERE authorization_id=?", (row["authorization_id"],)).fetchone()
+def reserve_marco_authorizations(
+    conn: sqlite3.Connection,
+    *,
+    task_gid: str,
+    operation_id: str,
+    changes: Sequence[Mapping[str, Any]],
+) -> tuple[sqlite3.Row, ...]:
+    """Resolve and reserve the full authorization set atomically.
+
+    Nothing is modified unless every governed change has an exact unused
+    authorization. Existing reservations owned by this operation are reusable;
+    reservations owned by another operation fail closed.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        rows: list[sqlite3.Row] = []
+        for change in changes:
+            before_json = json.dumps(change["before"], sort_keys=True)
+            after_json = json.dumps(change["after"], sort_keys=True)
+            row = conn.execute(
+                """SELECT * FROM marco_authorizations
+                     WHERE task_gid=? AND (operation_id IS NULL OR operation_id=?)
+                       AND field_name=? AND before_json=? AND after_json=?
+                       AND consumed_at IS NULL
+                       AND (reserved_by_operation_id IS NULL OR reserved_by_operation_id=?)
+                     ORDER BY created_at LIMIT 1""",
+                (task_gid, operation_id, change["field"], before_json, after_json, operation_id),
+            ).fetchone()
+            if row is None:
+                raise DishRuleError(
+                    "VALIDATION_FAILED",
+                    "candidate changes governed facts without persisted Marco authorization",
+                    rule="governed_change_unauthorized",
+                    details={"field": change["field"]},
+                )
+            rows.append(row)
+        now = utc_now()
+        for row in rows:
+            conn.execute(
+                """UPDATE marco_authorizations
+                      SET reserved_by_operation_id=?, reserved_at=COALESCE(reserved_at, ?)
+                    WHERE authorization_id=? AND consumed_at IS NULL
+                      AND (reserved_by_operation_id IS NULL OR reserved_by_operation_id=?)""",
+                (operation_id, now, row["authorization_id"], operation_id),
+            )
+        reserved = tuple(
+            conn.execute("SELECT * FROM marco_authorizations WHERE authorization_id=?", (row["authorization_id"],)).fetchone()
+            for row in rows
+        )
+        conn.execute("COMMIT")
+        return reserved
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
+def release_marco_authorization_reservations(
+    conn: sqlite3.Connection, *, operation_id: str, authorization_ids: Sequence[str]
+) -> None:
+    if not authorization_ids:
+        return
+    placeholders = ",".join("?" for _ in authorization_ids)
+    conn.execute(
+        f"""UPDATE marco_authorizations
+               SET reserved_by_operation_id=NULL, reserved_at=NULL
+             WHERE reserved_by_operation_id=? AND consumed_at IS NULL
+               AND authorization_id IN ({placeholders})""",
+        (operation_id, *authorization_ids),
+    )
+
+
+def consume_reserved_marco_authorizations(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    authorization_ids: Sequence[str],
+    candidate_identity: str,
+) -> None:
+    if not authorization_ids:
+        return
+    placeholders = ",".join("?" for _ in authorization_ids)
+    now = utc_now()
+    cursor = conn.execute(
+        f"""UPDATE marco_authorizations
+               SET consumed_at=?, consumed_identity=?
+             WHERE reserved_by_operation_id=? AND consumed_at IS NULL
+               AND authorization_id IN ({placeholders})""",
+        (now, candidate_identity, operation_id, *authorization_ids),
+    )
+    if cursor.rowcount != len(authorization_ids):
+        raise DishRuleError(
+            "CONFLICT",
+            "governed authorization reservation is incomplete",
+            rule="governed_authorization_reservation_lost",
+        )
+

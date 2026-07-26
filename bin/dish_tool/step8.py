@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import create_verification_cycle, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step, content_identity
+from .database import create_verification_cycle, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step, content_identity, release_marco_authorization_reservations
 from .errors import DishRuleError
 from .models import utc_now, material_editor_line
 from .lifecycle import assert_transition, hold, pending_verification, require_status, resumed
@@ -47,12 +47,25 @@ def _render(document):
     return lines[0], "\n".join(lines[1:]) + "\n"
 
 
-def _write_document(conn, backend, op, live, document, *, schema=None):
+def _write_document(conn, backend, op, live, document, *, schema=None, authorization_ids=()):
     check = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not check.ok:
         raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in check.findings])
     title, notes = _render(document)
-    return write_exact_content(conn, backend, operation_id=op["operation_id"], task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID, expected_identity=live.identity, expected_section_gid=live.section_gid, title=title, notes=notes, schema_version=op["schema_version"])
+    try:
+        return write_exact_content(
+            conn, backend, operation_id=op["operation_id"], task_gid=op["task_gid"],
+            project_gid=COOKING_PROJECT_GID, expected_identity=live.identity,
+            expected_section_gid=live.section_gid, title=title, notes=notes,
+            schema_version=op["schema_version"],
+            context={"authorization_ids": list(authorization_ids)} if authorization_ids else None,
+        )
+    except DishRuleError as exc:
+        if authorization_ids and exc.code != "BACKEND_UNCERTAIN":
+            release_marco_authorization_reservations(
+                conn, operation_id=op["operation_id"], authorization_ids=authorization_ids
+            )
+        raise
 
 
 def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, file_path: str, reviewed_identity: str, semantic_review_complete: bool, provenance_complete: bool, run_id: str | None = None, independence_attestation: str | None = None, schema=None):
@@ -70,18 +83,26 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
         raise DishRuleError("CONFLICT", "live candidate changed after verifier review", rule="stale_verifier_review")
     corrected = _candidate(file_path)
     reviewed_document = parse_task_document(f"{live.title}\n{live.notes}")
+    corrected_state = dict(corrected.state.values)
+    corrected_state["Researched by"] = reviewed_document.state.values["Researched by"]
+    corrected = dataclasses.replace(corrected, state=TaskState(corrected_state))
     require_small_scope(reviewed_document, corrected)
-    require_governed_authorization(conn, reviewed_document, corrected, task_gid=op["task_gid"], operation_id=operation_id)
     state = dict(corrected.state.values)
     state.update({"Status": "pending-verification", "Status detail": "None", "Resume status": "None", "Verified by": "None", "Verification protocol release": cycle["protocol_release"], "Self-verified": material_editor_line(agent, utc_now()[:10])})
     changes = tuple(corrected.material_changes) + (f"{utc_now()[:10]} — {agent}: small verification correction; exact candidate replaced and self-reviewed",)
     corrected = dataclasses.replace(corrected, state=TaskState(state), material_changes=changes)
+    precheck = validate_task_document(corrected, expected_schema_version=op["schema_version"], schema=schema)
+    if not precheck.ok:
+        raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in precheck.findings])
+    authorization_ids = require_governed_authorization(
+        conn, reviewed_document, corrected, task_gid=op["task_gid"], operation_id=operation_id
+    )
     intended_title, intended_notes = _render(corrected)
     intended_identity = content_identity(intended_title, intended_notes).digest
     declare_operation_step(conn, operation_id, "small_corrected_write", {"title": intended_title, "notes": intended_notes, "identity": intended_identity})
     declare_operation_step(conn, operation_id, "small_review_binding", {"cycle_id": cycle["cycle_id"], "identity": intended_identity})
     declare_operation_step(conn, operation_id, "small_signoff", {"cycle_id": cycle["cycle_id"], "agent": agent, "run_id": run_id, "independence_attestation": independence_attestation})
-    confirmed = _write_document(conn, backend, op, live, corrected, schema=schema)
+    confirmed = _write_document(conn, backend, op, live, corrected, schema=schema, authorization_ids=authorization_ids)
     complete_operation_step(conn, operation_id, "small_corrected_write")
     bind_cycle_review(conn, cycle_id=cycle["cycle_id"], operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity)
     complete_operation_step(conn, operation_id, "small_review_binding")
@@ -115,7 +136,9 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         if not file_path:
             raise DishRuleError("INVALID_ARGUMENT", "Large correction requires a complete corrected candidate", rule="large_candidate_required")
         corrected = _candidate(file_path)
-        require_governed_authorization(conn, document, corrected, task_gid=op["task_gid"], operation_id=operation_id)
+        corrected_state = dict(corrected.state.values)
+        corrected_state["Researched by"] = document.state.values["Researched by"]
+        corrected = dataclasses.replace(corrected, state=TaskState(corrected_state))
         if honest_root is None:
             raise DishRuleError("INTERNAL_ERROR", "current Honest checkout is required for a new Verification cycle", rule="honest_root_required")
         snapshot = current_verification_protocol_release(honest_root)
@@ -141,6 +164,13 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         assert_transition(action="two_pass_hold", before="pending-verification", after="pending-human-review")
         document = dataclasses.replace(document, state=hold(document.state.values, target="pending-human-review", detail=f"Two independent Verification passes ended without a signable task: {reason}", resume_status="pending-verification"))
 
+    precheck = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
+    if not precheck.ok:
+        raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in precheck.findings])
+    authorization_ids = require_governed_authorization(
+        conn, parse_task_document(f"{live.title}\n{live.notes}"), document,
+        task_gid=op["task_gid"], operation_id=operation_id,
+    )
     intended_title, intended_notes = _render(document)
     outcome = "two-pass-hold" if two_pass else "rejected"
     target_phase = "held_human" if (two_pass or route == "human-review") else ("held_evidence" if route == "evidence" else "await_verification")
@@ -158,7 +188,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     if route == "large" and not two_pass:
         declare_operation_step(conn, operation_id, route_new_cycle_step, {"protocol_release": snapshot.identity, "protocol_text": snapshot.text})
     declare_operation_step(conn, operation_id, route_phase_step, {"phase": target_phase})
-    confirmed = _write_document(conn, backend, op, live, document, schema=schema)
+    confirmed = _write_document(conn, backend, op, live, document, schema=schema, authorization_ids=authorization_ids)
     complete_operation_step(conn, operation_id, route_write_step)
     if two_pass or route == "human-review":
         transition_operation(conn, operation_id, phase="held_human")
@@ -180,41 +210,115 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     return {"operation_id": operation_id, "route": route, "two_pass_hold": two_pass, "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"], "task": dataclasses.asdict(confirmed)}
 
 
-def reopen_two_pass(conn: sqlite3.Connection, backend: Any, *, operation_id: str, category: str, before: str, after: str, editor: str, date: str, honest_root=None):
+def reopen_two_pass(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    operation_id: str,
+    category: str,
+    before: str,
+    after: str,
+    editor: str,
+    run_id: str,
+    file_path: str,
+    date: str,
+    honest_root=None,
+    schema=None,
+):
     op = conn.execute("SELECT * FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     if op is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
-    if category not in RESET_CATEGORIES or not all(str(x or "").strip() for x in (before, after, editor, date)):
-        raise DishRuleError("INVALID_ARGUMENT", "reopen requires substantive category, before, after, editor, and date", rule="substantive_reset_required")
+    if category not in RESET_CATEGORIES or not all(str(x or "").strip() for x in (before, after, editor, run_id, file_path, date)):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "reopen requires a corrected candidate, substantive reset, editor, and run proof",
+            rule="substantive_reset_required",
+        )
+    if editor not in {"gpt", "codex", "claude"}:
+        raise DishRuleError("INVALID_ARGUMENT", "reopen editor must be an agent", rule="reopen_editor_required")
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
-    document = parse_task_document(f"{live.title}\n{live.notes}")
-    if document.state.values["Status"] != "pending-human-review" or document.state.values["Resume status"] != "pending-verification":
+    original = parse_task_document(f"{live.title}\n{live.notes}")
+    if original.state.values["Status"] != "pending-human-review" or original.state.values["Resume status"] != "pending-verification":
         raise DishRuleError("WRONG_STATE", "task is not on the two-pass Verification hold", rule="two_pass_hold_required")
+    candidate = _candidate(file_path)
+    candidate_state = dict(candidate.state.values)
+    candidate_state["Researched by"] = original.state.values["Researched by"]
+    candidate = dataclasses.replace(candidate, state=TaskState(candidate_state))
+    original_text = original.render()
+    candidate_text = candidate.render()
+    if before not in original_text or after not in candidate_text or candidate_text == original_text:
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "corrected candidate does not demonstrate the declared substantive reset",
+            rule="two_pass_reset_not_applied",
+            details={"category": category, "before": before, "after": after},
+        )
     if honest_root is None:
-        previous = conn.execute("SELECT protocol_release, protocol_text FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1", (operation_id,)).fetchone()
+        previous = conn.execute(
+            "SELECT protocol_release, protocol_text FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1",
+            (operation_id,),
+        ).fetchone()
         snapshot = type("Snapshot", (), {"identity": previous["protocol_release"], "text": previous["protocol_text"]})()
     else:
         snapshot = current_verification_protocol_release(honest_root)
-    state_values = dict(resumed(document.state.values).values)
-    state_values["Verification protocol release"] = snapshot.identity
-    if editor in {"gpt", "codex", "claude"}:
-        state_values["Self-verified"] = material_editor_line(editor, date)
+    state_values = dict(candidate.state.values)
+    state_values.update({
+        "Status": "pending-verification",
+        "Status detail": "None",
+        "Resume status": "None",
+        "Verification protocol release": snapshot.identity,
+        "Verified by": "None",
+        "Self-verified": material_editor_line(editor, date),
+    })
     entry = f"{date} — {editor}: {category}; before: {before}; after: {after}"
-    document = dataclasses.replace(document, state=TaskState(state_values), material_changes=tuple(document.material_changes) + (entry,))
+    document = dataclasses.replace(
+        candidate,
+        state=TaskState(state_values),
+        material_changes=tuple(candidate.material_changes) + (entry,),
+    )
+    check = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
+    if not check.ok:
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "corrected reopen candidate failed deterministic validation",
+            errors=[{"rule": f.rule, "kind": f.kind.value} for f in check.findings],
+        )
+    authorization_ids = require_governed_authorization(
+        conn, original, document, task_gid=op["task_gid"], operation_id=operation_id
+    )
     intended_title, intended_notes = _render(document)
     declare_operation_step(conn, operation_id, "reopen_write", {"title": intended_title, "notes": intended_notes})
     declare_operation_step(conn, operation_id, "reopen_cycle", {"protocol_release": snapshot.identity, "protocol_text": snapshot.text})
     declare_operation_step(conn, operation_id, "reopen_phase", {"phase": "await_verification"})
-    confirmed = _write_document(conn, backend, op, live, document)
+    confirmed = _write_document(
+        conn, backend, op, live, document, schema=schema, authorization_ids=authorization_ids
+    )
     complete_operation_step(conn, operation_id, "reopen_write")
-    number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
-    cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number, protocol_release=snapshot.identity, protocol_text=snapshot.text, route=None)
+    number = conn.execute(
+        "SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?",
+        (op["task_gid"],),
+    ).fetchone()[0]
+    cycle = create_verification_cycle(
+        conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number,
+        protocol_release=snapshot.identity, protocol_text=snapshot.text, route=None,
+    )
     complete_operation_step(conn, operation_id, "reopen_cycle")
-    record_actor_fact(conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor" if editor in {"gpt", "codex", "claude"} else "human", agent=editor, candidate_identity=confirmed.identity)
-    conn.execute("UPDATE operations SET editor_agent = ?, verifier_agent = NULL, run_id = NULL, independence_attestation = NULL WHERE operation_id = ?", (editor, operation_id))
+    record_actor_fact(
+        conn, operation_id=operation_id, task_gid=op["task_gid"], role="material_editor",
+        agent=editor, run_id=run_id, candidate_identity=confirmed.identity,
+    )
+    conn.execute(
+        "UPDATE operations SET editor_agent=?, verifier_agent=NULL, run_id=?, independence_attestation=NULL WHERE operation_id=?",
+        (editor, run_id, operation_id),
+    )
     transition_operation(conn, operation_id, phase="await_verification")
     complete_operation_step(conn, operation_id, "reopen_phase")
-    return {"operation_id": operation_id, "cycle_id": cycle["cycle_id"], "task": dataclasses.asdict(confirmed), "material_change": entry}
+    return {
+        "operation_id": operation_id,
+        "cycle_id": cycle["cycle_id"],
+        "task": dataclasses.asdict(confirmed),
+        "material_change": entry,
+    }
 
 
 def resolve_hold(
@@ -269,7 +373,9 @@ def resolve_hold(
         if not editor or editor not in {"gpt", "codex", "claude"}:
             raise DishRuleError("INVALID_ARGUMENT", "material hold resolution requires a named editor agent", rule="hold_editor_required")
         candidate = _candidate(file_path)
-        require_governed_authorization(conn, before_doc, candidate, task_gid=op["task_gid"], operation_id=operation_id)
+        candidate_state = dict(candidate.state.values)
+        candidate_state["Researched by"] = before_doc.state.values["Researched by"]
+        candidate = dataclasses.replace(candidate, state=TaskState(candidate_state))
         snapshot = current_verification_protocol_release(honest_root)
         values = dict(candidate.state.values)
         values.update({
@@ -281,7 +387,8 @@ def resolve_hold(
             "Self-verified": material_editor_line(editor, utc_now()[:10]),
         })
         decision = f"Human — Marco: {resolution_kind} resolved — {clean_detail}"
-        decisions = tuple(candidate.decisions)
+        authorization_decisions = tuple(candidate.decisions)
+        decisions = authorization_decisions
         if decision not in decisions:
             decisions += (decision,)
         document = dataclasses.replace(candidate, state=TaskState(values), decisions=decisions)
@@ -290,11 +397,19 @@ def resolve_hold(
         values["Status"] = resume_status
         values["Verification protocol release"] = "None" if resume_status == "pending-research" else cycle["protocol_release"]
         decision = f"Human — Marco: {resolution_kind} resolved — {clean_detail}"
-        decisions = tuple(before_doc.decisions)
+        authorization_decisions = tuple(before_doc.decisions)
+        decisions = authorization_decisions
         if decision not in decisions:
             decisions += (decision,)
         document = dataclasses.replace(before_doc, state=TaskState(values), decisions=decisions)
 
+    precheck = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
+    if not precheck.ok:
+        raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in precheck.findings])
+    authorization_document = dataclasses.replace(document, decisions=authorization_decisions)
+    authorization_ids = require_governed_authorization(
+        conn, before_doc, authorization_document, task_gid=op["task_gid"], operation_id=operation_id
+    )
     intended_title, intended_notes = _render(document)
     declare_operation_step(conn, operation_id, "hold_resolution_write", {"title": intended_title, "notes": intended_notes, "resolution_kind": resolution_kind})
     declare_operation_step(conn, operation_id, "hold_resolution_decision", {"detail": clean_detail, "resume_status": resume_status, "material": material})
@@ -307,7 +422,7 @@ def resolve_hold(
         declare_operation_step(conn, operation_id, "hold_resolution_phase", {"phase": "await_verification", "status": "open"})
     else:
         declare_operation_step(conn, operation_id, "hold_resolution_phase", {"phase": "terminal", "status": "completed", "terminal_outcome": f"{resolution_kind}_resolved_to_research"})
-    confirmed = _write_document(conn, backend, op, live, document, schema=schema)
+    confirmed = _write_document(conn, backend, op, live, document, schema=schema, authorization_ids=authorization_ids)
     complete_operation_step(conn, operation_id, "hold_resolution_write")
     record_audit(
         conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
