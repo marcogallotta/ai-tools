@@ -151,8 +151,8 @@ def prepare_live(
         if classification not in {"material", "non-material"}:
             raise DishRuleError("INVALID_ARGUMENT", "body edits require material or non-material classification", rule="material_classification_required")
         material_changes.append(f"{utc_now()[:10]} — {agent}: {classification}")
+        require_governed_authorization(conn, prior, candidate, task_gid=op["task_gid"], operation_id=operation_id)
         if classification == "material":
-            require_governed_authorization(prior, candidate)
             verification_snapshot = current_verification_protocol_release(release.root)
             assert_transition(action="material_edit", before=prior.state.values["Status"], after="pending-verification")
             state_values = dict(pending_verification(candidate.state.values, protocol_release=verification_snapshot.identity).values)

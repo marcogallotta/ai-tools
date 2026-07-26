@@ -17,7 +17,7 @@ from .releases import configured_honest_path, resolve_release
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
-_ADMIN_COMMANDS = {"recover", "discard", "unblock", "migrate", "reopen", "supply-evidence", "record-human-decision"}
+_ADMIN_COMMANDS = {"recover", "discard", "unblock", "migrate", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change"}
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -58,6 +58,14 @@ def build_parser() -> JsonArgumentParser:
 
     migrate = subparsers.add_parser("migrate")
     migrate.add_argument("task_gid")
+
+    authorize = subparsers.add_parser("authorize-governed-change")
+    authorize.add_argument("submission_id")
+    authorize.add_argument("--field", required=True)
+    authorize.add_argument("--before", required=True)
+    authorize.add_argument("--after", required=True)
+    authorize.add_argument("--reason", required=True)
+    authorize.add_argument("--run-id")
 
     for name in ("supply-evidence", "record-human-decision"):
         hold = subparsers.add_parser(name)

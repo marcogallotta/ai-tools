@@ -766,10 +766,44 @@ def record_actor_fact(conn: sqlite3.Connection, *, operation_id: str, task_gid: 
 def assert_fresh_verifier(conn: sqlite3.Connection, *, operation_id: str, agent: str, run_id: str | None, independence_attestation: str | None) -> None:
     clean_run = str(run_id or '').strip()
     if clean_run:
-        prior = conn.execute("SELECT role FROM operation_actor_facts WHERE operation_id=? AND run_id=? AND role IN ('constructor','material_editor','verifier') LIMIT 1", (operation_id, clean_run)).fetchone()
+        task_gid = conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)).fetchone()[0]
+        prior = conn.execute("SELECT role FROM operation_actor_facts WHERE task_gid=? AND run_id=? AND role IN ('constructor','material_editor','verifier') LIMIT 1", (task_gid, clean_run)).fetchone()
         if prior is not None:
             raise DishRuleError("AGENT_MISMATCH", "verifier run is already part of the candidate lineage", rule="verifier_not_independent", details={"prior_role": prior['role']})
     else:
-        prior = conn.execute("SELECT role FROM operation_actor_facts WHERE operation_id=? AND agent=? AND role IN ('constructor','material_editor') LIMIT 1", (operation_id, agent)).fetchone()
+        task_gid = conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)).fetchone()[0]
+        prior = conn.execute("SELECT role FROM operation_actor_facts WHERE task_gid=? AND agent=? AND role IN ('constructor','material_editor') LIMIT 1", (task_gid, agent)).fetchone()
         if prior is not None:
             raise DishRuleError("AGENT_MISMATCH", "attestation-only verification cannot prove independence from candidate editors", rule="verifier_not_independent")
+
+
+def record_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, operation_id: str | None, field_name: str, before: Any, after: Any, reason: str, actor_run_id: str | None = None) -> sqlite3.Row:
+    authorization_id = str(uuid.uuid4())
+    clean_reason = str(reason or "").strip()
+    if not clean_reason:
+        raise DishRuleError("INVALID_ARGUMENT", "authorization reason is required", rule="authorization_reason_required")
+    conn.execute(
+        """INSERT INTO marco_authorizations(authorization_id,task_gid,operation_id,field_name,before_json,after_json,reason,actor_run_id,created_at)
+           VALUES (?,?,?,?,?,?,?,?,?)""",
+        (authorization_id, task_gid, operation_id, field_name, json.dumps(before, sort_keys=True), json.dumps(after, sort_keys=True), clean_reason, str(actor_run_id or "").strip() or None, utc_now()),
+    )
+    record_audit(conn, submission_id=None, task_gid=task_gid, operation_id=operation_id, event_type="marco.authorization", actor_agent=None,
+                 details={"authorization_id": authorization_id, "field": field_name, "reason": clean_reason}, result_code="OK", result_ok=True,
+                 governed_kind="decision", before_state={field_name: before}, after_state={field_name: after}, actor_run_id=actor_run_id, actor_source="marco-admin")
+    return conn.execute("SELECT * FROM marco_authorizations WHERE authorization_id=?", (authorization_id,)).fetchone()
+
+def consume_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, operation_id: str, field_name: str, before: Any, after: Any) -> sqlite3.Row:
+    before_json = json.dumps(before, sort_keys=True)
+    after_json = json.dumps(after, sort_keys=True)
+    row = conn.execute(
+        """SELECT * FROM marco_authorizations
+             WHERE task_gid=? AND (operation_id IS NULL OR operation_id=?) AND field_name=?
+               AND before_json=? AND after_json=? AND consumed_at IS NULL
+             ORDER BY created_at LIMIT 1""",
+        (task_gid, operation_id, field_name, before_json, after_json),
+    ).fetchone()
+    if row is None:
+        raise DishRuleError("VALIDATION_FAILED", "candidate changes governed facts without persisted Marco authorization",
+                            rule="governed_change_unauthorized", details={"field": field_name})
+    conn.execute("UPDATE marco_authorizations SET consumed_at=? WHERE authorization_id=?", (utc_now(), row["authorization_id"]))
+    return conn.execute("SELECT * FROM marco_authorizations WHERE authorization_id=?", (row["authorization_id"],)).fetchone()

@@ -14,7 +14,7 @@ from .lifecycle import assert_transition, hold, pending_verification, require_st
 from .task_document import DocumentParseError, TaskState, parse_task_document, validate_task_document
 from .task_store import read_complete_task, write_exact_content
 from .releases import current_verification_protocol_release
-from .governed_diff import require_governed_authorization
+from .governed_diff import require_governed_authorization, require_small_scope
 from .step7 import approve_live, assert_verifier_authority, bind_cycle_review
 
 ROUTES = {"large", "evidence", "human-review"}
@@ -69,8 +69,11 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     if live.identity != persisted_reviewed:
         raise DishRuleError("CONFLICT", "live candidate changed after verifier review", rule="stale_verifier_review")
     corrected = _candidate(file_path)
+    reviewed_document = parse_task_document(f"{live.title}\n{live.notes}")
+    require_small_scope(reviewed_document, corrected)
+    require_governed_authorization(conn, reviewed_document, corrected, task_gid=op["task_gid"], operation_id=operation_id)
     state = dict(corrected.state.values)
-    state.update({"Status": "pending-verification", "Status detail": "None", "Resume status": "None", "Verified by": "None", "Verification protocol release": cycle["protocol_release"]})
+    state.update({"Status": "pending-verification", "Status detail": "None", "Resume status": "None", "Verified by": "None", "Verification protocol release": cycle["protocol_release"], "Self-verified": material_editor_line(agent, utc_now()[:10])})
     changes = tuple(corrected.material_changes) + (f"{utc_now()[:10]} — {agent}: small verification correction; exact candidate replaced and self-reviewed",)
     corrected = dataclasses.replace(corrected, state=TaskState(state), material_changes=changes)
     confirmed = _write_document(conn, backend, op, live, corrected, schema=schema)
@@ -103,7 +106,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         if not file_path:
             raise DishRuleError("INVALID_ARGUMENT", "Large correction requires a complete corrected candidate", rule="large_candidate_required")
         corrected = _candidate(file_path)
-        require_governed_authorization(document, corrected)
+        require_governed_authorization(conn, document, corrected, task_gid=op["task_gid"], operation_id=operation_id)
         if honest_root is None:
             raise DishRuleError("INTERNAL_ERROR", "current Honest checkout is required for a new Verification cycle", rule="honest_root_required")
         snapshot = current_verification_protocol_release(honest_root)
@@ -230,7 +233,7 @@ def resolve_hold(
         if not editor or editor not in {"gpt", "codex", "claude"}:
             raise DishRuleError("INVALID_ARGUMENT", "material hold resolution requires a named editor agent", rule="hold_editor_required")
         candidate = _candidate(file_path)
-        require_governed_authorization(before_doc, candidate)
+        require_governed_authorization(conn, before_doc, candidate, task_gid=op["task_gid"], operation_id=operation_id)
         snapshot = current_verification_protocol_release(honest_root)
         values = dict(candidate.state.values)
         values.update({

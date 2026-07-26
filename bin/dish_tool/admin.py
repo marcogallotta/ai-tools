@@ -435,3 +435,22 @@ def _command_record_human_decision(self, *, trace: AdminTrace, submission_id: st
 
 DishAdminApplication._command_supply_evidence = _command_supply_evidence
 DishAdminApplication._command_record_human_decision = _command_record_human_decision
+
+
+def _command_authorize_governed_change(self, *, trace: AdminTrace, submission_id: str, field: str, before: str, after: str, reason: str, run_id: str | None = None) -> dict[str, Any]:
+    from .database import record_marco_authorization
+    operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
+    op = self.conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
+    if op is None:
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    row = record_marco_authorization(
+        self.conn, task_gid=op["task_gid"], operation_id=operation_id,
+        field_name=_clean_required(field, rule="authorization_field_required", label="field"),
+        before=before, after=after, reason=reason, actor_run_id=run_id,
+    )
+    trace.submission_id = operation_id
+    trace.task_gid = op["task_gid"]
+    trace.state = op["status"]
+    return result_envelope(command="authorize-governed-change", task_gid=op["task_gid"], submission_id=operation_id, state=op["status"], data={"authorization_id": row["authorization_id"], "field": row["field_name"]})
+
+DishAdminApplication._command_authorize_governed_change = _command_authorize_governed_change

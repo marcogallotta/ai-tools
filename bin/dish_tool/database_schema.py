@@ -430,7 +430,24 @@ CREATE INDEX operation_actor_facts_operation_idx ON operation_actor_facts(operat
 CREATE INDEX operation_actor_facts_run_idx ON operation_actor_facts(operation_id, run_id);
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10}
+_MIGRATION_11 = """
+CREATE TABLE marco_authorizations (
+    authorization_id TEXT PRIMARY KEY,
+    task_gid TEXT NOT NULL,
+    operation_id TEXT REFERENCES operations(operation_id),
+    field_name TEXT NOT NULL,
+    before_json TEXT NOT NULL CHECK (json_valid(before_json)),
+    after_json TEXT NOT NULL CHECK (json_valid(after_json)),
+    reason TEXT NOT NULL,
+    actor_run_id TEXT,
+    created_at TEXT NOT NULL,
+    consumed_at TEXT
+);
+CREATE INDEX marco_authorizations_lookup_idx
+    ON marco_authorizations(task_gid, operation_id, field_name, consumed_at, created_at);
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
