@@ -454,3 +454,34 @@ def _command_authorize_governed_change(self, *, trace: AdminTrace, submission_id
     return result_envelope(command="authorize-governed-change", task_gid=op["task_gid"], submission_id=operation_id, state=op["status"], data={"authorization_id": row["authorization_id"], "field": row["field_name"]})
 
 DishAdminApplication._command_authorize_governed_change = _command_authorize_governed_change
+
+# Current-operation cancellation. Legacy discard remains available only for
+# quarantined older records through the original handler.
+_legacy_discard = DishAdminApplication._command_discard
+
+def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, reason: str) -> dict[str, Any]:
+    operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
+    op = self.conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
+    if op is None:
+        return _legacy_discard(self, trace=trace, submission_id=submission_id, reason=reason)
+    if op["status"] not in {"open", "uncertain"}:
+        raise DishRuleError("WRONG_STATE", "operation is not cancellable", rule="operation_not_cancellable", details={"actual": op["status"]})
+    if self.backend is None:
+        raise DishRuleError("INTERNAL_ERROR", "current-operation cancellation requires backend evidence", rule="backend_required")
+    unresolved_write = self.conn.execute("SELECT 1 FROM write_attempts WHERE operation_id=? AND outcome IN ('started','uncertain') LIMIT 1", (operation_id,)).fetchone()
+    unresolved_move = self.conn.execute("SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain') LIMIT 1", (operation_id,)).fetchone()
+    if unresolved_write or unresolved_move:
+        raise DishRuleError("CONFLICT", "operation has unresolved external side effects", rule="operation_cancel_side_effects_unresolved")
+    from .task_store import read_complete_task
+    from .constants import COOKING_PROJECT_GID
+    live = read_complete_task(self.backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
+    baseline = self.conn.execute("SELECT last_confirmed_identity FROM task_content_state WHERE task_gid=?", (op["task_gid"],)).fetchone()
+    if baseline is None or live.identity != baseline["last_confirmed_identity"]:
+        raise DishRuleError("CONFLICT", "live content is not a confirmed safe cancellation state", rule="operation_cancel_live_drift")
+    from .database import transition_operation
+    final = transition_operation(self.conn, operation_id, phase="terminal", status="cancelled", terminal_outcome="cancelled_by_marco")
+    record_audit(self.conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="operation.cancelled", actor_agent=None, details={"reason": _clean_required(reason, rule="discard_reason_required", label="discard reason")}, result_code="OK", result_ok=True, actor_source="marco-admin")
+    trace.submission_id=operation_id; trace.task_gid=op["task_gid"]; trace.state=final["status"]
+    return result_envelope(command="discard", task_gid=op["task_gid"], submission_id=operation_id, state=final["status"], data={"reason": reason})
+
+DishAdminApplication._command_discard = _current_operation_discard

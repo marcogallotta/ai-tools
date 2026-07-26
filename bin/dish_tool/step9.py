@@ -257,13 +257,42 @@ def recover_operation(
                     existing = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number, protocol_release=intended["protocol_release"], protocol_text=intended.get("protocol_text"))
                 complete_operation_step(conn, operation_id, "verification_cycle")
                 actions.append({"kind": "workflow_step", "step": "verification_cycle", "outcome": "confirmed"})
-            elif step["step_name"] == "verification_handoff":
+            elif step["step_name"] in {"planning_write", "migration_write", "small_corrected_write", "hold_write", "large_write", "reopen_write"}:
+                if live.title == intended.get("title") and live.notes == intended.get("notes"):
+                    complete_operation_step(conn, operation_id, step["step_name"])
+                    actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
+                else:
+                    raise DishRuleError("CONFLICT", "live content does not satisfy workflow write intent", rule="workflow_step_evidence_mismatch")
+            elif step["step_name"] in {"verification_handoff", "planning_handoff"}:
                 target = intended["section_gid"]
+                purpose = "verification_handoff" if step["step_name"] == "verification_handoff" else "planning_handoff"
                 if live.section_gid != target:
-                    live = move_exact(conn, backend, operation_id=operation_id, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID, expected_identity=live.identity, expected_section_gid=live.section_gid, intended_section_gid=target, purpose="verification_handoff")
-                complete_operation_step(conn, operation_id, "verification_handoff")
-                transition_operation(conn, operation_id, phase="await_verification")
-                actions.append({"kind": "workflow_step", "step": "verification_handoff", "outcome": "confirmed"})
+                    live = move_exact(conn, backend, operation_id=operation_id, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID, expected_identity=live.identity, expected_section_gid=live.section_gid, intended_section_gid=target, purpose=purpose)
+                complete_operation_step(conn, operation_id, step["step_name"])
+                if step["step_name"] == "verification_handoff":
+                    transition_operation(conn, operation_id, phase="await_verification")
+                actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
+            elif step["step_name"] == "small_review_binding":
+                from .step7 import bind_cycle_review
+                if live.identity != intended["identity"]:
+                    raise DishRuleError("CONFLICT", "live correction does not match review-binding intent", rule="workflow_step_evidence_mismatch")
+                bind_cycle_review(conn, cycle_id=intended["cycle_id"], operation_id=operation_id, task_gid=op["task_gid"], identity=live.identity)
+                complete_operation_step(conn, operation_id, "small_review_binding")
+                actions.append({"kind": "workflow_step", "step": "small_review_binding", "outcome": "confirmed"})
+            elif step["step_name"] == "small_signoff":
+                cycle = conn.execute("SELECT * FROM verification_cycles WHERE cycle_id=?", (intended["cycle_id"],)).fetchone()
+                if cycle is not None and cycle["outcome"] == "approved":
+                    complete_operation_step(conn, operation_id, "small_signoff")
+                else:
+                    from .step7 import approve_live
+                    result = approve_live(conn, backend, operation_id=operation_id, agent=intended["agent"], reviewed_identity=live.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=intended.get("run_id"), independence_attestation=intended.get("independence_attestation"))
+                    live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
+                    complete_operation_step(conn, operation_id, "small_signoff")
+                actions.append({"kind": "workflow_step", "step": "small_signoff", "outcome": "confirmed"})
+            elif step["step_name"] in {"planning_terminal", "migration_terminal"}:
+                transition_operation(conn, operation_id, phase=intended.get("phase", "terminal"), status=intended.get("status", "completed"), terminal_outcome=intended.get("terminal_outcome"))
+                complete_operation_step(conn, operation_id, step["step_name"])
+                actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
 
     refreshed = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
     record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,

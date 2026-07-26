@@ -98,12 +98,16 @@ def prepare_live(
         if findings:
             raise DishRuleError("VALIDATION_FAILED", "Planning candidate failed validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in findings])
         notes = brief.render(heading=True).rstrip() + "\n"
+        declare_operation_step(conn, operation_id, "planning_write", {"title": live.title, "notes": notes, "schema_version": release.schema_version})
+        declare_operation_step(conn, operation_id, "planning_handoff", {"section_gid": registry.research_queue_gid})
+        declare_operation_step(conn, operation_id, "planning_terminal", {"status": "completed", "phase": "terminal", "terminal_outcome": "planning_handoff_confirmed"})
         confirmed = write_exact_content(
             conn, backend, operation_id=operation_id, task_gid=live.gid,
             project_gid=COOKING_PROJECT_GID, expected_identity=live.identity,
             expected_section_gid=live.section_gid, title=live.title, notes=notes,
             schema_version=release.schema_version,
         )
+        complete_operation_step(conn, operation_id, "planning_write")
         if confirmed.section_gid != registry.research_queue_gid:
             confirmed = move_exact(
                 conn, backend, operation_id=operation_id, task_gid=live.gid,
@@ -111,7 +115,9 @@ def prepare_live(
                 expected_section_gid=confirmed.section_gid,
                 intended_section_gid=registry.research_queue_gid, purpose="planning_handoff",
             )
+        complete_operation_step(conn, operation_id, "planning_handoff")
         transition_operation(conn, operation_id, phase="terminal", status="completed", terminal_outcome="planning_handoff_confirmed")
+        complete_operation_step(conn, operation_id, "planning_terminal")
         return {"operation_id": operation_id, "task": dataclasses.asdict(confirmed), "handoff": "planning-to-research", "validation_scope": "structural-only"}
 
     try:

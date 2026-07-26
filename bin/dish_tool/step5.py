@@ -5,7 +5,7 @@ import sqlite3
 from typing import Any, Mapping
 
 from .constants import COOKING_PROJECT_GID
-from .database import confirm_task_content, create_operation, content_identity, legal_operation_actions, transition_operation
+from .database import confirm_task_content, create_operation, content_identity, legal_operation_actions, transition_operation, declare_operation_step, complete_operation_step
 from .errors import DishRuleError
 from .models import OperationActors, ResolvedRelease
 from .migrations import migrate_task_document
@@ -85,6 +85,10 @@ def migrate_live_task(conn: sqlite3.Connection, backend, *, task_gid: str, relea
     op = create_operation(conn, task_gid=task_gid, operation_kind="migration", expected_identity=live.identity, schema_version=document.schema_version)
     rendered = candidate.render().splitlines()
     title, notes = rendered[0], "\n".join(rendered[1:]) + "\n"
+    declare_operation_step(conn, op["operation_id"], "migration_write", {"title": title, "notes": notes, "schema_version": release.schema_version})
+    declare_operation_step(conn, op["operation_id"], "migration_terminal", {"status": "completed", "phase": "terminal", "terminal_outcome": "migration_confirmed"})
     confirmed = write_exact_content(conn, backend, operation_id=op["operation_id"], task_gid=task_gid, project_gid=COOKING_PROJECT_GID, expected_identity=live.identity, expected_section_gid=live.section_gid, title=title, notes=notes, schema_version=release.schema_version)
+    complete_operation_step(conn, op["operation_id"], "migration_write")
     transition_operation(conn, op["operation_id"], phase="terminal", status="completed", terminal_outcome="migration_confirmed")
+    complete_operation_step(conn, op["operation_id"], "migration_terminal")
     return confirmed
