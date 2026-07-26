@@ -90,7 +90,7 @@ def test_valid_current_pair_loads_schema_requested_protocol_and_migrations(tmp_p
         root, protocol_role="research", include_migrations=True
     )
 
-    assert release.protocol_version == "1.0.2"
+    assert release.protocol_version == "1.0.4"
     assert release.schema_version == "2"
     assert set(release.protocols) == {"research"}
     assert release.schema["schema_kind"] == "dish-task"

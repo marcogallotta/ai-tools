@@ -69,7 +69,7 @@ class Backend:
     def move_task_to_section(self, *, task_gid, section_gid): self.moves += 1; self.section=section_gid
 
 def release(root, role=None):
-    return ResolvedRelease(version="1.0.2", commit="", root=root, protocols={} if role is None else {role:f"{role} protocol"}, manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}", migration_metadata={}, requested_protocol_role=role)
+    return ResolvedRelease(version="1.0.4", commit="", root=root, protocols={} if role is None else {role:f"{role} protocol"}, manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}", migration_metadata={}, requested_protocol_role=role)
 
 def app(tmp_path, backend):
     honest = tmp_path / "honest"; honest.mkdir(exist_ok=True)
