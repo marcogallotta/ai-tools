@@ -263,7 +263,7 @@ def validate_planning_brief(brief: PlanningBrief) -> DocumentValidation:
     findings: list[DocumentFinding] = []
     role = brief.values["Role"]
     if role != "main" and not role.startswith("non-main — "):
-        findings.append(DocumentFinding("planning.role", FindingKind.SYNTAX, "Role must be main or non-main with kind and reason", "Role"))
+        findings.append(DocumentFinding("planning.role", FindingKind.SYNTAX, "Role must be exactly `main` with no trailing text, or `non-main — <kind and why>`", "Role"))
     destination = brief.values["Destination section"]
     if destination not in {"[destination missing]", "[destination invalid]"} and not DESTINATION_RE.match(destination):
         findings.append(DocumentFinding("planning.destination", FindingKind.AGENT_CORRECTABLE, "Destination section must be name — gid or a canonical defect marker", "Destination section"))
