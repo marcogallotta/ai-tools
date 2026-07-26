@@ -19,6 +19,11 @@ python3 -m venv .venv
 and the machine schema. There is no default — unset, `dish` refuses to start; pointed at a
 checkout without `DISH_VERSION`, it fails closed rather than loading protocol text unversioned.
 
+`DISH_VERSION`'s `PROTOCOL_VERSION` and `dish-task-schema.json`'s own `protocol_version` field
+are two separate values that must be bumped together by hand — the commit gate only checks the
+former, so a `DISH_VERSION` bump without a matching schema-file edit passes review but fails at
+runtime with `schema_protocol_version_mismatch`.
+
 Also read from the environment: `ASANA_PAT` (or `ASANA_ENV`, defaulting to
 `~/.config/asana-cli/.env`) for the Asana token, and `DISH_DB_PATH` to override the state
 database.
