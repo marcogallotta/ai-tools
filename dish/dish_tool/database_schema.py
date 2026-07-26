@@ -521,7 +521,92 @@ CREATE INDEX marco_authorizations_reservation_idx
     ON marco_authorizations(task_gid, operation_id, field_name, consumed_at, reserved_by_operation_id, created_at);
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13}
+
+_MIGRATION_14 = """
+CREATE TABLE command_audit_repairs (
+    repair_id TEXT PRIMARY KEY,
+    command TEXT NOT NULL,
+    operation_id TEXT REFERENCES operations(operation_id),
+    submission_id TEXT REFERENCES submissions(submission_id),
+    task_gid TEXT,
+    actor_agent TEXT,
+    result_json TEXT NOT NULL CHECK (json_valid(result_json)),
+    audit_error TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    repaired_at TEXT
+);
+CREATE INDEX command_audit_repairs_pending_idx ON command_audit_repairs(repaired_at, created_at);
+
+CREATE TRIGGER verification_cycles_approved_append_only_update
+BEFORE UPDATE ON verification_cycles
+WHEN OLD.outcome = 'approved' AND (
+    NEW.outcome IS NOT OLD.outcome OR NEW.completed_at IS NOT OLD.completed_at OR
+    NEW.signed_content_version_id IS NOT OLD.signed_content_version_id OR
+    NEW.signed_identity IS NOT OLD.signed_identity OR
+    NEW.reviewed_content_version_id IS NOT OLD.reviewed_content_version_id OR
+    NEW.reviewed_identity IS NOT OLD.reviewed_identity OR
+    NEW.verifier_agent IS NOT OLD.verifier_agent OR NEW.run_id IS NOT OLD.run_id OR
+    NEW.independence_attestation IS NOT OLD.independence_attestation
+)
+BEGIN SELECT RAISE(ABORT, 'approved verification evidence is append-only'); END;
+CREATE TRIGGER verification_cycles_evidence_delete
+BEFORE DELETE ON verification_cycles
+WHEN OLD.completed_at IS NOT NULL OR OLD.reviewed_identity IS NOT NULL OR OLD.signed_identity IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'verification evidence is append-only'); END;
+
+CREATE TRIGGER write_attempt_confirmed_append_only_update
+BEFORE UPDATE ON write_attempts
+WHEN OLD.outcome = 'confirmed' AND (
+    NEW.operation_id IS NOT OLD.operation_id OR NEW.expected_identity IS NOT OLD.expected_identity OR
+    NEW.intended_identity IS NOT OLD.intended_identity OR NEW.outcome IS NOT OLD.outcome OR
+    NEW.finished_at IS NOT OLD.finished_at OR NEW.purpose IS NOT OLD.purpose OR
+    NEW.intended_title IS NOT OLD.intended_title OR NEW.intended_notes IS NOT OLD.intended_notes OR
+    NEW.schema_version IS NOT OLD.schema_version OR NEW.context_json IS NOT OLD.context_json OR
+    NEW.confirmed_content_version_id IS NOT OLD.confirmed_content_version_id
+)
+BEGIN SELECT RAISE(ABORT, 'confirmed write evidence is append-only'); END;
+CREATE TRIGGER write_attempt_confirmed_append_only_delete
+BEFORE DELETE ON write_attempts WHEN OLD.outcome = 'confirmed'
+BEGIN SELECT RAISE(ABORT, 'confirmed write evidence is append-only'); END;
+
+CREATE TRIGGER content_versions_confirmed_append_only_update
+BEFORE UPDATE ON content_versions
+WHEN OLD.confirmed = 1 AND (
+    NEW.task_gid IS NOT OLD.task_gid OR NEW.operation_id IS NOT OLD.operation_id OR
+    NEW.boundary IS NOT OLD.boundary OR NEW.identity IS NOT OLD.identity OR
+    NEW.title IS NOT OLD.title OR NEW.notes IS NOT OLD.notes OR
+    NEW.confirmed IS NOT OLD.confirmed OR NEW.created_at IS NOT OLD.created_at
+)
+BEGIN SELECT RAISE(ABORT, 'confirmed content evidence is append-only'); END;
+CREATE TRIGGER content_versions_confirmed_append_only_delete
+BEFORE DELETE ON content_versions WHEN OLD.confirmed = 1
+BEGIN SELECT RAISE(ABORT, 'confirmed content evidence is append-only'); END;
+
+CREATE TRIGGER operations_completion_monotonic_update
+BEFORE UPDATE ON operations
+WHEN (OLD.content_write_completed_at IS NOT NULL AND NEW.content_write_completed_at IS NOT OLD.content_write_completed_at)
+  OR (OLD.signoff_completed_at IS NOT NULL AND NEW.signoff_completed_at IS NOT OLD.signoff_completed_at)
+  OR (OLD.movement_completed_at IS NOT NULL AND NEW.movement_completed_at IS NOT OLD.movement_completed_at)
+  OR (OLD.completed_at IS NOT NULL AND NEW.completed_at IS NOT OLD.completed_at)
+  OR (OLD.status IN ('completed','cancelled') AND NEW.status IS NOT OLD.status)
+  OR (OLD.phase = 'terminal' AND NEW.phase IS NOT OLD.phase)
+BEGIN SELECT RAISE(ABORT, 'operation completion evidence is monotonic'); END;
+
+CREATE TRIGGER operation_actor_facts_append_only_update
+BEFORE UPDATE ON operation_actor_facts
+BEGIN SELECT RAISE(ABORT, 'actor facts are append-only'); END;
+CREATE TRIGGER operation_actor_facts_append_only_delete
+BEFORE DELETE ON operation_actor_facts
+BEGIN SELECT RAISE(ABORT, 'actor facts are append-only'); END;
+CREATE TRIGGER audit_events_append_only_update
+BEFORE UPDATE ON audit_events
+BEGIN SELECT RAISE(ABORT, 'audit events are append-only'); END;
+CREATE TRIGGER audit_events_append_only_delete
+BEFORE DELETE ON audit_events
+BEGIN SELECT RAISE(ABORT, 'audit events are append-only'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -609,13 +694,22 @@ def _execute_script_statements(conn: sqlite3.Connection, script: str) -> None:
 
 
 def _schema_version_state(conn: sqlite3.Connection) -> tuple[int, int | None]:
-    user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
-    has_ledger = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'").fetchone() is not None
-    ledger_version = None
-    if has_ledger:
-        ledger_version = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
-        ledger_version = None if ledger_version is None else int(ledger_version)
-    return user_version, ledger_version
+    try:
+        user_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+        has_ledger = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
+        ).fetchone() is not None
+        ledger_version = None
+        if has_ledger:
+            ledger_version = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()[0]
+            ledger_version = None if ledger_version is None else int(ledger_version)
+        return user_version, ledger_version
+    except (sqlite3.DatabaseError, TypeError, ValueError, IndexError) as exc:
+        raise DishRuleError(
+            "VALIDATION_FAILED", "database migration ledger is malformed",
+            rule="database_ledger_malformed",
+            details={"error": f"{type(exc).__name__}: {exc}"},
+        ) from exc
 
 
 def _validate_version_claims(conn: sqlite3.Connection, *, allow_empty: bool = False) -> None:
@@ -641,6 +735,55 @@ def _validate_version_claims(conn: sqlite3.Connection, *, allow_empty: bool = Fa
         raise DishRuleError("VALIDATION_FAILED", "versioned database is missing its migration ledger", rule="database_ledger_missing", details={"user_version": user_version})
 
 
+def _content_digest(title: str, notes: str) -> str:
+    clean_title = str(title).replace("\r\n", "\n")
+    clean_notes = str(notes).replace("\r\n", "\n")
+    payload = (
+        len(clean_title.encode("utf-8")).to_bytes(8, "big") + clean_title.encode("utf-8")
+        + len(clean_notes.encode("utf-8")).to_bytes(8, "big") + clean_notes.encode("utf-8")
+    )
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
+    problems: list[dict[str, Any]] = []
+    for row in conn.execute("SELECT * FROM content_versions WHERE confirmed=1"):
+        if _content_digest(row["title"], row["notes"]) != row["identity"]:
+            problems.append({"kind": "content_identity_mismatch", "id": row["content_version_id"]})
+    for row in conn.execute("SELECT * FROM write_attempts WHERE outcome='confirmed'"):
+        bound = conn.execute(
+            "SELECT identity,confirmed,operation_id FROM content_versions WHERE content_version_id=?",
+            (row["confirmed_content_version_id"],),
+        ).fetchone()
+        if bound is None or bound["confirmed"] != 1 or bound["operation_id"] != row["operation_id"] or bound["identity"] != row["intended_identity"]:
+            problems.append({"kind": "confirmed_write_binding", "id": row["attempt_id"]})
+    for row in conn.execute("SELECT * FROM verification_cycles WHERE outcome='approved'"):
+        signed = conn.execute(
+            "SELECT identity,confirmed,operation_id,task_gid FROM content_versions WHERE content_version_id=?",
+            (row["signed_content_version_id"],),
+        ).fetchone()
+        if (row["completed_at"] is None or row["signed_identity"] is None or signed is None
+                or signed["confirmed"] != 1 or signed["operation_id"] != row["operation_id"]
+                or signed["task_gid"] != row["task_gid"] or signed["identity"] != row["signed_identity"]):
+            problems.append({"kind": "approved_cycle_binding", "id": row["cycle_id"]})
+    for row in conn.execute("SELECT * FROM operations"):
+        if row["status"] == "completed" and (row["completed_at"] is None or row["phase"] != "terminal"):
+            problems.append({"kind": "completed_operation_state", "id": row["operation_id"]})
+        if row["signoff_completed_at"] is not None:
+            approved = conn.execute(
+                "SELECT 1 FROM verification_cycles WHERE operation_id=? AND outcome='approved' AND signed_identity IS NOT NULL AND signed_content_version_id IS NOT NULL",
+                (row["operation_id"],),
+            ).fetchone()
+            if approved is None:
+                problems.append({"kind": "operation_signoff_binding", "id": row["operation_id"]})
+    if problems:
+        raise DishRuleError(
+            "VALIDATION_FAILED", "database durable evidence is semantically inconsistent",
+            rule="database_semantic_evidence_invalid",
+            details={"problems": problems[:50], "problem_count": len(problems)},
+        )
+
+
 def _validate_current_database(conn: sqlite3.Connection) -> None:
     current = max(MIGRATIONS)
     _validate_version_claims(conn)
@@ -664,6 +807,7 @@ def _validate_current_database(conn: sqlite3.Connection) -> None:
             rule="database_schema_signature_mismatch",
             details={"missing_objects": missing_objects, "extra_objects": extra_objects, "altered_objects": altered_objects},
         )
+    _validate_semantic_evidence(conn)
 
 
 def _normalized_schema_sql(sql: str | None) -> str:

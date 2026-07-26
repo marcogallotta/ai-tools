@@ -21,6 +21,7 @@ from .database import (
     latest_change_diff_telemetry,
     latest_successful_rejection_reason,
     record_audit,
+    record_command_audit_repair,
     transition_submission,
 )
 from .errors import BackendFailure, DishRuleError
@@ -208,15 +209,25 @@ class DishApplication:
                 "actor_run_id": governed.get("run_id"),
                 "actor_attestation": governed.get("attestation"),
             }
-        record_audit(
-            self.conn,
-            submission_id=trace.submission_id if trace.known_submission else None,
-            task_gid=trace.task_gid,
-            event_type=f"dish.{command}",
-            actor_agent=valid_actor,
-            details=details,
-            **audit_kwargs,
-        )
+        try:
+            record_audit(
+                self.conn,
+                submission_id=trace.submission_id if trace.known_submission else None,
+                task_gid=trace.task_gid,
+                event_type=f"dish.{command}", actor_agent=valid_actor,
+                details=details, **audit_kwargs,
+            )
+        except Exception as audit_exc:
+            repair_id = record_command_audit_repair(
+                self.conn, command=command, result=result,
+                audit_error=f"{type(audit_exc).__name__}: {audit_exc}",
+                submission_id=trace.submission_id if trace.known_submission else None,
+                task_gid=trace.task_gid, actor_agent=valid_actor,
+            )
+            if isinstance(result, dict):
+                data = dict(result.get("data") or {})
+                data.update({"audit_repair_required": True, "audit_repair_id": repair_id})
+                result["data"] = data
 
     def _command_create(
         self, *, trace: CommandTrace, agent: str, title: str

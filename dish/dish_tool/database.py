@@ -66,6 +66,24 @@ def record_audit(
     return event_id
 
 
+def record_command_audit_repair(
+    conn: sqlite3.Connection, *, command: str, result: Mapping[str, Any], audit_error: str,
+    operation_id: str | None = None, submission_id: str | None = None,
+    task_gid: str | None = None, actor_agent: str | None = None,
+) -> str:
+    repair_id = str(uuid.uuid4())
+    conn.execute(
+        """INSERT INTO command_audit_repairs(
+               repair_id,command,operation_id,submission_id,task_gid,actor_agent,
+               result_json,audit_error,created_at
+           ) VALUES (?,?,?,?,?,?,?,?,?)""",
+        (repair_id, command, operation_id, submission_id, task_gid, actor_agent,
+         json.dumps(dict(result), sort_keys=True, separators=(",", ":")),
+         str(audit_error), utc_now()),
+    )
+    return repair_id
+
+
 def latest_change_diff_telemetry(
     conn: sqlite3.Connection, submission_id: str
 ) -> dict[str, Any] | None:
@@ -797,32 +815,27 @@ def record_actor_fact(conn: sqlite3.Connection, *, operation_id: str, task_gid: 
     clean_run = str(run_id or '').strip() or None
     clean_attestation = str(independence_attestation or '').strip() or None
     if clean_run is not None:
-        existing = conn.execute(
-            "SELECT * FROM operation_actor_facts WHERE task_gid=? AND role=? AND run_id=? ORDER BY created_at LIMIT 1",
+        existing_rows = conn.execute(
+            "SELECT * FROM operation_actor_facts WHERE task_gid=? AND role=? AND run_id=? ORDER BY created_at, fact_id",
             (task_gid, role, clean_run),
-        ).fetchone()
-        if existing is not None:
+        ).fetchall()
+        for existing in existing_rows:
             if existing["agent"] != agent or existing["operation_id"] != operation_id:
                 raise DishRuleError(
                     "CONFLICT", "actor lineage fact conflicts with persisted history",
-                    rule="actor_fact_conflict",
-                    details={"role": role, "run_id": clean_run},
+                    rule="actor_fact_conflict", details={"role": role, "run_id": clean_run},
                 )
+            if existing["candidate_identity"] == candidate_identity:
+                return existing
+        if existing_rows:
             operation = conn.execute("SELECT expected_identity FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
-            replaceable_identity = existing["candidate_identity"] is None or (operation is not None and existing["candidate_identity"] == operation["expected_identity"])
-            if replaceable_identity and candidate_identity is not None:
-                conn.execute(
-                    "UPDATE operation_actor_facts SET candidate_identity=? WHERE fact_id=?",
-                    (candidate_identity, existing["fact_id"]),
-                )
-                return conn.execute("SELECT * FROM operation_actor_facts WHERE fact_id=?", (existing["fact_id"],)).fetchone()
-            if existing["candidate_identity"] != candidate_identity:
+            baseline = None if operation is None else operation["expected_identity"]
+            if not all(row["candidate_identity"] in {None, baseline} for row in existing_rows):
                 raise DishRuleError(
                     "CONFLICT", "actor lineage fact conflicts with persisted candidate",
-                    rule="actor_fact_conflict",
-                    details={"role": role, "run_id": clean_run},
+                    rule="actor_fact_conflict", details={"role": role, "run_id": clean_run},
                 )
-            return existing
+            # Append a new exact-candidate fact; never rewrite actor history.
     fact_id = str(uuid.uuid4())
     conn.execute("""INSERT INTO operation_actor_facts(fact_id,operation_id,task_gid,role,agent,run_id,independence_attestation,candidate_identity,source_cycle_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""", (fact_id, operation_id, task_gid, role, agent, clean_run, clean_attestation, candidate_identity, source_cycle_id, utc_now()))
     return conn.execute("SELECT * FROM operation_actor_facts WHERE fact_id=?", (fact_id,)).fetchone()
