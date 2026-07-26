@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from .database import get_submission, record_audit, transition_submission
+from .constants import LEGACY_WORKFLOW_NAME
 from .errors import DishRuleError
 from .models import ProcessIdentity, utc_now
 from .recovery import (
@@ -15,7 +16,7 @@ from .recovery import (
     recover_write_attempt,
     validate_recovery_window,
 )
-from .results import error_envelope, result_envelope
+from .results import error_envelope, result_envelope, label_unsupported_legacy_workflow
 
 _RECOVERABLE_STATES = {"in_flight", "uncertain"}
 _DISCARDABLE_STATES = {
@@ -75,6 +76,13 @@ class DishAdminApplication:
         trace = AdminTrace(submission_id=arguments.get("submission_id"))
         handler = getattr(self, f"_command_{command.replace(chr(45), chr(95))}", None)
         try:
+            if trace.submission_id:
+                legacy = self.conn.execute("SELECT status, protocol_release FROM submissions WHERE submission_id=?", (trace.submission_id,)).fetchone()
+                if legacy is not None and legacy["protocol_release"] == LEGACY_WORKFLOW_NAME:
+                    result = result_envelope(command=command, ok=False, code="PROTOCOL_INCOMPATIBLE", submission_id=trace.submission_id, state=legacy["status"], retryable=False, allowed_actions=[], data={})
+                    result = label_unsupported_legacy_workflow(result)
+                    self._record_invocation(command, trace, result)
+                    return result
             if handler is None:
                 raise DishRuleError(
                     "INVALID_ARGUMENT",
@@ -123,13 +131,18 @@ class DishAdminApplication:
                 pass
             else:
                 self._attach_submission(trace, row)
-        result = error_envelope(
-            command,
-            error,
-            task_gid=trace.task_gid,
-            submission_id=trace.submission_id,
-            state=trace.state,
-        )
+        legacy = self.conn.execute("SELECT status, protocol_release FROM submissions WHERE submission_id=?", (submission_id,)).fetchone() if submission_id else None
+        if legacy is not None and legacy["protocol_release"] == LEGACY_WORKFLOW_NAME:
+            result = result_envelope(command=command, ok=False, code="PROTOCOL_INCOMPATIBLE", task_gid=trace.task_gid, submission_id=trace.submission_id, state=legacy["status"], retryable=False, allowed_actions=[], data={})
+            result = label_unsupported_legacy_workflow(result)
+        else:
+            result = error_envelope(
+                command,
+                error,
+                task_gid=trace.task_gid,
+                submission_id=trace.submission_id,
+                state=trace.state,
+            )
         self._record_invocation(command, trace, result)
         return result
 
@@ -349,7 +362,7 @@ DishAdminApplication._command_migrate = _step5_admin_migrate
 
 
 # Step 8 Marco-only two-pass hold reopen.
-def _step8_admin_reopen(self, *, trace: AdminTrace, submission_id: str, category: str, before: str, after: str, editor: str, date: str) -> dict[str, Any]:
+def _step8_admin_reopen(self, *, trace: AdminTrace, submission_id: str, category: str, before: str, after: str, editor: str, date: str, run_id: str | None = None, file_path: str | None = None) -> dict[str, Any]:
     if self.backend is None:
         raise DishRuleError("INTERNAL_ERROR", "admin backend is required", rule="backend_required")
     from .step8 import reopen_two_pass
@@ -359,7 +372,12 @@ def _step8_admin_reopen(self, *, trace: AdminTrace, submission_id: str, category
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     trace.submission_id = operation_id; trace.task_gid = row["task_gid"]; trace.state = "open"
     release = None if self.release_loader is None else self.release_loader()
-    data = reopen_two_pass(self.conn, self.backend, operation_id=operation_id, category=category, before=before, after=after, editor=editor, date=date, honest_root=None if release is None else release.root)
+    data = reopen_two_pass(
+        self.conn, self.backend, operation_id=operation_id, category=category,
+        before=before, after=after, editor=editor, run_id=run_id,
+        file_path=file_path, date=date, honest_root=None if release is None else release.root,
+        schema=None if release is None else release.schema,
+    )
     return result_envelope(command="reopen", task_gid=trace.task_gid, submission_id=operation_id, state="open", data=data)
 
 DishAdminApplication._command_reopen = _step8_admin_reopen
@@ -472,12 +490,25 @@ def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, r
     unresolved_move = self.conn.execute("SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain') LIMIT 1", (operation_id,)).fetchone()
     if unresolved_write or unresolved_move:
         raise DishRuleError("CONFLICT", "operation has unresolved external side effects", rule="operation_cancel_side_effects_unresolved")
+    applied_write = self.conn.execute("SELECT 1 FROM write_attempts WHERE operation_id=? AND outcome='confirmed' LIMIT 1", (operation_id,)).fetchone()
+    applied_move = self.conn.execute("SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome='confirmed' LIMIT 1", (operation_id,)).fetchone()
+    completed_step = self.conn.execute("SELECT 1 FROM operation_steps WHERE operation_id=? AND completed_at IS NOT NULL LIMIT 1", (operation_id,)).fetchone()
+    if applied_write or applied_move or completed_step:
+        raise DishRuleError(
+            "CONFLICT",
+            "operation has applied workflow effects and must be recovered or explicitly compensated",
+            rule="operation_cancel_applied_effects",
+        )
     from .task_store import read_complete_task
     from .constants import COOKING_PROJECT_GID
     live = read_complete_task(self.backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
-    baseline = self.conn.execute("SELECT last_confirmed_identity FROM task_content_state WHERE task_gid=?", (op["task_gid"],)).fetchone()
-    if baseline is None or live.identity != baseline["last_confirmed_identity"]:
-        raise DishRuleError("CONFLICT", "live content is not a confirmed safe cancellation state", rule="operation_cancel_live_drift")
+    if live.identity != op["expected_identity"]:
+        raise DishRuleError(
+            "CONFLICT",
+            "live content does not match the operation's pre-operation baseline",
+            rule="operation_cancel_live_drift",
+            details={"expected_identity": op["expected_identity"], "actual_identity": live.identity},
+        )
     from .database import transition_operation
     final = transition_operation(self.conn, operation_id, phase="terminal", status="cancelled", terminal_outcome="cancelled_by_marco")
     record_audit(self.conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="operation.cancelled", actor_agent=None, details={"reason": _clean_required(reason, rule="discard_reason_required", label="discard reason")}, result_code="OK", result_ok=True, actor_source="marco-admin")

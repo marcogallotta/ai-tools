@@ -513,7 +513,15 @@ WHEN NEW.signoff_completed_at IS NOT NULL AND NOT EXISTS (
 BEGIN SELECT RAISE(ABORT, 'signoff completion requires an approved signed cycle'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12}
+_MIGRATION_13 = """
+ALTER TABLE marco_authorizations ADD COLUMN reserved_by_operation_id TEXT REFERENCES operations(operation_id);
+ALTER TABLE marco_authorizations ADD COLUMN reserved_at TEXT;
+ALTER TABLE marco_authorizations ADD COLUMN consumed_identity TEXT;
+CREATE INDEX marco_authorizations_reservation_idx
+    ON marco_authorizations(task_gid, operation_id, field_name, consumed_at, reserved_by_operation_id, created_at);
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -567,8 +575,22 @@ def initialize_database(
             rule="database_reader_lock",
             retryable=True,
         ) from journal_exc
+    conn.execute("PRAGMA busy_timeout = 2000")
+    try:
+        migrate_database(conn)
+    except sqlite3.OperationalError as exc:
+        if "locked" in str(exc).lower() or "busy" in str(exc).lower():
+            conn.close()
+            raise DishRuleError(
+                "BACKEND_REJECTED",
+                "database initialization is blocked by another writer",
+                rule="database_writer_lock",
+                retryable=True,
+                details={"timeout_ms": 2000},
+            ) from exc
+        conn.close()
+        raise
     conn.execute("PRAGMA busy_timeout = 30000")
-    migrate_database(conn)
     _validate_current_database(conn)
     return conn
 
@@ -605,6 +627,16 @@ def _validate_version_claims(conn: sqlite3.Connection, *, allow_empty: bool = Fa
         raise DishRuleError("VALIDATION_FAILED", "database migration ledger is newer than this release", rule="database_future_ledger", details={"ledger_version": ledger_version, "current": current})
     if ledger_version is not None and ledger_version != user_version:
         raise DishRuleError("VALIDATION_FAILED", "database migration ledger and user_version disagree", rule="database_version_disagreement", details={"user_version": user_version, "ledger_version": ledger_version})
+    if ledger_version is not None:
+        ledger_rows = [int(row[0]) for row in conn.execute("SELECT version FROM schema_migrations ORDER BY version")]
+        expected_rows = list(range(1, ledger_version + 1))
+        if ledger_rows != expected_rows:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "database migration ledger is not contiguous",
+                rule="database_ledger_gap",
+                details={"versions": ledger_rows, "expected": expected_rows},
+            )
     if not allow_empty and user_version > 0 and ledger_version is None:
         raise DishRuleError("VALIDATION_FAILED", "versioned database is missing its migration ledger", rule="database_ledger_missing", details={"user_version": user_version})
 
@@ -620,6 +652,57 @@ def _validate_current_database(conn: sqlite3.Connection) -> None:
     missing = sorted(required - actual)
     if missing:
         raise DishRuleError("VALIDATION_FAILED", "current-version database is missing required tables", rule="database_schema_incomplete", details={"missing_tables": missing})
+    expected = _canonical_schema_manifest()
+    actual_manifest = _schema_manifest(conn)
+    if actual_manifest != expected:
+        missing_objects = sorted(set(expected) - set(actual_manifest))
+        extra_objects = sorted(set(actual_manifest) - set(expected))
+        altered_objects = sorted(name for name in set(expected) & set(actual_manifest) if expected[name] != actual_manifest[name])
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "current-version database schema does not match the canonical release schema",
+            rule="database_schema_signature_mismatch",
+            details={"missing_objects": missing_objects, "extra_objects": extra_objects, "altered_objects": altered_objects},
+        )
+
+
+def _normalized_schema_sql(sql: str | None) -> str:
+    import re
+    text = " ".join((sql or "").split())
+    text = re.sub(r"\s*([(),])\s*", r"\1", text)
+    return text
+
+
+def _schema_manifest(conn: sqlite3.Connection) -> dict[str, str]:
+    rows = conn.execute(
+        """SELECT type, name, sql FROM sqlite_master
+           WHERE type IN ('table','index','trigger')
+             AND name NOT LIKE 'sqlite_%'
+           ORDER BY type, name"""
+    )
+    return {f"{row[0]}:{row[1]}": _normalized_schema_sql(row[2]) for row in rows}
+
+
+_CANONICAL_SCHEMA_MANIFEST: dict[str, str] | None = None
+
+
+def _canonical_schema_manifest() -> dict[str, str]:
+    global _CANONICAL_SCHEMA_MANIFEST
+    if _CANONICAL_SCHEMA_MANIFEST is None:
+        probe = sqlite3.connect(":memory:", isolation_level=None)
+        try:
+            probe.execute("PRAGMA foreign_keys = ON")
+            probe.execute("BEGIN IMMEDIATE")
+            probe.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
+            for version in sorted(MIGRATIONS):
+                _execute_script_statements(probe, MIGRATIONS[version])
+                probe.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?, 'canonical')", (version,))
+                probe.execute(f"PRAGMA user_version = {version}")
+            probe.execute("COMMIT")
+            _CANONICAL_SCHEMA_MANIFEST = _schema_manifest(probe)
+        finally:
+            probe.close()
+    return dict(_CANONICAL_SCHEMA_MANIFEST)
 
 
 def migrate_database(conn: sqlite3.Connection) -> None:

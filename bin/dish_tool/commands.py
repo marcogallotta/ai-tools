@@ -12,6 +12,7 @@ from .constants import (
     AGENT_FAMILIES,
     CHANGE_LEVELS,
     COOKING_PROJECT_GID,
+    LEGACY_WORKFLOW_NAME,
     SUBMISSION_KINDS,
 )
 from .database import (
@@ -33,7 +34,7 @@ from .models import (
     utc_now,
 )
 from .recovery import begin_write_attempt, finish_write_attempt
-from .results import allowed_actions_for_state, error_envelope, result_envelope
+from .results import allowed_actions_for_state, error_envelope, result_envelope, label_unsupported_legacy_workflow
 from .telemetry import calculate_change_diff
 from .validation import (
     extract_exact_label_line,
@@ -81,6 +82,14 @@ class DishApplication:
             return self.release_loader(protocol_role)
         return self.release_loader()
 
+
+    def _legacy_compatibility_mode(self) -> bool:
+        try:
+            release = self._load_release(None)
+        except Exception:
+            return False
+        return release.version == LEGACY_WORKFLOW_NAME
+
     def execute(self, command: str, **arguments: Any) -> dict[str, Any]:
         trace = CommandTrace(
             task_gid=arguments.get("task_gid"),
@@ -89,6 +98,15 @@ class DishApplication:
         actor = arguments.get("agent")
         handler = getattr(self, f"_command_{command}", None)
         try:
+            if self._legacy_compatibility_mode() and command != "read":
+                legacy_state = None
+                if trace.submission_id:
+                    row = self.conn.execute("SELECT status FROM submissions WHERE submission_id=?", (trace.submission_id,)).fetchone()
+                    legacy_state = None if row is None else row["status"]
+                result = result_envelope(command=command, ok=False, code="PROTOCOL_INCOMPATIBLE", submission_id=trace.submission_id, task_gid=trace.task_gid, state=legacy_state, retryable=False, allowed_actions=[], data={})
+                result = label_unsupported_legacy_workflow(result)
+                self._record_invocation(command, trace.actor_agent or actor, trace, result)
+                return result
             if handler is None:
                 raise DishRuleError(
                     "INVALID_ARGUMENT",
@@ -144,13 +162,17 @@ class DishApplication:
                 trace.task_gid = row["task_gid"]
                 trace.state = row["status"]
                 trace.actor_agent = row["editor_agent"]
-        result = error_envelope(
-            command,
-            error,
-            task_gid=trace.task_gid,
-            submission_id=submission_id,
-            state=trace.state,
-        )
+        if self._legacy_compatibility_mode():
+            result = result_envelope(command=command, ok=False, code="PROTOCOL_INCOMPATIBLE", task_gid=trace.task_gid, submission_id=submission_id, state=trace.state, retryable=False, allowed_actions=[], data={})
+            result = label_unsupported_legacy_workflow(result)
+        else:
+            result = error_envelope(
+                command,
+                error,
+                task_gid=trace.task_gid,
+                submission_id=submission_id,
+                state=trace.state,
+            )
         self._record_invocation(command, trace.actor_agent or agent, trace, result)
         return result
 
@@ -251,7 +273,7 @@ class DishApplication:
         parsed_title = parse_canonical_title(
             raw_title, release.manifests["complete_task"]
         )
-        return result_envelope(
+        result = result_envelope(
             command="read",
             task_gid=task_gid,
             data={
@@ -270,6 +292,9 @@ class DishApplication:
                 },
             },
         )
+        if self._legacy_compatibility_mode():
+            return label_unsupported_legacy_workflow(result, diagnostic_read=True)
+        return result
 
     def _command_inspect(
         self, *, trace: CommandTrace, agent: str, submission_id: str

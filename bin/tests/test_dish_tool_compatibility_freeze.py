@@ -4,8 +4,6 @@ from pathlib import Path
 
 import pytest
 
-pytestmark = pytest.mark.skip(reason="superseded by the current-operation workflow and read-only legacy adapter tests")
-
 from dish_tool import admin_cli, cli
 from dish_tool.admin import DishAdminApplication
 from dish_tool.commands import DishApplication
@@ -39,7 +37,7 @@ def release_fixture() -> ResolvedRelease:
     planning_text = (RELEASE_ROOT / "dish-planning-manifest.json").read_text()
     complete_text = (RELEASE_ROOT / "dish-complete-task-manifest.json").read_text()
     return ResolvedRelease(
-        version="fixture-v2-structured-title",
+        version="task-pinned-release-v1a",
         commit="fixture-commit",
         root=RELEASE_ROOT,
         protocols={
@@ -185,7 +183,7 @@ def insert_ready_submission(conn, submission_id="legacy-ready"):
             submission_id, task_gid, submission_kind, protocol_release,
             release_commit, protocol_bundle, canonical_manifest,
             editor_agent, editor_family, status, created_at
-        ) VALUES (?, 'task-ready', 'initial', 'legacy-release', 'legacy-commit',
+        ) VALUES (?, 'task-ready', 'initial', 'task-pinned-release-v1a', 'legacy-commit',
                   '{}', '{}', 'claude', 'claude', 'ready',
                   '2026-07-21T00:00:00Z')
         """,
