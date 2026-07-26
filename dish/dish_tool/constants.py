@@ -1,9 +1,12 @@
 """Shared constants for the guarded dish workflow."""
 
+import os
 from pathlib import Path
 
 
-COOKING_PROJECT_GID = "1215089183018968"
+COOKING_PROJECT_GID = os.environ.get(
+    "DISH_COOKING_PROJECT_GID", "1215089183018968"
+)
 SOURCING_SECTION_GID = "1215097887456673"
 REFERENCE_SECTION_GID = "1215259129474846"
 EXCLUDED_SECTION_GIDS = frozenset(
