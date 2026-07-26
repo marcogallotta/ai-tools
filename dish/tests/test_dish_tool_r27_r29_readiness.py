@@ -1,0 +1,178 @@
+from pathlib import Path
+
+import pytest
+
+from dish_tool import step6, step8
+from dish_tool.admin import DishAdminApplication
+from dish_tool.errors import DishRuleError
+from dish_tool.step9 import recover_operation
+from test_dish_tool_step7_verification import Backend, TASK, make_app
+
+
+def _review(app, run: str, agent: str = "codex"):
+    result = app.execute("start", agent=agent, task_gid="t", kind="verification", run_id=run)
+    assert result["ok"]
+    return result
+
+
+def _approve_and_submit(app, operation_id: str, run: str = "review"):
+    review = _review(app, run)
+    approved = app.execute(
+        "approve", agent="codex", submission_id=operation_id, correction="none",
+        reviewed_identity=review["data"]["reviewed_identity"],
+        semantic_review_complete=True, provenance_complete=True, run_id=run,
+    )
+    assert approved["ok"]
+    submitted = app.execute("submit", submission_id=operation_id)
+    assert submitted["ok"]
+
+
+def test_reopen_recovery_records_editor_before_cycle_is_usable(tmp_path, monkeypatch):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    candidate = tmp_path / "large.txt"
+    candidate.write_text(TASK)
+    _review(app, "one")
+    assert app.execute(
+        "reject", agent="codex", submission_id=operation_id, route="large",
+        reason="first", file_path=str(candidate), run_id="one",
+    )["ok"]
+    _review(app, "two", agent="gpt")
+    assert app.execute(
+        "reject", agent="gpt", submission_id=operation_id, route="large",
+        reason="second", file_path=str(candidate), run_id="two",
+    )["ok"]
+
+    corrected = tmp_path / "corrected.txt"
+    corrected.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "Compare hydration routes.",
+            "Compare hydration routes after a substantive premise reset.",
+        )
+    )
+    original = step8.record_actor_fact
+
+    def crash_before_actor(*args, **kwargs):
+        raise RuntimeError("crash before editor lineage")
+
+    monkeypatch.setattr(step8, "record_actor_fact", crash_before_actor)
+    admin = DishAdminApplication(app.conn, backend=backend)
+    failed = admin.execute(
+        "reopen", submission_id=operation_id, category="premise",
+        before="Compare hydration routes.",
+        after="Compare hydration routes after a substantive premise reset.",
+        editor="codex", run_id="reopen-run", file_path=str(corrected), date="2026-07-25",
+    )
+    assert failed["code"] == "INTERNAL_ERROR"
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM operation_actor_facts WHERE task_gid='t' AND run_id='reopen-run'"
+    ).fetchone()[0] == 0
+
+    monkeypatch.setattr(step8, "record_actor_fact", original)
+    recovered = recover_operation(app.conn, backend, operation_id=operation_id, requested_outcome="applied")
+    assert any(action.get("step") == "reopen_actor" for action in recovered["actions"])
+    barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="reopen-run")
+    assert barred["code"] == "AGENT_MISMATCH"
+
+
+def test_material_hold_resolution_recovery_records_editor_before_cycle(tmp_path, monkeypatch):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    _review(app, "hold-review")
+    held = app.execute(
+        "reject", agent="codex", submission_id=operation_id, route="evidence",
+        reason="confirm source", resume_status="pending-verification", run_id="hold-review",
+    )
+    assert held["ok"]
+    corrected = tmp_path / "hold-corrected.txt"
+    corrected.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "Crisp and aromatic.", "Crisp and aromatic with the confirmed source."
+        )
+    )
+    original = step8.record_actor_fact
+
+    def crash_before_actor(*args, **kwargs):
+        raise RuntimeError("crash before hold editor lineage")
+
+    monkeypatch.setattr(step8, "record_actor_fact", crash_before_actor)
+    admin = DishAdminApplication(
+        app.conn, backend=backend, release_loader=lambda: app._load_release("verification")
+    )
+    failed = admin.execute(
+        "supply-evidence", submission_id=operation_id, detail="Marco confirmed source",
+        resume_status="pending-verification", file_path=str(corrected),
+        editor="codex", run_id="hold-editor",
+    )
+    assert failed["code"] == "INTERNAL_ERROR"
+    monkeypatch.setattr(step8, "record_actor_fact", original)
+    recovered = recover_operation(app.conn, backend, operation_id=operation_id, requested_outcome="applied")
+    assert any(action.get("step") == "hold_resolution_actor" for action in recovered["actions"])
+    barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="hold-editor")
+    assert barred["code"] == "AGENT_MISMATCH"
+
+
+def test_non_material_terminal_phase_recovers_after_confirmed_write(tmp_path, monkeypatch):
+    app, backend, initial_operation, _ = make_app(tmp_path)
+    _approve_and_submit(app, initial_operation)
+    started = app.execute(
+        "start", agent="codex", task_gid="t", kind="change",
+        change_level="small", change_reason="wording", run_id="later-editor",
+    )
+    candidate = tmp_path / "non-material.txt"
+    candidate.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "Crisp and aromatic.", "Crisp and aromatic, with a brighter finish."
+        )
+    )
+    original = step6.transition_operation
+
+    def crash_before_terminal(*args, **kwargs):
+        raise RuntimeError("crash before non-material terminal")
+
+    monkeypatch.setattr(step6, "transition_operation", crash_before_terminal)
+    failed = app.execute(
+        "prepare", agent="codex", submission_id=started["submission_id"],
+        file_path=str(candidate), material_classification="non-material",
+    )
+    assert failed["code"] == "INTERNAL_ERROR"
+    monkeypatch.setattr(step6, "transition_operation", original)
+    recovered = recover_operation(
+        app.conn, backend, operation_id=started["submission_id"], requested_outcome="applied"
+    )
+    assert any(action.get("step") == "non_material_terminal" for action in recovered["actions"])
+    row = app.conn.execute(
+        "SELECT status, phase FROM operations WHERE operation_id=?", (started["submission_id"],)
+    ).fetchone()
+    assert tuple(row) == ("completed", "terminal")
+
+
+def test_research_handoff_phase_recovers_after_move(tmp_path, monkeypatch):
+    # make_app has already completed the first handoff; regress the persisted phase
+    # while preserving exact live placement and the declared phase step.
+    app, backend, operation_id, _ = make_app(tmp_path)
+    app.conn.execute(
+        "UPDATE operation_steps SET completed_at=NULL WHERE operation_id=? AND step_name='verification_phase'",
+        (operation_id,),
+    )
+    app.conn.execute(
+        "UPDATE operations SET phase='prepare_required' WHERE operation_id=?", (operation_id,)
+    )
+    recovered = recover_operation(app.conn, backend, operation_id=operation_id, requested_outcome="applied")
+    assert any(action.get("step") == "verification_phase" for action in recovered["actions"])
+    assert app.conn.execute(
+        "SELECT phase FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()[0] == "await_verification"
+
+
+def test_current_dispatch_uses_service_boundary_without_runtime_method_replacement():
+    source = Path(__file__).resolve().parents[1] / "dish_tool" / "commands.py"
+    text = source.read_text()
+    import re
+    assert re.search(r"DishApplication\._command_\w+\s*=", text) is None
+    assert "class CurrentDishApplication(DishApplication)" in text
+    for method in (".current.prepare(", ".current.start_verification(", ".current.approve(", ".current.reject(", ".current.submit("):
+        assert method in text
+    admin_text = (source.parent / "admin.py").read_text()
+    assert re.search(r"DishAdminApplication\._command_\w+\s*=", admin_text) is None
+    assert "class CurrentDishAdminApplication(DishAdminApplication)" in admin_text
+    for method in (".current.reopen_two_pass(", ".current.resolve_hold(", ".current.recover("):
+        assert method in admin_text
