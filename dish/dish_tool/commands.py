@@ -1589,7 +1589,7 @@ def _step5_create(self, *, trace: CommandTrace, agent: str, title: str) -> dict[
     )
     task_gid = _clean_required(task.get("gid"), rule="created_task_gid_missing", label="created task GID")
     trace.task_gid = task_gid
-    return result_envelope(command="create", task_gid=task_gid, data={"task_gid": task_gid, "schema_version": release.schema_version, "bare_task": True})
+    return result_envelope(command="create", task_gid=task_gid, allowed_actions=["start"], data={"task_gid": task_gid, "schema_version": release.schema_version, "bare_task": True})
 
 
 def _step5_read(self, *, trace: CommandTrace, agent: str, task_gid: str) -> dict[str, Any]:
