@@ -153,11 +153,19 @@ def test_asana_backend_create_is_bare_and_places_confirmed_gid(monkeypatch):
             calls.append(("create", body, opts))
             return {"data": {"gid": "new-task", "name": "New dish"}}
 
+        def get_task(self, task_gid, opts, **kwargs):
+            calls.append(("read", task_gid, opts))
+            return {"data": {
+                "gid": task_gid, "name": "New dish", "notes": "",
+                "memberships": [{"project": {"gid": "cooking"}, "section": {"gid": "research"}}],
+            }}
+
     class SectionsApi:
         def __init__(self, client):
             self.client = client
 
-        def add_task_for_section(self, body, section_gid, opts, **kwargs):
+        def add_task_for_section(self, section_gid, opts, **kwargs):
+            body = opts["body"]
             calls.append(("move", body, section_gid, opts))
             return {"data": {}}
 
@@ -174,8 +182,9 @@ def test_asana_backend_create_is_bare_and_places_confirmed_gid(monkeypatch):
         "move",
         {"data": {"task": "new-task"}},
         "research",
-        {},
+        {"body": {"data": {"task": "new-task"}}},
     )
+    assert calls[2][0] == "read"
     assert task["gid"] == "new-task"
     assert task["notes"] == ""
 
@@ -198,7 +207,8 @@ def test_asana_backend_post_create_failure_is_uncertain(monkeypatch):
         def __init__(self, client):
             self.client = client
 
-        def add_task_for_section(self, body, section_gid, opts, **kwargs):
+        def add_task_for_section(self, section_gid, opts, **kwargs):
+            body = opts["body"]
             raise Rejection()
 
     monkeypatch.setattr(asana, "TasksApi", TasksApi)

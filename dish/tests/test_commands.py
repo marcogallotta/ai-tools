@@ -128,7 +128,7 @@ def test_move_adds_task_to_section(cli, monkeypatch):
     calls = []
     monkeypatch.setattr(
         asana.SectionsApi, "add_task_for_section",
-        lambda self, body, section_gid, opts, **kw: calls.append((body, section_gid)) or {"data": {}},
+        lambda self, section_gid, opts, **kw: calls.append((opts["body"], section_gid)) or {"data": {}},
     )
     cli.c_move("1", "999")
     assert calls == [({"data": {"task": "1"}}, "999")]
@@ -162,7 +162,7 @@ def test_create_task_moves_to_section_when_given(cli, monkeypatch):
     )
     monkeypatch.setattr(
         asana.SectionsApi, "add_task_for_section",
-        lambda self, body, section_gid, opts, **kw: move_calls.append((body, section_gid)) or {"data": {}},
+        lambda self, section_gid, opts, **kw: move_calls.append((opts["body"], section_gid)) or {"data": {}},
     )
     cli.c_create_task("proj-1", "New task", "sec-1", None)
     assert move_calls == [({"data": {"task": "new-1"}}, "sec-1")]

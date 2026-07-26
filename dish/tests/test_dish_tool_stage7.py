@@ -213,7 +213,7 @@ def test_note_bearing_creation_checks_intended_section(cli, monkeypatch, tmp_pat
     monkeypatch.setattr(
         asana.SectionsApi,
         "add_task_for_section",
-        lambda self, body, section_gid, opts, **kwargs: {"data": {}},
+        lambda self, section_gid, opts, **kwargs: {"data": {}},
     )
 
     cli.c_create_task(COOKING_PROJECT_GID, "Managed", "managed", "notes")
@@ -246,7 +246,7 @@ def test_title_only_creation_and_rename_log_content_bypasses(cli, monkeypatch, t
     monkeypatch.setattr(
         asana.SectionsApi,
         "add_task_for_section",
-        lambda self, body, section_gid, opts, **kwargs: {"data": {}},
+        lambda self, section_gid, opts, **kwargs: {"data": {}},
     )
 
     cli.c_create_task(COOKING_PROJECT_GID, "Bare", "managed", None)
@@ -286,7 +286,7 @@ def test_batch_logs_each_note_bearing_operation_only(cli, monkeypatch, tmp_path)
     monkeypatch.setattr(
         asana.SectionsApi,
         "add_task_for_section",
-        lambda self, body, section_gid, opts, **kwargs: {"data": {}},
+        lambda self, section_gid, opts, **kwargs: {"data": {}},
     )
 
     path = _write_plan(

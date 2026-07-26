@@ -174,7 +174,8 @@ def test_create_task_reports_gid_when_section_move_fails(cli, monkeypatch, tmp_p
         lambda self, body, opts, **kw: {"data": {"gid": "new-task-99"}},
     )
 
-    def fake_add_task_for_section(self, body, section_gid, opts, **kw):
+    def fake_add_task_for_section(self, section_gid, opts, **kw):
+        body = opts["body"]
         e = ApiException(status=404, reason="Not Found")
         e.body = b'{"errors":[{"message":"section not found"}]}'
         raise e

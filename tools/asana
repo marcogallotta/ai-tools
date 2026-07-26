@@ -300,7 +300,7 @@ def c_comments(gid, cursor):
 
 def c_move(gid, section):
     """Move a task to a section within its project."""
-    _call(asana.SectionsApi(client()).add_task_for_section, {"data": {"task": gid}}, section, {}, context="section %s" % section)
+    _call(asana.SectionsApi(client()).add_task_for_section, section, {"body": {"data": {"task": gid}}}, context="section %s" % section)
     print("move:", gid, "->", section)
 
 
@@ -314,7 +314,7 @@ def c_create_task(project, name, section, notes):
     _advise_create_task(project, section, "create-task", fields=fields)
     t = _call(asana.TasksApi(client()).create_task, {"data": d}, {}, context="project %s" % project)
     if section:
-        _call(asana.SectionsApi(client()).add_task_for_section, {"data": {"task": t["gid"]}}, section, {}, context="section %s" % section)
+        _call(asana.SectionsApi(client()).add_task_for_section, section, {"body": {"data": {"task": t["gid"]}}}, context="section %s" % section)
     print(t["gid"])
 
 
@@ -489,7 +489,7 @@ def c_batch_apply(path):
                 )
                 tasks_api.update_task({"data": {"notes": notes.replace(op["old"], op["new"])}}, op["task"], {})
             elif action == "move":
-                sections_api.add_task_for_section({"data": {"task": op["task"]}}, op["section"], {})
+                sections_api.add_task_for_section(op["section"], {"body": {"data": {"task": op["task"]}}})
             elif action == "create_task":
                 d = {"name": op["name"], "projects": [op["project"]]}
                 content_fields = ["name"]
@@ -507,7 +507,7 @@ def c_batch_apply(path):
                 created.append(t["gid"])
                 created_this_op = t["gid"]
                 if op.get("section"):
-                    sections_api.add_task_for_section({"data": {"task": t["gid"]}}, op["section"], {})
+                    sections_api.add_task_for_section(op["section"], {"body": {"data": {"task": t["gid"]}}})
             elif action == "create_subtask":
                 d = {"name": op["name"]}
                 content_fields = ["name"]

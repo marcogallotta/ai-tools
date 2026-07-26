@@ -200,6 +200,17 @@ class AsanaBackend:
             )
         return dict(data)
 
+    @staticmethod
+    def _section_for_project(task: Mapping[str, Any], project_gid: str | None = None) -> str | None:
+        for membership in task.get("memberships") or []:
+            project = membership.get("project") or {}
+            section = membership.get("section") or {}
+            if project_gid is None or str(project.get("gid") or "") == str(project_gid):
+                gid = str(section.get("gid") or "").strip()
+                if gid:
+                    return gid
+        return None
+
     def create_bare_task(
         self, *, title: str, project_gid: str, section_gid: str
     ) -> dict[str, Any]:
@@ -228,9 +239,8 @@ class AsanaBackend:
         try:
             self.call(
                 asana.SectionsApi(self.client()).add_task_for_section,
-                {"data": {"task": task_gid}},
                 section_gid,
-                {},
+                {"body": {"data": {"task": task_gid}}},
                 context=f"Research Queue {section_gid}",
             )
         except DishRuleError as exc:
@@ -245,8 +255,22 @@ class AsanaBackend:
                     "partial_application": "task_created",
                 },
             ) from exc
-        task.setdefault("notes", "")
-        return task
+        confirmed = self.read_task(task_gid)
+        if self._section_for_project(confirmed, project_gid) != section_gid:
+            raise BackendFailure(
+                "BACKEND_UNCERTAIN",
+                "task creation succeeded but Research Queue placement was not confirmed",
+                retryable=False,
+                details={"task_gid": task_gid, "expected_section_gid": section_gid},
+            )
+        if str(confirmed.get("name") or "") != title or str(confirmed.get("notes") or "") not in {"", str(task.get("notes") or "")}:
+            raise BackendFailure(
+                "BACKEND_UNCERTAIN",
+                "task changed unexpectedly during creation placement",
+                retryable=False,
+                details={"task_gid": task_gid},
+            )
+        return confirmed
 
 
     def update_task_content(
@@ -293,10 +317,25 @@ class AsanaBackend:
 
         import asana
 
+        before = self.read_task(task_gid)
         self.call(
             asana.SectionsApi(self.client()).add_task_for_section,
-            {"data": {"task": task_gid}},
             section_gid,
-            {},
+            {"body": {"data": {"task": task_gid}}},
             context=f"section {section_gid}",
         )
+        after = self.read_task(task_gid)
+        if self._section_for_project(after) != section_gid:
+            raise BackendFailure(
+                "BACKEND_UNCERTAIN",
+                "section placement was not confirmed by exact reread",
+                retryable=False,
+                details={"task_gid": task_gid, "expected_section_gid": section_gid},
+            )
+        if str(after.get("name") or "") != str(before.get("name") or "") or str(after.get("notes") or "") != str(before.get("notes") or ""):
+            raise BackendFailure(
+                "BACKEND_UNCERTAIN",
+                "task content changed during section placement",
+                retryable=False,
+                details={"task_gid": task_gid, "expected_section_gid": section_gid},
+            )
