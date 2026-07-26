@@ -157,8 +157,8 @@ def build(output_dir: str | Path | None = None) -> None:
     base_t, base_n = "Dish signed", "version one"
     signed_t, signed_n = "Dish signed", "version two signed"
     base_id = add_state(conn, task=task, title=base_t, notes=base_n)
-    add_operation(conn, op=op, task=task, expected=base_id, status="completed",
-                  completed=True, content_done=True, signoff_done=False, terminal_outcome="submitted")
+    add_operation(conn, op=op, task=task, expected=base_id, status="open",
+                  completed=False, content_done=True, signoff_done=False, phase="await_verification")
     v1 = "cv-signed-1"; v2 = "cv-signed-2"
     add_version(conn, version=v1, task=task, op=op, boundary="baseline",
                 title=base_t, notes=base_n)
@@ -183,7 +183,8 @@ def build(output_dir: str | Path | None = None) -> None:
     ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         ("cycle-signed", op, task, 1, "1.0.6", "codex", "run-op-signed",
          "small", "approved", NOW, NOW, "verification protocol", v2, signed_id, v2, signed_id))
-    conn.execute("UPDATE operations SET signoff_completed_at=? WHERE operation_id=?", (NOW, op))
+    conn.execute("""UPDATE operations SET signoff_completed_at=?, status='completed', phase='terminal',
+        completed_at=?, terminal_outcome='submitted' WHERE operation_id=?""", (NOW, NOW, op))
     sidecars.append({"task_gid": task, "title": signed_t, "notes": signed_n,
                      "section_gid": "destination", "expected_recovery": "none"})
     scenarios.append({"id": "signed-binding", "task_gid": task,

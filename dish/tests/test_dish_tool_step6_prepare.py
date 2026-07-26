@@ -101,3 +101,62 @@ def test_stale_baseline_blocks_before_write(tmp_path):
     b.title = b.title + " changed"
     result=a.execute("prepare",agent="gpt",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
     assert result["code"] == "CONFLICT" and b.writes == 0 and b.moves == 0
+
+
+def test_prepare_rejects_placement_drift_for_all_operation_kinds(tmp_path):
+    import pytest
+    from dish_tool.database import confirm_task_content, create_operation
+    from dish_tool.errors import DishRuleError
+    from dish_tool.models import OperationActors
+    from dish_tool.step6 import prepare_live
+
+    for kind in ("planning", "initial", "change"):
+        case = tmp_path / kind
+        case.mkdir()
+        if kind == "planning":
+            b = Backend()
+            candidate_text = PLANNING
+        else:
+            lines = TASK.splitlines()
+            b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
+            candidate_text = TASK
+        a = app(case, b)
+        confirm_task_content(
+            a.conn,
+            task_gid="t",
+            title=b.title,
+            notes=b.notes,
+            schema_version="2",
+            boundary="placement-drift-test",
+        )
+        actors = OperationActors(
+            editor_agent="gpt" if kind in {"planning", "change"} else None,
+            researcher_agent="gpt" if kind == "initial" else None,
+            run_id=f"{kind}-run",
+        )
+        op = create_operation(
+            a.conn,
+            task_gid="t",
+            operation_kind=kind,
+            expected_identity=a.conn.execute(
+                "SELECT last_confirmed_identity FROM task_content_state WHERE task_gid='t'"
+            ).fetchone()[0],
+            expected_section_gid="rq",
+            schema_version="2",
+            actors=actors,
+        )
+        b.section = "12345"
+        candidate = write(case, "candidate.txt", candidate_text)
+        with pytest.raises(DishRuleError) as exc:
+            prepare_live(
+                a.conn,
+                b,
+                operation_id=op["operation_id"],
+                agent="gpt",
+                file_path=candidate,
+                release=release(case / "honest"),
+                material_classification="non-material" if kind == "change" else None,
+            )
+        assert exc.value.rule == "live_task_placement_drift"
+        assert b.writes == 0
+        assert b.moves == 0

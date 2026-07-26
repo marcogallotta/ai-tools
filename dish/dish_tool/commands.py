@@ -21,7 +21,7 @@ from .database import (
     latest_change_diff_telemetry,
     latest_successful_rejection_reason,
     record_audit,
-    record_command_audit_repair,
+    record_command_audit_repair, process_command_audit_repairs,
     transition_submission,
 )
 from .errors import BackendFailure, DishRuleError
@@ -92,6 +92,10 @@ class DishApplication:
         return release.version == LEGACY_WORKFLOW_NAME
 
     def execute(self, command: str, **arguments: Any) -> dict[str, Any]:
+        try:
+            process_command_audit_repairs(self.conn)
+        except Exception:
+            pass
         trace = CommandTrace(
             task_gid=arguments.get("task_gid"),
             submission_id=arguments.get("submission_id"),
@@ -218,15 +222,36 @@ class DishApplication:
                 details=details, **audit_kwargs,
             )
         except Exception as audit_exc:
-            repair_id = record_command_audit_repair(
-                self.conn, command=command, result=result,
-                audit_error=f"{type(audit_exc).__name__}: {audit_exc}",
-                submission_id=trace.submission_id if trace.known_submission else None,
-                task_gid=trace.task_gid, actor_agent=valid_actor,
-            )
+            operation_id = None
+            if isinstance(result, Mapping):
+                operation_id = (result.get("data") or {}).get("operation_id")
+            if operation_id is None and trace.submission_id:
+                try:
+                    if self.conn.execute("SELECT 1 FROM operations WHERE operation_id=?", (trace.submission_id,)).fetchone():
+                        operation_id = trace.submission_id
+                except Exception:
+                    pass
+            try:
+                repair_id = record_command_audit_repair(
+                    self.conn, command=command, result=result,
+                    audit_error=f"{type(audit_exc).__name__}: {audit_exc}",
+                    operation_id=operation_id,
+                    submission_id=trace.submission_id if trace.known_submission else None,
+                    task_gid=trace.task_gid, actor_agent=valid_actor,
+                )
+                persisted = True
+            except Exception as repair_exc:
+                import pathlib, uuid
+                repair_id = str(uuid.uuid4())
+                db_path = self.conn.execute("PRAGMA database_list").fetchone()[2]
+                fallback = pathlib.Path(db_path + ".audit-repair.jsonl")
+                fallback.parent.mkdir(parents=True, exist_ok=True)
+                with fallback.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps({"repair_id": repair_id, "command": command, "operation_id": operation_id, "submission_id": trace.submission_id if trace.known_submission else None, "task_gid": trace.task_gid, "actor_agent": valid_actor, "result": dict(result), "audit_error": f"{type(audit_exc).__name__}: {audit_exc}", "repair_error": f"{type(repair_exc).__name__}: {repair_exc}"}, sort_keys=True) + "\n")
+                persisted = False
             if isinstance(result, dict):
                 data = dict(result.get("data") or {})
-                data.update({"audit_repair_required": True, "audit_repair_id": repair_id})
+                data.update({"audit_repair_required": True, "audit_repair_id": repair_id, "audit_repair_persisted_in_database": persisted})
                 result["data"] = data
 
     def _command_create(
@@ -611,6 +636,13 @@ class DishApplication:
                 "candidate_handoff": {
                     "stored_by_tool": False,
                     "author_supplies_complete_file": True,
+                },
+                "runtime_context": {
+                    "cooking_project_gid": COOKING_PROJECT_GID,
+                    "destination_format": "<section name> — <section gid>",
+                    "research_queue": {"name": "Research Queue", "gid": registry.research_queue_gid},
+                    "verification_queue": {"name": "Verification Queue", "gid": registry.verification_queue_gid},
+                    "sections": {name: section.gid for name, section in registry.by_name.items()},
                 },
             },
         )
@@ -1648,6 +1680,13 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
         "operation_id": op["operation_id"], "operation_kind": kind,
         "expected_identity": live.identity, "placement": {"section_gid": live.section_gid},
         "protocol": {"role": role, "version": release.protocol_version, "text": release.protocol_for_role(role)},
+        "runtime_context": {
+            "cooking_project_gid": COOKING_PROJECT_GID,
+            "destination_format": "<section name> — <section gid>",
+            "research_queue": {"name": "Research Queue", "gid": registry.research_queue_gid},
+            "verification_queue": {"name": "Verification Queue", "gid": registry.verification_queue_gid},
+            "sections": {name: section.gid for name, section in registry.by_name.items()},
+        },
         "schema": {"version": release.schema_version, "diagnostics": diag["validation"]},
         "actors": {"editor": op["editor_agent"], "researcher": op["researcher_agent"]},
     })

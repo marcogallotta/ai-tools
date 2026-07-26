@@ -606,7 +606,84 @@ BEFORE DELETE ON audit_events
 BEGIN SELECT RAISE(ABORT, 'audit events are append-only'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14}
+
+
+_MIGRATION_15 = """
+CREATE TRIGGER verification_cycles_completed_fully_immutable_update
+BEFORE UPDATE ON verification_cycles
+WHEN OLD.completed_at IS NOT NULL AND (
+    NEW.operation_id IS NOT OLD.operation_id OR NEW.task_gid IS NOT OLD.task_gid OR
+    NEW.cycle_number IS NOT OLD.cycle_number OR NEW.protocol_release IS NOT OLD.protocol_release OR
+    NEW.protocol_text IS NOT OLD.protocol_text OR NEW.verifier_agent IS NOT OLD.verifier_agent OR
+    NEW.run_id IS NOT OLD.run_id OR NEW.independence_attestation IS NOT OLD.independence_attestation OR
+    NEW.correction_class IS NOT OLD.correction_class OR NEW.outcome IS NOT OLD.outcome OR
+    NEW.route IS NOT OLD.route OR NEW.resume_state IS NOT OLD.resume_state OR
+    NEW.created_at IS NOT OLD.created_at OR NEW.completed_at IS NOT OLD.completed_at OR
+    NEW.reviewed_content_version_id IS NOT OLD.reviewed_content_version_id OR
+    NEW.reviewed_identity IS NOT OLD.reviewed_identity OR
+    NEW.signed_content_version_id IS NOT OLD.signed_content_version_id OR
+    NEW.signed_identity IS NOT OLD.signed_identity
+)
+BEGIN SELECT RAISE(ABORT, 'completed verification cycle is immutable'); END;
+
+CREATE TRIGGER operations_completed_fully_immutable_update
+BEFORE UPDATE ON operations
+WHEN OLD.status='completed' AND (
+    NEW.task_gid IS NOT OLD.task_gid OR NEW.operation_kind IS NOT OLD.operation_kind OR
+    NEW.status IS NOT OLD.status OR NEW.editor_agent IS NOT OLD.editor_agent OR
+    NEW.researcher_agent IS NOT OLD.researcher_agent OR NEW.verifier_agent IS NOT OLD.verifier_agent OR
+    NEW.run_id IS NOT OLD.run_id OR NEW.independence_attestation IS NOT OLD.independence_attestation OR
+    NEW.expected_identity IS NOT OLD.expected_identity OR NEW.schema_version IS NOT OLD.schema_version OR
+    NEW.content_write_completed_at IS NOT OLD.content_write_completed_at OR
+    NEW.signoff_completed_at IS NOT OLD.signoff_completed_at OR
+    NEW.movement_completed_at IS NOT OLD.movement_completed_at OR
+    NEW.created_at IS NOT OLD.created_at OR NEW.completed_at IS NOT OLD.completed_at OR
+    NEW.destination_movement_attempt_id IS NOT OLD.destination_movement_attempt_id OR
+    NEW.phase IS NOT OLD.phase OR NEW.terminal_outcome IS NOT OLD.terminal_outcome OR
+    NEW.inherited_signoff_cycle_id IS NOT OLD.inherited_signoff_cycle_id
+)
+BEGIN SELECT RAISE(ABORT, 'completed operation is immutable'); END;
+
+CREATE TRIGGER write_attempt_confirmed_started_at_immutable
+BEFORE UPDATE OF started_at ON write_attempts
+WHEN OLD.outcome='confirmed' AND NEW.started_at IS NOT OLD.started_at
+BEGIN SELECT RAISE(ABORT, 'confirmed write start time is immutable'); END;
+
+CREATE TRIGGER marco_authorizations_consumed_immutable_update
+BEFORE UPDATE ON marco_authorizations
+WHEN OLD.consumed_at IS NOT NULL AND (
+    NEW.task_gid IS NOT OLD.task_gid OR NEW.operation_id IS NOT OLD.operation_id OR
+    NEW.field_name IS NOT OLD.field_name OR NEW.before_json IS NOT OLD.before_json OR
+    NEW.after_json IS NOT OLD.after_json OR NEW.reason IS NOT OLD.reason OR
+    NEW.actor_run_id IS NOT OLD.actor_run_id OR NEW.created_at IS NOT OLD.created_at OR
+    NEW.consumed_at IS NOT OLD.consumed_at OR
+    NEW.reserved_by_operation_id IS NOT OLD.reserved_by_operation_id OR
+    NEW.reserved_at IS NOT OLD.reserved_at OR NEW.consumed_identity IS NOT OLD.consumed_identity
+)
+BEGIN SELECT RAISE(ABORT, 'consumed Marco authorization is immutable'); END;
+CREATE TRIGGER marco_authorizations_consumed_immutable_delete
+BEFORE DELETE ON marco_authorizations WHEN OLD.consumed_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'consumed Marco authorization is immutable'); END;
+
+CREATE TRIGGER command_audit_repairs_monotonic_update
+BEFORE UPDATE ON command_audit_repairs
+WHEN NEW.repair_id IS NOT OLD.repair_id OR NEW.command IS NOT OLD.command OR
+     NEW.operation_id IS NOT OLD.operation_id OR NEW.submission_id IS NOT OLD.submission_id OR
+     NEW.task_gid IS NOT OLD.task_gid OR NEW.actor_agent IS NOT OLD.actor_agent OR
+     NEW.result_json IS NOT OLD.result_json OR NEW.audit_error IS NOT OLD.audit_error OR
+     NEW.created_at IS NOT OLD.created_at OR
+     (OLD.repaired_at IS NOT NULL AND NEW.repaired_at IS NOT OLD.repaired_at)
+BEGIN SELECT RAISE(ABORT, 'audit repair facts are append-only'); END;
+CREATE TRIGGER command_audit_repairs_delete
+BEFORE DELETE ON command_audit_repairs
+BEGIN SELECT RAISE(ABORT, 'audit repair facts are append-only'); END;
+"""
+
+_MIGRATION_16 = """
+ALTER TABLE operations ADD COLUMN expected_section_gid TEXT;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -757,6 +834,18 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
         ).fetchone()
         if bound is None or bound["confirmed"] != 1 or bound["operation_id"] != row["operation_id"] or bound["identity"] != row["intended_identity"]:
             problems.append({"kind": "confirmed_write_binding", "id": row["attempt_id"]})
+    for row in conn.execute("SELECT * FROM verification_cycles"):
+        release = str(row["protocol_release"] or "")
+        text = str(row["protocol_text"] or "")
+        if release.startswith("sha256:") and hashlib.sha256(text.encode("utf-8")).hexdigest() != release.split(":", 1)[1]:
+            problems.append({"kind": "verification_protocol_identity", "id": row["cycle_id"]})
+    for task in conn.execute("SELECT DISTINCT task_gid FROM verification_cycles"):
+        numbers = [r[0] for r in conn.execute("SELECT cycle_number FROM verification_cycles WHERE task_gid=? ORDER BY cycle_number", (task[0],))]
+        if numbers and numbers != list(range(1, max(numbers) + 1)):
+            problems.append({"kind": "verification_cycle_sequence", "id": task[0]})
+    for row in conn.execute("SELECT * FROM marco_authorizations WHERE consumed_at IS NOT NULL"):
+        if not row["consumed_identity"] or not row["reserved_by_operation_id"] or not row["reserved_at"]:
+            problems.append({"kind": "consumed_authorization_binding", "id": row["authorization_id"]})
     for row in conn.execute("SELECT * FROM verification_cycles WHERE outcome='approved'"):
         signed = conn.execute(
             "SELECT identity,confirmed,operation_id,task_gid FROM content_versions WHERE content_version_id=?",
@@ -767,7 +856,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 or signed["task_gid"] != row["task_gid"] or signed["identity"] != row["signed_identity"]):
             problems.append({"kind": "approved_cycle_binding", "id": row["cycle_id"]})
     for row in conn.execute("SELECT * FROM operations"):
-        if row["status"] == "completed" and (row["completed_at"] is None or row["phase"] != "terminal"):
+        if row["status"] == "completed" and (row["completed_at"] is None or row["phase"] != "terminal" or not row["terminal_outcome"] or not row["schema_version"] or not row["expected_identity"]):
             problems.append({"kind": "completed_operation_state", "id": row["operation_id"]})
         if row["signoff_completed_at"] is not None:
             approved = conn.execute(

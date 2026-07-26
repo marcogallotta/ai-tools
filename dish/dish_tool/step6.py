@@ -13,6 +13,7 @@ from .models import ResolvedRelease, SectionRegistry, utc_now, material_editor_l
 from .lifecycle import assert_transition, pending_verification
 from .releases import current_verification_protocol_release
 from .task_document import (
+    finding_payload,
     DocumentParseError,
     PlanningBrief,
     TaskState,
@@ -86,6 +87,14 @@ def prepare_live(
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     if live.identity != op["expected_identity"]:
         raise DishRuleError("CONFLICT", "live task changed since start", rule="live_task_drift", details={"expected_identity": op["expected_identity"], "actual_identity": live.identity})
+    expected_section_gid = op["expected_section_gid"] if "expected_section_gid" in op.keys() else None
+    if expected_section_gid is not None and live.section_gid != expected_section_gid:
+        raise DishRuleError(
+            "CONFLICT",
+            "live task placement changed since start",
+            rule="live_task_placement_drift",
+            details={"expected_section_gid": expected_section_gid, "actual_section_gid": live.section_gid},
+        )
     text = _candidate(file_path)
     registry = SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
 
@@ -96,7 +105,7 @@ def prepare_live(
             raise DishRuleError("VALIDATION_FAILED", "Planning candidate is malformed", rule=exc.rule) from exc
         findings = validate_planning_brief(brief).findings
         if findings:
-            raise DishRuleError("VALIDATION_FAILED", "Planning candidate failed validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in findings])
+            raise DishRuleError("VALIDATION_FAILED", "Planning candidate failed validation", errors=[finding_payload(f) for f in findings])
         notes = brief.render(heading=True).rstrip() + "\n"
         declare_operation_step(conn, operation_id, "planning_write", {"title": live.title, "notes": notes, "schema_version": release.schema_version})
         declare_operation_step(conn, operation_id, "planning_handoff", {"section_gid": registry.research_queue_gid})
@@ -137,7 +146,7 @@ def prepare_live(
                     raise DishRuleError("VALIDATION_FAILED", "live baseline is neither canonical nor a Planning brief", rule=exc.rule) from exc
                 findings = validate_planning_brief(brief).findings
                 if findings:
-                    raise DishRuleError("VALIDATION_FAILED", "live Planning brief failed validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in findings])
+                    raise DishRuleError("VALIDATION_FAILED", "live Planning brief failed validation", errors=[finding_payload(f) for f in findings])
             else:
                 raise DishRuleError("VALIDATION_FAILED", "live baseline is not canonical", rule=exc.rule) from exc
 
@@ -190,7 +199,7 @@ def prepare_live(
     candidate = dataclasses.replace(candidate, state=state, material_changes=tuple(material_changes))
     validation = validate_task_document(candidate, expected_schema_version=release.schema_version, schema=release.schema)
     if not validation.ok:
-        raise DishRuleError("VALIDATION_FAILED", "candidate failed current validation", errors=[{"rule": f.rule, "kind": f.kind.value, "message": f.message, "location": f.location} for f in validation.findings])
+        raise DishRuleError("VALIDATION_FAILED", "candidate failed current validation", errors=[finding_payload(f) for f in validation.findings])
 
     authorization_ids = ()
     if prior is not None and body_changed:

@@ -618,6 +618,7 @@ def create_operation(
     operation_kind: str,
     expected_identity: str,
     schema_version: str,
+    expected_section_gid: str | None = None,
     actors: OperationActors = OperationActors(),
 ) -> sqlite3.Row:
     operation_id = str(uuid.uuid4())
@@ -640,12 +641,12 @@ def create_operation(
                 INSERT INTO operations (
                     operation_id, task_gid, operation_kind, status, editor_agent,
                     researcher_agent, verifier_agent, run_id, independence_attestation,
-                    expected_identity, schema_version, phase, created_at
-                ) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, 'prepare_required', ?)
+                    expected_identity, schema_version, expected_section_gid, phase, created_at
+                ) VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, 'prepare_required', ?)
                 """,
                 (operation_id, task_gid, operation_kind, actors.editor_agent,
                  actors.researcher_agent, actors.verifier_agent, actors.run_id,
-                 actors.independence_attestation, expected_identity, schema_version, utc_now()),
+                 actors.independence_attestation, expected_identity, schema_version, expected_section_gid, utc_now()),
             )
         except sqlite3.IntegrityError as exc:
             if "operations.task_gid" in str(exc):
@@ -966,3 +967,86 @@ def consume_reserved_marco_authorizations(
             rule="governed_authorization_reservation_lost",
         )
 
+
+
+def _import_command_audit_repair_fallback(conn: sqlite3.Connection) -> int:
+    """Import emergency JSONL repairs written when SQLite repair insertion failed."""
+    from pathlib import Path
+    db_path = str(conn.execute("PRAGMA database_list").fetchone()[2] or "")
+    if not db_path or db_path == ":memory:":
+        return 0
+    path = Path(db_path + ".audit-repair.jsonl")
+    if not path.exists():
+        return 0
+    imported = 0
+    remaining: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            item = json.loads(line)
+            conn.execute(
+                """INSERT OR IGNORE INTO command_audit_repairs(
+                       repair_id,command,operation_id,submission_id,task_gid,actor_agent,
+                       result_json,audit_error,created_at
+                   ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                (item["repair_id"], item["command"], item.get("operation_id"),
+                 item.get("submission_id"), item.get("task_gid"), item.get("actor_agent"),
+                 json.dumps(item["result"], sort_keys=True, separators=(",", ":")),
+                 item.get("audit_error", "emergency audit repair"), utc_now()),
+            )
+            imported += 1
+        except Exception:
+            remaining.append(line)
+    if remaining:
+        path.write_text("\n".join(remaining) + "\n", encoding="utf-8")
+    else:
+        path.unlink(missing_ok=True)
+    return imported
+
+
+def process_command_audit_repairs(conn: sqlite3.Connection, *, limit: int = 100) -> int:
+    """Import and replay pending invocation-audit repairs idempotently."""
+    _import_command_audit_repair_fallback(conn)
+    rows = conn.execute(
+        "SELECT * FROM command_audit_repairs WHERE repaired_at IS NULL ORDER BY created_at, repair_id LIMIT ?",
+        (limit,),
+    ).fetchall()
+    repaired = 0
+    for row in rows:
+        result = json.loads(row["result_json"])
+        details = {
+            "command": row["command"],
+            "ok": bool(result.get("ok")),
+            "code": result.get("code"),
+            "state": result.get("state"),
+            "retryable": bool(result.get("retryable")),
+            "errors": list(result.get("errors") or ()),
+            "repaired_from": row["repair_id"],
+            "original_audit_error": row["audit_error"],
+        }
+        conn.execute("SAVEPOINT audit_repair")
+        try:
+            record_audit(
+                conn,
+                submission_id=row["submission_id"],
+                task_gid=row["task_gid"],
+                operation_id=row["operation_id"],
+                event_type=f"dish.{row['command']}",
+                actor_agent=row["actor_agent"],
+                details=details,
+                result_code=result.get("code"),
+                result_ok=bool(result.get("ok")),
+                actor_source="audit-repair-worker",
+            )
+            conn.execute(
+                "UPDATE command_audit_repairs SET repaired_at=? WHERE repair_id=? AND repaired_at IS NULL",
+                (utc_now(), row["repair_id"]),
+            )
+            conn.execute("RELEASE audit_repair")
+            repaired += 1
+        except Exception:
+            conn.execute("ROLLBACK TO audit_repair")
+            conn.execute("RELEASE audit_repair")
+            break
+    return repaired

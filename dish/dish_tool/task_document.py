@@ -48,6 +48,18 @@ class DocumentFinding:
     location: str | None = None
 
 
+
+
+def finding_payload(finding: DocumentFinding) -> dict[str, str | None]:
+    """Serialize a validation finding without discarding actionable context."""
+    return {
+        "rule": finding.rule,
+        "kind": finding.kind.value,
+        "message": finding.message,
+        "location": finding.location,
+    }
+
+
 @dataclass(frozen=True)
 class DocumentValidation:
     findings: tuple[DocumentFinding, ...] = ()

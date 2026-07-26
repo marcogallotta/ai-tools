@@ -11,7 +11,7 @@ from .database import create_verification_cycle, record_audit, record_actor_fact
 from .errors import DishRuleError
 from .models import utc_now, material_editor_line
 from .lifecycle import assert_transition, hold, pending_verification, require_status, resumed
-from .task_document import DocumentParseError, TaskState, parse_task_document, validate_task_document
+from .task_document import DocumentParseError, TaskState, parse_task_document, validate_task_document, finding_payload
 from .task_store import read_complete_task, write_exact_content
 from .releases import current_verification_protocol_release
 from .governed_diff import require_governed_authorization, require_small_scope
@@ -50,7 +50,7 @@ def _render(document):
 def _write_document(conn, backend, op, live, document, *, schema=None, authorization_ids=()):
     check = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not check.ok:
-        raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in check.findings])
+        raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[finding_payload(f) for f in check.findings])
     title, notes = _render(document)
     try:
         return write_exact_content(
@@ -93,7 +93,7 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     corrected = dataclasses.replace(corrected, state=TaskState(state), material_changes=changes)
     precheck = validate_task_document(corrected, expected_schema_version=op["schema_version"], schema=schema)
     if not precheck.ok:
-        raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in precheck.findings])
+        raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[finding_payload(f) for f in precheck.findings])
     authorization_ids = require_governed_authorization(
         conn, reviewed_document, corrected, task_gid=op["task_gid"], operation_id=operation_id
     )
@@ -166,7 +166,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
 
     precheck = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not precheck.ok:
-        raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in precheck.findings])
+        raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[finding_payload(f) for f in precheck.findings])
     authorization_ids = require_governed_authorization(
         conn, parse_task_document(f"{live.title}\n{live.notes}"), document,
         task_gid=op["task_gid"], operation_id=operation_id,
@@ -255,17 +255,33 @@ def _reset_path(document, category: str) -> dict[str, str]:
     return {}
 
 def _prove_reset(original, candidate, category: str, before: str, after: str) -> str:
+    """Prove an exact replacement at one category-owned canonical path.
+
+    Merely adding an ``after`` claim while leaving the operative ``before``
+    value in place is not a reset. Generated metadata is not present in these
+    path maps and therefore cannot serve as evidence.
+    """
+    before = str(before).strip()
+    after = str(after).strip()
     old_paths = _reset_path(original, category)
     new_paths = _reset_path(candidate, category)
+    matches: list[str] = []
     for path, old_value in old_paths.items():
         new_value = new_paths.get(path, "")
-        if old_value != new_value and before in old_value and after in new_value:
-            return path
+        if old_value == new_value:
+            continue
+        if before not in old_value or after not in new_value:
+            continue
+        if before in new_value or after in old_value:
+            continue
+        matches.append(path)
+    if len(matches) == 1:
+        return matches[0]
     raise DishRuleError(
         "VALIDATION_FAILED",
-        "corrected candidate does not demonstrate the declared substantive reset",
+        "corrected candidate must replace the declared value at one category-owned canonical path",
         rule="two_pass_reset_not_applied",
-        details={"category": category, "before": before, "after": after},
+        details={"category": category, "before": before, "after": after, "matching_paths": matches},
     )
 
 def reopen_two_pass(
@@ -331,7 +347,7 @@ def reopen_two_pass(
         raise DishRuleError(
             "VALIDATION_FAILED",
             "corrected reopen candidate failed deterministic validation",
-            errors=[{"rule": f.rule, "kind": f.kind.value} for f in check.findings],
+            errors=[finding_payload(f) for f in check.findings],
         )
     authorization_ids = require_governed_authorization(
         conn, original, document, task_gid=op["task_gid"], operation_id=operation_id
@@ -461,7 +477,7 @@ def resolve_hold(
 
     precheck = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not precheck.ok:
-        raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[{"rule": f.rule, "kind": f.kind.value} for f in precheck.findings])
+        raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[finding_payload(f) for f in precheck.findings])
     authorization_document = dataclasses.replace(document, decisions=authorization_decisions)
     authorization_ids = require_governed_authorization(
         conn, before_doc, authorization_document, task_gid=op["task_gid"], operation_id=operation_id

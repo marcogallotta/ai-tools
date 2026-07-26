@@ -9,7 +9,7 @@ from .database import confirm_task_content, create_operation, content_identity, 
 from .errors import DishRuleError
 from .models import OperationActors, ResolvedRelease
 from .migrations import migrate_task_document
-from .task_document import DocumentParseError, parse_task_document, validate_task_document
+from .task_document import DocumentParseError, parse_task_document, validate_task_document, finding_payload
 from .task_store import LiveTask, read_complete_task, write_exact_content
 
 
@@ -46,7 +46,7 @@ def claim_operation(conn: sqlite3.Connection, *, live: LiveTask, release: Resolv
     if existing is None:
         confirm_task_content(conn, task_gid=live.gid, title=live.title, notes=live.notes, schema_version=release.schema_version, boundary="start_baseline")
     actors = OperationActors(editor_agent=agent if kind in {"planning", "change"} else None, researcher_agent=agent if kind == "initial" else None, run_id=str(run_id or "").strip() or None)
-    return create_operation(conn, task_gid=live.gid, operation_kind=kind, expected_identity=live.identity, schema_version=release.schema_version, actors=actors)
+    return create_operation(conn, task_gid=live.gid, operation_kind=kind, expected_identity=live.identity, schema_version=release.schema_version, expected_section_gid=live.section_gid, actors=actors)
 
 
 def inspect_operation(conn: sqlite3.Connection, operation_id: str) -> dict[str, Any]:
@@ -79,10 +79,10 @@ def migrate_live_task(conn: sqlite3.Connection, backend, *, task_gid: str, relea
         raise DishRuleError("VALIDATION_FAILED", "no supported migration path", rule="migration_path_missing", details={"from": document.schema_version, "to": release.schema_version})
     result = migrate_task_document(f"{live.title}\n{live.notes}", migration, schema=release.schema)
     if not result.ok or result.document is None:
-        raise DishRuleError("VALIDATION_FAILED", "migration could not safely produce the current schema", rule="migration_quarantined", errors=[{"rule": f.rule, "kind": f.kind.value, "message": f.message} for f in result.findings])
+        raise DishRuleError("VALIDATION_FAILED", "migration could not safely produce the current schema", rule="migration_quarantined", errors=[finding_payload(f) for f in result.findings])
     candidate = result.document
     confirm_task_content(conn, task_gid=task_gid, title=live.title, notes=live.notes, schema_version=document.schema_version, boundary="migration_baseline")
-    op = create_operation(conn, task_gid=task_gid, operation_kind="migration", expected_identity=live.identity, schema_version=document.schema_version)
+    op = create_operation(conn, task_gid=task_gid, operation_kind="migration", expected_identity=live.identity, schema_version=document.schema_version, expected_section_gid=live.section_gid)
     rendered = candidate.render().splitlines()
     title, notes = rendered[0], "\n".join(rendered[1:]) + "\n"
     declare_operation_step(conn, op["operation_id"], "migration_write", {"title": title, "notes": notes, "schema_version": release.schema_version})
