@@ -88,7 +88,7 @@ def prepare_live(
     if live.identity != op["expected_identity"]:
         raise DishRuleError("CONFLICT", "live task changed since start", rule="live_task_drift", details={"expected_identity": op["expected_identity"], "actual_identity": live.identity})
     expected_section_gid = op["expected_section_gid"] if "expected_section_gid" in op.keys() else None
-    if expected_section_gid is not None and live.section_gid != expected_section_gid:
+    if live.section_gid != expected_section_gid:
         raise DishRuleError(
             "CONFLICT",
             "live task placement changed since start",

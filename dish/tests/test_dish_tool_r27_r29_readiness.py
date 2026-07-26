@@ -1,4 +1,5 @@
 from pathlib import Path
+import sqlite3
 
 import pytest
 
@@ -145,22 +146,13 @@ def test_non_material_terminal_phase_recovers_after_confirmed_write(tmp_path, mo
     assert tuple(row) == ("completed", "terminal")
 
 
-def test_research_handoff_phase_recovers_after_move(tmp_path, monkeypatch):
-    # make_app has already completed the first handoff; regress the persisted phase
-    # while preserving exact live placement and the declared phase step.
+def test_completed_research_handoff_step_cannot_be_regressed(tmp_path, monkeypatch):
     app, backend, operation_id, _ = make_app(tmp_path)
-    app.conn.execute(
-        "UPDATE operation_steps SET completed_at=NULL WHERE operation_id=? AND step_name='verification_phase'",
-        (operation_id,),
-    )
-    app.conn.execute(
-        "UPDATE operations SET phase='prepare_required' WHERE operation_id=?", (operation_id,)
-    )
-    recovered = recover_operation(app.conn, backend, operation_id=operation_id, requested_outcome="applied")
-    assert any(action.get("step") == "verification_phase" for action in recovered["actions"])
-    assert app.conn.execute(
-        "SELECT phase FROM operations WHERE operation_id=?", (operation_id,)
-    ).fetchone()[0] == "await_verification"
+    with pytest.raises(sqlite3.IntegrityError):
+        app.conn.execute(
+            "UPDATE operation_steps SET completed_at=NULL WHERE operation_id=? AND step_name='verification_phase'",
+            (operation_id,),
+        )
 
 
 def test_current_dispatch_uses_service_boundary_without_runtime_method_replacement():

@@ -683,7 +683,51 @@ _MIGRATION_16 = """
 ALTER TABLE operations ADD COLUMN expected_section_gid TEXT;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16}
+
+_MIGRATION_17 = """
+CREATE TRIGGER operation_steps_intent_immutable_update
+BEFORE UPDATE ON operation_steps
+WHEN NEW.operation_id IS NOT OLD.operation_id OR NEW.step_name IS NOT OLD.step_name OR
+     NEW.intended_json IS NOT OLD.intended_json OR
+     (OLD.completed_at IS NOT NULL AND NEW.completed_at IS NOT OLD.completed_at) OR
+     (OLD.completed_at IS NULL AND NEW.completed_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'operation step intent is immutable and completion is monotonic'); END;
+CREATE TRIGGER operation_steps_append_only_delete
+BEFORE DELETE ON operation_steps
+BEGIN SELECT RAISE(ABORT, 'operation steps are append-only'); END;
+
+CREATE TRIGGER write_attempt_confirmed_id_immutable
+BEFORE UPDATE OF attempt_id ON write_attempts
+WHEN OLD.outcome='confirmed' AND NEW.attempt_id IS NOT OLD.attempt_id
+BEGIN SELECT RAISE(ABORT, 'confirmed write attempt identity is immutable'); END;
+
+CREATE TRIGGER movement_attempt_confirmed_immutable_update
+BEFORE UPDATE ON movement_attempts
+WHEN OLD.outcome='confirmed' AND (
+    NEW.attempt_id IS NOT OLD.attempt_id OR NEW.operation_id IS NOT OLD.operation_id OR
+    NEW.expected_section_gid IS NOT OLD.expected_section_gid OR
+    NEW.intended_section_gid IS NOT OLD.intended_section_gid OR
+    NEW.outcome IS NOT OLD.outcome OR NEW.started_at IS NOT OLD.started_at OR
+    NEW.finished_at IS NOT OLD.finished_at OR NEW.purpose IS NOT OLD.purpose OR
+    NEW.confirmed_section_gid IS NOT OLD.confirmed_section_gid
+)
+BEGIN SELECT RAISE(ABORT, 'confirmed movement evidence is immutable'); END;
+CREATE TRIGGER movement_attempt_confirmed_immutable_delete
+BEFORE DELETE ON movement_attempts WHEN OLD.outcome='confirmed'
+BEGIN SELECT RAISE(ABORT, 'confirmed movement evidence is append-only'); END;
+
+CREATE TRIGGER marco_authorizations_consumed_id_immutable
+BEFORE UPDATE OF authorization_id ON marco_authorizations
+WHEN OLD.consumed_at IS NOT NULL AND NEW.authorization_id IS NOT OLD.authorization_id
+BEGIN SELECT RAISE(ABORT, 'consumed Marco authorization identity is immutable'); END;
+
+CREATE TRIGGER operations_completed_section_immutable
+BEFORE UPDATE OF expected_section_gid ON operations
+WHEN OLD.status='completed' AND NEW.expected_section_gid IS NOT OLD.expected_section_gid
+BEGIN SELECT RAISE(ABORT, 'completed operation placement baseline is immutable'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -837,7 +881,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
     for row in conn.execute("SELECT * FROM verification_cycles"):
         release = str(row["protocol_release"] or "")
         text = str(row["protocol_text"] or "")
-        if release.startswith("sha256:") and hashlib.sha256(text.encode("utf-8")).hexdigest() != release.split(":", 1)[1]:
+        if release.startswith("sha256:") and hashlib.sha256(text.encode("utf-8")).hexdigest() != release.split(":", 1)[1].split(";", 1)[0].strip():
             problems.append({"kind": "verification_protocol_identity", "id": row["cycle_id"]})
     for task in conn.execute("SELECT DISTINCT task_gid FROM verification_cycles"):
         numbers = [r[0] for r in conn.execute("SELECT cycle_number FROM verification_cycles WHERE task_gid=? ORDER BY cycle_number", (task[0],))]

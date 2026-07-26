@@ -48,6 +48,8 @@ _HALAL_SAFETY_RE = re.compile(r"\b(?:halal|haram|pork|bacon|ham|lard|wine|beer|s
 _SOURCING_RE = re.compile(r"\b(?:source|sourcing|supplier|import|availability|available|unavailable|substitut(?:e|ion)|brand)\b", re.I)
 _EQUIPMENT_RE = re.compile(r"\b(?:wok|oven|stovetop|hob|grill|broiler|air fryer|fryer|pressure cooker|instant pot|slow cooker|sous vide|blender|food processor|mortar|pan|pot)\b", re.I)
 _RISK_RE = re.compile(r"\b(?:feasib(?:le|ility)|risk|constraint|equipment|temperature|timing|hold time)\b", re.I)
+_METHOD_ACTION_RE = re.compile(r"\b(?:add|mix|bake|boil|fry|grill|roast|steam|blend|whisk|knead|marinate|reduce|simmer|sear|toast|chop|slice|dice)\b", re.I)
+_METHOD_IGNORED_TOKENS = {"a", "an", "and", "the", "it", "then", "until", "to", "of", "in", "on", "for", "with", "gently", "carefully", "briefly", "well", "thoroughly"}
 
 
 def _canonical_body(document) -> dict[str, str]:
@@ -77,13 +79,40 @@ def _signature(pattern: re.Pattern[str], text: str) -> tuple[str, ...]:
 
 
 def explicit_material_reasons(before, after) -> tuple[str, ...]:
+    """Return deterministic protocol-level reasons that require fresh Verification.
+
+    Canonical governed fields and substantive recipe sections are classified by
+    structure first. Regex signatures are only supplementary evidence; they are
+    never the sole protection for method, scope, research, or approved decisions.
+    """
     reasons: list[str] = []
     diff = canonical_diff(before, after)
-    if "title" in diff or "recognition" in diff:
+    changed = set(diff)
+    if changed & {"title", "recognition"}:
         reasons.append("title_or_identity")
-    if "section.QUANTITIES" in diff:
+    if "section.QUANTITIES" in changed:
         reasons.append("quantities")
-    for _path, (old, new) in diff.items():
+    if "research_basis" in changed or "planning.Research emphasis" in changed:
+        reasons.append("research_basis")
+    governed = {
+        "planning.Locks": "locks",
+        "planning.Exemptions": "exemptions",
+        "decisions": "decisions",
+        "planning.Purpose": "purpose_or_test",
+        "planning.Role": "role_or_identity",
+    }
+    for path, reason in governed.items():
+        if path in changed:
+            reasons.append(reason)
+    for path, (old, new) in diff.items():
+        if path == "section.HOW TO COOK IT":
+            old_actions = _signature(_METHOD_ACTION_RE, old)
+            new_actions = _signature(_METHOD_ACTION_RE, new)
+            token = re.compile(r"[a-zA-Z]+|\d+")
+            old_terms = tuple(t for t in (x.casefold() for x in token.findall(old)) if t not in _METHOD_IGNORED_TOKENS)
+            new_terms = tuple(t for t in (x.casefold() for x in token.findall(new)) if t not in _METHOD_IGNORED_TOKENS)
+            if old_actions != new_actions or old_terms != new_terms:
+                reasons.append("method")
         if _signature(_QUANTITY_RE, old) != _signature(_QUANTITY_RE, new):
             reasons.append("quantity")
         if _signature(_RATIO_RE, old) != _signature(_RATIO_RE, new):

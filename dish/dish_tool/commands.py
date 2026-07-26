@@ -213,24 +213,25 @@ class DishApplication:
                 "actor_run_id": governed.get("run_id"),
                 "actor_attestation": governed.get("attestation"),
             }
+        operation_id = None
+        if isinstance(result, Mapping):
+            operation_id = (result.get("data") or {}).get("operation_id")
+        if operation_id is None and trace.submission_id:
+            try:
+                if self.conn.execute("SELECT 1 FROM operations WHERE operation_id=?", (trace.submission_id,)).fetchone():
+                    operation_id = trace.submission_id
+            except Exception:
+                pass
         try:
             record_audit(
                 self.conn,
                 submission_id=trace.submission_id if trace.known_submission else None,
-                task_gid=trace.task_gid,
+                task_gid=trace.task_gid, operation_id=operation_id,
                 event_type=f"dish.{command}", actor_agent=valid_actor,
-                details=details, **audit_kwargs,
+                details=details, result_code=result.get("code"),
+                result_ok=bool(result.get("ok")), **audit_kwargs,
             )
         except Exception as audit_exc:
-            operation_id = None
-            if isinstance(result, Mapping):
-                operation_id = (result.get("data") or {}).get("operation_id")
-            if operation_id is None and trace.submission_id:
-                try:
-                    if self.conn.execute("SELECT 1 FROM operations WHERE operation_id=?", (trace.submission_id,)).fetchone():
-                        operation_id = trace.submission_id
-                except Exception:
-                    pass
             try:
                 repair_id = record_command_audit_repair(
                     self.conn, command=command, result=result,
@@ -243,12 +244,18 @@ class DishApplication:
             except Exception as repair_exc:
                 import pathlib, uuid
                 repair_id = str(uuid.uuid4())
-                db_path = self.conn.execute("PRAGMA database_list").fetchone()[2]
-                fallback = pathlib.Path(db_path + ".audit-repair.jsonl")
-                fallback.parent.mkdir(parents=True, exist_ok=True)
-                with fallback.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps({"repair_id": repair_id, "command": command, "operation_id": operation_id, "submission_id": trace.submission_id if trace.known_submission else None, "task_gid": trace.task_gid, "actor_agent": valid_actor, "result": dict(result), "audit_error": f"{type(audit_exc).__name__}: {audit_exc}", "repair_error": f"{type(repair_exc).__name__}: {repair_exc}"}, sort_keys=True) + "\n")
                 persisted = False
+                try:
+                    db_path = self.conn.execute("PRAGMA database_list").fetchone()[2]
+                    fallback = pathlib.Path(db_path + ".audit-repair.jsonl")
+                    fallback.parent.mkdir(parents=True, exist_ok=True)
+                    with fallback.open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps({"repair_id": repair_id, "command": command, "operation_id": operation_id, "submission_id": trace.submission_id if trace.known_submission else None, "task_gid": trace.task_gid, "actor_agent": valid_actor, "result": dict(result), "audit_error": f"{type(audit_exc).__name__}: {audit_exc}", "repair_error": f"{type(repair_exc).__name__}: {repair_exc}"}, sort_keys=True) + "\n")
+                except Exception:
+                    # The governed action has already succeeded. Never convert a
+                    # final audit persistence outage into a retry that could
+                    # repeat the mutation; surface the repair requirement only.
+                    pass
             if isinstance(result, dict):
                 data = dict(result.get("data") or {})
                 data.update({"audit_repair_required": True, "audit_repair_id": repair_id, "audit_repair_persisted_in_database": persisted})

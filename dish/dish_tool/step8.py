@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -254,6 +255,15 @@ def _reset_path(document, category: str) -> dict[str, str]:
         }
     return {}
 
+
+
+def _reset_normal_form(value: str) -> str:
+    value = str(value).casefold().replace("\u00a0", " ")
+    value = re.sub(r"(?<=\d)\s+(?=(?:kg|g|mg|l|ml|cl|tsp|tbsp|oz|lb)\b)", "", value)
+    value = re.sub(r"\s+", " ", value)
+    return value.strip()
+
+
 def _prove_reset(original, candidate, category: str, before: str, after: str) -> str:
     """Prove an exact replacement at one category-owned canonical path.
 
@@ -270,9 +280,13 @@ def _prove_reset(original, candidate, category: str, before: str, after: str) ->
         new_value = new_paths.get(path, "")
         if old_value == new_value:
             continue
-        if before not in old_value or after not in new_value:
+        old_norm = _reset_normal_form(old_value)
+        new_norm = _reset_normal_form(new_value)
+        before_norm = _reset_normal_form(before)
+        after_norm = _reset_normal_form(after)
+        if before_norm not in old_norm or after_norm not in new_norm:
             continue
-        if before in new_value or after in old_value:
+        if before_norm in new_norm or after_norm in old_norm:
             continue
         matches.append(path)
     if len(matches) == 1:
