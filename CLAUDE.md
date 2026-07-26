@@ -1,7 +1,8 @@
 # ai-tools
 
-This repo holds Marco's personal agent tooling. See `README.md` for the file/directory
-layout and what each design doc covers.
+This repo holds Marco's personal agent tooling. Read `README.md` next — it covers what the
+repo is for, how `tools/git-commit` and `tools/asana` are invoked, and how the repo is wired
+into `~/.claude/`.
 
 ## Working rules for the dish design docs
 
