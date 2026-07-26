@@ -40,7 +40,7 @@ Implementation must preserve all of these:
 6. Any stale baseline, out-of-band edit, or ambiguous write outcome fails closed.
 7. Tool-local operation state never substitutes for the task’s seven authoritative state fields.
 8. Planning, Research, and Verification receive only their own protocol text.
-9. Verification is performed by a fresh independent ChatGPT run against the exact live content.
+9. Verification is performed by a fresh independent run, by any agent, against the exact live content.
 10. Small, Large, Evidence, Human Review, post-signoff reset, and two-pass behaviour follow the protocols.
 11. Signoff and destination movement are separate recoverable operations.
 12. Local V1 testing is single-agent only. Multi-agent live use requires one shared laptop-hosted service owning the lock, shared operation state, and Asana access. GPT Action network exposure and authentication is settled — see `dish-tool-update.md` C-02's V1 staging decision for the architecture.

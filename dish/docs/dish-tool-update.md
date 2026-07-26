@@ -31,7 +31,7 @@ The current dish tool is not compatible with the frozen protocols. It implements
 
 That release bundle is not random machinery: the old design deliberately used it to keep protocol text, manifests, and validator behaviour aligned. The mismatch is that it pins each task to the whole bundle selected at `dish start`. The settled replacement is a repository-level compatibility check, not task-lifetime protocol pinning: `honest` owns the current protocols, machine schema, migrations, and an uppercase `DISH_VERSION` file declaring `PROTOCOL_VERSION` and `SCHEMA_VERSION`; `ai-tools` is a generic engine that runs only when it supports those exact current versions. Each task stores only its `Schema version` for data compatibility. The separate `Verification protocol release` remains cycle-specific and is frozen whenever the live task enters `pending-verification`.
 
-The protocols also require the exact live Asana task to be the candidate handed off, independently verified, and signed; a seven-field task-native state block; a fresh independent ChatGPT verification run; verifier-owned Small and Large corrections; separate Evidence and Human Review states; exact-content signoff; and movement rules independent of readiness. Ephemeral local drafting files remain permissible, but they cannot substitute for the live task or become the object of signoff.
+The protocols also require the exact live Asana task to be the candidate handed off, independently verified, and signed; a seven-field task-native state block; a fresh independent verification run by any agent that did not construct or materially edit the candidate; verifier-owned Small and Large corrections; separate Evidence and Human Review states; exact-content signoff; and movement rules independent of readiness. Ephemeral local drafting files remain permissible, but they cannot substitute for the live task or become the object of signoff.
 
 **Do not activate the current tool on protocol-managed tasks until these areas are redesigned and retested.** This is an architectural compatibility update, not a terminology patch.
 
@@ -221,7 +221,7 @@ Cooking proceeds only from the exact live task at `Status: ready` with valid com
 
 **Mismatch**
 
-Research receives the Verification protocol; Verification is selected by opposite `claude` versus `gpt/codex` family; the tool records only coarse family tokens; and the relay describes file handoff to an opposite-family verifier. The implementation cannot prove a fresh independent ChatGPT run or preserve original constructor versus later material editor correctly.
+Research receives the Verification protocol; Verification is selected by opposite `claude` versus `gpt/codex` family; the tool records only coarse family tokens; and the relay describes file handoff to an opposite-family verifier. The implementation cannot prove a fresh independent run by an agent that did not construct or materially edit the candidate, or preserve original constructor versus later material editor correctly.
 
 **Affected locations**
 
@@ -235,7 +235,7 @@ Research receives the Verification protocol; Verification is selected by opposit
 - Planning reads Planning protocol only.
 - Research reads Research protocol and, when a canonical task exists, the live task; it does not receive Verification protocol.
 - Verification reads Verification protocol and the exact live task; it does not receive Research protocol.
-- Independent signoff is by a fresh ChatGPT run that did not construct or materially edit the candidate.
+- Independent signoff is by a fresh run, by any agent, that did not construct or materially edit the candidate.
 
 **Required change**
 
@@ -378,7 +378,7 @@ Material claims must have direct support; disagreements and rejected routes must
 
 - Require one overall Research-basis classification: `Source-backed dish`, `Halal port`, or `Intentional test dish`.
 - Check that each source record carries its construction/later-validation kind, source and locator, used/conflicting/rejected status, affected claim, chosen route, limitation/reason, and future test where applicable. Do not enforce a fixed separator grammar or reject a record on format alone.
-- Preserve enough structured provenance to check locators, source status, affected claims, chosen routes, limitations, and routing integrity. Semantic support quality still requires ChatGPT Verification.
+- Preserve enough structured provenance to check locators, source status, affected claims, chosen routes, limitations, and routing integrity. Semantic support quality still requires independent Verification.
 - Require the approved `Material changes` line for every body edit and two-pass reset, carrying the editor's material/non-material classification. The resulting content identity is recorded in the tool's database, not in the line.
 
 **Recommended implementation**
@@ -564,7 +564,7 @@ A compatible implementation must satisfy all of the following:
 3. Tool-internal operation state never implies protocol readiness.
 4. Planning, Research, and Verification receive only their own protocol text.
 5. `honest/DISH_VERSION`, the schema in `honest`, and `ai-tools` capability agree exactly before the tool runs; `bin/git-commit` flags governed protocol/schema changes whose required version bump is missing; each task body contains a separate canonical `Schema version` metadata field, while every entry into `pending-verification` separately records the then-current exact Verification protocol.
-6. Verification signoff is by a fresh independent ChatGPT run bound to the exact candidate. Independence is tool-enforced for edits the tool itself mediated (constructor/material-editor identity is tracked and checked against the verifier); for platform run/session IDs the tool cannot obtain (e.g. the manual ChatGPT relay), independence rests on the recorded attestation the tool cannot itself verify.
+6. Verification signoff is by a fresh independent run, by any agent, bound to the exact candidate and not the agent that constructed or materially edited it. There is no agent-family or agent-identity lock in the tool; independence rests entirely on the recorded attestation, which the tool cannot itself verify — this applies equally to edits the tool mediated and to the manual ChatGPT relay.
 7. `Researched by`, `Self-verified`, and `Verified by` obey their distinct provenance semantics.
 8. Small, Large, post-signoff, Evidence, Human Review, and two-pass workflows follow the governing routes above.
 9. Material support, source disagreements, Research-basis classification, and Material changes are preserved in the task.

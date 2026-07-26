@@ -256,11 +256,6 @@ class VerifierIdentity:
         constructor_run_id: str | None = None,
     ) -> None:
         agent_family(self.agent)
-        if self.agent not in {"gpt", "codex"}:
-            raise DishRuleError(
-                "AGENT_MISMATCH", "Verification requires a ChatGPT verifier",
-                rule="verification_requires_chatgpt",
-            )
         run_id = str(self.run_id or "").strip()
         attestation = str(self.independence_attestation or "").strip()
         if not (run_id or attestation):
@@ -322,14 +317,8 @@ def material_editor_line(agent: str, model: str, date: str) -> str:
 
 def verification_actor_line(agent: str, model: str, date: str) -> str:
     agent_family(agent)
-    if agent not in {"gpt", "codex"}:
-        raise DishRuleError(
-            "AGENT_MISMATCH",
-            "Verification signoff requires ChatGPT",
-            rule="verification_requires_chatgpt",
-        )
     clean_model = validate_actor_model(model)
-    return f"ChatGPT — {clean_model}, {date}"
+    return f"{FAMILY_DISPLAY_NAMES[agent]} — {clean_model}, {date}"
 
 
 @dataclass(frozen=True)
