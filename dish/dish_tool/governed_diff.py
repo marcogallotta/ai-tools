@@ -207,4 +207,3 @@ def require_small_scope(before, after) -> None:
             rule="large_correction_required",
             details={"fields": changed, "material_reasons": material},
         )
-
