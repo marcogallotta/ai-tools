@@ -11,7 +11,7 @@ from .errors import DishRuleError
 from .models import VerifierIdentity, verification_actor_line, utc_now, SectionRegistry
 from .lifecycle import assert_transition, ready, require_status
 from .releases import resolve_verification_protocol
-from .task_document import TaskState, parse_task_document, validate_task_document
+from .task_document import TaskState, parse_task_document, validate_task_document, finding_payload
 from .task_store import read_complete_task, write_exact_content
 
 
@@ -90,7 +90,7 @@ def verification_read(
         raise DishRuleError(
             "VALIDATION_FAILED", "live task is not a legal pending-verification candidate",
             rule="pending_verification_required",
-            errors=[{"rule": f.rule, "kind": f.kind.value} for f in validation.findings],
+            errors=[finding_payload(f) for f in validation.findings],
         )
     require_status(document.state, {"pending-verification"}, action="verification read")
     recorded = document.state.values["Verification protocol release"]
@@ -211,7 +211,7 @@ def approve_live(
     document = parse_task_document(f"{live.title}\n{live.notes}")
     check = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not check.ok or document.state.values["Status"] != "pending-verification":
-        raise DishRuleError("VALIDATION_FAILED", "exact live candidate failed pre-signoff validation", rule="pre_signoff_validation_failed", errors=[{"rule": f.rule, "kind": f.kind.value} for f in check.findings])
+        raise DishRuleError("VALIDATION_FAILED", "exact live candidate failed pre-signoff validation", rule="pre_signoff_validation_failed", errors=[finding_payload(f) for f in check.findings])
     assert_transition(action="approve", before=document.state.values["Status"], after="ready")
     signed = dataclasses.replace(document, state=ready(document.state.values, verified_by=verification_actor_line(agent, utc_now()[:10])))
     signed_lines = signed.render().splitlines()
@@ -227,7 +227,7 @@ def approve_live(
     )
     final_check = validate_task_document(signed, expected_schema_version=op["schema_version"], schema=schema)
     if not final_check.ok:
-        raise DishRuleError("VALIDATION_FAILED", "ready state failed deterministic validation", rule="ready_state_invalid", errors=[{"rule": f.rule, "kind": f.kind.value} for f in final_check.findings])
+        raise DishRuleError("VALIDATION_FAILED", "ready state failed deterministic validation", rule="ready_state_invalid", errors=[finding_payload(f) for f in final_check.findings])
     lines = signed_lines
     confirmed = write_exact_content(
         conn, backend, operation_id=operation_id, task_gid=live.gid, project_gid=COOKING_PROJECT_GID,

@@ -115,7 +115,10 @@ class CurrentWorkflowService:
         if action not in view["legal_actions"]:
             rule = "operation_action_not_allowed"
             message = f"{action} is not legal for the current operation state"
-            if action == "verify" and view["phase"] == "await_verification":
+            if view.get("recovery_required"):
+                rule = "workflow_recovery_required"
+                message = "operation has an incomplete durable workflow suffix; run recovery before any ordinary action"
+            elif action == "verify" and view["phase"] == "await_verification":
                 rule = "verification_placement_required"
                 message = "task must currently be in Verification Queue"
             raise DishRuleError(
