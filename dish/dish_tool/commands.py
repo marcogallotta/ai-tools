@@ -323,7 +323,7 @@ def _step5_read(self, *, trace: CommandTrace, agent: str, task_gid: str) -> dict
     diag = diagnostics_for(live, release)
     stored = self.conn.execute("SELECT * FROM task_content_state WHERE task_gid = ?", (task_gid,)).fetchone()
     drift = None if stored is None else stored["last_confirmed_identity"] != live.identity
-    return result_envelope(command="read", task_gid=task_gid, data={
+    data = {
         "task": {"gid": live.gid, "title": live.title, "notes": live.notes, "section_gid": live.section_gid, "completed": live.completed, "modified_at": live.modified_at},
         "parsed": diag["parsed"], "task_schema_version": diag["schema_version"],
         "content_identity": live.identity, "stored_identity": None if stored is None else stored["last_confirmed_identity"],
@@ -331,7 +331,31 @@ def _step5_read(self, *, trace: CommandTrace, agent: str, task_gid: str) -> dict
         "placement": {"project_gid": COOKING_PROJECT_GID, "section_gid": live.section_gid},
         "compatibility": {"protocol_version": release.protocol_version, "schema_version": release.schema_version},
         "validation": diag["validation"],
-    })
+    }
+    operation = self.conn.execute(
+        """SELECT operation_id FROM operations
+             WHERE task_gid=? AND status IN ('open','uncertain')
+             ORDER BY created_at DESC LIMIT 1""",
+        (task_gid,),
+    ).fetchone()
+    if operation is None:
+        return result_envelope(command="read", task_gid=task_gid, data=data)
+    operation_id = operation["operation_id"]
+    view = _exposed_view(_current_operation_view(self, operation_id, schema=release.schema))
+    data["active_operation"] = {
+        "submission_id": operation_id,
+        "authoritative_view": view,
+    }
+    if view.get("required_start_kind") is not None:
+        data["required_start_kind"] = view["required_start_kind"]
+    if view.get("required_admin_action") is not None:
+        data["required_admin_action"] = view["required_admin_action"]
+    trace.submission_id = operation_id
+    trace.state = view["status"]
+    return result_envelope(
+        command="read", task_gid=task_gid, submission_id=operation_id,
+        state=trace.state, allowed_actions=view["legal_actions"], data=data,
+    )
 
 
 def _current_operation_view(self, operation_id: str, *, schema=None) -> dict[str, Any]:

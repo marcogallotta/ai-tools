@@ -219,3 +219,17 @@ def test_retryable_prepare_validation_exposes_prepare_action(tmp_path):
     assert not result["ok"]
     assert result["retryable"] is True
     assert result["allowed_actions"] == ["prepare"]
+
+def test_read_exposes_active_operation_and_next_action(tmp_path):
+    b = Backend()
+    a = app(tmp_path, b)
+    started = a.execute(
+        "start", agent="gpt", task_gid="t", kind="planning",
+        change_level=None, change_reason=None,
+    )
+    result = a.execute("read", agent="gpt", task_gid="t")
+    assert result["submission_id"] == started["submission_id"]
+    assert result["state"] == "open"
+    assert result["allowed_actions"] == ["prepare"]
+    assert result["data"]["active_operation"]["submission_id"] == started["submission_id"]
+
