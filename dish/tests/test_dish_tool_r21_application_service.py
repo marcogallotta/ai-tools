@@ -11,8 +11,15 @@ def test_current_workflow_service_is_same_authority_used_by_inspect(tmp_path):
     before = service.authoritative_view(operation_id, schema=app._load_release(None).schema)
     inspected = app.execute("inspect", agent="gpt", submission_id=operation_id)
     assert inspected["ok"]
-    assert inspected["data"]["authoritative_view"] == before
-    assert inspected["allowed_actions"] == before["legal_actions"]
+    assert before["legal_actions"] == ["verify"]
+    assert inspected["allowed_actions"] == ["start"]
+    assert inspected["data"]["legal_next_actions"] == ["start"]
+    assert inspected["data"]["required_start_kind"] == "verification"
+    assert inspected["data"]["authoritative_view"]["legal_actions"] == ["start"]
+    assert (
+        inspected["data"]["authoritative_view"]["required_start_kind"]
+        == "verification"
+    )
 
 
 def test_current_workflow_service_rejects_action_after_live_placement_drift(tmp_path):

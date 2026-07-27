@@ -96,6 +96,10 @@ Every invocation writes exactly one compact JSON object to stdout:
 - `data` contains command-specific exact identities, diagnostics, protocol text, or completion facts.
 - `errors` contains structured findings with a `rule` and any supporting fields.
 
+Internal workflow permission `verify` is exposed as Action/CLI command `start`. When `start` is the
+required handoff command, `data.required_start_kind` identifies its required `kind`: `initial` after
+Planning and `verification` after Research. Clients must not look for a separate `verify` Action.
+
 Governed boundary responses include `data.validation_scope`, an ordered list drawn from:
 
 - `structural-only` — deterministic parsing and schema/shape checks only;

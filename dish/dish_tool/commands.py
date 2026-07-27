@@ -24,6 +24,39 @@ from .results import error_envelope, result_envelope
 from .validation_scope import scope_for_command
 
 
+def _exposed_action_contract(
+    actions: list[str] | tuple[str, ...],
+) -> tuple[list[str], str | None]:
+    """Translate internal workflow actions to commands exposed to agents."""
+    required_start_kind = "verification" if "verify" in actions else None
+    exposed = ["start" if action == "verify" else action for action in actions]
+    return exposed, required_start_kind
+
+
+def _exposed_view(view: Mapping[str, Any]) -> dict[str, Any]:
+    """Return an agent-facing copy of an authoritative internal view."""
+    exposed = dict(view)
+    actions, required_start_kind = _exposed_action_contract(
+        list(view.get("legal_actions") or [])
+    )
+    exposed["legal_actions"] = actions
+    if required_start_kind is not None:
+        exposed["required_start_kind"] = required_start_kind
+    return exposed
+
+
+def _exposed_result_contract(
+    view: Mapping[str, Any], data: Mapping[str, Any]
+) -> tuple[list[str], dict[str, Any]]:
+    actions, required_start_kind = _exposed_action_contract(
+        list(view.get("legal_actions") or [])
+    )
+    exposed_data = dict(data)
+    if required_start_kind is not None:
+        exposed_data["required_start_kind"] = required_start_kind
+    return actions, exposed_data
+
+
 class DishApplication:
     """Command dispatcher with one audit event per invocation."""
 
@@ -270,9 +303,12 @@ def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str)
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     data = inspect_operation(self.conn, operation_id)
     release = self._load_release(None)
-    view = _current_operation_view(self, operation_id, schema=release.schema)
+    internal_view = _current_operation_view(self, operation_id, schema=release.schema)
+    view = _exposed_view(internal_view)
     data["legal_next_actions"] = view["legal_actions"]
     data["authoritative_view"] = view
+    if view.get("required_start_kind") is not None:
+        data["required_start_kind"] = view["required_start_kind"]
     trace.submission_id = operation_id
     trace.task_gid = data["operation"]["task_gid"]
     trace.state = view["status"]
@@ -375,11 +411,12 @@ def _step6_prepare(self, *, trace: CommandTrace, agent: str, model: str | None =
         schema=release.schema,
     )
     trace.state = view["status"]
-    legal_actions = view["legal_actions"]
+    legal_actions, data = _exposed_result_contract(view, data)
     if not legal_actions and data.get("handoff") == "planning-to-research":
         # Planning's operation is finished, but the task's next legal command is
         # the Research `start`. Naming it keeps the "do not guess one" rule true.
         legal_actions = ["start"]
+        data["required_start_kind"] = "initial"
     return result_envelope(
         command="prepare", task_gid=trace.task_gid, submission_id=operation_id,
         state=view["status"], allowed_actions=legal_actions, data=data,
@@ -431,9 +468,10 @@ def _step7_start(
     )
     trace.submission_id = operation_id
     trace.state = view["status"]
+    legal_actions, data = _exposed_result_contract(view, data)
     return result_envelope(
         command="start", task_gid=task_gid, submission_id=operation_id,
-        state=view["status"], allowed_actions=view["legal_actions"], data=data,
+        state=view["status"], allowed_actions=legal_actions, data=data,
     )
 
 
@@ -485,9 +523,10 @@ def _step7_approve(
         schema=release.schema,
     )
     trace.state = view["status"]
+    legal_actions, data = _exposed_result_contract(view, data)
     return result_envelope(
         command="approve", task_gid=trace.task_gid, submission_id=operation_id,
-        state=view["status"], allowed_actions=view["legal_actions"], data=data,
+        state=view["status"], allowed_actions=legal_actions, data=data,
         validation_scope=trace.validation_scope,
     )
 
@@ -512,9 +551,10 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None =
         schema=release.schema,
     )
     trace.state = view["status"]
+    legal_actions, data = _exposed_result_contract(view, data)
     return result_envelope(
         command="approve", task_gid=trace.task_gid, submission_id=operation_id,
-        state=view["status"], allowed_actions=view["legal_actions"], data=data,
+        state=view["status"], allowed_actions=legal_actions, data=data,
         validation_scope=trace.validation_scope,
     )
 
@@ -547,9 +587,10 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = 
         schema=release.schema,
     )
     trace.state = view["status"]
+    legal_actions, data = _exposed_result_contract(view, data)
     return result_envelope(
         command="reject", task_gid=trace.task_gid, submission_id=operation_id,
-        state=view["status"], allowed_actions=view["legal_actions"], data=data,
+        state=view["status"], allowed_actions=legal_actions, data=data,
         validation_scope=trace.validation_scope,
     )
 
@@ -580,9 +621,10 @@ def _step9_submit(self, *, trace: CommandTrace, submission_id: str, file_path: s
         schema=release.schema,
     )
     trace.state = view["status"]
+    legal_actions, data = _exposed_result_contract(view, data)
     return result_envelope(
         command="submit", task_gid=trace.task_gid, submission_id=operation_id,
-        state=view["status"], allowed_actions=view["legal_actions"], data=data,
+        state=view["status"], allowed_actions=legal_actions, data=data,
         validation_scope=trace.validation_scope,
     )
 

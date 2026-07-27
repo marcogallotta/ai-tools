@@ -85,6 +85,8 @@ def test_planning_prepare_writes_live_and_preserves_research_queue(tmp_path):
     result=a.execute("prepare", model="gpt-5.6-sol",agent="gpt",submission_id=started["submission_id"],file_path=write(tmp_path,"p.txt",PLANNING))
     assert result["ok"] and b.writes == 1 and b.section == "rq"
     assert "Locks: Keep crisp" in b.notes and "Exemptions: None" in b.notes
+    assert result["allowed_actions"] == ["start"]
+    assert result["data"]["required_start_kind"] == "initial"
     assert result["data"]["validation_scope"] == [
         "structural-only", "transition-state", "exact-content-identity",
     ]
@@ -97,10 +99,18 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
     assert "Status: pending-verification" in b.notes
     assert "Verification protocol release: sha256:" in b.notes
     assert result["data"]["verification_cycle"]["protocol_release"].startswith("sha256:")
+    assert result["allowed_actions"] == ["start"]
+    assert result["data"]["required_start_kind"] == "verification"
     assert result["data"]["validation_scope"] == [
         "structural-only", "transition-state", "exact-content-identity",
     ]
     assert "agent-semantic-review" not in result["data"]["validation_scope"]
+    verification = a.execute(
+        "start", agent="codex", task_gid="t", kind="verification",
+        run_id="fresh-verification-run",
+    )
+    assert verification["ok"]
+    assert verification["allowed_actions"] == ["approve", "reject"]
 
 def test_initial_prepare_requires_model(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)

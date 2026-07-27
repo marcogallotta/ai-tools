@@ -40,6 +40,8 @@ def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK.replace("100 g", "120 g"))
     first = app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="method needs replacement", file_path=str(candidate), run_id="first")
     assert first["ok"] and first["data"]["new_cycle_id"]
+    assert first["allowed_actions"] == ["start"]
+    assert first["data"]["required_start_kind"] == "verification"
     barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="first")
     assert barred["code"] == "AGENT_MISMATCH"
     _review(app, "gpt", run="second")

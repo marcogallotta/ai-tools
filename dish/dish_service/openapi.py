@@ -124,7 +124,11 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                             "enum": list(VALIDATION_SCOPE_VALUES),
                         },
                         "uniqueItems": True,
-                    }
+                    },
+                    "required_start_kind": {
+                        "type": "string",
+                        "enum": ["initial", "verification"],
+                    },
                 },
             },
             "errors": {"type": "array", "items": {"type": "object", "additionalProperties": True}},

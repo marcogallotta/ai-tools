@@ -18,6 +18,13 @@
           "data": {
             "additionalProperties": true,
             "properties": {
+              "required_start_kind": {
+                "enum": [
+                  "initial",
+                  "verification"
+                ],
+                "type": "string"
+              },
               "validation_scope": {
                 "items": {
                   "enum": [
