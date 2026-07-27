@@ -72,6 +72,11 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now dish-service
 ```
 
+Dish reads the current protocol and task-schema assets from `DISH_HONEST_PATH` when it handles
+workflow commands, so edits to those assets do not require a service restart. Restart
+`dish-service` after changing its environment or Python code. Verification cycles already in
+progress remain bound to their recorded Verification protocol release.
+
 The service binds two loopback listeners:
 
 - private CLI/admin listener on `127.0.0.1:8765`;
