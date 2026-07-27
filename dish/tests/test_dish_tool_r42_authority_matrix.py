@@ -57,6 +57,98 @@ def test_handling_only_method_changes_remain_small_capable(replacement):
     require_small_scope(before, after)
 
 
+def _with_section(document, section, text):
+    return dataclasses.replace(document, sections={**document.sections, section: text})
+
+
+@pytest.mark.parametrize(
+    "section",
+    ["HOW TO COOK IT", "CHECK BEFORE COOKING", "WATCH OUT FOR", "STORAGE"],
+)
+def test_equivalent_freshness_handling_is_small_in_any_handling_section(section):
+    before = _doc()
+    old = before.sections.get(section, "")
+    after = _with_section(
+        before,
+        section,
+        f"{old}\nReheat the chicken first and fold in fresh basil after reheating to preserve aroma.".strip(),
+    )
+    assert explicit_material_reasons(before, after) == ()
+    require_small_scope(before, after)
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        (
+            "Keep the lime mixed into the dish.",
+            "Keep the lime separate and divide it per sitting instead of mixing it into the stored batch.",
+        ),
+        (
+            "Reheat gently and add fresh coriander.",
+            "Reheat the chicken first, then add fresh coriander after reheating.",
+        ),
+    ],
+)
+def test_storage_freshness_and_reheating_corrections_are_small(old, new):
+    before = _with_section(_doc(), "STORAGE", old)
+    after = _with_section(before, "STORAGE", new)
+    assert explicit_material_reasons(before, after) == ()
+    require_small_scope(before, after)
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected_reason"),
+    [
+        ("Refrigerate and use within 2 days.", "Refrigerate and use within 7 days.", "section:storage"),
+        ("Keep chilled.", "Keep at room temperature.", "section:storage"),
+        (
+            "Keep the cooked chicken separate.",
+            "Stir 200 g cooked chicken into the stored batch before chilling.",
+            "section:storage",
+        ),
+        (
+            "Keep the sauce separate from the chicken.",
+            "Combine the sauce with the chicken before storing the batch.",
+            "section:storage",
+        ),
+    ],
+)
+def test_material_storage_changes_still_require_large(old, new, expected_reason):
+    before = _with_section(_doc(), "STORAGE", old)
+    after = _with_section(before, "STORAGE", new)
+    reasons = explicit_material_reasons(before, after)
+    assert expected_reason in reasons
+    with pytest.raises(DishRuleError) as exc:
+        require_small_scope(before, after)
+    assert exc.value.rule == "large_correction_required"
+
+
+def test_real_small_route_accepts_fresh_basil_after_reheating(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review = _review(app)
+    candidate = tmp_path / "small-storage.txt"
+    candidate.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "\n---\n",
+            (
+                "\n## STORAGE\n"
+                "Reheat the chicken first and fold in fresh basil after reheating "
+                "to preserve aroma.\n---\n"
+            ),
+        )
+    )
+    result = app.execute(
+        "approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
+        correction="small", file_path=str(candidate),
+        reviewed_identity=review["data"]["reviewed_identity"],
+        semantic_review_complete=True, provenance_complete=True, run_id="review",
+    )
+    assert result["ok"]
+    assert result["allowed_actions"] == ["submit"]
+    assert "fresh basil after reheating" in backend.notes
+
+
 def test_real_small_route_rejects_same_keyword_halal_reversal(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
     review = _review(app)

@@ -43,11 +43,26 @@ def require_governed_authorization(conn, before, after, *, task_gid: str, operat
 _QUANTITY_RE = re.compile(r"(?<!\w)(?:\d+(?:[.,]\d+)?|\d+\s*/\s*\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:kg|g|mg|l|ml|cl|tsp|tbsp|teaspoons?|tablespoons?|cups?|oz|lb|eggs?|cloves?|pieces?|minutes?|mins?|hours?|hrs?)\b", re.I)
 _RATIO_RE = re.compile(r"(?:\b(?:equal parts?|one|two|three|four|five|six|seven|eight|nine|ten|\d+(?:[.,]\d+)?)\b\s*(?::|/|\bto\b|\bparts?\b)\s*\b(?:one|two|three|four|five|six|seven|eight|nine|ten|\d+(?:[.,]\d+)?)\b)", re.I)
 _PORTION_RE = re.compile(r"\b(?:portion|portions|serving|servings|sittings?|feeds?|people|persons?)\b", re.I)
+_PORTION_COUNT_RE = re.compile(
+    r"(?<!\w)(?:\d+(?:[.,]\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)\s*"
+    r"(?:portions?|servings?|sittings?|people|persons?)\b",
+    re.I,
+)
 _NUTRITION_RE = re.compile(r"\b(?:nutrition|nutritional|calorie|calories|kcal|protein|carbohydrate|carbs?|fat|fibre|fiber|sodium)\b", re.I)
 _HALAL_SAFETY_RE = re.compile(r"\b(?:halal|haram|pork|bacon|ham|lard|prosciutto|salami|pepperoni|wine|beer|sherry|mirin|alcohol|allergen|allergy|unsafe|safety|cross[- ]contamination|internal temperature)\b", re.I)
 _SOURCING_RE = re.compile(r"\b(?:source|sourcing|supplier|import|availability|available|unavailable|substitut(?:e|ion)|brand)\b", re.I)
 _EQUIPMENT_RE = re.compile(r"\b(?:wok|oven|stovetop|hob|grill|broiler|air fryer|fryer|pressure cooker|instant pot|slow cooker|sous vide|blender|food processor|mortar|pan|pot)\b", re.I)
 _RISK_RE = re.compile(r"\b(?:feasib(?:le|ility)|risk|constraint|temperature|timing|hold time)\b", re.I)
+_SHELF_LIFE_RE = re.compile(
+    r"(?<!\w)(?:\d+(?:[.,]\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)\s*"
+    r"(?:days?|weeks?|months?)\b|\bovernight\b",
+    re.I,
+)
+_STORAGE_CONDITION_RE = re.compile(
+    r"\b(?:room temperature|ambient temperature|on the counter|unrefrigerated|"
+    r"chill(?:ed|ing)?|refrigerat(?:e|ed|ing|or)|fridge|freez(?:e|er|ing|en))\b",
+    re.I,
+)
 
 _PLANNING_MATERIAL = {
     "Dish candidate": "dish_candidate",
@@ -64,18 +79,29 @@ _SECTION_MATERIAL = {
     "QUANTITIES": "quantities",
     "WHAT SUCCESS LOOKS LIKE": "success_criteria",
 }
+_HANDLING_SECTIONS = {
+    "CHECK BEFORE COOKING",
+    "HOW TO COOK IT",
+    "WATCH OUT FOR",
+    "STORAGE",
+}
 _HANDLING_WORDS = {
     "gently", "carefully", "briefly", "fresh", "freshly", "separate", "separately",
     "serving", "serve", "sitting", "sittings", "per", "last", "minute", "minutes",
     "immediately", "just", "before", "finish", "finished", "finishing", "early",
-    "ahead", "crisp", "raw", "undressed", "unmixed", "covered", "uncovered",
+    "ahead", "crisp", "raw", "undressed", "unmixed", "covered", "uncovered", "first",
 }
-_HANDLING_LINE_RE = re.compile(
-    r"^(?:(?:\d+[.)]|[-*])\s*)?(?:keep|store|hold|finish|add|mix|dress|combine|serve|prepare)\b.*"
-    r"(?:fresh|freshly|separate|separately|per sitting|at serving|before serving|last minute|"
-    r"do not .* early|until serving|just before serving)",
+_HANDLING_CUE_RE = re.compile(
+    r"\b(?:fresh|freshly|reheat(?:ed|ing)?|warm(?:ed|ing)?|separate|separately|"
+    r"per sitting|at serving|before serving|after reheating|last minute|until serving|"
+    r"just before serving|finish(?:ed|ing)?|garnish(?:ed|ing)?)\b",
     re.I,
 )
+_HANDLING_SUBJECT_STOPWORDS = _HANDLING_WORDS | {
+    "add", "after", "and", "batch", "before", "combine", "dish", "divide", "fold",
+    "food", "into", "keep", "mix", "mixed", "reheat", "reheated", "reheating",
+    "stored", "stir", "the", "then", "through", "instead", "preserve", "aroma",
+}
 
 
 def _canonical_body(document) -> dict[str, str]:
@@ -112,13 +138,39 @@ def _tokens(text: str) -> list[str]:
     return re.findall(r"[a-z]+|\d+(?:[.,]\d+)?", text.casefold())
 
 
-def _handling_only_method_change(old: str, new: str) -> bool:
-    """Recognise narrowly scoped serving/freshness handling without semantic rewrite."""
+def _handling_only_change(old: str, new: str) -> bool:
+    """Recognise bounded freshness and per-sitting handling without material drift."""
     if any(
         _signature(pattern, old) != _signature(pattern, new)
-        for pattern in (_QUANTITY_RE, _RATIO_RE, _HALAL_SAFETY_RE, _EQUIPMENT_RE, _RISK_RE)
+        for pattern in (
+            _QUANTITY_RE,
+            _RATIO_RE,
+            _PORTION_COUNT_RE,
+            _NUTRITION_RE,
+            _HALAL_SAFETY_RE,
+            _SOURCING_RE,
+            _EQUIPMENT_RE,
+            _RISK_RE,
+            _SHELF_LIFE_RE,
+            _STORAGE_CONDITION_RE,
+        )
     ):
         return False
+
+    def bounded(lines: list[str]) -> bool:
+        return bool(lines) and all(_HANDLING_CUE_RE.search(line) for line in lines)
+
+    def shares_subject(removed: list[str], added: list[str]) -> bool:
+        old_subjects = {
+            token for token in _tokens(" ".join(removed))
+            if len(token) >= 3 and token not in _HANDLING_SUBJECT_STOPWORDS
+        }
+        new_subjects = {
+            token for token in _tokens(" ".join(added))
+            if len(token) >= 3 and token not in _HANDLING_SUBJECT_STOPWORDS
+        }
+        return bool(old_subjects & new_subjects)
+
     import difflib
     old_lines = [line.strip() for line in old.splitlines() if line.strip()]
     new_lines = [line.strip() for line in new.splitlines() if line.strip()]
@@ -128,9 +180,13 @@ def _handling_only_method_change(old: str, new: str) -> bool:
             continue
         removed = old_lines[i1:i2]
         added = new_lines[j1:j2]
-        if tag == "insert" and added and all(_HANDLING_LINE_RE.search(line) for line in added):
+        if tag == "insert" and bounded(added):
             continue
-        if tag == "delete" and removed and all(_HANDLING_LINE_RE.search(line) for line in removed):
+        if tag == "delete" and bounded(removed):
+            continue
+        if tag == "replace" and bounded(added) and (
+            bounded(removed) or shares_subject(removed, added)
+        ):
             continue
         old_tokens = _tokens(" ".join(removed))
         new_tokens = _tokens(" ".join(added))
@@ -174,10 +230,14 @@ def explicit_material_reasons(before, after) -> tuple[str, ...]:
             continue
         if path.startswith("section."):
             section = path.split(".", 1)[1]
-            if section == "HOW TO COOK IT":
-                if _handling_only_method_change(old, new):
+            if section in _HANDLING_SECTIONS:
+                if _handling_only_change(old, new):
                     continue
-                reasons.append("method")
+                reasons.append(
+                    "method"
+                    if section == "HOW TO COOK IT"
+                    else f"section:{section.casefold().replace(' ', '_')}"
+                )
             else:
                 reasons.append(_SECTION_MATERIAL.get(section, f"section:{section.casefold().replace(' ', '_')}"))
         # Supplementary explanations for changed values. These do not exempt a
