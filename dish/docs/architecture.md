@@ -348,7 +348,7 @@ reason.
 Run the full suite from `dish/`:
 
 ```sh
-.venv/bin/pytest
+.venv/bin/python -m pytest
 ```
 
 ## Change rules for contributors

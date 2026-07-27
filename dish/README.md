@@ -171,7 +171,7 @@ The Action listener serves only the bounded `/v1/action/*` workflow and lease-re
 From `dish/`:
 
 ```sh
-.venv/bin/pytest
+.venv/bin/python -m pytest
 ```
 
 The committed Step 11 tests cover service restart, concurrency, leases, credential scopes, the generated Asana SDK path, Action/CLI equivalence, backup/restore, operational health, and private/public surface separation.
