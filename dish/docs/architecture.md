@@ -166,7 +166,9 @@ fall back into old create/prepare/approve/reject/submit implementations.
 `dish_tool.workflow_policy.legal_actions` derives the executable action list from that snapshot.
 Mutation entry points call `assert_action` before executing a use case and return a fresh snapshot
 afterward. Transports and clients must follow `allowed_actions`; they must not reconstruct legal
-transitions independently.
+transitions independently. Agent-facing results expose only commands available on the bounded
+agent surface. When internal policy requires a Marco-admin continuation, `allowed_actions` is
+empty and `data.required_admin_action` names the private command for audit and handoff.
 
 ## Workflow use cases
 

@@ -24,36 +24,63 @@ from .results import error_envelope, result_envelope
 from .validation_scope import scope_for_command
 
 
+_AGENT_EXPOSED_ACTIONS = {
+    "approve", "create", "inspect", "prepare", "read", "reject",
+    "sections", "start", "submit",
+}
+_ADMIN_ONLY_ACTIONS = {
+    "record-human-decision", "reopen", "supply-evidence",
+}
+
+
 def _exposed_action_contract(
     actions: list[str] | tuple[str, ...],
-) -> tuple[list[str], str | None]:
-    """Translate internal workflow actions to commands exposed to agents."""
+) -> tuple[list[str], str | None, str | None]:
+    """Translate internal workflow actions to commands exposed to agents.
+
+    Internal policy may require a Marco-admin continuation. Those commands must
+    never appear in an agent response's ``allowed_actions`` because the Action
+    and agent CLI cannot execute them. The exact private continuation remains
+    visible as a diagnostic.
+    """
     required_start_kind = "verification" if "verify" in actions else None
-    exposed = ["start" if action == "verify" else action for action in actions]
-    return exposed, required_start_kind
+    translated = ["start" if action == "verify" else action for action in actions]
+    required_admin_action = next(
+        (action for action in translated if action in _ADMIN_ONLY_ACTIONS),
+        None,
+    )
+    exposed = [
+        action for action in translated
+        if action in _AGENT_EXPOSED_ACTIONS
+    ]
+    return exposed, required_start_kind, required_admin_action
 
 
 def _exposed_view(view: Mapping[str, Any]) -> dict[str, Any]:
     """Return an agent-facing copy of an authoritative internal view."""
     exposed = dict(view)
-    actions, required_start_kind = _exposed_action_contract(
+    actions, required_start_kind, required_admin_action = _exposed_action_contract(
         list(view.get("legal_actions") or [])
     )
     exposed["legal_actions"] = actions
     if required_start_kind is not None:
         exposed["required_start_kind"] = required_start_kind
+    if required_admin_action is not None:
+        exposed["required_admin_action"] = required_admin_action
     return exposed
 
 
 def _exposed_result_contract(
     view: Mapping[str, Any], data: Mapping[str, Any]
 ) -> tuple[list[str], dict[str, Any]]:
-    actions, required_start_kind = _exposed_action_contract(
+    actions, required_start_kind, required_admin_action = _exposed_action_contract(
         list(view.get("legal_actions") or [])
     )
     exposed_data = dict(data)
     if required_start_kind is not None:
         exposed_data["required_start_kind"] = required_start_kind
+    if required_admin_action is not None:
+        exposed_data["required_admin_action"] = required_admin_action
     return actions, exposed_data
 
 
@@ -309,6 +336,8 @@ def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str)
     data["authoritative_view"] = view
     if view.get("required_start_kind") is not None:
         data["required_start_kind"] = view["required_start_kind"]
+    if view.get("required_admin_action") is not None:
+        data["required_admin_action"] = view["required_admin_action"]
     trace.submission_id = operation_id
     trace.task_gid = data["operation"]["task_gid"]
     trace.state = view["status"]

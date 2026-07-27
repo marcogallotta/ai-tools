@@ -61,12 +61,29 @@ def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path)
     assert bad["code"] == "INVALID_ARGUMENT"
     good = app.execute("reject", agent="codex", submission_id=operation_id, route="evidence", reason="Marco must confirm the factual input", resume_status="pending-verification", run_id="review")
     assert good["ok"] and "Status: pending-evidence" in backend.notes
+    assert good["allowed_actions"] == []
+    assert good["data"]["required_admin_action"] == "supply-evidence"
     assert good["data"]["validation_scope"] == [
         "structural-only", "transition-state", "exact-content-identity",
         "agent-semantic-review",
     ]
     assert "provenance-signoff" not in good["data"]["validation_scope"]
 
+
+
+
+def test_human_review_route_reports_private_continuation_without_exposing_it(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    _review(app, "codex", run="human-review")
+    result = app.execute(
+        "reject", agent="codex", submission_id=operation_id,
+        route="human-review", reason="Marco must choose between two valid serving formats.",
+        resume_status="pending-verification", run_id="human-review",
+    )
+    assert result["ok"]
+    assert result["allowed_actions"] == []
+    assert result["data"]["required_admin_action"] == "record-human-decision"
+    assert "Status: pending-human-review" in backend.notes
 
 def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)

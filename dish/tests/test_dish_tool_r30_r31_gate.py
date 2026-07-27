@@ -113,11 +113,13 @@ def test_two_pass_hold_advertises_reopen_not_human_decision(tmp_path):
         reason="second failure", file_path=str(candidate), run_id="second",
     )
     assert second["ok"] and second["data"]["two_pass_hold"]
-    assert second["allowed_actions"] == ["reopen"]
+    assert second["allowed_actions"] == []
+    assert second["data"]["required_admin_action"] == "reopen"
 
     inspected = app.execute("inspect", agent="gpt", submission_id=operation_id)
     assert inspected["ok"]
-    assert inspected["allowed_actions"] == ["reopen"]
+    assert inspected["allowed_actions"] == []
+    assert inspected["data"]["required_admin_action"] == "reopen"
 
     admin = DishAdminApplication(app.conn, backend=backend, release_loader=lambda: app._load_release(None))
     wrong = admin.execute(

@@ -100,6 +100,10 @@ Internal workflow permission `verify` is exposed as Action/CLI command `start`. 
 required handoff command, `data.required_start_kind` identifies its required `kind`: `initial` after
 Planning and `verification` after Research. Clients must not look for a separate `verify` Action.
 
+Marco-only continuations such as `supply-evidence`, `record-human-decision`, and `reopen` never
+appear in an agent response's `allowed_actions`. When one is required, agent responses return an
+empty action list and identify the exact private continuation in `data.required_admin_action`.
+
 Governed boundary responses include `data.validation_scope`, an ordered list drawn from:
 
 - `structural-only` — deterministic parsing and schema/shape checks only;
