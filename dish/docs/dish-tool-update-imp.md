@@ -1,5 +1,8 @@
 # Dish tool — protocol-compatibility update implementation plan
 
+> **Historical record:** the current implementation architecture is documented in [`architecture.md`](architecture.md). References below to removed `dish-tool.md` or `dish-tool-imp.md` files are preserved as historical provenance; use Git history when their exact contents are needed.
+
+
 **Companion to:** `dish-tool-update.md`
 
 **Scope:** update the existing implemented dish tool so it conforms to the current dish protocols and the settled rollout decisions in `dish-tool-update.md`, while preserving the original guarded-submission purpose of the tool.

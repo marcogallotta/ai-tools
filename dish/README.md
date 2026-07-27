@@ -92,7 +92,9 @@ Never place the CLI/admin token in the GPT Action configuration.
 
 ## Workflow
 
-Every response is one canonical JSON result envelope. Follow only `allowed_actions`.
+Every response is one canonical JSON result envelope. Follow only `allowed_actions`; they are
+derived from the exact live content, placement, durable operation evidence, pending recovery work,
+and signoff state.
 
 Typical Research and Verification lifecycle:
 
@@ -104,7 +106,9 @@ start initial/change
 → submit after approval
 ```
 
-Read-only commands are `create`, `sections`, `read`, and `inspect` from the user's perspective, although `create` is a governed service mutation because it creates an Asana task.
+The bounded agent surface contains discovery/read commands (`sections`, `read`, `inspect`) and
+governed mutations (`create`, `start`, `prepare`, `approve`, `reject`, `submit`). `create` is a
+mutation even though it starts from a bare task.
 
 Run `dish --help`, `dish <command> --help`, and the stage walkthroughs for exact arguments.
 
@@ -172,11 +176,11 @@ From `dish/`:
 
 The committed Step 11 tests cover service restart, concurrency, leases, credential scopes, the generated Asana SDK path, Action/CLI equivalence, backup/restore, operational health, and private/public surface separation.
 
-## Design references
+## Documentation map
 
-- `docs/dish-tool.md` — governing v1 design.
-- `docs/dish-tool-update.md` — compatibility decisions, including C-02.
-- `docs/dish-tool-update-imp.md` — staged implementation plan, including Step 11.
-- `docs/runtime-contract.md` — final runtime and access-path contract.
+- `docs/architecture.md` — current internals, authority boundaries, persistence, recovery, and extension rules.
+- `docs/runtime-contract.md` — JSON meanings, exit statuses, retry rules, and operational recovery.
+- `docs/dish-tool-future.md` — only work that is not already implemented.
+- `docs/dish-tool-update.md` and `docs/dish-tool-update-imp.md` — historical change analysis and implementation provenance, not current architecture authority.
 
-Step 11 implements the shared-service gate. It does not itself authorize production activation; migration rehearsal, live test-project smoke, cutover, and rollback remain Step 12.
+Step 11 implements the shared-service and GPT Action gate. It does not itself authorize production activation; migration rehearsal, live test-project smoke, cutover, and rollback remain Step 12.

@@ -4,36 +4,31 @@ This repo holds Marco's personal agent tooling. Read `README.md` next — it cov
 repo is for, how `tools/git-commit` and `tools/asana` are invoked, and how the repo is wired
 into `~/.claude/`.
 
-## Working rules for the dish design docs
+## Working rules for Dish documentation
 
-`dish/docs/dish-tool.md`, `dish-tool-future.md`, and `dish-tool-imp.md` are allowed to go
-stale relative to each other — that's fine, not a bug. When iterating/designing on one doc,
-just work on that doc. Don't feel obliged to keep the others in sync in the same pass, and
-especially don't hold back on the future doc — it's deliberately a loose catch-all net. Going
-stale there is expected and cheap to reconcile later, e.g. by diffing one doc's git history
-against a known baseline commit to see what changed and what it implies for the others.
+For changes under `dish/`, read `dish/docs/architecture.md` first. The current
+documentation roles are:
 
-The one case that's different: when a change *intentionally moves or resolves content between
-two of these docs* — e.g. resolving an open question in the implementation plan by relocating
-it into the future doc's v2 list — that's a single logical edit that happens to span two files,
-not two unrelated edits sharing a commit. Commit it as one commit, both files together.
+- `dish/README.md` — installation, deployment, and operator entry points;
+- `dish/docs/architecture.md` — current code structure, authority boundaries,
+  invariants, persistence, recovery, and extension rules;
+- `dish/docs/runtime-contract.md` — response, exit-status, retry, and
+  troubleshooting contract;
+- `dish/docs/dish-tool-future.md` — only work not already implemented.
 
-**Authority flows one way: change plan → design doc (`dish-tool.md`) → implementation plan.
-It is not a three-way sync.** Once the design doc has made a concrete decision, the design doc
-wins outright, even where the change plan's wording is older, vaguer, or broader — that is
-expected and not a discrepancy to resolve. The change plan is never updated to tighten it back
-up. The *only* pairwise sync obligation is design doc ↔ implementation plan, since the plan's
-job is to build exactly what the design doc specifies. When the implementation plan flags
-something as an open question, first check whether the design doc has actually already decided
-it — if so, it is not open; cite the resolution and move on, rather than re-litigating it as a
-live choice.
+`dish-tool-update.md` and `dish-tool-update-imp.md` are historical change records.
+They may explain why a decision was made, but they do not override the current architecture,
+runtime contract, code, or Honest protocol/schema assets. Older design and implementation
+plans were removed; use Git history when their exact text is needed.
 
-If you are working *on* the two design docs above (drafting, revising, reconciling design
-decisions) — as opposed to using them as a spec to build the tool — also read
-`~/honest-pantry/dish-docs-design.md` first, since it's the source of truth for what's approved.
-If that work goes deep enough into the protocol's own structure (not just the tool that edits
-it — e.g. its canonical manifest, process-record fields, change-class definitions), also read
-`~/honest-pantry/dish-protocol.md`.
+When architecture changes, update `architecture.md` in the same commit. Do not add
+executable legacy mutation paths, duplicate workflow authority in transports or CLIs, or
+preserve a state solely because a test can construct it. A compatibility path needs a real
+producer or a real database-preservation requirement.
+
+If work changes the protocol's own structure rather than only the tool, read
+`~/honest-pantry/dish-docs-design.md` first. If it changes canonical fields, process-record
+structure, or change classes, also read the relevant current Honest protocol and schema assets.
 
 ## Memory
 

@@ -1,5 +1,8 @@
 # Dish Tool Update Analysis
 
+> **Historical record:** the current implementation architecture is documented in [`architecture.md`](architecture.md). References below to removed `dish-tool.md` or `dish-tool-imp.md` files are preserved as historical provenance; use Git history when their exact contents are needed.
+
+
 **Scope:** compare the dish-tool implementation and documentation in `~/ai-tools` with the frozen dish protocols in `~/honest-pantry-dish-rollout` (archive labels `ai-tools(21)`/`honest(147)` in the original analysis pass, resolved here to real paths for provenance).
 
 **Mode:** analysis and planning only. No tool code, existing tool documentation, or protocol file was changed. Explicit, versioned protocol amendments remain allowed where they make the implementation cleaner or safer.

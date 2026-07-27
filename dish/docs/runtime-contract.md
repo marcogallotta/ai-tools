@@ -1,8 +1,9 @@
 # Dish runtime contract reference
 
 Command syntax and invocation live in `dish --help` / `dish <stage> --help` / `dish-admin --help`,
-and setup lives in `dish/README.md`. This document is the reference for what a response actually
-means once you've made a call: the JSON envelope shape, exit-status handling, and recovery.
+setup lives in `dish/README.md`, and internal design lives in [`architecture.md`](architecture.md).
+This document is the reference for what a response actually means once you've made a call: the JSON
+envelope shape, exit-status handling, and recovery.
 
 ## Authority and scope
 
@@ -89,9 +90,9 @@ Every invocation writes exactly one compact JSON object to stdout:
 ```
 
 - `task_gid` identifies the Asana task when known.
-- `submission_id` is the operation identifier retained for CLI compatibility.
+- `submission_id` is the current operation identifier; the field name is retained for client compatibility.
 - `state` is tool operation state, not protocol readiness.
-- `allowed_actions` is the bounded next tool action list.
+- `allowed_actions` is the bounded next tool action list derived from the same authoritative snapshot that mutation commands enforce.
 - `data` contains command-specific exact identities, diagnostics, protocol text, or completion facts.
 - `errors` contains structured findings with a `rule` and any supporting fields.
 

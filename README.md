@@ -38,7 +38,7 @@ Anthropic-API writes.
 ## Instructions for agents
 
 - `AGENTS.md` — repo entry point; tells a session to read `CLAUDE.md` and this file first.
-- `CLAUDE.md` — working rules for the dish design docs, and the no-memory-writes policy.
+- `CLAUDE.md` — working rules for Dish documentation and the no-memory-writes policy.
 - `CLAUDE-global.md` — cross-project preferences, loaded into every session everywhere. Lives
   here so it's version-controlled; Claude Code only auto-loads it under its real name,
   `~/.claude/CLAUDE.md`, hence the rename in the symlink.
