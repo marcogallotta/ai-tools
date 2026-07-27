@@ -217,6 +217,11 @@ exact identity. A live `Verified by` string is not sufficient local evidence.
 The local SQLite schema is versioned independently from the Honest task schema. Startup runs schema
 migrations, integrity checks, foreign-key checks, and semantic validation before serving mutations.
 
+The database location (`DISH_DB_PATH`, falling back to `constants.DEFAULT_DB_PATH`) is deliberately
+independent of any Dish checkout or worktree path. There is exactly one shared writable database
+(see `ServiceProcessLock` above); deriving its path from the running checkout would fragment that
+database across worktrees instead of keeping it singular.
+
 Conceptually important tables are:
 
 | Evidence | Tables |
