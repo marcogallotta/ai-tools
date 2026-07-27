@@ -176,12 +176,11 @@ def _validate_migration(
             expected=schema_version,
             actual=metadata["to_schema_version"],
         )
-    if metadata["protocol_version"] != protocol_version:
+    migration_protocol = metadata["protocol_version"]
+    if not isinstance(migration_protocol, str) or not migration_protocol.strip():
         raise ReleaseResolutionError(
-            "migration_version_mismatch",
-            f"{filename} declares the wrong protocol version",
-            expected=protocol_version,
-            actual=metadata["protocol_version"],
+            "migration_malformed",
+            f"{filename} has an invalid protocol version",
         )
     if metadata["automatic"] is not False:
         raise ReleaseResolutionError(
