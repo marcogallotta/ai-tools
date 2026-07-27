@@ -56,6 +56,8 @@ requests therefore include `client.request_id`, a UUID chosen before the first a
 - Reuse the same request ID only for the same command, authenticated owner/run, and arguments.
 - A repeated completed request returns the original stored result with
   `data.request_replayed: true`.
+- Validation failures reached with a valid replay-sensitive request ID are completed and replayed
+  under the same identity; the ID cannot later be repurposed for different work.
 - Reusing an ID for different work returns `CONFLICT`.
 - A process interruption after `start` is reconciled only when exact durable operation evidence proves
   the existing operation.

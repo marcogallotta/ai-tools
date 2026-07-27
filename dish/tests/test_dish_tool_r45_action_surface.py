@@ -384,3 +384,44 @@ def test_pre_body_auth_and_size_rejections_close_the_connection(tmp_path):
     assert rejected_auth[3]["errors"][0]["rule"] == "service_scope_forbidden"
     assert rejected_size[3]["errors"][0]["rule"] == "request_too_large"
     assert backend.writes == 0
+
+def test_failed_start_request_id_cannot_be_reused_for_different_work(tmp_path):
+    _backend, server, thread, url = _running(tmp_path)
+    request_id = str(uuid.uuid4())
+    try:
+        action = DishActionClient(url, token="action-secret", run_id="run")
+        first = action.execute(
+            "start", agent="gpt", task_gid="not-a-gid", kind="planning",
+            request_id=request_id,
+        )
+        second = action.execute(
+            "start", agent="gpt", task_gid="123456789", kind="initial",
+            request_id=request_id,
+        )
+    finally:
+        _stop(server, thread)
+    assert first["code"] == "INVALID_ARGUMENT"
+    assert first["data"]["request_id"] == request_id
+    assert second["code"] == "CONFLICT"
+    assert second["errors"][0]["rule"] == "service_request_identity_conflict"
+
+
+def test_failed_start_request_replays_stored_validation_result(tmp_path):
+    _backend, server, thread, url = _running(tmp_path)
+    request_id = str(uuid.uuid4())
+    try:
+        action = DishActionClient(url, token="action-secret", run_id="run")
+        first = action.execute(
+            "start", agent="gpt", task_gid="not-a-gid", kind="planning",
+            request_id=request_id,
+        )
+        second = action.execute(
+            "start", agent="gpt", task_gid="not-a-gid", kind="planning",
+            request_id=request_id,
+        )
+    finally:
+        _stop(server, thread)
+    assert first["code"] == "INVALID_ARGUMENT"
+    assert second["code"] == "INVALID_ARGUMENT"
+    assert second["data"]["request_replayed"] is True
+    assert second["data"]["request_id"] == request_id

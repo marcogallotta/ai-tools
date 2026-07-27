@@ -629,6 +629,39 @@ class DishService:
             finally:
                 conn.close()
 
+    def record_replay_validation_failure(
+        self,
+        command: str,
+        arguments: Mapping[str, Any],
+        *,
+        principal: ServicePrincipal,
+        request_id: str,
+        error: DishRuleError,
+    ) -> dict[str, Any]:
+        """Persist pre-application validation outcomes for replay-sensitive calls."""
+        with self._maintenance_lock:
+            conn = initialize_database(self.config.db_path)
+            try:
+                row, started = begin_request(
+                    conn,
+                    request_id=request_id,
+                    owner_id=principal.owner_id,
+                    run_id=principal.run_id,
+                    command=command,
+                    arguments=arguments,
+                )
+                prior = stored_result(row)
+                if prior is not None:
+                    return prior
+                if not started:
+                    raise pending_error(command, request_id)
+                result = error_envelope(command, error)
+                result.setdefault("data", {})["request_id"] = request_id
+                complete_request(conn, request_id=request_id, result=result)
+                return result
+            finally:
+                conn.close()
+
     def renew_lease(self, operation_id: str, principal: ServicePrincipal) -> dict[str, Any]:
         with self._maintenance_lock:
             conn = initialize_database(self.config.db_path)

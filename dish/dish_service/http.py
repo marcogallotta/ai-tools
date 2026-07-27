@@ -155,6 +155,9 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             surface, command = "admin-argument-failure", parts[3]
         elif len(parts) == 3 and parts[:2] == ["v1", "argument-failures"]:
             surface, command = "argument-failure", parts[2]
+        request = {}
+        principal = None
+        request_id = None
         try:
             if command == "unknown":
                 self._write_json(
@@ -187,6 +190,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 credential = self._credential("admin")
             request = self._read_json()
             if surface == "action":
+                principal = self._principal(credential, request)
                 _client, arguments = validate_action_request(command, request)
                 request = {"client": _client, "arguments": arguments}
             elif surface == "action-lease":
@@ -207,7 +211,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             context = request.get("context")
             if isinstance(context, dict):
                 validate_identifier_fields(context, allow_null=True)
-            principal = self._principal(credential, request)
+            if principal is None:
+                principal = self._principal(credential, request)
             client_payload = request.get("client") if isinstance(request.get("client"), dict) else {}
             request_id = client_payload.get("request_id")
             if surface == "agent" and command in REPLAY_SAFE_COMMANDS:
@@ -256,6 +261,36 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 )
             self._write_json(HTTPStatus.OK, payload)
         except DishRuleError as exc:
+            replay_payload = None
+            if (
+                surface == "action"
+                and command in REPLAY_SAFE_COMMANDS
+                and principal is not None
+                and isinstance(request, dict)
+            ):
+                client_payload = request.get("client")
+                raw_arguments = request.get("arguments")
+                candidate_request_id = (
+                    client_payload.get("request_id")
+                    if isinstance(client_payload, dict)
+                    else None
+                )
+                if isinstance(candidate_request_id, str):
+                    try:
+                        require_dish_uuid(candidate_request_id, field="client.request_id")
+                    except DishRuleError:
+                        pass
+                    else:
+                        replay_payload = self.server.service.record_replay_validation_failure(
+                            command,
+                            raw_arguments if isinstance(raw_arguments, dict) else {},
+                            principal=principal,
+                            request_id=candidate_request_id,
+                            error=exc,
+                        )
+            if replay_payload is not None:
+                self._write_json(HTTPStatus.OK, replay_payload)
+                return
             if exc.rule in {"service_auth_required", "service_auth_invalid"}:
                 status = HTTPStatus.UNAUTHORIZED
             elif exc.rule == "service_scope_forbidden":
