@@ -45,6 +45,7 @@ def _service(tmp_path, backend=None, *, clock=None, ttl=60):
             lease_ttl_seconds=ttl,
             agent_token="agent",
             admin_token="admin",
+            port=0,
         ),
         backend_factory=lambda: backend,
         release_loader=_release_loader(honest),
