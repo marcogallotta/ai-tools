@@ -199,3 +199,39 @@ def test_large_route_rejects_hold_resume_status(tmp_path):
     )
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"][0]["rule"] == "large_resume_status_unexpected"
+
+
+def test_hold_route_reports_all_incompatible_arguments_and_permitted_set(tmp_path):
+    candidate = tmp_path / "unused.txt"
+    candidate.write_text(TASK)
+    app, _backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute(
+        "start", agent="codex", task_gid="t", kind="verification", run_id="aggregate-route-errors"
+    )
+    assert review["ok"]
+    result = app.execute(
+        "reject",
+        agent="codex",
+        submission_id=operation_id,
+        route="evidence",
+        reason="Marco must confirm a fact",
+        file_path=str(candidate),
+        model="gpt-5.6-sol",
+        independence_attestation="not accepted on this route",
+        run_id="aggregate-route-errors",
+    )
+    assert result["code"] == "INVALID_ARGUMENT"
+    rules = {item["rule"] for item in result["errors"]}
+    assert {
+        "hold_candidate_unexpected",
+        "hold_model_unexpected",
+        "hold_independence_attestation_unexpected",
+        "resume_status_required",
+        "rejection_route_arguments_invalid",
+    }.issubset(rules)
+    overall = next(
+        item for item in result["errors"] if item["rule"] == "rejection_route_arguments_invalid"
+    )
+    assert overall["permitted_arguments"] == [
+        "submission_id", "agent", "reason", "route", "resume_status", "run_id"
+    ]

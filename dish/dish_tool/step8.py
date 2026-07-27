@@ -178,33 +178,96 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     return result
 
 
+def _validate_rejection_route_arguments(
+    *,
+    route: str,
+    model: str | None,
+    file_path: str | None,
+    resume_status: str | None,
+    independence_attestation: str | None,
+) -> None:
+    permitted = {
+        "large": [
+            "submission_id", "agent", "reason", "route", "model", "file_path",
+            "run_id", "independence_attestation",
+        ],
+        "evidence": [
+            "submission_id", "agent", "reason", "route", "resume_status", "run_id",
+        ],
+        "human-review": [
+            "submission_id", "agent", "reason", "route", "resume_status", "run_id",
+        ],
+    }[route]
+    errors: list[dict[str, Any]] = []
+
+    def add(rule: str, field: str, message: str) -> None:
+        errors.append({
+            "rule": rule,
+            "field": field,
+            "message": message,
+            "route": route,
+            "permitted_arguments": permitted,
+        })
+
+    if route == "large":
+        if resume_status is not None:
+            add(
+                "large_resume_status_unexpected", "resume_status",
+                "Large correction sets pending-verification automatically",
+            )
+        if not str(model or "").strip():
+            add("large_model_required", "model", "Large correction requires model")
+        if not str(file_path or "").strip():
+            add(
+                "large_candidate_required", "file_path",
+                "Large correction requires a complete corrected candidate",
+            )
+    else:
+        if str(file_path or "").strip():
+            add(
+                "hold_candidate_unexpected", "file_path",
+                "hold routes do not accept candidate content",
+            )
+        if str(model or "").strip():
+            add("hold_model_unexpected", "model", "hold routes do not accept model")
+        if str(independence_attestation or "").strip():
+            add(
+                "hold_independence_attestation_unexpected",
+                "independence_attestation",
+                "hold routes use the verifier run already bound by Verification start",
+            )
+        if resume_status not in {"pending-verification", "pending-research"}:
+            add(
+                "resume_status_required", "resume_status",
+                "hold routes require pending-research or pending-verification",
+            )
+
+    if errors:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "arguments are incompatible with the selected rejection route",
+            rule="rejection_route_arguments_invalid",
+            details={"route": route, "permitted_arguments": permitted},
+            errors=errors,
+        )
+
+
 def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, schema=None, honest_root=None):
-    op, cycle = _rows(conn, operation_id)
-    assert_verifier_authority(cycle, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
     route = str(route or "").strip()
     reason = str(reason or "").strip()
     if route not in ROUTES:
         raise DishRuleError("INVALID_ARGUMENT", "route must be large, evidence, or human-review", rule="invalid_rejection_route")
     if not reason:
         raise DishRuleError("INVALID_ARGUMENT", "route reason is required", rule="rejection_reason_required")
-    if route == "large" and resume_status is not None:
-        raise DishRuleError(
-            "INVALID_ARGUMENT",
-            "Large correction does not accept a hold resume status",
-            rule="large_resume_status_unexpected",
-        )
-    if route != "large" and file_path:
-        raise DishRuleError(
-            "INVALID_ARGUMENT",
-            "candidate file is accepted only for a Large correction",
-            rule="hold_candidate_unexpected",
-        )
-    if route != "large" and model:
-        raise DishRuleError(
-            "INVALID_ARGUMENT",
-            "model is accepted only for a Large correction",
-            rule="hold_model_unexpected",
-        )
+    _validate_rejection_route_arguments(
+        route=route,
+        model=model,
+        file_path=file_path,
+        resume_status=resume_status,
+        independence_attestation=independence_attestation,
+    )
+    op, cycle = _rows(conn, operation_id)
+    assert_verifier_authority(cycle, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     persisted_reviewed = cycle["reviewed_identity"]
     if not persisted_reviewed or not cycle["reviewed_content_version_id"]:
@@ -217,8 +280,6 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     changes = tuple(document.material_changes)
 
     if route == "large":
-        if not file_path:
-            raise DishRuleError("INVALID_ARGUMENT", "Large correction requires a complete corrected candidate", rule="large_candidate_required")
         corrected = _candidate(file_path)
         corrected_state = dict(corrected.state.values)
         corrected_state["Researched by"] = document.state.values["Researched by"]
@@ -239,13 +300,9 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         ),)
         document = dataclasses.replace(corrected, state=TaskState(state), material_changes=changes)
     elif route == "evidence":
-        if resume_status not in {"pending-verification", "pending-research"}:
-            raise DishRuleError("INVALID_ARGUMENT", "Evidence route requires a valid resume status", rule="resume_status_required")
         assert_transition(action="request_evidence", before="pending-verification", after="pending-evidence")
         document = dataclasses.replace(document, state=hold(state, target="pending-evidence", detail=reason, resume_status=resume_status))
     else:
-        if resume_status not in {"pending-verification", "pending-research"}:
-            raise DishRuleError("INVALID_ARGUMENT", "Human Review route requires a valid resume status", rule="resume_status_required")
         assert_transition(action="request_human_review", before="pending-verification", after="pending-human-review")
         document = dataclasses.replace(document, state=hold(state, target="pending-human-review", detail=reason, resume_status=resume_status))
 
