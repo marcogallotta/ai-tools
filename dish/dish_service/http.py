@@ -43,12 +43,18 @@ class DishRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         LOG.info("http_request remote=%s message=%s", self.client_address[0], fmt % args)
 
-    def _write_json(self, status: int, payload: Any) -> None:
+    def _write_json(
+        self, status: int, payload: Any, *, close_connection: bool = False
+    ) -> None:
         body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        if close_connection:
+            self.close_connection = True
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if close_connection:
+            self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 
@@ -70,6 +76,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             body = self.rfile.read(length)
         except socket.timeout as exc:
             raise DishRuleError("BACKEND_REJECTED", "request body timed out", rule="request_timeout", retryable=True) from exc
+        self._request_body_consumed = len(body) == length
         try:
             value = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -117,6 +124,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         started = time.monotonic()
+        self._request_body_consumed = False
         path = urlsplit(self.path).path
         parts = [part for part in path.split("/") if part]
         command = "unknown"
@@ -143,13 +151,25 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             surface, command = "argument-failure", parts[2]
         try:
             if command == "unknown":
-                self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"ok": False, "error": "not_found"},
+                    close_connection=True,
+                )
                 return
             if self.server.surface_mode == "private" and surface in {"action", "action-lease"}:
-                self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"ok": False, "error": "not_found"},
+                    close_connection=True,
+                )
                 return
             if self.server.surface_mode == "action" and surface not in {"action", "action-lease"}:
-                self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"ok": False, "error": "not_found"},
+                    close_connection=True,
+                )
                 return
             if surface in {"agent", "lease", "argument-failure"}:
                 credential = self._credential("agent")
@@ -199,7 +219,11 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             status = HTTPStatus.UNAUTHORIZED if exc.rule in {"service_auth_required", "service_auth_invalid"} else (
                 HTTPStatus.FORBIDDEN if exc.rule == "service_scope_forbidden" else HTTPStatus.BAD_REQUEST
             )
-            self._write_json(status, error_envelope(command, exc))
+            self._write_json(
+                status,
+                error_envelope(command, exc),
+                close_connection=not self._request_body_consumed,
+            )
         finally:
             LOG.info("command_complete surface=%s command=%s elapsed_ms=%d", surface, command, int((time.monotonic() - started) * 1000))
 

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import threading
+from http.client import HTTPConnection
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -83,6 +85,37 @@ def test_private_and_public_listeners_have_disjoint_route_surfaces(tmp_path):
     assert hidden_action == {"error": "not_found", "ok": False}
     assert hidden_admin == {"error": "not_found", "ok": False}
     assert public_health == {"error": "not_found", "ok": False}
+    assert backend.writes == 0
+    assert backend.moves == 0
+
+
+def test_hidden_post_route_closes_without_reinterpreting_its_body(tmp_path):
+    backend, private, action, private_thread, action_thread, private_url, _action_url = _split_servers(tmp_path)
+    parsed = urlsplit(private_url)
+    connection = HTTPConnection(parsed.hostname, parsed.port, timeout=2)
+    try:
+        connection.request(
+            "POST",
+            "/v1/action/sections",
+            body=json.dumps(
+                {"client": {"run_id": "action-run"}, "arguments": {"agent": "gpt"}}
+            ),
+            headers={
+                "Authorization": "Bearer action-secret",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+    finally:
+        connection.close()
+        _stop(private, private_thread)
+        _stop(action, action_thread)
+
+    assert response.status == 404
+    assert response.getheader("Connection") == "close"
+    assert response.will_close
+    assert payload == {"error": "not_found", "ok": False}
     assert backend.writes == 0
     assert backend.moves == 0
 

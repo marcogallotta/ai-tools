@@ -1,5 +1,7 @@
 import json
 import threading
+from http.client import HTTPConnection
+from urllib.parse import urlsplit
 
 from dish_service.application import DishService
 from dish_service.client import DishActionClient, DishAdminServiceClient, DishServiceClient
@@ -38,6 +40,26 @@ def _stop(server, thread):
     server.shutdown()
     server.server_close()
     thread.join(timeout=2)
+
+
+def _raw_post(url, path, *, token, body):
+    parsed = urlsplit(url)
+    connection = HTTPConnection(parsed.hostname, parsed.port, timeout=2)
+    try:
+        connection.request(
+            "POST",
+            path,
+            body=body,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+        )
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        return response.status, response.getheader("Connection"), response.will_close, payload
+    finally:
+        connection.close()
 
 
 def test_cli_and_action_receive_identical_workflow_results(tmp_path):
@@ -131,4 +153,34 @@ def test_action_request_limit_applies_before_workflow_execution(tmp_path):
         _stop(server, thread)
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"][0]["rule"] == "request_too_large"
+    assert backend.writes == 0
+
+
+def test_pre_body_auth_and_size_rejections_close_the_connection(tmp_path):
+    backend, server, thread, url = _running(tmp_path, max_body=80)
+    valid_body = json.dumps(
+        {"client": {"run_id": "run"}, "arguments": {"agent": "gpt"}}
+    )
+    oversized_body = json.dumps(
+        {"client": {"run_id": "run"}, "arguments": {"title": "x" * 500}}
+    )
+    try:
+        rejected_auth = _raw_post(
+            url, "/v1/action/sections", token="cli-secret", body=valid_body
+        )
+        rejected_size = _raw_post(
+            url, "/v1/action/create", token="action-secret", body=oversized_body
+        )
+    finally:
+        _stop(server, thread)
+
+    for status, connection_header, will_close, _payload in (
+        rejected_auth,
+        rejected_size,
+    ):
+        assert status in {400, 403}
+        assert connection_header == "close"
+        assert will_close
+    assert rejected_auth[3]["errors"][0]["rule"] == "service_scope_forbidden"
+    assert rejected_size[3]["errors"][0]["rule"] == "request_too_large"
     assert backend.writes == 0
