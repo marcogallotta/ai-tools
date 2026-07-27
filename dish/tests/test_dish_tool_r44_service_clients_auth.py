@@ -134,3 +134,50 @@ def test_admin_cli_builds_remote_admin_client(monkeypatch):
     monkeypatch.setattr(admin_cli, "AsanaBackend", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("Asana backend created")))
     app = admin_cli.build_application()
     assert isinstance(app, DishAdminServiceClient)
+
+
+def test_mode_is_required_for_direct_local_operation(monkeypatch):
+    monkeypatch.delenv("DISH_MODE", raising=False)
+    monkeypatch.delenv("DISH_SERVICE_URL", raising=False)
+    monkeypatch.delenv("DISH_LIVE_MODE", raising=False)
+    with pytest.raises(DishRuleError) as exc:
+        cli.build_application()
+    assert exc.value.rule == "dish_mode_required"
+
+
+def test_service_owned_database_rejects_direct_agent_and_admin_mode(tmp_path, monkeypatch):
+    from dish_service.database_ownership import ServiceDatabaseOwnership
+
+    db_path = tmp_path / "shared.sqlite3"
+    ServiceDatabaseOwnership(db_path).mark()
+    monkeypatch.setenv("DISH_MODE", "local")
+    monkeypatch.delenv("DISH_LIVE_MODE", raising=False)
+    monkeypatch.setattr(cli, "DB_PATH", db_path)
+    monkeypatch.setattr(admin_cli, "DB_PATH", db_path)
+    monkeypatch.setattr(
+        cli, "initialize_database",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("database opened")),
+    )
+    monkeypatch.setattr(
+        admin_cli, "initialize_database",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("database opened")),
+    )
+
+    with pytest.raises(DishRuleError) as agent_exc:
+        cli.build_application()
+    with pytest.raises(DishRuleError) as admin_exc:
+        admin_cli.build_application()
+    assert agent_exc.value.rule == "service_owned_database"
+    assert admin_exc.value.rule == "service_owned_database"
+
+
+def test_service_database_ownership_marker_survives_reinstantiation(tmp_path):
+    from dish_service.database_ownership import ServiceDatabaseOwnership
+
+    db_path = tmp_path / "shared.sqlite3"
+    marker = ServiceDatabaseOwnership(db_path)
+    marker.mark()
+    assert marker.path.exists()
+    with pytest.raises(DishRuleError) as exc:
+        ServiceDatabaseOwnership(db_path).assert_local_access_allowed()
+    assert exc.value.rule == "service_owned_database"

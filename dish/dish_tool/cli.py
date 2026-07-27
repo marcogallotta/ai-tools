@@ -15,6 +15,7 @@ from .database import initialize_database
 from .errors import DishRuleError
 from .releases import configured_honest_path, resolve_release
 from dish_service.client import DishServiceClient
+from dish_service.database_ownership import ServiceDatabaseOwnership
 from .results import error_envelope, exit_status
 
 
@@ -268,7 +269,23 @@ def build_application():
     service_url = os.environ.get("DISH_SERVICE_URL", "").strip()
     if mode not in {"", "local", "service"}:
         raise DishRuleError("INVALID_ARGUMENT", "DISH_MODE must be local or service", rule="dish_mode_invalid")
-    if mode == "service" or (not mode and service_url):
+    live_mode = os.environ.get("DISH_LIVE_MODE", "").strip().lower() in {"1", "true", "yes"}
+    if not mode and live_mode:
+        raise DishRuleError(
+            "PROTOCOL_INCOMPATIBLE",
+            "live mode requires the shared dish service",
+            rule="shared_service_required",
+        )
+    if not mode:
+        if service_url:
+            mode = "service"
+        else:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "DISH_MODE is required; use service for live operation or local only for controlled development",
+                rule="dish_mode_required",
+            )
+    if mode == "service":
         if not service_url:
             raise DishRuleError("INVALID_ARGUMENT", "DISH_SERVICE_URL is required in service mode", rule="service_url_required")
         return DishServiceClient(
@@ -277,12 +294,13 @@ def build_application():
             run_id=os.environ.get("DISH_CLIENT_RUN_ID", ""),
             timeout=float(os.environ.get("DISH_SERVICE_CLIENT_TIMEOUT", "65")),
         )
-    if os.environ.get("DISH_LIVE_MODE", "").strip().lower() in {"1", "true", "yes"}:
+    if live_mode:
         raise DishRuleError(
             "PROTOCOL_INCOMPATIBLE",
             "live mode requires the shared dish service",
             rule="shared_service_required",
         )
+    ServiceDatabaseOwnership(DB_PATH).assert_local_access_allowed()
     honest_root = configured_honest_path()
     conn = initialize_database(DB_PATH)
     return DishApplication(

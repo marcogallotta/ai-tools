@@ -47,7 +47,7 @@ class StatefulAsanaTransport:
         if resource_path == "/projects/{project_gid}/sections" and http_method == "GET":
             return {"data": copy.deepcopy(self.sections)}
         if resource_path == "/tasks" and http_method == "POST":
-            gid = f"task-{self.next_id}"; self.next_id += 1
+            gid = str(9000000000000000 + self.next_id); self.next_id += 1
             data = body["data"]
             task = {"gid": gid, "name": data["name"], "notes": data.get("notes", ""), "project": data["projects"][0], "section": None}
             self.tasks[gid] = task

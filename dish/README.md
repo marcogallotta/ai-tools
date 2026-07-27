@@ -18,7 +18,7 @@ Agent laptops and GPT Actions must not receive `ASANA_PAT`, `ASANA_ENV`, or a wr
 
 ### Local test mode
 
-Local mode remains available for controlled, single-agent tests and development. It is not a multi-agent lock and must not be used with `DISH_LIVE_MODE=1`.
+Local mode remains available for controlled, single-agent tests and development. Set `DISH_MODE=local` explicitly; an unset mode fails closed. It is not a multi-agent lock and must not be used with `DISH_LIVE_MODE=1`. Once `dish-service` has marked a database as service-owned, direct local CLI/admin access to that database remains forbidden even while the service is stopped.
 
 ## Installation
 

@@ -84,8 +84,11 @@ contains no raw Asana, migration, recovery, health, or backup endpoint.
 
 ### Local test mode
 
-`DISH_MODE=local` constructs a local SQLite connection and `AsanaBackend` in the CLI process. Live
-mode explicitly rejects this path. Use it only for controlled development, hermetic integration, and
+`DISH_MODE=local` constructs a local SQLite connection and `AsanaBackend` in the CLI process. The
+mode must be selected explicitly; an unset mode fails closed. Live mode rejects this path. When the
+shared service first owns a database it writes a persistent sidecar ownership marker, and direct local
+CLI/admin access to that database remains forbidden even while the service is stopped. Use local mode
+only with a separate development database for controlled development, hermetic integration, and
 manual test-project smoke checks.
 
 ## Entry points and transport

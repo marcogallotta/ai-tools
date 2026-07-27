@@ -10,6 +10,7 @@ from .application import DishService
 from .config import ServiceConfig
 from .http import build_action_server, build_private_server
 from .process_lock import ServiceProcessLock
+from .database_ownership import ServiceDatabaseOwnership
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -29,6 +30,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     config.validate_runtime(require_action=True)
     lock_path = config.db_path.with_suffix(config.db_path.suffix + ".service.lock")
     with ServiceProcessLock(lock_path):
+        ServiceDatabaseOwnership(config.db_path).mark()
         service = DishService(config)
         startup = service.startup_check()
         if not startup["ok"]:
