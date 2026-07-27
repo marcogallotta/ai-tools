@@ -134,7 +134,7 @@ Run `dish --help`, `dish <command> --help`, and the stage walkthroughs for exact
 
 `dish-admin` is Marco-only. In service mode it exposes:
 
-- `recover-lease` for an expired client/run lease;
+- `recover-lease` to release an expired client/run lease without transferring workflow ownership to Marco;
 - `recover` for ambiguous write or movement evidence;
 - `discard` for a provably unapplied stale operation;
 - `reopen`, `supply-evidence`, and `record-human-decision` for the existing protocol-specific hold routes;

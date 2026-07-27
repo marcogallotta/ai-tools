@@ -172,7 +172,8 @@ def test_lease_renewal_expiry_and_admin_recovery_are_deterministic(tmp_path):
         operation_id, _principal("admin", "recovery-2"), reason="owner confirmed dead"
     )
     assert recovered["ok"]
-    assert recovered["data"]["service_lease"]["owner_id"] == "admin"
+    assert recovered["data"]["service_lease"] is None
+    assert recovered["data"]["ownership_transferred"] is False
 
 
 def test_task_lock_cannot_release_before_terminal_completion(tmp_path):

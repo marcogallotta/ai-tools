@@ -8,6 +8,7 @@ from dish_service.application import DishService
 from dish_service.client import DishServiceClient
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
+from dish_service.leases import ServicePrincipal
 from dish_tool.commands import DishApplication
 from dish_tool.database import initialize_database
 from dish_tool.errors import DishRuleError
@@ -89,6 +90,7 @@ def test_service_restart_preserves_open_operation(tmp_path):
     inspected = restarted.execute_agent(
         "inspect",
         {"agent": "gpt", "submission_id": started["submission_id"]},
+        principal=ServicePrincipal(owner_id="local:gpt", run_id="constructor"),
     )
     assert inspected["ok"]
     assert inspected["submission_id"] == started["submission_id"]

@@ -58,6 +58,13 @@ class LeaseManager:
             (operation_id,),
         ).fetchone()
 
+    def is_expired(self, row) -> bool:
+        return _parse(row["expires_at"]) <= self.now()
+
+    @staticmethod
+    def is_owned_by(row, principal: ServicePrincipal) -> bool:
+        return row["owner_id"] == principal.owner_id and row["run_id"] == principal.run_id
+
     def _operation(self, operation_id: str):
         row = self.conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
         if row is None:
@@ -66,6 +73,13 @@ class LeaseManager:
 
     def acquire(self, operation_id: str, principal: ServicePrincipal):
         op = self._operation(operation_id)
+        if op["status"] != "open":
+            raise DishRuleError(
+                "WRONG_STATE",
+                "service lease can be acquired only for an open operation",
+                rule="service_lease_operation_not_open",
+                details={"operation_id": operation_id, "status": op["status"]},
+            )
         now = self.now()
         expiry = now + timedelta(seconds=self.ttl_seconds)
         self.conn.execute("BEGIN IMMEDIATE")
@@ -233,12 +247,23 @@ class LeaseManager:
         return self.release(operation_id, principal, reason=reason)
 
     def admin_recover(self, operation_id: str, principal: ServicePrincipal, *, reason: str):
+        """Release a stale lease without transferring workflow ownership to admin.
+
+        Administrative recovery proves that the prior run is gone.  It does not make
+        Marco the constructor/verifier and must not leave an operation permanently
+        owned by the admin credential.  A workflow run with durable actor lineage may
+        reclaim the now-missing lease on its next legal mutation.
+        """
+        del principal
+        self._operation(operation_id)
         row = self.active_for_operation(operation_id)
-        if row is not None:
-            if _parse(row["expires_at"]) > self.now():
-                raise DishRuleError(
-                    "CONFLICT", "active lease is not stale",
-                    rule="service_lease_not_stale", details={"expires_at": row["expires_at"]},
-                )
-            self.release(operation_id, None, reason=f"admin recovery: {reason}", admin=True)
-        return self.acquire(operation_id, principal)
+        if row is None:
+            return None
+        if _parse(row["expires_at"]) > self.now():
+            raise DishRuleError(
+                "CONFLICT", "active lease is not stale",
+                rule="service_lease_not_stale", details={"expires_at": row["expires_at"]},
+            )
+        return self.release(
+            operation_id, None, reason=f"admin recovery: {reason}", admin=True
+        )

@@ -25,6 +25,7 @@ from .leases import LeaseManager, ServicePrincipal
 
 _READ_ONLY_AGENT_COMMANDS = {"sections", "read", "inspect"}
 _LEASED_AGENT_COMMANDS = {"prepare", "approve", "reject", "submit"}
+_MUTATING_AGENT_COMMANDS = {"create", "start", *_LEASED_AGENT_COMMANDS}
 _RUN_ID_AGENT_COMMANDS = {"start", "prepare", "approve", "reject"}
 _HANDOFF_PHASES = {"await_verification", "held_evidence", "held_human"}
 _OPERATION_ADMIN_COMMANDS = {
@@ -35,6 +36,7 @@ _OPERATION_ADMIN_COMMANDS = {
     "record-human-decision",
     "authorize-governed-change",
 }
+_LEASE_FREE_ADMIN_COMMANDS = {"authorize-governed-change"}
 
 
 def _now_stamp() -> str:
@@ -175,6 +177,118 @@ class DishService:
             "expires_at": row["expires_at"],
         }
 
+    @staticmethod
+    def _operation_row(conn, operation_id: str):
+        return conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+        ).fetchone()
+
+    @staticmethod
+    def _run_has_role(conn, operation_id: str, run_id: str, roles: tuple[str, ...]) -> bool:
+        placeholders = ",".join("?" for _ in roles)
+        row = conn.execute(
+            f"SELECT 1 FROM operation_actor_facts "
+            f"WHERE operation_id=? AND run_id=? AND role IN ({placeholders}) LIMIT 1",
+            (operation_id, run_id, *roles),
+        ).fetchone()
+        return row is not None
+
+    def _may_claim_missing_lease(
+        self, conn, operation_id: str, principal: ServicePrincipal, command: str
+    ) -> bool:
+        op = self._operation_row(conn, operation_id)
+        if op is None or op["status"] != "open":
+            return False
+        if command == "prepare":
+            if str(op["run_id"] or "").strip() == principal.run_id:
+                return True
+            return self._run_has_role(
+                conn, operation_id, principal.run_id,
+                ("planner", "constructor", "material_editor"),
+            )
+        if command in {"approve", "reject", "submit"}:
+            return self._run_has_role(
+                conn, operation_id, principal.run_id, ("verifier",)
+            )
+        return False
+
+    def _apply_principal_access(
+        self,
+        result: dict[str, Any],
+        *,
+        conn,
+        leases: LeaseManager,
+        operation_id: str | None,
+        principal: ServicePrincipal,
+    ) -> dict[str, Any]:
+        if not result.get("ok") or not operation_id:
+            return result
+        op = self._operation_row(conn, operation_id)
+        if op is None:
+            return result
+        data = result.setdefault("data", {})
+        active = leases.active_for_operation(operation_id)
+        data["service_lease"] = self._lease_payload(active)
+        actions = list(result.get("allowed_actions") or [])
+
+        access: dict[str, Any] = {"state": "available"}
+        if op["status"] == "uncertain":
+            actions = []
+            access = {
+                "state": "recovery_required",
+                "rule": "operation_uncertain",
+                "required_admin_action": "recover",
+            }
+            data["recovery_required"] = True
+        elif op["status"] != "open":
+            actions = []
+            access = {"state": "terminal"}
+        elif active is not None:
+            if leases.is_expired(active):
+                actions = []
+                access = {
+                    "state": "expired",
+                    "rule": "service_lease_expired",
+                    "required_admin_action": "recover-lease",
+                }
+                data["recovery_required"] = True
+            elif leases.is_owned_by(active, principal):
+                access = {"state": "owned"}
+            else:
+                actions = []
+                access = {
+                    "state": "held_by_other_run",
+                    "rule": "service_lease_owner_mismatch",
+                    "owner_id": active["owner_id"],
+                    "run_id": active["run_id"],
+                    "expires_at": active["expires_at"],
+                }
+        else:
+            filtered: list[str] = []
+            for action in actions:
+                if action == "start":
+                    filtered.append(action)
+                elif action in _LEASED_AGENT_COMMANDS and self._may_claim_missing_lease(
+                    conn, operation_id, principal, action
+                ):
+                    filtered.append(action)
+            actions = filtered
+            if actions:
+                access = {"state": "claimable_by_run"}
+            elif op["phase"] in _HANDOFF_PHASES:
+                access = {"state": "handoff"}
+            else:
+                access = {
+                    "state": "recovery_required",
+                    "rule": "service_lease_missing",
+                    "required_admin_action": "recover-lease",
+                }
+                data["recovery_required"] = True
+
+        result["allowed_actions"] = actions
+        data["service_access"] = access
+        return result
+
     def _assert_mutation_ready(self, backend: Any) -> None:
         # Compatibility is resolved before any workflow mutation. Asana access is
         # proven with the same read-only section registry contract used by the
@@ -285,7 +399,21 @@ class DishService:
                 if command in _LEASED_AGENT_COMMANDS:
                     if not operation_id:
                         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
-                    leases.assert_owned(operation_id, principal)
+                    active = leases.active_for_operation(operation_id)
+                    if active is None:
+                        if not self._may_claim_missing_lease(
+                            conn, operation_id, principal, command
+                        ):
+                            raise DishRuleError(
+                                "AGENT_MISMATCH",
+                                "operation has no lease and this run has no durable workflow ownership",
+                                rule="service_lease_claim_forbidden",
+                                details={"operation_id": operation_id, "run_id": principal.run_id},
+                            )
+                        leases.acquire(operation_id, principal)
+                        acquired_for_request = True
+                    else:
+                        leases.assert_owned(operation_id, principal)
                 elif command == "start" and prepared_arguments.get("kind") == "verification":
                     if not operation_id:
                         raise DishRuleError("NOT_FOUND", "task has no open operation", rule="open_operation_missing")
@@ -301,19 +429,28 @@ class DishService:
                         leases.acquire(operation_id, principal)
                         acquired_for_request = True
 
-                if result.get("ok") and operation_id:
+                result_operation_id = operation_id or result.get("submission_id")
+                if result.get("ok") and result_operation_id and command in _MUTATING_AGENT_COMMANDS:
                     result = self._finalize_successful_lease(
                         result=result,
                         conn=conn,
                         leases=leases,
-                        operation_id=operation_id,
+                        operation_id=result_operation_id,
                         principal=principal,
                         command=command,
                     )
                 elif not result.get("ok") and acquired_for_request and operation_id:
                     if command == "start" and prepared_arguments.get("kind") == "verification":
                         leases.release(operation_id, principal, reason="verification_start_failed")
-                return result
+                    elif command in _LEASED_AGENT_COMMANDS:
+                        leases.release(operation_id, principal, reason="reclaimed_command_rejected")
+                return self._apply_principal_access(
+                    result,
+                    conn=conn,
+                    leases=leases,
+                    operation_id=result_operation_id,
+                    principal=principal,
+                )
             except DishRuleError as exc:
                 if acquired_for_request and operation_id:
                     try:
@@ -366,11 +503,17 @@ class DishService:
         with self._maintenance_lock:
             conn = initialize_database(self.config.db_path)
             try:
-                row = self._lease_manager(conn).admin_recover(operation_id, principal, reason=reason)
+                released = self._lease_manager(conn).admin_recover(
+                    operation_id, principal, reason=reason
+                )
                 return result_envelope(
                     command="recover-lease",
                     submission_id=operation_id,
-                    data={"service_lease": self._lease_payload(row)},
+                    data={
+                        "service_lease": None,
+                        "released_lease_id": None if released is None else released["lease_id"],
+                        "ownership_transferred": False,
+                    },
                 )
             except DishRuleError as exc:
                 return error_envelope("recover-lease", exc, submission_id=operation_id)
@@ -455,12 +598,26 @@ class DishService:
             try:
                 backend = self.backend_factory()
                 self._assert_mutation_ready(backend)
-                if command in _OPERATION_ADMIN_COMMANDS and operation_id:
+                if (
+                    command in _OPERATION_ADMIN_COMMANDS
+                    and command not in _LEASE_FREE_ADMIN_COMMANDS
+                    and operation_id
+                ):
                     existing = leases.active_for_operation(operation_id)
                     if existing is None:
                         leases.acquire(operation_id, principal)
                         acquired_for_request = True
                     else:
+                        # Admin continuations never steal a live actor lease.  An
+                        # expired lease must be released explicitly through
+                        # recover-lease before the protocol-specific admin action.
+                        if leases.is_expired(existing):
+                            raise DishRuleError(
+                                "CONFLICT",
+                                "expired actor lease requires recover-lease first",
+                                rule="service_lease_expired",
+                                details={"expires_at": existing["expires_at"]},
+                            )
                         leases.assert_owned(operation_id, principal)
                 app = DishAdminApplication(
                     conn,
@@ -479,6 +636,16 @@ class DishService:
                         command=command,
                         admin=True,
                     )
+                    # Admin ownership is request-scoped.  Protocol continuation
+                    # never leaves the operation leased to marco-admin.
+                    active = leases.active_for_operation(operation_id)
+                    if active is not None and leases.is_owned_by(active, principal):
+                        leases.release(
+                            operation_id,
+                            principal,
+                            reason=f"admin_command_complete:{command}",
+                        )
+                        result.setdefault("data", {})["service_lease"] = None
                 elif not result.get("ok") and acquired_for_request and operation_id:
                     leases.release(operation_id, principal, reason="admin_command_rejected")
                 return result

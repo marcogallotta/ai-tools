@@ -43,7 +43,7 @@ The public listener does not route private CLI, admin, health, migration, recove
 
 ## Service ownership and leases
 
-The durable `operations` constraint is the one-active-operation-per-task lock. `service_leases` bind the current actor to an owner identity and run identity with a renewable expiry. Workflow handoff may release the actor lease, but it does not release the task operation lock. Expired leases fail closed and require Marco to run `dish-admin recover-lease`; they are never silently stolen by another agent.
+The durable `operations` constraint is the one-active-operation-per-task lock. `service_leases` bind the current actor to an owner identity and run identity with a renewable expiry. Workflow handoff may release the actor lease, but it does not release the task operation lock. `allowed_actions` is principal-aware: a different or expired run receives no ordinary mutation actions even when the underlying workflow phase has one. Read-only inspection never mutates lease state. Expired leases fail closed and require Marco to run `dish-admin recover-lease`; recovery releases stale ownership but does not transfer the workflow to Marco. Only a run whose durable actor lineage matches the required workflow role may reclaim a missing lease. Admin hold/recovery continuations use temporary request-scoped leases and return the operation unleased for the next valid actor.
 
 A terminal lease is released only after the operation is terminal and every declared step and ambiguous write/movement attempt has a durable completion outcome. If post-success lease finalization fails after the governed mutation committed, the original command still returns success with `service_recovery_required`, suppresses follow-on actions, and explicitly tells the client not to retry the mutation. Ordinary full-state write and approval retries remain naturally idempotent by exact live-state comparison; clients do not invent separate idempotency keys.
 
@@ -63,7 +63,7 @@ At startup the service validates the database, resolves Honest compatibility, an
 
 Admin recovery remains specific rather than generic:
 
-- `recover-lease` reclaims only an expired actor lease;
+- `recover-lease` releases only an expired actor lease; it never assigns workflow ownership to the admin caller;
 - `recover` reconciles ambiguous backend evidence by live reread;
 - `discard` cancels only a provably unapplied operation;
 - `supply-evidence`, `record-human-decision`, and `reopen` retain their existing protocol meanings.

@@ -298,9 +298,14 @@ There are two distinct ownership mechanisms:
 - the database guarantees at most one active operation per task;
 - `service_leases` bind that operation to a client owner and run identity for a renewable period.
 
-A workflow handoff may release the actor lease while keeping the task operation active. Expired
-leases fail closed and require `dish-admin recover-lease`; another agent cannot silently steal them.
-Terminal lease release waits until workflow steps and ambiguous attempts have durable outcomes.
+A workflow handoff may release the actor lease while keeping the task operation active. `allowed_actions`
+is filtered for the authenticated owner/run, so a caller is never told to perform an action that its
+lease cannot execute. Read-only calls inspect lease state but never acquire, renew, release, or transfer
+it. Expired leases fail closed and require `dish-admin recover-lease`, which releases stale ownership
+without assigning the operation to Marco. A run may reclaim a missing lease only when durable actor
+lineage proves it owns that workflow role. Protocol-specific admin continuations use request-scoped
+admin leases and release them before returning. Terminal lease release waits until workflow steps and
+ambiguous attempts have durable outcomes.
 
 The host process lock is not a substitute for database operation constraints. The client run ID is
 the durable unit of actor/verifier lineage, but it does not replace exact candidate bindings and
