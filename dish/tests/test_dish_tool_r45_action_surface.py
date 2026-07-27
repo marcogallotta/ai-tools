@@ -1,13 +1,21 @@
 import json
 import threading
+import uuid
 from http.client import HTTPConnection
 from urllib.parse import urlsplit
+
+import pytest
 
 from dish_service.application import DishService
 from dish_service.client import DishActionClient, DishAdminServiceClient, DishServiceClient
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
+from dish_service.identifiers import validate_identifier_fields
 from dish_service.openapi import ACTION_COMMANDS, action_openapi
+from dish_tool.backend import map_backend_exception
+from dish_tool.errors import BackendFailure, DishRuleError
+from dish_tool.models import RequestPhase
+from dish_tool.results import error_envelope
 from tests.test_dish_tool_r42_service_foundation import _release_loader
 from tests.test_dish_tool_step7_verification import Backend, TASK
 
@@ -103,7 +111,7 @@ def test_action_surface_supports_leased_start_prepare_and_heartbeat(tmp_path):
     try:
         action = DishActionClient(url, token="action-secret", run_id="constructor-run")
         started = action.execute(
-            "start", agent="gpt", task_gid="t", kind="initial"
+            "start", agent="gpt", task_gid="123456789", kind="initial"
         )
         renewed = action.renew_lease(started["submission_id"])
         prepared = action.execute(
@@ -125,6 +133,186 @@ def test_action_surface_supports_leased_start_prepare_and_heartbeat(tmp_path):
     assert inspected["data"]["actors"]["run_id"] == "constructor-run"
     assert backend.writes == 1
     assert backend.moves == 1
+
+
+@pytest.mark.parametrize(
+    "task_gid",
+    ["not-a-gid", "123abc", "", " ", "-1"],
+)
+def test_action_rejects_malformed_task_gid_before_backend_call(tmp_path, task_gid):
+    backend, server, thread, url = _running(tmp_path)
+    calls = 0
+    original = backend.read_task
+
+    def counted_read(gid):
+        nonlocal calls
+        calls += 1
+        return original(gid)
+
+    backend.read_task = counted_read
+    try:
+        action = DishActionClient(url, token="action-secret", run_id="run")
+        result = action.execute("read", agent="gpt", task_gid=task_gid)
+    finally:
+        _stop(server, thread)
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["retryable"] is False
+    assert result["errors"] == [
+        {"field": "task_gid", "rule": "numeric_identifier_required"}
+    ]
+    assert calls == 0
+
+
+def test_action_distinguishes_nonexistent_numeric_gid_and_reaches_backend(tmp_path):
+    backend, server, thread, url = _running(tmp_path)
+    calls = 0
+
+    def missing(gid):
+        nonlocal calls
+        calls += 1
+        raise BackendFailure(
+            "BACKEND_REJECTED",
+            "private Asana 404 response body",
+            status=404,
+            retryable=True,
+        )
+
+    backend.read_task = missing
+    try:
+        action = DishActionClient(url, token="action-secret", run_id="run")
+        result = action.execute("read", agent="gpt", task_gid="999999999")
+    finally:
+        _stop(server, thread)
+
+    assert result["code"] == "NOT_FOUND"
+    assert result["retryable"] is False
+    assert result["errors"][0]["rule"] == "task_not_found"
+    assert "private Asana" not in json.dumps(result)
+    assert calls == 1
+
+
+def test_valid_numeric_gid_reaches_action_backend_path(tmp_path):
+    backend, server, thread, url = _running(tmp_path)
+    calls = 0
+    original = backend.read_task
+
+    def counted_read(gid):
+        nonlocal calls
+        calls += 1
+        return original(gid)
+
+    backend.read_task = counted_read
+    try:
+        action = DishActionClient(url, token="action-secret", run_id="run")
+        result = action.execute("read", agent="gpt", task_gid="123456789")
+    finally:
+        _stop(server, thread)
+
+    assert result["ok"]
+    assert calls == 2
+
+
+@pytest.mark.parametrize("submission_id", ["not-an-operation", "", " "])
+def test_action_rejects_malformed_submission_id_before_database_routing(
+    tmp_path, submission_id
+):
+    _backend, server, thread, url = _running(tmp_path)
+    try:
+        action = DishActionClient(url, token="action-secret", run_id="run")
+        result = action.execute(
+            "inspect", agent="gpt", submission_id=submission_id
+        )
+    finally:
+        _stop(server, thread)
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["retryable"] is False
+    assert result["errors"] == [
+        {"field": "submission_id", "rule": "uuid_identifier_required"}
+    ]
+
+
+def test_action_rejects_malformed_lease_operation_id(tmp_path):
+    _backend, server, thread, url = _running(tmp_path)
+    try:
+        action = DishActionClient(url, token="action-secret", run_id="run")
+        result = action.renew_lease("not-an-operation")
+    finally:
+        _stop(server, thread)
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"] == [
+        {"field": "operation_id", "rule": "uuid_identifier_required"}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "rule"),
+    [
+        ("project_gid", "project", "numeric_identifier_required"),
+        ("section_gid", "-123", "numeric_identifier_required"),
+        ("operation_id", "operation", "uuid_identifier_required"),
+        ("cycle_id", "cycle", "uuid_identifier_required"),
+        ("verification_cycle_id", "cycle", "uuid_identifier_required"),
+    ],
+)
+def test_all_http_identifier_field_classes_use_strict_grammar(field, value, rule):
+    with pytest.raises(DishRuleError) as caught:
+        validate_identifier_fields({field: value})
+    assert caught.value.code == "INVALID_ARGUMENT"
+    assert caught.value.rule == rule
+    assert caught.value.details == {"field": field}
+
+
+def test_action_sanitizes_raw_backend_rejection(tmp_path):
+    backend, server, thread, url = _running(tmp_path)
+
+    def rejected(_gid):
+        raise BackendFailure(
+            "BACKEND_REJECTED",
+            "Asana API error (400) https://app.asana.com/private raw-body",
+            status=400,
+            retryable=True,
+        )
+
+    backend.read_task = rejected
+    try:
+        action = DishActionClient(url, token="action-secret", run_id="run")
+        result = action.execute("read", agent="gpt", task_gid="123456789")
+    finally:
+        _stop(server, thread)
+
+    rendered = json.dumps(result)
+    assert result["code"] == "BACKEND_REJECTED"
+    assert result["data"]["message"] == "backend request was rejected"
+    assert "asana.com" not in rendered.lower()
+    assert "raw-body" not in rendered
+
+
+def test_inaccessible_backend_identifier_is_distinct_and_non_retryable():
+    class Forbidden(Exception):
+        status = 403
+        body = "private access policy detail"
+        reason = "Forbidden"
+
+    failure = map_backend_exception(
+        Forbidden(),
+        phase=RequestPhase.RESPONSE_RECEIVED,
+        context="task 123456789",
+    )
+    result = error_envelope("read", failure, task_gid="123456789")
+
+    assert result["code"] == "BACKEND_REJECTED"
+    assert result["retryable"] is False
+    assert result["errors"] == [{"rule": "backend_access_denied"}]
+    assert result["data"]["message"] == "backend request was rejected"
+    assert "private access policy" not in json.dumps(result)
+
+
+def test_canonical_operation_uuid_is_accepted_by_boundary_validator():
+    operation_id = str(uuid.uuid4())
+    validate_identifier_fields({"submission_id": operation_id})
 
 
 def test_trimmed_openapi_contains_only_action_workflow_and_renewal_paths():

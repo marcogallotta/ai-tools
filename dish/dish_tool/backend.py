@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from pathlib import Path
 from typing import Any, Mapping
@@ -10,6 +11,8 @@ from typing import Any, Mapping
 from .constants import ASANA_REQUEST_TIMEOUT, COOKING_PROJECT_GID
 from .errors import BackendFailure, DishRuleError
 from .models import RequestPhase, RequestPhaseTracker
+
+LOG = logging.getLogger("dish.backend")
 
 
 def load_asana_pat() -> str:
@@ -61,12 +64,29 @@ def map_backend_exception(
     context: str | None = None,
 ) -> BackendFailure:
     status = getattr(error, "status", None)
+    LOG.warning(
+        "asana_request_failed phase=%s status=%s context=%s error_type=%s detail=%s",
+        phase.value,
+        status,
+        context,
+        type(error).__name__,
+        asana_error_detail(error, context),
+    )
     if status is not None:
         message = asana_error_detail(error, context)
         if status == 408 or status >= 500:
             return BackendFailure(
                 "BACKEND_UNCERTAIN",
                 message,
+                status=status,
+                phase=phase.value,
+                retryable=False,
+            )
+        if status == 403:
+            return BackendFailure(
+                "BACKEND_REJECTED",
+                message,
+                rule="backend_access_denied",
                 status=status,
                 phase=phase.value,
                 retryable=False,

@@ -29,16 +29,16 @@ _ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "read": {
         "required": ["task_gid", "agent"],
-        "properties": {"task_gid": {"type": "string"}, "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]}},
+        "properties": {"task_gid": {"type": "string", "pattern": "^[0-9]+$"}, "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]}},
     },
     "inspect": {
         "required": ["submission_id", "agent"],
-        "properties": {"submission_id": {"type": "string"}, "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]}},
+        "properties": {"submission_id": {"type": "string", "format": "uuid"}, "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]}},
     },
     "start": {
         "required": ["task_gid", "agent", "kind"],
         "properties": {
-            "task_gid": {"type": "string"},
+            "task_gid": {"type": "string", "pattern": "^[0-9]+$"},
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "kind": {"type": "string", "enum": ["planning", "initial", "change", "verification"]},
             "run_id": {"type": "string"},
@@ -50,7 +50,7 @@ _ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     "prepare": {
         "required": ["submission_id", "agent", "model", "file_text"],
         "properties": {
-            "submission_id": {"type": "string"},
+            "submission_id": {"type": "string", "format": "uuid"},
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "model": {"type": "string"},
             "file_text": {"type": "string"},
@@ -67,7 +67,7 @@ _ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     "approve": {
         "required": ["submission_id", "agent", "model", "correction", "reviewed_identity", "semantic_review_complete", "provenance_complete"],
         "properties": {
-            "submission_id": {"type": "string"},
+            "submission_id": {"type": "string", "format": "uuid"},
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "model": {"type": "string"},
             "correction": {"type": "string", "enum": ["none", "small"]},
@@ -82,7 +82,7 @@ _ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     "reject": {
         "required": ["submission_id", "agent", "reason", "route"],
         "properties": {
-            "submission_id": {"type": "string"},
+            "submission_id": {"type": "string", "format": "uuid"},
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "model": {"type": "string"},
             "reason": {"type": "string"},
@@ -95,7 +95,7 @@ _ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "submit": {
         "required": ["submission_id"],
-        "properties": {"submission_id": {"type": "string"}},
+        "properties": {"submission_id": {"type": "string", "format": "uuid"}},
     },
 }
 
@@ -177,7 +177,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
             "operationId": "dish_renew_lease",
             "summary": "Renew the current GPT Action operation lease",
             "security": [{"actionBearer": []}],
-            "parameters": [{"name": "operation_id", "in": "path", "required": True, "schema": {"type": "string"}}],
+            "parameters": [{"name": "operation_id", "in": "path", "required": True, "schema": {"type": "string", "format": "uuid"}}],
             "requestBody": {
                 "required": True,
                 "content": {"application/json": {"schema": {

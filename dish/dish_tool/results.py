@@ -7,7 +7,7 @@ from .constants import (
     DEFAULT_RETRYABLE_BY_CODE,
     EXIT_STATUS_BY_CODE,
 )
-from .errors import DishRuleError
+from .errors import BackendFailure, DishRuleError
 from .validation_scope import add_validation_scope
 
 
@@ -70,6 +70,13 @@ def error_envelope(
         item = {"rule": error.rule}
         item.update(error.details)
         rule_error.append(item)
+    message = str(error)
+    if isinstance(error, BackendFailure):
+        message = (
+            "backend outcome could not be confirmed"
+            if error.code == "BACKEND_UNCERTAIN"
+            else "backend request was rejected"
+        )
     return result_envelope(
         command=command,
         ok=False,
@@ -79,7 +86,7 @@ def error_envelope(
         state=state,
         retryable=error.retryable,
         errors=rule_error,
-        data={"message": str(error)},
+        data={"message": message},
         validation_scope=validation_scope,
     )
 

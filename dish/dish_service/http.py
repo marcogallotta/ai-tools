@@ -15,6 +15,7 @@ from dish_tool.results import error_envelope
 
 from .application import DishService
 from .auth import authenticate_bearer
+from .identifiers import require_dish_uuid, validate_identifier_fields
 from .leases import ServicePrincipal
 from .openapi import ACTION_COMMANDS, action_openapi
 
@@ -180,6 +181,15 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             else:
                 credential = self._credential("admin")
             request = self._read_json()
+            if surface in {"lease", "action-lease", "admin-lease"}:
+                operation_id = parts[2] if surface == "lease" else parts[3]
+                require_dish_uuid(operation_id, field="operation_id")
+            arguments = request.get("arguments")
+            if isinstance(arguments, dict):
+                validate_identifier_fields(arguments)
+            context = request.get("context")
+            if isinstance(context, dict):
+                validate_identifier_fields(context, allow_null=True)
             principal = self._principal(credential, request)
             if surface == "lease":
                 payload = self.server.service.renew_lease(parts[2], principal)

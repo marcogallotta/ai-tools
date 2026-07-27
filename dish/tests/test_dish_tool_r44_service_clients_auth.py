@@ -100,7 +100,7 @@ def test_remote_cli_transports_candidate_text_not_client_path(tmp_path, monkeypa
     monkeypatch.setenv("DISH_SERVICE_TOKEN", "agent-secret")
     monkeypatch.setenv("DISH_CLIENT_RUN_ID", "constructor-run")
     try:
-        assert cli.main(["start", "t", "--agent", "gpt", "--kind", "initial", "--run-id", "constructor-run"]) == 0
+        assert cli.main(["start", "123456789", "--agent", "gpt", "--kind", "initial", "--run-id", "constructor-run"]) == 0
         started = json.loads(capsys.readouterr().out)
         assert cli.main([
             "prepare", started["submission_id"], "--agent", "gpt", "--model", "gpt-5.6-sol",

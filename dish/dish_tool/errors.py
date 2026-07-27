@@ -49,11 +49,18 @@ class BackendFailure(DishRuleError):
         code: str,
         message: str,
         *,
+        rule: str | None = None,
         status: int | None = None,
         phase: str | None = None,
         retryable: bool | None = None,
         details: Mapping[str, Any] | None = None,
     ) -> None:
-        super().__init__(code, message, retryable=retryable, details=details)
+        super().__init__(
+            code,
+            message,
+            rule=rule,
+            retryable=retryable,
+            details=details,
+        )
         self.status = status
         self.phase = phase
