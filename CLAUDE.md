@@ -21,6 +21,15 @@ They may explain why a decision was made, but they do not override the current a
 runtime contract, code, or Honest protocol/schema assets. Older design and implementation
 plans were removed; use Git history when their exact text is needed.
 
+## Live Dish smoke-test credentials
+
+For an authorized live Dish smoke test run from the service host, load
+`/home/marco/.config/dish-service/service.env` and map
+`DISH_SERVICE_AGENT_TOKEN` to the client variable `DISH_SERVICE_TOKEN` and
+`DISH_SERVICE_ADMIN_TOKEN` to `DISH_ADMIN_TOKEN`. `DISH_SERVICE_URL` is configured
+through the interactive `~/.bashrc` path, so invoke the smoke-test shell interactively.
+Never print, log, or include any token value in a transcript or report.
+
 When architecture changes, update `architecture.md` in the same commit. Do not add
 executable legacy mutation paths, duplicate workflow authority in transports or CLIs, or
 preserve a state solely because a test can construct it. A compatibility path needs a real
