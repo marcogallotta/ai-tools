@@ -99,15 +99,11 @@ def test_constructor_cannot_verify(tmp_path):
     assert backend.writes == 1
 
 
-def test_attested_verifier_reads_exact_live_candidate_and_frozen_protocol(tmp_path):
+def test_verifier_without_run_id_is_rejected_even_with_attestation(tmp_path):
     app, backend, operation_id, protocol = make_app(tmp_path)
     result = app.execute("start", agent="codex", task_gid="t", kind="verification", independence_attestation="fresh independent ChatGPT run")
-    assert result["ok"]
-    assert result["submission_id"] == operation_id
-    assert result["data"]["task"]["title"] == backend.title
-    assert result["data"]["task"]["notes"] == backend.notes
-    assert result["data"]["verification_protocol"]["text"] == protocol
-    assert result["allowed_actions"] == ["approve", "reject"]
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"][0]["rule"] == "verifier_identity_required"
 
 
 def test_stale_candidate_blocks_approval(tmp_path):
@@ -130,7 +126,7 @@ def test_approval_signs_exact_reread_without_moving_and_requires_inputs(tmp_path
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True, run_id="run-3")
     assert result["ok"]
     assert "Status: ready" in backend.notes
-    assert "Verified by: ChatGPT — gpt-5.6-sol," in backend.notes
+    assert "Verified by: Codex — gpt-5.6-sol," in backend.notes
     assert backend.section == "vq" and backend.moves == 1
     assert result["allowed_actions"] == ["submit"]
     row = app.conn.execute("SELECT signoff_completed_at, movement_completed_at FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
@@ -215,14 +211,14 @@ def test_approval_requires_exact_verifier_run_proof(tmp_path):
     assert result["errors"][0]["rule"] == "verifier_proof_mismatch"
 
 
-def test_attestation_approval_requires_exact_recorded_attestation(tmp_path):
+def test_attestation_cannot_replace_recorded_run_on_approval(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    review = app.execute("start", agent="codex", task_gid="t", kind="verification", independence_attestation="fresh independent run A")
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="fresh-run")
     result = app.execute(
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True,
-        independence_attestation="fresh independent run B",
+        independence_attestation="fresh independent run",
     )
     assert result["code"] == "AGENT_MISMATCH"
     assert result["errors"][0]["rule"] == "verifier_proof_mismatch"

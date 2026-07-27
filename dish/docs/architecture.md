@@ -207,10 +207,15 @@ canonical task. `dish_tool.schema_validation` validates the external Honest sche
 `dish_tool.governed_diff` compares canonical fields and sections. It is shared by Small-correction
 and post-signoff change handling so explicit material categories cannot be reclassified by a caller.
 Authorization permits an exact protected-field change; it does not make a material change
-non-material.
+non-material. A change operation's validated level and reason are captured as immutable completed
+`operation_steps` intent at `start`, so later canonical Material changes output does not reconstruct
+or guess that provenance.
 
 Verification binds an exact confirmed `content_versions` record. Signoff is valid only for that
-exact identity. A live `Verified by` string is not sufficient local evidence.
+exact identity. A live `Verified by` string is not sufficient local evidence. Independent
+Verification is proven by the verifier's durable `client.run_id` differing from the run that
+constructed or last materially edited that candidate; operation IDs, Verification cycle IDs,
+actor/model labels, and attestations are not substitutes for run lineage.
 
 ## Persistence model
 
@@ -282,8 +287,10 @@ A workflow handoff may release the actor lease while keeping the task operation 
 leases fail closed and require `dish-admin recover-lease`; another agent cannot silently steal them.
 Terminal lease release waits until workflow steps and ambiguous attempts have durable outcomes.
 
-The host process lock is not a substitute for database operation constraints, and the client run ID
-is not a substitute for task-wide actor/verifier lineage.
+The host process lock is not a substitute for database operation constraints. The client run ID is
+the durable unit of actor/verifier lineage, but it does not replace exact candidate bindings and
+role facts: independence is checked against the constructor and latest material editor recorded for
+the candidate.
 
 ## Compatibility and migration
 

@@ -41,15 +41,17 @@ Funnel host.
 
 Add an operating instruction with all of these requirements:
 
-- Act as agent `gpt` and pass `agent: gpt` whenever the operation schema accepts an agent.
+- Use the machine identifier `agent: gpt` whenever the operation schema accepts an agent; Dish
+  renders that identifier as the human-readable actor name `Custom GPT`.
 - Create one unique `client.run_id` for the current agent run and reuse it for every Action call and
   lease renewal in that run. A genuinely new run uses a new value.
-- Treat `client.run_id` as service lease ownership, not as proof of independent Verification.
-  Where `start` accepts a workflow `run_id`, supply the actual platform run identity when available;
-  otherwise use the protocol's explicit independence attestation route. For `approve` and `reject`,
-  this workflow proof is mandatory: send either the exact `arguments.run_id` recorded when
-  Verification started or its exact `arguments.independence_attestation`. Reusing only
-  `client.run_id` does not supply verifier proof.
+- The authenticated `client.run_id` is both lease ownership and the durable agent-run identity. The
+  service applies it to `start`, `prepare`, `approve`, and `reject`; do not invent a separate
+  workflow run ID. A redundant `arguments.run_id`, when supplied, must match it exactly.
+- Independent Verification requires that run ID to differ from the run that constructed or last
+  materially edited the candidate. A new operation ID, cycle ID, actor/model identity, or
+  `independence_attestation` does not establish independence. An attestation may remain as
+  supplementary audit context but cannot replace `client.run_id`.
 - Follow only the returned `allowed_actions`. Do not reconstruct workflow transitions from
   conversation history.
 - Treat `file_text` as the complete candidate. Never send a partial patch or assume that the service

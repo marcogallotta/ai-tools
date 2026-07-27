@@ -97,6 +97,17 @@ def test_post_signoff_non_material_request_is_forced_material_for_dish_candidate
     assert tuple(row) == ("open", "await_verification", None)
     assert "Status: pending-verification" in backend.notes
     assert "Verified by: None" in backend.notes
+    intent = app.conn.execute(
+        """SELECT intended_json,completed_at FROM operation_steps
+             WHERE operation_id=? AND step_name='change_intent'""",
+        (started["submission_id"],),
+    ).fetchone()
+    assert intent["completed_at"] is not None
+    assert intent["intended_json"] == '{"level":"small","reason":"rename candidate"}'
+    assert (
+        "Codex — gpt-5.6-sol — updated the candidate — rename candidate — "
+        "Small — pending-verification"
+    ) in backend.notes
 
 
 def test_evidence_hold_blocks_content_drift_before_resolution(tmp_path):

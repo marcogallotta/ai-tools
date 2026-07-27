@@ -67,7 +67,7 @@ class CurrentWorkflowService:
         ).fetchone()
         cycle_reviewed = False
         if cycle is not None and cycle["completed_at"] is None:
-            proof_ok = bool(str(cycle["run_id"] or "").strip() or str(cycle["independence_attestation"] or "").strip())
+            proof_ok = bool(str(cycle["run_id"] or "").strip())
             binding_ok = bool(cycle["reviewed_content_version_id"] and cycle["reviewed_identity"] and cycle["verifier_agent"] and proof_ok)
             actor = None
             if binding_ok:

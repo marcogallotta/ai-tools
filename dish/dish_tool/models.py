@@ -257,11 +257,10 @@ class VerifierIdentity:
     ) -> None:
         agent_family(self.agent)
         run_id = str(self.run_id or "").strip()
-        attestation = str(self.independence_attestation or "").strip()
-        if not (run_id or attestation):
+        if not run_id:
             raise DishRuleError(
                 "INVALID_ARGUMENT",
-                "a verifier run ID or independence attestation is required",
+                "a verifier run ID is required",
                 rule="verifier_identity_required",
             )
         constructor_run = str(constructor_run_id or "").strip()
@@ -272,17 +271,10 @@ class VerifierIdentity:
                 rule="verifier_not_independent",
                 details={"verifier_run_id": run_id},
             )
-        if not run_id and self.agent in {editor_agent, researcher_agent}:
-            raise DishRuleError(
-                "AGENT_MISMATCH",
-                "attestation-only mode cannot prove independence from the constructor agent",
-                rule="verifier_not_independent",
-                details={"verifier_agent": self.agent, "trust_mode": "attestation-only"},
-            )
 
 
 
-FAMILY_DISPLAY_NAMES = {"claude": "Claude", "gpt": "ChatGPT", "codex": "ChatGPT"}
+FAMILY_DISPLAY_NAMES = {"claude": "Claude", "gpt": "Custom GPT", "codex": "Codex"}
 
 MAX_ACTOR_MODEL_LENGTH = 80
 
@@ -319,6 +311,43 @@ def verification_actor_line(agent: str, model: str, date: str) -> str:
     agent_family(agent)
     clean_model = validate_actor_model(model)
     return f"{FAMILY_DISPLAY_NAMES[agent]} — {clean_model}, {date}"
+
+
+def material_change_line(
+    agent: str,
+    model: str,
+    date: str,
+    *,
+    change: str,
+    reason: str,
+    materiality: str,
+    verified: bool = False,
+) -> str:
+    agent_family(agent)
+    clean_model = validate_actor_model(model)
+    if materiality not in {"Small", "Large"}:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "materiality must be Small or Large",
+            rule="material_change_materiality_invalid",
+        )
+    clean_change = str(change or "").strip()
+    clean_reason = str(reason or "").strip()
+    if not clean_change or not clean_reason:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "material change and reason are required",
+            rule="material_change_detail_required",
+        )
+    verification_state = "pending-verification"
+    if verified:
+        verification_state = (
+            f"verified — {FAMILY_DISPLAY_NAMES[agent]}, {clean_model}, {date}"
+        )
+    return (
+        f"{date} — {FAMILY_DISPLAY_NAMES[agent]} — {clean_model} — "
+        f"{clean_change} — {clean_reason} — {materiality} — {verification_state}"
+    )
 
 
 @dataclass(frozen=True)

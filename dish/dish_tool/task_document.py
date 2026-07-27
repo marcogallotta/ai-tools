@@ -28,8 +28,17 @@ RESEARCH_BASIS_PREFIXES = (
     "Source-backed dish", "Halal port of ", "Intentional test dish, human-approved",
 )
 DESTINATION_RE = re.compile(r"^(?P<name>.+?)\s+—\s+(?P<gid>[0-9]+)$")
-ACTOR_RE = re.compile(r"^(?:ChatGPT|Claude) — .+, \d{4}-\d{2}-\d{2}$")
-MATERIAL_CHANGE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\s+—\s+.+")
+ACTOR_NAME_PATTERN = r"(?:ChatGPT|Custom GPT|Claude|Codex)"
+MODEL_PATTERN = r"[^,—]+"
+DATE_PATTERN = r"\d{4}-\d{2}-\d{2}"
+ACTOR_RE = re.compile(
+    rf"^{ACTOR_NAME_PATTERN} — {MODEL_PATTERN}, {DATE_PATTERN}$"
+)
+MATERIAL_CHANGE_RE = re.compile(
+    rf"^{DATE_PATTERN} — {ACTOR_NAME_PATTERN} — {MODEL_PATTERN} — "
+    rf".+ — .+ — (?:Small|Large) — "
+    rf"(?:pending-verification|verified — {ACTOR_NAME_PATTERN}, {MODEL_PATTERN}, {DATE_PATTERN})$"
+)
 
 
 class FindingKind(str, Enum):
@@ -355,7 +364,12 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
             findings.append(DocumentFinding("decisions.human-format", FindingKind.SYNTAX, "Decisions entries must use Human — Marco format", "Decisions"))
     for line in document.material_changes:
         if not MATERIAL_CHANGE_RE.match(line):
-            findings.append(DocumentFinding("material-changes.format", FindingKind.SYNTAX, "Material changes entry requires date and editor/model", "Material changes"))
+            findings.append(DocumentFinding(
+                "material-changes.format",
+                FindingKind.SYNTAX,
+                "Material changes entry must use date — agent — model — change — reason — Small|Large — verification state",
+                "Material changes",
+            ))
     if document.planning_brief.values["Role"].startswith("non-main") != document.is_non_main:
         findings.append(DocumentFinding("role.title-brief-disagreement", FindingKind.ILLEGAL_COMBINATION, "title role and Planning brief Role disagree", "title"))
     return DocumentValidation(tuple(findings))

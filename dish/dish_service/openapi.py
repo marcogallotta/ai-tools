@@ -64,10 +64,6 @@ _ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "approve": {
         "required": ["submission_id", "agent", "model", "correction", "reviewed_identity", "semantic_review_complete", "provenance_complete"],
-        "anyOf": [
-            {"required": ["run_id"]},
-            {"required": ["independence_attestation"]},
-        ],
         "properties": {
             "submission_id": {"type": "string"},
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
@@ -83,10 +79,6 @@ _ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "reject": {
         "required": ["submission_id", "agent", "reason", "route"],
-        "anyOf": [
-            {"required": ["run_id"]},
-            {"required": ["independence_attestation"]},
-        ],
         "properties": {
             "submission_id": {"type": "string"},
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},

@@ -308,7 +308,16 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
         if diag["parsed"] is not None and diag["validation"]:
             raise DishRuleError("VALIDATION_FAILED", "task failed current structural validation", errors=diag["validation"])
     op = self.operation_service.current.start_operation(
-        lambda: claim_operation(self.conn, live=live, release=release, kind=kind, agent=agent, run_id=run_id)
+        lambda: claim_operation(
+            self.conn,
+            live=live,
+            release=release,
+            kind=kind,
+            agent=agent,
+            run_id=run_id,
+            change_level=change_level,
+            change_reason=change_reason,
+        )
     )
     trace.submission_id = op["operation_id"]
     trace.state = op["status"]

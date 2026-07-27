@@ -72,8 +72,7 @@ See `dish start --help` and `dish prepare --help` for the full argument referenc
     "verification": """\
 dish verification -- stage walkthrough (not a governed operation; this command only prints this text)
 
-  1. dish start TASK_GID --agent AGENT --kind verification \\
-       --run-id RUN_ID | --independence-attestation TEXT
+  1. dish start TASK_GID --agent AGENT --kind verification --run-id RUN_ID
   2. review the exact frozen live task for semantic and provenance conformance
   3. dish approve SUBMISSION_ID --agent AGENT --model MODEL --correction none|small \\
        --semantic-review-complete --provenance-complete \\
@@ -94,7 +93,7 @@ A successful `approve` returns `submit` as the next action -- run it in the same
 
 A Large correction stays `pending-verification` for a fresh independent verifier; the
 correcting verifier must not sign its own Large correction. The decision command must repeat
-the exact verifier run ID or independence attestation recorded by `start` -- an agent-family
+the exact verifier run ID recorded by `start` -- an operation ID, cycle ID, or agent-family
 label alone is not authority.
 
 `allowed_actions` in the JSON response names the next legal command. Do not retry an uncertain

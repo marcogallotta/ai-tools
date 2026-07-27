@@ -27,7 +27,8 @@ def test_small_correction_is_written_rechecked_and_signed_same_pass(tmp_path):
         semantic_review_complete=True, provenance_complete=True, run_id="review",
     )
     assert result["ok"]
-    assert "small verification correction" in backend.notes
+    assert "applied a small Verification correction" in backend.notes
+    assert "Small — verified — Codex, gpt-5.6-sol," in backend.notes
     assert "Status: ready" in backend.notes
     cycle = app.conn.execute("SELECT correction_class, outcome FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()
     assert tuple(cycle) == ("small", "approved")
@@ -80,7 +81,11 @@ def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     )
     assert result["ok"]
     assert "Status: pending-verification" in backend.notes
-    assert "before: Compare hydration routes.; after: Compare hydration routes with a rested-starch reset." in backend.notes
+    assert (
+        "reset premise at sections.WHY COOK IT from Compare hydration routes. "
+        "to Compare hydration routes with a rested-starch reset."
+    ) in backend.notes
+    assert "Large — pending-verification" in backend.notes
     assert app.conn.execute("SELECT COUNT(*) FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()[0] == 3
 
 

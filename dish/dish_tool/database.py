@@ -881,16 +881,16 @@ def record_actor_fact(conn: sqlite3.Connection, *, operation_id: str, task_gid: 
 
 def assert_fresh_verifier(conn: sqlite3.Connection, *, operation_id: str, agent: str, run_id: str | None, independence_attestation: str | None) -> None:
     clean_run = str(run_id or '').strip()
-    if clean_run:
-        task_gid = conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)).fetchone()[0]
-        prior = conn.execute("SELECT role FROM operation_actor_facts WHERE task_gid=? AND run_id=? AND role IN ('constructor','material_editor','verifier') LIMIT 1", (task_gid, clean_run)).fetchone()
-        if prior is not None:
-            raise DishRuleError("AGENT_MISMATCH", "verifier run is already part of the candidate lineage", rule="verifier_not_independent", details={"prior_role": prior['role']})
-    else:
-        task_gid = conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)).fetchone()[0]
-        prior = conn.execute("SELECT role FROM operation_actor_facts WHERE task_gid=? AND agent=? AND role IN ('constructor','material_editor') LIMIT 1", (task_gid, agent)).fetchone()
-        if prior is not None:
-            raise DishRuleError("AGENT_MISMATCH", "attestation-only verification cannot prove independence from candidate editors", rule="verifier_not_independent")
+    if not clean_run:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "a verifier run ID is required",
+            rule="verifier_identity_required",
+        )
+    task_gid = conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)).fetchone()[0]
+    prior = conn.execute("SELECT role FROM operation_actor_facts WHERE task_gid=? AND run_id=? AND role IN ('constructor','material_editor') LIMIT 1", (task_gid, clean_run)).fetchone()
+    if prior is not None:
+        raise DishRuleError("AGENT_MISMATCH", "verifier run is already part of the candidate lineage", rule="verifier_not_independent", details={"prior_role": prior['role']})
 
 
 def record_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, operation_id: str | None, field_name: str, before: Any, after: Any, reason: str, actor_run_id: str | None = None) -> sqlite3.Row:

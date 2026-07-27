@@ -37,6 +37,8 @@ from dish_tool.models import (  # noqa: E402
     SectionRegistry,
     agent_family,
     is_protocol_managed,
+    material_change_line,
+    material_editor_line,
     opposite_family,
     resolve_destination,
 )
@@ -296,6 +298,26 @@ def test_unknown_agent_fails_closed():
     with pytest.raises(DishRuleError) as exc:
         agent_family("other")
     assert exc.value.code == "INVALID_ARGUMENT"
+
+
+def test_task_provenance_uses_canonical_actor_names_and_separate_model_tokens():
+    assert material_editor_line("gpt", "GPT-5.6 Thinking", "2026-07-27") == (
+        "Custom GPT — GPT-5.6 Thinking, 2026-07-27"
+    )
+    assert material_editor_line("codex", "GPT-5.6-Codex", "2026-07-27") == (
+        "Codex — GPT-5.6-Codex, 2026-07-27"
+    )
+    assert material_change_line(
+        "gpt",
+        "GPT-5.6 Thinking",
+        "2026-07-27",
+        change="adjusted the route",
+        reason="the prior route was incomplete",
+        materiality="Large",
+    ) == (
+        "2026-07-27 — Custom GPT — GPT-5.6 Thinking — adjusted the route — "
+        "the prior route was incomplete — Large — pending-verification"
+    )
 
 
 def test_section_resolution_and_management_fail_closed():

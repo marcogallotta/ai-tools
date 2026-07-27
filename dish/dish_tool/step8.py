@@ -13,7 +13,7 @@ from typing import Any
 from .constants import COOKING_PROJECT_GID
 from .database import create_verification_cycle, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step, content_identity, release_marco_authorization_reservations
 from .errors import DishRuleError
-from .models import utc_now, material_editor_line
+from .models import material_change_line, material_editor_line, utc_now
 from .lifecycle import assert_transition, hold, pending_verification, require_status, resumed
 from .task_document import DocumentParseError, TaskState, parse_task_document, validate_task_document, finding_payload
 from .task_store import read_complete_task, write_exact_content
@@ -146,7 +146,14 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     require_small_scope(reviewed_document, corrected)
     state = dict(corrected.state.values)
     state.update({"Status": "pending-verification", "Status detail": "None", "Resume status": "None", "Verified by": "None", "Verification protocol release": cycle["protocol_release"], "Self-verified": material_editor_line(agent, model, utc_now()[:10])})
-    changes = tuple(corrected.material_changes) + (f"{utc_now()[:10]} — {agent}: small verification correction; exact candidate replaced and self-reviewed",)
+    changes = tuple(corrected.material_changes) + (material_change_line(
+        agent,
+        model,
+        utc_now()[:10],
+        change="applied a small Verification correction",
+        reason="exact candidate replaced and self-reviewed",
+        materiality="Small",
+    ),)
     corrected = dataclasses.replace(corrected, state=TaskState(state), material_changes=changes)
     precheck = validate_task_document(corrected, expected_schema_version=op["schema_version"], schema=schema)
     if not precheck.ok:
@@ -204,7 +211,14 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         assert_transition(action="large_correction", before="pending-verification", after="pending-verification")
         state = dict(pending_verification(corrected.state.values, protocol_release=snapshot.identity).values)
         state["Self-verified"] = material_editor_line(agent, model, utc_now()[:10])
-        changes = tuple(corrected.material_changes) + (f"{utc_now()[:10]} — {agent}: large verification correction — {reason}",)
+        changes = tuple(corrected.material_changes) + (material_change_line(
+            agent,
+            model,
+            utc_now()[:10],
+            change="applied a large Verification correction",
+            reason=reason,
+            materiality="Large",
+        ),)
         document = dataclasses.replace(corrected, state=TaskState(state), material_changes=changes)
     elif route == "evidence":
         if resume_status not in {"pending-verification", "pending-research"}:
@@ -468,7 +482,14 @@ def reopen_two_pass(
         "Verified by": "None",
         "Self-verified": material_editor_line(editor, model, date),
     })
-    entry = f"{date} — {editor}: {category}; path: {changed_path}; before: {before}; after: {after}"
+    entry = material_change_line(
+        editor,
+        model,
+        date,
+        change=f"reset {category} at {changed_path} from {before} to {after}",
+        reason="Marco-authorized substantive reset after two unsuccessful passes",
+        materiality="Large",
+    )
     document = dataclasses.replace(
         candidate,
         state=TaskState(state_values),

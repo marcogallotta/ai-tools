@@ -177,18 +177,9 @@ def assert_verifier_authority(
         )
     recorded_run = str(cycle["run_id"] or "").strip()
     supplied_run = str(run_id or "").strip()
-    recorded_attestation = str(cycle["independence_attestation"] or "").strip()
-    supplied_attestation = str(independence_attestation or "").strip()
-    if recorded_run:
-        if supplied_run != recorded_run:
-            raise DishRuleError(
-                "AGENT_MISMATCH", "decision caller does not match the recorded verifier run",
-                rule="verifier_proof_mismatch",
-            )
-        return
-    if not recorded_attestation or supplied_attestation != recorded_attestation:
+    if not recorded_run or supplied_run != recorded_run:
         raise DishRuleError(
-            "AGENT_MISMATCH", "decision caller does not match the recorded verifier attestation",
+            "AGENT_MISMATCH", "decision caller does not match the recorded verifier run",
             rule="verifier_proof_mismatch",
         )
 
@@ -229,7 +220,25 @@ def approve_live(
     if not check.ok or document.state.values["Status"] != "pending-verification":
         raise DishRuleError("VALIDATION_FAILED", "exact live candidate failed pre-signoff validation", rule="pre_signoff_validation_failed", errors=[finding_payload(f) for f in check.findings])
     assert_transition(action="approve", before=document.state.values["Status"], after="ready")
-    signed = dataclasses.replace(document, state=ready(document.state.values, verified_by=verification_actor_line(agent, model, utc_now()[:10])))
+    date = utc_now()[:10]
+    signed = dataclasses.replace(
+        document,
+        state=ready(
+            document.state.values,
+            verified_by=verification_actor_line(agent, model, date),
+        ),
+    )
+    if correction_class == "small" and signed.material_changes:
+        latest = signed.material_changes[-1]
+        if latest.endswith(" — pending-verification"):
+            verified_state = (
+                f"verified — {verification_actor_line(agent, model, date).replace(' — ', ', ', 1)}"
+            )
+            signed = dataclasses.replace(
+                signed,
+                material_changes=signed.material_changes[:-1]
+                + (latest.removesuffix("pending-verification") + verified_state,),
+            )
     signed_lines = signed.render().splitlines()
     intended_title = signed_lines[0]
     intended_notes = "\n".join(signed_lines[1:]) + "\n"

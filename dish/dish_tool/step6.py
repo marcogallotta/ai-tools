@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -9,7 +10,13 @@ from typing import Any
 from .constants import COOKING_PROJECT_GID
 from .database import create_verification_cycle, transition_operation, declare_operation_step, complete_operation_step, record_actor_fact
 from .errors import DishRuleError
-from .models import ResolvedRelease, SectionRegistry, utc_now, material_editor_line
+from .models import (
+    ResolvedRelease,
+    SectionRegistry,
+    material_change_line,
+    material_editor_line,
+    utc_now,
+)
 from .lifecycle import assert_transition, pending_verification
 from .releases import current_verification_protocol_release
 from .task_document import (
@@ -173,15 +180,31 @@ def prepare_live(
         classification = str(material_classification or "").strip()
         if classification not in {"material", "non-material"}:
             raise DishRuleError("INVALID_ARGUMENT", "body edits require material or non-material classification", rule="material_classification_required")
-        requested_classification = classification
         forced_reasons = explicit_material_reasons(prior, candidate)
         if classification == "non-material" and forced_reasons:
             classification = "material"
-        material_changes.append(
-            f"{utc_now()[:10]} — {agent}: requested {requested_classification}; enforced {classification}"
-            + (f" ({', '.join(forced_reasons)})" if forced_reasons else "")
-        )
         if classification == "material":
+            intent_row = conn.execute(
+                """SELECT intended_json FROM operation_steps
+                     WHERE operation_id=? AND step_name='change_intent'
+                       AND completed_at IS NOT NULL""",
+                (operation_id,),
+            ).fetchone()
+            if intent_row is None:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "change operation is missing its durable intent",
+                    rule="change_intent_missing",
+                )
+            change_intent = json.loads(intent_row["intended_json"])
+            material_changes.append(material_change_line(
+                agent,
+                model,
+                utc_now()[:10],
+                change="updated the candidate",
+                reason=str(change_intent["reason"]),
+                materiality=str(change_intent["level"]).capitalize(),
+            ))
             verification_snapshot = current_verification_protocol_release(release.root)
             assert_transition(action="material_edit", before=prior.state.values["Status"], after="pending-verification")
             state_values = dict(pending_verification(candidate.state.values, protocol_release=verification_snapshot.identity).values)

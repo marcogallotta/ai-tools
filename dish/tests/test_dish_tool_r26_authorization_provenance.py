@@ -74,4 +74,4 @@ def test_initial_prepare_owns_researched_by(tmp_path):
     )
     assert result["ok"]
     assert "Researched by: None" not in backend.notes
-    assert "Researched by: ChatGPT — gpt-5.6-sol" in backend.notes
+    assert "Researched by: Codex — gpt-5.6-sol" in backend.notes

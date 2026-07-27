@@ -63,7 +63,7 @@ Human — Marco: Use the smaller batch, 2026-07-25, to isolate texture
 Classification: Source-backed dish
 source.example/test — Construction — hydration ratio — selected route is drier
 ### Material changes
-2026-07-25 — ChatGPT/GPT-5 — tightened hydration — improve crispness — material — not independently verified
+2026-07-25 — ChatGPT — GPT-5 — tightened hydration — improve crispness — Large — pending-verification
 Schema version: 2
 """
 
@@ -83,6 +83,40 @@ def test_complete_task_round_trip_and_lower_heading():
     assert "### Mise en place" in document.sections["QUANTITIES"]
     assert parse_task_document(document.render()) == document
     assert validate_task_document(document, expected_schema_version="2").ok
+
+
+def test_all_canonical_actor_names_and_verified_material_change_are_valid():
+    for actor in ("ChatGPT", "Custom GPT", "Claude", "Codex"):
+        candidate = TASK.replace(
+            "Researched by: ChatGPT — GPT-5, 2026-07-25",
+            f"Researched by: {actor} — model-name, 2026-07-25",
+        ).replace(
+            "Self-verified: ChatGPT — GPT-5, 2026-07-25",
+            f"Self-verified: {actor} — model-name, 2026-07-25",
+        ).replace(
+            "2026-07-25 — ChatGPT — GPT-5 — tightened hydration — improve crispness — Large — pending-verification",
+            f"2026-07-25 — {actor} — model-name — tightened hydration — improve crispness — Large — verified — {actor}, model-name, 2026-07-25",
+        )
+        assert validate_task_document(parse_task_document(candidate)).ok
+
+
+def test_bare_gpt_and_legacy_material_change_grammar_are_rejected():
+    bare = TASK.replace(
+        "Researched by: ChatGPT — GPT-5, 2026-07-25",
+        "Researched by: GPT — GPT-5, 2026-07-25",
+    )
+    assert any(
+        finding.rule == "state.actor-format"
+        for finding in validate_task_document(parse_task_document(bare)).findings
+    )
+    legacy = TASK.replace(
+        "2026-07-25 — ChatGPT — GPT-5 — tightened hydration — improve crispness — Large — pending-verification",
+        "2026-07-25 — ChatGPT/GPT-5 — tightened hydration — improve crispness — material — not independently verified",
+    )
+    assert any(
+        finding.rule == "material-changes.format"
+        for finding in validate_task_document(parse_task_document(legacy)).findings
+    )
 
 
 def test_exact_once_state_fields_reject_duplicate():

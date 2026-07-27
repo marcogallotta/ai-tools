@@ -144,10 +144,8 @@ def test_trimmed_openapi_contains_only_action_workflow_and_renewal_paths():
         arguments = spec["paths"][f"/v1/action/{command}"]["post"]["requestBody"]["content"][
             "application/json"
         ]["schema"]["properties"]["arguments"]
-        assert arguments["anyOf"] == [
-            {"required": ["run_id"]},
-            {"required": ["independence_attestation"]},
-        ]
+        assert "anyOf" not in arguments
+        assert "run_id" not in arguments["required"]
 
 
 def test_checked_in_openapi_matches_generator():
