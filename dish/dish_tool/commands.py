@@ -32,10 +32,12 @@ class DishApplication:
         backend: CommandBackend,
         *,
         release_loader: Callable[..., ResolvedRelease],
+        invocation_run_id: str | None = None,
     ) -> None:
         self.conn = conn
         self.backend = backend
         self.release_loader = release_loader
+        self.invocation_run_id = str(invocation_run_id or "").strip() or None
         self.operation_service = OperationApplicationService(conn, backend)
         parameters = inspect.signature(release_loader).parameters.values()
         self._release_loader_accepts_role = any(
@@ -197,6 +199,7 @@ class DishApplication:
             task_gid=trace.task_gid,
             submission_id=trace.submission_id,
             actor=trace.actor_agent or actor,
+            actor_run_id=self.invocation_run_id,
             audit_details=trace.audit_details,
         )
 

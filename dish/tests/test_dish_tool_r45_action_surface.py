@@ -103,7 +103,7 @@ def test_action_surface_supports_leased_start_prepare_and_heartbeat(tmp_path):
     try:
         action = DishActionClient(url, token="action-secret", run_id="constructor-run")
         started = action.execute(
-            "start", agent="gpt", task_gid="t", kind="initial", run_id="constructor-run"
+            "start", agent="gpt", task_gid="t", kind="initial"
         )
         renewed = action.renew_lease(started["submission_id"])
         prepared = action.execute(
@@ -113,11 +113,16 @@ def test_action_surface_supports_leased_start_prepare_and_heartbeat(tmp_path):
             submission_id=started["submission_id"],
             file_text=TASK,
         )
+        inspected = action.execute(
+            "inspect", agent="gpt", submission_id=started["submission_id"],
+        )
     finally:
         _stop(server, thread)
     assert started["ok"]
     assert renewed["ok"]
     assert prepared["ok"]
+    assert inspected["data"]["operation"]["run_id"] == "constructor-run"
+    assert inspected["data"]["actors"]["run_id"] == "constructor-run"
     assert backend.writes == 1
     assert backend.moves == 1
 

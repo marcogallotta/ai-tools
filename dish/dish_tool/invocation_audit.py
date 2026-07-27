@@ -54,6 +54,7 @@ def record_invocation_audit(
     submission_id: str | None,
     actor: Any = None,
     actor_role: str | None = None,
+    actor_run_id: str | None = None,
     audit_details: Mapping[str, Any] | None = None,
 ) -> None:
     """Record an invocation without ever reversing an already-produced result.
@@ -84,15 +85,19 @@ def record_invocation_audit(
     supplied = dict(audit_details or {})
     governed = supplied.pop("governed_audit", None)
     details.update(supplied)
-    audit_kwargs: dict[str, Any] = {}
+    audit_kwargs: dict[str, Any] = {
+        "actor_run_id": str(actor_run_id or "").strip() or None,
+    }
     if isinstance(governed, Mapping) and bool(result.get("ok")):
-        audit_kwargs = {
+        audit_kwargs.update({
             "governed_kind": governed.get("kind"),
             "before_state": governed.get("before"),
             "after_state": governed.get("after"),
-            "actor_run_id": governed.get("run_id"),
             "actor_attestation": governed.get("attestation"),
-        }
+        })
+        governed_run_id = str(governed.get("run_id") or "").strip()
+        if governed_run_id:
+            audit_kwargs["actor_run_id"] = governed_run_id
 
     operation_id = _operation_id(conn, result, submission_id)
     audit_submission_id = None

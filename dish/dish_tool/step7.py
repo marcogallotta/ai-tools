@@ -145,7 +145,8 @@ def verification_read(
             conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
             event_type="verification.review_started", actor_agent=agent,
             details={"cycle_id": cycle["cycle_id"], "reviewed_identity": live.identity, "reviewed_content_version_id": reviewed_version["content_version_id"]},
-            result_code="OK", result_ok=True,
+            result_code="OK", result_ok=True, actor_run_id=run_id,
+            actor_attestation=independence_attestation,
         )
     except Exception:
         conn.execute("ROLLBACK TO verification_read_local")

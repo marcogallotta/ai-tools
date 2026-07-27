@@ -24,6 +24,7 @@ from .leases import LeaseManager, ServicePrincipal
 
 _READ_ONLY_AGENT_COMMANDS = {"sections", "read", "inspect"}
 _LEASED_AGENT_COMMANDS = {"prepare", "approve", "reject", "submit"}
+_RUN_ID_AGENT_COMMANDS = {"start", "prepare", "approve", "reject"}
 _HANDOFF_PHASES = {"await_verification", "held_evidence", "held_human"}
 _OPERATION_ADMIN_COMMANDS = {
     "recover",
@@ -139,6 +140,27 @@ class DishService:
         return None
 
     @staticmethod
+    def _arguments_for_principal(
+        command: str,
+        arguments: Mapping[str, Any],
+        *,
+        run_id: str | None,
+    ) -> dict[str, Any]:
+        prepared = dict(arguments)
+        if command not in _RUN_ID_AGENT_COMMANDS or run_id is None:
+            return prepared
+        supplied = str(prepared.get("run_id") or "").strip()
+        if supplied and supplied != run_id:
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "command run identity conflicts with the authenticated client run",
+                rule="service_run_id_conflict",
+                details={"client_run_id": run_id, "command_run_id": supplied},
+            )
+        prepared["run_id"] = run_id
+        return prepared
+
+    @staticmethod
     def _lease_payload(row) -> dict[str, Any] | None:
         if row is None:
             return None
@@ -235,7 +257,13 @@ class DishService:
             conn = initialize_database(self.config.db_path)
             acquired_for_request = False
             operation_id = None
+            explicit_principal = principal is not None
             principal = principal or self._default_principal(arguments)
+            invocation_run_id = (
+                principal.run_id
+                if explicit_principal
+                else str(arguments.get("run_id") or "").strip() or None
+            )
             leases = self._lease_manager(conn)
             try:
                 backend = self.backend_factory()
@@ -245,22 +273,28 @@ class DishService:
                     conn,
                     backend,
                     release_loader=lambda role=None: self._release(role),
+                    invocation_run_id=invocation_run_id,
                 )
-                operation_id = self._operation_for_request(conn, command, arguments)
+                prepared_arguments = self._arguments_for_principal(
+                    command, arguments, run_id=invocation_run_id,
+                )
+                operation_id = self._operation_for_request(
+                    conn, command, prepared_arguments,
+                )
                 if command in _LEASED_AGENT_COMMANDS:
                     if not operation_id:
                         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
                     leases.assert_owned(operation_id, principal)
-                elif command == "start" and arguments.get("kind") == "verification":
+                elif command == "start" and prepared_arguments.get("kind") == "verification":
                     if not operation_id:
                         raise DishRuleError("NOT_FOUND", "task has no open operation", rule="open_operation_missing")
                     leases.acquire(operation_id, principal)
                     acquired_for_request = True
 
-                with self._candidate_file(arguments) as prepared:
+                with self._candidate_file(prepared_arguments) as prepared:
                     result = app.execute(command, **prepared)
 
-                if command == "start" and arguments.get("kind") != "verification" and result.get("ok"):
+                if command == "start" and prepared_arguments.get("kind") != "verification" and result.get("ok"):
                     operation_id = result.get("submission_id")
                     if operation_id:
                         leases.acquire(operation_id, principal)
@@ -276,7 +310,7 @@ class DishService:
                         command=command,
                     )
                 elif not result.get("ok") and acquired_for_request and operation_id:
-                    if command == "start" and arguments.get("kind") == "verification":
+                    if command == "start" and prepared_arguments.get("kind") == "verification":
                         leases.release(operation_id, principal, reason="verification_start_failed")
                 return result
             except DishRuleError as exc:
