@@ -538,12 +538,21 @@ class DishService:
 
     def health(self) -> dict[str, Any]:
         with self._maintenance_lock:
+            configuration: dict[str, Any]
             database: dict[str, Any]
             compatibility: dict[str, Any]
             asana: dict[str, Any]
             audit: dict[str, Any] = {"pending_repairs": None}
             operations: dict[str, Any] = {"active": None}
             leases: dict[str, Any] = {"active": None, "expired": None}
+
+            try:
+                self.config.validate_runtime(require_action=False)
+                configuration = {"ok": True}
+            except DishRuleError as exc:
+                configuration = {"ok": False, "rule": exc.rule, "message": str(exc)}
+            except Exception as exc:
+                configuration = {"ok": False, "rule": "service_config_invalid", "message": type(exc).__name__}
 
             conn = None
             try:
@@ -603,7 +612,8 @@ class DishService:
                 "restore_recovery_required": self._restore_faulted,
             }
             ok = bool(
-                database.get("ok")
+                configuration.get("ok")
+                and database.get("ok")
                 and compatibility.get("ok")
                 and asana.get("ok")
                 and maintenance["ok"]
@@ -611,6 +621,7 @@ class DishService:
             return {
                 "ok": ok,
                 "service": "dish",
+                "configuration": configuration,
                 "database": database,
                 "compatibility": compatibility,
                 "asana": asana,

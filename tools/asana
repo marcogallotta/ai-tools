@@ -34,12 +34,11 @@ sys.path.insert(0, str(DISH_ROOT))
 import asana
 from asana.rest import ApiException
 
-from dish_tool.advisory import AdvisoryGuard
-from dish_tool.constants import DEFAULT_DB_PATH
+from dish_tool.generic_asana_guard import CookingMutationBlocked, CookingMutationGuard
 
 DEFAULT_WS = "1200569426771227"  # "London to Umrah 2022" workspace
 _CLIENT = None
-_ADVISORY_GUARD = None
+_COOKING_GUARD = None
 
 
 def load_pat():
@@ -69,31 +68,41 @@ def client():
     return _CLIENT
 
 
-def advisory_guard():
-    """One advisory guard per CLI invocation, sharing the SDK client."""
-    global _ADVISORY_GUARD
-    if _ADVISORY_GUARD is None:
-        db_path = os.environ.get("DISH_DB_PATH", str(DEFAULT_DB_PATH))
-        _ADVISORY_GUARD = AdvisoryGuard(api_client=client(), db_path=db_path)
-    return _ADVISORY_GUARD
+def cooking_guard():
+    """One fail-closed Cooking mutation guard per CLI invocation."""
+    global _COOKING_GUARD
+    if _COOKING_GUARD is None:
+        _COOKING_GUARD = CookingMutationGuard(api_client=client())
+    return _COOKING_GUARD
 
 
-def _advise_task_content(gid, command, fields=("notes",), operation=None):
-    advisory_guard().before_task_content(
+def _guard(call):
+    try:
+        return call()
+    except CookingMutationBlocked as exc:
+        sys.exit(f"asana: {exc}")
+
+
+def _guard_task_mutation(gid, command, fields=(), operation=None):
+    return _guard(lambda: cooking_guard().before_task_mutation(
         gid, command=command, fields=fields, operation=operation
-    )
+    ))
 
 
-def _advise_create_task(
-    project, section, command, fields=("notes",), operation=None
-):
-    advisory_guard().before_create_task(
+def _guard_create_task(project, section, command, fields=(), operation=None):
+    return _guard(lambda: cooking_guard().before_create_task(
         project_gid=project,
         section_gid=section,
         command=command,
         fields=fields,
         operation=operation,
-    )
+    ))
+
+
+def _guard_move(gid, section, command):
+    return _guard(lambda: cooking_guard().before_move(
+        task_gid=gid, section_gid=section, command=command
+    ))
 
 
 def _error_detail(e, context=None):
@@ -186,7 +195,7 @@ def c_notes(gid):
 
 def c_set_notes(gid, text):
     notes = _text(text)
-    _advise_task_content(gid, "set-notes")
+    _guard_task_mutation(gid, "set-notes")
     _call(asana.TasksApi(client()).update_task, {"data": {"notes": notes}}, gid, {}, context="task %s" % gid)
     print("set-notes:", gid)
 
@@ -195,7 +204,7 @@ def c_append(gid, text):
     tasks_api = asana.TasksApi(client())
     cur = _call(tasks_api.get_task, gid, {"opt_fields": "notes"}, context="task %s" % gid).get("notes") or ""
     updated = cur + _text(text)
-    _advise_task_content(gid, "append")
+    _guard_task_mutation(gid, "append")
     _call(tasks_api.update_task, {"data": {"notes": updated}}, gid, {}, context="task %s" % gid)
     print("append:", gid)
 
@@ -213,13 +222,13 @@ def c_replace(gid, old=None, new=None):
     nmatch = cur.count(old)
     if nmatch != 1:
         sys.exit("replace aborted: 'old' found %d times (need exactly 1)" % nmatch)
-    _advise_task_content(gid, "replace")
+    _guard_task_mutation(gid, "replace")
     _call(tasks_api.update_task, {"data": {"notes": cur.replace(old, new)}}, gid, {}, context="task %s" % gid)
     print("replace:", gid)
 
 
 def c_rename(gid, name):
-    _advise_task_content(gid, "rename", fields=("name",))
+    _guard_task_mutation(gid, "rename", fields=("name",))
     _call(asana.TasksApi(client()).update_task, {"data": {"name": name}}, gid, {}, context="task %s" % gid)
     print("rename:", gid)
 
@@ -301,6 +310,7 @@ def c_comments(gid, cursor):
 
 def c_move(gid, section):
     """Move a task to a section within its project."""
+    _guard_move(gid, section, "move")
     _call(asana.SectionsApi(client()).add_task_for_section, section, {"body": {"data": {"task": gid}}}, context="section %s" % section)
     print("move:", gid, "->", section)
 
@@ -312,7 +322,7 @@ def c_create_task(project, name, section, notes):
         note_text = _text(notes)
         fields.append("notes")
         d["notes"] = note_text
-    _advise_create_task(project, section, "create-task", fields=fields)
+    _guard_create_task(project, section, "create-task", fields=fields)
     t = _call(asana.TasksApi(client()).create_task, {"data": d}, {}, context="project %s" % project)
     if section:
         _call(asana.SectionsApi(client()).add_task_for_section, section, {"body": {"data": {"task": t["gid"]}}}, context="section %s" % section)
@@ -325,9 +335,9 @@ def c_create_subtask(parent, name, notes):
     if notes is not None:
         d["notes"] = _text(notes)
         fields.append("notes")
-    advisory_guard().before_create_subtask(
+    _guard(lambda: cooking_guard().before_create_subtask(
         parent_gid=parent, command="create-subtask", fields=fields
-    )
+    ))
     print(_call(asana.TasksApi(client()).create_subtask_for_task, {"data": d}, parent, {}, context="task %s" % parent)["gid"])
 
 
@@ -464,17 +474,12 @@ def c_batch_apply(path):
         created_this_op = None  # set once create succeeds, in case a later step in the same op fails
         try:
             if action == "update_task":
-                content_fields = tuple(
-                    field for field in ("name", "notes", "html_notes")
-                    if field in op["fields"]
+                _guard_task_mutation(
+                    op["task"],
+                    "batch-apply",
+                    fields=tuple(sorted(op["fields"])),
+                    operation=op["source_action"],
                 )
-                if content_fields:
-                    _advise_task_content(
-                        op["task"],
-                        "batch-apply",
-                        fields=content_fields,
-                        operation=op["source_action"],
-                    )
                 tasks_api.update_task({"data": op["fields"]}, op["task"], {})
             elif action == "replace_notes":
                 task = tasks_api.get_task(op["task"], {"opt_fields": "notes"})["data"]
@@ -482,7 +487,7 @@ def c_batch_apply(path):
                 matches = notes.count(op["old"])
                 if matches != 1:
                     raise _BatchOpFailed("old text found %d times (need exactly 1)" % matches)
-                _advise_task_content(
+                _guard_task_mutation(
                     op["task"],
                     "batch-apply",
                     fields=("notes",),
@@ -490,6 +495,7 @@ def c_batch_apply(path):
                 )
                 tasks_api.update_task({"data": {"notes": notes.replace(op["old"], op["new"])}}, op["task"], {})
             elif action == "move":
+                _guard_move(op["task"], op["section"], "batch-apply")
                 sections_api.add_task_for_section(op["section"], {"body": {"data": {"task": op["task"]}}})
             elif action == "create_task":
                 d = {"name": op["name"], "projects": [op["project"]]}
@@ -497,7 +503,7 @@ def c_batch_apply(path):
                 if op.get("notes") is not None:
                     d["notes"] = op["notes"]
                     content_fields.append("notes")
-                _advise_create_task(
+                _guard_create_task(
                     op["project"],
                     op.get("section"),
                     "batch-apply",
@@ -515,12 +521,12 @@ def c_batch_apply(path):
                 if op.get("notes") is not None:
                     d["notes"] = op["notes"]
                     content_fields.append("notes")
-                advisory_guard().before_create_subtask(
+                _guard(lambda: cooking_guard().before_create_subtask(
                     parent_gid=op["parent"],
                     command="batch-apply",
                     fields=content_fields,
                     operation="create_subtask",
-                )
+                ))
                 t = tasks_api.create_subtask_for_task({"data": d}, op["parent"], {})["data"]
                 created.append(t["gid"])
                 created_this_op = t["gid"]
@@ -581,7 +587,7 @@ def c_raw(method, path):
         if s:
             data = json.loads(s)
     body = {"data": data} if data is not None else None
-    advisory_guard().before_raw(method=method, path=path, payload=data)
+    _guard(lambda: cooking_guard().before_raw(method=method, path=path, payload=data))
     try:
         result = client().call_api(
             path, method.upper(),
@@ -628,8 +634,8 @@ HELP = """asana — Asana API CLI (reads ASANA_PAT from ~/.config/asana-cli/.env
                                      lexicographically, e.g. "2026-07-20" or full timestamp)
   asana raw <GET|PUT|POST|DELETE> <path>   JSON body from stdin, wrapped in {"data": ...}
       e.g. asana raw GET '/tasks/123?opt_fields=name,notes'
-      unrestricted escape hatch (no method allowlist); relies on the Bash-tool
-      permission hook, not an in-CLI confirmation, as its safety layer
+      unrestricted outside governed Cooking; writes that target governed Cooking
+      tasks or sections are blocked in-process before the API call
 
 batch plan shape:
   {"operations":[
@@ -641,7 +647,7 @@ batch plan shape:
     {"action":"create_subtask","parent":"123","name":"Subtask name","notes":"optional","reason":"why"}
   ]}
 
-env overrides: ASANA_PAT, ASANA_ENV, ASANA_WORKSPACE, ASANA_AGENT, DISH_DB_PATH
+env overrides: ASANA_PAT, ASANA_ENV, ASANA_WORKSPACE
 """
 
 

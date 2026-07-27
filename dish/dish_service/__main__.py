@@ -26,11 +26,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     config = ServiceConfig.from_env()
+    config.validate_runtime(require_action=True)
     lock_path = config.db_path.with_suffix(config.db_path.suffix + ".service.lock")
     with ServiceProcessLock(lock_path):
         service = DishService(config)
         startup = service.startup_check()
-        if not startup["database"]["ok"] or not startup["compatibility"]["ok"]:
+        if not startup["ok"]:
             raise RuntimeError("dish service startup validation failed")
         if not startup["asana"]["ok"]:
             logging.getLogger("dish.service").warning(

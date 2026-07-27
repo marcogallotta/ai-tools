@@ -43,19 +43,19 @@ class TestGetNotes:
         assert capsys.readouterr().out == "\n"
 
 
-class TestWritesInvokeAdvisoryGuard:
+class TestWritesInvokeCookingGuard:
     def test_set_notes_calls_guard_before_update(self, cli, monkeypatch, capsys):
         api = fake_api(monkeypatch, cli, "TasksApi", update_task={"data": {}})
         cli.c_set_notes("123", "hello")
         assert api.update_task.called
-        assert cli._test_guard.calls[0][0] == "before_task_content"
+        assert cli._test_guard.calls[0][0] == "before_task_mutation"
         assert cli._test_guard.calls[0][1] == ("123",)
 
     def test_rename_calls_guard_with_name_field(self, cli, monkeypatch, capsys):
         fake_api(monkeypatch, cli, "TasksApi", update_task={"data": {}})
         cli.c_rename("123", "New Name")
         call = cli._test_guard.calls[0]
-        assert call[0] == "before_task_content"
+        assert call[0] == "before_task_mutation"
         assert call[2]["fields"] == ("name",)
 
     def test_append_reads_then_updates(self, cli, monkeypatch):
@@ -164,3 +164,37 @@ class TestMainDispatch:
         monkeypatch.setattr("sys.argv", ["asana", "help"])
         cli.main()
         assert "Asana API CLI" in capsys.readouterr().out
+
+
+class TestCookingGuardBlocksBeforeWrite:
+    def test_task_mutation_block_prevents_sdk_update(self, cli, monkeypatch):
+        from dish_tool.generic_asana_guard import CookingMutationBlocked
+
+        api = fake_api(monkeypatch, cli, "TasksApi", update_task={"data": {}})
+
+        class Blocker:
+            def before_task_mutation(self, *args, **kwargs):
+                raise CookingMutationBlocked(
+                    command="set-notes", resolution="managed_section", task_gid="123"
+                )
+
+        monkeypatch.setattr(cli, "cooking_guard", lambda: Blocker())
+        with pytest.raises(SystemExit, match="generic Asana mutation blocked"):
+            cli.c_set_notes("123", "new")
+        api.update_task.assert_not_called()
+
+    def test_move_block_prevents_section_api_call(self, cli, monkeypatch):
+        from dish_tool.generic_asana_guard import CookingMutationBlocked
+
+        api = fake_api(monkeypatch, cli, "SectionsApi", add_task_for_section={"data": {}})
+
+        class Blocker:
+            def before_move(self, *args, **kwargs):
+                raise CookingMutationBlocked(
+                    command="move", resolution="managed_section", task_gid="123"
+                )
+
+        monkeypatch.setattr(cli, "cooking_guard", lambda: Blocker())
+        with pytest.raises(SystemExit, match="generic Asana mutation blocked"):
+            cli.c_move("123", "456")
+        api.add_task_for_section.assert_not_called()

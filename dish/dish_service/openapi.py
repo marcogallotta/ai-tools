@@ -1,104 +1,11 @@
 """Trimmed OpenAPI document for the Custom GPT Action surface."""
 from __future__ import annotations
 
-from copy import deepcopy
 from typing import Any
 
 from dish_tool.validation_scope import VALIDATION_SCOPE_VALUES
 
-ACTION_COMMANDS = (
-    "create",
-    "sections",
-    "read",
-    "inspect",
-    "start",
-    "prepare",
-    "approve",
-    "reject",
-    "submit",
-)
-
-_ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
-    "create": {
-        "required": ["agent", "title"],
-        "properties": {"agent": {"type": "string", "enum": ["claude", "gpt", "codex"]}, "title": {"type": "string"}},
-    },
-    "sections": {
-        "required": ["agent"],
-        "properties": {"agent": {"type": "string", "enum": ["claude", "gpt", "codex"]}},
-    },
-    "read": {
-        "required": ["task_gid", "agent"],
-        "properties": {"task_gid": {"type": "string", "pattern": "^[0-9]+$"}, "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]}},
-    },
-    "inspect": {
-        "required": ["submission_id", "agent"],
-        "properties": {"submission_id": {"type": "string", "format": "uuid"}, "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]}},
-    },
-    "start": {
-        "required": ["task_gid", "agent", "kind"],
-        "properties": {
-            "task_gid": {"type": "string", "pattern": "^[0-9]+$"},
-            "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
-            "kind": {"type": "string", "enum": ["planning", "initial", "change", "verification"]},
-            "run_id": {"type": "string"},
-            "independence_attestation": {"type": "string"},
-            "change_level": {"type": "string", "enum": ["small", "large"]},
-            "change_reason": {"type": "string"},
-        },
-    },
-    "prepare": {
-        "required": ["submission_id", "agent", "model", "file_text"],
-        "properties": {
-            "submission_id": {"type": "string", "format": "uuid"},
-            "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
-            "model": {"type": "string"},
-            "file_text": {"type": "string"},
-            "material_classification": {"type": "string", "enum": ["material", "non-material"]},
-            "exemption_revision": {"type": "string"},
-            "dish_name": {"type": "string"},
-            "recognition": {"type": "string"},
-            "roles": {"type": "array", "items": {"type": "string"}},
-            "no_role_tags": {"type": "boolean"},
-            "blockers": {"type": "array", "items": {"type": "string"}},
-            "no_blockers": {"type": "boolean"},
-        },
-    },
-    "approve": {
-        "required": ["submission_id", "agent", "model", "correction", "reviewed_identity", "semantic_review_complete", "provenance_complete"],
-        "properties": {
-            "submission_id": {"type": "string", "format": "uuid"},
-            "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
-            "model": {"type": "string"},
-            "correction": {"type": "string", "enum": ["none", "small"]},
-            "file_text": {"type": "string"},
-            "reviewed_identity": {"type": "string"},
-            "semantic_review_complete": {"type": "boolean"},
-            "provenance_complete": {"type": "boolean"},
-            "run_id": {"type": "string"},
-            "independence_attestation": {"type": "string"},
-        },
-    },
-    "reject": {
-        "required": ["submission_id", "agent", "reason", "route"],
-        "properties": {
-            "submission_id": {"type": "string", "format": "uuid"},
-            "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
-            "model": {"type": "string"},
-            "reason": {"type": "string"},
-            "route": {"type": "string", "enum": ["large", "evidence", "human-review"]},
-            "file_text": {"type": "string"},
-            "resume_status": {"type": "string", "enum": ["pending-research", "pending-verification"]},
-            "run_id": {"type": "string"},
-            "independence_attestation": {"type": "string"},
-        },
-    },
-    "submit": {
-        "required": ["submission_id"],
-        "properties": {"submission_id": {"type": "string", "format": "uuid"}},
-    },
-}
-
+from .command_spec import ACTION_COMMANDS, action_argument_schema
 
 def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[str, Any]:
     envelope = {
@@ -136,8 +43,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
     }
     paths: dict[str, Any] = {}
     for command in ACTION_COMMANDS:
-        argument_schema = deepcopy(_ARGUMENT_SCHEMAS[command])
-        argument_schema.update({"type": "object", "additionalProperties": False})
+        argument_schema = action_argument_schema(command)
         paths[f"/v1/action/{command}"] = {
             "post": {
                 "operationId": f"dish_{command.replace('-', '_')}",

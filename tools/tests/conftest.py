@@ -66,14 +66,14 @@ def load_asana_cli():
     return module
 
 
-class NoopAdvisoryGuard:
+class PermissiveCookingGuard:
     """Records before_* calls without touching a real DB or the network."""
 
     def __init__(self):
         self.calls = []
 
-    def before_task_content(self, *args, **kwargs):
-        self.calls.append(("before_task_content", args, kwargs))
+    def before_task_mutation(self, *args, **kwargs):
+        self.calls.append(("before_task_mutation", args, kwargs))
 
     def before_create_task(self, *args, **kwargs):
         self.calls.append(("before_create_task", args, kwargs))
@@ -81,15 +81,19 @@ class NoopAdvisoryGuard:
     def before_create_subtask(self, *args, **kwargs):
         self.calls.append(("before_create_subtask", args, kwargs))
 
+    def before_move(self, *args, **kwargs):
+        self.calls.append(("before_move", args, kwargs))
+
     def before_raw(self, *args, **kwargs):
         self.calls.append(("before_raw", args, kwargs))
 
 
 @pytest.fixture
 def cli(monkeypatch):
-    """A loaded tools/asana module with the advisory guard replaced by a no-op recorder."""
+    """A loaded tools/asana module with the Cooking guard replaced by a no-op recorder."""
+    monkeypatch.setenv("ASANA_PAT", "test-pat")
     module = load_asana_cli()
-    guard = NoopAdvisoryGuard()
-    monkeypatch.setattr(module, "advisory_guard", lambda: guard)
+    guard = PermissiveCookingGuard()
+    monkeypatch.setattr(module, "cooking_guard", lambda: guard)
     module._test_guard = guard
     return module

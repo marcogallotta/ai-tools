@@ -5,6 +5,7 @@ import json
 import logging
 import socket
 import time
+import uuid
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -17,7 +18,8 @@ from .application import DishService
 from .auth import authenticate_bearer
 from .identifiers import require_dish_uuid, validate_identifier_fields
 from .leases import ServicePrincipal
-from .openapi import ACTION_COMMANDS, action_openapi
+from .command_spec import ACTION_COMMANDS, validate_action_request
+from .openapi import action_openapi
 
 LOG = logging.getLogger("dish.service")
 
@@ -30,6 +32,9 @@ class DishHTTPServer(ThreadingHTTPServer):
             raise ValueError("invalid HTTP surface mode")
         self.service = service
         self.surface_mode = surface_mode
+        service.config.validate_runtime(require_action=surface_mode == "action" or (
+            surface_mode == "combined" and service.config.action_token is not None
+        ))
         super().__init__(address, DishRequestHandler)
 
 
@@ -181,6 +186,18 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             else:
                 credential = self._credential("admin")
             request = self._read_json()
+            if surface == "action":
+                _client, arguments = validate_action_request(command, request)
+                request = {"client": _client, "arguments": arguments}
+            elif surface == "action-lease":
+                extras = sorted(set(request) - {"client"})
+                if extras:
+                    raise DishRuleError(
+                        "INVALID_ARGUMENT",
+                        "request contains an unexpected field",
+                        rule="request_field_unexpected",
+                        details={"field": extras[0]},
+                    )
             if surface in {"lease", "action-lease", "admin-lease"}:
                 operation_id = parts[2] if surface == "lease" else parts[3]
                 require_dish_uuid(operation_id, field="operation_id")
@@ -234,6 +251,30 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 error_envelope(command, exc),
                 close_connection=not self._request_body_consumed,
             )
+        except Exception:
+            request_id = str(uuid.uuid4())
+            LOG.exception(
+                "unhandled_request_error surface=%s command=%s request_id=%s",
+                surface,
+                command,
+                request_id,
+            )
+            error = DishRuleError(
+                "INTERNAL_ERROR",
+                "unexpected internal failure",
+                rule="unexpected_internal_failure",
+                details={"request_id": request_id},
+            )
+            try:
+                self._write_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    error_envelope(command, error),
+                    close_connection=True,
+                )
+            except Exception:
+                LOG.exception(
+                    "failed_to_write_error_response request_id=%s", request_id
+                )
         finally:
             LOG.info("command_complete surface=%s command=%s elapsed_ms=%d", surface, command, int((time.monotonic() - started) * 1000))
 

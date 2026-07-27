@@ -50,7 +50,7 @@ DISH_SERVICE_ACTION_TOKEN=<dedicated GPT Action token>
 ASANA_ENV=/home/marco/.config/asana-cli/.env
 ```
 
-Only the service-host environment contains Asana credentials. Protect the environment file and state directory with owner-only permissions.
+Only the service-host environment contains Asana credentials. Protect the environment file and state directory with owner-only permissions. All three service tokens are required for the live dual-listener process, must be distinct, and must not use placeholder or short values. Listener hosts must remain loopback and the private and Action ports must be distinct. Invalid configuration fails before either listener binds.
 
 For the controlled Step 12 test deployment, keep test state separate from production:
 
@@ -182,7 +182,7 @@ openapi/dish-action.openapi.json
 
 The checked-in schema intentionally uses the placeholder server `https://dish.example.invalid`. Before importing it, replace that server with the exact Funnel URL, or import the runtime schema from the public listener at `GET /openapi/action.json` so the server URL is generated from the request host. Validate the final URL and HTTPS port in the GPT Action editor before activation.
 
-The Action listener serves only the bounded `/v1/action/*` workflow and lease-renewal routes. Admin, recovery, migration, backup, private CLI, and generic Asana routes are not present on that listener or in the Action OpenAPI document.
+The Action listener serves only the bounded `/v1/action/*` workflow and lease-renewal routes. Admin, recovery, migration, backup, private CLI, and generic Asana routes are not present on that listener or in the Action OpenAPI document. The OpenAPI generator and HTTP request validator share one command specification; missing, extra, wrongly typed, or invalid-enum Action arguments are rejected before backend or workflow code.
 
 Follow `deploy/gpt-action.md` for the exact editor configuration, run-identity rules, Preview gate,
 lease handling, and token rotation.

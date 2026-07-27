@@ -38,8 +38,8 @@ def cli(monkeypatch):
     monkeypatch.setattr(os, "execv", lambda *_args, **_kwargs: None)
     module = _load_cli_module()
 
-    class NoopAdvisoryGuard:
-        def before_task_content(self, *args, **kwargs):
+    class PermissiveCookingGuard:
+        def before_task_mutation(self, *args, **kwargs):
             return None
 
         def before_create_task(self, *args, **kwargs):
@@ -48,10 +48,13 @@ def cli(monkeypatch):
         def before_create_subtask(self, *args, **kwargs):
             return None
 
+        def before_move(self, *args, **kwargs):
+            return None
+
         def before_raw(self, *args, **kwargs):
             return None
 
-    module._ADVISORY_GUARD = NoopAdvisoryGuard()
+    module._COOKING_GUARD = PermissiveCookingGuard()
     return module
 
 

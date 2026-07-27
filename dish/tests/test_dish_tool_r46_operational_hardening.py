@@ -43,8 +43,8 @@ def _service(tmp_path, backend=None, *, clock=None, ttl=60):
             honest_root=honest,
             backup_dir=tmp_path / "managed-backups",
             lease_ttl_seconds=ttl,
-            agent_token="agent",
-            admin_token="admin",
+            agent_token="agent-secret",
+            admin_token="admin-secret",
             port=0,
         ),
         backend_factory=lambda: backend,
@@ -252,7 +252,7 @@ def test_backup_restore_and_admin_argument_audit_are_available_over_private_http
     thread.start()
     host, port = server.server_address
     client = DishAdminServiceClient(
-        f"http://{host}:{port}", token="admin", run_id="admin-run"
+        f"http://{host}:{port}", token="admin-secret", run_id="admin-run"
     )
     try:
         created = client.create_backup(label="http")

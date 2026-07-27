@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from dish_tool.constants import DB_PATH
+from dish_tool.errors import DishRuleError
 from dish_tool.releases import configured_honest_path
 
 
@@ -24,6 +25,83 @@ class ServiceConfig:
     admin_token: str | None = None
     action_token: str | None = None
     backup_dir: Path | None = None
+
+    def validate_runtime(self, *, require_action: bool = True) -> None:
+        """Fail closed before listeners bind or startup reports healthy."""
+        tokens = {
+            "agent": self.agent_token,
+            "admin": self.admin_token,
+            "action": self.action_token,
+        }
+        required = ("agent", "admin", "action") if require_action else ("agent", "admin")
+        for name in required:
+            value = str(tokens[name] or "").strip()
+            if not value:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    f"{name} service token is required",
+                    rule="service_token_required",
+                    details={"token": name},
+                )
+            if len(value) < 10 or value.lower() in {
+                "changeme", "change-me", "placeholder", "secret", "token",
+            }:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    f"{name} service token is too weak",
+                    rule="service_token_weak",
+                    details={"token": name},
+                )
+        configured = [(name, str(value or "").strip()) for name, value in tokens.items() if value]
+        seen: dict[str, str] = {}
+        for name, value in configured:
+            other = seen.get(value)
+            if other is not None:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    "service tokens must be pairwise distinct",
+                    rule="service_tokens_duplicate",
+                    details={"tokens": sorted([other, name])},
+                )
+            seen[value] = name
+        for field, value in (
+            ("max_body_bytes", self.max_body_bytes),
+            ("request_timeout_seconds", self.request_timeout_seconds),
+            ("lease_ttl_seconds", self.lease_ttl_seconds),
+        ):
+            if value <= 0:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    f"{field} must be positive",
+                    rule="service_config_nonpositive",
+                    details={"field": field},
+                )
+        for field, value in (("port", self.port), ("action_port", self.action_port)):
+            if not 0 <= value <= 65535:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    f"{field} is outside the valid TCP range",
+                    rule="service_port_invalid",
+                    details={"field": field},
+                )
+        loopback = {"127.0.0.1", "::1", "localhost"}
+        for field, value in (
+            ("bind_host", self.bind_host),
+            ("action_bind_host", self.action_bind_host),
+        ):
+            if value not in loopback:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    f"{field} must be loopback",
+                    rule="service_bind_not_loopback",
+                    details={"field": field},
+                )
+        if self.port and self.action_port and self.port == self.action_port:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "private and Action listeners must use distinct ports",
+                rule="service_ports_duplicate",
+            )
 
     @classmethod
     def from_env(cls) -> "ServiceConfig":

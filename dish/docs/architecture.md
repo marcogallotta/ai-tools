@@ -110,8 +110,10 @@ agent credentials and routes.
 
 ### GPT Action
 
-The generated/checked-in Action contract is defined by `dish_service.openapi` and
-`openapi/dish-action.openapi.json`. `DishActionClient` and the public listener use the same canonical
+The generated/checked-in Action contract is defined by `dish_service.command_spec`,
+`dish_service.openapi`, and `openapi/dish-action.openapi.json`. The HTTP validator and OpenAPI
+generator consume the same command/argument definitions, so malformed or extra arguments are
+rejected before workflow code. `DishActionClient` and the public listener use the same canonical
 command envelope as the CLI. The Action is a bounded Dish client, not a generic Asana integration.
 
 ### HTTP layer
@@ -199,6 +201,17 @@ Marco-only admin commands resolve the protocol-specific hold and recovery paths.
 New workflow logic should live in a use-case/domain module and be entered through
 `CurrentWorkflowService`. Do not add a second mutation path in a CLI, HTTP handler, recovery helper,
 or compatibility adapter.
+
+
+## Generic Asana tooling boundary
+
+`tools/asana` is not a supported mutation path for governed Cooking tasks. Its generic read
+commands remain useful, but every write passes through `dish_tool.generic_asana_guard`, which
+uses live read-only Asana membership lookups and fails closed for managed Cooking tasks, managed
+Cooking sections, raw task/project/section mutation paths, and unresolved classifications. The
+guard deliberately does not open or write the Dish database. Reference and Sourcing remain the
+only explicitly excluded Cooking sections. Do not weaken this to advisory logging or add a bypass
+flag; governed writes belong exclusively to the shared Dish service.
 
 ## Canonical task and change authority
 
