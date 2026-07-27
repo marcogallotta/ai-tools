@@ -68,7 +68,7 @@ def test_sections_and_create_are_scoped_and_bare(tmp_path):
     b=Backend(); a=app(tmp_path,b)
     assert a.execute("sections",agent="claude")["data"]["project_gid"] == COOKING_PROJECT_GID
     made=a.execute("create",agent="claude",title="New dish")
-    assert made["data"] == {"task_gid":"new","schema_version":"2","bare_task":True}
+    assert made["data"] == {"task_gid":"new","schema_version":"2","bare_task":True,"required_start_kind":"planning"}
     assert b.notes == "" and b.section == "rq"
 
 def test_read_reports_exact_state_and_migration_required(tmp_path):
