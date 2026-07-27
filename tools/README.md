@@ -22,6 +22,13 @@ The script also imports `dish_tool` (advisory checks, DB helpers) as source dire
 needed for `tools/asana` itself (that venv is only for running `dish` directly; see
 `dish/README.md`).
 
+This isn't incidental reuse: `AdvisoryGuard` writes bypass events to the *same* audit DB dish
+itself uses, and uses dish's own `COOKING_PROJECT_GID`/`EXCLUDED_SECTION_GIDS` constants so
+"managed" means the same thing in both places. Duplicating these instead of importing would
+let the two definitions drift and silently break correlation between dish's audit log and
+`tools/asana`'s bypass records — don't decouple this without replacing that shared DB/definition,
+not just the import.
+
 ## Tests
 
 `tools/tests/` covers both scripts:
