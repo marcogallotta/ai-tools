@@ -255,6 +255,13 @@ def _command_authorize_governed_change(self, *, trace: AdminTrace, submission_id
     op = self.conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
     if op is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    if op["status"] != "open":
+        raise DishRuleError(
+            "WRONG_STATE",
+            "governed changes may only be authorized for an open operation",
+            rule="authorization_operation_not_open",
+            details={"actual": op["status"]},
+        )
     field_name = _clean_required(field, rule="authorization_field_required", label="field")
     if field_name == "Decisions":
         if not isinstance(before, list) or not isinstance(after, list) or not all(
@@ -280,7 +287,20 @@ def _command_authorize_governed_change(self, *, trace: AdminTrace, submission_id
     trace.submission_id = operation_id
     trace.task_gid = op["task_gid"]
     trace.state = op["status"]
-    return result_envelope(command="authorize-governed-change", task_gid=op["task_gid"], submission_id=operation_id, state=op["status"], data={"authorization_id": row["authorization_id"], "field": row["field_name"]})
+    return result_envelope(
+        command="authorize-governed-change",
+        task_gid=op["task_gid"],
+        submission_id=operation_id,
+        state=op["status"],
+        data={
+            "authorization_id": row["authorization_id"],
+            "field": row["field_name"],
+            "before": before_value,
+            "after": after_value,
+            "reason": row["reason"],
+            "run_id": row["actor_run_id"],
+        },
+    )
 
 
 # Current-operation cancellation. Historical submissions are read-only.

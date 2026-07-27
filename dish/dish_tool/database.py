@@ -898,10 +898,32 @@ def record_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, opera
     clean_reason = str(reason or "").strip()
     if not clean_reason:
         raise DishRuleError("INVALID_ARGUMENT", "authorization reason is required", rule="authorization_reason_required")
+    before_json = json.dumps(before, sort_keys=True)
+    after_json = json.dumps(after, sort_keys=True)
+    clean_run_id = str(actor_run_id or "").strip() or None
+    existing = conn.execute(
+        """SELECT * FROM marco_authorizations
+             WHERE task_gid=? AND operation_id IS ?
+               AND field_name=? AND before_json=? AND after_json=?
+               AND reason=? AND actor_run_id IS ?
+               AND consumed_at IS NULL
+             ORDER BY created_at LIMIT 1""",
+        (
+            task_gid,
+            operation_id,
+            field_name,
+            before_json,
+            after_json,
+            clean_reason,
+            clean_run_id,
+        ),
+    ).fetchone()
+    if existing is not None:
+        return existing
     conn.execute(
         """INSERT INTO marco_authorizations(authorization_id,task_gid,operation_id,field_name,before_json,after_json,reason,actor_run_id,created_at)
            VALUES (?,?,?,?,?,?,?,?,?)""",
-        (authorization_id, task_gid, operation_id, field_name, json.dumps(before, sort_keys=True), json.dumps(after, sort_keys=True), clean_reason, str(actor_run_id or "").strip() or None, utc_now()),
+        (authorization_id, task_gid, operation_id, field_name, before_json, after_json, clean_reason, clean_run_id, utc_now()),
     )
     record_audit(conn, submission_id=None, task_gid=task_gid, operation_id=operation_id, event_type="marco.authorization", actor_agent=None,
                  details={"authorization_id": authorization_id, "field": field_name, "reason": clean_reason}, result_code="OK", result_ok=True,
