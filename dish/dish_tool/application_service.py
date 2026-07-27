@@ -130,6 +130,24 @@ class CurrentWorkflowService:
                 and live.identity == held["hold_identity"]
                 and live.section_gid == held["hold_section_gid"]
             )
+        destination_movement = None
+        if op["movement_completed_at"] is not None and op["destination_movement_attempt_id"]:
+            destination_movement = self.conn.execute(
+                """SELECT confirmed_section_gid
+                     FROM movement_attempts
+                    WHERE attempt_id=? AND operation_id=?
+                      AND purpose='destination_submission'
+                      AND outcome='confirmed'
+                      AND confirmed_section_gid=intended_section_gid""",
+                (op["destination_movement_attempt_id"], operation_id),
+            ).fetchone()
+        if destination_movement is not None:
+            required_section_gid = destination_movement["confirmed_section_gid"]
+        required_section = (
+            None if required_section_gid is None
+            else registry.by_gid.get(required_section_gid)
+        )
+        required_section_name = None if required_section is None else required_section.name
         identity_matches = required_identity is None or live.identity == required_identity
         placement_matches = required_section_gid is None or live.section_gid == required_section_gid
         unresolved_rows = self.conn.execute(
@@ -182,6 +200,7 @@ class CurrentWorkflowService:
             "identity_matches": identity_matches,
             "live_section_gid": live.section_gid,
             "required_section_gid": required_section_gid,
+            "required_section_name": required_section_name,
             "placement_matches": placement_matches,
             "validation_rules": validation_rules,
             "pending_steps": list(pending_steps),
