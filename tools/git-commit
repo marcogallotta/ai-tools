@@ -115,8 +115,10 @@ for f in "${files[@]}"; do
   fi
   resolved="$(realpath -m -- "$candidate")"
   if [[ ! -e "$resolved" ]]; then
-    # Could be a staged deletion (path removed from worktree, still tracked).
-    if ! git -C "$git_cwd" ls-files --error-unmatch -- "$resolved" >/dev/null 2>&1; then
+    # Could be a staged deletion: git rm removes the path from the index,
+    # so ls-files can't see it — check HEAD instead (relative to repo root).
+    rel_to_root="${resolved#"$repo_root"/}"
+    if ! git -C "$git_cwd" cat-file -e "HEAD:$rel_to_root" >/dev/null 2>&1; then
       missing+=("$f -> $resolved")
     fi
   fi
