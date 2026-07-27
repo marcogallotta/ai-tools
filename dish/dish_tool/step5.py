@@ -82,6 +82,56 @@ def diagnostics_for(live: LiveTask, release: ResolvedRelease) -> dict[str, Any]:
     }
 
 
+
+def start_result_data(
+    *,
+    live: LiveTask,
+    release: ResolvedRelease,
+    registry,
+    kind: str,
+    operation,
+    diagnostics: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Build the stable workflow context returned by a successful start.
+
+    Kept outside the command router so service request reconciliation can
+    reproduce the useful result after response loss without recreating the
+    operation or duplicating workflow rules.
+    """
+    role = "planning" if kind == "planning" else "research"
+    return {
+        "operation_id": operation["operation_id"],
+        "operation_kind": kind,
+        "expected_identity": live.identity,
+        "placement": {"section_gid": live.section_gid},
+        "protocol": {
+            "role": role,
+            "version": release.protocol_version,
+            "text": release.protocol_for_role(role),
+        },
+        "runtime_context": {
+            "cooking_project_gid": COOKING_PROJECT_GID,
+            "destination_format": "<section name> — <section gid>",
+            "research_queue": {
+                "name": "Research Queue",
+                "gid": registry.research_queue_gid,
+            },
+            "verification_queue": {
+                "name": "Verification Queue",
+                "gid": registry.verification_queue_gid,
+            },
+            "sections": {name: section.gid for name, section in registry.by_name.items()},
+        },
+        "schema": {
+            "version": release.schema_version,
+            "diagnostics": diagnostics["validation"],
+        },
+        "actors": {
+            "editor": operation["editor_agent"],
+            "researcher": operation["researcher_agent"],
+        },
+    }
+
 def claim_operation(
     conn: sqlite3.Connection,
     *,

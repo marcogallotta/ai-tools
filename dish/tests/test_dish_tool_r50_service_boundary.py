@@ -128,7 +128,13 @@ def test_action_server_rejects_malformed_arguments_before_workflow(
         status, result = _post(
             server,
             f"/v1/action/{command}",
-            {"client": {"run_id": "run"}, "arguments": arguments},
+            {
+                "client": {
+                    "run_id": "run",
+                    **({"request_id": "11111111-1111-4111-8111-111111111111"} if command in {"create", "start"} else {}),
+                },
+                "arguments": arguments,
+            },
         )
     finally:
         _stop(server, thread)

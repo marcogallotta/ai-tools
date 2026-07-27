@@ -15,6 +15,9 @@ from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
 from dish_tool.database import initialize_database, process_command_audit_repairs
 from dish_tool.errors import DishRuleError
 from dish_tool.models import SectionRegistry
+from dish_tool.step5 import diagnostics_for, start_result_data
+from dish_tool.step7 import replay_verification_read
+from dish_tool.task_store import read_complete_task
 from dish_tool.releases import resolve_release
 from dish_tool.results import error_envelope, result_envelope
 from dish_tool.validation_scope import scope_for_command
@@ -22,6 +25,8 @@ from dish_tool.validation_scope import scope_for_command
 from .backup import BackupManager
 from .config import ServiceConfig
 from .leases import LeaseManager, ServicePrincipal
+from .request_replay import begin_request, complete_request, pending_error, stored_result
+from .restore_fault import RestoreFaultMarker
 
 _READ_ONLY_AGENT_COMMANDS = {"sections", "read", "inspect"}
 _LEASED_AGENT_COMMANDS = {"prepare", "approve", "reject", "submit"}
@@ -65,7 +70,7 @@ class DishService:
         self.release_loader = release_loader
         self.lease_now = lease_now
         self._maintenance_lock = threading.RLock()
-        self._restore_faulted = False
+        self._restore_fault = RestoreFaultMarker(self.config.db_path)
 
     @property
     def backup_manager(self) -> BackupManager:
@@ -294,7 +299,7 @@ class DishService:
         # proven with the same read-only section registry contract used by the
         # workflow itself; malformed/missing queues fail closed. A restore whose
         # rollback could not be proven keeps this process diagnosis-only.
-        if self._restore_faulted:
+        if self._restore_fault.active():
             raise DishRuleError(
                 "INTERNAL_ERROR",
                 "database restore recovery is incomplete; workflow mutations are disabled",
@@ -361,17 +366,107 @@ class DishService:
             result["retryable"] = False
         return result
 
+    def _reconcile_pending_start(
+        self,
+        *,
+        conn,
+        backend: Any,
+        app: DishApplication,
+        leases: LeaseManager,
+        principal: ServicePrincipal,
+        arguments: Mapping[str, Any],
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Return a proven start result after response loss, or fail uncertain."""
+        task_gid = str(arguments.get("task_gid") or "").strip()
+        kind = str(arguments.get("kind") or "").strip()
+        rows = conn.execute(
+            """SELECT * FROM operations
+                 WHERE task_gid=? AND status IN ('open','uncertain')
+                 ORDER BY created_at DESC""",
+            (task_gid,),
+        ).fetchall()
+        if len(rows) != 1 or rows[0]["status"] != "open":
+            raise pending_error("start", request_id)
+        operation = rows[0]
+        operation_id = operation["operation_id"]
+
+        if kind == "verification":
+            data = replay_verification_read(
+                conn, backend, operation_id=operation_id,
+                agent=str(arguments.get("agent") or ""), run_id=principal.run_id,
+            )
+        else:
+            if (
+                operation["operation_kind"] != kind
+                or str(operation["run_id"] or "").strip() != principal.run_id
+                or operation["phase"] != "prepare_required"
+            ):
+                raise pending_error("start", request_id, operation_id=operation_id)
+            live = read_complete_task(
+                backend, task_gid=task_gid, project_gid=COOKING_PROJECT_GID
+            )
+            if (
+                live.identity != operation["expected_identity"]
+                or live.section_gid != operation["expected_section_gid"]
+            ):
+                raise pending_error("start", request_id, operation_id=operation_id)
+            role = "planning" if kind == "planning" else "research"
+            release = self._release(role)
+            registry = SectionRegistry.from_sections(
+                backend.list_sections(COOKING_PROJECT_GID)
+            )
+            data = start_result_data(
+                live=live, release=release, registry=registry, kind=kind,
+                operation=operation, diagnostics=diagnostics_for(live, release),
+            )
+
+        active = leases.active_for_operation(operation_id)
+        if active is None:
+            leases.acquire(operation_id, principal)
+        elif not leases.is_owned_by(active, principal):
+            raise pending_error("start", request_id, operation_id=operation_id)
+
+        inspected = app.execute(
+            "inspect",
+            agent=str(arguments.get("agent") or "gpt"),
+            submission_id=operation_id,
+        )
+        if not inspected.get("ok"):
+            raise pending_error("start", request_id, operation_id=operation_id)
+        data.update({
+            "request_replayed": True,
+            "request_id": request_id,
+            "authoritative_view": inspected.get("data", {}).get("authoritative_view"),
+        })
+        result = result_envelope(
+            command="start",
+            task_gid=task_gid,
+            submission_id=operation_id,
+            state=operation["status"],
+            allowed_actions=inspected.get("allowed_actions", []),
+            data=data,
+        )
+        result = self._apply_principal_access(
+            result, conn=conn, leases=leases, operation_id=operation_id,
+            principal=principal,
+        )
+        complete_request(conn, request_id=request_id, result=result)
+        return result
+
     def execute_agent(
         self,
         command: str,
         arguments: Mapping[str, Any],
         *,
         principal: ServicePrincipal | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         with self._maintenance_lock:
             conn = initialize_database(self.config.db_path)
             acquired_for_request = False
             operation_id = None
+            replay_started = False
             explicit_principal = principal is not None
             principal = principal or self._default_principal(arguments)
             invocation_run_id = (
@@ -381,6 +476,24 @@ class DishService:
             )
             leases = self._lease_manager(conn)
             try:
+                prepared_arguments = self._arguments_for_principal(
+                    command, arguments, run_id=invocation_run_id,
+                )
+
+                request_row = None
+                if command in {"create", "start"} and request_id:
+                    request_row, replay_started = begin_request(
+                        conn,
+                        request_id=request_id,
+                        owner_id=principal.owner_id,
+                        run_id=principal.run_id,
+                        command=command,
+                        arguments=prepared_arguments,
+                    )
+                    prior = stored_result(request_row)
+                    if prior is not None:
+                        return prior
+
                 backend = self.backend_factory()
                 if command not in _READ_ONLY_AGENT_COMMANDS:
                     self._assert_mutation_ready(backend)
@@ -390,9 +503,19 @@ class DishService:
                     release_loader=lambda role=None: self._release(role),
                     invocation_run_id=invocation_run_id,
                 )
-                prepared_arguments = self._arguments_for_principal(
-                    command, arguments, run_id=invocation_run_id,
-                )
+
+                # A prior process may have committed start before it could persist
+                # the result envelope. Reconcile only from exact durable workflow
+                # and live-state evidence; otherwise fail uncertain.
+                if request_row is not None and not replay_started:
+                    if command == "start":
+                        return self._reconcile_pending_start(
+                            conn=conn, backend=backend, app=app, leases=leases,
+                            principal=principal, arguments=prepared_arguments,
+                            request_id=request_id,
+                        )
+                    raise pending_error(command, request_id)
+
                 operation_id = self._operation_for_request(
                     conn, command, prepared_arguments,
                 )
@@ -426,8 +549,20 @@ class DishService:
                 if command == "start" and prepared_arguments.get("kind") != "verification" and result.get("ok"):
                     operation_id = result.get("submission_id")
                     if operation_id:
-                        leases.acquire(operation_id, principal)
-                        acquired_for_request = True
+                        try:
+                            leases.acquire(operation_id, principal)
+                            acquired_for_request = True
+                        except Exception as exc:
+                            data = result.setdefault("data", {})
+                            data["service_recovery_required"] = True
+                            data["service_recovery"] = {
+                                "kind": "lease_acquisition",
+                                "operation_id": operation_id,
+                                "error_type": type(exc).__name__,
+                                "do_not_retry_command": True,
+                            }
+                            result["allowed_actions"] = []
+                            result["retryable"] = False
 
                 result_operation_id = operation_id or result.get("submission_id")
                 if result.get("ok") and result_operation_id and command in _MUTATING_AGENT_COMMANDS:
@@ -444,13 +579,19 @@ class DishService:
                         leases.release(operation_id, principal, reason="verification_start_failed")
                     elif command in _LEASED_AGENT_COMMANDS:
                         leases.release(operation_id, principal, reason="reclaimed_command_rejected")
-                return self._apply_principal_access(
+                result = self._apply_principal_access(
                     result,
                     conn=conn,
                     leases=leases,
                     operation_id=result_operation_id,
                     principal=principal,
                 )
+                if result.get("data", {}).get("service_recovery_required"):
+                    result["allowed_actions"] = []
+                if request_id and command in {"create", "start"}:
+                    result.setdefault("data", {})["request_id"] = request_id
+                    complete_request(conn, request_id=request_id, result=result)
+                return result
             except DishRuleError as exc:
                 if acquired_for_request and operation_id:
                     try:
@@ -469,12 +610,16 @@ class DishService:
                     if operation_id
                     else ()
                 )
-                return error_envelope(
+                result = error_envelope(
                     command,
                     exc,
                     submission_id=operation_id,
                     validation_scope=validation_scope,
                 )
+                if request_id and command in {"create", "start"} and replay_started:
+                    result.setdefault("data", {})["request_id"] = request_id
+                    complete_request(conn, request_id=request_id, result=result)
+                return result
             finally:
                 conn.close()
 
@@ -671,14 +816,21 @@ class DishService:
         with self._maintenance_lock:
             try:
                 data = self.backup_manager.restore(backup_id)
-                self._restore_faulted = False
+                self._restore_fault.clear()
                 return result_envelope(command="backup-restore", data=data)
             except DishRuleError as exc:
                 if exc.rule == "backup_restore_and_rollback_failed":
-                    self._restore_faulted = True
+                    self._restore_fault.set({
+                        "kind": "backup_restore_and_rollback_failed",
+                        "rule": exc.rule,
+                        "details": dict(exc.details),
+                    })
                 return error_envelope("backup-restore", exc)
             except Exception as exc:
-                self._restore_faulted = True
+                self._restore_fault.set({
+                    "kind": "backup_restore_recovery_unknown",
+                    "error_type": type(exc).__name__,
+                })
                 error = DishRuleError(
                     "INTERNAL_ERROR",
                     "database restore failed with an unclassified recovery outcome; "
@@ -774,9 +926,11 @@ class DishService:
             except Exception as exc:
                 asana = {"ok": False, "rule": "asana_health_failed", "message": type(exc).__name__}
 
+            restore_fault = self._restore_fault.read()
             maintenance = {
-                "ok": not self._restore_faulted,
-                "restore_recovery_required": self._restore_faulted,
+                "ok": restore_fault is None,
+                "restore_recovery_required": restore_fault is not None,
+                "restore_fault": restore_fault,
             }
             ok = bool(
                 configuration.get("ok")

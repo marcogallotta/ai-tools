@@ -45,6 +45,9 @@ Add an operating instruction with all of these requirements:
   renders that identifier as the human-readable actor name `Custom GPT`.
 - Create one unique `client.run_id` for the current agent run and reuse it for every Action call and
   lease renewal in that run. A genuinely new run uses a new value.
+- Before each `create` or `start`, create a UUID `client.request_id`. Preserve it with the attempted
+  call. If the response is lost, repeat the exact same command and arguments with the same UUID. Never
+  reuse that UUID for different work or generate a new one merely to bypass an uncertain result.
 - The authenticated `client.run_id` is both lease ownership and the durable agent-run identity. The
   service applies it to `start`, `prepare`, `approve`, and `reject`; do not invent a separate
   workflow run ID. A redundant `arguments.run_id`, when supplied, must match it exactly.
@@ -60,7 +63,9 @@ Add an operating instruction with all of these requirements:
   stage protocol returned by Dish.
 - After successful Verification approval returns `submit`, call `submit` in the same pass.
 - Never retry `BACKEND_UNCERTAIN`, steal an expired lease, call a private/admin route, or repair an
-  Asana task directly. Stop and give Marco the complete result.
+  Asana task directly. An exact transport replay with the original `client.request_id` is allowed only
+  when no result was received; once Dish returns `BACKEND_UNCERTAIN`, stop and give Marco the complete
+  result.
 
 The canonical result meanings and retry rules remain in `../docs/runtime-contract.md`; do not copy a
 second result-code policy into the GPT instructions.
@@ -85,6 +90,7 @@ Before any task mutation:
 5. Confirm the Preview request succeeds through the standard HTTPS URL, not the private `:8444`
    endpoint.
 6. Review the GPT configuration and confirm no CLI, admin, or Asana secret is present.
+7. Inspect the imported `create` and `start` operations and confirm `client.request_id` is a required UUID.
 
 Then run the complete disposable-task procedure in `live-test-project-smoke.md`. Preview success for
 `sections` is connectivity proof, not authorization for production Cooking.

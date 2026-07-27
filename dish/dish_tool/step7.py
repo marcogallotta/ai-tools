@@ -166,6 +166,91 @@ def verification_read(
 
 
 
+
+def replay_verification_read(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    operation_id: str,
+    agent: str,
+    run_id: str,
+) -> dict[str, Any]:
+    """Reconstruct a proven completed Verification read after response loss.
+
+    This performs no workflow mutation. It succeeds only when the current open
+    cycle, verifier actor fact, exact reviewed content, and live Verification
+    placement all still prove that the original `start verification` applied.
+    """
+    op, cycle = _operation_and_cycle(conn, operation_id)
+    if (
+        str(cycle["verifier_agent"] or "").strip() != str(agent).strip()
+        or str(cycle["run_id"] or "").strip() != str(run_id).strip()
+        or not cycle["reviewed_identity"]
+        or not cycle["reviewed_content_version_id"]
+        or not cycle["protocol_text"]
+    ):
+        raise DishRuleError(
+            "BACKEND_UNCERTAIN",
+            "Verification start cannot be proven from durable review evidence",
+            rule="service_request_pending",
+        )
+    actor = conn.execute(
+        """SELECT 1 FROM operation_actor_facts
+             WHERE operation_id=? AND role='verifier' AND agent=? AND run_id=?
+               AND candidate_identity=? AND source_cycle_id=?
+             LIMIT 1""",
+        (operation_id, agent, run_id, cycle["reviewed_identity"], cycle["cycle_id"]),
+    ).fetchone()
+    if actor is None:
+        raise DishRuleError(
+            "BACKEND_UNCERTAIN",
+            "Verification start lacks durable verifier lineage",
+            rule="service_request_pending",
+        )
+    version = conn.execute(
+        """SELECT 1 FROM content_versions
+             WHERE content_version_id=? AND operation_id=? AND task_gid=?
+               AND identity=? AND confirmed=1""",
+        (
+            cycle["reviewed_content_version_id"], operation_id, op["task_gid"],
+            cycle["reviewed_identity"],
+        ),
+    ).fetchone()
+    if version is None:
+        raise DishRuleError(
+            "BACKEND_UNCERTAIN",
+            "Verification start lacks its confirmed reviewed content version",
+            rule="service_request_pending",
+        )
+    live = read_complete_task(
+        backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    registry = SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
+    if (
+        live.identity != cycle["reviewed_identity"]
+        or live.section_gid != registry.verification_queue_gid
+    ):
+        raise DishRuleError(
+            "BACKEND_UNCERTAIN",
+            "live Verification state no longer matches the recorded review",
+            rule="service_request_pending",
+        )
+    return {
+        "operation_id": operation_id,
+        "cycle_id": cycle["cycle_id"],
+        "reviewed_identity": live.identity,
+        "task": dataclasses.asdict(live),
+        "verification_protocol": {
+            "identity": cycle["protocol_release"],
+            "text": cycle["protocol_text"],
+        },
+        "verifier": {
+            "agent": cycle["verifier_agent"],
+            "run_id": cycle["run_id"],
+            "independence_attestation": cycle["independence_attestation"],
+        },
+    }
+
 def assert_verifier_authority(
     cycle, *, agent: str, run_id: str | None, independence_attestation: str | None
 ) -> None:

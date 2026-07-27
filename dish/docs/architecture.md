@@ -66,7 +66,7 @@ It is not a supported multi-agent lock.
 - the writable SQLite database;
 - the Asana credential and backend;
 - task operation locks and actor/run leases;
-- recovery, audit repair, health, backup, and restore;
+- recovery, request replay, audit repair, health, backup, and restore;
 - both HTTP listeners.
 
 `dish_service.process_lock.ServiceProcessLock` prevents two service processes from owning the same
@@ -139,6 +139,7 @@ It does not decide workflow legality.
 - acquires/asserts/releases service leases;
 - delegates workflow work to `DishApplication` or `DishAdminApplication`;
 - preserves committed success if post-success lease bookkeeping fails;
+- records and replays response-loss-sensitive service requests;
 - owns health, backup, restore, and startup checks.
 
 The service must not duplicate stage-specific workflow rules.
@@ -252,6 +253,7 @@ Conceptually important tables are:
 | external effects | `write_attempts`, `movement_attempts` |
 | governed authority | `marco_authorizations` |
 | shared ownership | `service_leases` |
+| HTTP request replay | `service_requests` |
 | audit and repair | `audit_events`, `command_audit_repairs` |
 | historical quarantine | `legacy_submission_quarantine` and retained read-only legacy records |
 
@@ -307,6 +309,13 @@ lineage proves it owns that workflow role. Protocol-specific admin continuations
 admin leases and release them before returning. Terminal lease release waits until workflow steps and
 ambiguous attempts have durable outcomes.
 
+`service_requests` is a separate idempotency boundary for response loss around `create` and
+non-verification `start`. The immutable record binds request UUID, owner, run, command, and canonical
+argument hash before the external or operation-creation effect. Completion is one-way. Exact repeats
+return the stored result; mismatched reuse fails; unresolved create remains uncertain instead of being
+reissued. This ledger complements, rather than replaces, operation constraints and exact external-effect
+attempt records.
+
 The host process lock is not a substitute for database operation constraints. The client run ID is
 the durable unit of actor/verifier lineage, but it does not replace exact candidate bindings and
 role facts: independence is checked against the constructor and latest material editor recorded for
@@ -352,7 +361,7 @@ block before entering workflow code.
 `BackupManager` uses SQLite's online backup API, validates the complete current database contract,
 and accepts only managed backup identifiers. Restore is serialized against requests, creates a
 pre-restore snapshot, validates the candidate, replaces atomically, and attempts a validated rollback
-on failure. If rollback cannot be proven, the service remains diagnosis-only.
+on failure. If rollback cannot be proven, the service writes an atomic sidecar fault marker outside the replaceable database and remains diagnosis-only across process restart. A later validated restore clears that marker.
 
 ## Testing architecture
 

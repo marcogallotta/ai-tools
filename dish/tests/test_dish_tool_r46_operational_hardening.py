@@ -179,7 +179,7 @@ def test_startup_processes_pending_audit_repairs_and_reports_health(tmp_path):
     startup = service.startup_check()
     assert startup["ok"]
     assert startup["startup"]["audit_repairs_processed"] == 1
-    assert startup["database"]["schema_version"] == 20
+    assert startup["database"]["schema_version"] == 21
     assert startup["audit"]["pending_repairs"] == 0
     assert startup["asana"]["ok"]
 
@@ -309,10 +309,10 @@ def test_failed_restore_reports_proven_rollback_without_claiming_success(monkeyp
     assert not result["ok"]
     assert result["errors"][0]["rule"] == "backup_restore_failed_rolled_back"
     assert result["errors"][0]["database_retained"] is True
-    assert service.health()["maintenance"] == {
-        "ok": True,
-        "restore_recovery_required": False,
-    }
+    maintenance = service.health()["maintenance"]
+    assert maintenance["ok"] is True
+    assert maintenance["restore_recovery_required"] is False
+    assert maintenance["restore_fault"] is None
 
     conn = initialize_database(service.config.db_path)
     try:
@@ -353,10 +353,11 @@ def test_unproven_restore_rollback_disables_mutations(monkeypatch, tmp_path):
     assert not result["ok"]
     assert result["errors"][0]["rule"] == "backup_restore_and_rollback_failed"
     assert result["errors"][0]["database_retained"] is False
-    assert service.health()["maintenance"] == {
-        "ok": False,
-        "restore_recovery_required": True,
-    }
+    maintenance = service.health()["maintenance"]
+    assert maintenance["ok"] is False
+    assert maintenance["restore_recovery_required"] is True
+    assert maintenance["restore_fault"]["rule"] == "backup_restore_and_rollback_failed"
+    assert maintenance["restore_fault"]["details"]["database_retained"] is False
 
     writes_before = backend.writes
     moves_before = backend.moves

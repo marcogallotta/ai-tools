@@ -126,7 +126,9 @@ start initial/change
 
 The bounded agent surface contains discovery/read commands (`sections`, `read`, `inspect`) and
 governed mutations (`create`, `start`, `prepare`, `approve`, `reject`, `submit`). `create` is a
-mutation even though it starts from a bare task.
+mutation even though it starts from a bare task. `create` and non-verification `start` carry a
+client-generated request UUID so an exact call can be replayed safely after response loss without
+creating duplicate work.
 
 Run `dish --help`, `dish <command> --help`, and the stage walkthroughs for exact arguments.
 
@@ -158,7 +160,7 @@ Restore only a managed snapshot identifier returned by the service:
 dish-admin backup-restore dish-<timestamp>-<label>-<id>.sqlite3
 ```
 
-Restore creates an automatic pre-restore snapshot, validates SQLite integrity and the complete current dish schema/evidence contract, replaces the database atomically, and rolls back if validation fails.
+Restore creates an automatic pre-restore snapshot, validates SQLite integrity and the complete current dish schema/evidence contract, replaces the database atomically, and rolls back if validation fails. If rollback cannot be proven, a durable sidecar fault marker keeps mutations disabled across service restart until a validated restore succeeds.
 
 ## Health and compatibility
 
@@ -182,7 +184,7 @@ openapi/dish-action.openapi.json
 
 The checked-in schema intentionally uses the placeholder server `https://dish.example.invalid`. Before importing it, replace that server with the exact Funnel URL, or import the runtime schema from the public listener at `GET /openapi/action.json` so the server URL is generated from the request host. Validate the final URL and HTTPS port in the GPT Action editor before activation.
 
-The Action listener serves only the bounded `/v1/action/*` workflow and lease-renewal routes. Admin, recovery, migration, backup, private CLI, and generic Asana routes are not present on that listener or in the Action OpenAPI document. The OpenAPI generator and HTTP request validator share one command specification; missing, extra, wrongly typed, or invalid-enum Action arguments are rejected before backend or workflow code.
+The Action listener serves only the bounded `/v1/action/*` workflow and lease-renewal routes. Admin, recovery, migration, backup, private CLI, and generic Asana routes are not present on that listener or in the Action OpenAPI document. The OpenAPI generator and HTTP request validator share one command specification; missing, extra, wrongly typed, or invalid-enum Action arguments are rejected before backend or workflow code. The schema requires `client.request_id` for `create` and `start`; the GPT must reuse the same UUID only when replaying the exact call after a lost response.
 
 Follow `deploy/gpt-action.md` for the exact editor configuration, run-identity rules, Preview gate,
 lease handling, and token rotation.

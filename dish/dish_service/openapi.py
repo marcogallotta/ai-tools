@@ -5,7 +5,7 @@ from typing import Any
 
 from dish_tool.validation_scope import VALIDATION_SCOPE_VALUES
 
-from .command_spec import ACTION_COMMANDS, action_argument_schema
+from .command_spec import ACTION_COMMANDS, REPLAY_SAFE_COMMANDS, action_argument_schema
 
 def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[str, Any]:
     envelope = {
@@ -60,9 +60,12 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                                 "properties": {
                                     "client": {
                                         "type": "object",
-                                        "required": ["run_id"],
+                                        "required": (["run_id", "request_id"] if command in REPLAY_SAFE_COMMANDS else ["run_id"]),
                                         "additionalProperties": False,
-                                        "properties": {"run_id": {"type": "string"}},
+                                        "properties": {
+                                            "run_id": {"type": "string"},
+                                            "request_id": {"type": "string", "format": "uuid"},
+                                        },
                                     },
                                     "arguments": argument_schema,
                                 },

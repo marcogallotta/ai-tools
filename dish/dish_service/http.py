@@ -18,7 +18,7 @@ from .application import DishService
 from .auth import authenticate_bearer
 from .identifiers import require_dish_uuid, validate_identifier_fields
 from .leases import ServicePrincipal
-from .command_spec import ACTION_COMMANDS, validate_action_request
+from .command_spec import ACTION_COMMANDS, REPLAY_SAFE_COMMANDS, validate_action_request
 from .openapi import action_openapi
 
 LOG = logging.getLogger("dish.service")
@@ -208,6 +208,17 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             if isinstance(context, dict):
                 validate_identifier_fields(context, allow_null=True)
             principal = self._principal(credential, request)
+            client_payload = request.get("client") if isinstance(request.get("client"), dict) else {}
+            request_id = client_payload.get("request_id")
+            if surface == "agent" and command in REPLAY_SAFE_COMMANDS:
+                if not isinstance(request_id, str) or not request_id.strip():
+                    raise DishRuleError(
+                        "INVALID_ARGUMENT",
+                        "client.request_id is required for replay-sensitive mutations",
+                        rule="request_field_required",
+                        details={"field": "client.request_id"},
+                    )
+                require_dish_uuid(request_id, field="client.request_id")
             if surface == "lease":
                 payload = self.server.service.renew_lease(parts[2], principal)
             elif surface == "action-lease":
@@ -240,7 +251,9 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 arguments = request.get("arguments", {})
                 if not isinstance(arguments, dict):
                     raise DishRuleError("INVALID_ARGUMENT", "arguments must be a JSON object", rule="arguments_object_required")
-                payload = self.server.service.execute_agent(command, arguments, principal=principal)
+                payload = self.server.service.execute_agent(
+                    command, arguments, principal=principal, request_id=request_id
+                )
             self._write_json(HTTPStatus.OK, payload)
         except DishRuleError as exc:
             status = HTTPStatus.UNAUTHORIZED if exc.rule in {"service_auth_required", "service_auth_invalid"} else (

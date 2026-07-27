@@ -345,7 +345,7 @@ def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str)
 
 
 def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: str, change_level: str | None = None, change_reason: str | None = None, run_id: str | None = None, **_extra: Any) -> dict[str, Any]:
-    from .step5 import claim_operation, diagnostics_for
+    from .step5 import claim_operation, diagnostics_for, start_result_data
     from .task_store import read_complete_task
     agent_family(agent)
     task_gid = _clean_required(task_gid, rule="task_gid_required", label="task GID")
@@ -393,20 +393,17 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
     )
     trace.submission_id = op["operation_id"]
     trace.state = op["status"]
-    return result_envelope(command="start", task_gid=task_gid, submission_id=op["operation_id"], state=op["status"], allowed_actions=["prepare"], data={
-        "operation_id": op["operation_id"], "operation_kind": kind,
-        "expected_identity": live.identity, "placement": {"section_gid": live.section_gid},
-        "protocol": {"role": role, "version": release.protocol_version, "text": release.protocol_for_role(role)},
-        "runtime_context": {
-            "cooking_project_gid": COOKING_PROJECT_GID,
-            "destination_format": "<section name> — <section gid>",
-            "research_queue": {"name": "Research Queue", "gid": registry.research_queue_gid},
-            "verification_queue": {"name": "Verification Queue", "gid": registry.verification_queue_gid},
-            "sections": {name: section.gid for name, section in registry.by_name.items()},
-        },
-        "schema": {"version": release.schema_version, "diagnostics": diag["validation"]},
-        "actors": {"editor": op["editor_agent"], "researcher": op["researcher_agent"]},
-    })
+    return result_envelope(
+        command="start",
+        task_gid=task_gid,
+        submission_id=op["operation_id"],
+        state=op["status"],
+        allowed_actions=["prepare"],
+        data=start_result_data(
+            live=live, release=release, registry=registry, kind=kind,
+            operation=op, diagnostics=diag,
+        ),
+    )
 
 
 

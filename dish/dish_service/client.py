@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
@@ -67,8 +68,11 @@ class DishServiceClient:
                 retryable=True,
             ) from exc
 
-    def _client(self) -> dict[str, str]:
-        return {"run_id": self.run_id}
+    def _client(self, *, request_id: str | None = None) -> dict[str, str]:
+        client = {"run_id": self.run_id}
+        if request_id is not None:
+            client["request_id"] = request_id
+        return client
 
     def health(self) -> dict[str, Any]:
         return self._json_request("/health")
@@ -85,15 +89,22 @@ class DishServiceClient:
         self,
         command: str,
         arguments: Mapping[str, Any] | None = None,
+        *,
+        request_id: str | None = None,
         **keyword_arguments: Any,
     ) -> dict[str, Any]:
         if arguments is not None and keyword_arguments:
             raise TypeError("provide command arguments as a mapping or keywords, not both")
         prepared = dict(arguments or keyword_arguments)
+        if command in {"create", "start"} and request_id is None:
+            request_id = str(uuid.uuid4())
         return self._json_request(
             f"/v1/commands/{command}",
             method="POST",
-            payload={"arguments": self._transport_arguments(prepared), "client": self._client()},
+            payload={
+                "arguments": self._transport_arguments(prepared),
+                "client": self._client(request_id=request_id),
+            },
         )
 
     def record_argument_failure(
@@ -203,15 +214,22 @@ class DishActionClient(DishServiceClient):
         self,
         command: str,
         arguments: Mapping[str, Any] | None = None,
+        *,
+        request_id: str | None = None,
         **keyword_arguments: Any,
     ) -> dict[str, Any]:
         if arguments is not None and keyword_arguments:
             raise TypeError("provide command arguments as a mapping or keywords, not both")
         prepared = dict(arguments or keyword_arguments)
+        if command in {"create", "start"} and request_id is None:
+            request_id = str(uuid.uuid4())
         return self._json_request(
             f"/v1/action/{command}",
             method="POST",
-            payload={"arguments": self._transport_arguments(prepared), "client": self._client()},
+            payload={
+                "arguments": self._transport_arguments(prepared),
+                "client": self._client(request_id=request_id),
+            },
         )
 
     def renew_lease(self, operation_id: str) -> dict[str, Any]:

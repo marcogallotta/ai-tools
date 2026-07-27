@@ -7,6 +7,8 @@ from typing import Any, Mapping
 from dish_tool.errors import DishRuleError
 from .identifiers import require_asana_gid, require_dish_uuid
 
+REPLAY_SAFE_COMMANDS = {"create", "start"}
+
 ACTION_COMMANDS = (
     "create",
     "sections",
@@ -201,7 +203,7 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
     client = request["client"]
     if not isinstance(client, dict):
         raise _argument_error("client must be an object", "request_type_invalid", field="client")
-    client_extras = sorted(set(client) - {"run_id"})
+    client_extras = sorted(set(client) - {"run_id", "request_id"})
     if client_extras:
         raise _argument_error(
             "client contains an unexpected field",
@@ -215,6 +217,23 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
             "request_field_required",
             field="client.run_id",
         )
+    request_id = client.get("request_id")
+    if command in REPLAY_SAFE_COMMANDS and (
+        not isinstance(request_id, str) or not request_id.strip()
+    ):
+        raise _argument_error(
+            "client.request_id is required for replay-sensitive mutations",
+            "request_field_required",
+            field="client.request_id",
+        )
+    if request_id is not None:
+        if not isinstance(request_id, str):
+            raise _argument_error(
+                "client.request_id has the wrong type",
+                "request_type_invalid",
+                field="client.request_id",
+            )
+        require_dish_uuid(request_id, field="client.request_id")
 
     arguments = request["arguments"]
     if not isinstance(arguments, dict):

@@ -1231,8 +1231,52 @@ BEFORE DELETE ON service_leases
 BEGIN SELECT RAISE(ABORT, 'service leases are append-only'); END;
 """
 
+_MIGRATION_21 = """
+CREATE TABLE service_requests (
+    request_id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL CHECK(length(trim(owner_id)) > 0),
+    run_id TEXT NOT NULL CHECK(length(trim(run_id)) > 0),
+    command TEXT NOT NULL CHECK(length(trim(command)) > 0),
+    request_hash TEXT NOT NULL CHECK(length(trim(request_hash)) > 0),
+    status TEXT NOT NULL CHECK(status IN ('pending','completed','uncertain')),
+    operation_id TEXT REFERENCES operations(operation_id),
+    task_gid TEXT,
+    result_json TEXT CHECK(result_json IS NULL OR json_valid(result_json)),
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    CHECK ((status='pending' AND result_json IS NULL AND completed_at IS NULL)
+        OR (status IN ('completed','uncertain') AND result_json IS NOT NULL AND completed_at IS NOT NULL))
+);
+CREATE INDEX service_requests_run_idx
+    ON service_requests(owner_id, run_id, created_at);
+CREATE INDEX service_requests_operation_idx
+    ON service_requests(operation_id, created_at);
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20}
+CREATE TRIGGER service_requests_identity_immutable_update
+BEFORE UPDATE ON service_requests
+WHEN NEW.request_id IS NOT OLD.request_id
+  OR NEW.owner_id IS NOT OLD.owner_id
+  OR NEW.run_id IS NOT OLD.run_id
+  OR NEW.command IS NOT OLD.command
+  OR NEW.request_hash IS NOT OLD.request_hash
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'service request identity is immutable'); END;
+
+CREATE TRIGGER service_requests_status_monotonic_update
+BEFORE UPDATE OF status, operation_id, task_gid, result_json, completed_at ON service_requests
+WHEN OLD.status <> 'pending'
+  OR NEW.status NOT IN ('completed','uncertain')
+  OR NEW.result_json IS NULL
+  OR NEW.completed_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'service request completion is one-way'); END;
+
+CREATE TRIGGER service_requests_append_only_delete
+BEFORE DELETE ON service_requests
+BEGIN SELECT RAISE(ABORT, 'service requests are append-only'); END;
+"""
+
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -1498,7 +1542,7 @@ def _validate_current_database(conn: sqlite3.Connection) -> None:
     user_version, ledger_version = _schema_version_state(conn)
     if user_version != current or ledger_version != current:
         raise DishRuleError("VALIDATION_FAILED", "database did not converge to the current schema", rule="database_schema_not_current", details={"user_version": user_version, "ledger_version": ledger_version, "current": current})
-    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations"}
+    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests"}
     actual = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     missing = sorted(required - actual)
     if missing:

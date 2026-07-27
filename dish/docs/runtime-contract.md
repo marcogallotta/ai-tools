@@ -45,7 +45,27 @@ The public listener does not route private CLI, admin, health, migration, recove
 
 The durable `operations` constraint is the one-active-operation-per-task lock. `service_leases` bind the current actor to an owner identity and run identity with a renewable expiry. Workflow handoff may release the actor lease, but it does not release the task operation lock. `allowed_actions` is principal-aware: a different or expired run receives no ordinary mutation actions even when the underlying workflow phase has one. Read-only inspection never mutates lease state. Expired leases fail closed and require Marco to run `dish-admin recover-lease`; recovery releases stale ownership but does not transfer the workflow to Marco. Only a run whose durable actor lineage matches the required workflow role may reclaim a missing lease. Admin hold/recovery continuations use temporary request-scoped leases and return the operation unleased for the next valid actor.
 
-A terminal lease is released only after the operation is terminal and every declared step and ambiguous write/movement attempt has a durable completion outcome. If post-success lease finalization fails after the governed mutation committed, the original command still returns success with `service_recovery_required`, suppresses follow-on actions, and explicitly tells the client not to retry the mutation. Ordinary full-state write and approval retries remain naturally idempotent by exact live-state comparison; clients do not invent separate idempotency keys.
+A terminal lease is released only after the operation is terminal and every declared step and ambiguous write/movement attempt has a durable completion outcome. If post-success lease finalization fails after the governed mutation committed, the original command still returns success with `service_recovery_required`, suppresses follow-on actions, and explicitly tells the client not to retry the mutation. Ordinary full-state write and approval retries remain naturally idempotent by exact live-state comparison. The response-loss-sensitive `create` and non-verification `start` commands additionally require a client-generated UUID `client.request_id`. Reuse that same request ID only when retrying the exact same logical call after a lost response; never reuse it for different arguments. A completed request returns its stored result, a provably committed `start` is reconciled to the existing operation, and an unresolved `create` fails `BACKEND_UNCERTAIN` rather than risking a duplicate task.
+
+## Request replay contract
+
+`create` and non-verification `start` cross a response-loss boundary where blindly repeating the HTTP
+call could create a duplicate task or hide an already-created operation. Their private and Action
+requests therefore include `client.request_id`, a UUID chosen before the first attempt.
+
+- Reuse the same request ID only for the same command, authenticated owner/run, and arguments.
+- A repeated completed request returns the original stored result with
+  `data.request_replayed: true`.
+- Reusing an ID for different work returns `CONFLICT`.
+- A process interruption after `start` is reconciled only when exact durable operation evidence proves
+  the existing operation.
+- A process interruption around `create` cannot be inferred safely from local state, so the same request
+  returns `BACKEND_UNCERTAIN` and must not be repeated under a new request ID until Marco has inspected
+  live Asana state.
+
+The bundled HTTP clients generate an ID for a first call, but a caller handling transport failure must
+retain and reuse that value. GPT Action calls must supply it explicitly through the imported schema.
+Other commands keep their existing exact-state and durable-attempt retry rules.
 
 ## Health, backup, and startup
 
@@ -57,9 +77,9 @@ A terminal lease is released only after the operation is terminal and every decl
 - pending invocation-audit repairs;
 - active operations and active/expired leases.
 
-At startup the service validates the database, resolves Honest compatibility, and replays pending invocation-audit repairs. An Asana outage may leave the process available for health, backup, lease renewal, and diagnosis, but all workflow mutations fail before entering application mutation code.
+At startup the service validates the database, resolves Honest compatibility, and replays pending invocation-audit repairs. Durable service-request records and any restore-fault marker survive process restart. An Asana outage may leave the process available for health, backup, lease renewal, and diagnosis, but all workflow mutations fail before entering application mutation code.
 
-`dish-admin backup-create` produces a managed SQLite snapshot using the online backup API and validates the complete current database contract. `dish-admin backup-restore` accepts only a managed backup identifier, creates a pre-restore snapshot, validates the restore candidate, replaces the database atomically, and rolls back if validation fails. Restore is serialized against every request. A failed restore reports whether rollback was actually proven. If automatic rollback cannot be proven, health becomes unhealthy and workflow mutations remain disabled until manual recovery or a successful validated restore.
+`dish-admin backup-create` produces a managed SQLite snapshot using the online backup API and validates the complete current database contract. `dish-admin backup-restore` accepts only a managed backup identifier, creates a pre-restore snapshot, validates the restore candidate, replaces the database atomically, and rolls back if validation fails. Restore is serialized against every request. A failed restore reports whether rollback was actually proven. If automatic rollback cannot be proven, the service writes a fault marker beside the database; health remains unhealthy and workflow mutations stay disabled across restart until manual recovery or a successful validated restore clears the marker.
 
 Admin recovery remains specific rather than generic:
 
