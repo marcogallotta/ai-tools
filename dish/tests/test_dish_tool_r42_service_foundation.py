@@ -124,7 +124,7 @@ def test_loopback_http_transport_returns_same_envelope(tmp_path):
     thread.start()
     try:
         host, port = server.server_address
-        client = DishServiceClient(f"http://{host}:{port}", token="agent-token", run_id="test-run")
+        client = DishServiceClient(f"http://{host}:{port}", token="agent-token", run_id="11111111-1111-4111-8111-111111111111")
         health = client.health()
         result = client.execute("sections", {"agent": "gpt"})
     finally:
@@ -150,7 +150,7 @@ def test_http_request_size_limit_fails_before_command(tmp_path):
     thread.start()
     try:
         host, port = server.server_address
-        client = DishServiceClient(f"http://{host}:{port}", token="agent-token", run_id="test-run")
+        client = DishServiceClient(f"http://{host}:{port}", token="agent-token", run_id="11111111-1111-4111-8111-111111111111")
         result = client.execute("create", {"agent": "gpt", "title": "x" * 100})
     finally:
         server.shutdown()

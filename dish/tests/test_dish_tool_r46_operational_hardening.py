@@ -263,25 +263,32 @@ def test_server_close_drains_inflight_request_before_return(monkeypatch, tmp_pat
 
     def request():
         client = DishServiceClient(
-            f"http://{host}:{port}", token="agent-secret", run_id="request-run"
+            f"http://{host}:{port}", token="agent-secret", run_id="11111111-1111-4111-8111-111111111111"
         )
         result.update(client.execute("sections", {"agent": "gpt"}))
 
     requester = threading.Thread(target=request, daemon=False)
+    closer = None
     requester.start()
-    assert entered.wait(timeout=2)
+    try:
+        assert entered.wait(timeout=2)
 
-    server.shutdown()
-    closer = threading.Thread(target=server.server_close, daemon=False)
-    closer.start()
-    time.sleep(0.05)
-    assert closer.is_alive(), "server_close returned before the active request drained"
+        server.shutdown()
+        closer = threading.Thread(target=server.server_close, daemon=False)
+        closer.start()
+        time.sleep(0.05)
+        assert closer.is_alive(), "server_close returned before the active request drained"
+    finally:
+        release.set()
+        if closer is None:
+            server.shutdown()
+            server.server_close()
+        else:
+            closer.join(timeout=2)
+        requester.join(timeout=2)
+        listener.join(timeout=2)
 
-    release.set()
-    closer.join(timeout=2)
-    requester.join(timeout=2)
-    listener.join(timeout=2)
-    assert not closer.is_alive()
+    assert closer is not None and not closer.is_alive()
     assert not requester.is_alive()
     assert not listener.is_alive()
     assert result["ok"] is True
@@ -299,7 +306,7 @@ def test_backup_restore_and_admin_argument_audit_are_available_over_private_http
     thread.start()
     host, port = server.server_address
     client = DishAdminServiceClient(
-        f"http://{host}:{port}", token="admin-secret", run_id="admin-run"
+        f"http://{host}:{port}", token="admin-secret", run_id="22222222-2222-4222-8222-222222222222"
     )
     try:
         created = client.create_backup(label="http")

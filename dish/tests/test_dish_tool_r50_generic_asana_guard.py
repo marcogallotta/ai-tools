@@ -6,6 +6,7 @@ import asana
 import pytest
 
 from dish_tool.constants import COOKING_PROJECT_GID, REFERENCE_SECTION_GID
+from dish_tool.backend import close_asana_sdk_client
 from dish_tool.generic_asana_guard import CookingMutationBlocked, CookingMutationGuard
 
 
@@ -78,8 +79,7 @@ def guard_transport():
     try:
         yield CookingMutationGuard(api_client=client), transport
     finally:
-        client.pool.close()
-        client.pool.join()
+        close_asana_sdk_client(client)
 
 
 def test_real_sdk_guard_blocks_managed_task_but_allows_excluded_and_outside(guard_transport):

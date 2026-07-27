@@ -8,7 +8,7 @@ from dish_service.application import DishService
 from dish_service.client import DishActionClient
 from dish_service.config import ServiceConfig
 from dish_service.http import build_action_server
-from dish_tool.backend import AsanaBackend
+from dish_tool.backend import AsanaBackend, close_asana_sdk_client
 from dish_tool.database import initialize_database
 from tests.test_dish_tool_r40_placement_gate import StatefulAsanaTransport, _release
 from tests.test_dish_tool_step6_prepare import PLANNING, TASK
@@ -48,7 +48,7 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
     url = f"http://{host}:{port}"
 
     try:
-        planner = DishActionClient(url, token="action-secret-123", run_id="planning-run")
+        planner = DishActionClient(url, token="action-secret-123", run_id="11111111-1111-4111-8111-111111111111")
         created = planner.execute(
             "create",
             agent="gpt",
@@ -72,7 +72,7 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
         )
 
         researcher = DishActionClient(
-            url, token="action-secret-123", run_id="research-run"
+            url, token="action-secret-123", run_id="22222222-2222-4222-8222-222222222222"
         )
         research = researcher.execute(
             "start",
@@ -90,7 +90,7 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
         )
 
         verifier = DishActionClient(
-            url, token="action-secret-123", run_id="verification-run"
+            url, token="action-secret-123", run_id="33333333-3333-4333-8333-333333333333"
         )
         review = verifier.execute(
             "start",
@@ -116,8 +116,7 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
-        api_client.pool.close()
-        api_client.pool.join()
+        close_asana_sdk_client(api_client)
 
     assert created["ok"] and planning["ok"] and planned["ok"]
     assert research["ok"] and prepared["ok"] and review["ok"]
@@ -136,7 +135,7 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 2
         assert conn.execute(
             "SELECT COUNT(*) FROM service_requests WHERE status='completed'"
-        ).fetchone()[0] == 4
+        ).fetchone()[0] == 8
         assert conn.execute(
             "SELECT COUNT(*) FROM service_leases WHERE released_at IS NULL"
         ).fetchone()[0] == 0

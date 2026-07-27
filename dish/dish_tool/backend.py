@@ -113,6 +113,30 @@ def map_backend_exception(
     )
 
 
+def close_asana_sdk_client(api_client: Any) -> None:
+    """Deterministically release a python-asana client's worker pool.
+
+    ``multiprocessing.pool.ThreadPool.close`` and ``join`` stop the workers but
+    leave the pool's registered finalizer active.  On interpreter shutdown that
+    retained finalizer can stall an otherwise completed process.  Cancel the
+    now-redundant finalizer after the graceful join so shutdown has no stale pool
+    callback to execute.
+    """
+
+    pool = getattr(api_client, "pool", None)
+    if pool is None:
+        return
+    pool.close()
+    pool.join()
+    finalizer = getattr(pool, "_terminate", None)
+    if finalizer is not None and finalizer.still_active():
+        finalizer.cancel()
+    # The generated ApiClient destructor blindly closes and joins ``pool``
+    # again during interpreter teardown.  Remove the already-closed pool so
+    # that late destructor execution is a no-op rather than a shutdown hazard.
+    delattr(api_client, "pool")
+
+
 class AsanaBackend:
     """Small SDK construction/call layer shared by both command surfaces."""
 
@@ -161,10 +185,7 @@ class AsanaBackend:
         client = self._client
         if not self._owns_client or client is None:
             return
-        pool = getattr(client, "pool", None)
-        if pool is not None:
-            pool.close()
-            pool.join()
+        close_asana_sdk_client(client)
         self._client = None
 
     def __enter__(self) -> "AsanaBackend":

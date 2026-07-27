@@ -587,6 +587,7 @@ def test_asana_backend_closes_only_the_client_it_created(monkeypatch):
     owned.close()
 
     assert owned_pool._state == "CLOSE"
+    assert not owned_pool._terminate.still_active()
     with pytest.raises(DishRuleError) as exc:
         owned.client()
     assert exc.value.rule == "asana_backend_closed"

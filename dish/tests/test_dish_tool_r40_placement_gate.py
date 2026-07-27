@@ -6,7 +6,7 @@ from pathlib import Path
 import asana
 import pytest
 
-from dish_tool.backend import AsanaBackend
+from dish_tool.backend import AsanaBackend, close_asana_sdk_client
 from dish_tool.commands import DishApplication
 from dish_tool.constants import COOKING_PROJECT_GID
 from dish_tool.database import initialize_database
@@ -87,8 +87,7 @@ def sdk_backend():
     try:
         yield backend, transport
     finally:
-        client.pool.close()
-        client.pool.join()
+        close_asana_sdk_client(client)
 
 
 def test_real_sdk_full_placement_lifecycle(tmp_path, sdk_backend):

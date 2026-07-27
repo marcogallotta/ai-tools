@@ -45,7 +45,7 @@ def _stop(server, thread):
 def test_unauthorized_clients_cannot_read_or_mutate(tmp_path):
     _service, backend, server, thread, url = _running_service(tmp_path)
     try:
-        wrong = DishServiceClient(url, token="wrong", run_id="run")
+        wrong = DishServiceClient(url, token="wrong", run_id="11111111-1111-4111-8111-111111111111")
         read = wrong.execute("read", {"agent": "gpt", "task_gid": "t"})
         start = wrong.execute("start", {"agent": "gpt", "task_gid": "t", "kind": "initial"})
     finally:
@@ -59,8 +59,8 @@ def test_unauthorized_clients_cannot_read_or_mutate(tmp_path):
 def test_agent_and_admin_credentials_are_separate(tmp_path):
     _service, _backend, server, thread, url = _running_service(tmp_path)
     try:
-        agent = DishServiceClient(url, token="agent-secret", run_id="run")
-        admin_with_agent_token = DishAdminServiceClient(url, token="agent-secret", run_id="run")
+        agent = DishServiceClient(url, token="agent-secret", run_id="11111111-1111-4111-8111-111111111111")
+        admin_with_agent_token = DishAdminServiceClient(url, token="agent-secret", run_id="11111111-1111-4111-8111-111111111111")
         agent_result = agent.execute("sections", {"agent": "gpt"})
         admin_result = admin_with_agent_token.execute("discard", {"submission_id": "missing", "reason": "x"})
     finally:
@@ -98,9 +98,9 @@ def test_remote_cli_transports_candidate_text_not_client_path(tmp_path, monkeypa
     monkeypatch.setenv("DISH_MODE", "service")
     monkeypatch.setenv("DISH_SERVICE_URL", url)
     monkeypatch.setenv("DISH_SERVICE_TOKEN", "agent-secret")
-    monkeypatch.setenv("DISH_CLIENT_RUN_ID", "constructor-run")
+    monkeypatch.setenv("DISH_CLIENT_RUN_ID", "22222222-2222-4222-8222-222222222222")
     try:
-        assert cli.main(["start", "123456789", "--agent", "gpt", "--kind", "initial", "--run-id", "constructor-run"]) == 0
+        assert cli.main(["start", "123456789", "--agent", "gpt", "--kind", "initial", "--run-id", "22222222-2222-4222-8222-222222222222"]) == 0
         started = json.loads(capsys.readouterr().out)
         assert cli.main([
             "prepare", started["submission_id"], "--agent", "gpt", "--model", "gpt-5.6-sol",
@@ -117,7 +117,7 @@ def test_remote_cli_transports_candidate_text_not_client_path(tmp_path, monkeypa
 def test_service_token_never_appears_in_results(tmp_path):
     _service, _backend, server, thread, url = _running_service(tmp_path)
     try:
-        client = DishServiceClient(url, token="agent-secret", run_id="run")
+        client = DishServiceClient(url, token="agent-secret", run_id="11111111-1111-4111-8111-111111111111")
         result = client.execute("sections", {"agent": "gpt"})
     finally:
         _stop(server, thread)

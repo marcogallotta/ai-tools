@@ -80,6 +80,10 @@ def close_client():
     if pool is not None:
         pool.close()
         pool.join()
+        finalizer = getattr(pool, "_terminate", None)
+        if finalizer is not None and finalizer.still_active():
+            finalizer.cancel()
+        delattr(current, "pool")
 
 
 def cooking_guard():
