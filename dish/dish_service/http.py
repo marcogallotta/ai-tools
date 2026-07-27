@@ -14,6 +14,7 @@ from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
 
 from .application import DishService
+from .auth import authenticate_bearer
 from .leases import ServicePrincipal
 
 LOG = logging.getLogger("dish.service")
@@ -58,10 +59,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         limit = self.server.service.config.max_body_bytes
         if length < 0 or length > limit:
             raise DishRuleError(
-                "INVALID_ARGUMENT",
-                "request body exceeds the service limit",
-                rule="request_too_large",
-                details={"max_body_bytes": limit},
+                "INVALID_ARGUMENT", "request body exceeds the service limit",
+                rule="request_too_large", details={"max_body_bytes": limit},
             )
         try:
             body = self.rfile.read(length)
@@ -75,6 +74,31 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             raise DishRuleError("INVALID_ARGUMENT", "request body must be a JSON object", rule="request_object_required")
         return value
 
+    def _tokens(self) -> dict[str, tuple[str, str]]:
+        config = self.server.service.config
+        result: dict[str, tuple[str, str]] = {}
+        if config.agent_token:
+            result[config.agent_token] = ("cli", "agent")
+        if config.admin_token:
+            result[config.admin_token] = ("marco-admin", "admin")
+        if config.action_token:
+            result[config.action_token] = ("gpt-action", "action")
+        return result
+
+    def _credential(self, *scopes: str):
+        return authenticate_bearer(
+            self.headers.get("Authorization"), tokens=self._tokens(), allowed_scopes=scopes
+        )
+
+    @staticmethod
+    def _principal(credential, request: dict[str, Any]) -> ServicePrincipal:
+        client = request.get("client")
+        if not isinstance(client, dict):
+            raise DishRuleError(
+                "INVALID_ARGUMENT", "client run identity is required", rule="service_client_required"
+            )
+        return ServicePrincipal.from_values(credential.client_id, client.get("run_id"))
+
     def do_GET(self) -> None:  # noqa: N802
         path = urlsplit(self.path).path
         if path == "/health":
@@ -87,28 +111,46 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         started = time.monotonic()
         path = urlsplit(self.path).path
         parts = [part for part in path.split("/") if part]
+        command = "unknown"
+        surface = "unknown"
         if len(parts) == 3 and parts[:2] == ["v1", "commands"]:
-            command = parts[2]
+            surface, command = "agent", parts[2]
         elif len(parts) == 4 and parts[:2] == ["v1", "leases"] and parts[3] == "renew":
-            command = "renew-lease"
-        else:
-            command = "unknown"
+            surface, command = "lease", "renew-lease"
+        elif len(parts) == 3 and parts[:2] == ["v1", "admin"]:
+            surface, command = "admin", parts[2]
+        elif len(parts) == 5 and parts[:3] == ["v1", "admin", "leases"] and parts[4] == "recover":
+            surface, command = "admin-lease", "recover-lease"
+        elif len(parts) == 3 and parts[:2] == ["v1", "argument-failures"]:
+            surface, command = "argument-failure", parts[2]
         try:
             if command == "unknown":
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
                 return
+            if surface in {"agent", "lease", "argument-failure"}:
+                credential = self._credential("agent", "action")
+            else:
+                credential = self._credential("admin")
             request = self._read_json()
-            client = request.get("client")
-            principal = None
-            if client is not None:
-                if not isinstance(client, dict):
-                    raise DishRuleError("INVALID_ARGUMENT", "client must be a JSON object", rule="client_object_required")
-                principal = ServicePrincipal.from_values(client.get("owner_id"), client.get("run_id"))
-            if len(parts) == 4 and parts[:2] == ["v1", "leases"] and parts[3] == "renew":
-                operation_id = parts[2]
-                if principal is None:
-                    raise DishRuleError("INVALID_ARGUMENT", "client identity is required", rule="service_principal_required")
-                payload = self.server.service.renew_lease(operation_id, principal)
+            principal = self._principal(credential, request)
+            if surface == "lease":
+                payload = self.server.service.renew_lease(parts[2], principal)
+            elif surface == "admin-lease":
+                reason = str(request.get("reason") or "").strip()
+                if not reason:
+                    raise DishRuleError("INVALID_ARGUMENT", "recovery reason is required", rule="recovery_reason_required")
+                payload = self.server.service.recover_lease(parts[3], principal, reason=reason)
+            elif surface == "admin":
+                arguments = request.get("arguments", {})
+                if not isinstance(arguments, dict):
+                    raise DishRuleError("INVALID_ARGUMENT", "arguments must be a JSON object", rule="arguments_object_required")
+                payload = self.server.service.execute_admin(command, arguments)
+            elif surface == "argument-failure":
+                error = request.get("error")
+                context = request.get("context", {})
+                if not isinstance(error, dict) or not isinstance(context, dict):
+                    raise DishRuleError("INVALID_ARGUMENT", "argument failure payload is invalid", rule="argument_failure_invalid")
+                payload = self.server.service.record_agent_argument_failure(command, error, context)
             else:
                 arguments = request.get("arguments", {})
                 if not isinstance(arguments, dict):
@@ -116,9 +158,12 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 payload = self.server.service.execute_agent(command, arguments, principal=principal)
             self._write_json(HTTPStatus.OK, payload)
         except DishRuleError as exc:
-            self._write_json(HTTPStatus.BAD_REQUEST, error_envelope(command, exc))
+            status = HTTPStatus.UNAUTHORIZED if exc.rule in {"service_auth_required", "service_auth_invalid"} else (
+                HTTPStatus.FORBIDDEN if exc.rule == "service_scope_forbidden" else HTTPStatus.BAD_REQUEST
+            )
+            self._write_json(status, error_envelope(command, exc))
         finally:
-            LOG.info("command_complete command=%s elapsed_ms=%d", command, int((time.monotonic() - started) * 1000))
+            LOG.info("command_complete surface=%s command=%s elapsed_ms=%d", surface, command, int((time.monotonic() - started) * 1000))
 
 
 def build_server(service: DishService) -> DishHTTPServer:

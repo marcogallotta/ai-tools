@@ -41,7 +41,7 @@ def _service(tmp_path, backend, *, loader=None):
     honest = tmp_path / "honest"
     honest.mkdir(exist_ok=True)
     return DishService(
-        ServiceConfig(db_path=tmp_path / "shared.db", honest_root=honest, port=0),
+        ServiceConfig(db_path=tmp_path / "shared.db", honest_root=honest, port=0, agent_token="agent-token", admin_token="admin-token"),
         backend_factory=lambda: backend,
         release_loader=loader or _release_loader(honest),
     )
@@ -56,7 +56,7 @@ def test_service_and_direct_application_share_canonical_result_contract(tmp_path
         initialize_database(tmp_path / "direct.db"), backend, release_loader=loader
     )
     service = DishService(
-        ServiceConfig(db_path=tmp_path / "service.db", honest_root=honest),
+        ServiceConfig(db_path=tmp_path / "service.db", honest_root=honest, agent_token="agent-token", admin_token="admin-token"),
         backend_factory=lambda: backend,
         release_loader=loader,
     )
@@ -122,7 +122,7 @@ def test_loopback_http_transport_returns_same_envelope(tmp_path):
     thread.start()
     try:
         host, port = server.server_address
-        client = DishServiceClient(f"http://{host}:{port}")
+        client = DishServiceClient(f"http://{host}:{port}", token="agent-token", run_id="test-run")
         health = client.health()
         result = client.execute("sections", {"agent": "gpt"})
     finally:
@@ -148,7 +148,7 @@ def test_http_request_size_limit_fails_before_command(tmp_path):
     thread.start()
     try:
         host, port = server.server_address
-        client = DishServiceClient(f"http://{host}:{port}")
+        client = DishServiceClient(f"http://{host}:{port}", token="agent-token", run_id="test-run")
         result = client.execute("create", {"agent": "gpt", "title": "x" * 100})
     finally:
         server.shutdown()

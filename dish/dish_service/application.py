@@ -225,6 +225,37 @@ class DishService:
         finally:
             conn.close()
 
+    def record_agent_argument_failure(
+        self,
+        command: str,
+        error_payload: Mapping[str, Any],
+        context: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        conn = initialize_database(self.config.db_path)
+        try:
+            app = DishApplication(
+                conn,
+                self.backend_factory(),
+                release_loader=lambda role=None: self._release(role),
+            )
+            error = DishRuleError(
+                str(error_payload.get("code") or "INVALID_ARGUMENT"),
+                str(error_payload.get("message") or "invalid arguments"),
+                rule=error_payload.get("rule"),
+                retryable=bool(error_payload.get("retryable", False)),
+                details=error_payload.get("details") if isinstance(error_payload.get("details"), dict) else None,
+                errors=error_payload.get("errors") if isinstance(error_payload.get("errors"), list) else None,
+            )
+            return app.record_argument_failure(
+                command,
+                error,
+                agent=context.get("agent"),
+                task_gid=context.get("task_gid"),
+                submission_id=context.get("submission_id"),
+            )
+        finally:
+            conn.close()
+
     def execute_admin(self, command: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
         conn = initialize_database(self.config.db_path)
         try:
@@ -247,7 +278,7 @@ class DishService:
             return {
                 "ok": True,
                 "service": "dish",
-                "database": {"ok": True, "path": str(self.config.db_path)},
+                "database": {"ok": True},
                 "compatibility": {
                     "ok": True,
                     "protocol_version": release.protocol_version,
@@ -258,7 +289,7 @@ class DishService:
             return {
                 "ok": False,
                 "service": "dish",
-                "database": {"ok": False, "path": str(self.config.db_path)},
+                "database": {"ok": False},
                 "compatibility": {"ok": False, "message": str(exc), "rule": exc.rule},
             }
         finally:

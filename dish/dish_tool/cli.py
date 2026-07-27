@@ -15,6 +15,7 @@ from .constants import DEFAULT_DB_PATH
 from .database import initialize_database
 from .errors import DishRuleError
 from .releases import configured_honest_path, resolve_release
+from dish_service.client import DishServiceClient
 from .results import error_envelope, exit_status
 
 
@@ -264,7 +265,26 @@ def build_parser() -> JsonArgumentParser:
     return parser
 
 
-def build_application() -> DishApplication:
+def build_application():
+    mode = os.environ.get("DISH_MODE", "").strip().lower()
+    service_url = os.environ.get("DISH_SERVICE_URL", "").strip()
+    if mode not in {"", "local", "service"}:
+        raise DishRuleError("INVALID_ARGUMENT", "DISH_MODE must be local or service", rule="dish_mode_invalid")
+    if mode == "service" or (not mode and service_url):
+        if not service_url:
+            raise DishRuleError("INVALID_ARGUMENT", "DISH_SERVICE_URL is required in service mode", rule="service_url_required")
+        return DishServiceClient(
+            service_url,
+            token=os.environ.get("DISH_SERVICE_TOKEN", ""),
+            run_id=os.environ.get("DISH_CLIENT_RUN_ID", ""),
+            timeout=float(os.environ.get("DISH_SERVICE_CLIENT_TIMEOUT", "65")),
+        )
+    if os.environ.get("DISH_LIVE_MODE", "").strip().lower() in {"1", "true", "yes"}:
+        raise DishRuleError(
+            "PROTOCOL_INCOMPATIBLE",
+            "live mode requires the shared dish service",
+            rule="shared_service_required",
+        )
     db_path = Path(os.environ.get("DISH_DB_PATH", str(DEFAULT_DB_PATH))).expanduser()
     honest_root = configured_honest_path()
     conn = initialize_database(db_path)
@@ -352,4 +372,6 @@ def main(
         return exit_status(result["code"])
     finally:
         if owned_application:
-            app.conn.close()
+            conn = getattr(app, "conn", None)
+            if conn is not None:
+                conn.close()

@@ -18,6 +18,9 @@ class ServiceConfig:
     max_body_bytes: int = 2 * 1024 * 1024
     request_timeout_seconds: float = 60.0
     lease_ttl_seconds: int = 1800
+    agent_token: str | None = None
+    admin_token: str | None = None
+    action_token: str | None = None
 
     @classmethod
     def from_env(cls) -> "ServiceConfig":
@@ -29,4 +32,7 @@ class ServiceConfig:
             max_body_bytes=int(os.environ.get("DISH_SERVICE_MAX_BODY_BYTES", str(2 * 1024 * 1024))),
             request_timeout_seconds=float(os.environ.get("DISH_SERVICE_REQUEST_TIMEOUT", "60")),
             lease_ttl_seconds=int(os.environ.get("DISH_SERVICE_LEASE_TTL_SECONDS", "1800")),
+            agent_token=os.environ.get("DISH_SERVICE_AGENT_TOKEN") or None,
+            admin_token=os.environ.get("DISH_SERVICE_ADMIN_TOKEN") or None,
+            action_token=os.environ.get("DISH_SERVICE_ACTION_TOKEN") or None,
         )

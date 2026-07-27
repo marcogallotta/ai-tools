@@ -28,7 +28,8 @@ Gets and sets notes, moves tasks between sections, creates tasks and subtasks. R
 token from `~/.config/asana-cli/.env`. Every write goes through a hook prompt.
 
 **`dish/`** — the `dish` protocol tool: the one validated path for writing protocol-governed
-dish-task notes to Asana. See `dish/README.md`.
+dish-task notes to Asana. Live multi-agent use runs through the laptop-hosted `dish-service`;
+local direct mode is limited to controlled single-agent testing. See `dish/README.md`.
 
 **`hooks/`** — Claude Code PreToolUse guards that make the above non-optional: they block
 carpet-bomb `git`/`rm` patterns, compound bash, raw redirects, and unguarded Asana and
@@ -54,6 +55,7 @@ The repo is used through `~/.claude/` and `~/.local/bin/`, not from this directo
 | `tools/asana` | `~/.local/bin/asana` |
 | `dish/dish` | `~/.local/bin/dish` |
 | `dish/dish-admin` | `~/.local/bin/dish-admin` |
+| `dish/dish-service` | `~/.local/bin/dish-service` |
 
 The two agent-facing config paths live under `~/.claude/` because Claude Code discovers them
 by location. The executables live in `~/.local/bin/`, which is on the real `PATH`, so
