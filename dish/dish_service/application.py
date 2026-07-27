@@ -17,6 +17,7 @@ from dish_tool.errors import DishRuleError
 from dish_tool.models import SectionRegistry
 from dish_tool.releases import resolve_release
 from dish_tool.results import error_envelope, result_envelope
+from dish_tool.validation_scope import scope_for_command
 
 from .backup import BackupManager
 from .config import ServiceConfig
@@ -319,7 +320,24 @@ class DishService:
                         leases.release(operation_id, principal, reason="service_command_rejected")
                     except Exception:
                         pass
-                return error_envelope(command, exc, submission_id=operation_id)
+                operation_kind = None
+                if operation_id:
+                    row = conn.execute(
+                        "SELECT operation_kind FROM operations WHERE operation_id=?",
+                        (operation_id,),
+                    ).fetchone()
+                    operation_kind = None if row is None else row["operation_kind"]
+                validation_scope = (
+                    scope_for_command(command, operation_kind=operation_kind)
+                    if operation_id
+                    else ()
+                )
+                return error_envelope(
+                    command,
+                    exc,
+                    submission_id=operation_id,
+                    validation_scope=validation_scope,
+                )
             finally:
                 conn.close()
 

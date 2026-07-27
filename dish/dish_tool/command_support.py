@@ -30,6 +30,7 @@ class CommandTrace:
     task_gid: str | None = None
     submission_id: str | None = None
     state: str | None = None
+    validation_scope: tuple[str, ...] = ()
     known_submission: bool = False
     audit_details: dict[str, Any] = field(default_factory=dict)
     actor_agent: str | None = None

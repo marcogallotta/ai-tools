@@ -96,6 +96,21 @@ Every invocation writes exactly one compact JSON object to stdout:
 - `data` contains command-specific exact identities, diagnostics, protocol text, or completion facts.
 - `errors` contains structured findings with a `rule` and any supporting fields.
 
+Governed boundary responses include `data.validation_scope`, an ordered list drawn from:
+
+- `structural-only` — deterministic parsing and schema/shape checks only;
+- `transition-state` — current workflow state and legal-transition checks;
+- `exact-content-identity` — exact live content or persisted identity binding;
+- `agent-semantic-review` — the agent reported that it performed the semantic review;
+- `provenance-signoff` — verifier provenance and exact signoff binding;
+- `movement-confirmation` — destination movement confirmed by live reread.
+
+The field reports the checks attempted at that boundary on both success and failure. It never means
+Dish independently judged culinary truth, source quality, or substantive correctness. In
+particular, Research preparation remains deterministic conformance rather than substantive
+approval; Verification semantic review is supplied by the verifier; and successful `submit`
+confirms state, identity, and movement without repeating semantic review.
+
 ## Result codes and exit statuses
 
 | Code | Exit | Meaning and handling |

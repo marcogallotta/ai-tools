@@ -122,6 +122,10 @@ def test_approval_signs_exact_reread_without_moving_and_requires_inputs(tmp_path
     missing = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=False, provenance_complete=True, run_id="run-3")
     assert missing["code"] == "VALIDATION_FAILED"
+    assert missing["data"]["validation_scope"] == [
+        "structural-only", "transition-state", "exact-content-identity",
+        "agent-semantic-review", "provenance-signoff",
+    ]
     result = app.execute("approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True, run_id="run-3")
     assert result["ok"]
@@ -129,6 +133,10 @@ def test_approval_signs_exact_reread_without_moving_and_requires_inputs(tmp_path
     assert "Verified by: Codex — gpt-5.6-sol," in backend.notes
     assert backend.section == "vq" and backend.moves == 1
     assert result["allowed_actions"] == ["submit"]
+    assert result["data"]["validation_scope"] == [
+        "structural-only", "transition-state", "exact-content-identity",
+        "agent-semantic-review", "provenance-signoff",
+    ]
     row = app.conn.execute("SELECT signoff_completed_at, movement_completed_at FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     assert row["signoff_completed_at"] is not None
     assert row["movement_completed_at"] is None  # verification handoff is not final submission movement

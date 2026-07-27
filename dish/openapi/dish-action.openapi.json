@@ -17,6 +17,23 @@
           },
           "data": {
             "additionalProperties": true,
+            "properties": {
+              "validation_scope": {
+                "items": {
+                  "enum": [
+                    "structural-only",
+                    "transition-state",
+                    "exact-content-identity",
+                    "agent-semantic-review",
+                    "provenance-signoff",
+                    "movement-confirmation"
+                  ],
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              }
+            },
             "type": "object"
           },
           "errors": {

@@ -59,6 +59,11 @@ def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path)
     assert bad["code"] == "INVALID_ARGUMENT"
     good = app.execute("reject", agent="codex", submission_id=operation_id, route="evidence", reason="Marco must confirm the factual input", resume_status="pending-verification", run_id="review")
     assert good["ok"] and "Status: pending-evidence" in backend.notes
+    assert good["data"]["validation_scope"] == [
+        "structural-only", "transition-state", "exact-content-identity",
+        "agent-semantic-review",
+    ]
+    assert "provenance-signoff" not in good["data"]["validation_scope"]
 
 
 def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):

@@ -21,6 +21,7 @@ from .invocation_audit import record_invocation_audit
 from .errors import BackendFailure, DishRuleError
 from .models import ResolvedRelease, SectionRegistry, agent_family, is_protocol_managed
 from .results import error_envelope, result_envelope
+from .validation_scope import scope_for_command
 
 
 class DishApplication:
@@ -86,6 +87,7 @@ class DishApplication:
                 task_gid=trace.task_gid,
                 submission_id=trace.submission_id,
                 state=trace.state,
+                validation_scope=trace.validation_scope,
             )
         except Exception:
             exc = DishRuleError(
@@ -99,6 +101,7 @@ class DishApplication:
                 task_gid=trace.task_gid,
                 submission_id=trace.submission_id,
                 state=trace.state,
+                validation_scope=trace.validation_scope,
             )
         self._record_invocation(command, trace.actor_agent or actor, trace, result)
         return result
@@ -115,16 +118,20 @@ class DishApplication:
         trace = CommandTrace(task_gid=task_gid, submission_id=submission_id)
         if submission_id:
             row = self.conn.execute(
-                "SELECT task_gid, status, editor_agent FROM operations WHERE operation_id=?",
+                "SELECT task_gid, status, editor_agent, operation_kind FROM operations WHERE operation_id=?",
                 (submission_id,),
             ).fetchone()
             if row is not None:
                 trace.task_gid = row["task_gid"]
                 trace.state = row["status"]
                 trace.actor_agent = row["editor_agent"]
+                trace.validation_scope = scope_for_command(
+                    command, operation_kind=row["operation_kind"]
+                )
         result = error_envelope(
             command, error, task_gid=trace.task_gid,
             submission_id=submission_id, state=trace.state,
+            validation_scope=trace.validation_scope,
         )
         self._record_invocation(command, trace.actor_agent or agent, trace, result)
         return result
@@ -354,7 +361,14 @@ def _step6_prepare(self, *, trace: CommandTrace, agent: str, model: str | None =
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
-    release = self._load_release("planning" if self.conn.execute("SELECT operation_kind FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0] == "planning" else "research")
+    operation_kind = self.conn.execute(
+        "SELECT operation_kind FROM operations WHERE operation_id = ?",
+        (operation_id,),
+    ).fetchone()[0]
+    trace.validation_scope = scope_for_command(
+        "prepare", operation_kind=operation_kind
+    )
+    release = self._load_release("planning" if operation_kind == "planning" else "research")
     data, view = self.operation_service.current.prepare(
         operation_id,
         lambda: prepare_live(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, file_path=file_path or "", release=release, material_classification=material_classification),
@@ -366,7 +380,11 @@ def _step6_prepare(self, *, trace: CommandTrace, agent: str, model: str | None =
         # Planning's operation is finished, but the task's next legal command is
         # the Research `start`. Naming it keeps the "do not guess one" rule true.
         legal_actions = ["start"]
-    return result_envelope(command="prepare", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=legal_actions, data=data)
+    return result_envelope(
+        command="prepare", task_gid=trace.task_gid, submission_id=operation_id,
+        state=view["status"], allowed_actions=legal_actions, data=data,
+        validation_scope=trace.validation_scope,
+    )
 
 
 # Step 7 exact-live Verification lifecycle.
@@ -448,6 +466,7 @@ def _step7_approve(
         )
     if routed.generation == "missing":
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    trace.validation_scope = scope_for_command("approve")
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
     clean_identity = _clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity")
@@ -469,6 +488,7 @@ def _step7_approve(
     return result_envelope(
         command="approve", task_gid=trace.task_gid, submission_id=operation_id,
         state=view["status"], allowed_actions=view["legal_actions"], data=data,
+        validation_scope=trace.validation_scope,
     )
 
 
@@ -482,6 +502,7 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None =
     exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     if exists is None or correction != "small" or not file_path:
         return _step7_command_approve(self, trace=trace, agent=agent, model=model, submission_id=submission_id, file_path=file_path, correction=correction, reviewed_identity=reviewed_identity, semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation, **legacy)
+    trace.validation_scope = scope_for_command("approve")
     from .step8 import approve_small
     release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
@@ -491,7 +512,11 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None =
         schema=release.schema,
     )
     trace.state = view["status"]
-    return result_envelope(command="approve", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
+    return result_envelope(
+        command="approve", task_gid=trace.task_gid, submission_id=operation_id,
+        state=view["status"], allowed_actions=view["legal_actions"], data=data,
+        validation_scope=trace.validation_scope,
+    )
 
 def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, **legacy: Any) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
@@ -512,6 +537,7 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = 
         )
     if routed.generation == "missing":
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    trace.validation_scope = scope_for_command("reject")
     from .step8 import reject_route
     release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
@@ -521,7 +547,11 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = 
         schema=release.schema,
     )
     trace.state = view["status"]
-    return result_envelope(command="reject", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
+    return result_envelope(
+        command="reject", task_gid=trace.task_gid, submission_id=operation_id,
+        state=view["status"], allowed_actions=view["legal_actions"], data=data,
+        validation_scope=trace.validation_scope,
+    )
 
 
 # Step 9 movement-only submit.
@@ -539,6 +569,7 @@ def _step9_submit(self, *, trace: CommandTrace, submission_id: str, file_path: s
         )
     if routed.generation == "missing":
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    trace.validation_scope = scope_for_command("submit")
     from .step9 import submit_live
     release = self._load_release("verification")
     trace.submission_id = operation_id
@@ -549,7 +580,11 @@ def _step9_submit(self, *, trace: CommandTrace, submission_id: str, file_path: s
         schema=release.schema,
     )
     trace.state = view["status"]
-    return result_envelope(command="submit", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
+    return result_envelope(
+        command="submit", task_gid=trace.task_gid, submission_id=operation_id,
+        state=view["status"], allowed_actions=view["legal_actions"], data=data,
+        validation_scope=trace.validation_scope,
+    )
 
 class CurrentDishApplication(DishApplication):
     """Sole supported current workflow dispatcher."""

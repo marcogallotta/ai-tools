@@ -27,6 +27,11 @@ def test_submit_is_movement_only_and_moves_vq_once(tmp_path):
     before = (backend.title, backend.notes, backend.writes)
     result = app.execute("submit", submission_id=operation_id, file_path="ignored")
     assert result["ok"] and result["data"]["handoff"] == "moved_to_destination"
+    assert result["data"]["validation_scope"] == [
+        "structural-only", "transition-state", "exact-content-identity",
+        "movement-confirmation",
+    ]
+    assert "agent-semantic-review" not in result["data"]["validation_scope"]
     assert backend.section == "12345" and backend.moves == 2
     assert (backend.title, backend.notes, backend.writes) == before
     retry = app.execute("submit", submission_id=operation_id, file_path="ignored")
@@ -73,6 +78,10 @@ def test_changed_content_after_signoff_blocks_movement(tmp_path):
     result = app.execute("submit", submission_id=operation_id, file_path="ignored")
     assert result["code"] == "CONFLICT"
     assert result["errors"][0]["rule"] == "post_signoff_content_drift"
+    assert result["data"]["validation_scope"] == [
+        "structural-only", "transition-state", "exact-content-identity",
+        "movement-confirmation",
+    ]
     assert backend.moves == moves
 
 

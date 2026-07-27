@@ -8,6 +8,7 @@ from .constants import (
     EXIT_STATUS_BY_CODE,
 )
 from .errors import DishRuleError
+from .validation_scope import add_validation_scope
 
 
 def allowed_actions_for_state(state: str | None) -> list[str]:
@@ -28,6 +29,7 @@ def result_envelope(
     allowed_actions: Sequence[str] | None = None,
     data: Mapping[str, Any] | None = None,
     errors: Sequence[Mapping[str, Any]] | None = None,
+    validation_scope: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     if code not in EXIT_STATUS_BY_CODE:
         raise ValueError(f"unknown result code: {code}")
@@ -39,6 +41,7 @@ def result_envelope(
         retryable = DEFAULT_RETRYABLE_BY_CODE[code]
     if allowed_actions is None:
         allowed_actions = allowed_actions_for_state(state)
+    result_data = add_validation_scope(dict(data or {}), validation_scope)
     return {
         "ok": bool(ok),
         "command": command,
@@ -48,7 +51,7 @@ def result_envelope(
         "state": state,
         "retryable": bool(retryable),
         "allowed_actions": list(allowed_actions),
-        "data": dict(data or {}),
+        "data": result_data,
         "errors": [dict(error) for error in (errors or [])],
     }
 
@@ -60,6 +63,7 @@ def error_envelope(
     task_gid: str | None = None,
     submission_id: str | None = None,
     state: str | None = None,
+    validation_scope: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     rule_error = [dict(item) for item in error.errors]
     if error.rule:
@@ -76,6 +80,7 @@ def error_envelope(
         retryable=error.retryable,
         errors=rule_error,
         data={"message": str(error)},
+        validation_scope=validation_scope,
     )
 
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from dish_tool.validation_scope import VALIDATION_SCOPE_VALUES
+
 ACTION_COMMANDS = (
     "create",
     "sections",
@@ -111,7 +113,20 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
             "state": {"type": ["string", "null"]},
             "retryable": {"type": "boolean"},
             "allowed_actions": {"type": "array", "items": {"type": "string"}},
-            "data": {"type": "object", "additionalProperties": True},
+            "data": {
+                "type": "object",
+                "additionalProperties": True,
+                "properties": {
+                    "validation_scope": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": list(VALIDATION_SCOPE_VALUES),
+                        },
+                        "uniqueItems": True,
+                    }
+                },
+            },
             "errors": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
         },
     }

@@ -85,6 +85,9 @@ def test_planning_prepare_writes_live_and_preserves_research_queue(tmp_path):
     result=a.execute("prepare", model="gpt-5.6-sol",agent="gpt",submission_id=started["submission_id"],file_path=write(tmp_path,"p.txt",PLANNING))
     assert result["ok"] and b.writes == 1 and b.section == "rq"
     assert "Locks: Keep crisp" in b.notes and "Exemptions: None" in b.notes
+    assert result["data"]["validation_scope"] == [
+        "structural-only", "transition-state", "exact-content-identity",
+    ]
 
 def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
@@ -94,12 +97,19 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
     assert "Status: pending-verification" in b.notes
     assert "Verification protocol release: sha256:" in b.notes
     assert result["data"]["verification_cycle"]["protocol_release"].startswith("sha256:")
+    assert result["data"]["validation_scope"] == [
+        "structural-only", "transition-state", "exact-content-identity",
+    ]
+    assert "agent-semantic-review" not in result["data"]["validation_scope"]
 
 def test_initial_prepare_requires_model(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
     started=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
     result=a.execute("prepare", agent="gpt",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
     assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_required"
+    assert result["data"]["validation_scope"] == [
+        "structural-only", "transition-state", "exact-content-identity",
+    ]
     assert b.writes == 0
 
 def test_initial_prepare_rejects_model_with_em_dash(tmp_path):

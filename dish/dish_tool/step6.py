@@ -135,7 +135,11 @@ def prepare_live(
         complete_operation_step(conn, operation_id, "planning_handoff")
         transition_operation(conn, operation_id, phase="terminal", status="completed", terminal_outcome="planning_handoff_confirmed")
         complete_operation_step(conn, operation_id, "planning_terminal")
-        return {"operation_id": operation_id, "task": dataclasses.asdict(confirmed), "handoff": "planning-to-research", "validation_scope": "structural-only"}
+        return {
+            "operation_id": operation_id,
+            "task": dataclasses.asdict(confirmed),
+            "handoff": "planning-to-research",
+        }
 
     try:
         candidate = parse_task_document(text)
