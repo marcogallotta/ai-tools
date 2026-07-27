@@ -371,9 +371,9 @@ registry checks, pending audit repairs, active operations, and leases. Failed mu
 block before entering workflow code.
 
 `BackupManager` uses SQLite's online backup API, validates the complete current database contract,
-and accepts only managed backup identifiers. Restore copies a managed source into a candidate,
-migrates and validates that candidate without altering the source backup, then obtains exclusive
-maintenance access for replacement. A validated pre-restore snapshot is attempted when the live
+and accepts only managed backup identifiers. Restore obtains exclusive maintenance access, copies a managed source into a candidate, and
+migrates and validates that candidate without altering the source backup. A validated pre-restore
+snapshot is attempted when the live
 database is readable; an invalid live database does not block recovery from a valid managed backup.
 Replacement is atomic and a validated pre-restore snapshot is used for rollback when available. If
 rollback cannot be proven, the service writes an atomic sidecar fault marker outside the replaceable
