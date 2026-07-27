@@ -188,3 +188,16 @@ def test_admin_migration_sets_version_only_on_validated_exact_write(tmp_path):
     result=admin.execute("migrate",task_gid="t")
     assert result["ok"] and result["data"]["schema_version"] == "2"
     assert "Schema version: 2" in b.notes
+
+def test_wrong_state_response_exposes_current_legal_action(tmp_path):
+    b = Backend()
+    a = app(tmp_path, b)
+    started = a.execute(
+        "start", agent="gpt", task_gid="t", kind="planning",
+        change_level=None, change_reason=None,
+    )
+    result = a.execute("submit", submission_id=started["submission_id"])
+    assert result["code"] == "WRONG_STATE"
+    assert result["allowed_actions"] == ["prepare"]
+    assert result["retryable"] is False
+

@@ -149,6 +149,23 @@ class DishApplication:
                 state=trace.state,
                 validation_scope=trace.validation_scope,
             )
+            if trace.submission_id and exc.code == "WRONG_STATE":
+                try:
+                    release = self._load_release(None)
+                    view = _exposed_view(
+                        self.operation_service.authoritative_view(
+                            trace.submission_id, schema=release.schema
+                        )
+                    )
+                    actions, exposed_data = _exposed_result_contract(
+                        view, result.get("data", {})
+                    )
+                    result["state"] = view["status"]
+                    result["allowed_actions"] = actions
+                    result["data"] = exposed_data
+                except Exception:
+                    # Error reporting must not hide the original governed failure.
+                    pass
         except Exception:
             exc = DishRuleError(
                 "INTERNAL_ERROR",
