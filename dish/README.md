@@ -37,6 +37,7 @@ Start from `deploy/systemd/service.env.example`. The service host needs:
 
 ```sh
 DISH_HONEST_PATH=/home/marco/honest-pantry
+DISH_COOKING_PROJECT_GID=<Cooking project gid>
 DISH_DB_PATH=/home/marco/.local/state/dish/shared.sqlite3
 DISH_SERVICE_BACKUP_DIR=/home/marco/.local/state/dish/backups
 DISH_SERVICE_BIND=127.0.0.1
@@ -50,6 +51,18 @@ ASANA_ENV=/home/marco/.config/asana-cli/.env
 ```
 
 Only the service-host environment contains Asana credentials. Protect the environment file and state directory with owner-only permissions.
+
+For the controlled Step 12 test deployment, keep test state separate from production:
+
+```sh
+DISH_HONEST_PATH=/home/marco/honest-pantry-dish-rollout
+DISH_COOKING_PROJECT_GID=1216693403164366
+DISH_DB_PATH=/home/marco/.local/state/dish/test/shared.sqlite3
+DISH_SERVICE_BACKUP_DIR=/home/marco/.local/state/dish/test/backups
+```
+
+Do not switch those values to the production checkout, project, or database until the separately
+authorized production cutover.
 
 Install and start the systemd unit only during the controlled Step 12 activation:
 
@@ -73,7 +86,7 @@ The normal live CLI is an HTTP client and does not open SQLite or construct an A
 ```sh
 export DISH_LIVE_MODE=1
 export DISH_MODE=service
-export DISH_SERVICE_URL=https://<laptop-tailnet-name>
+export DISH_SERVICE_URL=https://<laptop-tailnet-name>:8444
 export DISH_SERVICE_TOKEN=<private CLI token>
 export DISH_CLIENT_RUN_ID=<unique run identity>
 ```
@@ -83,7 +96,7 @@ Marco's admin shell uses the same private tailnet URL but a separate token:
 ```sh
 export DISH_LIVE_MODE=1
 export DISH_MODE=service
-export DISH_SERVICE_URL=https://<laptop-tailnet-name>
+export DISH_SERVICE_URL=https://<laptop-tailnet-name>:8444
 export DISH_ADMIN_TOKEN=<Marco-admin token>
 export DISH_CLIENT_RUN_ID=<unique admin run identity>
 ```

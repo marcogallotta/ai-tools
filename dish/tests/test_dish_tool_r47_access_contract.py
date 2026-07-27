@@ -151,8 +151,10 @@ def test_checked_in_contract_documents_final_step11_access_paths():
     assert "DISH_LIVE_MODE=1" in runtime and "DISH_MODE=service" in runtime
     assert "Action-only listener" in runtime
     assert "Step 12" in readme and "does not itself authorize production activation" in readme
-    assert "--https=443" in tailscale and "--https=8443" in tailscale
+    assert "--https=8444" in tailscale and "--https=8443" in tailscale
+    assert "port 443" in tailscale and "must remain unchanged" in tailscale
     assert "127.0.0.1:8765" in tailscale and "127.0.0.1:8766" in tailscale
+    assert "1216693403164366" in smoke
     assert "Do not run this against production Cooking" in smoke
 
 
@@ -166,6 +168,7 @@ def test_deployment_assets_keep_secrets_host_side_and_action_schema_trimmed():
     assert "DISH_SERVICE_AGENT_TOKEN=" in env_example
     assert "DISH_SERVICE_ADMIN_TOKEN=" in env_example
     assert "DISH_SERVICE_ACTION_TOKEN=" in env_example
+    assert "DISH_COOKING_PROJECT_GID=" in env_example
     assert "EnvironmentFile=" in unit and "UMask=0077" in unit
     assert all(path.startswith("/v1/action/") for path in openapi["paths"])
     assert "/admin" not in rendered
