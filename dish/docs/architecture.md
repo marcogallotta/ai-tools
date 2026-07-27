@@ -82,6 +82,11 @@ Tailscale Serve exposes the private listener to trusted tailnet clients. Tailsca
 Action listener. The Action token is not accepted for private or admin routes, and the Action schema
 contains no raw Asana, migration, recovery, health, or backup endpoint.
 
+The two listeners run in supervised non-daemon threads. `SIGTERM`, `SIGINT`, or failure of either
+listener stops both listeners. Shutdown first stops acceptance, then closes the servers and waits for
+every active request handler to finish, because a handler may own a database transaction or an
+in-flight Asana mutation. Failure to bind the second listener closes the first before startup exits.
+
 ### Local test mode
 
 `DISH_MODE=local` constructs a local SQLite connection and `AsanaBackend` in the CLI process. The

@@ -25,7 +25,11 @@ LOG = logging.getLogger("dish.service")
 
 
 class DishHTTPServer(ThreadingHTTPServer):
-    daemon_threads = True
+    # Request handlers may own a database transaction or an in-flight Asana
+    # mutation.  They must be drained before process exit rather than abandoned
+    # as daemon threads.
+    daemon_threads = False
+    block_on_close = True
 
     def __init__(self, address, service: DishService, *, surface_mode: str = "combined"):
         if surface_mode not in {"combined", "private", "action"}:

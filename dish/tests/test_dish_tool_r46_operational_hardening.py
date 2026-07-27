@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 from dish_service.application import DishService
+from dish_service.client import DishServiceClient
 from dish_service.config import ServiceConfig
+from dish_service.http import build_server
 from dish_service.leases import ServicePrincipal
 from dish_tool.database import initialize_database, record_command_audit_repair
 from dish_tool.errors import DishRuleError
@@ -238,6 +242,49 @@ def test_health_payload_contains_no_paths_or_credentials(tmp_path):
     assert str(service.config.honest_root) not in rendered
     assert "agent-token" not in rendered
     assert "admin-token" not in rendered
+
+
+def test_server_close_drains_inflight_request_before_return(monkeypatch, tmp_path):
+    service, _backend = _service(tmp_path)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_execute(command, arguments, **_kwargs):
+        entered.set()
+        assert release.wait(timeout=5)
+        return result_envelope(command=command, data={"arguments": dict(arguments)})
+
+    monkeypatch.setattr(service, "execute_agent", blocking_execute)
+    server = build_server(service)
+    listener = threading.Thread(target=server.serve_forever, daemon=False)
+    listener.start()
+    host, port = server.server_address
+    result = {}
+
+    def request():
+        client = DishServiceClient(
+            f"http://{host}:{port}", token="agent-secret", run_id="request-run"
+        )
+        result.update(client.execute("sections", {"agent": "gpt"}))
+
+    requester = threading.Thread(target=request, daemon=False)
+    requester.start()
+    assert entered.wait(timeout=2)
+
+    server.shutdown()
+    closer = threading.Thread(target=server.server_close, daemon=False)
+    closer.start()
+    time.sleep(0.05)
+    assert closer.is_alive(), "server_close returned before the active request drained"
+
+    release.set()
+    closer.join(timeout=2)
+    requester.join(timeout=2)
+    listener.join(timeout=2)
+    assert not closer.is_alive()
+    assert not requester.is_alive()
+    assert not listener.is_alive()
+    assert result["ok"] is True
 
 
 def test_backup_restore_and_admin_argument_audit_are_available_over_private_http(tmp_path):

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 from pathlib import Path
+
+import pytest
+
+from dish_service import __main__ as service_main
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -44,3 +49,57 @@ def test_dish_service_fails_closed_when_repository_virtualenv_is_missing(tmp_pat
     assert completed.returncode != 0
     expected = tmp_path / ".venv" / "bin" / "python"
     assert f"dish-service: no virtualenv at {expected}" in completed.stderr
+
+
+def test_sigterm_handler_requests_orderly_shutdown():
+    import threading
+
+    stop = threading.Event()
+    service_main._signal_handler(stop)(signal.SIGTERM, None)
+    assert stop.is_set()
+
+
+def test_second_listener_bind_failure_closes_first(monkeypatch):
+    class PrivateServer:
+        closed = False
+
+        def server_close(self):
+            self.closed = True
+
+    private = PrivateServer()
+    monkeypatch.setattr(service_main, "build_private_server", lambda _service: private)
+
+    def fail_action(_service):
+        raise OSError("address already in use")
+
+    monkeypatch.setattr(service_main, "build_action_server", fail_action)
+    with pytest.raises(OSError, match="address already in use"):
+        service_main._build_servers(object())
+    assert private.closed is True
+
+
+def test_listener_failure_stops_and_closes_both_servers():
+    import threading
+
+    class FakeServer:
+        def __init__(self, *, failure=None):
+            self.failure = failure
+            self.stop = threading.Event()
+            self.closed = False
+
+        def serve_forever(self):
+            if self.failure is not None:
+                raise self.failure
+            self.stop.wait(timeout=5)
+
+        def shutdown(self):
+            self.stop.set()
+
+        def server_close(self):
+            self.closed = True
+
+    private = FakeServer()
+    action = FakeServer(failure=RuntimeError("listener failed"))
+    assert service_main._run_servers(private, action) == 1
+    assert private.closed is True
+    assert action.closed is True
