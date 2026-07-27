@@ -138,7 +138,7 @@ def test_action_server_rejects_malformed_arguments_before_workflow(
         )
     finally:
         _stop(server, thread)
-    assert status == 400
+    assert status == 200
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"] == [{"field": field, "rule": rule}]
     assert backend_calls["count"] == 0

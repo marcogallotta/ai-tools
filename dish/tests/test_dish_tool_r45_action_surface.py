@@ -373,11 +373,12 @@ def test_pre_body_auth_and_size_rejections_close_the_connection(tmp_path):
     finally:
         _stop(server, thread)
 
-    for status, connection_header, will_close, _payload in (
+    assert rejected_auth[0] == 403
+    assert rejected_size[0] == 200
+    for _status, connection_header, will_close, _payload in (
         rejected_auth,
         rejected_size,
     ):
-        assert status in {400, 403}
         assert connection_header == "close"
         assert will_close
     assert rejected_auth[3]["errors"][0]["rule"] == "service_scope_forbidden"

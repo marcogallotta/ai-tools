@@ -256,9 +256,16 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 )
             self._write_json(HTTPStatus.OK, payload)
         except DishRuleError as exc:
-            status = HTTPStatus.UNAUTHORIZED if exc.rule in {"service_auth_required", "service_auth_invalid"} else (
-                HTTPStatus.FORBIDDEN if exc.rule == "service_scope_forbidden" else HTTPStatus.BAD_REQUEST
-            )
+            if exc.rule in {"service_auth_required", "service_auth_invalid"}:
+                status = HTTPStatus.UNAUTHORIZED
+            elif exc.rule == "service_scope_forbidden":
+                status = HTTPStatus.FORBIDDEN
+            elif surface in {"action", "action-lease"}:
+                # GPT Actions classify non-2xx responses as transport failures. Expected
+                # Dish rule outcomes must remain readable canonical workflow envelopes.
+                status = HTTPStatus.OK
+            else:
+                status = HTTPStatus.BAD_REQUEST
             self._write_json(
                 status,
                 error_envelope(command, exc),

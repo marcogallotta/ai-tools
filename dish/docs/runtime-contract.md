@@ -39,7 +39,7 @@ The service host is the only place that defines `ASANA_PAT` or `ASANA_ENV`. It r
 - private CLI/admin listener, intended for Tailscale Serve;
 - Action-only listener, intended for Tailscale Funnel.
 
-The public listener does not route private CLI, admin, health, migration, recovery, or backup endpoints. HTTP status remains transport information; workflow meaning remains in the canonical JSON result code.
+The public listener does not route private CLI, admin, health, migration, recovery, or backup endpoints. HTTP status remains transport information; workflow meaning remains in the canonical JSON result code. On the GPT Action surface, expected authenticated Dish rule outcomes (including `INVALID_ARGUMENT`, state conflicts, and validation failures) use HTTP 200 so the Action runtime returns the canonical envelope to the agent instead of reclassifying it as a transport failure. Authentication and authorization failures retain HTTP 401/403, and unexpected server failures retain HTTP 500.
 
 ## Service ownership and leases
 
