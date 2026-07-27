@@ -255,3 +255,46 @@ def test_admin_operation_error_preserves_task_and_submission_ids(tmp_path):
     assert result["code"] == "AGENT_MISMATCH"
     assert result["task_gid"] == "t"
     assert result["submission_id"] == operation_id
+
+
+def test_failed_repeat_verification_start_does_not_release_existing_lease(tmp_path):
+    service, _backend = _service(tmp_path)
+    constructor = _principal("action", "constructor-run")
+    started = _start(service, constructor)
+    operation_id = started["submission_id"]
+    prepared = service.execute_agent(
+        "prepare",
+        {
+            "agent": "gpt",
+            "model": "gpt-5.6-sol",
+            "submission_id": operation_id,
+            "file_text": TASK,
+        },
+        principal=constructor,
+    )
+    assert prepared["ok"]
+
+    verifier = _principal("action", "verifier-run")
+    first = service.execute_agent(
+        "start",
+        {"agent": "codex", "task_gid": "t", "kind": "verification"},
+        principal=verifier,
+    )
+    assert first["ok"]
+
+    repeated = service.execute_agent(
+        "start",
+        {"agent": "codex", "task_gid": "t", "kind": "verification"},
+        principal=verifier,
+    )
+    assert not repeated["ok"]
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        lease = LeaseManager(conn).active_for_operation(operation_id)
+        assert lease is not None
+        assert lease["owner_id"] == verifier.owner_id
+        assert lease["run_id"] == verifier.run_id
+        assert lease["released_at"] is None
+    finally:
+        conn.close()

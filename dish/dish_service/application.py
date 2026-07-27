@@ -549,8 +549,12 @@ class DishService:
                 elif command == "start" and prepared_arguments.get("kind") == "verification":
                     if not operation_id:
                         raise DishRuleError("NOT_FOUND", "task has no open operation", rule="open_operation_missing")
-                    leases.acquire(operation_id, principal)
-                    acquired_for_request = True
+                    active = leases.active_for_operation(operation_id)
+                    if active is None:
+                        leases.acquire(operation_id, principal)
+                        acquired_for_request = True
+                    else:
+                        leases.assert_owned(operation_id, principal)
 
                 with self._candidate_file(prepared_arguments) as prepared:
                     result = app.execute(command, **prepared)
