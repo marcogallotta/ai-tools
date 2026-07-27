@@ -24,8 +24,11 @@ LOG = logging.getLogger("dish.service")
 class DishHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, service: DishService):
+    def __init__(self, address, service: DishService, *, surface_mode: str = "combined"):
+        if surface_mode not in {"combined", "private", "action"}:
+            raise ValueError("invalid HTTP surface mode")
         self.service = service
+        self.surface_mode = surface_mode
         super().__init__(address, DishRequestHandler)
 
 
@@ -102,7 +105,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlsplit(self.path).path
-        if path == "/health":
+        if path == "/health" and self.server.surface_mode != "action":
             payload = self.server.service.health()
             self._write_json(HTTPStatus.OK if payload["ok"] else HTTPStatus.SERVICE_UNAVAILABLE, payload)
             return
@@ -134,10 +137,18 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             surface, command = "admin-backup", "backup-create"
         elif parts == ["v1", "admin", "backups", "restore"]:
             surface, command = "admin-backup", "backup-restore"
+        elif len(parts) == 4 and parts[:3] == ["v1", "admin", "argument-failures"]:
+            surface, command = "admin-argument-failure", parts[3]
         elif len(parts) == 3 and parts[:2] == ["v1", "argument-failures"]:
             surface, command = "argument-failure", parts[2]
         try:
             if command == "unknown":
+                self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+                return
+            if self.server.surface_mode == "private" and surface in {"action", "action-lease"}:
+                self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
+                return
+            if self.server.surface_mode == "action" and surface not in {"action", "action-lease"}:
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
                 return
             if surface in {"agent", "lease", "argument-failure"}:
@@ -169,12 +180,15 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 if not isinstance(arguments, dict):
                     raise DishRuleError("INVALID_ARGUMENT", "arguments must be a JSON object", rule="arguments_object_required")
                 payload = self.server.service.execute_admin(command, arguments, principal=principal)
-            elif surface == "argument-failure":
+            elif surface in {"argument-failure", "admin-argument-failure"}:
                 error = request.get("error")
                 context = request.get("context", {})
                 if not isinstance(error, dict) or not isinstance(context, dict):
                     raise DishRuleError("INVALID_ARGUMENT", "argument failure payload is invalid", rule="argument_failure_invalid")
-                payload = self.server.service.record_agent_argument_failure(command, error, context)
+                if surface == "admin-argument-failure":
+                    payload = self.server.service.record_admin_argument_failure(command, error, context)
+                else:
+                    payload = self.server.service.record_agent_argument_failure(command, error, context)
             else:
                 arguments = request.get("arguments", {})
                 if not isinstance(arguments, dict):
@@ -191,5 +205,18 @@ class DishRequestHandler(BaseHTTPRequestHandler):
 
 
 def build_server(service: DishService) -> DishHTTPServer:
+    """Combined listener retained for hermetic tests and local development."""
     config = service.config
-    return DishHTTPServer((config.bind_host, config.port), service)
+    return DishHTTPServer((config.bind_host, config.port), service, surface_mode="combined")
+
+
+def build_private_server(service: DishService) -> DishHTTPServer:
+    config = service.config
+    return DishHTTPServer((config.bind_host, config.port), service, surface_mode="private")
+
+
+def build_action_server(service: DishService) -> DishHTTPServer:
+    config = service.config
+    return DishHTTPServer(
+        (config.action_bind_host, config.action_port), service, surface_mode="action"
+    )

@@ -135,6 +135,32 @@ class DishServiceClient:
 
 
 class DishAdminServiceClient(DishServiceClient):
+    def record_argument_failure(
+        self,
+        command: str,
+        error: DishRuleError,
+        *,
+        agent: str | None = None,
+        task_gid: str | None = None,
+        submission_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._json_request(
+            f"/v1/admin/argument-failures/{command}",
+            method="POST",
+            payload={
+                "client": self._client(),
+                "error": {
+                    "code": error.code,
+                    "message": str(error),
+                    "rule": error.rule,
+                    "retryable": error.retryable,
+                    "details": dict(error.details),
+                    "errors": [dict(item) for item in error.errors],
+                },
+                "context": {"submission_id": submission_id},
+            },
+        )
+
     def execute(
         self,
         command: str,

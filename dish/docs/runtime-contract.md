@@ -6,11 +6,68 @@ means once you've made a call: the JSON envelope shape, exit-status handling, an
 
 ## Authority and scope
 
-The live Asana Cooking task is authoritative for title, body, workflow state, provenance, and cooking instructions. Agents access protocol-managed Cooking tasks only through `dish`; they do not read or write those tasks through the generic Asana CLI. The `ai-tools` checkout supplies that mediated interface, deterministic validation, persistence, and recovery state. Neither the tool nor its SQLite database replaces agent judgment or the governing protocol.
+The live Asana Cooking task is authoritative for title, body, workflow state, provenance, and cooking instructions. Agents access protocol-managed Cooking tasks only through `dish`; they do not read or write those tasks through the generic Asana CLI. Planning's read-only lookup of completed cooking history through the generic `asana` CLI is the one deliberate exception. It does not authorize writes to governed tasks.
 
-This document covers the single-agent local test path. It does **not** authorize concurrent or live multi-agent use. Step 11 supplies the shared-service access path, credentials, and GPT Action surface.
+The `ai-tools` checkout supplies deterministic validation and the client executables. In live multi-agent mode, one laptop-hosted `dish-service` process is the sole writable authority for operation state, leases, Asana credentials, audit/recovery, backup, and all governed task mutations. A repository copy or copied SQLite database is never a cross-agent lock.
+The single-agent local test path remains available only for controlled development and is not live multi-agent authority.
 
-Candidate files are ephemeral complete-text inputs. The live task is reread before mutation and after every write or move. Do not edit a candidate after recording the identity supplied to Verification.
+Candidate files are ephemeral complete-text inputs. In service mode the client reads the file and sends its text; the server never opens a client filesystem path. The live task is reread before mutation and after every write or move. Do not edit a candidate after recording the identity supplied to Verification.
+
+## Access-path contract
+
+| Caller | Network path | Credential | Permitted surface |
+|---|---|---|---|
+| `dish` CLI | private Tailscale Serve/tailnet endpoint | agent CLI bearer token | bounded agent commands and lease renewal |
+| `dish-admin` | private Tailscale Serve/tailnet endpoint | separate Marco-admin bearer token | admin workflow, stale-lease recovery, backup/restore |
+| GPT Action | public Tailscale Funnel endpoint on its own HTTPS port | dedicated Action bearer token | `/v1/action/*` commands and Action lease renewal only |
+| local tests | direct local application mode | local Asana test credential when required | controlled single-agent development only |
+
+Live client environments set all of:
+
+```text
+DISH_LIVE_MODE=1
+DISH_MODE=service
+DISH_SERVICE_URL=<private service URL>
+DISH_CLIENT_RUN_ID=<unique run identity>
+```
+
+The CLI adds `DISH_SERVICE_TOKEN`; Marco's admin shell adds `DISH_ADMIN_TOKEN`. The GPT Action stores only `DISH_SERVICE_ACTION_TOKEN` in its Action authentication configuration. No client receives the service database path or Asana credential.
+
+The service host is the only place that defines `ASANA_PAT` or `ASANA_ENV`. It runs one process, enforced by a host file lock tied to the shared database. The process exposes two loopback listeners:
+
+- private CLI/admin listener, intended for Tailscale Serve;
+- Action-only listener, intended for Tailscale Funnel.
+
+The public listener does not route private CLI, admin, health, migration, recovery, or backup endpoints. HTTP status remains transport information; workflow meaning remains in the canonical JSON result code.
+
+## Service ownership and leases
+
+The durable `operations` constraint is the one-active-operation-per-task lock. `service_leases` bind the current actor to an owner identity and run identity with a renewable expiry. Workflow handoff may release the actor lease, but it does not release the task operation lock. Expired leases fail closed and require Marco to run `dish-admin recover-lease`; they are never silently stolen by another agent.
+
+A terminal lease is released only after the operation is terminal and every declared step and ambiguous write/movement attempt has a durable completion outcome. If post-success lease finalization fails after the governed mutation committed, the original command still returns success with `service_recovery_required`, suppresses follow-on actions, and explicitly tells the client not to retry the mutation. Ordinary full-state write and approval retries remain naturally idempotent by exact live-state comparison; clients do not invent separate idempotency keys.
+
+## Health, backup, and startup
+
+`GET /health` exists only on the private listener. It checks:
+
+- current SQLite schema and semantic evidence validation;
+- exact Honest protocol/task-schema compatibility;
+- Asana access and required Cooking section registry;
+- pending invocation-audit repairs;
+- active operations and active/expired leases.
+
+At startup the service validates the database, resolves Honest compatibility, and replays pending invocation-audit repairs. An Asana outage may leave the process available for health, backup, lease renewal, and diagnosis, but all workflow mutations fail before entering application mutation code.
+
+`dish-admin backup-create` produces a managed SQLite snapshot using the online backup API and validates the complete current database contract. `dish-admin backup-restore` accepts only a managed backup identifier, creates a pre-restore snapshot, validates the restore candidate, replaces the database atomically, and rolls back if validation fails. Restore is serialized against every request. A failed restore reports whether rollback was actually proven. If automatic rollback cannot be proven, health becomes unhealthy and workflow mutations remain disabled until manual recovery or a successful validated restore.
+
+Admin recovery remains specific rather than generic:
+
+- `recover-lease` reclaims only an expired actor lease;
+- `recover` reconciles ambiguous backend evidence by live reread;
+- `discard` cancels only a provably unapplied operation;
+- `supply-evidence`, `record-human-decision`, and `reopen` retain their existing protocol meanings.
+
+There is intentionally no general-purpose `unblock` mutation.
 
 ## JSON response contract
 
@@ -88,4 +145,4 @@ The JSON `retryable` field is authoritative for mechanical retry advice. Even wh
 6. For a `started` or `uncertain` write/movement, do not retry the backend mutation. Use `dish-admin recover` after a live reread; recovery must match persisted expected/intended evidence and records the reconciliation outcome durably.
 7. For tool/protocol disagreement, preserve the task unchanged and report both the protocol clause and tool rule.
 
-The corpus migration and live cutover remain separately authorized Step 12 work. This local contract does not authorize live Cooking-task writes or multi-agent activation.
+The corpus migration rehearsal and live cutover remain separately authorized Step 12 work. Passing this Step 11 contract does not itself authorize production Cooking-task activation.

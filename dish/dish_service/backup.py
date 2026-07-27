@@ -171,33 +171,59 @@ class BackupManager:
                 Path(str(self.db_path) + suffix).unlink(missing_ok=True)
             validation = initialize_database(self.db_path)
             validation.close()
-        except Exception:
-            # Roll back from the automatic pre-restore snapshot. This path uses a
-            # byte-complete SQLite backup produced immediately before replacement.
-            rollback_source = self._raw_connection(self._managed_path(pre_restore.backup_id))
+        except Exception as restore_exc:
+            # Roll back from the automatic pre-restore snapshot. Report whether
+            # that rollback was actually proven rather than claiming retention
+            # after an unverified second failure.
             rollback_temp: Path | None = None
             try:
-                with tempfile.NamedTemporaryFile(
-                    dir=self.db_path.parent,
-                    prefix=f".{self.db_path.name}.rollback.",
-                    suffix=".tmp",
-                    delete=False,
-                ) as handle:
-                    rollback_temp = Path(handle.name)
-                rollback_target = self._raw_connection(rollback_temp)
+                rollback_source = self._raw_connection(self._managed_path(pre_restore.backup_id))
                 try:
-                    rollback_source.backup(rollback_target)
+                    with tempfile.NamedTemporaryFile(
+                        dir=self.db_path.parent,
+                        prefix=f".{self.db_path.name}.rollback.",
+                        suffix=".tmp",
+                        delete=False,
+                    ) as handle:
+                        rollback_temp = Path(handle.name)
+                    rollback_target = self._raw_connection(rollback_temp)
+                    try:
+                        rollback_source.backup(rollback_target)
+                    finally:
+                        rollback_target.close()
+                    self._validate_snapshot(rollback_temp)
+                    os.replace(rollback_temp, self.db_path)
+                    rollback_temp = None
+                    for suffix in ("-wal", "-shm"):
+                        Path(str(self.db_path) + suffix).unlink(missing_ok=True)
+                    validation = initialize_database(self.db_path)
+                    validation.close()
                 finally:
-                    rollback_target.close()
-                os.replace(rollback_temp, self.db_path)
-                rollback_temp = None
-                for suffix in ("-wal", "-shm"):
-                    Path(str(self.db_path) + suffix).unlink(missing_ok=True)
+                    rollback_source.close()
+            except Exception as rollback_exc:
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "database restore failed and automatic rollback could not be proven; "
+                    "workflow mutations are disabled pending manual recovery",
+                    rule="backup_restore_and_rollback_failed",
+                    details={
+                        "restore_error_type": type(restore_exc).__name__,
+                        "rollback_error_type": type(rollback_exc).__name__,
+                        "database_retained": False,
+                    },
+                ) from rollback_exc
             finally:
-                rollback_source.close()
                 if rollback_temp is not None:
                     rollback_temp.unlink(missing_ok=True)
-            raise
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "database restore failed; the validated pre-restore database was restored",
+                rule="backup_restore_failed_rolled_back",
+                details={
+                    "restore_error_type": type(restore_exc).__name__,
+                    "database_retained": True,
+                },
+            ) from restore_exc
         finally:
             if candidate_path is not None:
                 candidate_path.unlink(missing_ok=True)

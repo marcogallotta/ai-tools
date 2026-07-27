@@ -18,7 +18,8 @@ from dish_service.client import DishAdminServiceClient
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
-_ADMIN_COMMANDS = {"recover", "discard", "migrate", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change"}
+_ADMIN_COMMANDS = {"recover", "discard", "migrate", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease", "backup-create", "backup-restore"}
+_OPERATION_ADMIN_COMMANDS = {"recover", "discard", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease"}
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -82,6 +83,22 @@ def build_parser() -> JsonArgumentParser:
     )
     migrate.add_argument("task_gid")
 
+    recover_lease = subparsers.add_parser(
+        "recover-lease", help="reclaim an expired service lease before an admin operation"
+    )
+    recover_lease.add_argument("submission_id")
+    recover_lease.add_argument("--reason", required=True)
+
+    backup_create = subparsers.add_parser(
+        "backup-create", help="create a validated online snapshot of the shared database"
+    )
+    backup_create.add_argument("--label", default="manual")
+
+    backup_restore = subparsers.add_parser(
+        "backup-restore", help="restore a managed shared-database snapshot"
+    )
+    backup_restore.add_argument("backup_id")
+
     authorize = subparsers.add_parser(
         "authorize-governed-change", help="authorize a single field change the tool would otherwise block"
     )
@@ -138,7 +155,7 @@ def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
     submission_id = None
     task_gid = None
     if (
-        command in _ADMIN_COMMANDS
+        command in _OPERATION_ADMIN_COMMANDS
         and len(argv) > 1
         and not argv[1].startswith("-")
     ):
@@ -183,7 +200,48 @@ def main(
             )
         else:
             command = parsed.pop("command")
-            result = app.execute(command, **parsed)
+            if command == "recover-lease":
+                method = getattr(app, "recover_lease", None)
+                if method is None:
+                    result = error_envelope(
+                        command,
+                        DishRuleError(
+                            "PROTOCOL_INCOMPATIBLE",
+                            "service lease recovery requires shared-service mode",
+                            rule="shared_service_required",
+                        ),
+                        submission_id=parsed["submission_id"],
+                    )
+                else:
+                    result = method(parsed["submission_id"], reason=parsed["reason"])
+            elif command == "backup-create":
+                method = getattr(app, "create_backup", None)
+                if method is None:
+                    result = error_envelope(
+                        command,
+                        DishRuleError(
+                            "PROTOCOL_INCOMPATIBLE",
+                            "shared database backup requires shared-service mode",
+                            rule="shared_service_required",
+                        ),
+                    )
+                else:
+                    result = method(label=parsed["label"])
+            elif command == "backup-restore":
+                method = getattr(app, "restore_backup", None)
+                if method is None:
+                    result = error_envelope(
+                        command,
+                        DishRuleError(
+                            "PROTOCOL_INCOMPATIBLE",
+                            "shared database restore requires shared-service mode",
+                            rule="shared_service_required",
+                        ),
+                    )
+                else:
+                    result = method(parsed["backup_id"])
+            else:
+                result = app.execute(command, **parsed)
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return exit_status(result["code"])
     finally:

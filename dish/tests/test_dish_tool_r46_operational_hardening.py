@@ -237,3 +237,176 @@ def test_health_payload_contains_no_paths_or_credentials(tmp_path):
     assert str(service.config.honest_root) not in rendered
     assert "agent-token" not in rendered
     assert "admin-token" not in rendered
+
+
+def test_backup_restore_and_admin_argument_audit_are_available_over_private_http(tmp_path):
+    import threading
+
+    from dish_service.client import DishAdminServiceClient
+    from dish_service.http import build_server
+
+    service, _backend = _service(tmp_path)
+    server = build_server(service)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    client = DishAdminServiceClient(
+        f"http://{host}:{port}", token="admin", run_id="admin-run"
+    )
+    try:
+        created = client.create_backup(label="http")
+        restored = client.restore_backup(created["data"]["backup"]["backup_id"])
+        audited = client.record_argument_failure(
+            "recover",
+            DishRuleError("INVALID_ARGUMENT", "bad recovery request", rule="invalid_arguments"),
+            submission_id=None,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert created["ok"] and restored["ok"] and audited["ok"] is False
+    conn = initialize_database(service.config.db_path)
+    try:
+        row = conn.execute(
+            "SELECT event_type, details FROM audit_events ORDER BY created_at DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row["event_type"] == "dish-admin.recover"
+    import json
+    assert json.loads(row["details"])["actor_role"] == "marco"
+
+
+def test_failed_restore_reports_proven_rollback_without_claiming_success(monkeypatch, tmp_path):
+    import dish_service.backup as backup_module
+
+    service, _backend = _service(tmp_path)
+    created = service.create_backup(label="before-operation")
+    assert created["ok"]
+    backup_id = created["data"]["backup"]["backup_id"]
+
+    started = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": "t", "kind": "initial", "run_id": "run"},
+    )
+    assert started["ok"]
+
+    original_initialize = backup_module.initialize_database
+    calls = {"count": 0}
+
+    def fail_post_replace_validation(path):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise RuntimeError("simulated post-replace validation failure")
+        return original_initialize(path)
+
+    monkeypatch.setattr(backup_module, "initialize_database", fail_post_replace_validation)
+    result = service.restore_backup(backup_id)
+
+    assert not result["ok"]
+    assert result["errors"][0]["rule"] == "backup_restore_failed_rolled_back"
+    assert result["errors"][0]["database_retained"] is True
+    assert service.health()["maintenance"] == {
+        "ok": True,
+        "restore_recovery_required": False,
+    }
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        assert conn.execute(
+            "SELECT 1 FROM operations WHERE operation_id=?", (started["submission_id"],)
+        ).fetchone() is not None
+    finally:
+        conn.close()
+
+
+def test_unproven_restore_rollback_disables_mutations(monkeypatch, tmp_path):
+    import dish_service.backup as backup_module
+
+    service, backend = _service(tmp_path)
+    created = service.create_backup(label="restore-source")
+    assert created["ok"]
+    backup_id = created["data"]["backup"]["backup_id"]
+
+    original_initialize = backup_module.initialize_database
+    original_replace = backup_module.os.replace
+    calls = {"count": 0}
+
+    def fail_post_replace_validation(path):
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise RuntimeError("simulated post-replace validation failure")
+        return original_initialize(path)
+
+    def fail_rollback_replace(source, destination):
+        if ".rollback." in str(source):
+            raise OSError("simulated rollback replacement failure")
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(backup_module, "initialize_database", fail_post_replace_validation)
+    monkeypatch.setattr(backup_module.os, "replace", fail_rollback_replace)
+
+    result = service.restore_backup(backup_id)
+    assert not result["ok"]
+    assert result["errors"][0]["rule"] == "backup_restore_and_rollback_failed"
+    assert result["errors"][0]["database_retained"] is False
+    assert service.health()["maintenance"] == {
+        "ok": False,
+        "restore_recovery_required": True,
+    }
+
+    writes_before = backend.writes
+    moves_before = backend.moves
+    blocked = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": "t", "kind": "initial", "run_id": "run"},
+    )
+    assert not blocked["ok"]
+    assert blocked["errors"][0]["rule"] == "service_restore_recovery_required"
+    assert backend.writes == writes_before
+    assert backend.moves == moves_before
+
+
+def test_post_success_lease_failure_never_reverses_submit(monkeypatch, tmp_path):
+    from dish_service.leases import LeaseManager
+
+    service, _backend = _service(tmp_path)
+    operation_id, verifier = _approved(service)
+
+    def fail_terminal_release(self, operation_id, principal, *, reason="operation_terminal"):
+        raise RuntimeError("simulated lease finalization failure")
+
+    monkeypatch.setattr(LeaseManager, "release_terminal", fail_terminal_release)
+    result = service.execute_agent(
+        "submit", {"submission_id": operation_id}, principal=verifier
+    )
+
+    assert result["ok"]
+    assert result["retryable"] is False
+    assert result["allowed_actions"] == []
+    assert result["data"]["service_recovery_required"] is True
+    assert result["data"]["service_recovery"] == {
+        "kind": "lease_finalization",
+        "operation_id": operation_id,
+        "command": "submit",
+        "error_type": "RuntimeError",
+        "do_not_retry_command": True,
+    }
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        operation = conn.execute(
+            "SELECT status,phase,completed_at FROM operations WHERE operation_id=?",
+            (operation_id,),
+        ).fetchone()
+        lease = conn.execute(
+            "SELECT released_at FROM service_leases WHERE operation_id=? AND released_at IS NULL",
+            (operation_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert tuple(operation[:2]) == ("completed", "terminal")
+    assert operation["completed_at"] is not None
+    assert lease is not None

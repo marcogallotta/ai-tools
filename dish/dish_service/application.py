@@ -61,6 +61,7 @@ class DishService:
         self.release_loader = release_loader
         self.lease_now = lease_now
         self._maintenance_lock = threading.RLock()
+        self._restore_faulted = False
 
     @property
     def backup_manager(self) -> BackupManager:
@@ -154,9 +155,74 @@ class DishService:
     def _assert_mutation_ready(self, backend: Any) -> None:
         # Compatibility is resolved before any workflow mutation. Asana access is
         # proven with the same read-only section registry contract used by the
-        # workflow itself; malformed/missing queues fail closed.
+        # workflow itself; malformed/missing queues fail closed. A restore whose
+        # rollback could not be proven keeps this process diagnosis-only.
+        if self._restore_faulted:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "database restore recovery is incomplete; workflow mutations are disabled",
+                rule="service_restore_recovery_required",
+            )
         self._release(None)
         SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
+
+    def _finalize_successful_lease(
+        self,
+        *,
+        result: dict[str, Any],
+        conn,
+        leases: LeaseManager,
+        operation_id: str,
+        principal: ServicePrincipal,
+        command: str,
+        admin: bool = False,
+    ) -> dict[str, Any]:
+        """Apply post-success lease bookkeeping without reversing success.
+
+        The workflow application may already have committed Asana and database
+        effects. A later lease-release/read failure must therefore suppress
+        follow-on actions and require service recovery, not turn the completed
+        mutation into a retryable command failure.
+        """
+        try:
+            op = conn.execute(
+                "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+            ).fetchone()
+            if op is not None:
+                if op["status"] in {"completed", "cancelled"}:
+                    leases.release_terminal(
+                        operation_id,
+                        principal,
+                        reason="admin_operation_terminal" if admin else "operation_terminal",
+                    )
+                elif not admin and op["phase"] in _HANDOFF_PHASES and command in {"prepare", "reject"}:
+                    leases.release_for_handoff(
+                        operation_id,
+                        principal,
+                        reason=f"workflow_handoff:{op['phase']}",
+                    )
+            active = leases.active_for_operation(operation_id)
+            result.setdefault("data", {})["service_lease"] = self._lease_payload(active)
+        except Exception as exc:
+            data = result.setdefault("data", {})
+            data["service_recovery_required"] = True
+            data["service_recovery"] = {
+                "kind": "lease_finalization",
+                "operation_id": operation_id,
+                "command": command,
+                "error_type": type(exc).__name__,
+                "do_not_retry_command": True,
+            }
+            try:
+                data["service_lease"] = self._lease_payload(
+                    leases.active_for_operation(operation_id)
+                )
+            except Exception as lease_read_exc:
+                data["service_lease"] = None
+                data["service_recovery"]["lease_read_error_type"] = type(lease_read_exc).__name__
+            result["allowed_actions"] = []
+            result["retryable"] = False
+        return result
 
     def execute_agent(
         self,
@@ -201,18 +267,14 @@ class DishService:
                         acquired_for_request = True
 
                 if result.get("ok") and operation_id:
-                    op = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
-                    if op is not None:
-                        if op["status"] in {"completed", "cancelled"}:
-                            leases.release_terminal(operation_id, principal)
-                        elif op["phase"] in _HANDOFF_PHASES and command in {"prepare", "reject"}:
-                            leases.release_for_handoff(
-                                operation_id,
-                                principal,
-                                reason=f"workflow_handoff:{op['phase']}",
-                            )
-                    active = leases.active_for_operation(operation_id)
-                    result.setdefault("data", {})["service_lease"] = self._lease_payload(active)
+                    result = self._finalize_successful_lease(
+                        result=result,
+                        conn=conn,
+                        leases=leases,
+                        operation_id=operation_id,
+                        principal=principal,
+                        command=command,
+                    )
                 elif not result.get("ok") and acquired_for_request and operation_id:
                     if command == "start" and arguments.get("kind") == "verification":
                         leases.release(operation_id, principal, reason="verification_start_failed")
@@ -295,6 +357,36 @@ class DishService:
             finally:
                 conn.close()
 
+    def record_admin_argument_failure(
+        self,
+        command: str,
+        error_payload: Mapping[str, Any],
+        context: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        with self._maintenance_lock:
+            conn = initialize_database(self.config.db_path)
+            try:
+                app = DishAdminApplication(
+                    conn,
+                    backend=self.backend_factory(),
+                    release_loader=lambda: self._release(None, include_migrations=True),
+                )
+                error = DishRuleError(
+                    str(error_payload.get("code") or "INVALID_ARGUMENT"),
+                    str(error_payload.get("message") or "invalid arguments"),
+                    rule=error_payload.get("rule"),
+                    retryable=bool(error_payload.get("retryable", False)),
+                    details=error_payload.get("details") if isinstance(error_payload.get("details"), dict) else None,
+                    errors=error_payload.get("errors") if isinstance(error_payload.get("errors"), list) else None,
+                )
+                return app.record_argument_failure(
+                    command,
+                    error,
+                    submission_id=context.get("submission_id"),
+                )
+            finally:
+                conn.close()
+
     def execute_admin(
         self,
         command: str,
@@ -326,11 +418,14 @@ class DishService:
                 with self._candidate_file(arguments) as prepared:
                     result = app.execute(command, **prepared)
                 if result.get("ok") and operation_id:
-                    op = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
-                    if op is not None and op["status"] in {"completed", "cancelled"}:
-                        leases.release_terminal(operation_id, principal, reason="admin_operation_terminal")
-                    result.setdefault("data", {})["service_lease"] = self._lease_payload(
-                        leases.active_for_operation(operation_id)
+                    result = self._finalize_successful_lease(
+                        result=result,
+                        conn=conn,
+                        leases=leases,
+                        operation_id=operation_id,
+                        principal=principal,
+                        command=command,
+                        admin=True,
                     )
                 elif not result.get("ok") and acquired_for_request and operation_id:
                     leases.release(operation_id, principal, reason="admin_command_rejected")
@@ -357,14 +452,19 @@ class DishService:
         with self._maintenance_lock:
             try:
                 data = self.backup_manager.restore(backup_id)
+                self._restore_faulted = False
                 return result_envelope(command="backup-restore", data=data)
             except DishRuleError as exc:
+                if exc.rule == "backup_restore_and_rollback_failed":
+                    self._restore_faulted = True
                 return error_envelope("backup-restore", exc)
             except Exception as exc:
+                self._restore_faulted = True
                 error = DishRuleError(
                     "INTERNAL_ERROR",
-                    "database restore failed and the pre-restore database was retained",
-                    rule="backup_restore_failed",
+                    "database restore failed with an unclassified recovery outcome; "
+                    "workflow mutations are disabled",
+                    rule="backup_restore_recovery_unknown",
                     details={"error_type": type(exc).__name__},
                 )
                 return error_envelope("backup-restore", error)
@@ -446,13 +546,23 @@ class DishService:
             except Exception as exc:
                 asana = {"ok": False, "rule": "asana_health_failed", "message": type(exc).__name__}
 
-            ok = bool(database.get("ok") and compatibility.get("ok") and asana.get("ok"))
+            maintenance = {
+                "ok": not self._restore_faulted,
+                "restore_recovery_required": self._restore_faulted,
+            }
+            ok = bool(
+                database.get("ok")
+                and compatibility.get("ok")
+                and asana.get("ok")
+                and maintenance["ok"]
+            )
             return {
                 "ok": ok,
                 "service": "dish",
                 "database": database,
                 "compatibility": compatibility,
                 "asana": asana,
+                "maintenance": maintenance,
                 "audit": audit,
                 "operations": operations,
                 "leases": leases,
