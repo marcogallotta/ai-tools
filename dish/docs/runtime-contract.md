@@ -137,6 +137,12 @@ Internal workflow permission `verify` is exposed as Action/CLI command `start`. 
 required handoff command, `data.required_start_kind` identifies its required `kind`: `initial` after
 Planning and `verification` after Research. Clients must not look for a separate `verify` Action.
 
+Verification `start` and `inspect` expose `data.verification_lineage`. `candidate_runs` lists the
+constructor and material-editor run facts that contribute to verifier independence enforcement.
+`current_run` reports the authenticated caller run, whether it is eligible to verify, and the exact
+disqualifying role/rule when it is not. Agents must inspect this before deciding; an approval call is
+not the discovery mechanism for lineage conflicts.
+
 Marco-only continuations such as `supply-evidence`, `record-human-decision`, and `reopen` never
 appear in an agent response's `allowed_actions`. When one is required, agent responses return an
 empty action list and identify the exact private continuation in `data.required_admin_action`.
@@ -155,6 +161,13 @@ Dish independently judged culinary truth, source quality, or substantive correct
 particular, Research preparation remains deterministic conformance rather than substantive
 approval; Verification semantic review is supplied by the verifier; and successful `submit`
 confirms state, identity, and movement without repeating semantic review.
+
+Research `prepare` may normalize tool-owned process fields before writing: lifecycle status fields,
+`Verification protocol release`, `Researched by`, `Verified by`, `Self-verified`, and, where the
+current workflow requires it, `Material changes`. The response lists the fields actually changed in
+`data.content_normalization.tool_owned_fields`. The returned `task.identity` and every later
+exact-content check bind the complete live task *after* those disclosed normalizations; they do not
+promise that the submitted candidate text was written byte-for-byte unchanged.
 
 ## Result codes and exit statuses
 
@@ -176,6 +189,12 @@ confirms state, identity, and movement without repeating semantic review.
 | `INTERNAL_ERROR` | 1 | Tooling failure. Preserve live task/content and report the command, identifiers, content identity, error, and diagnostics. |
 
 The JSON `retryable` field is authoritative for mechanical retry advice. Even when true, correct the reported condition first. Never retry `BACKEND_UNCERTAIN` as a normal command.
+
+For `reject`, route-specific validation is aggregate. A single `INVALID_ARGUMENT` response reports
+all supplied fields incompatible with the selected route and includes that route's
+`permitted_arguments`. Large corrections accept candidate/model fields and set
+`pending-verification` automatically; Evidence and Human Review accept only their hold/resume
+shape and do not accept candidate text, model, or independence-attestation fields.
 
 ## Interpreting outcomes
 

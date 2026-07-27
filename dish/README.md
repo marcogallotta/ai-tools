@@ -191,13 +191,21 @@ lease handling, and token rotation.
 
 ## Tests
 
-From `dish/`:
+Each checkout or agent session creates its own repository-local environment from `dish/requirements.txt`:
 
 ```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+
+Use the fast suite during normal iteration, then run the complete suite before handing work back:
+
+```sh
+.venv/bin/python -m pytest --fast
 .venv/bin/python -m pytest
 ```
 
-The committed Step 11 tests cover service restart, concurrency, leases, credential scopes, the generated Asana SDK path, Action/CLI equivalence, backup/restore, operational health, and private/public surface separation.
+Do not copy or package `.venv`; it is interpreter-local. The committed Step 11 tests cover service restart, concurrency, leases, credential scopes, the generated Asana SDK path, Action/CLI equivalence, private/admin HTTP parity, backup/restore, operational health, and private/public surface separation.
 
 ## Documentation map
 

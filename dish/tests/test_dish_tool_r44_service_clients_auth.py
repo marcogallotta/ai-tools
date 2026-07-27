@@ -181,3 +181,77 @@ def test_service_database_ownership_marker_survives_reinstantiation(tmp_path):
     with pytest.raises(DishRuleError) as exc:
         ServiceDatabaseOwnership(db_path).assert_local_access_allowed()
     assert exc.value.rule == "service_owned_database"
+
+
+def test_private_admin_http_and_cli_cover_authorization_recovery_and_migration(tmp_path, capsys):
+    from dish_service.leases import ServicePrincipal
+    from dish_tool.database import initialize_database
+
+    service, _backend, server, thread, url = _running_service(tmp_path)
+    owner = ServicePrincipal("agent", "33333333-3333-4333-8333-333333333333")
+    started = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": "t", "kind": "initial"},
+        principal=owner,
+    )
+    assert started["ok"]
+    operation_id = started["submission_id"]
+    admin = DishAdminServiceClient(
+        url,
+        token="admin-secret",
+        run_id="44444444-4444-4444-8444-444444444444",
+    )
+    try:
+        status = admin_cli.main(
+            [
+                "authorize-governed-change",
+                operation_id,
+                "--field", "Locks",
+                "--before", '"Keep crisp"',
+                "--after", '"Keep very crisp"',
+                "--reason", "Marco approved the exact change",
+            ],
+            application=admin,
+        )
+        authorized = json.loads(capsys.readouterr().out)
+        assert status == 0 and authorized["ok"]
+
+        direct_recover = admin.execute(
+            "recover",
+            submission_id=operation_id,
+            outcome="not-applied",
+            reason="private parity check",
+        )
+        cli_status = admin_cli.main(
+            ["recover", operation_id, "--outcome", "not-applied", "--reason", "private parity check"],
+            application=admin,
+        )
+        cli_recover = json.loads(capsys.readouterr().out)
+        assert cli_status != 0
+        assert (cli_recover["code"], cli_recover["errors"][0]["rule"]) == (
+            direct_recover["code"], direct_recover["errors"][0]["rule"]
+        )
+
+        direct_migrate = admin.execute("migrate", task_gid="t")
+        cli_status = admin_cli.main(["migrate", "t"], application=admin)
+        cli_migrate = json.loads(capsys.readouterr().out)
+        assert cli_status != 0
+        assert (cli_migrate["code"], cli_migrate["errors"][0]["rule"]) == (
+            direct_migrate["code"], direct_migrate["errors"][0]["rule"]
+        )
+    finally:
+        _stop(server, thread)
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        row = conn.execute(
+            "SELECT field_name, before_json, after_json FROM marco_authorizations "
+            "WHERE operation_id=? ORDER BY created_at DESC LIMIT 1",
+            (operation_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    assert row["field_name"] == "Locks"
+    assert json.loads(row["before_json"]) == "Keep crisp"
+    assert json.loads(row["after_json"]) == "Keep very crisp"

@@ -21,6 +21,22 @@ They may explain why a decision was made, but they do not override the current a
 runtime contract, code, or Honest protocol/schema assets. Older design and implementation
 plans were removed; use Git history when their exact text is needed.
 
+## Dish agent environment
+
+Every agent working under `dish/` must create its own repository-local environment; do not
+assume an uploaded or host-global environment is runnable on the current Python interpreter:
+
+```sh
+cd ai-tools/dish
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pytest --fast
+```
+
+Use `pytest --fast` while iterating. Before handing back code or staged archives, run the complete
+`.venv/bin/python -m pytest` suite, including the two tests skipped by `--fast`. Never package
+`.venv` in a patch or archive.
+
 ## Live Dish smoke-test credentials
 
 For an authorized live Dish smoke test run from the service host, load

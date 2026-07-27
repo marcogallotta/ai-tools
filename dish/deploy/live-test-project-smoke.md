@@ -25,8 +25,11 @@ Do not run this against production Cooking. Use a disposable task in the configu
 8. Confirm title/notes identities and section membership after every write or movement.
 9. Deliberately attempt a stale content baseline and stale placement baseline; assert zero mutation.
 10. Simulate an expired client lease and use `dish-admin recover-lease` before recovery.
-11. Create a managed backup, complete another harmless test operation, restore the backup, and confirm the prior operation/lease state returns exactly.
-12. Delete the disposable Asana tasks only through the approved test cleanup path.
+11. Through the private HTTP-backed `dish-admin` client, exercise one governed-change authorization and confirm its durable `marco_authorizations` evidence.
+12. Exercise `dish-admin recover` against a deliberately interrupted disposable operation and compare the CLI result with the private HTTP response and live reread.
+13. Exercise `dish-admin migrate` on a disposable previous-schema task; confirm the exact migrated content by live reread and verify an already-current task returns the canonical no-migration result.
+14. Create a managed backup, complete another harmless test operation, restore the backup, and confirm the prior operation/lease state returns exactly.
+15. Delete the disposable Asana tasks only through the approved test cleanup path.
 
 ## Stop conditions
 
