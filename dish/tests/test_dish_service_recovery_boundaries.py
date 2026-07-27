@@ -42,6 +42,41 @@ def test_startup_remains_available_with_restore_fault_and_invalid_database(tmp_p
     assert startup["startup"]["database_initialization_error_type"] == "DatabaseError"
 
 
+def test_corrupt_database_returns_structured_unavailable_results(tmp_path):
+    service, _backend = _service(tmp_path)
+    service.config.db_path.write_bytes(b"not a sqlite database")
+    principal = ServicePrincipal("agent", "run-1")
+
+    agent = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": "t", "kind": "initial"},
+        principal=principal,
+    )
+    admin = service.execute_admin(
+        "discard",
+        {"submission_id": "11111111-1111-4111-8111-111111111111", "reason": "test"},
+        principal=ServicePrincipal("admin", "admin-run"),
+    )
+    renewal = service.renew_lease(
+        "11111111-1111-4111-8111-111111111111", principal
+    )
+    recovery = service.recover_lease(
+        "11111111-1111-4111-8111-111111111111",
+        ServicePrincipal("admin", "admin-run"),
+        reason="test",
+    )
+    backup = service.create_backup(label="corrupt")
+
+    for result in (agent, admin, renewal, recovery, backup):
+        assert result["code"] == "INTERNAL_ERROR"
+        assert result["retryable"] is False
+        assert result["errors"][0]["rule"] == "service_database_unavailable"
+        assert result["errors"][0]["error_type"] == "DatabaseError"
+        assert result["data"]["message"] == (
+            "Dish database is unavailable; the request was not executed"
+        )
+
+
 def test_restore_recovers_corrupt_live_database_without_pre_restore_snapshot(tmp_path):
     service, _backend = _service(tmp_path)
     created = service.create_backup(label="known-good")

@@ -48,6 +48,16 @@ def _now_stamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def _database_unavailable_error(exc: BaseException) -> DishRuleError:
+    return DishRuleError(
+        "INTERNAL_ERROR",
+        "Dish database is unavailable; the request was not executed",
+        rule="service_database_unavailable",
+        retryable=False,
+        details={"error_type": type(exc).__name__},
+    )
+
+
 class DishService:
     """Shared persistent authority around the existing workflow applications.
 
@@ -496,7 +506,15 @@ class DishService:
         request_id: str | None = None,
     ) -> dict[str, Any]:
         with self._maintenance_gate.request():
-            conn = initialize_database(self.config.db_path)
+            try:
+                conn = initialize_database(self.config.db_path)
+            except Exception as exc:
+                return error_envelope(
+                    command,
+                    _database_unavailable_error(exc),
+                    task_gid=str(arguments.get("task_gid") or "").strip() or None,
+                    submission_id=str(arguments.get("submission_id") or "").strip() or None,
+                )
             backend = None
             acquired_for_request = False
             operation_id = None
@@ -714,7 +732,14 @@ class DishService:
 
     def renew_lease(self, operation_id: str, principal: ServicePrincipal) -> dict[str, Any]:
         with self._maintenance_gate.request():
-            conn = initialize_database(self.config.db_path)
+            try:
+                conn = initialize_database(self.config.db_path)
+            except Exception as exc:
+                return error_envelope(
+                    "renew-lease",
+                    _database_unavailable_error(exc),
+                    submission_id=operation_id,
+                )
             try:
                 operation = conn.execute(
                     "SELECT task_gid, status FROM operations WHERE operation_id=?",
@@ -762,7 +787,14 @@ class DishService:
         request_id: str | None = None,
     ) -> dict[str, Any]:
         with self._maintenance_gate.request():
-            conn = initialize_database(self.config.db_path)
+            try:
+                conn = initialize_database(self.config.db_path)
+            except Exception as exc:
+                return error_envelope(
+                    "recover-lease",
+                    _database_unavailable_error(exc),
+                    submission_id=operation_id,
+                )
             replay_started = False
             try:
                 if request_id:
@@ -913,7 +945,14 @@ class DishService:
         request_id: str | None = None,
     ) -> dict[str, Any]:
         with self._maintenance_gate.request():
-            conn = initialize_database(self.config.db_path)
+            try:
+                conn = initialize_database(self.config.db_path)
+            except Exception as exc:
+                return error_envelope(
+                    command,
+                    _database_unavailable_error(exc),
+                    submission_id=str(arguments.get("submission_id") or "").strip() or None,
+                )
             backend = None
             principal = principal or self._default_principal(arguments, admin=True)
             operation_id = str(arguments.get("submission_id") or "").strip() or None
@@ -1022,6 +1061,10 @@ class DishService:
                 return result_envelope(command="backup-create", data={"backup": record.as_dict()})
             except DishRuleError as exc:
                 return error_envelope("backup-create", exc)
+            except Exception as exc:
+                return error_envelope(
+                    "backup-create", _database_unavailable_error(exc)
+                )
 
     def restore_backup(self, backup_id: str) -> dict[str, Any]:
         with self._maintenance_gate.restore():

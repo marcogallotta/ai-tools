@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from dish_service import __main__ as service_main
+from dish_service.config import ServiceConfig
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -78,6 +79,31 @@ def test_second_listener_bind_failure_closes_first(monkeypatch):
     with pytest.raises(OSError, match="address already in use"):
         service_main._build_servers(object())
     assert private.closed is True
+
+
+def test_process_lock_contention_is_a_concise_startup_diagnostic(
+    tmp_path, monkeypatch, caplog
+):
+    config = ServiceConfig(
+        db_path=tmp_path / "shared.db",
+        honest_root=tmp_path,
+        agent_token="agent-token-123",
+        admin_token="admin-token-456",
+        action_token="action-token-789",
+    )
+    monkeypatch.setattr(service_main.ServiceConfig, "from_env", lambda: config)
+    lock_path = config.db_path.with_suffix(config.db_path.suffix + ".service.lock")
+    held = service_main.ServiceProcessLock(lock_path).acquire()
+    try:
+        with caplog.at_level("ERROR", logger="dish.service"):
+            result = service_main.main([])
+    finally:
+        held.release()
+
+    assert result == 1
+    assert "startup_failed" in caplog.text
+    assert "service_process_lock_held" in caplog.text
+    assert "Traceback" not in caplog.text
 
 
 def test_listener_failure_stops_and_closes_both_servers():

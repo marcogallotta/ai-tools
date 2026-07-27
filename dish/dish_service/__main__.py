@@ -15,6 +15,7 @@ from .config import ServiceConfig
 from .database_ownership import ServiceDatabaseOwnership
 from .http import DishHTTPServer, build_action_server, build_private_server
 from .process_lock import ServiceProcessLock
+from dish_tool.errors import DishRuleError
 
 LOG = logging.getLogger("dish.service")
 
@@ -122,11 +123,7 @@ def _build_servers(service: DishService) -> tuple[DishHTTPServer, DishHTTPServer
     return private_server, action_server
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    build_parser().parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    config = ServiceConfig.from_env()
-    config.validate_runtime(require_action=True)
+def _run_configured_service(config: ServiceConfig) -> int:
     lock_path = config.db_path.with_suffix(config.db_path.suffix + ".service.lock")
     with ServiceProcessLock(lock_path):
         ServiceDatabaseOwnership(config.db_path).mark()
@@ -156,6 +153,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         finally:
             for signum, prior in previous.items():
                 signal.signal(signum, prior)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    build_parser().parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    try:
+        config = ServiceConfig.from_env()
+        config.validate_runtime(require_action=True)
+        return _run_configured_service(config)
+    except DishRuleError as exc:
+        LOG.error(
+            "startup_failed rule=%s detail=%s",
+            exc.rule or "dish_rule_error",
+            exc,
+        )
+        return 1
 
 
 if __name__ == "__main__":
