@@ -297,7 +297,7 @@ def approve_live(
     if not persisted_reviewed or not cycle["reviewed_content_version_id"]:
         raise DishRuleError("WRONG_STATE", "Verification cycle has no persisted reviewed content", rule="reviewed_content_missing")
     if reviewed_identity != persisted_reviewed:
-        raise DishRuleError("CONFLICT", "caller review identity does not match the persisted review", rule="reviewed_identity_mismatch", details={"persisted_reviewed_identity": persisted_reviewed, "supplied_identity": reviewed_identity})
+        raise DishRuleError("CONFLICT", "caller review identity does not match the persisted review", rule="reviewed_identity_mismatch", retryable=True, details={"persisted_reviewed_identity": persisted_reviewed, "supplied_identity": reviewed_identity})
     if live.identity != persisted_reviewed:
         raise DishRuleError("CONFLICT", "live candidate changed after verifier review", rule="stale_verifier_review", details={"reviewed_identity": persisted_reviewed, "actual_identity": live.identity})
     document = parse_task_document(f"{live.title}\n{live.notes}")

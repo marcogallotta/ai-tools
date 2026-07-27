@@ -142,6 +142,30 @@ def test_approval_signs_exact_reread_without_moving_and_requires_inputs(tmp_path
     assert row["movement_completed_at"] is None  # verification handoff is not final submission movement
 
 
+def test_reviewed_identity_mismatch_is_retryable_with_corrected_identity(tmp_path):
+    app, _backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute(
+        "start", agent="codex", task_gid="t", kind="verification", run_id="retry-identity"
+    )
+    wrong = app.execute(
+        "approve", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, correction="none",
+        reviewed_identity="0" * 64, semantic_review_complete=True,
+        provenance_complete=True, run_id="retry-identity",
+    )
+    assert wrong["code"] == "CONFLICT"
+    assert wrong["errors"][0]["rule"] == "reviewed_identity_mismatch"
+    assert wrong["retryable"] is True
+    corrected = app.execute(
+        "approve", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, correction="none",
+        reviewed_identity=review["data"]["reviewed_identity"],
+        semantic_review_complete=True, provenance_complete=True,
+        run_id="retry-identity",
+    )
+    assert corrected["ok"]
+
+
 def test_approval_requires_model(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-model")

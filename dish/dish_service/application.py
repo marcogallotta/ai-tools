@@ -468,12 +468,15 @@ class DishService:
             "request_id": request_id,
             "authoritative_view": inspected.get("data", {}).get("authoritative_view"),
         })
+        replay_actions = list(inspected.get("allowed_actions", []))
+        if kind == "verification" and "inspect" not in replay_actions:
+            replay_actions.insert(0, "inspect")
         result = result_envelope(
             command="start",
             task_gid=task_gid,
             submission_id=operation_id,
             state=operation["status"],
-            allowed_actions=inspected.get("allowed_actions", []),
+            allowed_actions=replay_actions,
             data=data,
         )
         result = self._apply_principal_access(
@@ -713,27 +716,36 @@ class DishService:
         with self._maintenance_gate.request():
             conn = initialize_database(self.config.db_path)
             try:
-                row = self._lease_manager(conn).renew(operation_id, principal)
                 operation = conn.execute(
-                    "SELECT task_gid FROM operations WHERE operation_id=?",
+                    "SELECT task_gid, status FROM operations WHERE operation_id=?",
                     (operation_id,),
                 ).fetchone()
+                if operation is not None and operation["status"] != "open":
+                    raise DishRuleError(
+                        "WRONG_STATE",
+                        "operation is not open",
+                        rule="operation_not_open",
+                        details={"actual": operation["status"]},
+                    )
+                row = self._lease_manager(conn).renew(operation_id, principal)
                 return result_envelope(
                     command="renew-lease",
                     task_gid=None if operation is None else operation["task_gid"],
                     submission_id=operation_id,
+                    state=None if operation is None else operation["status"],
                     data={"service_lease": self._lease_payload(row)},
                 )
             except DishRuleError as exc:
-                row = conn.execute(
-                    "SELECT task_gid FROM operations WHERE operation_id=?",
+                operation = conn.execute(
+                    "SELECT task_gid, status FROM operations WHERE operation_id=?",
                     (operation_id,),
                 ).fetchone()
                 result = error_envelope(
                     "renew-lease",
                     exc,
-                    task_gid=None if row is None else row["task_gid"],
+                    task_gid=None if operation is None else operation["task_gid"],
                     submission_id=operation_id,
+                    state=None if operation is None else operation["status"],
                 )
                 if exc.rule == "service_lease_expired":
                     result.setdefault("data", {})["required_admin_action"] = "recover-lease"

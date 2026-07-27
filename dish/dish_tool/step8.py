@@ -135,7 +135,7 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     if not persisted_reviewed or not cycle["reviewed_content_version_id"]:
         raise DishRuleError("WRONG_STATE", "Verification cycle has no persisted reviewed content", rule="reviewed_content_missing")
     if reviewed_identity != persisted_reviewed:
-        raise DishRuleError("CONFLICT", "caller review identity does not match the persisted review", rule="reviewed_identity_mismatch")
+        raise DishRuleError("CONFLICT", "caller review identity does not match the persisted review", rule="reviewed_identity_mismatch", retryable=True)
     if live.identity != persisted_reviewed:
         raise DishRuleError("CONFLICT", "live candidate changed after verifier review", rule="stale_verifier_review")
     corrected = _candidate(file_path)

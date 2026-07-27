@@ -47,7 +47,7 @@ def test_verification_read_local_facts_are_atomic(monkeypatch, tmp_path):
 
     monkeypatch.undo()
     retry = _review(app, "codex", "review-run")
-    assert retry["allowed_actions"] == ["approve", "reject"]
+    assert retry["allowed_actions"] == ["inspect", "approve", "reject"]
 
 
 def test_large_route_actor_is_recoverable_before_cycle_is_usable(monkeypatch, tmp_path):

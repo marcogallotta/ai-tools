@@ -234,7 +234,7 @@ def test_pending_verification_start_reconstructs_exact_review_context(tmp_path):
     )
     assert replayed["ok"]
     assert replayed["submission_id"] == started["submission_id"]
-    assert replayed["allowed_actions"] == ["approve", "reject"]
+    assert replayed["allowed_actions"] == ["inspect", "approve", "reject"]
     assert replayed["data"]["request_replayed"] is True
     assert replayed["data"]["reviewed_identity"] == original["data"]["reviewed_identity"]
     assert replayed["data"]["verification_protocol"] == original["data"]["verification_protocol"]

@@ -177,8 +177,39 @@ def test_lease_renewal_expiry_and_admin_recovery_are_deterministic(tmp_path):
         operation_id, _principal("admin", "recovery-2"), reason="owner confirmed dead"
     )
     assert recovered["ok"]
+    assert recovered["task_gid"] == "t"
+    assert recovered["state"] == "open"
     assert recovered["data"]["service_lease"] is None
     assert recovered["data"]["ownership_transferred"] is False
+
+
+def test_terminal_operation_renewal_reports_terminal_wrong_state(tmp_path):
+    backend = Backend()
+    service = _service(tmp_path, backend)
+    owner = _principal("owner", "run")
+    started = service.execute_agent(
+        "start", {"agent": "gpt", "task_gid": "t", "kind": "initial", "run_id": "run"},
+        principal=owner,
+    )
+    operation_id = started["submission_id"]
+    conn = initialize_database(service.config.db_path)
+    try:
+        conn.execute(
+            "UPDATE operations SET status='completed', phase='terminal', completed_at='now', "
+            "terminal_outcome='test' WHERE operation_id=?",
+            (operation_id,),
+        )
+        conn.execute(
+            "UPDATE service_leases SET released_at='now', release_reason='test' "
+            "WHERE operation_id=? AND released_at IS NULL",
+            (operation_id,),
+        )
+    finally:
+        conn.close()
+    result = service.renew_lease(operation_id, owner)
+    assert result["code"] == "WRONG_STATE"
+    assert result["state"] == "completed"
+    assert result["errors"] == [{"rule": "operation_not_open", "actual": "completed"}]
 
 
 def test_task_lock_cannot_release_before_terminal_completion(tmp_path):

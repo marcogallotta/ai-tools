@@ -110,7 +110,41 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
         run_id="fresh-verification-run",
     )
     assert verification["ok"]
-    assert verification["allowed_actions"] == ["approve", "reject"]
+    assert verification["allowed_actions"] == ["inspect", "approve", "reject"]
+
+def test_planning_prepare_reports_every_missing_field_and_required_label(tmp_path):
+    b = Backend("Planning task", "")
+    a = app(tmp_path, b)
+    started = a.execute(
+        "start", agent="gpt", task_gid="t", kind="planning",
+        change_level=None, change_reason=None,
+    )
+    incomplete = PLANNING.replace("Research emphasis: Compare two hydration levels\n", "").replace(
+        "Destination section: Sichuan — 12345\n", ""
+    )
+    result = a.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"],
+        file_path=write(tmp_path, "missing-planning.txt", incomplete),
+    )
+    assert result["code"] == "VALIDATION_FAILED"
+    missing = [
+        item for item in result["errors"]
+        if item.get("rule") == "planning_field_missing" and "field" in item
+    ]
+    assert missing == [
+        {
+            "rule": "planning_field_missing",
+            "field": "Research emphasis",
+            "required_label": "Research emphasis: <value>",
+        },
+        {
+            "rule": "planning_field_missing",
+            "field": "Destination section",
+            "required_label": "Destination section: <value>",
+        },
+    ]
+
 
 def test_initial_prepare_requires_model(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)

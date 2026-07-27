@@ -536,6 +536,10 @@ def _step7_start(
     trace.submission_id = operation_id
     trace.state = view["status"]
     legal_actions, data = _exposed_result_contract(view, data)
+    # Verification start binds the reviewed identity, but agents still need the
+    # explicit inspect step to see lineage, provenance, and the authoritative
+    # snapshot before deciding. Keep the decision actions visible as follow-ons.
+    legal_actions = ["inspect", *(action for action in legal_actions if action != "inspect")]
     return result_envelope(
         command="start", task_gid=task_gid, submission_id=operation_id,
         state=view["status"], allowed_actions=legal_actions, data=data,

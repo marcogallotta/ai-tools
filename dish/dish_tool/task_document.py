@@ -142,9 +142,12 @@ class CanonicalTaskDocument:
 
 
 class DocumentParseError(ValueError):
-    def __init__(self, rule: str, message: str):
+    def __init__(
+        self, rule: str, message: str, *, details: Mapping[str, object] | None = None
+    ):
         super().__init__(message)
         self.rule = rule
+        self.details = dict(details or {})
 
 
 def _parse_exact_fields(lines: Sequence[str], names: Sequence[str], *, context: str) -> dict[str, str]:
@@ -164,7 +167,14 @@ def _parse_exact_fields(lines: Sequence[str], names: Sequence[str], *, context: 
             raise DocumentParseError(f"{context}_field_unknown", f"unexpected line in {context}: {line}")
     missing = [name for name in names if name not in values]
     if missing:
-        raise DocumentParseError(f"{context}_field_missing", f"missing fields: {', '.join(missing)}")
+        raise DocumentParseError(
+            f"{context}_field_missing",
+            f"missing fields: {', '.join(missing)}",
+            details={
+                "missing_fields": missing,
+                "required_labels": [f"{name}: <value>" for name in missing],
+            },
+        )
     return values
 
 

@@ -110,7 +110,30 @@ def prepare_live(
         try:
             brief = parse_planning_brief(text)
         except DocumentParseError as exc:
-            raise DishRuleError("VALIDATION_FAILED", "Planning candidate is malformed", rule=exc.rule) from exc
+            if exc.rule == "planning_field_missing":
+                missing = list(exc.details.get("missing_fields") or ())
+                raise DishRuleError(
+                    "VALIDATION_FAILED",
+                    "Planning candidate is missing required fields",
+                    rule=exc.rule,
+                    details={
+                        "missing_fields": missing,
+                        "required_labels": list(exc.details.get("required_labels") or ()),
+                    },
+                    errors=[
+                        {
+                            "rule": "planning_field_missing",
+                            "field": field,
+                            "required_label": f"{field}: <value>",
+                        }
+                        for field in missing
+                    ],
+                ) from exc
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "Planning candidate is malformed",
+                rule=exc.rule,
+            ) from exc
         findings = validate_planning_brief(brief).findings
         if findings:
             raise DishRuleError("VALIDATION_FAILED", "Planning candidate failed validation", errors=[finding_payload(f) for f in findings])
