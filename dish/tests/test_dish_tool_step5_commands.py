@@ -201,3 +201,21 @@ def test_wrong_state_response_exposes_current_legal_action(tmp_path):
     assert result["allowed_actions"] == ["prepare"]
     assert result["retryable"] is False
 
+
+def test_retryable_prepare_validation_exposes_prepare_action(tmp_path):
+    b = Backend()
+    a = app(tmp_path, b)
+    started = a.execute(
+        "start", agent="gpt", task_gid="t", kind="planning",
+        change_level=None, change_reason=None,
+    )
+    candidate = tmp_path / "invalid.txt"
+    candidate.write_text("not a planning brief")
+    result = a.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"], file_path=str(candidate),
+        no_role_tags=True, no_blockers=True,
+    )
+    assert not result["ok"]
+    assert result["retryable"] is True
+    assert result["allowed_actions"] == ["prepare"]

@@ -149,7 +149,7 @@ class DishApplication:
                 state=trace.state,
                 validation_scope=trace.validation_scope,
             )
-            if trace.submission_id and exc.code == "WRONG_STATE":
+            if trace.submission_id:
                 try:
                     release = self._load_release(None)
                     view = _exposed_view(
