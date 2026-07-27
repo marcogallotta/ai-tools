@@ -6,11 +6,10 @@ import argparse
 import json
 import os
 import sys
-from pathlib import Path
 from typing import Sequence
 
 from .admin import DishAdminApplication
-from .constants import DEFAULT_DB_PATH
+from .constants import DB_PATH
 from .database import initialize_database
 from .backend import AsanaBackend
 from .releases import configured_honest_path, resolve_release
@@ -145,9 +144,8 @@ def build_application():
             "live mode requires the shared dish service",
             rule="shared_service_required",
         )
-    db_path = Path(os.environ.get("DISH_DB_PATH", str(DEFAULT_DB_PATH))).expanduser()
     honest_root = configured_honest_path()
-    return DishAdminApplication(initialize_database(db_path), backend=AsanaBackend(), release_loader=lambda: resolve_release(honest_root, include_migrations=True))
+    return DishAdminApplication(initialize_database(DB_PATH), backend=AsanaBackend(), release_loader=lambda: resolve_release(honest_root, include_migrations=True))
 
 
 def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:

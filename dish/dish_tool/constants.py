@@ -13,6 +13,7 @@ EXCLUDED_SECTION_GIDS = frozenset(
     {SOURCING_SECTION_GID, REFERENCE_SECTION_GID}
 )
 DEFAULT_DB_PATH = Path("~/ai-tools/var/dish-tool.db").expanduser()
+DB_PATH = Path(os.environ.get("DISH_DB_PATH", str(DEFAULT_DB_PATH))).expanduser()
 
 AGENT_FAMILIES = {
     "claude": "claude",

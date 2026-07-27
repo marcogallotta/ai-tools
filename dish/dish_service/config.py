@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from dish_tool.constants import DEFAULT_DB_PATH
+from dish_tool.constants import DB_PATH
 from dish_tool.releases import configured_honest_path
 
 
@@ -28,7 +28,7 @@ class ServiceConfig:
     @classmethod
     def from_env(cls) -> "ServiceConfig":
         return cls(
-            db_path=Path(os.environ.get("DISH_DB_PATH", str(DEFAULT_DB_PATH))).expanduser(),
+            db_path=DB_PATH,
             honest_root=configured_honest_path(),
             bind_host=os.environ.get("DISH_SERVICE_BIND", "127.0.0.1").strip() or "127.0.0.1",
             port=int(os.environ.get("DISH_SERVICE_PORT", "8765")),

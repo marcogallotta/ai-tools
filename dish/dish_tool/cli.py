@@ -6,12 +6,11 @@ import argparse
 import json
 import os
 import sys
-from pathlib import Path
 from typing import Sequence
 
 from .backend import AsanaBackend
 from .commands import DishApplication
-from .constants import DEFAULT_DB_PATH
+from .constants import DB_PATH
 from .database import initialize_database
 from .errors import DishRuleError
 from .releases import configured_honest_path, resolve_release
@@ -285,9 +284,8 @@ def build_application():
             "live mode requires the shared dish service",
             rule="shared_service_required",
         )
-    db_path = Path(os.environ.get("DISH_DB_PATH", str(DEFAULT_DB_PATH))).expanduser()
     honest_root = configured_honest_path()
-    conn = initialize_database(db_path)
+    conn = initialize_database(DB_PATH)
     return DishApplication(
         conn,
         AsanaBackend(),
