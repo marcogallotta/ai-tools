@@ -229,7 +229,7 @@ def test_action_rejects_malformed_submission_id_before_database_routing(
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["retryable"] is False
     assert result["errors"] == [
-        {"field": "submission_id", "rule": "uuid_identifier_required"}
+        {"expected_format": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", "field": "submission_id", "rule": "uuid_identifier_required"}
     ]
 
 
@@ -243,7 +243,7 @@ def test_action_rejects_malformed_lease_operation_id(tmp_path):
 
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"] == [
-        {"field": "operation_id", "rule": "uuid_identifier_required"}
+        {"expected_format": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx", "field": "operation_id", "rule": "uuid_identifier_required"}
     ]
 
 
@@ -262,7 +262,10 @@ def test_all_http_identifier_field_classes_use_strict_grammar(field, value, rule
         validate_identifier_fields({field: value})
     assert caught.value.code == "INVALID_ARGUMENT"
     assert caught.value.rule == rule
-    assert caught.value.details == {"field": field}
+    expected = {"field": field}
+    if rule == "uuid_identifier_required":
+        expected["expected_format"] = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+    assert caught.value.details == expected
 
 
 def test_action_sanitizes_raw_backend_rejection(tmp_path):
@@ -333,7 +336,54 @@ def test_trimmed_openapi_contains_only_action_workflow_and_renewal_paths():
             "application/json"
         ]["schema"]["properties"]["arguments"]
         assert "anyOf" not in arguments
-        assert "run_id" not in arguments["required"]
+        if "oneOf" in arguments:
+            assert all("run_id" not in variant["required"] for variant in arguments["oneOf"])
+        else:
+            assert "run_id" not in arguments["required"]
+
+
+def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
+    spec = action_openapi(server_url="https://dish.example.test")
+    create_client = spec["paths"]["/v1/action/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["client"]
+    run_id = create_client["properties"]["run_id"]
+    request_id = create_client["properties"]["request_id"]
+    assert run_id["format"] == "uuid"
+    assert "canonical lowercase uuid" in run_id["description"].lower()
+    assert request_id["format"] == "uuid"
+    assert "Newly generated UUID" in request_id["description"]
+
+    renew_client = spec["paths"]["/v1/action/leases/{operation_id}/renew"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["client"]
+    assert renew_client["properties"]["run_id"]["format"] == "uuid"
+
+    reject = spec["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
+    variants = {item["properties"]["route"]["const"]: item for item in reject["oneOf"]}
+    assert set(variants) == {"large", "evidence", "human-review"}
+    assert {"model", "file_text"}.issubset(variants["large"]["required"])
+    assert "resume_status" not in variants["large"]["properties"]
+    for route in ("evidence", "human-review"):
+        props = variants[route]["properties"]
+        assert "resume_status" in variants[route]["required"]
+        assert "file_text" not in props
+        assert "model" not in props
+        assert "independence_attestation" not in props
+
+    prepare = spec["paths"]["/v1/action/prepare"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
+    assert "no_blockers" not in prepare.get("properties", {})
+
+
+def test_uuid_validation_message_names_field_and_expected_format(tmp_path):
+    _backend, server, thread, url = _running(tmp_path)
+    try:
+        action = DishActionClient(url, token="action-secret", run_id="sections-001")
+        result = action.execute("sections", agent="gpt")
+    finally:
+        _stop(server, thread)
+    assert result["errors"][0] == {
+        "expected_format": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        "field": "client.run_id",
+        "rule": "uuid_identifier_required",
+    }
+    assert "canonical lowercase UUID in 8-4-4-4-12 form" in result["data"]["message"]
 
 
 def test_checked_in_openapi_matches_generator():

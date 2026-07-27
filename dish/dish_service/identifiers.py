@@ -19,13 +19,18 @@ _DISH_UUID_FIELDS = {
 _NUMERIC_GID_RE = re.compile(r"[1-9][0-9]*")
 
 
-def _invalid_identifier(field: str, rule: str, message: str) -> DishRuleError:
+def _invalid_identifier(
+    field: str, rule: str, message: str, *, expected_format: str | None = None
+) -> DishRuleError:
+    details = {"field": field}
+    if expected_format is not None:
+        details["expected_format"] = expected_format
     return DishRuleError(
         "INVALID_ARGUMENT",
         message,
         rule=rule,
         retryable=False,
-        details={"field": field},
+        details=details,
     )
 
 
@@ -46,7 +51,8 @@ def require_dish_uuid(value: Any, *, field: str) -> str:
         raise _invalid_identifier(
             field,
             "uuid_identifier_required",
-            f"{field} must be a UUID identifier",
+            f"{field} must be a canonical lowercase UUID in 8-4-4-4-12 form",
+            expected_format="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
         )
     try:
         parsed = uuid.UUID(value)
@@ -54,13 +60,15 @@ def require_dish_uuid(value: Any, *, field: str) -> str:
         raise _invalid_identifier(
             field,
             "uuid_identifier_required",
-            f"{field} must be a UUID identifier",
+            f"{field} must be a canonical lowercase UUID in 8-4-4-4-12 form",
+            expected_format="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
         ) from None
     if str(parsed) != value:
         raise _invalid_identifier(
             field,
             "uuid_identifier_required",
-            f"{field} must be a canonical UUID identifier",
+            f"{field} must be a canonical lowercase UUID in 8-4-4-4-12 form",
+            expected_format="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
         )
     return value
 

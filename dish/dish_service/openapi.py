@@ -5,7 +5,13 @@ from typing import Any
 
 from dish_tool.validation_scope import VALIDATION_SCOPE_VALUES
 
-from .command_spec import ACTION_COMMANDS, REPLAY_SAFE_COMMANDS, action_argument_schema
+from .command_spec import (
+    ACTION_COMMANDS,
+    CLIENT_REQUEST_ID_SCHEMA,
+    CLIENT_RUN_ID_SCHEMA,
+    REPLAY_SAFE_COMMANDS,
+    action_openapi_argument_schema,
+)
 
 def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[str, Any]:
     envelope = {
@@ -43,7 +49,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
     }
     paths: dict[str, Any] = {}
     for command in ACTION_COMMANDS:
-        argument_schema = action_argument_schema(command)
+        argument_schema = action_openapi_argument_schema(command)
         paths[f"/v1/action/{command}"] = {
             "post": {
                 "operationId": f"dish_{command.replace('-', '_')}",
@@ -63,8 +69,8 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                                         "required": (["run_id", "request_id"] if command in REPLAY_SAFE_COMMANDS else ["run_id"]),
                                         "additionalProperties": False,
                                         "properties": {
-                                            "run_id": {"type": "string"},
-                                            "request_id": {"type": "string", "format": "uuid"},
+                                            "run_id": dict(CLIENT_RUN_ID_SCHEMA),
+                                            "request_id": dict(CLIENT_REQUEST_ID_SCHEMA),
                                         },
                                     },
                                     "arguments": argument_schema,
@@ -93,7 +99,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                     "type": "object", "required": ["client"], "additionalProperties": False,
                     "properties": {"client": {
                         "type": "object", "required": ["run_id"], "additionalProperties": False,
-                        "properties": {"run_id": {"type": "string"}},
+                        "properties": {"run_id": dict(CLIENT_RUN_ID_SCHEMA)},
                     }},
                 }}},
             },

@@ -168,10 +168,13 @@
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work.",
                         "format": "uuid",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
                         "type": "string"
                       }
                     },
@@ -245,10 +248,13 @@
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work.",
                         "format": "uuid",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
                         "type": "string"
                       }
                     },
@@ -324,10 +330,13 @@
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work.",
                         "format": "uuid",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
                         "type": "string"
                       }
                     },
@@ -391,6 +400,8 @@
                     "additionalProperties": false,
                     "properties": {
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
                         "type": "string"
                       }
                     },
@@ -479,10 +490,13 @@
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work.",
                         "format": "uuid",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
                         "type": "string"
                       }
                     },
@@ -557,10 +571,13 @@
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work.",
                         "format": "uuid",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
                         "type": "string"
                       }
                     },
@@ -610,67 +627,149 @@
                 "additionalProperties": false,
                 "properties": {
                   "arguments": {
-                    "additionalProperties": false,
-                    "properties": {
-                      "agent": {
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ],
-                        "type": "string"
-                      },
-                      "file_text": {
-                        "type": "string"
-                      },
-                      "independence_attestation": {
-                        "type": "string"
-                      },
-                      "model": {
-                        "type": "string"
-                      },
-                      "reason": {
-                        "type": "string"
-                      },
-                      "resume_status": {
-                        "enum": [
-                          "pending-research",
-                          "pending-verification"
-                        ],
-                        "type": "string"
-                      },
-                      "route": {
-                        "enum": [
-                          "large",
-                          "evidence",
-                          "human-review"
-                        ],
-                        "type": "string"
-                      },
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "submission_id": {
-                        "format": "uuid",
-                        "type": "string"
-                      }
+                    "discriminator": {
+                      "propertyName": "route"
                     },
-                    "required": [
-                      "submission_id",
-                      "agent",
-                      "reason",
-                      "route"
-                    ],
-                    "type": "object"
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "file_text": {
+                            "type": "string"
+                          },
+                          "independence_attestation": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "route": {
+                            "const": "large",
+                            "description": "Select the large rejection route.",
+                            "type": "string"
+                          },
+                          "run_id": {
+                            "type": "string"
+                          },
+                          "submission_id": {
+                            "format": "uuid",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "submission_id",
+                          "agent",
+                          "reason",
+                          "route",
+                          "model",
+                          "file_text"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "resume_status": {
+                            "enum": [
+                              "pending-research",
+                              "pending-verification"
+                            ],
+                            "type": "string"
+                          },
+                          "route": {
+                            "const": "evidence",
+                            "description": "Select the evidence rejection route.",
+                            "type": "string"
+                          },
+                          "submission_id": {
+                            "format": "uuid",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "submission_id",
+                          "agent",
+                          "reason",
+                          "route",
+                          "resume_status"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "resume_status": {
+                            "enum": [
+                              "pending-research",
+                              "pending-verification"
+                            ],
+                            "type": "string"
+                          },
+                          "route": {
+                            "const": "human-review",
+                            "description": "Select the human-review rejection route.",
+                            "type": "string"
+                          },
+                          "submission_id": {
+                            "format": "uuid",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "submission_id",
+                          "agent",
+                          "reason",
+                          "route",
+                          "resume_status"
+                        ],
+                        "type": "object"
+                      }
+                    ]
                   },
                   "client": {
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work.",
                         "format": "uuid",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
                         "type": "string"
                       }
                     },
@@ -740,10 +839,13 @@
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work.",
                         "format": "uuid",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
                         "type": "string"
                       }
                     },
@@ -844,10 +946,13 @@
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work.",
                         "format": "uuid",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
                         "type": "string"
                       }
                     },
@@ -914,10 +1019,13 @@
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work.",
                         "format": "uuid",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
                         "type": "string"
                       }
                     },

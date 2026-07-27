@@ -10,6 +10,23 @@ from .identifiers import require_asana_gid, require_dish_uuid
 REPLAY_SAFE_COMMANDS = {"create", "start"}
 REPLAY_CAPABLE_COMMANDS = {"create", "start", "prepare", "approve", "reject", "submit"}
 
+CLIENT_RUN_ID_SCHEMA = {
+    "type": "string",
+    "format": "uuid",
+    "description": (
+        "Canonical lowercase UUID identifying this agent run. Reuse it for every "
+        "call made by the same run; a new run must generate a new UUID."
+    ),
+}
+CLIENT_REQUEST_ID_SCHEMA = {
+    "type": "string",
+    "format": "uuid",
+    "description": (
+        "Newly generated UUID identifying this request. Reuse it only to replay "
+        "the exact same command after a lost response; never reuse it for different work."
+    ),
+}
+
 ACTION_COMMANDS = (
     "create",
     "sections",
@@ -126,6 +143,52 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {"submission_id": {"type": "string", "format": "uuid"}},
     },
 }
+
+
+def action_openapi_argument_schema(command: str) -> dict[str, Any]:
+    """Return the public Action schema, including route-specific reject shapes."""
+    if command != "reject":
+        return action_argument_schema(command)
+
+    base = ARGUMENT_SCHEMAS["reject"]["properties"]
+    common = {name: deepcopy(base[name]) for name in ("submission_id", "agent", "reason")}
+
+    def variant(route: str, *, extra: tuple[str, ...], required: tuple[str, ...]) -> dict[str, Any]:
+        properties = deepcopy(common)
+        properties["route"] = {
+            "type": "string",
+            "const": route,
+            "description": f"Select the {route} rejection route.",
+        }
+        for name in extra:
+            properties[name] = deepcopy(base[name])
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["submission_id", "agent", "reason", "route", *required],
+            "properties": properties,
+        }
+
+    return {
+        "oneOf": [
+            variant(
+                "large",
+                extra=("model", "file_text", "run_id", "independence_attestation"),
+                required=("model", "file_text"),
+            ),
+            variant(
+                "evidence",
+                extra=("resume_status",),
+                required=("resume_status",),
+            ),
+            variant(
+                "human-review",
+                extra=("resume_status",),
+                required=("resume_status",),
+            ),
+        ],
+        "discriminator": {"propertyName": "route"},
+    }
 
 
 def action_argument_schema(command: str) -> dict[str, Any]:
