@@ -1,18 +1,19 @@
-#!/usr/bin/env bash
-# Atomic stage-and-commit. Refuses carpet-bomb patterns to prevent index
-# collisions between concurrent Claude sessions.
-#
-# Usage: git-commit <file> [file...] -m "message" [--amend]
+#!/usr/bin/env python3
+"""git-commit — atomic stage-and-commit.
 
-set -euo pipefail
+Refuses carpet-bomb patterns ('.', '-A', '-u', '--all') to prevent index
+collisions between concurrent Claude sessions.
 
-msg=""
-repo=""
-amend=false
-files=()
+Usage: git-commit <file> [file...] -m "message" [-C <repo>] [--amend]
+"""
+import os
+import subprocess
+import sys
+from pathlib import Path
 
-show_help() {
-  cat <<EOF
+CARPET_BOMB_PATTERNS = {".", "-A", "-u", "--all"}
+
+HELP_TEXT = """\
 Usage: git-commit <file> [file...] -m "message" [-C <repo>] [--amend]
 
 Atomic stage-and-commit. Refuses carpet-bomb patterns ('.', '-A', '-u', '--all')
@@ -21,147 +22,66 @@ to prevent index collisions between concurrent Claude sessions.
 Options:
   -m <message>                    Commit message (required, unless --amend is
                                    used without one, which keeps the prior message)
-  -C <repo>                       Run git in <repo> instead of \$PWD
+  -C <repo>                       Run git in <repo> instead of $PWD
   --amend                         Amend the previous commit instead of creating
                                    a new one
   -h, --help                      Show this help and exit
 
-Paths are resolved relative to \$PWD (or -C <repo> if given), NOT the repo root.
+Paths are resolved relative to $PWD (or -C <repo> if given), NOT the repo root.
 Check your current directory before adding a prefix like "bin/" — if you're
 already in bin/, pass "foo.md", not "bin/foo.md". Example:
-  \$ pwd
+  $ pwd
   /home/marco/ai-tools/bin
-  \$ git-commit foo.md -m "..."          # correct
-  \$ git-commit bin/foo.md -m "..."      # wrong: resolves to bin/bin/foo.md
-EOF
-}
-
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    -h|--help)
-      show_help
-      exit 0
-      ;;
-    -m)
-      shift
-      msg="$1"
-      ;;
-    -C)
-      shift
-      repo="$1"
-      ;;
-    --amend)
-      amend=true
-      ;;
-    --)
-      shift
-      files+=("$@")
-      break
-      ;;
-    -*)
-      echo "Unknown flag: $1" >&2
-      exit 1
-      ;;
-    *)
-      files+=("$1")
-      ;;
-  esac
-  shift
-done
-
-if [[ -z "$msg" && "$amend" == false ]]; then
-  echo "Error: -m <message> is required" >&2
-  exit 1
-fi
-
-if [[ ${#files[@]} -eq 0 ]]; then
-  echo "Error: at least one explicit file path is required — no carpet-bomb commits" >&2
-  exit 1
-fi
-
-for f in "${files[@]}"; do
-  if [[ "$f" == "." || "$f" == "-A" || "$f" == "-u" || "$f" == "--all" ]]; then
-    echo "Error: '$f' not allowed — list explicit paths to avoid index collisions with other sessions" >&2
-    exit 1
-  fi
-done
-
-git_cwd="$PWD"
-if [[ -n "$repo" ]]; then
-  git_cwd="$(cd "$repo" && pwd -P)"
-fi
-repo_root="$(git -C "$git_cwd" rev-parse --show-toplevel)"
-
-commit_args=()
-if [[ "$amend" == true ]]; then
-  commit_args+=(--amend)
-  if [[ -n "$msg" ]]; then
-    commit_args+=(-m "$msg")
-  else
-    commit_args+=(--no-edit)
-  fi
-else
-  commit_args+=(-m "$msg")
-fi
-
-# Pre-flight: catch bad paths before staging, with a diagnostic specific
-# enough that one retry fixes it (instead of blind repeated guessing —
-# each retry re-triggers a permission prompt for the caller).
-missing=()
-for f in "${files[@]}"; do
-  candidate="$f"
-  if [[ "$candidate" != /* ]]; then
-    candidate="$git_cwd/$candidate"
-  fi
-  resolved="$(realpath -m -- "$candidate")"
-  if [[ ! -e "$resolved" ]]; then
-    # Could be a staged deletion: git rm removes the path from the index,
-    # so ls-files can't see it — check HEAD instead (relative to repo root).
-    rel_to_root="${resolved#"$repo_root"/}"
-    if ! git -C "$git_cwd" cat-file -e "HEAD:$rel_to_root" >/dev/null 2>&1; then
-      missing+=("$f -> $resolved")
-    fi
-  fi
-done
-
-if [[ ${#missing[@]} -gt 0 ]]; then
-  {
-    echo "Error: file path(s) did not resolve to anything in the working tree or index:"
-    for m in "${missing[@]}"; do
-      echo "  $m"
-    done
-    echo
-    echo "Resolved relative to git_cwd: $git_cwd"
-    echo "Repo root: $repo_root"
-    echo "Real invocation directory (\$PWD): $PWD"
-    echo
-    echo "If git_cwd and \$PWD differ, your paths were resolved against git_cwd (the -C target),"
-    echo "not against your actual shell location. Pass paths relative to git_cwd, or use absolute paths."
-  } >&2
-  exit 1
-fi
-
-if [[ -n "$repo" ]]; then
-  git -C "$repo" add -- "${files[@]}"
-else
-  git add -- "${files[@]}"
-fi
-
-# Honest dish schema/migration changes are governed by the root DISH_VERSION file.
-# Inspect the actual staged diff after staging and block missing bumps; never
-# guess or auto-increment a version. Repositories without DISH_VERSION are
-# unaffected.
-python3 - "$repo_root" <<'PY_GUARD'
-import subprocess
-import sys
-from pathlib import Path
-
-repo = Path(sys.argv[1])
+  $ git-commit foo.md -m "..."          # correct
+  $ git-commit bin/foo.md -m "..."      # wrong: resolves to bin/bin/foo.md
+"""
 
 
-def git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+def fail(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
+
+
+def parse_args(argv):
+    msg = None
+    repo = None
+    amend = False
+    files = []
+
+    i = 0
+    n = len(argv)
+    while i < n:
+        arg = argv[i]
+        if arg in ("-h", "--help"):
+            print(HELP_TEXT, end="")
+            sys.exit(0)
+        elif arg == "-m":
+            i += 1
+            if i >= n:
+                fail("Error: -m requires a value")
+            msg = argv[i]
+        elif arg == "-C":
+            i += 1
+            if i >= n:
+                fail("Error: -C requires a value")
+            repo = argv[i]
+        elif arg == "--amend":
+            amend = True
+        elif arg == "--":
+            files.extend(argv[i + 1 :])
+            break
+        elif arg.startswith("-"):
+            fail(f"Unknown flag: {arg}")
+        else:
+            files.append(arg)
+        i += 1
+
+    return msg, repo, amend, files
+
+
+def run_git(cwd, *args, check=True):
     return subprocess.run(
-        ["git", "-C", str(repo), *args],
+        ["git", "-C", str(cwd), *args],
         check=check,
         text=True,
         stdout=subprocess.PIPE,
@@ -169,72 +89,45 @@ def git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     )
 
 
-def show(spec: str) -> str | None:
-    completed = git("show", spec, check=False)
+def show(cwd, spec):
+    completed = run_git(cwd, "show", spec, check=False)
     if completed.returncode != 0:
         return None
     return completed.stdout
 
 
-def parse_version(text: str | None, *, source: str) -> dict[str, str] | None:
+def parse_version(text, source):
     if text is None:
         return None
-    values: dict[str, str] = {}
+    values = {}
     allowed = {"PROTOCOL_VERSION", "SCHEMA_VERSION"}
     for line_number, raw in enumerate(text.splitlines(), start=1):
         if not raw.strip():
             continue
         if raw.count("=") != 1:
-            raise SystemExit(
-                f"Error: {source} line {line_number} must be KEY=VALUE"
-            )
+            fail(f"Error: {source} line {line_number} must be KEY=VALUE")
         key, value = raw.split("=", 1)
         if key not in allowed:
-            raise SystemExit(f"Error: {source} has unknown key {key!r}")
+            fail(f"Error: {source} has unknown key {key!r}")
         if key in values:
-            raise SystemExit(f"Error: {source} contains duplicate key {key}")
+            fail(f"Error: {source} contains duplicate key {key}")
         if not value or value != value.strip():
-            raise SystemExit(f"Error: {source} has invalid value for {key}")
+            fail(f"Error: {source} has invalid value for {key}")
         values[key] = value
     missing = sorted(allowed - set(values))
     if missing:
-        raise SystemExit(
-            f"Error: {source} is missing required key(s): {', '.join(missing)}"
-        )
+        fail(f"Error: {source} is missing required key(s): {', '.join(missing)}")
     return values
 
-staged_raw = git(
-    "diff", "--cached", "--name-only", "--diff-filter=ACMRD", "-z"
-).stdout
-staged = {item for item in staged_raw.split("\0") if item}
-schema_assets = {
-    path
-    for path in staged
-    if path == "dish-task-schema.json"
-    or path.startswith("dish-schema-migrations/")
-}
 
-
-def schema_asset_has_structural_change(path: str) -> bool:
-    status = git(
-        "diff",
-        "--cached",
-        "--name-status",
-        "--find-renames",
-        "--",
-        path,
+def schema_asset_has_structural_change(cwd, path):
+    status = run_git(
+        cwd, "diff", "--cached", "--name-status", "--find-renames", "--", path
     ).stdout.splitlines()
     if not status or any(not line.startswith("M\t") for line in status):
         return True
 
-    diff = git(
-        "diff",
-        "--cached",
-        "--unified=0",
-        "--no-color",
-        "--",
-        path,
-    ).stdout
+    diff = run_git(cwd, "diff", "--cached", "--unified=0", "--no-color", "--", path).stdout
     for line in diff.splitlines():
         if not line.startswith(("+", "-")) or line.startswith(("+++", "---")):
             continue
@@ -245,32 +138,119 @@ def schema_asset_has_structural_change(path: str) -> bool:
     return False
 
 
-schema_changed = any(schema_asset_has_structural_change(path) for path in schema_assets)
-if not schema_changed:
-    raise SystemExit(0)
+def check_dish_version_guard(repo_root):
+    """Honest dish schema/migration changes are governed by the root DISH_VERSION
+    file. Inspect the actual staged diff after staging and block missing bumps;
+    never guess or auto-increment a version. Repositories without DISH_VERSION are
+    unaffected.
+    """
+    staged_raw = run_git(
+        repo_root, "diff", "--cached", "--name-only", "--diff-filter=ACMRD", "-z"
+    ).stdout
+    staged = {item for item in staged_raw.split("\0") if item}
+    schema_assets = {
+        path
+        for path in staged
+        if path == "dish-task-schema.json" or path.startswith("dish-schema-migrations/")
+    }
 
-new = parse_version(show(":DISH_VERSION"), source="staged DISH_VERSION")
-if new is None:
-    raise SystemExit(
-        "Error: governed dish protocol/schema changes require staged DISH_VERSION"
+    schema_changed = any(
+        schema_asset_has_structural_change(repo_root, path) for path in schema_assets
     )
-old = parse_version(show("HEAD:DISH_VERSION"), source="HEAD DISH_VERSION")
+    if not schema_changed:
+        return
 
-# Initial baseline introduction has no prior value to compare against.
-if old is None:
-    raise SystemExit(0)
+    new = parse_version(show(repo_root, ":DISH_VERSION"), source="staged DISH_VERSION")
+    if new is None:
+        fail("Error: governed dish protocol/schema changes require staged DISH_VERSION")
+    old = parse_version(show(repo_root, "HEAD:DISH_VERSION"), source="HEAD DISH_VERSION")
 
-protocol_bumped = new["PROTOCOL_VERSION"] != old["PROTOCOL_VERSION"]
-schema_bumped = new["SCHEMA_VERSION"] != old["SCHEMA_VERSION"]
-if not protocol_bumped or not schema_bumped:
-    raise SystemExit(
-        "Error: staged dish schema/migration changes require both "
-        "PROTOCOL_VERSION and SCHEMA_VERSION bumps in DISH_VERSION"
+    # Initial baseline introduction has no prior value to compare against.
+    if old is None:
+        return
+
+    protocol_bumped = new["PROTOCOL_VERSION"] != old["PROTOCOL_VERSION"]
+    schema_bumped = new["SCHEMA_VERSION"] != old["SCHEMA_VERSION"]
+    if not protocol_bumped or not schema_bumped:
+        fail(
+            "Error: staged dish schema/migration changes require both "
+            "PROTOCOL_VERSION and SCHEMA_VERSION bumps in DISH_VERSION"
+        )
+
+
+def main(argv):
+    msg, repo, amend, files = parse_args(argv)
+
+    if not msg and not amend:
+        fail("Error: -m <message> is required")
+
+    if not files:
+        fail("Error: at least one explicit file path is required — no carpet-bomb commits")
+
+    for f in files:
+        if f in CARPET_BOMB_PATTERNS:
+            fail(
+                f"Error: '{f}' not allowed — list explicit paths to avoid index "
+                "collisions with other sessions"
+            )
+
+    git_cwd = Path(repo).resolve() if repo else Path.cwd()
+    repo_root = Path(
+        run_git(git_cwd, "rev-parse", "--show-toplevel").stdout.strip()
     )
-PY_GUARD
 
-if [[ -n "$repo" ]]; then
-  git -C "$repo" commit "${commit_args[@]}"
-else
-  git commit "${commit_args[@]}"
-fi
+    # Pre-flight: catch bad paths before staging, with a diagnostic specific
+    # enough that one retry fixes it (instead of blind repeated guessing —
+    # each retry re-triggers a permission prompt for the caller).
+    missing = []
+    for f in files:
+        candidate = Path(f) if Path(f).is_absolute() else git_cwd / f
+        resolved = Path(os.path.realpath(candidate))
+        if not resolved.exists():
+            # Could be a staged deletion: git rm removes the path from the index,
+            # so ls-files can't see it — check HEAD instead (relative to repo root).
+            try:
+                rel_to_root = resolved.relative_to(repo_root)
+            except ValueError:
+                rel_to_root = resolved
+            probe = run_git(git_cwd, "cat-file", "-e", f"HEAD:{rel_to_root}", check=False)
+            if probe.returncode != 0:
+                missing.append(f"{f} -> {resolved}")
+
+    if missing:
+        lines = ["Error: file path(s) did not resolve to anything in the working tree or index:"]
+        for m in missing:
+            lines.append(f"  {m}")
+        lines.append("")
+        lines.append(f"Resolved relative to git_cwd: {git_cwd}")
+        lines.append(f"Repo root: {repo_root}")
+        lines.append(f"Real invocation directory ($PWD): {Path.cwd()}")
+        lines.append("")
+        lines.append(
+            "If git_cwd and $PWD differ, your paths were resolved against git_cwd (the -C target),"
+        )
+        lines.append(
+            "not against your actual shell location. Pass paths relative to git_cwd, or use absolute paths."
+        )
+        fail("\n".join(lines))
+
+    run_git(git_cwd, "add", "--", *files)
+
+    check_dish_version_guard(repo_root)
+
+    commit_args = []
+    if amend:
+        commit_args.append("--amend")
+        if msg:
+            commit_args.extend(["-m", msg])
+        else:
+            commit_args.append("--no-edit")
+    else:
+        commit_args.extend(["-m", msg])
+
+    result = subprocess.run(["git", "-C", str(git_cwd), "commit", *commit_args])
+    sys.exit(result.returncode)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
