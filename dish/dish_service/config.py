@@ -17,6 +17,7 @@ class ServiceConfig:
     port: int = 8765
     max_body_bytes: int = 2 * 1024 * 1024
     request_timeout_seconds: float = 60.0
+    lease_ttl_seconds: int = 1800
 
     @classmethod
     def from_env(cls) -> "ServiceConfig":
@@ -27,4 +28,5 @@ class ServiceConfig:
             port=int(os.environ.get("DISH_SERVICE_PORT", "8765")),
             max_body_bytes=int(os.environ.get("DISH_SERVICE_MAX_BODY_BYTES", str(2 * 1024 * 1024))),
             request_timeout_seconds=float(os.environ.get("DISH_SERVICE_REQUEST_TIMEOUT", "60")),
+            lease_ttl_seconds=int(os.environ.get("DISH_SERVICE_LEASE_TTL_SECONDS", "1800")),
         )

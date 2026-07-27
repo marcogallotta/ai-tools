@@ -1178,7 +1178,61 @@ WHEN NEW.status='completed' AND NEW.terminal_outcome='non_material_checkin'
 BEGIN SELECT RAISE(ABORT, 'non-material completion requires exact local signed baseline'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19}
+_MIGRATION_20 = """
+CREATE TABLE service_leases (
+    lease_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    task_gid TEXT NOT NULL,
+    owner_id TEXT NOT NULL CHECK(length(trim(owner_id)) > 0),
+    run_id TEXT NOT NULL CHECK(length(trim(run_id)) > 0),
+    acquired_at TEXT NOT NULL,
+    renewed_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    released_at TEXT,
+    release_reason TEXT,
+    CHECK ((released_at IS NULL AND release_reason IS NULL)
+        OR (released_at IS NOT NULL AND length(trim(release_reason)) > 0))
+);
+CREATE UNIQUE INDEX service_leases_one_active_operation
+    ON service_leases(operation_id) WHERE released_at IS NULL;
+CREATE UNIQUE INDEX service_leases_one_active_task
+    ON service_leases(task_gid) WHERE released_at IS NULL;
+CREATE INDEX service_leases_operation_history
+    ON service_leases(operation_id, acquired_at);
+
+CREATE TRIGGER service_leases_creation_immutable_update
+BEFORE UPDATE ON service_leases
+WHEN NEW.lease_id IS NOT OLD.lease_id
+  OR NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.owner_id IS NOT OLD.owner_id
+  OR NEW.run_id IS NOT OLD.run_id
+  OR NEW.acquired_at IS NOT OLD.acquired_at
+BEGIN SELECT RAISE(ABORT, 'service lease creation facts are immutable'); END;
+
+CREATE TRIGGER service_leases_renewal_monotonic_update
+BEFORE UPDATE OF renewed_at, expires_at ON service_leases
+WHEN OLD.released_at IS NOT NULL
+  OR NEW.renewed_at < OLD.renewed_at
+  OR NEW.expires_at <= NEW.renewed_at
+  OR NEW.expires_at < OLD.expires_at
+BEGIN SELECT RAISE(ABORT, 'service lease renewal must be active and monotonic'); END;
+
+CREATE TRIGGER service_leases_release_monotonic_update
+BEFORE UPDATE OF released_at, release_reason ON service_leases
+WHEN OLD.released_at IS NOT NULL
+  OR NEW.released_at IS NULL
+  OR NEW.release_reason IS NULL
+  OR length(trim(NEW.release_reason)) = 0
+BEGIN SELECT RAISE(ABORT, 'service lease release is one-way and requires a reason'); END;
+
+CREATE TRIGGER service_leases_append_only_delete
+BEFORE DELETE ON service_leases
+BEGIN SELECT RAISE(ABORT, 'service leases are append-only'); END;
+"""
+
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20}
 
 
 def _backup_legacy_database(db_path: Path) -> None:

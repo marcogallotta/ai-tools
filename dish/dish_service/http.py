@@ -14,6 +14,7 @@ from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
 
 from .application import DishService
+from .leases import ServicePrincipal
 
 LOG = logging.getLogger("dish.service")
 
@@ -86,16 +87,33 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         started = time.monotonic()
         path = urlsplit(self.path).path
         parts = [part for part in path.split("/") if part]
-        command = parts[2] if len(parts) == 3 and parts[:2] == ["v1", "commands"] else "unknown"
+        if len(parts) == 3 and parts[:2] == ["v1", "commands"]:
+            command = parts[2]
+        elif len(parts) == 4 and parts[:2] == ["v1", "leases"] and parts[3] == "renew":
+            command = "renew-lease"
+        else:
+            command = "unknown"
         try:
             if command == "unknown":
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
                 return
             request = self._read_json()
-            arguments = request.get("arguments", {})
-            if not isinstance(arguments, dict):
-                raise DishRuleError("INVALID_ARGUMENT", "arguments must be a JSON object", rule="arguments_object_required")
-            payload = self.server.service.execute_agent(command, arguments)
+            client = request.get("client")
+            principal = None
+            if client is not None:
+                if not isinstance(client, dict):
+                    raise DishRuleError("INVALID_ARGUMENT", "client must be a JSON object", rule="client_object_required")
+                principal = ServicePrincipal.from_values(client.get("owner_id"), client.get("run_id"))
+            if len(parts) == 4 and parts[:2] == ["v1", "leases"] and parts[3] == "renew":
+                operation_id = parts[2]
+                if principal is None:
+                    raise DishRuleError("INVALID_ARGUMENT", "client identity is required", rule="service_principal_required")
+                payload = self.server.service.renew_lease(operation_id, principal)
+            else:
+                arguments = request.get("arguments", {})
+                if not isinstance(arguments, dict):
+                    raise DishRuleError("INVALID_ARGUMENT", "arguments must be a JSON object", rule="arguments_object_required")
+                payload = self.server.service.execute_agent(command, arguments, principal=principal)
             self._write_json(HTTPStatus.OK, payload)
         except DishRuleError as exc:
             self._write_json(HTTPStatus.BAD_REQUEST, error_envelope(command, exc))
