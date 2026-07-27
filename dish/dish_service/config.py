@@ -21,6 +21,7 @@ class ServiceConfig:
     agent_token: str | None = None
     admin_token: str | None = None
     action_token: str | None = None
+    backup_dir: Path | None = None
 
     @classmethod
     def from_env(cls) -> "ServiceConfig":
@@ -35,4 +36,9 @@ class ServiceConfig:
             agent_token=os.environ.get("DISH_SERVICE_AGENT_TOKEN") or None,
             admin_token=os.environ.get("DISH_SERVICE_ADMIN_TOKEN") or None,
             action_token=os.environ.get("DISH_SERVICE_ACTION_TOKEN") or None,
+            backup_dir=(
+                Path(os.environ["DISH_SERVICE_BACKUP_DIR"]).expanduser()
+                if os.environ.get("DISH_SERVICE_BACKUP_DIR")
+                else None
+            ),
         )

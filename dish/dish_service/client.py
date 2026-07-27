@@ -157,6 +157,20 @@ class DishAdminServiceClient(DishServiceClient):
             payload={"reason": reason, "client": self._client()},
         )
 
+    def create_backup(self, *, label: str = "manual") -> dict[str, Any]:
+        return self._json_request(
+            "/v1/admin/backups/create",
+            method="POST",
+            payload={"label": label, "client": self._client()},
+        )
+
+    def restore_backup(self, backup_id: str) -> dict[str, Any]:
+        return self._json_request(
+            "/v1/admin/backups/restore",
+            method="POST",
+            payload={"backup_id": backup_id, "client": self._client()},
+        )
+
 
 class DishActionClient(DishServiceClient):
     def execute(

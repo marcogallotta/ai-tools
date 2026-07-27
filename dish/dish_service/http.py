@@ -130,6 +130,10 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             surface, command = "admin", parts[2]
         elif len(parts) == 5 and parts[:3] == ["v1", "admin", "leases"] and parts[4] == "recover":
             surface, command = "admin-lease", "recover-lease"
+        elif parts == ["v1", "admin", "backups", "create"]:
+            surface, command = "admin-backup", "backup-create"
+        elif parts == ["v1", "admin", "backups", "restore"]:
+            surface, command = "admin-backup", "backup-restore"
         elif len(parts) == 3 and parts[:2] == ["v1", "argument-failures"]:
             surface, command = "argument-failure", parts[2]
         try:
@@ -155,11 +159,16 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 if not reason:
                     raise DishRuleError("INVALID_ARGUMENT", "recovery reason is required", rule="recovery_reason_required")
                 payload = self.server.service.recover_lease(parts[3], principal, reason=reason)
+            elif surface == "admin-backup":
+                if command == "backup-create":
+                    payload = self.server.service.create_backup(label=str(request.get("label") or "manual"))
+                else:
+                    payload = self.server.service.restore_backup(str(request.get("backup_id") or ""))
             elif surface == "admin":
                 arguments = request.get("arguments", {})
                 if not isinstance(arguments, dict):
                     raise DishRuleError("INVALID_ARGUMENT", "arguments must be a JSON object", rule="arguments_object_required")
-                payload = self.server.service.execute_admin(command, arguments)
+                payload = self.server.service.execute_admin(command, arguments, principal=principal)
             elif surface == "argument-failure":
                 error = request.get("error")
                 context = request.get("context", {})

@@ -3,30 +3,49 @@ from __future__ import annotations
 
 import contextlib
 import tempfile
+import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from dish_tool.admin import DishAdminApplication
 from dish_tool.backend import AsanaBackend
 from dish_tool.commands import DishApplication
-from dish_tool.database import initialize_database
+from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
+from dish_tool.database import initialize_database, process_command_audit_repairs
 from dish_tool.errors import DishRuleError
+from dish_tool.models import SectionRegistry
 from dish_tool.releases import resolve_release
 from dish_tool.results import error_envelope, result_envelope
 
+from .backup import BackupManager
 from .config import ServiceConfig
 from .leases import LeaseManager, ServicePrincipal
 
 _READ_ONLY_AGENT_COMMANDS = {"sections", "read", "inspect"}
 _LEASED_AGENT_COMMANDS = {"prepare", "approve", "reject", "submit"}
 _HANDOFF_PHASES = {"await_verification", "held_evidence", "held_human"}
+_OPERATION_ADMIN_COMMANDS = {
+    "recover",
+    "discard",
+    "reopen",
+    "supply-evidence",
+    "record-human-decision",
+    "authorize-governed-change",
+}
+
+
+def _now_stamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 class DishService:
-    """Create a fresh database/application boundary for each request.
+    """Shared persistent authority around the existing workflow applications.
 
-    SQLite remains the single shared persistent authority. Opening a connection per
-    request avoids sharing sqlite connection objects across HTTP worker threads.
+    Every request still gets a fresh SQLite connection, but one in-process
+    maintenance lock serializes database replacement and workflow mutations. The
+    durable operations/task constraint and service leases remain the cross-request
+    authority; the lock only ensures a restore cannot overlap a request.
     """
 
     def __init__(
@@ -41,6 +60,12 @@ class DishService:
         self.backend_factory = backend_factory or AsanaBackend
         self.release_loader = release_loader
         self.lease_now = lease_now
+        self._maintenance_lock = threading.RLock()
+
+    @property
+    def backup_manager(self) -> BackupManager:
+        backup_dir = self.config.backup_dir or (self.config.db_path.parent / "backups")
+        return BackupManager(self.config.db_path, backup_dir)
 
     def _release(self, role: str | None = None, *, include_migrations: bool = False):
         if self.release_loader is not None:
@@ -64,9 +89,11 @@ class DishService:
         return LeaseManager(conn, **kwargs)
 
     @staticmethod
-    def _default_principal(arguments: Mapping[str, Any]) -> ServicePrincipal:
-        agent = str(arguments.get("agent") or "local").strip() or "local"
-        return ServicePrincipal(owner_id=f"local:{agent}", run_id=f"local:{agent}")
+    def _default_principal(arguments: Mapping[str, Any], *, admin: bool = False) -> ServicePrincipal:
+        agent = str(arguments.get("agent") or ("marco-admin" if admin else "local")).strip() or "local"
+        prefix = "admin" if admin else "local"
+        run = str(arguments.get("run_id") or f"{prefix}:{agent}").strip()
+        return ServicePrincipal(owner_id=f"{prefix}:{agent}", run_id=run)
 
     @contextlib.contextmanager
     def _candidate_file(self, arguments: Mapping[str, Any]):
@@ -124,6 +151,13 @@ class DishService:
             "expires_at": row["expires_at"],
         }
 
+    def _assert_mutation_ready(self, backend: Any) -> None:
+        # Compatibility is resolved before any workflow mutation. Asana access is
+        # proven with the same read-only section registry contract used by the
+        # workflow itself; malformed/missing queues fail closed.
+        self._release(None)
+        SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
+
     def execute_agent(
         self,
         command: str,
@@ -131,79 +165,82 @@ class DishService:
         *,
         principal: ServicePrincipal | None = None,
     ) -> dict[str, Any]:
-        conn = initialize_database(self.config.db_path)
-        acquired_for_request = False
-        operation_id = None
-        principal = principal or self._default_principal(arguments)
-        leases = self._lease_manager(conn)
-        try:
-            app = DishApplication(
-                conn,
-                self.backend_factory(),
-                release_loader=lambda role=None: self._release(role),
-            )
-            operation_id = self._operation_for_request(conn, command, arguments)
-            if command in _LEASED_AGENT_COMMANDS:
-                if not operation_id:
-                    raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
-                leases.assert_owned(operation_id, principal)
-            elif command == "start" and arguments.get("kind") == "verification":
-                if not operation_id:
-                    raise DishRuleError("NOT_FOUND", "task has no open operation", rule="open_operation_missing")
-                leases.acquire(operation_id, principal)
-                acquired_for_request = True
-
-            with self._candidate_file(arguments) as prepared:
-                result = app.execute(command, **prepared)
-
-            if command == "start" and arguments.get("kind") != "verification" and result.get("ok"):
-                operation_id = result.get("submission_id")
-                if operation_id:
+        with self._maintenance_lock:
+            conn = initialize_database(self.config.db_path)
+            acquired_for_request = False
+            operation_id = None
+            principal = principal or self._default_principal(arguments)
+            leases = self._lease_manager(conn)
+            try:
+                backend = self.backend_factory()
+                if command not in _READ_ONLY_AGENT_COMMANDS:
+                    self._assert_mutation_ready(backend)
+                app = DishApplication(
+                    conn,
+                    backend,
+                    release_loader=lambda role=None: self._release(role),
+                )
+                operation_id = self._operation_for_request(conn, command, arguments)
+                if command in _LEASED_AGENT_COMMANDS:
+                    if not operation_id:
+                        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+                    leases.assert_owned(operation_id, principal)
+                elif command == "start" and arguments.get("kind") == "verification":
+                    if not operation_id:
+                        raise DishRuleError("NOT_FOUND", "task has no open operation", rule="open_operation_missing")
                     leases.acquire(operation_id, principal)
                     acquired_for_request = True
 
-            if result.get("ok") and operation_id:
-                op = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
-                if op is not None:
-                    if op["status"] in {"completed", "cancelled"}:
-                        leases.release_terminal(operation_id, principal)
-                    elif op["phase"] in _HANDOFF_PHASES and command in {"prepare", "reject"}:
-                        leases.release_for_handoff(
-                            operation_id,
-                            principal,
-                            reason=f"workflow_handoff:{op['phase']}",
-                        )
-                active = leases.active_for_operation(operation_id)
-                result.setdefault("data", {})["service_lease"] = self._lease_payload(active)
-            elif not result.get("ok") and acquired_for_request and operation_id:
-                # A failed Verification start did not establish actor authority; do
-                # not strand the task under the rejected caller's owner lease.
-                if command == "start" and arguments.get("kind") == "verification":
-                    leases.release(operation_id, principal, reason="verification_start_failed")
-            return result
-        except DishRuleError as exc:
-            if acquired_for_request and operation_id:
-                try:
-                    leases.release(operation_id, principal, reason="service_command_rejected")
-                except Exception:
-                    pass
-            return error_envelope(command, exc, submission_id=operation_id)
-        finally:
-            conn.close()
+                with self._candidate_file(arguments) as prepared:
+                    result = app.execute(command, **prepared)
+
+                if command == "start" and arguments.get("kind") != "verification" and result.get("ok"):
+                    operation_id = result.get("submission_id")
+                    if operation_id:
+                        leases.acquire(operation_id, principal)
+                        acquired_for_request = True
+
+                if result.get("ok") and operation_id:
+                    op = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
+                    if op is not None:
+                        if op["status"] in {"completed", "cancelled"}:
+                            leases.release_terminal(operation_id, principal)
+                        elif op["phase"] in _HANDOFF_PHASES and command in {"prepare", "reject"}:
+                            leases.release_for_handoff(
+                                operation_id,
+                                principal,
+                                reason=f"workflow_handoff:{op['phase']}",
+                            )
+                    active = leases.active_for_operation(operation_id)
+                    result.setdefault("data", {})["service_lease"] = self._lease_payload(active)
+                elif not result.get("ok") and acquired_for_request and operation_id:
+                    if command == "start" and arguments.get("kind") == "verification":
+                        leases.release(operation_id, principal, reason="verification_start_failed")
+                return result
+            except DishRuleError as exc:
+                if acquired_for_request and operation_id:
+                    try:
+                        leases.release(operation_id, principal, reason="service_command_rejected")
+                    except Exception:
+                        pass
+                return error_envelope(command, exc, submission_id=operation_id)
+            finally:
+                conn.close()
 
     def renew_lease(self, operation_id: str, principal: ServicePrincipal) -> dict[str, Any]:
-        conn = initialize_database(self.config.db_path)
-        try:
-            row = self._lease_manager(conn).renew(operation_id, principal)
-            return result_envelope(
-                command="renew-lease",
-                submission_id=operation_id,
-                data={"service_lease": self._lease_payload(row)},
-            )
-        except DishRuleError as exc:
-            return error_envelope("renew-lease", exc, submission_id=operation_id)
-        finally:
-            conn.close()
+        with self._maintenance_lock:
+            conn = initialize_database(self.config.db_path)
+            try:
+                row = self._lease_manager(conn).renew(operation_id, principal)
+                return result_envelope(
+                    command="renew-lease",
+                    submission_id=operation_id,
+                    data={"service_lease": self._lease_payload(row)},
+                )
+            except DishRuleError as exc:
+                return error_envelope("renew-lease", exc, submission_id=operation_id)
+            finally:
+                conn.close()
 
     def recover_lease(
         self,
@@ -212,18 +249,19 @@ class DishService:
         *,
         reason: str,
     ) -> dict[str, Any]:
-        conn = initialize_database(self.config.db_path)
-        try:
-            row = self._lease_manager(conn).admin_recover(operation_id, principal, reason=reason)
-            return result_envelope(
-                command="recover-lease",
-                submission_id=operation_id,
-                data={"service_lease": self._lease_payload(row)},
-            )
-        except DishRuleError as exc:
-            return error_envelope("recover-lease", exc, submission_id=operation_id)
-        finally:
-            conn.close()
+        with self._maintenance_lock:
+            conn = initialize_database(self.config.db_path)
+            try:
+                row = self._lease_manager(conn).admin_recover(operation_id, principal, reason=reason)
+                return result_envelope(
+                    command="recover-lease",
+                    submission_id=operation_id,
+                    data={"service_lease": self._lease_payload(row)},
+                )
+            except DishRuleError as exc:
+                return error_envelope("recover-lease", exc, submission_id=operation_id)
+            finally:
+                conn.close()
 
     def record_agent_argument_failure(
         self,
@@ -231,66 +269,191 @@ class DishService:
         error_payload: Mapping[str, Any],
         context: Mapping[str, Any],
     ) -> dict[str, Any]:
-        conn = initialize_database(self.config.db_path)
-        try:
-            app = DishApplication(
-                conn,
-                self.backend_factory(),
-                release_loader=lambda role=None: self._release(role),
-            )
-            error = DishRuleError(
-                str(error_payload.get("code") or "INVALID_ARGUMENT"),
-                str(error_payload.get("message") or "invalid arguments"),
-                rule=error_payload.get("rule"),
-                retryable=bool(error_payload.get("retryable", False)),
-                details=error_payload.get("details") if isinstance(error_payload.get("details"), dict) else None,
-                errors=error_payload.get("errors") if isinstance(error_payload.get("errors"), list) else None,
-            )
-            return app.record_argument_failure(
-                command,
-                error,
-                agent=context.get("agent"),
-                task_gid=context.get("task_gid"),
-                submission_id=context.get("submission_id"),
-            )
-        finally:
-            conn.close()
+        with self._maintenance_lock:
+            conn = initialize_database(self.config.db_path)
+            try:
+                app = DishApplication(
+                    conn,
+                    self.backend_factory(),
+                    release_loader=lambda role=None: self._release(role),
+                )
+                error = DishRuleError(
+                    str(error_payload.get("code") or "INVALID_ARGUMENT"),
+                    str(error_payload.get("message") or "invalid arguments"),
+                    rule=error_payload.get("rule"),
+                    retryable=bool(error_payload.get("retryable", False)),
+                    details=error_payload.get("details") if isinstance(error_payload.get("details"), dict) else None,
+                    errors=error_payload.get("errors") if isinstance(error_payload.get("errors"), list) else None,
+                )
+                return app.record_argument_failure(
+                    command,
+                    error,
+                    agent=context.get("agent"),
+                    task_gid=context.get("task_gid"),
+                    submission_id=context.get("submission_id"),
+                )
+            finally:
+                conn.close()
 
-    def execute_admin(self, command: str, arguments: Mapping[str, Any]) -> dict[str, Any]:
-        conn = initialize_database(self.config.db_path)
-        try:
-            app = DishAdminApplication(
-                conn,
-                backend=self.backend_factory(),
-                release_loader=lambda: self._release(None, include_migrations=True),
-            )
-            with self._candidate_file(arguments) as prepared:
-                return app.execute(command, **prepared)
-        except DishRuleError as exc:
-            return error_envelope(command, exc)
-        finally:
-            conn.close()
+    def execute_admin(
+        self,
+        command: str,
+        arguments: Mapping[str, Any],
+        *,
+        principal: ServicePrincipal | None = None,
+    ) -> dict[str, Any]:
+        with self._maintenance_lock:
+            conn = initialize_database(self.config.db_path)
+            principal = principal or self._default_principal(arguments, admin=True)
+            operation_id = str(arguments.get("submission_id") or "").strip() or None
+            acquired_for_request = False
+            leases = self._lease_manager(conn)
+            try:
+                backend = self.backend_factory()
+                self._assert_mutation_ready(backend)
+                if command in _OPERATION_ADMIN_COMMANDS and operation_id:
+                    existing = leases.active_for_operation(operation_id)
+                    if existing is None:
+                        leases.acquire(operation_id, principal)
+                        acquired_for_request = True
+                    else:
+                        leases.assert_owned(operation_id, principal)
+                app = DishAdminApplication(
+                    conn,
+                    backend=backend,
+                    release_loader=lambda: self._release(None, include_migrations=True),
+                )
+                with self._candidate_file(arguments) as prepared:
+                    result = app.execute(command, **prepared)
+                if result.get("ok") and operation_id:
+                    op = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
+                    if op is not None and op["status"] in {"completed", "cancelled"}:
+                        leases.release_terminal(operation_id, principal, reason="admin_operation_terminal")
+                    result.setdefault("data", {})["service_lease"] = self._lease_payload(
+                        leases.active_for_operation(operation_id)
+                    )
+                elif not result.get("ok") and acquired_for_request and operation_id:
+                    leases.release(operation_id, principal, reason="admin_command_rejected")
+                return result
+            except DishRuleError as exc:
+                if acquired_for_request and operation_id:
+                    try:
+                        leases.release(operation_id, principal, reason="admin_command_rejected")
+                    except Exception:
+                        pass
+                return error_envelope(command, exc, submission_id=operation_id)
+            finally:
+                conn.close()
+
+    def create_backup(self, *, label: str = "manual") -> dict[str, Any]:
+        with self._maintenance_lock:
+            try:
+                record = self.backup_manager.create(label=label)
+                return result_envelope(command="backup-create", data={"backup": record.as_dict()})
+            except DishRuleError as exc:
+                return error_envelope("backup-create", exc)
+
+    def restore_backup(self, backup_id: str) -> dict[str, Any]:
+        with self._maintenance_lock:
+            try:
+                data = self.backup_manager.restore(backup_id)
+                return result_envelope(command="backup-restore", data=data)
+            except DishRuleError as exc:
+                return error_envelope("backup-restore", exc)
+            except Exception as exc:
+                error = DishRuleError(
+                    "INTERNAL_ERROR",
+                    "database restore failed and the pre-restore database was retained",
+                    rule="backup_restore_failed",
+                    details={"error_type": type(exc).__name__},
+                )
+                return error_envelope("backup-restore", error)
+
+    def startup_check(self) -> dict[str, Any]:
+        """Validate durable state and repair pending invocation audits before serving."""
+        with self._maintenance_lock:
+            conn = initialize_database(self.config.db_path)
+            try:
+                repaired = process_command_audit_repairs(conn)
+                release = self._release(None)
+            finally:
+                conn.close()
+            result = self.health()
+            result.setdefault("startup", {})["audit_repairs_processed"] = repaired
+            result["startup"]["protocol_version"] = release.protocol_version
+            result["startup"]["schema_version"] = release.schema_version
+            return result
 
     def health(self) -> dict[str, Any]:
-        conn = initialize_database(self.config.db_path)
-        try:
-            release = self._release(None)
-            return {
-                "ok": True,
-                "service": "dish",
-                "database": {"ok": True},
-                "compatibility": {
+        with self._maintenance_lock:
+            database: dict[str, Any]
+            compatibility: dict[str, Any]
+            asana: dict[str, Any]
+            audit: dict[str, Any] = {"pending_repairs": None}
+            operations: dict[str, Any] = {"active": None}
+            leases: dict[str, Any] = {"active": None, "expired": None}
+
+            conn = None
+            try:
+                conn = initialize_database(self.config.db_path)
+                database = {"ok": True, "schema_version": SCHEMA_VERSION}
+                audit["pending_repairs"] = conn.execute(
+                    "SELECT COUNT(*) FROM command_audit_repairs WHERE repaired_at IS NULL"
+                ).fetchone()[0]
+                operations["active"] = conn.execute(
+                    "SELECT COUNT(*) FROM operations WHERE status IN ('open','uncertain')"
+                ).fetchone()[0]
+                leases["active"] = conn.execute(
+                    "SELECT COUNT(*) FROM service_leases WHERE released_at IS NULL"
+                ).fetchone()[0]
+                leases["expired"] = conn.execute(
+                    "SELECT COUNT(*) FROM service_leases WHERE released_at IS NULL AND expires_at <= ?",
+                    (_now_stamp(),),
+                ).fetchone()[0]
+            except DishRuleError as exc:
+                database = {"ok": False, "rule": exc.rule, "message": str(exc)}
+            except Exception as exc:
+                database = {"ok": False, "rule": "database_health_failed", "message": type(exc).__name__}
+            finally:
+                if conn is not None:
+                    conn.close()
+
+            try:
+                release = self._release(None)
+                compatibility = {
                     "ok": True,
                     "protocol_version": release.protocol_version,
                     "schema_version": release.schema_version,
-                },
-            }
-        except DishRuleError as exc:
+                }
+            except DishRuleError as exc:
+                compatibility = {"ok": False, "rule": exc.rule, "message": str(exc)}
+            except Exception as exc:
+                compatibility = {"ok": False, "rule": "compatibility_health_failed", "message": type(exc).__name__}
+
+            try:
+                registry = SectionRegistry.from_sections(
+                    self.backend_factory().list_sections(COOKING_PROJECT_GID)
+                )
+                asana = {
+                    "ok": True,
+                    "required_sections": {
+                        "research_queue": registry.research_queue_gid,
+                        "verification_queue": registry.verification_queue_gid,
+                    },
+                }
+            except DishRuleError as exc:
+                asana = {"ok": False, "rule": exc.rule, "message": str(exc)}
+            except Exception as exc:
+                asana = {"ok": False, "rule": "asana_health_failed", "message": type(exc).__name__}
+
+            ok = bool(database.get("ok") and compatibility.get("ok") and asana.get("ok"))
             return {
-                "ok": False,
+                "ok": ok,
                 "service": "dish",
-                "database": {"ok": False},
-                "compatibility": {"ok": False, "message": str(exc), "rule": exc.rule},
+                "database": database,
+                "compatibility": compatibility,
+                "asana": asana,
+                "audit": audit,
+                "operations": operations,
+                "leases": leases,
             }
-        finally:
-            conn.close()
