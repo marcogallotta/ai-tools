@@ -179,6 +179,9 @@ The checked-in schema intentionally uses the placeholder server `https://dish.ex
 
 The Action listener serves only the bounded `/v1/action/*` workflow and lease-renewal routes. Admin, recovery, migration, backup, private CLI, and generic Asana routes are not present on that listener or in the Action OpenAPI document.
 
+Follow `deploy/gpt-action.md` for the exact editor configuration, run-identity rules, Preview gate,
+lease handling, and token rotation.
+
 ## Tests
 
 From `dish/`:
