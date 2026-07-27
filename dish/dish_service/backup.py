@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database_schema import _validate_current_database, initialize_database
 from dish_tool.errors import DishRuleError
 
@@ -77,7 +78,7 @@ class BackupManager:
         return conn
 
     @classmethod
-    def _validate_snapshot(cls, path: Path) -> None:
+    def _validate_integrity(cls, path: Path) -> int:
         if not path.is_file():
             raise DishRuleError("NOT_FOUND", "backup not found", rule="backup_not_found")
         conn = cls._raw_connection(path)
@@ -90,7 +91,7 @@ class BackupManager:
                     rule="backup_integrity_invalid",
                     details={"integrity": str(integrity)},
                 )
-            _validate_current_database(conn)
+            return int(conn.execute("PRAGMA user_version").fetchone()[0])
         except sqlite3.DatabaseError as exc:
             raise DishRuleError(
                 "VALIDATION_FAILED",
@@ -99,6 +100,27 @@ class BackupManager:
             ) from exc
         finally:
             conn.close()
+
+    @classmethod
+    def _validate_snapshot(cls, path: Path) -> None:
+        cls._validate_integrity(path)
+        conn = cls._raw_connection(path)
+        try:
+            _validate_current_database(conn)
+        finally:
+            conn.close()
+
+    @classmethod
+    def _migrate_and_validate_candidate(cls, path: Path) -> None:
+        """Upgrade a copied restore candidate without mutating the source backup."""
+        conn = initialize_database(path)
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            conn.close()
+        for suffix in ("-wal", "-shm", ".legacy-v2.bak"):
+            Path(str(path) + suffix).unlink(missing_ok=True)
+        cls._validate_snapshot(path)
 
     def _record(self, path: Path) -> BackupRecord:
         return BackupRecord(path.name, _sha256(path), path.stat().st_size)
@@ -138,7 +160,7 @@ class BackupManager:
 
     def restore(self, backup_id: str) -> dict[str, Any]:
         source_path = self._managed_path(backup_id)
-        self._validate_snapshot(source_path)
+        source_schema_version = self._validate_integrity(source_path)
         if source_path.resolve() == self.db_path.resolve():
             raise DishRuleError(
                 "INVALID_ARGUMENT",
@@ -146,8 +168,10 @@ class BackupManager:
                 rule="backup_restore_source_is_live_database",
             )
 
-        pre_restore = self.create(label="pre-restore")
+        pre_restore: BackupRecord | None = None
+        pre_restore_error_type: str | None = None
         candidate_path: Path | None = None
+        live_replaced = False
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         try:
             with tempfile.NamedTemporaryFile(
@@ -164,14 +188,48 @@ class BackupManager:
             finally:
                 target.close()
                 source.close()
-            self._validate_snapshot(candidate_path)
+            self._migrate_and_validate_candidate(candidate_path)
+
+            try:
+                pre_restore = self.create(label="pre-restore")
+            except Exception as exc:
+                # Recovery must remain possible when the live database is the
+                # invalid object.  The fully prepared candidate is not swapped
+                # until after this best-effort validated snapshot attempt.
+                pre_restore_error_type = type(exc).__name__
+
             os.replace(candidate_path, self.db_path)
+            live_replaced = True
             candidate_path = None
             for suffix in ("-wal", "-shm"):
                 Path(str(self.db_path) + suffix).unlink(missing_ok=True)
             validation = initialize_database(self.db_path)
             validation.close()
         except Exception as restore_exc:
+            if pre_restore is None:
+                if not live_replaced and isinstance(restore_exc, DishRuleError):
+                    raise
+                if not live_replaced:
+                    raise DishRuleError(
+                        "INTERNAL_ERROR",
+                        "database restore failed before replacement; the live database was unchanged",
+                        rule="backup_restore_failed_live_unchanged",
+                        details={
+                            "restore_error_type": type(restore_exc).__name__,
+                            "database_retained": True,
+                        },
+                    ) from restore_exc
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "database restore failed after replacement and no validated pre-restore snapshot was available; "
+                    "workflow mutations are disabled pending recovery",
+                    rule="backup_restore_and_rollback_failed",
+                    details={
+                        "restore_error_type": type(restore_exc).__name__,
+                        "rollback_error_type": "validated_pre_restore_unavailable",
+                        "database_retained": False,
+                    },
+                ) from restore_exc
             # Roll back from the automatic pre-restore snapshot. Report whether
             # that rollback was actually proven rather than claiming retention
             # after an unverified second failure.
@@ -231,5 +289,11 @@ class BackupManager:
         restored = self._record(source_path)
         return {
             "restored": restored.as_dict(),
-            "pre_restore_backup": pre_restore.as_dict(),
+            "pre_restore_backup": None if pre_restore is None else pre_restore.as_dict(),
+            "pre_restore_unavailable": None if pre_restore is not None else {
+                "reason": "live_database_not_validated",
+                "error_type": pre_restore_error_type,
+            },
+            "source_schema_version": source_schema_version,
+            "restored_schema_version": SCHEMA_VERSION,
         }

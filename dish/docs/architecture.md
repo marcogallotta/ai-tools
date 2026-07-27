@@ -70,8 +70,9 @@ It is not a supported multi-agent lock.
 - both HTTP listeners.
 
 `dish_service.process_lock.ServiceProcessLock` prevents two service processes from owning the same
-database. `DishService` also uses an in-process maintenance lock so database restore cannot overlap a
-request.
+database. `DishService` also uses an in-process reader/writer maintenance gate: ordinary requests may
+run concurrently, while restore waits for active requests, blocks new requests, and owns database
+replacement exclusively.
 
 The service exposes two separate loopback listeners:
 
@@ -367,9 +368,19 @@ registry checks, pending audit repairs, active operations, and leases. Failed mu
 block before entering workflow code.
 
 `BackupManager` uses SQLite's online backup API, validates the complete current database contract,
-and accepts only managed backup identifiers. Restore is serialized against requests, creates a
-pre-restore snapshot, validates the candidate, replaces atomically, and attempts a validated rollback
-on failure. If rollback cannot be proven, the service writes an atomic sidecar fault marker outside the replaceable database and remains diagnosis-only across process restart. A later validated restore clears that marker.
+and accepts only managed backup identifiers. Restore copies a managed source into a candidate,
+migrates and validates that candidate without altering the source backup, then obtains exclusive
+maintenance access for replacement. A validated pre-restore snapshot is attempted when the live
+database is readable; an invalid live database does not block recovery from a valid managed backup.
+Replacement is atomic and a validated pre-restore snapshot is used for rollback when available. If
+rollback cannot be proven, the service writes an atomic sidecar fault marker outside the replaceable
+database and remains diagnosis-only across process restart. A later validated restore clears that
+marker.
+
+Startup distinguishes listener readiness from dependency health. Valid service configuration is the
+listener-start boundary; database, compatibility, Asana, and restore-fault failures keep health
+unhealthy and mutations fail closed, but the private administrative surface remains available for
+diagnosis and validated restore.
 
 ## Testing architecture
 

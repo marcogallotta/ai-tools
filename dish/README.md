@@ -160,7 +160,7 @@ Restore only a managed snapshot identifier returned by the service:
 dish-admin backup-restore dish-<timestamp>-<label>-<id>.sqlite3
 ```
 
-Restore creates an automatic pre-restore snapshot, validates SQLite integrity and the complete current dish schema/evidence contract, replaces the database atomically, and rolls back if validation fails. If rollback cannot be proven, a durable sidecar fault marker keeps mutations disabled across service restart until a validated restore succeeds.
+Restore copies the selected managed backup into a temporary candidate, migrates and validates the candidate against the current dish schema/evidence contract, and then replaces the live database atomically. The source backup is never modified. A validated pre-restore snapshot is attempted when the live database is readable; corruption of the live database does not block recovery from a valid managed backup. If replacement validation fails, the service rolls back when a validated pre-restore snapshot is available. If rollback cannot be proven, a durable sidecar fault marker keeps mutations disabled across service restart until a validated restore succeeds.
 
 ## Health and compatibility
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import contextlib
 import tempfile
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -25,6 +24,7 @@ from dish_tool.validation_scope import scope_for_command
 from .backup import BackupManager
 from .config import ServiceConfig
 from .leases import LeaseManager, ServicePrincipal
+from .maintenance import MaintenanceGate
 from .request_replay import begin_request, complete_request, pending_error, stored_result
 from .restore_fault import RestoreFaultMarker
 
@@ -51,10 +51,10 @@ def _now_stamp() -> str:
 class DishService:
     """Shared persistent authority around the existing workflow applications.
 
-    Every request still gets a fresh SQLite connection, but one in-process
-    maintenance lock serializes database replacement and workflow mutations. The
-    durable operations/task constraint and service leases remain the cross-request
-    authority; the lock only ensures a restore cannot overlap a request.
+    Every request gets a fresh SQLite connection. Ordinary requests may run
+    concurrently, while an in-process maintenance gate gives database replacement
+    exclusive access. Durable operation constraints and service leases remain the
+    cross-request workflow authority.
     """
 
     def __init__(
@@ -70,7 +70,7 @@ class DishService:
         self.backend_factory = backend_factory or AsanaBackend
         self.release_loader = release_loader
         self.lease_now = lease_now
-        self._maintenance_lock = threading.RLock()
+        self._maintenance_gate = MaintenanceGate()
         self._restore_fault = RestoreFaultMarker(self.config.db_path)
 
     @property
@@ -470,7 +470,7 @@ class DishService:
         principal: ServicePrincipal | None = None,
         request_id: str | None = None,
     ) -> dict[str, Any]:
-        with self._maintenance_lock:
+        with self._maintenance_gate.request():
             conn = initialize_database(self.config.db_path)
             backend = None
             acquired_for_request = False
@@ -653,7 +653,7 @@ class DishService:
         error: DishRuleError,
     ) -> dict[str, Any]:
         """Persist pre-application validation outcomes for replay-sensitive calls."""
-        with self._maintenance_lock:
+        with self._maintenance_gate.request():
             conn = initialize_database(self.config.db_path)
             try:
                 row, started = begin_request(
@@ -677,7 +677,7 @@ class DishService:
                 conn.close()
 
     def renew_lease(self, operation_id: str, principal: ServicePrincipal) -> dict[str, Any]:
-        with self._maintenance_lock:
+        with self._maintenance_gate.request():
             conn = initialize_database(self.config.db_path)
             try:
                 row = self._lease_manager(conn).renew(operation_id, principal)
@@ -712,7 +712,7 @@ class DishService:
         *,
         reason: str,
     ) -> dict[str, Any]:
-        with self._maintenance_lock:
+        with self._maintenance_gate.request():
             conn = initialize_database(self.config.db_path)
             try:
                 released = self._lease_manager(conn).admin_recover(
@@ -747,7 +747,7 @@ class DishService:
         error_payload: Mapping[str, Any],
         context: Mapping[str, Any],
     ) -> dict[str, Any]:
-        with self._maintenance_lock:
+        with self._maintenance_gate.request():
             conn = initialize_database(self.config.db_path)
             backend = self.backend_factory()
             try:
@@ -781,7 +781,7 @@ class DishService:
         error_payload: Mapping[str, Any],
         context: Mapping[str, Any],
     ) -> dict[str, Any]:
-        with self._maintenance_lock:
+        with self._maintenance_gate.request():
             conn = initialize_database(self.config.db_path)
             backend = self.backend_factory()
             try:
@@ -814,7 +814,7 @@ class DishService:
         *,
         principal: ServicePrincipal | None = None,
     ) -> dict[str, Any]:
-        with self._maintenance_lock:
+        with self._maintenance_gate.request():
             conn = initialize_database(self.config.db_path)
             backend = None
             principal = principal or self._default_principal(arguments, admin=True)
@@ -896,7 +896,7 @@ class DishService:
                 conn.close()
 
     def create_backup(self, *, label: str = "manual") -> dict[str, Any]:
-        with self._maintenance_lock:
+        with self._maintenance_gate.request():
             try:
                 record = self.backup_manager.create(label=label)
                 return result_envelope(command="backup-create", data={"backup": record.as_dict()})
@@ -904,7 +904,7 @@ class DishService:
                 return error_envelope("backup-create", exc)
 
     def restore_backup(self, backup_id: str) -> dict[str, Any]:
-        with self._maintenance_lock:
+        with self._maintenance_gate.restore():
             try:
                 data = self.backup_manager.restore(backup_id)
                 self._restore_fault.clear()
@@ -932,22 +932,45 @@ class DishService:
                 return error_envelope("backup-restore", error)
 
     def startup_check(self) -> dict[str, Any]:
-        """Validate durable state and repair pending invocation audits before serving."""
-        with self._maintenance_lock:
+        """Report startup state without hiding diagnosis and restore endpoints."""
+        repaired = 0
+        release = None
+        database_initialization_error_type = None
+        audit_repair_error_type = None
+        compatibility_error_type = None
+        try:
             conn = initialize_database(self.config.db_path)
+        except Exception as exc:
+            database_initialization_error_type = type(exc).__name__
+            conn = None
+        if conn is not None:
             try:
                 repaired = process_command_audit_repairs(conn)
-                release = self._release(None)
+            except Exception as exc:
+                audit_repair_error_type = type(exc).__name__
             finally:
                 conn.close()
-            result = self.health()
-            result.setdefault("startup", {})["audit_repairs_processed"] = repaired
-            result["startup"]["protocol_version"] = release.protocol_version
-            result["startup"]["schema_version"] = release.schema_version
-            return result
+        try:
+            release = self._release(None)
+        except Exception as exc:
+            compatibility_error_type = type(exc).__name__
+
+        result = self.health()
+        startup = result.setdefault("startup", {})
+        startup["audit_repairs_processed"] = repaired
+        startup["protocol_version"] = None if release is None else release.protocol_version
+        startup["schema_version"] = None if release is None else release.schema_version
+        startup["database_initialization_error_type"] = database_initialization_error_type
+        startup["audit_repair_error_type"] = audit_repair_error_type
+        startup["compatibility_error_type"] = compatibility_error_type
+        # Configuration is the listener-start boundary. Database, compatibility,
+        # Asana, and restore faults leave the process available for diagnosis,
+        # lease recovery, backup attempts, and administrative restore.
+        result["startup_ready"] = bool(result["configuration"].get("ok"))
+        return result
 
     def health(self) -> dict[str, Any]:
-        with self._maintenance_lock:
+        with self._maintenance_gate.request():
             configuration: dict[str, Any]
             database: dict[str, Any]
             compatibility: dict[str, Any]

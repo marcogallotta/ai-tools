@@ -346,7 +346,7 @@ def test_failed_restore_reports_proven_rollback_without_claiming_success(monkeyp
 
     def fail_post_replace_validation(path):
         calls["count"] += 1
-        if calls["count"] == 2:
+        if calls["count"] == 3:
             raise RuntimeError("simulated post-replace validation failure")
         return original_initialize(path)
 
@@ -384,7 +384,7 @@ def test_unproven_restore_rollback_disables_mutations(monkeypatch, tmp_path):
 
     def fail_post_replace_validation(path):
         calls["count"] += 1
-        if calls["count"] == 2:
+        if calls["count"] == 3:
             raise RuntimeError("simulated post-replace validation failure")
         return original_initialize(path)
 
