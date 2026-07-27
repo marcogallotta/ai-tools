@@ -185,12 +185,12 @@ def test_checked_in_contract_documents_final_step11_access_paths():
     assert "DISH_LIVE_MODE=1" in runtime and "DISH_MODE=service" in runtime
     assert "Action-only listener" in runtime
     assert "Step 12" in readme and "does not itself authorize production activation" in readme
-    assert "--https=8444" in tailscale and "--https=8443" in tailscale
-    assert "port 443" in tailscale and "must remain unchanged" in tailscale
+    assert "--https=8444" in tailscale and "--https=443" in tailscale
+    assert "port 443 is free" in tailscale and "do not overwrite" in tailscale
     assert "127.0.0.1:8765" in tailscale and "127.0.0.1:8766" in tailscale
     assert "1216693403164366" in smoke
     assert "Do not run this against production Cooking" in smoke
-    assert "https://laptop.tail46f0b9.ts.net:8443/openapi/action.json" in action_guide
+    assert "https://laptop.tail46f0b9.ts.net/openapi/action.json" in action_guide
     assert "Authorization: Bearer <DISH_SERVICE_ACTION_TOKEN>" in action_guide
     assert "client.run_id" in action_guide and "allowed_actions" in action_guide
     assert "BACKEND_UNCERTAIN" in action_guide and "recover-lease" in action_guide

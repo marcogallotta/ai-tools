@@ -20,11 +20,11 @@ Before opening the GPT editor:
 Import the runtime schema from:
 
 ```text
-https://laptop.tail46f0b9.ts.net:8443/openapi/action.json
+https://laptop.tail46f0b9.ts.net/openapi/action.json
 ```
 
-The imported schema must retain that exact `https` server, including port `8443`. Configure API-key
-authentication so requests use:
+The imported schema must retain that exact `https` server with no non-default port. Configure
+API-key authentication so requests use:
 
 ```text
 Authorization: Bearer <DISH_SERVICE_ACTION_TOKEN>
@@ -80,7 +80,8 @@ Before any task mutation:
 2. Confirm the result is the canonical JSON envelope with `code: OK`.
 3. Confirm `data.project_gid` is the test project `1216693403164366`.
 4. Confirm the returned Research and Verification queue GIDs match the live test project.
-5. Confirm the Preview request succeeds through `:8443`, not the private `:8444` endpoint.
+5. Confirm the Preview request succeeds through the standard HTTPS URL, not the private `:8444`
+   endpoint.
 6. Review the GPT configuration and confirm no CLI, admin, or Asana secret is present.
 
 Then run the complete disposable-task procedure in `live-test-project-smoke.md`. Preview success for
