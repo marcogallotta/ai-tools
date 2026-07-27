@@ -363,13 +363,16 @@ def _current_operation_view(self, operation_id: str, *, schema=None) -> dict[str
 
 
 def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str) -> dict[str, Any]:
-    from .step5 import inspect_operation
+    from .step5 import inspect_operation, verification_lineage
     agent_family(agent)
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     exists = self.conn.execute("SELECT 1 FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     if exists is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     data = inspect_operation(self.conn, operation_id)
+    data["verification_lineage"] = verification_lineage(
+        self.conn, operation_id, current_run_id=self.invocation_run_id
+    )
     release = self._load_release(None)
     internal_view = _current_operation_view(self, operation_id, schema=release.schema)
     view = _exposed_view(internal_view)

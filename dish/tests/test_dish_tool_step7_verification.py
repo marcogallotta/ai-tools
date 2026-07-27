@@ -254,3 +254,34 @@ def test_attestation_cannot_replace_recorded_run_on_approval(tmp_path):
     )
     assert result["code"] == "AGENT_MISMATCH"
     assert result["errors"][0]["rule"] == "verifier_proof_mismatch"
+
+
+def test_verification_start_surfaces_candidate_lineage_and_current_run_eligibility(tmp_path):
+    app, _backend, operation_id, _ = make_app(tmp_path)
+    result = app.execute(
+        "start", agent="codex", task_gid="t", kind="verification", run_id="fresh-verifier"
+    )
+    assert result["ok"]
+    lineage = result["data"]["verification_lineage"]
+    assert lineage["current_run"] == {
+        "run_id": "fresh-verifier",
+        "eligible": True,
+        "rule": None,
+        "prior_role": None,
+    }
+    assert any(
+        fact["role"] == "constructor" and fact["run_id"] == "constructor-run"
+        for fact in lineage["candidate_runs"]
+    )
+
+
+def test_inspect_surfaces_ineligible_constructor_run_before_verification_decision(tmp_path):
+    app, _backend, operation_id, _ = make_app(tmp_path)
+    app.invocation_run_id = "constructor-run"
+    result = app.execute("inspect", agent="gpt", submission_id=operation_id)
+    assert result["ok"]
+    current = result["data"]["verification_lineage"]["current_run"]
+    assert current["run_id"] == "constructor-run"
+    assert current["eligible"] is False
+    assert current["rule"] == "verifier_not_independent"
+    assert current["prior_role"] == "constructor"

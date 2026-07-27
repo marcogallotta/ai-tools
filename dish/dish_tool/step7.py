@@ -13,6 +13,7 @@ from .lifecycle import assert_transition, ready, require_status
 from .releases import resolve_verification_protocol
 from .task_document import TaskState, parse_task_document, validate_task_document, finding_payload
 from .task_store import read_complete_task, write_exact_content
+from .step5 import verification_lineage
 
 
 def _operation_and_cycle(conn: sqlite3.Connection, operation_id: str):
@@ -161,6 +162,9 @@ def verification_read(
         "task": dataclasses.asdict(live),
         "verification_protocol": {"identity": snapshot.identity, "text": snapshot.text},
         "verifier": {"agent": agent, "run_id": run_id, "independence_attestation": independence_attestation},
+        "verification_lineage": verification_lineage(
+            conn, operation_id, current_run_id=run_id
+        ),
     }
 
 
@@ -249,6 +253,9 @@ def replay_verification_read(
             "run_id": cycle["run_id"],
             "independence_attestation": cycle["independence_attestation"],
         },
+        "verification_lineage": verification_lineage(
+            conn, operation_id, current_run_id=run_id
+        ),
     }
 
 def assert_verifier_authority(

@@ -161,6 +161,53 @@ def claim_operation(
     return operation
 
 
+def verification_lineage(
+    conn: sqlite3.Connection,
+    operation_id: str,
+    *,
+    current_run_id: str | None = None,
+) -> dict[str, Any]:
+    """Return candidate-producing run lineage and the current run's eligibility.
+
+    Eligibility mirrors ``assert_fresh_verifier``: any run previously recorded as
+    a constructor or material editor for the task is ineligible to verify it.
+    """
+    op = conn.execute(
+        "SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)
+    ).fetchone()
+    if op is None:
+        raise DishRuleError(
+            "NOT_FOUND", f"operation not found: {operation_id}",
+            rule="operation_not_found",
+        )
+    rows = conn.execute(
+        """SELECT operation_id, role, agent, run_id, candidate_identity,
+                         source_cycle_id, created_at
+              FROM operation_actor_facts
+             WHERE task_gid = ? AND role IN ('constructor','material_editor')
+             ORDER BY created_at, fact_id""",
+        (op["task_gid"],),
+    ).fetchall()
+    lineage = [{key: row[key] for key in row.keys()} for row in rows]
+    clean_run = str(current_run_id or "").strip() or None
+    conflict = None
+    if clean_run is not None:
+        conflict = next((row for row in rows if row["run_id"] == clean_run), None)
+    return {
+        "candidate_runs": lineage,
+        "current_run": {
+            "run_id": clean_run,
+            "eligible": None if clean_run is None else conflict is None,
+            "rule": (
+                "run_id_unavailable" if clean_run is None
+                else "verifier_not_independent" if conflict is not None
+                else None
+            ),
+            "prior_role": None if conflict is None else conflict["role"],
+        },
+    }
+
+
 def inspect_operation(conn: sqlite3.Connection, operation_id: str) -> dict[str, Any]:
     op = conn.execute("SELECT * FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     if op is None:
