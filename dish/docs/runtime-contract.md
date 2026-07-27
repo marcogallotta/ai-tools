@@ -29,7 +29,7 @@ Live client environments set all of:
 DISH_LIVE_MODE=1
 DISH_MODE=service
 DISH_SERVICE_URL=<private service URL>
-DISH_CLIENT_RUN_ID=<unique run identity>
+DISH_CLIENT_RUN_ID=<canonical lowercase UUID for this run>
 ```
 
 The CLI adds `DISH_SERVICE_TOKEN`; Marco's admin shell adds `DISH_ADMIN_TOKEN`. The GPT Action stores only `DISH_SERVICE_ACTION_TOKEN` in its Action authentication configuration. No client receives the service database path or Asana credential.
@@ -46,37 +46,43 @@ The public listener does not route private CLI, admin, health, migration, recove
 Agent-facing action guidance is authoritative even on failures. When an operation-scoped command is
 rejected, `allowed_actions` reports the currently legal exposed continuation when one exists. A
 retryable candidate-validation failure therefore keeps the same corrective command available.
-Fresh bare tasks created by `create` report `data.required_start_kind: planning`. Task-level `read`
-responses expose any active operation, its submission ID, workflow state, and principal-filtered next
-actions. Successful operation-scoped lease renewal includes both `task_gid` and `submission_id`.
+Fresh bare tasks created by `create` report `data.required_start_kind: planning`. A completed
+cross-stage handoff reports `start` and the required start kind even though the old operation itself is
+terminal. Verification `start` includes `inspect` so the agent can review exact identity, provenance,
+and lineage before deciding. Task-level `read` responses expose any active operation, its submission
+ID, workflow state, and principal-filtered next actions. Successful operation-scoped lease renewal
+includes both `task_gid` and `submission_id`; renewal of a terminal operation reports
+`WRONG_STATE / operation_not_open` with the terminal status.
 
 ## Service ownership and leases
 
 The durable `operations` constraint is the one-active-operation-per-task lock. The service also writes a persistent ownership sidecar for its database; direct local CLI/admin mode will not open a service-owned database, including while the service process is stopped. `service_leases` bind the current actor to an owner identity and run identity with a renewable expiry. Workflow handoff may release the actor lease, but it does not release the task operation lock. `allowed_actions` is principal-aware: a different or expired run receives no ordinary mutation actions even when the underlying workflow phase has one. Read-only inspection never mutates lease state. Expired leases fail closed and require Marco to run `dish-admin recover-lease`; recovery releases stale ownership but does not transfer the workflow to Marco. Only a run whose durable actor lineage matches the required workflow role may reclaim a missing lease. Admin hold/recovery continuations use temporary request-scoped leases and return the operation unleased for the next valid actor.
 
-A terminal lease is released only after the operation is terminal and every declared step and ambiguous write/movement attempt has a durable completion outcome. If post-success lease finalization fails after the governed mutation committed, the original command still returns success with `service_recovery_required`, suppresses follow-on actions, and explicitly tells the client not to retry the mutation. Ordinary full-state write and approval retries remain naturally idempotent by exact live-state comparison. The response-loss-sensitive `create` and non-verification `start` commands additionally require a client-generated UUID `client.request_id`. Reuse that same request ID only when retrying the exact same logical call after a lost response; never reuse it for different arguments. A completed request returns its stored result, a provably committed `start` is reconciled to the existing operation, and an unresolved `create` fails `BACKEND_UNCERTAIN` rather than risking a duplicate task.
+A terminal lease is released only after the operation is terminal and every declared step and ambiguous write/movement attempt has a durable completion outcome. If post-success lease finalization fails after the governed mutation committed, the original command still returns success with `service_recovery_required`, suppresses follow-on actions, and explicitly tells the client not to retry the mutation. Ordinary full-state write and approval retries remain naturally idempotent by exact live-state comparison. All agent mutations are replay-bound when a valid `client.request_id` is supplied. The response-loss-sensitive `create` and non-verification `start` commands currently require that ID; `prepare`, `approve`, `reject`, and `submit` accept it and apply the same completed-result and conflicting-reuse rules. Reuse an ID only when retrying the exact same logical call after a lost response.
 
 ## Request replay contract
 
-`create` and non-verification `start` cross a response-loss boundary where blindly repeating the HTTP
-call could create a duplicate task or hide an already-created operation. Their private and Action
-requests therefore include `client.request_id`, a UUID chosen before the first attempt.
+A request ID is a canonical lowercase UUID chosen before the first attempt. The immutable replay
+identity includes the command, authenticated owner and run, and canonical arguments.
 
-- Reuse the same request ID only for the same command, authenticated owner/run, and arguments.
-- A repeated completed request returns the original stored result with
-  `data.request_replayed: true`.
-- Validation failures reached with a valid replay-sensitive request ID are completed and replayed
-  under the same identity; the ID cannot later be repurposed for different work.
-- Reusing an ID for different work returns `CONFLICT`.
-- A process interruption after `start` is reconciled only when exact durable operation evidence proves
-  the existing operation.
-- A process interruption around `create` cannot be inferred safely from local state, so the same request
-  returns `BACKEND_UNCERTAIN` and must not be repeated under a new request ID until Marco has inspected
-  live Asana state.
+- `create` and non-verification `start` require `client.request_id` because blind repetition can
+  create duplicate external or operation state.
+- `prepare`, `approve`, `reject`, and `submit` are also replay-capable. When a request ID is supplied,
+  their first authoritative success or expected failure is bound to it.
+- Reuse the same ID only for the exact same logical request. A completed repeat returns the original
+  stored envelope with `data.request_replayed: true`; changed reuse returns `CONFLICT`.
+- Validation failures reached after a valid replay identity is accepted are stored and cannot later
+  be repurposed for different work. Missing or malformed request IDs are rejected before such an
+  identity exists.
+- Replay records survive service restart. A process interruption after `start` is reconciled only
+  when exact durable operation evidence proves the existing operation.
+- A process interruption around `create` cannot be inferred safely from local state, so the same
+  request returns `BACKEND_UNCERTAIN` rather than risking a duplicate task.
 
-The bundled HTTP clients generate an ID for a first call, but a caller handling transport failure must
-retain and reuse that value. GPT Action calls must supply it explicitly through the imported schema.
-Other commands keep their existing exact-state and durable-attempt retry rules.
+The bundled clients generate IDs for required first calls, but a caller handling transport failure
+must retain the ID and reuse it. GPT Action callers supply the UUID through `client.request_id`. The
+public schema marks both `client.request_id` and `client.run_id` as UUIDs; `run_id` must be canonical
+lowercase form and remains stable for the whole agent run.
 
 ## Health, backup, and startup
 

@@ -321,12 +321,13 @@ lineage proves it owns that workflow role. Protocol-specific admin continuations
 admin leases and release them before returning. Terminal lease release waits until workflow steps and
 ambiguous attempts have durable outcomes.
 
-`service_requests` is a separate idempotency boundary for response loss around `create` and
-non-verification `start`. The immutable record binds request UUID, owner, run, command, and canonical
-argument hash before the external or operation-creation effect. Completion is one-way. Exact repeats
-return the stored result; mismatched reuse fails; unresolved create remains uncertain instead of being
-reissued. This ledger complements, rather than replaces, operation constraints and exact external-effect
-attempt records.
+`service_requests` is a separate idempotency boundary for response loss across agent mutations. The
+immutable record binds request UUID, owner, run, command, and canonical argument hash before the
+authoritative result. `create` and non-verification `start` require the ID; the remaining mutations
+apply the same binding whenever one is supplied. Completion is one-way and stores expected failures as
+well as successes. Exact repeats return the stored result, mismatched reuse fails, and unresolved
+`create` remains uncertain instead of being reissued. This ledger complements, rather than replaces,
+operation constraints and exact external-effect attempt records.
 
 The host process lock is not a substitute for database operation constraints. The client run ID is
 the durable unit of actor/verifier lineage, but it does not replace exact candidate bindings and

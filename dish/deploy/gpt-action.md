@@ -43,11 +43,13 @@ Add an operating instruction with all of these requirements:
 
 - Use the machine identifier `agent: gpt` whenever the operation schema accepts an agent; Dish
   renders that identifier as the human-readable actor name `Custom GPT`.
-- Create one unique `client.run_id` for the current agent run and reuse it for every Action call and
-  lease renewal in that run. A genuinely new run uses a new value.
-- Before each `create` or `start`, create a UUID `client.request_id`. Preserve it with the attempted
-  call. If the response is lost, repeat the exact same command and arguments with the same UUID. Never
-  reuse that UUID for different work or generate a new one merely to bypass an uncertain result.
+- Create one canonical lowercase UUID as `client.run_id` for the current agent run and reuse it for
+  every Action call and lease renewal in that run. A genuinely new run uses a new UUID.
+- Before each `create` or non-verification `start`, create a new canonical lowercase UUID as
+  `client.request_id`. Other mutations may also carry a fresh request ID and then receive the same
+  durable replay protection. Preserve the ID with the attempted call. If the response is lost, repeat
+  the exact same command and arguments with the same UUID. Never reuse that UUID for different work or
+  generate a new one merely to bypass an uncertain result.
 - The authenticated `client.run_id` is both lease ownership and the durable agent-run identity. The
   service applies it to `start`, `prepare`, `approve`, and `reject`; do not invent a separate
   workflow run ID. A redundant `arguments.run_id`, when supplied, must match it exactly.
@@ -55,8 +57,10 @@ Add an operating instruction with all of these requirements:
   materially edited the candidate. A new operation ID, cycle ID, actor/model identity, or
   `independence_attestation` does not establish independence. An attestation may remain as
   supplementary audit context but cannot replace `client.run_id`.
-- Follow only the returned `allowed_actions`. Do not reconstruct workflow transitions from
-  conversation history.
+- Follow only the returned `allowed_actions`. A completed cross-stage handoff names `start` plus
+  `data.required_start_kind`; it does not reopen the terminal prior operation. After Verification
+  `start`, call `inspect` before making an approval or rejection decision. Do not reconstruct workflow
+  transitions from conversation history.
 - Treat `file_text` as the complete candidate. Never send a partial patch or assume that the service
   can read a local file.
 - A tool pass proves deterministic conformance only; complete the semantic work required by the

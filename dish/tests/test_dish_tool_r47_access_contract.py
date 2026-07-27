@@ -193,6 +193,10 @@ def test_checked_in_contract_documents_final_step11_access_paths():
     assert "https://laptop.tail46f0b9.ts.net/openapi/action.json" in action_guide
     assert "Authorization: Bearer <DISH_SERVICE_ACTION_TOKEN>" in action_guide
     assert "client.run_id" in action_guide and "allowed_actions" in action_guide
+    assert "canonical lowercase UUID" in action_guide
+    assert "After Verification" in action_guide and "call `inspect`" in action_guide
+    assert "All agent mutations are replay-bound" in runtime
+    assert "prepare`, `approve`, `reject`, and `submit`" in runtime
     assert "BACKEND_UNCERTAIN" in action_guide and "recover-lease" in action_guide
 
 
