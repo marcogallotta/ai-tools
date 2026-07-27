@@ -54,7 +54,7 @@ class DishAdminApplication:
         except Exception:
             pass
         trace = AdminTrace(submission_id=arguments.get("submission_id"))
-        handler = getattr(self, f"_command_{command.replace(chr(45), chr(95))}", None)
+        handler = CURRENT_ADMIN_COMMAND_HANDLERS.get(command)
         try:
             if handler is None:
                 raise DishRuleError(
@@ -62,7 +62,7 @@ class DishAdminApplication:
                     f"unknown dish-admin command: {command}",
                     rule="invalid_command",
                 )
-            result = handler(trace=trace, **arguments)
+            result = handler(self, trace=trace, **arguments)
         except DishRuleError as exc:
             if exc.code == "WRONG_STATE" and exc.details.get("actual"):
                 trace.state = str(exc.details["actual"])
@@ -322,16 +322,12 @@ def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, r
     trace.submission_id=operation_id; trace.task_gid=op["task_gid"]; trace.state=final["status"]
     return result_envelope(command="discard", task_gid=op["task_gid"], submission_id=operation_id, state=final["status"], data={"reason": reason})
 
-class CurrentDishAdminApplication(DishAdminApplication):
-    """Sole supported current admin transport."""
-
-    _command_migrate = _step5_admin_migrate
-    _command_reopen = _step8_admin_reopen
-    _command_recover = _step9_admin_recover
-    _command_supply_evidence = _command_supply_evidence
-    _command_record_human_decision = _command_record_human_decision
-    _command_authorize_governed_change = _command_authorize_governed_change
-    _command_discard = _current_operation_discard
-
-
-DishAdminApplication = CurrentDishAdminApplication
+CURRENT_ADMIN_COMMAND_HANDLERS = {
+    "migrate": _step5_admin_migrate,
+    "reopen": _step8_admin_reopen,
+    "recover": _step9_admin_recover,
+    "supply-evidence": _command_supply_evidence,
+    "record-human-decision": _command_record_human_decision,
+    "authorize-governed-change": _command_authorize_governed_change,
+    "discard": _current_operation_discard,
+}

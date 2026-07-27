@@ -103,6 +103,10 @@ manual test-project smoke checks.
 
 `dish` re-execs under `dish/.venv/bin/python`, then calls `dish_tool.cli.main`.
 
+Agent and admin command dispatch use the explicit runtime registries
+`CURRENT_COMMAND_HANDLERS` and `CURRENT_ADMIN_COMMAND_HANDLERS`. There is one public application
+class per surface; no import-time subclass rebinding or compatibility dispatcher is used.
+
 `dish_tool.cli.build_application` chooses one of two adapters:
 
 - `DishServiceClient` in service mode;
@@ -275,7 +279,6 @@ silently weakened later.
 Repository modules expose narrower persistence operations:
 
 - `workflow_repository.py` — operation, step, actor, and transition facts;
-- `attempt_repository.py` — write and movement attempts;
 - `database.py` — current persistence primitives and audit-repair processing.
 
 Do not bypass repository/database invariants with ad hoc SQL in workflow or transport code.

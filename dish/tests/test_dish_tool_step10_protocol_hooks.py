@@ -1,9 +1,26 @@
-from pathlib import Path
+from tests.test_dish_tool_step7_verification import make_app
 
 
-def test_protocol_hook_contract(tmp_path):
-    # Hook content is tested from an Honest tree supplied by the test environment.
-    # The local docs own mechanics; this test keeps the required wording explicit.
-    activation = (Path(__file__).resolve().parents[1] / "docs" / "runtime-contract.md").read_text()
-    assert "tool pass" in activation.lower()
-    assert "tooling failure" in activation.lower()
+def test_structural_pass_does_not_replace_verifier_semantic_attestation(tmp_path):
+    app, _backend, operation_id, _candidate = make_app(tmp_path)
+    review = app.execute(
+        "start", agent="codex", task_gid="t", kind="verification", run_id="protocol-hook-review"
+    )
+    assert review["ok"]
+
+    result = app.execute(
+        "approve",
+        agent="codex",
+        model="gpt-5.6-sol",
+        submission_id=operation_id,
+        correction="none",
+        reviewed_identity=review["data"]["reviewed_identity"],
+        semantic_review_complete=False,
+        provenance_complete=True,
+        run_id="protocol-hook-review",
+    )
+
+    assert not result["ok"]
+    assert result["code"] == "VALIDATION_FAILED"
+    assert any(error["rule"] == "verification_inputs_incomplete" for error in result["errors"])
+    assert result["allowed_actions"] == ["approve", "reject"]

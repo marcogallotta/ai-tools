@@ -127,7 +127,7 @@ class DishApplication:
             submission_id=arguments.get("submission_id"),
         )
         actor = arguments.get("agent")
-        handler = getattr(self, f"_command_{command}", None)
+        handler = CURRENT_COMMAND_HANDLERS.get(command)
         try:
             if handler is None:
                 raise DishRuleError(
@@ -135,7 +135,7 @@ class DishApplication:
                     f"unknown dish command: {command}",
                     rule="invalid_command",
                 )
-            result = handler(trace=trace, **arguments)
+            result = handler(self, trace=trace, **arguments)
         except DishRuleError as exc:
             if trace.task_gid is None:
                 trace.task_gid = _gid(exc.details.get("task_gid"))
@@ -695,18 +695,14 @@ def _step9_submit(self, *, trace: CommandTrace, submission_id: str) -> dict[str,
         validation_scope=trace.validation_scope,
     )
 
-class CurrentDishApplication(DishApplication):
-    """Sole supported current workflow dispatcher."""
-
-    _command_sections = _step5_sections
-    _command_create = _step5_create
-    _command_read = _step5_read
-    _command_inspect = _step5_inspect
-    _command_start = _step7_start
-    _command_prepare = _step6_prepare
-    _command_approve = _step8_approve
-    _command_reject = _step8_reject
-    _command_submit = _step9_submit
-
-
-DishApplication = CurrentDishApplication
+CURRENT_COMMAND_HANDLERS = {
+    "sections": _step5_sections,
+    "create": _step5_create,
+    "read": _step5_read,
+    "inspect": _step5_inspect,
+    "start": _step7_start,
+    "prepare": _step6_prepare,
+    "approve": _step8_approve,
+    "reject": _step8_reject,
+    "submit": _step9_submit,
+}

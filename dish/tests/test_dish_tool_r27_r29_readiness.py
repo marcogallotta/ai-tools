@@ -155,16 +155,17 @@ def test_completed_research_handoff_step_cannot_be_regressed(tmp_path, monkeypat
         )
 
 
-def test_current_dispatch_uses_service_boundary_without_runtime_method_replacement():
-    source = Path(__file__).resolve().parents[1] / "dish_tool" / "commands.py"
-    text = source.read_text()
-    import re
-    assert re.search(r"DishApplication\._command_\w+\s*=", text) is None
-    assert "class CurrentDishApplication(DishApplication)" in text
-    for method in (".current.prepare(", ".current.start_verification(", ".current.approve(", ".current.reject(", ".current.submit("):
-        assert method in text
-    admin_text = (source.parent / "admin.py").read_text()
-    assert re.search(r"DishAdminApplication\._command_\w+\s*=", admin_text) is None
-    assert "class CurrentDishAdminApplication(DishAdminApplication)" in admin_text
-    for method in (".current.reopen_two_pass(", ".current.resolve_hold(", ".current.recover("):
-        assert method in admin_text
+def test_current_dispatch_contract_is_explicit_and_complete():
+    from dish_tool.admin import CURRENT_ADMIN_COMMAND_HANDLERS
+    from dish_tool.commands import CURRENT_COMMAND_HANDLERS
+
+    assert set(CURRENT_COMMAND_HANDLERS) == {
+        "sections", "create", "read", "inspect", "start",
+        "prepare", "approve", "reject", "submit",
+    }
+    assert set(CURRENT_ADMIN_COMMAND_HANDLERS) == {
+        "migrate", "reopen", "recover", "supply-evidence",
+        "record-human-decision", "authorize-governed-change", "discard",
+    }
+    assert all(callable(handler) for handler in CURRENT_COMMAND_HANDLERS.values())
+    assert all(callable(handler) for handler in CURRENT_ADMIN_COMMAND_HANDLERS.values())
