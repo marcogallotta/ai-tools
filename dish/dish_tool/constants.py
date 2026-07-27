@@ -99,9 +99,12 @@ ASANA_REQUEST_TIMEOUT = (CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS)
 MAX_REQUEST_LIFETIME_SECONDS = CONNECT_TIMEOUT_SECONDS + READ_TIMEOUT_SECONDS
 RECOVERY_SAFETY_MARGIN_SECONDS = 30
 RECOVERY_QUARANTINE_SECONDS = 90
-assert RECOVERY_QUARANTINE_SECONDS > (
+if RECOVERY_QUARANTINE_SECONDS <= (
     MAX_REQUEST_LIFETIME_SECONDS + RECOVERY_SAFETY_MARGIN_SECONDS
-)
+):
+    raise ValueError(
+        "RECOVERY_QUARANTINE_SECONDS must exceed max request lifetime plus safety margin"
+    )
 
 # Current Honest compatibility contract. These are engine capabilities, not a
 # task-pinned protocol release. The exact pair must match Honest/DISH_VERSION.
