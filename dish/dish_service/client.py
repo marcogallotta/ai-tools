@@ -156,3 +156,27 @@ class DishAdminServiceClient(DishServiceClient):
             method="POST",
             payload={"reason": reason, "client": self._client()},
         )
+
+
+class DishActionClient(DishServiceClient):
+    def execute(
+        self,
+        command: str,
+        arguments: Mapping[str, Any] | None = None,
+        **keyword_arguments: Any,
+    ) -> dict[str, Any]:
+        if arguments is not None and keyword_arguments:
+            raise TypeError("provide command arguments as a mapping or keywords, not both")
+        prepared = dict(arguments or keyword_arguments)
+        return self._json_request(
+            f"/v1/action/{command}",
+            method="POST",
+            payload={"arguments": self._transport_arguments(prepared), "client": self._client()},
+        )
+
+    def renew_lease(self, operation_id: str) -> dict[str, Any]:
+        return self._json_request(
+            f"/v1/action/leases/{operation_id}/renew",
+            method="POST",
+            payload={"client": self._client()},
+        )

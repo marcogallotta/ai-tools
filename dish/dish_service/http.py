@@ -16,6 +16,7 @@ from dish_tool.results import error_envelope
 from .application import DishService
 from .auth import authenticate_bearer
 from .leases import ServicePrincipal
+from .openapi import ACTION_COMMANDS, action_openapi
 
 LOG = logging.getLogger("dish.service")
 
@@ -105,6 +106,10 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             payload = self.server.service.health()
             self._write_json(HTTPStatus.OK if payload["ok"] else HTTPStatus.SERVICE_UNAVAILABLE, payload)
             return
+        if path == "/openapi/action.json":
+            host = self.headers.get("Host") or "dish.example.invalid"
+            self._write_json(HTTPStatus.OK, action_openapi(server_url=f"https://{host}"))
+            return
         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -115,6 +120,10 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         surface = "unknown"
         if len(parts) == 3 and parts[:2] == ["v1", "commands"]:
             surface, command = "agent", parts[2]
+        elif len(parts) == 3 and parts[:2] == ["v1", "action"]:
+            surface, command = "action", parts[2]
+        elif len(parts) == 5 and parts[:3] == ["v1", "action", "leases"] and parts[4] == "renew":
+            surface, command = "action-lease", "renew-lease"
         elif len(parts) == 4 and parts[:2] == ["v1", "leases"] and parts[3] == "renew":
             surface, command = "lease", "renew-lease"
         elif len(parts) == 3 and parts[:2] == ["v1", "admin"]:
@@ -128,13 +137,19 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
                 return
             if surface in {"agent", "lease", "argument-failure"}:
-                credential = self._credential("agent", "action")
+                credential = self._credential("agent")
+            elif surface in {"action", "action-lease"}:
+                credential = self._credential("action")
+                if surface == "action" and command not in ACTION_COMMANDS:
+                    raise DishRuleError("INVALID_ARGUMENT", "command is not exposed to the GPT Action", rule="action_command_forbidden")
             else:
                 credential = self._credential("admin")
             request = self._read_json()
             principal = self._principal(credential, request)
             if surface == "lease":
                 payload = self.server.service.renew_lease(parts[2], principal)
+            elif surface == "action-lease":
+                payload = self.server.service.renew_lease(parts[3], principal)
             elif surface == "admin-lease":
                 reason = str(request.get("reason") or "").strip()
                 if not reason:

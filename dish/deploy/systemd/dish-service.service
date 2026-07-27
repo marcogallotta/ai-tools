@@ -1,0 +1,21 @@
+[Unit]
+Description=Shared dish workflow service
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=marco
+WorkingDirectory=/home/marco/ai-tools/dish
+EnvironmentFile=/home/marco/.config/dish-service/service.env
+ExecStart=/home/marco/ai-tools/dish/dish-service
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/marco/.local/state/dish
+
+[Install]
+WantedBy=multi-user.target
