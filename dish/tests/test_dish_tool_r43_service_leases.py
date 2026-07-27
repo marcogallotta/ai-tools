@@ -156,6 +156,7 @@ def test_lease_renewal_expiry_and_admin_recovery_are_deterministic(tmp_path):
     renewed = service.renew_lease(operation_id, owner)
     assert renewed["ok"]
     assert renewed["data"]["service_lease"]["expires_at"] > first_expiry
+    assert renewed["task_gid"] == started["task_gid"]
 
     not_stale = service.recover_lease(
         operation_id, _principal("admin", "recovery-1"), reason="premature"
@@ -215,3 +216,4 @@ def test_service_restart_preserves_active_lease(tmp_path):
     renewed = restarted.renew_lease(started["submission_id"], owner)
     assert renewed["ok"]
     assert renewed["data"]["service_lease"]["operation_id"] == started["submission_id"]
+    assert renewed["task_gid"] == started["task_gid"]

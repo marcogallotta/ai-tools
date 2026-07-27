@@ -41,6 +41,15 @@ The service host is the only place that defines `ASANA_PAT` or `ASANA_ENV`. It r
 
 The public listener does not route private CLI, admin, health, migration, recovery, or backup endpoints. HTTP status remains transport information; workflow meaning remains in the canonical JSON result code. On the GPT Action surface, expected authenticated Dish rule outcomes (including `INVALID_ARGUMENT`, state conflicts, and validation failures) use HTTP 200 so the Action runtime returns the canonical envelope to the agent instead of reclassifying it as a transport failure. Authentication and authorization failures retain HTTP 401/403, and unexpected server failures retain HTTP 500.
 
+
+
+Agent-facing action guidance is authoritative even on failures. When an operation-scoped command is
+rejected, `allowed_actions` reports the currently legal exposed continuation when one exists. A
+retryable candidate-validation failure therefore keeps the same corrective command available.
+Fresh bare tasks created by `create` report `data.required_start_kind: planning`. Task-level `read`
+responses expose any active operation, its submission ID, workflow state, and principal-filtered next
+actions. Successful operation-scoped lease renewal includes both `task_gid` and `submission_id`.
+
 ## Service ownership and leases
 
 The durable `operations` constraint is the one-active-operation-per-task lock. The service also writes a persistent ownership sidecar for its database; direct local CLI/admin mode will not open a service-owned database, including while the service process is stopped. `service_leases` bind the current actor to an owner identity and run identity with a renewable expiry. Workflow handoff may release the actor lease, but it does not release the task operation lock. `allowed_actions` is principal-aware: a different or expired run receives no ordinary mutation actions even when the underlying workflow phase has one. Read-only inspection never mutates lease state. Expired leases fail closed and require Marco to run `dish-admin recover-lease`; recovery releases stale ownership but does not transfer the workflow to Marco. Only a run whose durable actor lineage matches the required workflow role may reclaim a missing lease. Admin hold/recovery continuations use temporary request-scoped leases and return the operation unleased for the next valid actor.

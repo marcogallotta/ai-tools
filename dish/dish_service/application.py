@@ -667,8 +667,13 @@ class DishService:
             conn = initialize_database(self.config.db_path)
             try:
                 row = self._lease_manager(conn).renew(operation_id, principal)
+                operation = conn.execute(
+                    "SELECT task_gid FROM operations WHERE operation_id=?",
+                    (operation_id,),
+                ).fetchone()
                 return result_envelope(
                     command="renew-lease",
+                    task_gid=None if operation is None else operation["task_gid"],
                     submission_id=operation_id,
                     data={"service_lease": self._lease_payload(row)},
                 )
