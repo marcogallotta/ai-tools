@@ -18,7 +18,7 @@ from .application import DishService
 from .auth import authenticate_bearer
 from .identifiers import require_dish_uuid, validate_identifier_fields
 from .leases import ServicePrincipal
-from .command_spec import ACTION_COMMANDS, REPLAY_SAFE_COMMANDS, validate_action_request
+from .command_spec import ACTION_COMMANDS, REPLAY_CAPABLE_COMMANDS, REPLAY_SAFE_COMMANDS, validate_action_request
 from .openapi import action_openapi
 
 LOG = logging.getLogger("dish.service")
@@ -118,7 +118,9 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             raise DishRuleError(
                 "INVALID_ARGUMENT", "client run identity is required", rule="service_client_required"
             )
-        return ServicePrincipal.from_values(credential.client_id, client.get("run_id"))
+        run_id = client.get("run_id")
+        require_dish_uuid(run_id, field="client.run_id")
+        return ServicePrincipal.from_values(credential.client_id, run_id)
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlsplit(self.path).path
@@ -219,6 +221,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 principal = self._principal(credential, request)
             client_payload = request.get("client") if isinstance(request.get("client"), dict) else {}
             request_id = client_payload.get("request_id")
+            if request_id is not None:
+                require_dish_uuid(request_id, field="client.request_id")
             if surface == "agent" and command in REPLAY_SAFE_COMMANDS:
                 if not isinstance(request_id, str) or not request_id.strip():
                     raise DishRuleError(
@@ -236,17 +240,32 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 reason = str(request.get("reason") or "").strip()
                 if not reason:
                     raise DishRuleError("INVALID_ARGUMENT", "recovery reason is required", rule="recovery_reason_required")
-                payload = self.server.service.recover_lease(parts[3], principal, reason=reason)
+                payload = self.server.service.recover_lease(parts[3], principal, reason=reason, request_id=request_id)
             elif surface == "admin-backup":
                 if command == "backup-create":
                     payload = self.server.service.create_backup(label=str(request.get("label") or "manual"))
                 else:
                     payload = self.server.service.restore_backup(str(request.get("backup_id") or ""))
             elif surface == "admin":
-                arguments = request.get("arguments", {})
+                if "arguments" not in request:
+                    raise DishRuleError(
+                        "INVALID_ARGUMENT",
+                        "arguments are required",
+                        rule="arguments_object_required",
+                        details={"field": "arguments"},
+                    )
+                arguments = request.get("arguments")
                 if not isinstance(arguments, dict):
                     raise DishRuleError("INVALID_ARGUMENT", "arguments must be a JSON object", rule="arguments_object_required")
-                payload = self.server.service.execute_admin(command, arguments, principal=principal)
+                extras = sorted(set(request) - {"arguments", "client"})
+                if extras:
+                    raise DishRuleError(
+                        "INVALID_ARGUMENT",
+                        "request contains an unexpected field",
+                        rule="request_field_unexpected",
+                        details={"field": extras[0]},
+                    )
+                payload = self.server.service.execute_admin(command, arguments, principal=principal, request_id=request_id)
             elif surface in {"argument-failure", "admin-argument-failure"}:
                 error = request.get("error")
                 context = request.get("context", {})
@@ -267,8 +286,10 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         except DishRuleError as exc:
             replay_payload = None
             if (
-                surface == "action"
-                and command in REPLAY_SAFE_COMMANDS
+                (
+                    (surface in {"action", "agent"} and command in REPLAY_CAPABLE_COMMANDS)
+                    or surface in {"admin", "admin-lease"}
+                )
                 and principal is not None
                 and isinstance(request, dict)
             ):

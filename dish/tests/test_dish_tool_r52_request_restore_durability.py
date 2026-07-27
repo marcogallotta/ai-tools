@@ -287,7 +287,7 @@ def test_action_http_replays_completed_create_with_same_request_id(tmp_path):
     host, port = server.server_address
     try:
         action = DishActionClient(
-            f"http://{host}:{port}", token="action-secret", run_id="run"
+            f"http://{host}:{port}", token="action-secret", run_id="11111111-2222-4333-8444-555555555555"
         )
         first = action.execute(
             "create",

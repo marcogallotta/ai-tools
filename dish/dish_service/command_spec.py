@@ -8,6 +8,7 @@ from dish_tool.errors import DishRuleError
 from .identifiers import require_asana_gid, require_dish_uuid
 
 REPLAY_SAFE_COMMANDS = {"create", "start"}
+REPLAY_CAPABLE_COMMANDS = {"create", "start", "prepare", "approve", "reject", "submit"}
 
 ACTION_COMMANDS = (
     "create",
@@ -210,6 +211,7 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
             "request_field_required",
             field="client.run_id",
         )
+    require_dish_uuid(run_id, field="client.run_id")
     request_id = client.get("request_id")
     if command in REPLAY_SAFE_COMMANDS and (
         not isinstance(request_id, str) or not request_id.strip()

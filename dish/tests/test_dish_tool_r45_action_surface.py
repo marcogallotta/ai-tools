@@ -73,8 +73,8 @@ def _raw_post(url, path, *, token, body):
 def test_cli_and_action_receive_identical_workflow_results(tmp_path):
     _backend, server, thread, url = _running(tmp_path)
     try:
-        cli = DishServiceClient(url, token="cli-secret", run_id="cli-run")
-        action = DishActionClient(url, token="action-secret", run_id="action-run")
+        cli = DishServiceClient(url, token="cli-secret", run_id="9940d276-a582-5787-b6d9-b4fba846e271")
+        action = DishActionClient(url, token="action-secret", run_id="7b87f6d2-db66-5199-882f-07841e94589c")
         cli_result = cli.execute("sections", agent="gpt")
         action_result = action.execute("sections", agent="gpt")
     finally:
@@ -85,8 +85,8 @@ def test_cli_and_action_receive_identical_workflow_results(tmp_path):
 def test_action_credential_is_rejected_from_cli_and_admin_surfaces(tmp_path):
     _backend, server, thread, url = _running(tmp_path)
     try:
-        wrong_cli = DishServiceClient(url, token="action-secret", run_id="action-run")
-        wrong_admin = DishAdminServiceClient(url, token="action-secret", run_id="action-run")
+        wrong_cli = DishServiceClient(url, token="action-secret", run_id="7b87f6d2-db66-5199-882f-07841e94589c")
+        wrong_admin = DishAdminServiceClient(url, token="action-secret", run_id="7b87f6d2-db66-5199-882f-07841e94589c")
         cli_result = wrong_cli.execute("read", agent="gpt", task_gid="t")
         admin_result = wrong_admin.execute("discard", submission_id="x", reason="x")
     finally:
@@ -98,7 +98,7 @@ def test_action_credential_is_rejected_from_cli_and_admin_surfaces(tmp_path):
 def test_cli_credential_is_rejected_from_action_surface(tmp_path):
     _backend, server, thread, url = _running(tmp_path)
     try:
-        wrong = DishActionClient(url, token="cli-secret", run_id="cli-run")
+        wrong = DishActionClient(url, token="cli-secret", run_id="9940d276-a582-5787-b6d9-b4fba846e271")
         result = wrong.execute("sections", agent="gpt")
     finally:
         _stop(server, thread)
@@ -109,7 +109,7 @@ def test_cli_credential_is_rejected_from_action_surface(tmp_path):
 def test_action_surface_supports_leased_start_prepare_and_heartbeat(tmp_path):
     backend, server, thread, url = _running(tmp_path)
     try:
-        action = DishActionClient(url, token="action-secret", run_id="constructor-run")
+        action = DishActionClient(url, token="action-secret", run_id="60f24aac-64a6-590a-99f5-a52fb9aae0a5")
         started = action.execute(
             "start", agent="gpt", task_gid="123456789", kind="initial"
         )
@@ -129,8 +129,8 @@ def test_action_surface_supports_leased_start_prepare_and_heartbeat(tmp_path):
     assert started["ok"]
     assert renewed["ok"]
     assert prepared["ok"]
-    assert inspected["data"]["operation"]["run_id"] == "constructor-run"
-    assert inspected["data"]["actors"]["run_id"] == "constructor-run"
+    assert inspected["data"]["operation"]["run_id"] == "60f24aac-64a6-590a-99f5-a52fb9aae0a5"
+    assert inspected["data"]["actors"]["run_id"] == "60f24aac-64a6-590a-99f5-a52fb9aae0a5"
     assert backend.writes == 1
     assert backend.moves == 1
 
@@ -151,7 +151,7 @@ def test_action_rejects_malformed_task_gid_before_backend_call(tmp_path, task_gi
 
     backend.read_task = counted_read
     try:
-        action = DishActionClient(url, token="action-secret", run_id="run")
+        action = DishActionClient(url, token="action-secret", run_id="f946b9ec-2b97-5b20-9831-e749d02e9883")
         result = action.execute("read", agent="gpt", task_gid=task_gid)
     finally:
         _stop(server, thread)
@@ -180,7 +180,7 @@ def test_action_distinguishes_nonexistent_numeric_gid_and_reaches_backend(tmp_pa
 
     backend.read_task = missing
     try:
-        action = DishActionClient(url, token="action-secret", run_id="run")
+        action = DishActionClient(url, token="action-secret", run_id="f946b9ec-2b97-5b20-9831-e749d02e9883")
         result = action.execute("read", agent="gpt", task_gid="999999999")
     finally:
         _stop(server, thread)
@@ -204,7 +204,7 @@ def test_valid_numeric_gid_reaches_action_backend_path(tmp_path):
 
     backend.read_task = counted_read
     try:
-        action = DishActionClient(url, token="action-secret", run_id="run")
+        action = DishActionClient(url, token="action-secret", run_id="f946b9ec-2b97-5b20-9831-e749d02e9883")
         result = action.execute("read", agent="gpt", task_gid="123456789")
     finally:
         _stop(server, thread)
@@ -219,7 +219,7 @@ def test_action_rejects_malformed_submission_id_before_database_routing(
 ):
     _backend, server, thread, url = _running(tmp_path)
     try:
-        action = DishActionClient(url, token="action-secret", run_id="run")
+        action = DishActionClient(url, token="action-secret", run_id="f946b9ec-2b97-5b20-9831-e749d02e9883")
         result = action.execute(
             "inspect", agent="gpt", submission_id=submission_id
         )
@@ -236,7 +236,7 @@ def test_action_rejects_malformed_submission_id_before_database_routing(
 def test_action_rejects_malformed_lease_operation_id(tmp_path):
     _backend, server, thread, url = _running(tmp_path)
     try:
-        action = DishActionClient(url, token="action-secret", run_id="run")
+        action = DishActionClient(url, token="action-secret", run_id="f946b9ec-2b97-5b20-9831-e749d02e9883")
         result = action.renew_lease("not-an-operation")
     finally:
         _stop(server, thread)
@@ -278,7 +278,7 @@ def test_action_sanitizes_raw_backend_rejection(tmp_path):
 
     backend.read_task = rejected
     try:
-        action = DishActionClient(url, token="action-secret", run_id="run")
+        action = DishActionClient(url, token="action-secret", run_id="f946b9ec-2b97-5b20-9831-e749d02e9883")
         result = action.execute("read", agent="gpt", task_gid="123456789")
     finally:
         _stop(server, thread)
@@ -346,7 +346,7 @@ def test_checked_in_openapi_matches_generator():
 def test_action_request_limit_applies_before_workflow_execution(tmp_path):
     backend, server, thread, url = _running(tmp_path, max_body=80)
     try:
-        action = DishActionClient(url, token="action-secret", run_id="run")
+        action = DishActionClient(url, token="action-secret", run_id="f946b9ec-2b97-5b20-9831-e749d02e9883")
         result = action.execute("create", agent="gpt", title="x" * 500)
     finally:
         _stop(server, thread)
@@ -358,10 +358,10 @@ def test_action_request_limit_applies_before_workflow_execution(tmp_path):
 def test_pre_body_auth_and_size_rejections_close_the_connection(tmp_path):
     backend, server, thread, url = _running(tmp_path, max_body=80)
     valid_body = json.dumps(
-        {"client": {"run_id": "run"}, "arguments": {"agent": "gpt"}}
+        {"client": {"run_id": "f946b9ec-2b97-5b20-9831-e749d02e9883"}, "arguments": {"agent": "gpt"}}
     )
     oversized_body = json.dumps(
-        {"client": {"run_id": "run"}, "arguments": {"title": "x" * 500}}
+        {"client": {"run_id": "f946b9ec-2b97-5b20-9831-e749d02e9883"}, "arguments": {"title": "x" * 500}}
     )
     try:
         rejected_auth = _raw_post(
@@ -389,7 +389,7 @@ def test_failed_start_request_id_cannot_be_reused_for_different_work(tmp_path):
     _backend, server, thread, url = _running(tmp_path)
     request_id = str(uuid.uuid4())
     try:
-        action = DishActionClient(url, token="action-secret", run_id="run")
+        action = DishActionClient(url, token="action-secret", run_id="f946b9ec-2b97-5b20-9831-e749d02e9883")
         first = action.execute(
             "start", agent="gpt", task_gid="not-a-gid", kind="planning",
             request_id=request_id,
@@ -410,7 +410,7 @@ def test_failed_start_request_replays_stored_validation_result(tmp_path):
     _backend, server, thread, url = _running(tmp_path)
     request_id = str(uuid.uuid4())
     try:
-        action = DishActionClient(url, token="action-secret", run_id="run")
+        action = DishActionClient(url, token="action-secret", run_id="f946b9ec-2b97-5b20-9831-e749d02e9883")
         first = action.execute(
             "start", agent="gpt", task_gid="not-a-gid", kind="planning",
             request_id=request_id,
@@ -425,3 +425,39 @@ def test_failed_start_request_replays_stored_validation_result(tmp_path):
     assert second["code"] == "INVALID_ARGUMENT"
     assert second["data"]["request_replayed"] is True
     assert second["data"]["request_id"] == request_id
+
+
+@pytest.mark.parametrize("task_gid", ["0", "0000", "0123456789"])
+def test_action_rejects_noncanonical_numeric_task_gid_before_backend_call(tmp_path, task_gid):
+    backend, server, thread, url = _running(tmp_path)
+    try:
+        action = DishActionClient(
+            url,
+            token="action-secret",
+            run_id="7ee726a0-06c2-4d12-a2b6-0c206d64c7e5",
+        )
+        result = action.execute(
+            "start",
+            request_id=str(uuid.uuid4()),
+            agent="gpt",
+            kind="planning",
+            task_gid=task_gid,
+        )
+    finally:
+        _stop(server, thread)
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"][0]["field"] == "task_gid"
+    assert result["errors"][0]["rule"] == "numeric_identifier_required"
+
+
+def test_action_rejects_noncanonical_client_run_id_before_work(tmp_path):
+    backend, server, thread, url = _running(tmp_path)
+    try:
+        action = DishActionClient(url, token="action-secret", run_id="not-a-run")
+        result = action.execute("sections", agent="gpt")
+    finally:
+        _stop(server, thread)
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"][0]["field"] == "client.run_id"
+    assert result["errors"][0]["rule"] == "uuid_identifier_required"
+

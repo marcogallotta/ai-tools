@@ -16,7 +16,7 @@ _DISH_UUID_FIELDS = {
     "cycle_id",
     "verification_cycle_id",
 }
-_NUMERIC_GID_RE = re.compile(r"[0-9]+")
+_NUMERIC_GID_RE = re.compile(r"[1-9][0-9]*")
 
 
 def _invalid_identifier(field: str, rule: str, message: str) -> DishRuleError:

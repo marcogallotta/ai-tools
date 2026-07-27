@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
+from .identifiers import require_dish_uuid
 
 
 class DishServiceClient:
@@ -96,7 +97,7 @@ class DishServiceClient:
         if arguments is not None and keyword_arguments:
             raise TypeError("provide command arguments as a mapping or keywords, not both")
         prepared = dict(arguments or keyword_arguments)
-        if command in {"create", "start"} and request_id is None:
+        if command in {"create", "start", "prepare", "approve", "reject", "submit"} and request_id is None:
             request_id = str(uuid.uuid4())
         return self._json_request(
             f"/v1/commands/{command}",
@@ -176,22 +177,41 @@ class DishAdminServiceClient(DishServiceClient):
         self,
         command: str,
         arguments: Mapping[str, Any] | None = None,
+        *,
+        request_id: str | None = None,
         **keyword_arguments: Any,
     ) -> dict[str, Any]:
         if arguments is not None and keyword_arguments:
             raise TypeError("provide command arguments as a mapping or keywords, not both")
         prepared = dict(arguments or keyword_arguments)
+        if request_id is None:
+            request_id = str(uuid.uuid4())
         return self._json_request(
             f"/v1/admin/{command}",
             method="POST",
-            payload={"arguments": self._transport_arguments(prepared), "client": self._client()},
+            payload={
+                "arguments": self._transport_arguments(prepared),
+                "client": self._client(request_id=request_id),
+            },
         )
 
-    def recover_lease(self, operation_id: str, *, reason: str) -> dict[str, Any]:
+    def recover_lease(
+        self,
+        operation_id: str,
+        *,
+        reason: str,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        operation_id = require_dish_uuid(operation_id, field="operation_id")
+        if request_id is None:
+            request_id = str(uuid.uuid4())
         return self._json_request(
             f"/v1/admin/leases/{operation_id}/recover",
             method="POST",
-            payload={"reason": reason, "client": self._client()},
+            payload={
+                "reason": reason,
+                "client": self._client(request_id=request_id),
+            },
         )
 
     def create_backup(self, *, label: str = "manual") -> dict[str, Any]:
@@ -221,7 +241,7 @@ class DishActionClient(DishServiceClient):
         if arguments is not None and keyword_arguments:
             raise TypeError("provide command arguments as a mapping or keywords, not both")
         prepared = dict(arguments or keyword_arguments)
-        if command in {"create", "start"} and request_id is None:
+        if command in {"create", "start", "prepare", "approve", "reject", "submit"} and request_id is None:
             request_id = str(uuid.uuid4())
         return self._json_request(
             f"/v1/action/{command}",

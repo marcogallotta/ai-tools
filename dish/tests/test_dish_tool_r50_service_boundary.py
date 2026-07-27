@@ -130,7 +130,7 @@ def test_action_server_rejects_malformed_arguments_before_workflow(
             f"/v1/action/{command}",
             {
                 "client": {
-                    "run_id": "run",
+                    "run_id": "11111111-2222-4333-8444-555555555555",
                     **({"request_id": "11111111-1111-4111-8111-111111111111"} if command in {"create", "start"} else {}),
                 },
                 "arguments": arguments,
@@ -155,7 +155,7 @@ def test_unexpected_http_exception_returns_canonical_json_and_request_id(tmp_pat
         status, result = _post(
             server,
             "/v1/action/sections",
-            {"client": {"run_id": "run"}, "arguments": {"agent": "gpt"}},
+            {"client": {"run_id": "11111111-2222-4333-8444-555555555555"}, "arguments": {"agent": "gpt"}},
         )
     finally:
         _stop(server, thread)

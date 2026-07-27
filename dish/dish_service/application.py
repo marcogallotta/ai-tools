@@ -207,12 +207,25 @@ class DishService:
         return row is not None
 
     def _may_claim_missing_lease(
-        self, conn, operation_id: str, principal: ServicePrincipal, command: str
+        self,
+        conn,
+        operation_id: str,
+        principal: ServicePrincipal,
+        command: str,
+        *,
+        agent: str | None = None,
     ) -> bool:
         op = self._operation_row(conn, operation_id)
         if op is None or op["status"] != "open":
             return False
         if command == "prepare":
+            expected_agent = (
+                op["researcher_agent"]
+                if op["operation_kind"] == "initial"
+                else op["editor_agent"]
+            )
+            if agent and expected_agent and agent != expected_agent:
+                return False
             if str(op["run_id"] or "").strip() == principal.run_id:
                 return True
             return self._run_has_role(
@@ -220,6 +233,8 @@ class DishService:
                 ("planner", "constructor", "material_editor"),
             )
         if command in {"approve", "reject", "submit"}:
+            if agent and op["verifier_agent"] and agent != op["verifier_agent"]:
+                return False
             return self._run_has_role(
                 conn, operation_id, principal.run_id, ("verifier",)
             )
@@ -233,8 +248,9 @@ class DishService:
         leases: LeaseManager,
         operation_id: str | None,
         principal: ServicePrincipal,
+        agent: str | None = None,
     ) -> dict[str, Any]:
-        if not result.get("ok") or not operation_id:
+        if not operation_id:
             return result
         op = self._operation_row(conn, operation_id)
         if op is None:
@@ -282,7 +298,7 @@ class DishService:
                 if action == "start":
                     filtered.append(action)
                 elif action in _LEASED_AGENT_COMMANDS and self._may_claim_missing_lease(
-                    conn, operation_id, principal, action
+                    conn, operation_id, principal, action, agent=agent
                 ):
                     filtered.append(action)
             actions = filtered
@@ -300,6 +316,11 @@ class DishService:
 
         result["allowed_actions"] = actions
         data["service_access"] = access
+        required_admin_action = access.get("required_admin_action")
+        if required_admin_action:
+            data["required_admin_action"] = required_admin_action
+        else:
+            data.pop("required_admin_action", None)
         return result
 
     def _assert_mutation_ready(self, backend: Any) -> None:
@@ -458,6 +479,7 @@ class DishService:
         result = self._apply_principal_access(
             result, conn=conn, leases=leases, operation_id=operation_id,
             principal=principal,
+            agent=str(arguments.get("agent") or "") or None,
         )
         complete_request(conn, request_id=request_id, result=result)
         return result
@@ -490,7 +512,7 @@ class DishService:
                 )
 
                 request_row = None
-                if command in {"create", "start"} and request_id:
+                if command in {"create", "start", "prepare", "approve", "reject", "submit"} and request_id:
                     request_row, replay_started = begin_request(
                         conn,
                         request_id=request_id,
@@ -531,6 +553,14 @@ class DishService:
                 if command in _LEASED_AGENT_COMMANDS:
                     if not operation_id:
                         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+                    operation = self._operation_row(conn, operation_id)
+                    if operation is not None and operation["status"] != "open":
+                        raise DishRuleError(
+                            "WRONG_STATE",
+                            "operation is not open",
+                            rule="operation_not_open",
+                            details={"actual": operation["status"]},
+                        )
                     active = leases.active_for_operation(operation_id)
                     if active is None:
                         if not self._may_claim_missing_lease(
@@ -598,10 +628,11 @@ class DishService:
                     leases=leases,
                     operation_id=result_operation_id,
                     principal=principal,
+                    agent=str(prepared_arguments.get("agent") or "") or None,
                 )
                 if result.get("data", {}).get("service_recovery_required"):
                     result["allowed_actions"] = []
-                if request_id and command in {"create", "start"}:
+                if request_id and command in {"create", "start", "prepare", "approve", "reject", "submit"}:
                     result.setdefault("data", {})["request_id"] = request_id
                     complete_request(conn, request_id=request_id, result=result)
                 return result
@@ -635,7 +666,9 @@ class DishService:
                     submission_id=operation_id,
                     validation_scope=validation_scope,
                 )
-                if request_id and command in {"create", "start"} and replay_started:
+                if exc.rule == "service_lease_expired":
+                    result.setdefault("data", {})["required_admin_action"] = "recover-lease"
+                if request_id and command in {"create", "start", "prepare", "approve", "reject", "submit"} and replay_started:
                     result.setdefault("data", {})["request_id"] = request_id
                     complete_request(conn, request_id=request_id, result=result)
                 return result
@@ -696,12 +729,15 @@ class DishService:
                     "SELECT task_gid FROM operations WHERE operation_id=?",
                     (operation_id,),
                 ).fetchone()
-                return error_envelope(
+                result = error_envelope(
                     "renew-lease",
                     exc,
                     task_gid=None if row is None else row["task_gid"],
                     submission_id=operation_id,
                 )
+                if exc.rule == "service_lease_expired":
+                    result.setdefault("data", {})["required_admin_action"] = "recover-lease"
+                return result
             finally:
                 conn.close()
 
@@ -711,33 +747,82 @@ class DishService:
         principal: ServicePrincipal,
         *,
         reason: str,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         with self._maintenance_gate.request():
             conn = initialize_database(self.config.db_path)
+            replay_started = False
             try:
+                if request_id:
+                    row, replay_started = begin_request(
+                        conn,
+                        request_id=request_id,
+                        owner_id=principal.owner_id,
+                        run_id=principal.run_id,
+                        command="recover-lease",
+                        arguments={"operation_id": operation_id, "reason": reason},
+                    )
+                    prior = stored_result(row)
+                    if prior is not None:
+                        return prior
+                    if not replay_started:
+                        raise pending_error("recover-lease", request_id)
+                operation = conn.execute(
+                    "SELECT task_gid, status FROM operations WHERE operation_id=?",
+                    (operation_id,),
+                ).fetchone()
+                if operation is None:
+                    raise DishRuleError(
+                        "NOT_FOUND",
+                        "operation not found",
+                        rule="operation_not_found",
+                    )
+                if operation["status"] != "open":
+                    raise DishRuleError(
+                        "WRONG_STATE",
+                        "operation is not open",
+                        rule="operation_not_open",
+                        details={"actual": operation["status"]},
+                    )
                 released = self._lease_manager(conn).admin_recover(
                     operation_id, principal, reason=reason
                 )
-                return result_envelope(
+                if released is None:
+                    raise DishRuleError(
+                        "CONFLICT",
+                        "operation has no active service lease",
+                        rule="service_lease_missing",
+                    )
+                result = result_envelope(
                     command="recover-lease",
+                    task_gid=operation["task_gid"],
                     submission_id=operation_id,
+                    state=operation["status"],
                     data={
                         "service_lease": None,
-                        "released_lease_id": None if released is None else released["lease_id"],
+                        "released_lease_id": released["lease_id"],
                         "ownership_transferred": False,
                     },
                 )
+                if request_id:
+                    result.setdefault("data", {})["request_id"] = request_id
+                    complete_request(conn, request_id=request_id, result=result)
+                return result
             except DishRuleError as exc:
                 row = conn.execute(
                     "SELECT task_gid FROM operations WHERE operation_id=?",
                     (operation_id,),
                 ).fetchone()
-                return error_envelope(
+                result = error_envelope(
                     "recover-lease",
                     exc,
                     task_gid=None if row is None else row["task_gid"],
                     submission_id=operation_id,
                 )
+                if request_id and replay_started:
+                    result.setdefault("data", {})["request_id"] = request_id
+                    complete_request(conn, request_id=request_id, result=result)
+                return result
             finally:
                 conn.close()
 
@@ -813,6 +898,7 @@ class DishService:
         arguments: Mapping[str, Any],
         *,
         principal: ServicePrincipal | None = None,
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         with self._maintenance_gate.request():
             conn = initialize_database(self.config.db_path)
@@ -821,7 +907,22 @@ class DishService:
             operation_id = str(arguments.get("submission_id") or "").strip() or None
             acquired_for_request = False
             leases = self._lease_manager(conn)
+            replay_started = False
             try:
+                if request_id:
+                    request_row, replay_started = begin_request(
+                        conn,
+                        request_id=request_id,
+                        owner_id=principal.owner_id,
+                        run_id=principal.run_id,
+                        command=command,
+                        arguments=dict(arguments),
+                    )
+                    prior = stored_result(request_row)
+                    if prior is not None:
+                        return prior
+                    if not replay_started:
+                        raise pending_error(command, request_id)
                 backend = self.backend_factory()
                 self._assert_mutation_ready(backend)
                 if (
@@ -874,6 +975,9 @@ class DishService:
                         result.setdefault("data", {})["service_lease"] = None
                 elif not result.get("ok") and acquired_for_request and operation_id:
                     leases.release(operation_id, principal, reason="admin_command_rejected")
+                if request_id:
+                    result.setdefault("data", {})["request_id"] = request_id
+                    complete_request(conn, request_id=request_id, result=result)
                 return result
             except DishRuleError as exc:
                 if acquired_for_request and operation_id:
@@ -888,9 +992,13 @@ class DishService:
                         (operation_id,),
                     ).fetchone()
                     task_gid = None if row is None else row["task_gid"]
-                return error_envelope(
+                result = error_envelope(
                     command, exc, task_gid=task_gid, submission_id=operation_id,
                 )
+                if request_id and replay_started:
+                    result.setdefault("data", {})["request_id"] = request_id
+                    complete_request(conn, request_id=request_id, result=result)
+                return result
             finally:
                 self._close_backend(backend)
                 conn.close()

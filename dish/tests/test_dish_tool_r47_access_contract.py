@@ -66,10 +66,10 @@ def _stop(server, thread):
 def test_private_and_public_listeners_have_disjoint_route_surfaces(tmp_path):
     backend, private, action, private_thread, action_thread, private_url, action_url = _split_servers(tmp_path)
     try:
-        cli = DishServiceClient(private_url, token="cli-secret", run_id="cli-run")
-        action_client = DishActionClient(action_url, token="action-secret", run_id="action-run")
-        wrong_action = DishActionClient(private_url, token="action-secret", run_id="action-run")
-        wrong_admin = DishAdminServiceClient(action_url, token="admin-secret", run_id="admin-run")
+        cli = DishServiceClient(private_url, token="cli-secret", run_id="9940d276-a582-5787-b6d9-b4fba846e271")
+        action_client = DishActionClient(action_url, token="action-secret", run_id="7b87f6d2-db66-5199-882f-07841e94589c")
+        wrong_action = DishActionClient(private_url, token="action-secret", run_id="7b87f6d2-db66-5199-882f-07841e94589c")
+        wrong_admin = DishAdminServiceClient(action_url, token="admin-secret", run_id="49aa30ee-8c28-59f4-96c5-acedac34764b")
 
         private_result = cli.execute("sections", agent="gpt")
         public_result = action_client.execute("sections", agent="gpt")
@@ -98,7 +98,7 @@ def test_hidden_post_route_closes_without_reinterpreting_its_body(tmp_path):
             "POST",
             "/v1/action/sections",
             body=json.dumps(
-                {"client": {"run_id": "action-run"}, "arguments": {"agent": "gpt"}}
+                {"client": {"run_id": "7b87f6d2-db66-5199-882f-07841e94589c"}, "arguments": {"agent": "gpt"}}
             ),
             headers={
                 "Authorization": "Bearer action-secret",
