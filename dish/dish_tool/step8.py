@@ -187,6 +187,24 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         raise DishRuleError("INVALID_ARGUMENT", "route must be large, evidence, or human-review", rule="invalid_rejection_route")
     if not reason:
         raise DishRuleError("INVALID_ARGUMENT", "route reason is required", rule="rejection_reason_required")
+    if route == "large" and resume_status is not None:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "Large correction does not accept a hold resume status",
+            rule="large_resume_status_unexpected",
+        )
+    if route != "large" and file_path:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "candidate file is accepted only for a Large correction",
+            rule="hold_candidate_unexpected",
+        )
+    if route != "large" and model:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "model is accepted only for a Large correction",
+            rule="hold_model_unexpected",
+        )
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     persisted_reviewed = cycle["reviewed_identity"]
     if not persisted_reviewed or not cycle["reviewed_content_version_id"]:

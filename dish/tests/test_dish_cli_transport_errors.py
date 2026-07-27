@@ -133,3 +133,17 @@ def test_prepare_action_contract_rejects_removed_declarations():
         assert exc.details["field"] == "dish_name"
     else:
         raise AssertionError("removed declaration was accepted")
+
+
+def test_reject_cli_rejects_removed_compatibility_flags():
+    parser = cli.build_parser()
+    for flag, value in (("--changed-since-prior", "identity"), ("--take-ownership", None)):
+        argv = ["reject", "00000000-0000-4000-8000-000000000000", "--agent", "gpt", "--reason", "reason", "--route", "large", flag]
+        if value is not None:
+            argv.append(value)
+        try:
+            parser.parse_args(argv)
+        except DishRuleError as exc:
+            assert exc.rule == "invalid_arguments"
+        else:
+            raise AssertionError(f"{flag} was accepted despite having no consumer")

@@ -290,7 +290,7 @@ class DishApplication:
 
 
 
-# Step 5 lifecycle replacements. Kept at module end so legacy later-stage handlers remain untouched.
+# Step 5 lifecycle command handlers.
 def _step5_sections(self, *, trace: CommandTrace, agent: str) -> dict[str, Any]:
     agent_family(agent)
     sections = self.backend.list_sections(COOKING_PROJECT_GID)
@@ -385,7 +385,7 @@ def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str)
     return result_envelope(command="inspect", task_gid=trace.task_gid, submission_id=operation_id, state=trace.state, allowed_actions=view["legal_actions"], data=data)
 
 
-def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: str, change_level: str | None = None, change_reason: str | None = None, run_id: str | None = None, **_extra: Any) -> dict[str, Any]:
+def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: str, change_level: str | None = None, change_reason: str | None = None, run_id: str | None = None) -> dict[str, Any]:
     from .step5 import claim_operation, diagnostics_for, start_result_data
     from .task_store import read_complete_task
     agent_family(agent)
@@ -556,7 +556,6 @@ def _step7_approve(
     provenance_complete: bool = False,
     run_id: str | None = None,
     independence_attestation: str | None = None,
-    **legacy: Any,
 ) -> dict[str, Any]:
     from .step7 import approve_live
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
@@ -603,11 +602,23 @@ def _step7_approve(
 # Step 8 protocol-native rejection routes and Small same-pass correction.
 _step7_command_approve = _step7_approve
 
-def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, file_path: str | None = None, correction: str = "none", reviewed_identity: str | None = None, semantic_review_complete: bool = False, provenance_complete: bool = False, run_id: str | None = None, independence_attestation: str | None = None, **legacy: Any) -> dict[str, Any]:
+def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, file_path: str | None = None, correction: str = "none", reviewed_identity: str | None = None, semantic_review_complete: bool = False, provenance_complete: bool = False, run_id: str | None = None, independence_attestation: str | None = None) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
-    if exists is None or correction != "small" or not file_path:
-        return _step7_command_approve(self, trace=trace, agent=agent, model=model, submission_id=submission_id, file_path=file_path, correction=correction, reviewed_identity=reviewed_identity, semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation, **legacy)
+    if exists is not None and correction == "small" and not file_path:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "Small correction approval requires a complete corrected candidate",
+            rule="small_correction_file_required",
+        )
+    if exists is not None and correction != "small" and file_path:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "approval candidate file is accepted only for a Small correction",
+            rule="approval_file_unexpected",
+        )
+    if exists is None or correction != "small":
+        return _step7_command_approve(self, trace=trace, agent=agent, model=model, submission_id=submission_id, file_path=file_path, correction=correction, reviewed_identity=reviewed_identity, semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation)
     trace.validation_scope = scope_for_command("approve")
     from .step8 import approve_small
     release = self._load_release("verification")
@@ -625,7 +636,7 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None =
         validation_scope=trace.validation_scope,
     )
 
-def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, **legacy: Any) -> dict[str, Any]:
+def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     route_release = self._load_release(None)
     routed = self.operation_service.route(operation_id, command="reject", protocol_version=route_release.protocol_version)

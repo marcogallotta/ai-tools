@@ -137,3 +137,65 @@ def test_reject_requires_exact_verifier_run_proof(tmp_path):
     )
     assert result["code"] == "AGENT_MISMATCH"
     assert result["errors"][0]["rule"] == "verifier_proof_mismatch"
+
+
+def test_approve_rejects_candidate_file_without_small_correction(tmp_path):
+    app, _backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-extra-file")
+    candidate = tmp_path / "unused.txt"
+    candidate.write_text(TASK)
+    result = app.execute(
+        "approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
+        correction="none", file_path=str(candidate),
+        reviewed_identity=review["data"]["reviewed_identity"],
+        semantic_review_complete=True, provenance_complete=True, run_id="review-extra-file",
+    )
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"][0]["rule"] == "approval_file_unexpected"
+
+
+def test_small_correction_requires_candidate_file(tmp_path):
+    app, _backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-missing-file")
+    result = app.execute(
+        "approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
+        correction="small", reviewed_identity=review["data"]["reviewed_identity"],
+        semantic_review_complete=True, provenance_complete=True, run_id="review-missing-file",
+    )
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"][0]["rule"] == "small_correction_file_required"
+
+
+def test_hold_routes_reject_large_only_arguments(tmp_path):
+    for suffix, extra, rule in (
+        ("file", {"file_path": str(tmp_path / "unused.txt")}, "hold_candidate_unexpected"),
+        ("model", {"model": "gpt-5.6-sol"}, "hold_model_unexpected"),
+    ):
+        path = tmp_path / "unused.txt"
+        path.write_text(TASK)
+        case_dir = tmp_path / suffix
+        case_dir.mkdir()
+        app, _backend, operation_id, _ = make_app(case_dir)
+        review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id=f"review-{suffix}")
+        assert review["ok"]
+        result = app.execute(
+            "reject", agent="codex", submission_id=operation_id, route="evidence",
+            reason="Marco must confirm a fact", resume_status="pending-verification",
+            run_id=f"review-{suffix}", **extra,
+        )
+        assert result["code"] == "INVALID_ARGUMENT"
+        assert result["errors"][0]["rule"] == rule
+
+
+def test_large_route_rejects_hold_resume_status(tmp_path):
+    app, _backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-large-resume")
+    candidate = tmp_path / "large.txt"
+    candidate.write_text(TASK.replace("100 g", "120 g"))
+    result = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
+        route="large", reason="material correction", file_path=str(candidate),
+        resume_status="pending-verification", run_id="review-large-resume",
+    )
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"][0]["rule"] == "large_resume_status_unexpected"
