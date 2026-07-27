@@ -1296,6 +1296,14 @@ def _backup_legacy_database(db_path: Path) -> None:
         shutil.copy2(db_path, backup)
 
 
+WAL_BUSY_TIMEOUT_MS = 100
+WAL_RETRY_ATTEMPTS = 20
+WAL_RETRY_SLEEP_BASE_SECONDS = 0.01
+WAL_RETRY_SLEEP_CAP_SECONDS = 0.1
+MIGRATION_BUSY_TIMEOUT_MS = 2000
+RUNTIME_BUSY_TIMEOUT_MS = 30000
+
+
 def initialize_database(
     path: str | os.PathLike[str] = DEFAULT_DB_PATH,
 ) -> sqlite3.Connection:
@@ -1305,12 +1313,12 @@ def initialize_database(
     conn = sqlite3.connect(str(db_path), timeout=30, isolation_level=None)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA busy_timeout = 100")
+    conn.execute(f"PRAGMA busy_timeout = {WAL_BUSY_TIMEOUT_MS}")
     journal_exc: sqlite3.OperationalError | None = None
     # A second initializer can briefly collide with the first while SQLite is
     # establishing WAL mode. Retry only this narrow busy/locked boundary; after
     # the bounded window, a persistent reader is reported as a structured lock.
-    for attempt in range(20):
+    for attempt in range(WAL_RETRY_ATTEMPTS):
         try:
             conn.execute("PRAGMA journal_mode = WAL")
             journal_exc = None
@@ -1321,7 +1329,7 @@ def initialize_database(
                 conn.close()
                 raise
             journal_exc = exc
-            time.sleep(min(0.01 * (attempt + 1), 0.1))
+            time.sleep(min(WAL_RETRY_SLEEP_BASE_SECONDS * (attempt + 1), WAL_RETRY_SLEEP_CAP_SECONDS))
     if journal_exc is not None:
         conn.close()
         raise DishRuleError(
@@ -1330,7 +1338,7 @@ def initialize_database(
             rule="database_reader_lock",
             retryable=True,
         ) from journal_exc
-    conn.execute("PRAGMA busy_timeout = 2000")
+    conn.execute(f"PRAGMA busy_timeout = {MIGRATION_BUSY_TIMEOUT_MS}")
     try:
         migrate_database(conn)
     except sqlite3.OperationalError as exc:
@@ -1341,11 +1349,11 @@ def initialize_database(
                 "database initialization is blocked by another writer",
                 rule="database_writer_lock",
                 retryable=True,
-                details={"timeout_ms": 2000},
+                details={"timeout_ms": MIGRATION_BUSY_TIMEOUT_MS},
             ) from exc
         conn.close()
         raise
-    conn.execute("PRAGMA busy_timeout = 30000")
+    conn.execute(f"PRAGMA busy_timeout = {RUNTIME_BUSY_TIMEOUT_MS}")
     try:
         _validate_current_database(conn)
     except Exception:

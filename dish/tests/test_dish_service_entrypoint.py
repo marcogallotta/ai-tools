@@ -13,6 +13,7 @@ from dish_service import __main__ as service_main
 ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.mark.boundary
 def test_dish_service_help_uses_the_repository_virtualenv_without_starting_service():
     completed = subprocess.run(
         [str(ROOT / "dish-service"), "--help"],
@@ -29,6 +30,7 @@ def test_dish_service_help_uses_the_repository_virtualenv_without_starting_servi
     assert completed.stderr == ""
 
 
+@pytest.mark.boundary
 def test_dish_service_fails_closed_when_repository_virtualenv_is_missing(tmp_path):
     launcher = tmp_path / "dish-service"
     launcher.write_text((ROOT / "dish-service").read_text())

@@ -42,6 +42,7 @@ def test_final_database_validation_failure_closes_created_connection(monkeypatch
     assert created[0].closed_by_owner is True
 
 
+@pytest.mark.boundary
 def test_repeated_owned_asana_clients_exit_without_worker_pool_tail(tmp_path):
     root = Path(__file__).resolve().parents[1]
     script = """
@@ -54,7 +55,7 @@ print('closed')
 """
     env = dict(os.environ)
     env["ASANA_PAT"] = "test-pat-token"
-    env["PYTHONPATH"] = str(root)
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(root), env.get("PYTHONPATH"))))
     completed = subprocess.run(
         [sys.executable, "-c", script],
         cwd=root,

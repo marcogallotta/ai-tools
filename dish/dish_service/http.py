@@ -41,6 +41,9 @@ class DishHTTPServer(ThreadingHTTPServer):
         ))
         super().__init__(address, DishRequestHandler)
 
+    def serve_forever(self, poll_interval: float = 0.05) -> None:
+        super().serve_forever(poll_interval=poll_interval)
+
 
 class DishRequestHandler(BaseHTTPRequestHandler):
     server: DishHTTPServer

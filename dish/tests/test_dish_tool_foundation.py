@@ -219,6 +219,7 @@ def insert_submission(conn, submission_id, task_gid, status):
     conn.commit()
 
 
+@pytest.mark.real_database_bootstrap
 def test_schema_creation_and_migration_are_idempotent(tmp_path):
     db_path = tmp_path / "dish-tool.db"
     conn = initialize_database(db_path)

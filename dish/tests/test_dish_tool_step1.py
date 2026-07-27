@@ -284,6 +284,7 @@ def run_commit_helper(repo: Path, *paths: str):
     )
 
 
+@pytest.mark.boundary
 def test_git_commit_blocks_schema_change_without_both_bumps(tmp_path):
     root = copy_fixture(tmp_path)
     init_git(root)
@@ -299,6 +300,7 @@ def test_git_commit_blocks_schema_change_without_both_bumps(tmp_path):
     assert "both PROTOCOL_VERSION and SCHEMA_VERSION bumps" in completed.stderr
 
 
+@pytest.mark.boundary
 def test_git_commit_allows_governed_change_with_required_bumps(tmp_path):
     root = copy_fixture(tmp_path)
     init_git(root)
@@ -312,6 +314,7 @@ def test_git_commit_allows_governed_change_with_required_bumps(tmp_path):
     assert completed.returncode == 0, completed.stderr
 
 
+@pytest.mark.boundary
 def test_git_commit_allows_ordinary_code_only_change_without_version_bump(tmp_path):
     root = copy_fixture(tmp_path)
     (root / "helper.py").write_text("print('one')\n")

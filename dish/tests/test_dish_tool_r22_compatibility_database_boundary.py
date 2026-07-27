@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+import dish_tool.database_schema as database_schema
 from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
 
@@ -46,7 +47,8 @@ def _hold_writer(path: str, ready, release):
     conn.close()
 
 
-def test_held_writer_returns_structured_retryable_error(tmp_path: Path):
+def test_held_writer_returns_structured_retryable_error(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(database_schema, "MIGRATION_BUSY_TIMEOUT_MS", 10)
     path = tmp_path / "writer.sqlite"
     initialize_database(path).close()
     ctx = mp.get_context("spawn")

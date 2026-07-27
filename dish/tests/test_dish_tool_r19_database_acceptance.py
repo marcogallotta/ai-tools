@@ -8,6 +8,7 @@ BIN = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BIN))
 
 from dish_tool.database import create_operation, mark_operation_completion, confirm_task_content
+import dish_tool.database_schema as database_schema
 from dish_tool.database_schema import MIGRATIONS, initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
@@ -69,7 +70,11 @@ def test_confirmed_attempts_require_evidence_bindings(tmp_path):
         mark_operation_completion(conn, op["operation_id"], "signoff")
 
 
-def test_reader_lock_has_structured_retryable_diagnostic(tmp_path):
+def test_reader_lock_has_structured_retryable_diagnostic(monkeypatch, tmp_path):
+    monkeypatch.setattr(database_schema, "WAL_BUSY_TIMEOUT_MS", 1)
+    monkeypatch.setattr(database_schema, "WAL_RETRY_ATTEMPTS", 2)
+    monkeypatch.setattr(database_schema, "WAL_RETRY_SLEEP_BASE_SECONDS", 0.001)
+    monkeypatch.setattr(database_schema, "WAL_RETRY_SLEEP_CAP_SECONDS", 0.001)
     path = tmp_path / "reader.sqlite"
     writer = sqlite3.connect(path)
     writer.execute("CREATE TABLE seed(x INTEGER)")
