@@ -213,8 +213,7 @@ def test_retryable_prepare_validation_exposes_prepare_action(tmp_path):
     candidate.write_text("not a planning brief")
     result = a.execute(
         "prepare", agent="gpt", model="gpt-5.6-sol",
-        submission_id=started["submission_id"], file_path=str(candidate),
-        no_role_tags=True, no_blockers=True,
+        submission_id=started["submission_id"], file_path=str(candidate)
     )
     assert not result["ok"]
     assert result["retryable"] is True

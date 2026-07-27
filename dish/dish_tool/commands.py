@@ -448,7 +448,7 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
 
 
 
-def _step6_prepare(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, file_path: str | None = None, material_classification: str | None = None, **legacy: Any) -> dict[str, Any]:
+def _step6_prepare(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, file_path: str | None = None, material_classification: str | None = None, run_id: str | None = None) -> dict[str, Any]:
     from .step6 import prepare_live
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     route_release = self._load_release(None)
@@ -664,7 +664,7 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = 
 
 # Step 9 movement-only submit.
 
-def _step9_submit(self, *, trace: CommandTrace, submission_id: str, file_path: str | None = None) -> dict[str, Any]:
+def _step9_submit(self, *, trace: CommandTrace, submission_id: str) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     route_release = self._load_release(None)
     routed = self.operation_service.route(operation_id, command="submit", protocol_version=route_release.protocol_version)

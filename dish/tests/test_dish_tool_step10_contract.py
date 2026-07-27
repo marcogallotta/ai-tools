@@ -29,7 +29,7 @@ def test_documented_agent_examples_match_current_parser_surface():
             "--semantic-review-complete", "--provenance-complete",
         ],
         ["reject", "op", "--agent", "gpt", "--reason", "reason"],
-        ["submit", "op", "--file", "candidate.md"],
+        ["submit", "op"],
     ]
     for argv in examples:
         assert vars(parser.parse_args(argv))["command"] == argv[0]

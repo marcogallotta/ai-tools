@@ -75,13 +75,6 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "string",
                 "enum": ["material", "non-material"],
             },
-            "exemption_revision": {"type": "string"},
-            "dish_name": {"type": "string"},
-            "recognition": {"type": "string"},
-            "roles": {"type": "array", "items": {"type": "string"}},
-            "no_role_tags": {"type": "boolean"},
-            "blockers": {"type": "array", "items": {"type": "string"}},
-            "no_blockers": {"type": "boolean"},
         },
     },
     "approve": {

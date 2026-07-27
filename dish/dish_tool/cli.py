@@ -106,15 +106,6 @@ for the full argument reference.
 }
 
 
-def _add_title_declaration(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--dish-name")
-    parser.add_argument("--recognition")
-    parser.add_argument("--role", dest="roles", action="append")
-    parser.add_argument("--no-role-tags", action="store_true")
-    parser.add_argument("--blocker", dest="blockers", action="append")
-    parser.add_argument("--no-blockers", action="store_true")
-
-
 def build_parser() -> JsonArgumentParser:
     parser = JsonArgumentParser(
         prog="dish",
@@ -197,9 +188,7 @@ def build_parser() -> JsonArgumentParser:
     prepare.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
     prepare.add_argument("--model", required=True)
     prepare.add_argument("--file", dest="file_path", required=True)
-    prepare.add_argument("--exemption-revision")
     prepare.add_argument("--material-classification", choices=("material", "non-material"))
-    _add_title_declaration(prepare)
 
     approve = subparsers.add_parser(
         "approve",
@@ -225,7 +214,6 @@ def build_parser() -> JsonArgumentParser:
     approve.add_argument("--independence-attestation")
     approve.add_argument("--semantic-review-complete", action="store_true")
     approve.add_argument("--provenance-complete", action="store_true")
-    _add_title_declaration(approve)
 
     reject = subparsers.add_parser(
         "reject",
@@ -260,7 +248,6 @@ def build_parser() -> JsonArgumentParser:
         "submit", help="move a signed task to its recorded destination (run after a successful approve)"
     )
     submit.add_argument("submission_id")
-    submit.add_argument("--file", dest="file_path")
     return parser
 
 
@@ -383,6 +370,27 @@ def main(
         else:
             command = parsed.pop("command")
             result = app.execute(command, **parsed)
+    except DishRuleError as exc:
+        result = error_envelope(
+            context["command"] or "unknown",
+            exc,
+            task_gid=context["task_gid"],
+            submission_id=context["submission_id"],
+        )
+    except Exception as exc:
+        error = DishRuleError(
+            "INTERNAL_ERROR",
+            "dish command failed",
+            rule="command_failure",
+            details={"error_type": type(exc).__name__},
+        )
+        result = error_envelope(
+            context["command"] or "unknown",
+            error,
+            task_gid=context["task_gid"],
+            submission_id=context["submission_id"],
+        )
+    try:
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return exit_status(result["code"])
     finally:

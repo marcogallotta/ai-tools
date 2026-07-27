@@ -1,930 +1,62 @@
 {
-  "openapi": "3.1.0",
-  "info": {
-    "title": "Dish GPT Action",
-    "version": "1.0.0"
-  },
-  "servers": [
-    {
-      "url": "https://dish.example.invalid"
-    }
-  ],
-  "paths": {
-    "/v1/action/create": {
-      "post": {
-        "operationId": "dish_create",
-        "summary": "Run dish create",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id",
-                      "request_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "agent",
-                      "title"
-                    ],
-                    "properties": {
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      },
-                      "title": {
-                        "type": "string"
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/sections": {
-      "post": {
-        "operationId": "dish_sections",
-        "summary": "Run dish sections",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "agent"
-                    ],
-                    "properties": {
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/read": {
-      "post": {
-        "operationId": "dish_read",
-        "summary": "Run dish read",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "task_gid",
-                      "agent"
-                    ],
-                    "properties": {
-                      "task_gid": {
-                        "type": "string",
-                        "pattern": "^[0-9]+$"
-                      },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/inspect": {
-      "post": {
-        "operationId": "dish_inspect",
-        "summary": "Run dish inspect",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "submission_id",
-                      "agent"
-                    ],
-                    "properties": {
-                      "submission_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/start": {
-      "post": {
-        "operationId": "dish_start",
-        "summary": "Run dish start",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id",
-                      "request_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "task_gid",
-                      "agent",
-                      "kind"
-                    ],
-                    "properties": {
-                      "task_gid": {
-                        "type": "string",
-                        "pattern": "^[0-9]+$"
-                      },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      },
-                      "kind": {
-                        "type": "string",
-                        "enum": [
-                          "planning",
-                          "initial",
-                          "change",
-                          "verification"
-                        ]
-                      },
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "independence_attestation": {
-                        "type": "string"
-                      },
-                      "change_level": {
-                        "type": "string",
-                        "enum": [
-                          "small",
-                          "large"
-                        ]
-                      },
-                      "change_reason": {
-                        "type": "string"
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/prepare": {
-      "post": {
-        "operationId": "dish_prepare",
-        "summary": "Run dish prepare",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "submission_id",
-                      "agent",
-                      "model",
-                      "file_text"
-                    ],
-                    "properties": {
-                      "submission_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      },
-                      "model": {
-                        "type": "string"
-                      },
-                      "file_text": {
-                        "type": "string"
-                      },
-                      "material_classification": {
-                        "type": "string",
-                        "enum": [
-                          "material",
-                          "non-material"
-                        ]
-                      },
-                      "exemption_revision": {
-                        "type": "string"
-                      },
-                      "dish_name": {
-                        "type": "string"
-                      },
-                      "recognition": {
-                        "type": "string"
-                      },
-                      "roles": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        }
-                      },
-                      "no_role_tags": {
-                        "type": "boolean"
-                      },
-                      "blockers": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        }
-                      },
-                      "no_blockers": {
-                        "type": "boolean"
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/approve": {
-      "post": {
-        "operationId": "dish_approve",
-        "summary": "Run dish approve",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "submission_id",
-                      "agent",
-                      "model",
-                      "correction",
-                      "reviewed_identity",
-                      "semantic_review_complete",
-                      "provenance_complete"
-                    ],
-                    "properties": {
-                      "submission_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      },
-                      "model": {
-                        "type": "string"
-                      },
-                      "correction": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "small"
-                        ]
-                      },
-                      "file_text": {
-                        "type": "string"
-                      },
-                      "reviewed_identity": {
-                        "type": "string"
-                      },
-                      "semantic_review_complete": {
-                        "type": "boolean"
-                      },
-                      "provenance_complete": {
-                        "type": "boolean"
-                      },
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "independence_attestation": {
-                        "type": "string"
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/reject": {
-      "post": {
-        "operationId": "dish_reject",
-        "summary": "Run dish reject",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "submission_id",
-                      "agent",
-                      "reason",
-                      "route"
-                    ],
-                    "properties": {
-                      "submission_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      },
-                      "model": {
-                        "type": "string"
-                      },
-                      "reason": {
-                        "type": "string"
-                      },
-                      "route": {
-                        "type": "string",
-                        "enum": [
-                          "large",
-                          "evidence",
-                          "human-review"
-                        ]
-                      },
-                      "file_text": {
-                        "type": "string"
-                      },
-                      "resume_status": {
-                        "type": "string",
-                        "enum": [
-                          "pending-research",
-                          "pending-verification"
-                        ]
-                      },
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "independence_attestation": {
-                        "type": "string"
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/submit": {
-      "post": {
-        "operationId": "dish_submit",
-        "summary": "Run dish submit",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "submission_id"
-                    ],
-                    "properties": {
-                      "submission_id": {
-                        "type": "string",
-                        "format": "uuid"
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/leases/{operation_id}/renew": {
-      "post": {
-        "operationId": "dish_renew_lease",
-        "summary": "Renew the current GPT Action operation lease",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "operation_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string"
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical lease result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  },
   "components": {
-    "securitySchemes": {
-      "actionBearer": {
-        "type": "http",
-        "scheme": "bearer"
-      }
-    },
     "schemas": {
       "ResultEnvelope": {
-        "type": "object",
-        "required": [
-          "ok",
-          "command",
-          "code",
-          "retryable",
-          "allowed_actions",
-          "data",
-          "errors"
-        ],
         "properties": {
-          "ok": {
-            "type": "boolean"
-          },
-          "command": {
-            "type": "string"
+          "allowed_actions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "code": {
             "type": "string"
           },
-          "task_gid": {
+          "command": {
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": true,
+            "properties": {
+              "required_start_kind": {
+                "enum": [
+                  "initial",
+                  "verification"
+                ],
+                "type": "string"
+              },
+              "validation_scope": {
+                "items": {
+                  "enum": [
+                    "structural-only",
+                    "transition-state",
+                    "exact-content-identity",
+                    "agent-semantic-review",
+                    "provenance-signoff",
+                    "movement-confirmation"
+                  ],
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              }
+            },
+            "type": "object"
+          },
+          "errors": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "state": {
             "type": [
               "string",
               "null"
@@ -936,58 +68,899 @@
               "null"
             ]
           },
-          "state": {
+          "task_gid": {
             "type": [
               "string",
               "null"
             ]
-          },
-          "retryable": {
-            "type": "boolean"
-          },
-          "allowed_actions": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "data": {
-            "type": "object",
-            "additionalProperties": true,
-            "properties": {
-              "validation_scope": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "enum": [
-                    "structural-only",
-                    "transition-state",
-                    "exact-content-identity",
-                    "agent-semantic-review",
-                    "provenance-signoff",
-                    "movement-confirmation"
-                  ]
+          }
+        },
+        "required": [
+          "ok",
+          "command",
+          "code",
+          "retryable",
+          "allowed_actions",
+          "data",
+          "errors"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "actionBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "Dish GPT Action",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/action/approve": {
+      "post": {
+        "operationId": "dish_approve",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "correction": {
+                        "enum": [
+                          "none",
+                          "small"
+                        ],
+                        "type": "string"
+                      },
+                      "file_text": {
+                        "type": "string"
+                      },
+                      "independence_attestation": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "provenance_complete": {
+                        "type": "boolean"
+                      },
+                      "reviewed_identity": {
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      },
+                      "semantic_review_complete": {
+                        "type": "boolean"
+                      },
+                      "submission_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id",
+                      "agent",
+                      "model",
+                      "correction",
+                      "reviewed_identity",
+                      "semantic_review_complete",
+                      "provenance_complete"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
                 },
-                "uniqueItems": true
-              },
-              "required_start_kind": {
-                "type": "string",
-                "enum": [
-                  "initial",
-                  "verification"
-                ]
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
               }
             }
           },
-          "errors": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": true
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish approve"
+      }
+    },
+    "/v1/action/create": {
+      "post": {
+        "operationId": "dish_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "agent",
+                      "title"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish create"
+      }
+    },
+    "/v1/action/inspect": {
+      "post": {
+        "operationId": "dish_inspect",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "submission_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id",
+                      "agent"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish inspect"
+      }
+    },
+    "/v1/action/leases/{operation_id}/renew": {
+      "post": {
+        "operationId": "dish_renew_lease",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "operation_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
             }
           }
-        }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical lease result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Renew the current GPT Action operation lease"
+      }
+    },
+    "/v1/action/prepare": {
+      "post": {
+        "operationId": "dish_prepare",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "file_text": {
+                        "type": "string"
+                      },
+                      "material_classification": {
+                        "enum": [
+                          "material",
+                          "non-material"
+                        ],
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "submission_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id",
+                      "agent",
+                      "model",
+                      "file_text"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish prepare"
+      }
+    },
+    "/v1/action/read": {
+      "post": {
+        "operationId": "dish_read",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "task_gid": {
+                        "pattern": "^[0-9]+$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "task_gid",
+                      "agent"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish read"
+      }
+    },
+    "/v1/action/reject": {
+      "post": {
+        "operationId": "dish_reject",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "file_text": {
+                        "type": "string"
+                      },
+                      "independence_attestation": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "resume_status": {
+                        "enum": [
+                          "pending-research",
+                          "pending-verification"
+                        ],
+                        "type": "string"
+                      },
+                      "route": {
+                        "enum": [
+                          "large",
+                          "evidence",
+                          "human-review"
+                        ],
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      },
+                      "submission_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id",
+                      "agent",
+                      "reason",
+                      "route"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish reject"
+      }
+    },
+    "/v1/action/sections": {
+      "post": {
+        "operationId": "dish_sections",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "agent"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish sections"
+      }
+    },
+    "/v1/action/start": {
+      "post": {
+        "operationId": "dish_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "change_level": {
+                        "enum": [
+                          "small",
+                          "large"
+                        ],
+                        "type": "string"
+                      },
+                      "change_reason": {
+                        "type": "string"
+                      },
+                      "independence_attestation": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "enum": [
+                          "planning",
+                          "initial",
+                          "change",
+                          "verification"
+                        ],
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      },
+                      "task_gid": {
+                        "pattern": "^[0-9]+$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "task_gid",
+                      "agent",
+                      "kind"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish start"
+      }
+    },
+    "/v1/action/submit": {
+      "post": {
+        "operationId": "dish_submit",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "submission_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish submit"
       }
     }
-  }
+  },
+  "servers": [
+    {
+      "url": "https://dish.example.invalid"
+    }
+  ]
 }

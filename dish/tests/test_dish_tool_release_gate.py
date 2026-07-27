@@ -102,4 +102,5 @@ def test_hold_resuming_research_clears_release_immediately(tmp_path):
 
 def test_new_submit_cli_does_not_require_candidate_file():
     parsed = build_parser().parse_args(["submit", "operation-id"])
-    assert parsed.submission_id == "operation-id" and parsed.file_path is None
+    assert parsed.submission_id == "operation-id"
+    assert not hasattr(parsed, "file_path")

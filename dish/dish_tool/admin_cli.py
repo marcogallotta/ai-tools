@@ -195,11 +195,21 @@ def main(
     owned_application = application is None
     try:
         app = application or build_application()
-    except Exception:
+    except DishRuleError as exc:
+        result = error_envelope(
+            context["command"] or "unknown",
+            exc,
+            task_gid=context["task_gid"],
+            submission_id=context["submission_id"],
+        )
+        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        return exit_status(result["code"])
+    except Exception as exc:
         error = DishRuleError(
             "INTERNAL_ERROR",
             "dish-admin failed during startup",
             rule="startup_failure",
+            details={"error_type": type(exc).__name__},
         )
         result = error_envelope(context["command"] or "unknown", error)
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
@@ -258,6 +268,27 @@ def main(
                     result = method(parsed["backup_id"])
             else:
                 result = app.execute(command, **parsed)
+    except DishRuleError as exc:
+        result = error_envelope(
+            context["command"] or "unknown",
+            exc,
+            task_gid=context["task_gid"],
+            submission_id=context["submission_id"],
+        )
+    except Exception as exc:
+        error = DishRuleError(
+            "INTERNAL_ERROR",
+            "dish-admin command failed",
+            rule="command_failure",
+            details={"error_type": type(exc).__name__},
+        )
+        result = error_envelope(
+            context["command"] or "unknown",
+            error,
+            task_gid=context["task_gid"],
+            submission_id=context["submission_id"],
+        )
+    try:
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return exit_status(result["code"])
     finally:
