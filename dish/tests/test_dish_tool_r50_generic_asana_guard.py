@@ -68,17 +68,22 @@ class GuardTransport:
         raise AssertionError((resource_path, http_method, path_params, body, kwargs))
 
 
-def _guard():
+@pytest.fixture
+def guard_transport():
     config = asana.Configuration()
     config.return_page_iterator = False
     client = asana.ApiClient(config)
     transport = GuardTransport()
     client.call_api = transport.call_api
-    return CookingMutationGuard(api_client=client), transport
+    try:
+        yield CookingMutationGuard(api_client=client), transport
+    finally:
+        client.pool.close()
+        client.pool.join()
 
 
-def test_real_sdk_guard_blocks_managed_task_but_allows_excluded_and_outside():
-    guard, transport = _guard()
+def test_real_sdk_guard_blocks_managed_task_but_allows_excluded_and_outside(guard_transport):
+    guard, transport = guard_transport
     with pytest.raises(CookingMutationBlocked, match="managed_section"):
         guard.before_task_mutation("100", command="set-notes")
     guard.before_task_mutation("101", command="set-notes")
@@ -90,14 +95,14 @@ def test_real_sdk_guard_blocks_managed_task_but_allows_excluded_and_outside():
     ]
 
 
-def test_lookup_failure_fails_closed_before_generic_write():
-    guard, _transport = _guard()
+def test_lookup_failure_fails_closed_before_generic_write(guard_transport):
+    guard, _transport = guard_transport
     with pytest.raises(CookingMutationBlocked, match="task_lookup_unresolved"):
         guard.before_task_mutation("500", command="rename")
 
 
-def test_move_blocks_source_or_destination_crossing_governed_boundary():
-    guard, _transport = _guard()
+def test_move_blocks_source_or_destination_crossing_governed_boundary(guard_transport):
+    guard, _transport = guard_transport
     with pytest.raises(CookingMutationBlocked, match="managed_section"):
         guard.before_move(task_gid="100", section_gid="800", command="move")
     with pytest.raises(CookingMutationBlocked, match="managed_section"):
@@ -105,8 +110,8 @@ def test_move_blocks_source_or_destination_crossing_governed_boundary():
     guard.before_move(task_gid="200", section_gid="800", command="move")
 
 
-def test_create_and_subtask_guard_cover_governed_cooking_targets():
-    guard, _transport = _guard()
+def test_create_and_subtask_guard_cover_governed_cooking_targets(guard_transport):
+    guard, _transport = guard_transport
     with pytest.raises(CookingMutationBlocked):
         guard.before_create_task(
             project_gid=COOKING_PROJECT_GID,
@@ -122,8 +127,8 @@ def test_create_and_subtask_guard_cover_governed_cooking_targets():
         guard.before_create_subtask(parent_gid="100", command="create-subtask")
 
 
-def test_raw_task_and_section_mutations_are_guarded():
-    guard, _transport = _guard()
+def test_raw_task_and_section_mutations_are_guarded(guard_transport):
+    guard, _transport = guard_transport
     with pytest.raises(CookingMutationBlocked):
         guard.before_raw(method="PUT", path="/tasks/100", payload={"completed": True})
     with pytest.raises(CookingMutationBlocked):

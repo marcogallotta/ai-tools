@@ -566,12 +566,39 @@ def test_backend_call_without_explicit_tracker_marks_request_as_sent():
 def test_asana_backend_reuses_client_and_disables_sdk_retries(monkeypatch):
     monkeypatch.setenv("ASANA_PAT", "test-token")
     backend = AsanaBackend()
-    first = backend.client()
-    second = backend.client()
+    try:
+        first = backend.client()
+        second = backend.client()
 
-    assert first is second
-    assert first.configuration.return_page_iterator is False
-    assert first.configuration.retry_strategy.total == 0
+        assert first is second
+        assert first.configuration.return_page_iterator is False
+        assert first.configuration.retry_strategy.total == 0
+    finally:
+        backend.close()
+
+
+def test_asana_backend_closes_only_the_client_it_created(monkeypatch):
+    monkeypatch.setenv("ASANA_PAT", "test-token")
+    owned = AsanaBackend()
+    owned_client = owned.client()
+    owned_pool = owned_client.pool
+
+    owned.close()
+    owned.close()
+
+    assert owned_pool._state == "CLOSE"
+    with pytest.raises(DishRuleError) as exc:
+        owned.client()
+    assert exc.value.rule == "asana_backend_closed"
+
+    class InjectedClient:
+        def __init__(self):
+            self.pool = type("Pool", (), {"close": lambda self: (_ for _ in ()).throw(AssertionError), "join": lambda self: (_ for _ in ()).throw(AssertionError)})()
+
+    injected = InjectedClient()
+    backend = AsanaBackend(api_client=injected)
+    backend.close()
+    assert injected.pool is not None
 
 
 def test_asana_auth_loader_and_timeout_configuration(tmp_path, monkeypatch):

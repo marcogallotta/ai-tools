@@ -118,8 +118,16 @@ class AsanaBackend:
 
     def __init__(self, api_client: Any | None = None) -> None:
         self._client = api_client
+        self._owns_client = api_client is None
+        self._closed = False
 
     def client(self) -> Any:
+        if self._closed:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "Asana backend is closed",
+                rule="asana_backend_closed",
+            )
         if self._client is None:
             try:
                 import asana
@@ -136,6 +144,40 @@ class AsanaBackend:
             config.retry_strategy = Retry(total=0, connect=0, read=0, redirect=0)
             self._client = asana.ApiClient(config)
         return self._client
+
+    def close(self) -> None:
+        """Release only an SDK client created by this backend.
+
+        python-asana 5.2.5 exposes no public close method or context manager,
+        but every ``ApiClient`` creates a ``multiprocessing.pool.ThreadPool``.
+        The generated destructor closes that pool nondeterministically.  Owners
+        must instead close and join it explicitly.  An injected client remains
+        caller-owned and is never touched here.
+        """
+
+        if self._closed:
+            return
+        self._closed = True
+        client = self._client
+        if not self._owns_client or client is None:
+            return
+        pool = getattr(client, "pool", None)
+        if pool is not None:
+            pool.close()
+            pool.join()
+        self._client = None
+
+    def __enter__(self) -> "AsanaBackend":
+        if self._closed:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "Asana backend is closed",
+                rule="asana_backend_closed",
+            )
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        self.close()
 
     def call(
         self,

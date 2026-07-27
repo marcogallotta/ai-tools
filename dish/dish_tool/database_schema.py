@@ -1346,7 +1346,11 @@ def initialize_database(
         conn.close()
         raise
     conn.execute("PRAGMA busy_timeout = 30000")
-    _validate_current_database(conn)
+    try:
+        _validate_current_database(conn)
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 

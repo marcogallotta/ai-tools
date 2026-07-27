@@ -262,6 +262,10 @@ def main(
         return exit_status(result["code"])
     finally:
         if owned_application:
+            backend = getattr(app, "backend", None)
+            close = getattr(backend, "close", None)
+            if callable(close):
+                close()
             conn = getattr(app, "conn", None)
             if conn is not None:
                 conn.close()

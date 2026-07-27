@@ -66,6 +66,7 @@ class DishService:
         lease_now=None,
     ) -> None:
         self.config = config
+        self._owns_backend_instances = backend_factory is None
         self.backend_factory = backend_factory or AsanaBackend
         self.release_loader = release_loader
         self.lease_now = lease_now
@@ -97,6 +98,13 @@ class DishService:
         if self.lease_now is not None:
             kwargs["now"] = self.lease_now
         return LeaseManager(conn, **kwargs)
+
+    def _close_backend(self, backend: Any | None) -> None:
+        if backend is None or not self._owns_backend_instances:
+            return
+        close = getattr(backend, "close", None)
+        if callable(close):
+            close()
 
     @staticmethod
     def _default_principal(arguments: Mapping[str, Any], *, admin: bool = False) -> ServicePrincipal:
@@ -464,6 +472,7 @@ class DishService:
     ) -> dict[str, Any]:
         with self._maintenance_lock:
             conn = initialize_database(self.config.db_path)
+            backend = None
             acquired_for_request = False
             operation_id = None
             replay_started = False
@@ -627,6 +636,7 @@ class DishService:
                     complete_request(conn, request_id=request_id, result=result)
                 return result
             finally:
+                self._close_backend(backend)
                 conn.close()
 
     def record_replay_validation_failure(
@@ -735,10 +745,11 @@ class DishService:
     ) -> dict[str, Any]:
         with self._maintenance_lock:
             conn = initialize_database(self.config.db_path)
+            backend = self.backend_factory()
             try:
                 app = DishApplication(
                     conn,
-                    self.backend_factory(),
+                    backend,
                     release_loader=lambda role=None: self._release(role),
                 )
                 error = DishRuleError(
@@ -757,6 +768,7 @@ class DishService:
                     submission_id=context.get("submission_id"),
                 )
             finally:
+                self._close_backend(backend)
                 conn.close()
 
     def record_admin_argument_failure(
@@ -767,10 +779,11 @@ class DishService:
     ) -> dict[str, Any]:
         with self._maintenance_lock:
             conn = initialize_database(self.config.db_path)
+            backend = self.backend_factory()
             try:
                 app = DishAdminApplication(
                     conn,
-                    backend=self.backend_factory(),
+                    backend=backend,
                     release_loader=lambda: self._release(None, include_migrations=True),
                 )
                 error = DishRuleError(
@@ -787,6 +800,7 @@ class DishService:
                     submission_id=context.get("submission_id"),
                 )
             finally:
+                self._close_backend(backend)
                 conn.close()
 
     def execute_admin(
@@ -798,6 +812,7 @@ class DishService:
     ) -> dict[str, Any]:
         with self._maintenance_lock:
             conn = initialize_database(self.config.db_path)
+            backend = None
             principal = principal or self._default_principal(arguments, admin=True)
             operation_id = str(arguments.get("submission_id") or "").strip() or None
             acquired_for_request = False
@@ -873,6 +888,7 @@ class DishService:
                     command, exc, task_gid=task_gid, submission_id=operation_id,
                 )
             finally:
+                self._close_backend(backend)
                 conn.close()
 
     def create_backup(self, *, label: str = "manual") -> dict[str, Any]:
@@ -981,9 +997,11 @@ class DishService:
             except Exception as exc:
                 compatibility = {"ok": False, "rule": "compatibility_health_failed", "message": type(exc).__name__}
 
+            backend = None
             try:
+                backend = self.backend_factory()
                 registry = SectionRegistry.from_sections(
-                    self.backend_factory().list_sections(COOKING_PROJECT_GID)
+                    backend.list_sections(COOKING_PROJECT_GID)
                 )
                 asana = {
                     "ok": True,
@@ -996,6 +1014,8 @@ class DishService:
                 asana = {"ok": False, "rule": exc.rule, "message": str(exc)}
             except Exception as exc:
                 asana = {"ok": False, "rule": "asana_health_failed", "message": type(exc).__name__}
+            finally:
+                self._close_backend(backend)
 
             restore_fault = self._restore_fault.read()
             maintenance = {

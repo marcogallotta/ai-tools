@@ -116,6 +116,8 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+        api_client.pool.close()
+        api_client.pool.join()
 
     assert created["ok"] and planning["ok"] and planned["ok"]
     assert research["ok"] and prepared["ok"] and review["ok"]

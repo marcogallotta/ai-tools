@@ -4,6 +4,7 @@ import copy
 from pathlib import Path
 
 import asana
+import pytest
 
 from dish_tool.backend import AsanaBackend
 from dish_tool.commands import DishApplication
@@ -75,13 +76,23 @@ def _release(root: Path, role: str | None = None) -> ResolvedRelease:
     )
 
 
-def test_real_sdk_full_placement_lifecycle(tmp_path):
+@pytest.fixture
+def sdk_backend():
     config = asana.Configuration()
     config.return_page_iterator = False
     client = asana.ApiClient(config)
     transport = StatefulAsanaTransport()
     client.call_api = transport.call_api
     backend = AsanaBackend(api_client=client)
+    try:
+        yield backend, transport
+    finally:
+        client.pool.close()
+        client.pool.join()
+
+
+def test_real_sdk_full_placement_lifecycle(tmp_path, sdk_backend):
+    backend, transport = sdk_backend
     honest = tmp_path / "honest"; honest.mkdir()
     (honest / "dish-verification-protocol.md").write_text("# Verification protocol\n")
     app = DishApplication(initialize_database(tmp_path / "dish.db"), backend, release_loader=lambda role=None: _release(honest, role))

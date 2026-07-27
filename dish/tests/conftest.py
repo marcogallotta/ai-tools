@@ -8,6 +8,7 @@ level globals (_CLIENT, _PAT) never leak state between tests.
 import importlib.util
 import os
 import pathlib
+import sqlite3
 import sys
 from importlib.machinery import SourceFileLoader
 
@@ -55,7 +56,30 @@ def cli(monkeypatch):
             return None
 
     module._COOKING_GUARD = PermissiveCookingGuard()
-    return module
+    try:
+        yield module
+    finally:
+        module.close_client()
+
+
+@pytest.fixture(autouse=True)
+def close_sqlite_connections(monkeypatch):
+    """Make every test own and deterministically close its SQLite handles."""
+    real_connect = sqlite3.connect
+    opened = []
+
+    def tracked_connect(*args, **kwargs):
+        conn = real_connect(*args, **kwargs)
+        opened.append(conn)
+        return conn
+
+    monkeypatch.setattr(sqlite3, "connect", tracked_connect)
+    yield
+    for conn in reversed(opened):
+        try:
+            conn.close()
+        except sqlite3.Error:
+            pass
 
 
 def run_cli(module, argv, monkeypatch):

@@ -68,6 +68,20 @@ def client():
     return _CLIENT
 
 
+def close_client():
+    """Deterministically stop the SDK worker pool owned by this CLI module."""
+    global _CLIENT, _COOKING_GUARD
+    current = _CLIENT
+    _CLIENT = None
+    _COOKING_GUARD = None
+    if current is None:
+        return
+    pool = getattr(current, "pool", None)
+    if pool is not None:
+        pool.close()
+        pool.join()
+
+
 def cooking_guard():
     """One fail-closed Cooking mutation guard per CLI invocation."""
     global _COOKING_GUARD
@@ -722,6 +736,8 @@ def main():
             sys.exit("unknown command: %s (try `asana help`)" % cmd)
     except IndexError:
         sys.exit("missing argument (try `asana help`)")
+    finally:
+        close_client()
 
 
 if __name__ == "__main__":
