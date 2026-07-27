@@ -45,8 +45,11 @@ Add an operating instruction with all of these requirements:
 - Create one unique `client.run_id` for the current agent run and reuse it for every Action call and
   lease renewal in that run. A genuinely new run uses a new value.
 - Treat `client.run_id` as service lease ownership, not as proof of independent Verification.
-  Where `start`, `approve`, or `reject` accepts a workflow `run_id`, supply the actual platform run
-  identity when available; otherwise use the protocol's explicit independence attestation route.
+  Where `start` accepts a workflow `run_id`, supply the actual platform run identity when available;
+  otherwise use the protocol's explicit independence attestation route. For `approve` and `reject`,
+  this workflow proof is mandatory: send either the exact `arguments.run_id` recorded when
+  Verification started or its exact `arguments.independence_attestation`. Reusing only
+  `client.run_id` does not supply verifier proof.
 - Follow only the returned `allowed_actions`. Do not reconstruct workflow transitions from
   conversation history.
 - Treat `file_text` as the complete candidate. Never send a partial patch or assume that the service

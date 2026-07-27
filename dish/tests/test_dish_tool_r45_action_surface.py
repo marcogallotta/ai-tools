@@ -135,6 +135,14 @@ def test_trimmed_openapi_contains_only_action_workflow_and_renewal_paths():
     assert "migrate" not in rendered
     assert "asana" not in rendered
     assert "secret" not in rendered
+    for command in ("approve", "reject"):
+        arguments = spec["paths"][f"/v1/action/{command}"]["post"]["requestBody"]["content"][
+            "application/json"
+        ]["schema"]["properties"]["arguments"]
+        assert arguments["anyOf"] == [
+            {"required": ["run_id"]},
+            {"required": ["independence_attestation"]},
+        ]
 
 
 def test_checked_in_openapi_matches_generator():

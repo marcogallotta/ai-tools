@@ -87,6 +87,18 @@
                 "properties": {
                   "arguments": {
                     "additionalProperties": false,
+                    "anyOf": [
+                      {
+                        "required": [
+                          "run_id"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "independence_attestation"
+                        ]
+                      }
+                    ],
                     "properties": {
                       "agent": {
                         "enum": [
@@ -588,6 +600,18 @@
                 "properties": {
                   "arguments": {
                     "additionalProperties": false,
+                    "anyOf": [
+                      {
+                        "required": [
+                          "run_id"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "independence_attestation"
+                        ]
+                      }
+                    ],
                     "properties": {
                       "agent": {
                         "enum": [
