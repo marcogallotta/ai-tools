@@ -1,8 +1,10 @@
 """Run the laptop-hosted dish service."""
 from __future__ import annotations
 
+import argparse
 import logging
 import threading
+from collections.abc import Sequence
 
 from .application import DishService
 from .config import ServiceConfig
@@ -10,7 +12,18 @@ from .http import build_action_server, build_private_server
 from .process_lock import ServiceProcessLock
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    return argparse.ArgumentParser(
+        prog="dish-service",
+        description=(
+            "Run the single-process Dish HTTP service. Runtime configuration is read "
+            "from the service environment; see deploy/systemd/service.env.example."
+        ),
+    )
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     config = ServiceConfig.from_env()
     lock_path = config.db_path.with_suffix(config.db_path.suffix + ".service.lock")
