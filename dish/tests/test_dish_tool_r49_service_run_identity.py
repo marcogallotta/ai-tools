@@ -111,6 +111,8 @@ def test_authenticated_client_rejects_conflicting_later_command_run_id(tmp_path)
     )
 
     assert result["code"] == "AGENT_MISMATCH"
+    assert result["task_gid"] == "t"
+    assert result["submission_id"] == started["submission_id"]
     assert result["errors"][0]["rule"] == "service_run_id_conflict"
     assert backend.writes == 0
     conn = initialize_database(service.config.db_path)

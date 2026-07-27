@@ -161,11 +161,15 @@ def test_lease_renewal_expiry_and_admin_recovery_are_deterministic(tmp_path):
         operation_id, _principal("admin", "recovery-1"), reason="premature"
     )
     assert not_stale["code"] == "CONFLICT"
+    assert not_stale["task_gid"] == "t"
+    assert not_stale["submission_id"] == operation_id
     assert not_stale["errors"][0]["rule"] == "service_lease_not_stale"
 
     clock.advance(31)
     expired = service.renew_lease(operation_id, owner)
     assert expired["code"] == "CONFLICT"
+    assert expired["task_gid"] == "t"
+    assert expired["submission_id"] == operation_id
     assert expired["errors"][0]["rule"] == "service_lease_expired"
 
     recovered = service.recover_lease(

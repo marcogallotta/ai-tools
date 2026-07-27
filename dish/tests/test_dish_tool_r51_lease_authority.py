@@ -235,3 +235,23 @@ def test_admin_hold_resolution_uses_ephemeral_lease_and_hands_back_to_verificati
     )
     assert review2["ok"]
     assert review2["data"]["service_lease"]["run_id"] == "next-verifier-run"
+
+
+def test_admin_operation_error_preserves_task_and_submission_ids(tmp_path):
+    service, _backend = _service(tmp_path)
+    owner = _principal("action", "constructor-run")
+    started = _start(service, owner)
+    operation_id = started["submission_id"]
+
+    result = service.execute_admin(
+        "recover",
+        {
+            "submission_id": operation_id,
+            "reason": "premature recovery",
+        },
+        principal=_principal("admin", "marco-run"),
+    )
+
+    assert result["code"] == "AGENT_MISMATCH"
+    assert result["task_gid"] == "t"
+    assert result["submission_id"] == operation_id

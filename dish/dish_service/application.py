@@ -598,13 +598,18 @@ class DishService:
                         leases.release(operation_id, principal, reason="service_command_rejected")
                     except Exception:
                         pass
+                if operation_id is None:
+                    operation_id = str(arguments.get("submission_id") or "").strip() or None
                 operation_kind = None
+                task_gid = None
                 if operation_id:
                     row = conn.execute(
-                        "SELECT operation_kind FROM operations WHERE operation_id=?",
+                        "SELECT operation_kind, task_gid FROM operations WHERE operation_id=?",
                         (operation_id,),
                     ).fetchone()
-                    operation_kind = None if row is None else row["operation_kind"]
+                    if row is not None:
+                        operation_kind = row["operation_kind"]
+                        task_gid = row["task_gid"]
                 validation_scope = (
                     scope_for_command(command, operation_kind=operation_kind)
                     if operation_id
@@ -613,6 +618,7 @@ class DishService:
                 result = error_envelope(
                     command,
                     exc,
+                    task_gid=task_gid,
                     submission_id=operation_id,
                     validation_scope=validation_scope,
                 )
@@ -634,7 +640,16 @@ class DishService:
                     data={"service_lease": self._lease_payload(row)},
                 )
             except DishRuleError as exc:
-                return error_envelope("renew-lease", exc, submission_id=operation_id)
+                row = conn.execute(
+                    "SELECT task_gid FROM operations WHERE operation_id=?",
+                    (operation_id,),
+                ).fetchone()
+                return error_envelope(
+                    "renew-lease",
+                    exc,
+                    task_gid=None if row is None else row["task_gid"],
+                    submission_id=operation_id,
+                )
             finally:
                 conn.close()
 
@@ -661,7 +676,16 @@ class DishService:
                     },
                 )
             except DishRuleError as exc:
-                return error_envelope("recover-lease", exc, submission_id=operation_id)
+                row = conn.execute(
+                    "SELECT task_gid FROM operations WHERE operation_id=?",
+                    (operation_id,),
+                ).fetchone()
+                return error_envelope(
+                    "recover-lease",
+                    exc,
+                    task_gid=None if row is None else row["task_gid"],
+                    submission_id=operation_id,
+                )
             finally:
                 conn.close()
 
@@ -800,7 +824,16 @@ class DishService:
                         leases.release(operation_id, principal, reason="admin_command_rejected")
                     except Exception:
                         pass
-                return error_envelope(command, exc, submission_id=operation_id)
+                task_gid = None
+                if operation_id:
+                    row = conn.execute(
+                        "SELECT task_gid FROM operations WHERE operation_id=?",
+                        (operation_id,),
+                    ).fetchone()
+                    task_gid = None if row is None else row["task_gid"]
+                return error_envelope(
+                    command, exc, task_gid=task_gid, submission_id=operation_id,
+                )
             finally:
                 conn.close()
 
