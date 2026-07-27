@@ -79,6 +79,34 @@ def _body_changed(before, after) -> bool:
     )
 
 
+def _content_normalization_contract(submitted, written) -> dict[str, Any]:
+    """Describe process fields Dish owns before exact live identity is computed."""
+    fields = [
+        name
+        for name in (
+            "Status",
+            "Status detail",
+            "Resume status",
+            "Verification protocol release",
+            "Researched by",
+            "Verified by",
+            "Self-verified",
+        )
+        if submitted.state.values.get(name) != written.state.values.get(name)
+    ]
+    if tuple(submitted.material_changes) != tuple(written.material_changes):
+        fields.append("Material changes")
+    return {
+        "applied": bool(fields),
+        "tool_owned_fields": fields,
+        "identity_scope": (
+            "content_identity and exact-content checks bind the complete live task "
+            "after these tool-owned process-field normalizations"
+        ),
+        "submitted_candidate_identity_is_authoritative": False,
+    }
+
+
 def prepare_live(
     conn: sqlite3.Connection,
     backend: Any,
@@ -168,6 +196,8 @@ def prepare_live(
         candidate = parse_task_document(text)
     except DocumentParseError as exc:
         raise DishRuleError("VALIDATION_FAILED", "candidate is not a canonical complete task", rule=exc.rule) from exc
+
+    submitted_candidate = candidate
 
     prior = None
     if live.notes:
@@ -336,4 +366,7 @@ def prepare_live(
         "task": dataclasses.asdict(confirmed),
         "verification_cycle": None if cycle is None else {k: cycle[k] for k in cycle.keys()},
         "handoff": "verification" if cycle is not None else "checked-in",
+        "content_normalization": _content_normalization_contract(
+            submitted_candidate, candidate
+        ),
     }

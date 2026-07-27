@@ -105,6 +105,14 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
         "structural-only", "transition-state", "exact-content-identity",
     ]
     assert "agent-semantic-review" not in result["data"]["validation_scope"]
+    normalization = result["data"]["content_normalization"]
+    assert normalization["applied"] is True
+    assert {
+        "Status", "Status detail", "Verification protocol release",
+        "Researched by", "Self-verified",
+    }.issubset(normalization["tool_owned_fields"])
+    assert normalization["submitted_candidate_identity_is_authoritative"] is False
+    assert "after these tool-owned process-field normalizations" in normalization["identity_scope"]
     verification = a.execute(
         "start", agent="codex", task_gid="t", kind="verification",
         run_id="fresh-verification-run",
