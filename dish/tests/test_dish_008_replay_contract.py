@@ -24,19 +24,16 @@ def test_openapi_documents_complete_action_replay_semantics():
         description = post["description"].lower()
         if command in REPLAY_SAFE_COMMANDS:
             assert "request_id" in client["required"]
-            assert "exact command, canonical arguments" in description
+            assert len(post["description"]) <= 300
+            assert "command and arguments" in description
             assert "authenticated owner" in description
             assert "client.run_id" in description
             assert "including expected failures" in description
-            assert "preserves it across service restart" in description
-            assert "exact replay with the same identity" in description
-            assert "changed arguments" in description
-            assert "different command" in description
-            assert "different authenticated owner" in description
-            assert "different run" in description
-            assert "service_request_identity_conflict" in description
+            assert "across restarts" in description
+            assert "same-identity replays" in description
+            assert "changed identity conflicts" in description
             assert "pending or uncertain" in description
-            assert "not executed again" in description
+            assert "not rerun" in description
             assert "fail-closed" in description
         else:
             assert "request_id" not in client["properties"]
@@ -51,19 +48,15 @@ def test_openapi_documents_complete_action_replay_semantics():
     assert "request_id" in renew_client["required"]
     renew_description = renew["description"].lower()
     for phrase in (
-        "exact command, canonical arguments",
+        "command and arguments",
         "authenticated owner",
         "client.run_id",
         "including expected failures",
-        "across service restart",
-        "exact replay with the same identity",
-        "changed arguments",
-        "different command",
-        "different authenticated owner",
-        "different run",
-        "service_request_identity_conflict",
+        "across restarts",
+        "same-identity replays",
+        "changed identity conflicts",
         "pending or uncertain",
-        "not executed again",
+        "not rerun",
         "fail-closed",
     ):
         assert phrase in renew_description

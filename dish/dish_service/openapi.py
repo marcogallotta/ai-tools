@@ -16,15 +16,10 @@ from .command_spec import (
 
 
 REPLAY_MUTATION_DESCRIPTION = (
-    "Replay-bound mutation. client.request_id is required and is durably bound to the exact "
-    "command, canonical arguments, authenticated owner, and client.run_id. Dish stores the "
-    "first authoritative result, including expected failures, and preserves it across service "
-    "restart. An exact replay with the same identity returns the stored result with "
-    "data.request_replayed=true and data.request_id. Reuse with changed arguments, a different "
-    "command, a different authenticated owner, or a different run returns non-retryable "
-    "service_request_identity_conflict. A matching pending or uncertain request is not executed "
-    "again and remains fail-closed until exact durable evidence supports reconstruction or "
-    "safe resolution."
+    "Replay-bound. request_id binds the command and arguments to the authenticated owner and "
+    "client.run_id, including expected failures across restarts. Exact same-identity replays "
+    "return the stored result. Changed identity conflicts; pending or uncertain requests stay "
+    "fail-closed and are not rerun."
 )
 
 
