@@ -18,11 +18,103 @@ from .lifecycle import assert_transition, hold, pending_verification, require_st
 from .task_document import DocumentParseError, TaskState, parse_task_document, validate_task_document, finding_payload
 from .task_store import read_complete_task, write_exact_content
 from .releases import current_verification_protocol_release
-from .governed_diff import require_governed_authorization, require_small_scope
+from .governed_diff import (
+    require_governed_authorization,
+    preserve_material_change_history,
+    require_small_scope,
+)
 from .step7 import approve_live, assert_verifier_authority, bind_cycle_review
 
 ROUTES = {"large", "evidence", "human-review"}
 RESET_CATEGORIES = {"evidence", "premise", "method", "scope"}
+
+
+def _preconstruction_research_hold(
+    conn: sqlite3.Connection,
+    *,
+    op,
+    agent: str,
+    route: str,
+    reason: str,
+    resume_status: str | None,
+    run_id: str | None,
+    request_id: str | None,
+    file_path: str | None,
+    model: str | None,
+) -> dict[str, Any]:
+    if route not in {"evidence", "human-review"}:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "Research may be held before construction only for evidence or human review",
+            rule="preconstruction_hold_route_invalid",
+        )
+    if resume_status != "pending-research":
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "pre-construction Research holds must resume to pending-research",
+            rule="preconstruction_resume_status_invalid",
+            details={"expected": "pending-research", "actual": resume_status},
+        )
+    if file_path:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "pre-construction Research holds cannot include candidate content",
+            rule="hold_candidate_unexpected",
+        )
+    if model:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "pre-construction Research holds do not accept a model field",
+            rule="hold_model_unexpected",
+        )
+    if agent != op["researcher_agent"]:
+        raise DishRuleError(
+            "AGENT_MISMATCH",
+            "Research hold agent does not match the recorded researcher",
+            rule="operation_actor_mismatch",
+            details={"expected": op["researcher_agent"], "actual": agent},
+        )
+    if str(op["run_id"] or "").strip() != str(run_id or "").strip():
+        raise DishRuleError(
+            "AGENT_MISMATCH",
+            "Research hold run does not match the originating Research run",
+            rule="service_run_id_conflict",
+        )
+    resolver = "Marco/admin supply-evidence" if route == "evidence" else "Marco/admin record-human-decision"
+    intended = {
+        "description": "Research blocked before construction",
+        "route": route,
+        "reason": reason,
+        "task_gid": op["task_gid"],
+        "originating_agent": agent,
+        "originating_run_id": run_id,
+        "request_id": request_id,
+        "timestamp": utc_now(),
+        "resolver": resolver,
+        "resume_status": "pending-research",
+        "candidate_content_existed": False,
+    }
+    declare_operation_step(conn, op["operation_id"], "research_preconstruction_hold", intended)
+    target_phase = "held_evidence" if route == "evidence" else "held_human"
+    transition_operation(conn, op["operation_id"], phase=target_phase)
+    complete_operation_step(conn, op["operation_id"], "research_preconstruction_hold")
+    record_audit(
+        conn,
+        submission_id=None,
+        task_gid=op["task_gid"],
+        operation_id=op["operation_id"],
+        event_type="research.preconstruction_blocked",
+        actor_agent=agent,
+        actor_run_id=run_id,
+        details=intended,
+        result_code="OK",
+        result_ok=True,
+        governed_kind="decision",
+        before_state={"phase": "prepare_required", "candidate_content_existed": False},
+        after_state={"phase": target_phase, "resume_status": "pending-research"},
+        actor_source="research-command",
+    )
+    return {"operation_id": op["operation_id"], **intended, "phase": target_phase}
 
 
 def _rows(conn: sqlite3.Connection, operation_id: str):
@@ -143,6 +235,7 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     corrected_state = dict(corrected.state.values)
     corrected_state["Researched by"] = reviewed_document.state.values["Researched by"]
     corrected = dataclasses.replace(corrected, state=TaskState(corrected_state))
+    corrected = preserve_material_change_history(reviewed_document, corrected)
     require_small_scope(reviewed_document, corrected)
     state = dict(corrected.state.values)
     state.update({"Status": "pending-verification", "Status detail": "None", "Resume status": "None", "Verified by": "None", "Verification protocol release": cycle["protocol_release"], "Self-verified": material_editor_line(agent, model, utc_now()[:10])})
@@ -252,7 +345,8 @@ def _validate_rejection_route_arguments(
         )
 
 
-def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, schema=None, honest_root=None):
+def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, request_id: str | None = None, schema=None, honest_root=None):
+
     route = str(route or "").strip()
     reason = str(reason or "").strip()
     if route not in ROUTES:
@@ -266,8 +360,38 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         resume_status=resume_status,
         independence_attestation=independence_attestation,
     )
+    op = conn.execute(
+        "SELECT * FROM operations WHERE operation_id = ?", (operation_id,)
+    ).fetchone()
+    if op is None:
+        raise DishRuleError(
+            "NOT_FOUND", f"operation not found: {operation_id}", rule="operation_not_found"
+        )
+    if (
+        op["status"] == "open"
+        and op["phase"] == "prepare_required"
+        and op["operation_kind"] == "initial"
+        and op["content_write_completed_at"] is None
+    ):
+        return _preconstruction_research_hold(
+            conn,
+            op=op,
+            agent=agent,
+            route=route,
+            reason=reason,
+            resume_status=resume_status,
+            run_id=run_id,
+            request_id=request_id,
+            file_path=file_path,
+            model=model,
+        )
     op, cycle = _rows(conn, operation_id)
-    assert_verifier_authority(cycle, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
+    assert_verifier_authority(
+        cycle,
+        agent=agent,
+        run_id=run_id,
+        independence_attestation=independence_attestation,
+    )
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     persisted_reviewed = cycle["reviewed_identity"]
     if not persisted_reviewed or not cycle["reviewed_content_version_id"]:
@@ -284,6 +408,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         corrected_state = dict(corrected.state.values)
         corrected_state["Researched by"] = document.state.values["Researched by"]
         corrected = dataclasses.replace(corrected, state=TaskState(corrected_state))
+        corrected = preserve_material_change_history(document, corrected)
         if honest_root is None:
             raise DishRuleError("INTERNAL_ERROR", "current Honest checkout is required for a new Verification cycle", rule="honest_root_required")
         snapshot = current_verification_protocol_release(honest_root)
@@ -539,6 +664,7 @@ def reopen_two_pass(
     candidate_state = dict(candidate.state.values)
     candidate_state["Researched by"] = original.state.values["Researched by"]
     candidate = dataclasses.replace(candidate, state=TaskState(candidate_state))
+    candidate = preserve_material_change_history(original, candidate)
     changed_path = _prove_reset(original, candidate, category, before, after)
     if honest_root is None:
         previous = conn.execute(
@@ -672,6 +798,86 @@ def resolve_hold(
     expected_phase = "held_evidence" if resolution_kind == "evidence" else "held_human"
     if op["status"] != "open" or op["phase"] != expected_phase:
         raise DishRuleError("WRONG_STATE", "operation is not on the requested hold", rule="hold_not_active")
+    preconstruction = conn.execute(
+        """SELECT intended_json FROM operation_steps
+             WHERE operation_id=? AND step_name='research_preconstruction_hold'
+               AND completed_at IS NOT NULL""",
+        (operation_id,),
+    ).fetchone()
+    if preconstruction is not None:
+        hold_record = json.loads(preconstruction["intended_json"])
+        if hold_record.get("route") != (
+            "evidence" if resolution_kind == "evidence" else "human-review"
+        ):
+            raise DishRuleError(
+                "WRONG_STATE",
+                "hold resolution kind does not match the persisted Research hold",
+                rule="hold_resolution_kind_mismatch",
+            )
+        if resume_status != "pending-research":
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "pre-construction Research holds must resume to pending-research",
+                rule="preconstruction_resume_status_invalid",
+                details={"expected": "pending-research", "actual": resume_status},
+            )
+        if file_path or editor or model:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "pre-construction Research hold resolution cannot install candidate content",
+                rule="preconstruction_resolution_candidate_unexpected",
+            )
+        live = read_complete_task(
+            backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
+        )
+        if live.identity != op["expected_identity"] or live.section_gid != op["expected_section_gid"]:
+            raise DishRuleError(
+                "CONFLICT",
+                "live task changed while Research was blocked before construction",
+                rule="preconstruction_hold_baseline_drift",
+                details={
+                    "expected_identity": op["expected_identity"],
+                    "actual_identity": live.identity,
+                    "expected_section_gid": op["expected_section_gid"],
+                    "actual_section_gid": live.section_gid,
+                },
+            )
+        resolution = {
+            "description": "Research block resolved before construction",
+            "resolution_kind": resolution_kind,
+            "detail": clean_detail,
+            "resume_status": "pending-research",
+            "candidate_content_existed": False,
+        }
+        declare_operation_step(
+            conn, operation_id, "research_preconstruction_hold_resolution", resolution
+        )
+        transition_operation(conn, operation_id, phase="prepare_required")
+        complete_operation_step(
+            conn, operation_id, "research_preconstruction_hold_resolution"
+        )
+        record_audit(
+            conn,
+            submission_id=None,
+            task_gid=op["task_gid"],
+            operation_id=operation_id,
+            event_type="research.preconstruction_resolved",
+            actor_agent=editor if editor in {"gpt", "codex", "claude"} else None,
+            actor_run_id=run_id,
+            details=resolution,
+            result_code="OK",
+            result_ok=True,
+            governed_kind="decision",
+            before_state={"phase": expected_phase, "candidate_content_existed": False},
+            after_state={"phase": "prepare_required", "resume_status": "pending-research"},
+            actor_source="marco-hold-resolution",
+        )
+        return {
+            "operation_id": operation_id,
+            **resolution,
+            "phase": "prepare_required",
+            "task": dataclasses.asdict(live),
+        }
     cycle = conn.execute(
         "SELECT * FROM verification_cycles WHERE operation_id=? AND route=? ORDER BY cycle_number DESC LIMIT 1",
         (operation_id, resolution_kind),
@@ -693,6 +899,7 @@ def resolve_hold(
         candidate_state = dict(candidate.state.values)
         candidate_state["Researched by"] = before_doc.state.values["Researched by"]
         candidate = dataclasses.replace(candidate, state=TaskState(candidate_state))
+        candidate = preserve_material_change_history(before_doc, candidate)
         snapshot = current_verification_protocol_release(honest_root)
         values = dict(candidate.state.values)
         values.update({
