@@ -136,7 +136,7 @@ def test_unresolved_attempts_are_unique_per_operation(tmp_path):
     conn.close()
 
 
-def test_terminal_operation_cannot_keep_active_lease_semantically(tmp_path):
+def test_terminal_operation_may_keep_non_authoritative_cleanup_lease(tmp_path):
     db_path = tmp_path / "dish.db"
     conn = initialize_database(db_path)
     _insert_operation(conn)
@@ -149,11 +149,38 @@ def test_terminal_operation_cannot_keep_active_lease_semantically(tmp_path):
     )
     conn.close()
 
+    reopened = initialize_database(db_path)
+    try:
+        active = reopened.execute(
+            "SELECT lease_id FROM service_leases WHERE operation_id='op' AND released_at IS NULL"
+        ).fetchone()
+        assert active is not None
+    finally:
+        reopened.close()
+
+
+def test_terminal_operation_with_incomplete_evidence_remains_invalid(tmp_path):
+    db_path = tmp_path / "dish.db"
+    conn = initialize_database(db_path)
+    _insert_operation(conn)
+    lease = LeaseManager(conn).acquire("op", ServicePrincipal("owner", "run"))
+    conn.execute(
+        "INSERT INTO operation_steps(operation_id,step_name,intended_json) "
+        "VALUES('op','terminal_pending','{}')"
+    )
+    conn.execute(
+        """UPDATE operations
+              SET status='completed',phase='terminal',completed_at='now',
+                  terminal_outcome='test'
+            WHERE operation_id='op'"""
+    )
+    conn.close()
+
     with pytest.raises(DishRuleError) as exc:
         initialize_database(db_path)
     assert exc.value.rule == "database_semantic_evidence_invalid"
     assert {
-        "invariant": "active_lease_on_terminal_operation",
+        "invariant": "active_lease_on_incomplete_terminal_operation",
         "record_type": "service_leases",
         "record_id": lease["lease_id"],
         "related_record_type": "operations",

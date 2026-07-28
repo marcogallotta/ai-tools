@@ -277,6 +277,11 @@ Triggers enforce append-only or monotonic evidence where recovery depends on his
 and its governed audit facts commit in one transaction. Workflow and transport code must use
 repository primitives rather than bypassing those invariants with ad hoc SQL.
 
+External-effect intent and confirmation are intentionally visible between transactions because they
+are the recovery authority around Asana calls. Local terminalization is different: submit's terminal
+step, operation transition, transition audit, and submission audit commit as one SQLite unit, so a
+reader sees either the pre-terminal operation or the complete terminal evidence.
+
 Concurrency uses separate mechanisms for separate facts:
 
 1. a database constraint permits at most one active operation per task;
@@ -289,6 +294,13 @@ Concurrency uses separate mechanisms for separate facts:
 
 None substitutes for another. In particular, a process lock is not an operation lock, and a run ID
 does not replace exact content/signoff bindings.
+
+Workflow terminal status removes mutation authority before service response bookkeeping finishes.
+The owning service lease may therefore be briefly visible on a terminal operation, or remain after a
+process crash between workflow commit and lease cleanup. That row is a non-authoritative cleanup
+tail only when every workflow step and external-effect attempt is resolved; otherwise semantic
+validation still fails closed. Terminal cleanup is idempotent, and a later lease acquisition for the
+same task reaps only that safe stale row.
 
 Every externally callable service mutation has a client request UUID whose first authoritative
 outcome is replay-bound. Pending or uncertain work is inspected or reconstructed, not reissued.

@@ -116,6 +116,41 @@ class LeaseManager:
             "SELECT * FROM service_leases WHERE lease_id=?", (row["lease_id"],)
         ).fetchone()
 
+    def _reap_terminal_task_lease(self, row, *, now: datetime) -> bool:
+        """Release a stale terminal lease only when local completion is safe.
+
+        Workflow terminal status already removes every legal mutation.  The
+        lease can linger if a process stops between workflow commit and service
+        cleanup, but it must not block a later operation for the same task.
+        Pending workflow steps or unresolved external attempts remain recovery
+        evidence and deliberately prevent automatic reaping.
+        """
+        operation = self._operation(row["operation_id"])
+        if (
+            operation["status"] not in {"completed", "cancelled"}
+            or operation["phase"] != "terminal"
+            or not operation["completed_at"]
+            or not operation["terminal_outcome"]
+        ):
+            return False
+        pending = self.conn.execute(
+            "SELECT 1 FROM operation_steps WHERE operation_id=? AND completed_at IS NULL LIMIT 1",
+            (row["operation_id"],),
+        ).fetchone()
+        unresolved = self.conn.execute(
+            """SELECT 1 FROM write_attempts
+                 WHERE operation_id=? AND outcome IN ('started','uncertain')
+               UNION ALL
+               SELECT 1 FROM movement_attempts
+                 WHERE operation_id=? AND outcome IN ('started','uncertain')
+               LIMIT 1""",
+            (row["operation_id"], row["operation_id"]),
+        ).fetchone()
+        if pending is not None or unresolved is not None:
+            return False
+        self._release_row(row, reason="terminal_lease_reaped", now=now)
+        return True
+
     def acquire(self, operation_id: str, principal: ServicePrincipal):
         now = self.now()
         expiry = now + timedelta(seconds=self.ttl_seconds)
@@ -158,6 +193,10 @@ class LeaseManager:
                 "SELECT * FROM service_leases WHERE task_gid=? AND released_at IS NULL",
                 (op["task_gid"],),
             ).fetchone()
+            if task_existing is not None and self._reap_terminal_task_lease(
+                task_existing, now=now
+            ):
+                task_existing = None
             if task_existing is not None:
                 raise DishRuleError(
                     "CONFLICT", "task is leased by another active operation",
@@ -317,9 +356,14 @@ class LeaseManager:
         self.conn.execute("BEGIN IMMEDIATE")
         try:
             op = self._operation(operation_id)
-            row = self._assert_owned_row(
-                self.active_for_operation(operation_id), principal, now=now
-            )
+            row = self.active_for_operation(operation_id)
+            if row is None and op["status"] in {"completed", "cancelled"}:
+                # A later operation may have safely reaped this cleanup tail
+                # after terminal workflow commit but before this request's own
+                # response bookkeeping reached lease release.
+                self.conn.execute("COMMIT")
+                return None
+            row = self._assert_owned_row(row, principal, now=now)
             if op["status"] not in {"completed", "cancelled"}:
                 raise DishRuleError(
                     "WRONG_STATE",

@@ -8,7 +8,7 @@ import sqlite3
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import content_identity, finalize_confirmed_movement_attempt, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step
+from .database import atomic_persistence, content_identity, finalize_confirmed_movement_attempt, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step
 from .errors import DishRuleError
 from .lifecycle import assert_transition, require_status
 from .models import SectionRegistry, resolve_destination, utc_now
@@ -467,21 +467,26 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
     else:
         handoff = "manual_placement_preserved"
 
-    declare_operation_step(
-        conn, operation_id, "submission_terminal",
-        {"phase": "terminal", "status": "completed", "terminal_outcome": "destination_handled"},
-    )
-    transition_operation(conn, operation_id, phase="terminal", status="completed", terminal_outcome="destination_handled")
-    complete_operation_step(conn, operation_id, "submission_terminal")
-    record_audit(
-        conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
-        event_type="operation.submitted", actor_agent=None,
-        details={"handoff": handoff, "moved": moved, "section_gid": live.section_gid, "destination_diagnostic": diagnostic},
-        result_code="OK", result_ok=True, governed_kind="lock",
-        before_state={"operation_id": operation_id, "status": "open"},
-        after_state={"operation_id": operation_id, "status": "completed"},
-        actor_source="submission-command",
-    )
+    # The external movement attempt is already durably confirmed above.  The
+    # remaining local terminal evidence must appear as one SQLite fact: readers
+    # may see the pre-terminal operation or the complete terminal record, never
+    # a terminal operation with a half-written step/audit tail.
+    with atomic_persistence(conn, "submission_terminal"):
+        declare_operation_step(
+            conn, operation_id, "submission_terminal",
+            {"phase": "terminal", "status": "completed", "terminal_outcome": "destination_handled"},
+        )
+        transition_operation(conn, operation_id, phase="terminal", status="completed", terminal_outcome="destination_handled")
+        complete_operation_step(conn, operation_id, "submission_terminal")
+        record_audit(
+            conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
+            event_type="operation.submitted", actor_agent=None,
+            details={"handoff": handoff, "moved": moved, "section_gid": live.section_gid, "destination_diagnostic": diagnostic},
+            result_code="OK", result_ok=True, governed_kind="lock",
+            before_state={"operation_id": operation_id, "status": "open"},
+            after_state={"operation_id": operation_id, "status": "completed"},
+            actor_source="submission-command",
+        )
     return {
         "operation_id": operation_id,
         "signed_identity": signed_identity,

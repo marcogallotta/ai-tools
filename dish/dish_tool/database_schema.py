@@ -1872,20 +1872,45 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 related_record_id=row["operation_id"],
                 observed_count=int(row["unresolved_count"]),
             ))
+    # A service lease is transport ownership, not workflow state. Terminal
+    # status revokes mutation authority before response cleanup, so a complete
+    # terminal operation may retain an active cleanup-tail lease. It is safe
+    # only after every declared step and external-effect attempt is resolved;
+    # otherwise the terminal row still contradicts its durable evidence.
     for row in conn.execute(
-        """SELECT lease.lease_id, lease.operation_id
+        """SELECT lease.lease_id, lease.operation_id, operation.phase,
+                  operation.completed_at, operation.terminal_outcome
              FROM service_leases AS lease
              JOIN operations AS operation ON operation.operation_id=lease.operation_id
             WHERE lease.released_at IS NULL
               AND operation.status IN ('completed','cancelled')"""
     ):
-        problems.append(_semantic_problem(
-            "active_lease_on_terminal_operation",
-            "service_leases",
-            row["lease_id"],
-            related_record_type="operations",
-            related_record_id=row["operation_id"],
-        ))
+        pending = conn.execute(
+            "SELECT 1 FROM operation_steps WHERE operation_id=? AND completed_at IS NULL LIMIT 1",
+            (row["operation_id"],),
+        ).fetchone()
+        unresolved = conn.execute(
+            """SELECT 1 FROM write_attempts
+                 WHERE operation_id=? AND outcome IN ('started','uncertain')
+               UNION ALL
+               SELECT 1 FROM movement_attempts
+                 WHERE operation_id=? AND outcome IN ('started','uncertain')
+               LIMIT 1""",
+            (row["operation_id"], row["operation_id"]),
+        ).fetchone()
+        terminal_incomplete = (
+            row["phase"] != "terminal"
+            or not row["completed_at"]
+            or not row["terminal_outcome"]
+        )
+        if terminal_incomplete or pending is not None or unresolved is not None:
+            problems.append(_semantic_problem(
+                "active_lease_on_incomplete_terminal_operation",
+                "service_leases",
+                row["lease_id"],
+                related_record_type="operations",
+                related_record_id=row["operation_id"],
+            ))
     for row in conn.execute("SELECT * FROM operation_execution_claims"):
         if row["execution_id"] is None:
             continue
