@@ -322,8 +322,8 @@ def test_trimmed_openapi_contains_only_action_workflow_and_renewal_paths():
     spec = action_openapi(server_url="https://dish.example.test")
     paths = set(spec["paths"])
     expected = {f"/v1/action/{command}" for command in ACTION_COMMANDS}
-    expected.add("/v1/action/leases/{operation_id}/renew")
     assert paths == expected
+    assert "/v1/action/leases/{operation_id}/renew" not in paths
     rendered = json.dumps(spec).lower()
     assert "/admin" not in rendered
     assert "recover" not in rendered
@@ -357,10 +357,14 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     assert "one logical mutation" in request_id["description"]
     assert "lost response" in request_id["description"]
 
-    renew_client = spec["paths"]["/v1/action/leases/{operation_id}/renew"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["client"]
+    renew_schema = spec["paths"]["/v1/action/renew-lease"]["post"]["requestBody"]["content"]["application/json"]["schema"]
+    assert renew_schema["required"] == ["client", "arguments"]
+    renew_client = renew_schema["properties"]["client"]
     assert renew_client["properties"]["run_id"]["format"] == "uuid"
-    renew_parameter = spec["paths"]["/v1/action/leases/{operation_id}/renew"]["post"]["parameters"][0]["schema"]
-    assert renew_parameter["pattern"] == CANONICAL_DISH_UUID_PATTERN
+    renew_arguments = renew_schema["properties"]["arguments"]
+    assert renew_arguments["required"] == ["operation_id"]
+    assert renew_arguments["properties"]["operation_id"]["pattern"] == CANONICAL_DISH_UUID_PATTERN
+    assert "parameters" not in spec["paths"]["/v1/action/renew-lease"]["post"]
 
     envelope_submission = spec["components"]["schemas"]["ResultEnvelope"]["properties"]["submission_id"]
     assert envelope_submission["format"] == "uuid"
@@ -564,3 +568,40 @@ def test_action_rejects_noncanonical_client_run_id_before_work(tmp_path):
     assert result["errors"][0]["field"] == "client.run_id"
     assert result["errors"][0]["rule"] == "uuid_identifier_required"
 
+
+
+def test_action_lease_renewal_rejects_legacy_path_and_top_level_operation_id(tmp_path):
+    _backend, server, thread, url = _running(tmp_path)
+    operation_id = "99999999-9999-4999-8999-999999999999"
+    run_id = "f946b9ec-2b97-5b20-9831-e749d02e9883"
+    request_id = str(uuid.uuid4())
+    try:
+        legacy = _raw_post(
+            url,
+            f"/v1/action/leases/{operation_id}/renew",
+            token="action-secret",
+            body=json.dumps(
+                {"client": {"run_id": run_id, "request_id": request_id}}
+            ),
+        )
+        top_level = _raw_post(
+            url,
+            "/v1/action/renew-lease",
+            token="action-secret",
+            body=json.dumps(
+                {
+                    "client": {"run_id": run_id, "request_id": request_id},
+                    "operation_id": operation_id,
+                }
+            ),
+        )
+    finally:
+        _stop(server, thread)
+
+    assert legacy[0] == 404
+    assert legacy[3] == {"ok": False, "error": "not_found"}
+    assert top_level[0] == 200
+    assert top_level[3]["code"] == "INVALID_ARGUMENT"
+    assert top_level[3]["errors"] == [
+        {"field": "operation_id", "rule": "request_field_unexpected"}
+    ]

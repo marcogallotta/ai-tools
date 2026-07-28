@@ -102,10 +102,12 @@ includes the command, canonical arguments, authenticated owner identity, and run
 |---|---|
 | Agent Action/private CLI | `create`, `start`, `prepare`, `approve`, `reject`, `submit` |
 | Marco admin workflow | `migrate`, `reopen`, `recover`, `repair-destination`, `supply-evidence`, `record-human-decision`, `authorize-governed-change`, `discard` |
-| Lease lifecycle | agent/action `renew`; Marco-admin `recover-lease` |
+| Lease lifecycle | private agent lease renewal; Action `renew-lease`; Marco-admin `recover-lease` |
 | Backup lifecycle | `backup-create`, `backup-restore` |
 
 No mutation endpoint is exempt from request identity. Read-only `sections`, `read`, `inspect`, and `health` do not create replay records and do not accept a request ID as mutation authority.
+The connected `renew-lease` Action uses the common body shape: `arguments.operation_id` is replay-bound
+alongside `client.run_id` and `client.request_id`; it is not supplied as a top-level or path parameter.
 
 - Missing or malformed request IDs are rejected before a request record exists. Once the UUID is accepted, expected argument, state, authorization, and workflow failures are stored just like successes.
 - A repeated completed request returns the original stored result with `data.request_replayed: true` and `data.request_id`; the first response is not labelled as a replay.

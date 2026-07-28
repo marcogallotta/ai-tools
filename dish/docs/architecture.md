@@ -209,6 +209,12 @@ retryable lock condition; a read-only database is not healthy.
 Once a database has the service-ownership sidecar, direct local CLI/admin access remains forbidden
 even while the service is stopped.
 
+The Action lease renewal is exposed through the same request envelope as every other connected
+mutation: `POST /v1/action/renew-lease` carries `arguments.operation_id` plus `client.run_id` and
+`client.request_id`. The operation identifier is part of canonical replay arguments, not a separate
+path parameter. The private CLI lease endpoint retains its transport-specific path because it is not
+part of the connected Action schema.
+
 The generic `tools/asana` interface is not a mutation path for governed Cooking tasks.
 `generic_asana_guard` fails closed for covered managed-task writes and moves. Its read commands
 remain available, including Planning's deliberate read-only lookup of completed cooking history.

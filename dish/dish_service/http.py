@@ -54,9 +54,8 @@ def _replay_arguments(
     if surface in {"agent", "action", "admin"}:
         arguments = request.get("arguments")
         return dict(arguments) if isinstance(arguments, dict) else {}
-    if surface in {"lease", "action-lease"}:
-        operation_id = parts[2] if surface == "lease" else parts[3]
-        return {"operation_id": operation_id}
+    if surface == "lease":
+        return {"operation_id": parts[2]}
     if surface == "admin-lease":
         return {"operation_id": parts[3], "reason": str(request.get("reason") or "").strip()}
     if surface == "admin-backup" and command == "backup-create":
@@ -189,7 +188,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
     ) -> None:
         if surface in {"agent", "action", "admin"}:
             allowed = {"client", "arguments"}
-        elif surface in {"lease", "action-lease"}:
+        elif surface == "lease":
             allowed = {"client"}
         elif surface == "admin-lease":
             allowed = {"client", "reason"}
@@ -262,8 +261,6 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             surface, command = "agent", parts[2]
         elif len(parts) == 3 and parts[:2] == ["v1", "action"]:
             surface, command = "action", parts[2]
-        elif len(parts) == 5 and parts[:3] == ["v1", "action", "leases"] and parts[4] == "renew":
-            surface, command = "action-lease", "renew-lease"
         elif len(parts) == 4 and parts[:2] == ["v1", "leases"] and parts[3] == "renew":
             surface, command = "lease", "renew-lease"
         elif len(parts) == 3 and parts[:2] == ["v1", "admin"]:
@@ -289,14 +286,14 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                     close_connection=True,
                 )
                 return
-            if self.server.surface_mode == "private" and surface in {"action", "action-lease"}:
+            if self.server.surface_mode == "private" and surface == "action":
                 self._write_json(
                     HTTPStatus.NOT_FOUND,
                     {"ok": False, "error": "not_found"},
                     close_connection=True,
                 )
                 return
-            if self.server.surface_mode == "action" and surface not in {"action", "action-lease"}:
+            if self.server.surface_mode == "action" and surface != "action":
                 self._write_json(
                     HTTPStatus.NOT_FOUND,
                     {"ok": False, "error": "not_found"},
@@ -305,7 +302,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 return
             if surface in {"agent", "lease", "argument-failure"}:
                 credential = self._credential("agent")
-            elif surface in {"action", "action-lease"}:
+            elif surface == "action":
                 credential = self._credential("action")
                 if surface == "action" and command not in ACTION_COMMANDS:
                     raise DishRuleError("INVALID_ARGUMENT", "command is not exposed to the GPT Action", rule="action_command_forbidden")
@@ -338,22 +335,23 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             context = request.get("context")
             if isinstance(context, dict):
                 validate_identifier_fields(context, allow_null=True)
-            if surface in {"lease", "action-lease", "admin-lease"}:
+            if surface in {"lease", "admin-lease"}:
                 operation_id = parts[2] if surface == "lease" else parts[3]
                 require_dish_uuid(operation_id, field="operation_id")
             if surface == "lease":
                 payload = self.server.service.renew_lease(
                     parts[2], principal, request_id=request_id
                 )
-            elif surface == "action-lease":
-                payload = self.server.service.renew_lease(
-                    parts[3], principal, request_id=request_id
-                )
             elif surface == "admin-lease":
                 reason = str(request.get("reason") or "").strip()
                 if not reason:
                     raise DishRuleError("INVALID_ARGUMENT", "recovery reason is required", rule="recovery_reason_required")
                 payload = self.server.service.recover_lease(parts[3], principal, reason=reason, request_id=request_id)
+            elif surface == "action" and command == "renew-lease":
+                arguments = request["arguments"]
+                payload = self.server.service.renew_lease(
+                    arguments["operation_id"], principal, request_id=request_id
+                )
             elif surface == "admin-backup":
                 if command == "backup-create":
                     payload = self.server.service.create_backup(
@@ -409,7 +407,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             if (
                 (
                     (surface in {"action", "agent"} and command in REPLAY_CAPABLE_COMMANDS)
-                    or surface in {"lease", "action-lease", "admin", "admin-lease", "admin-backup"}
+                    or surface in {"lease", "admin", "admin-lease", "admin-backup"}
                 )
                 and principal is not None
                 and isinstance(request, dict)
@@ -452,7 +450,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 status = HTTPStatus.UNAUTHORIZED
             elif exc.rule == "service_scope_forbidden":
                 status = HTTPStatus.FORBIDDEN
-            elif surface in {"action", "action-lease"}:
+            elif surface == "action":
                 # GPT Actions classify non-2xx responses as transport failures. Expected
                 # Dish rule outcomes must remain readable canonical workflow envelopes.
                 status = HTTPStatus.OK

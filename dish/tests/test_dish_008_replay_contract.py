@@ -44,7 +44,7 @@ def test_openapi_documents_complete_action_replay_semantics():
             assert "read-only" in description
             assert "does not accept client.request_id" in description
 
-    renew = spec["paths"]["/v1/action/leases/{operation_id}/renew"]["post"]
+    renew = spec["paths"]["/v1/action/renew-lease"]["post"]
     renew_client = renew["requestBody"]["content"]["application/json"]["schema"][
         "properties"
     ]["client"]

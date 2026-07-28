@@ -1009,7 +1009,7 @@
         }
       }
     },
-    "/v1/action/leases/{operation_id}/renew": {
+    "/v1/action/renew-lease": {
       "post": {
         "operationId": "dish_renew_lease",
         "summary": "Renew the current GPT Action operation lease",
@@ -1019,18 +1019,6 @@
             "actionBearer": []
           }
         ],
-        "parameters": [
-          {
-            "name": "operation_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-            }
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1038,7 +1026,8 @@
               "schema": {
                 "type": "object",
                 "required": [
-                  "client"
+                  "client",
+                  "arguments"
                 ],
                 "additionalProperties": false,
                 "properties": {
@@ -1063,6 +1052,20 @@
                         "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
                       }
                     }
+                  },
+                  "arguments": {
+                    "required": [
+                      "operation_id"
+                    ],
+                    "properties": {
+                      "operation_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+                      }
+                    },
+                    "type": "object",
+                    "additionalProperties": false
                   }
                 }
               }

@@ -269,7 +269,7 @@ class DishActionClient(DishServiceClient):
         if arguments is not None and keyword_arguments:
             raise TypeError("provide command arguments as a mapping or keywords, not both")
         prepared = dict(arguments or keyword_arguments)
-        if command in {"create", "start", "prepare", "approve", "reject", "submit"} and request_id is None:
+        if command in {"create", "start", "prepare", "approve", "reject", "submit", "renew-lease"} and request_id is None:
             request_id = str(uuid.uuid4())
         return self._json_request(
             f"/v1/action/{command}",
@@ -286,7 +286,10 @@ class DishActionClient(DishServiceClient):
         if request_id is None:
             request_id = str(uuid.uuid4())
         return self._json_request(
-            f"/v1/action/leases/{operation_id}/renew",
+            "/v1/action/renew-lease",
             method="POST",
-            payload={"client": self._client(request_id=request_id)},
+            payload={
+                "arguments": {"operation_id": operation_id},
+                "client": self._client(request_id=request_id),
+            },
         )

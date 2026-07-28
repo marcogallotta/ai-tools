@@ -1129,7 +1129,12 @@ class DishService:
                 principal=principal,
                 task_gid=str(arguments.get("task_gid") or "").strip() or None,
                 operation_id=(
-                    str(arguments.get("submission_id") or "").strip() or None
+                    str(
+                        arguments.get("submission_id")
+                        or arguments.get("operation_id")
+                        or ""
+                    ).strip()
+                    or None
                 ),
             )
             try:

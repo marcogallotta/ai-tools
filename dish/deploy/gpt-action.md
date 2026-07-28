@@ -83,8 +83,10 @@ second result-code policy into the GPT instructions.
 
 ## Lease handling
 
-The default lease lasts 30 minutes. If work on an active operation approaches that limit, renew the
-operation lease with the same `client.run_id`. A handoff may release the actor lease while leaving
+The default lease lasts 30 minutes. If work on an active operation approaches that limit, call
+`dish_renew_lease` with the operation UUID in `arguments.operation_id`, the same `client.run_id`, and
+a fresh `client.request_id`. Do not supply the operation UUID as a top-level or path parameter. A
+handoff may release the actor lease while leaving
 the task operation active; follow the returned actions rather than renewing after handoff.
 
 If a lease expires, stop. Only Marco may use `dish-admin recover-lease`; the GPT must not create a

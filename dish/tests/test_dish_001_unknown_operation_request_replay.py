@@ -28,9 +28,9 @@ UNKNOWN_OPERATION = "99999999-9999-4999-8999-999999999999"
             "recover",
         ),
         (
-            f"/v1/action/leases/{UNKNOWN_OPERATION}/renew",
+            "/v1/action/renew-lease",
             "action-secret",
-            {},
+            {"arguments": {"operation_id": UNKNOWN_OPERATION}},
             "renew-lease",
         ),
         (

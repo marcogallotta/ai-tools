@@ -163,7 +163,11 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
         paths[f"/v1/action/{command}"] = {
             "post": {
                 "operationId": f"dish_{command.replace('-', '_')}",
-                "summary": f"Run dish {command}",
+                "summary": (
+                    "Renew the current GPT Action operation lease"
+                    if command == "renew-lease"
+                    else f"Run dish {command}"
+                ),
                 "description": _action_operation_description(command),
                 "security": [{"actionBearer": []}],
                 "requestBody": {
@@ -196,42 +200,16 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                 },
                 "responses": {
                     "200": {
-                        "description": "Canonical dish workflow result",
+                        "description": (
+                            "Canonical lease result"
+                            if command == "renew-lease"
+                            else "Canonical dish workflow result"
+                        ),
                         "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResultEnvelope"}}},
                     }
                 },
             }
         }
-    paths["/v1/action/leases/{operation_id}/renew"] = {
-        "post": {
-            "operationId": "dish_renew_lease",
-            "summary": "Renew the current GPT Action operation lease",
-            "description": REPLAY_MUTATION_DESCRIPTION,
-            "security": [{"actionBearer": []}],
-            "parameters": [
-                {
-                    "name": "operation_id",
-                    "in": "path",
-                    "required": True,
-                    "schema": dict(DISH_UUID_SCHEMA),
-                }
-            ],
-            "requestBody": {
-                "required": True,
-                "content": {"application/json": {"schema": {
-                    "type": "object", "required": ["client"], "additionalProperties": False,
-                    "properties": {"client": {
-                        "type": "object", "required": ["run_id", "request_id"], "additionalProperties": False,
-                        "properties": {
-                            "run_id": dict(CLIENT_RUN_ID_SCHEMA),
-                            "request_id": dict(CLIENT_REQUEST_ID_SCHEMA),
-                        },
-                    }},
-                }}},
-            },
-            "responses": {"200": {"description": "Canonical lease result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResultEnvelope"}}}}},
-        }
-    }
     return {
         "openapi": "3.1.0",
         "info": {"title": "Dish GPT Action", "version": "1.0.0"},

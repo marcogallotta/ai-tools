@@ -13,8 +13,9 @@ from .identifiers import (
 )
 
 AGENT_MUTATION_COMMANDS = {"create", "start", "prepare", "approve", "reject", "submit"}
-REPLAY_SAFE_COMMANDS = AGENT_MUTATION_COMMANDS
-REPLAY_CAPABLE_COMMANDS = AGENT_MUTATION_COMMANDS
+ACTION_LEASE_COMMAND = "renew-lease"
+REPLAY_SAFE_COMMANDS = AGENT_MUTATION_COMMANDS | {ACTION_LEASE_COMMAND}
+REPLAY_CAPABLE_COMMANDS = REPLAY_SAFE_COMMANDS
 
 DISH_UUID_SCHEMA = {
     "type": "string",
@@ -53,6 +54,7 @@ ACTION_COMMANDS = (
     "approve",
     "reject",
     "submit",
+    ACTION_LEASE_COMMAND,
 )
 
 ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
@@ -160,6 +162,10 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     "submit": {
         "required": ["submission_id"],
         "properties": {"submission_id": dict(DISH_UUID_SCHEMA)},
+    },
+    ACTION_LEASE_COMMAND: {
+        "required": ["operation_id"],
+        "properties": {"operation_id": dict(DISH_UUID_SCHEMA)},
     },
 }
 
