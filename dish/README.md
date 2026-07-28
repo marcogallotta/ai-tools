@@ -251,7 +251,6 @@ Do not copy or package `.venv`; it is interpreter-local. The committed implement
 - `docs/runtime-contract.md` — JSON meanings, exit statuses, retry rules, and operational recovery.
 - `docs/rollout.md` — separately authorized test-project rehearsal, migration, production cutover, and rollback.
 - `docs/future.md` — only work that is not already implemented.
-- `docs/dish-tool-update.md` — historical change analysis, not current architecture authority.
 
 The implementation does not itself authorize production activation. Follow
 [`docs/rollout.md`](docs/rollout.md) for the separately authorized migration rehearsal, live

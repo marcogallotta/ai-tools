@@ -19,8 +19,7 @@ loading every Dish document.
 | the protocol's own structure, canonical fields, process records, or change classes | `~/honest-pantry/dish-docs-design.md` and the relevant current Honest assets |
 | work not yet implemented | [`future.md`](future.md) |
 
-`dish-tool-update.md` is historical provenance. It never overrides the current code, this document,
-the runtime contract, or current Honest assets. Removed plans remain available in Git history.
+Removed plans remain available in Git history.
 
 Update this document in the same commit when a change moves an authority boundary, adds a runtime
 surface, changes the workflow state model, or changes which component owns a durable fact. Do not

@@ -18,10 +18,8 @@ documentation roles are:
   migration, production cutover, and rollback;
 - `dish/docs/future.md` — only work not already implemented.
 
-`dish-tool-update.md` is a historical change record. It may explain why a decision was made, but it
-does not override the current architecture, runtime contract, code, or Honest protocol/schema
-assets. Older design and implementation plans were removed; use Git history when their exact text
-is needed.
+Older design and implementation plans were removed; use Git history when their exact text is
+needed.
 
 ## Dish agent environment
 
