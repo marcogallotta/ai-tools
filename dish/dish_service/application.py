@@ -66,7 +66,7 @@ def _database_unavailable_error(exc: BaseException) -> DishRuleError:
         "INTERNAL_ERROR",
         "Dish database is unavailable; the request was not executed",
         rule="service_database_unavailable",
-        retryable=False,
+        retryable=True,
         details={"error_type": type(exc).__name__},
     )
 

@@ -69,7 +69,7 @@ def test_corrupt_database_returns_structured_unavailable_results(tmp_path):
 
     for result in (agent, admin, renewal, recovery, backup):
         assert result["code"] == "INTERNAL_ERROR"
-        assert result["retryable"] is False
+        assert result["retryable"] is True
         assert result["errors"][0]["rule"] == "service_database_unavailable"
         assert result["errors"][0]["error_type"] == "DatabaseError"
         assert result["data"]["message"] == (
