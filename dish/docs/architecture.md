@@ -194,6 +194,17 @@ listener. The Action token is invalid on private/admin routes, and the Action su
 raw Asana, migration, recovery, health, or backup route. `dish_service.command_spec` is shared by the
 Action validator and OpenAPI generator so their accepted arguments cannot drift.
 
+Every protected POST authenticates before reading its body, then requires exactly one
+`application/json` media type. The shared decoder rejects duplicate object keys recursively before
+client identity, request replay, or workflow validation can observe a parser-selected value. Private
+routes use HTTP 415 for media-type failures; the Action listener retains its canonical HTTP-200
+workflow-envelope rule for authenticated expected failures.
+
+Private `GET /health` is mutation readiness, not process liveness. Database readiness includes a
+bounded rollback-only write probe against the schema ledger, reports `database.write_ready`, and
+must not create durable workflow, request-journal, or probe rows. A transient writer lock remains a
+retryable lock condition; a read-only database is not healthy.
+
 `DISH_MODE=local` is controlled, single-agent development only. It must use a separate database.
 Once a database has the service-ownership sidecar, direct local CLI/admin access remains forbidden
 even while the service is stopped.

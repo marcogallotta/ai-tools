@@ -117,6 +117,12 @@ export DISH_CLIENT_RUN_ID=<canonical lowercase UUID for this admin run>
 
 Never place the CLI/admin token in the GPT Action configuration.
 
+## HTTP request boundary
+
+Every authenticated POST requires exactly one `application/json` media type; parameters such as
+`charset=utf-8` are accepted. Duplicate JSON object keys are rejected recursively before request
+identity or workflow validation, so no parser-specific last-value rule can authorize a mutation.
+
 ## Workflow
 
 Every CLI command response is one canonical JSON result envelope. Follow only `allowed_actions`;
@@ -200,13 +206,17 @@ A restore interrupted by `SIGKILL` is reconciled automatically during the next s
 
 ## Health and compatibility
 
-The private listener exposes `GET /health`. It reports:
+The private listener exposes readiness-oriented `GET /health`. It reports:
 
-- local database validation and schema version;
+- local database validation, schema version, and rollback-only write readiness;
 - Honest protocol/task-schema compatibility;
 - Asana access and required section registry;
 - pending audit repairs;
 - active operations and leases.
+
+The write-readiness probe is rolled back and creates no durable workflow or request-journal rows. A
+read-only database therefore makes health fail even when reads still succeed; transient lock
+contention is reported as a lock rather than database corruption.
 
 Mutation requests recheck compatibility and Asana access before entering workflow code. A failed health dependency blocks mutation before any task write, movement, or new operation is created.
 

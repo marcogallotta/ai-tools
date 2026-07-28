@@ -47,6 +47,11 @@ On the GPT Action surface, expected authenticated Dish rule outcomes (including 
 state conflicts, and validation failures) use HTTP 200 so the Action runtime returns the canonical
 envelope to the agent instead of reclassifying it as a transport failure. Authentication and
 authorization failures retain HTTP 401/403, and unexpected server failures retain HTTP 500.
+Protected POST routes authenticate first and then require exactly one `application/json` media type;
+parameters such as `charset=utf-8` are allowed. Missing, ambiguous, or different media types fail
+before JSON parsing. JSON objects with duplicate keys are rejected recursively before client identity,
+request replay, or mutation. Private media-type failures use HTTP 415; authenticated Action failures
+remain canonical HTTP-200 Dish envelopes.
 
 Agent-facing action guidance is authoritative even on failures. When an operation-scoped command is
 rejected, `allowed_actions` reports the currently legal exposed continuation when one exists. A
@@ -117,13 +122,18 @@ it explicitly through the imported schema. The public schema marks both `client.
 
 ## Health, backup, and startup
 
-`GET /health` exists only on the private listener. It checks:
+`GET /health` exists only on the private listener and represents mutation readiness. It checks:
 
-- current SQLite schema and semantic evidence validation;
+- current SQLite schema, semantic evidence, and rollback-only write readiness;
 - exact Honest protocol/task-schema compatibility;
 - Asana access and required Cooking section registry;
 - pending invocation-audit repairs;
 - active operations and active/expired leases.
+
+The database probe takes a bounded write lock, updates the schema ledger only inside a savepoint, and
+rolls the probe back before returning. It leaves no durable workflow or request-journal state. Health
+reports `database.write_ready: true` only after that probe succeeds; read-only storage is unhealthy,
+while transient writer contention remains a lock condition rather than corruption.
 
 At startup the service validates the database, including semantic impossibilities such as duplicate unresolved attempts or active leases on terminal operations, resolves Honest compatibility, and replays pending invocation-audit repairs. Repair workers claim each repair transactionally so concurrent workers cannot emit duplicate events. Durable service-request records and any restore-fault marker survive process restart. Listener readiness depends on valid service configuration, not healthy external or recoverable data dependencies. An Asana outage, an invalid live database, compatibility failure, or a restore-fault marker therefore leaves the private service available for health and administrative diagnosis or restore; health remains unhealthy and workflow mutations fail before entering application mutation code. Backup creation and lease renewal remain available only when their own database prerequisites are healthy.
 

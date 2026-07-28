@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import logging
+import sqlite3
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -68,6 +69,63 @@ def _database_unavailable_error(exc: BaseException) -> DishRuleError:
         retryable=False,
         details={"error_type": type(exc).__name__},
     )
+
+
+def _probe_database_write_readiness(conn: sqlite3.Connection) -> None:
+    """Prove bounded main-database write capability without committing state."""
+
+    timeout_row = conn.execute("PRAGMA busy_timeout").fetchone()
+    prior_timeout_ms = int(timeout_row[0]) if timeout_row is not None else 0
+    savepoint = "dish_health_write_probe"
+    savepoint_open = False
+    try:
+        conn.execute("PRAGMA busy_timeout = 100")
+        conn.execute(f"SAVEPOINT {savepoint}")
+        savepoint_open = True
+        conn.execute(
+            """UPDATE schema_migrations
+                  SET applied_at = applied_at
+                WHERE version = (SELECT MAX(version) FROM schema_migrations)"""
+        )
+        if conn.execute("SELECT changes()").fetchone()[0] != 1:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "workflow database readiness probe could not bind the current schema",
+                rule="database_write_probe_invalid",
+                retryable=False,
+            )
+    except sqlite3.OperationalError as exc:
+        message = str(exc).lower()
+        error_code = getattr(exc, "sqlite_errorcode", None)
+        primary_code = None if error_code is None else error_code & 0xFF
+        if primary_code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED} or (
+            "locked" in message or "busy" in message
+        ):
+            raise DishRuleError(
+                "BACKEND_REJECTED",
+                "workflow database write readiness is temporarily blocked",
+                rule="database_writer_lock",
+                retryable=True,
+                details={"timeout_ms": 100},
+            ) from exc
+        if primary_code == sqlite3.SQLITE_READONLY or any(
+            marker in message
+            for marker in ("readonly", "read-only", "permission denied")
+        ):
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "workflow database is not mutation-ready",
+                rule="database_not_writable",
+                retryable=False,
+            ) from exc
+        raise
+    finally:
+        if savepoint_open:
+            try:
+                conn.execute(f"ROLLBACK TO {savepoint}")
+            finally:
+                conn.execute(f"RELEASE {savepoint}")
+        conn.execute(f"PRAGMA busy_timeout = {prior_timeout_ms}")
 
 
 class DishService:
@@ -1799,7 +1857,8 @@ class DishService:
             conn = None
             try:
                 conn = initialize_database(self.config.db_path)
-                database = {"ok": True, "schema_version": SCHEMA_VERSION}
+                _probe_database_write_readiness(conn)
+                database = {"ok": True, "schema_version": SCHEMA_VERSION, "write_ready": True}
                 audit["pending_repairs"] = conn.execute(
                     "SELECT COUNT(*) FROM command_audit_repairs WHERE repaired_at IS NULL"
                 ).fetchone()[0]
@@ -1814,9 +1873,9 @@ class DishService:
                     (_now_stamp(),),
                 ).fetchone()[0]
             except DishRuleError as exc:
-                database = {"ok": False, "rule": exc.rule, "message": str(exc)}
+                database = {"ok": False, "rule": exc.rule, "message": str(exc), "write_ready": False}
             except Exception as exc:
-                database = {"ok": False, "rule": "database_health_failed", "message": type(exc).__name__}
+                database = {"ok": False, "rule": "database_health_failed", "message": type(exc).__name__, "write_ready": False}
             finally:
                 if conn is not None:
                     conn.close()

@@ -24,6 +24,21 @@ from .openapi import action_openapi
 LOG = logging.getLogger("dish.service")
 
 
+class _DuplicateJSONKey(ValueError):
+    def __init__(self, key: str) -> None:
+        super().__init__(key)
+        self.key = key
+
+
+def _object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise _DuplicateJSONKey(key)
+        value[key] = item
+    return value
+
+
 def _requires_request_id(surface: str, command: str) -> bool:
     if surface in {"agent", "action"}:
         return command in REPLAY_SAFE_COMMANDS
@@ -98,7 +113,36 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _require_json_content_type(self) -> None:
+        values = self.headers.get_all("Content-Type", [])
+        if not values:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "Content-Type application/json is required",
+                rule="request_content_type_required",
+                details={"expected": "application/json"},
+            )
+        if len(values) != 1:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "request must contain exactly one Content-Type header",
+                rule="request_content_type_ambiguous",
+                details={"expected": "application/json"},
+            )
+        media_type = values[0].split(";", 1)[0].strip().lower()
+        if media_type != "application/json":
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "request Content-Type must be application/json",
+                rule="request_content_type_unsupported",
+                details={
+                    "expected": "application/json",
+                    "media_type": media_type or values[0].strip(),
+                },
+            )
+
     def _read_json(self) -> dict[str, Any]:
+        self._require_json_content_type()
         raw_length = self.headers.get("Content-Length")
         if raw_length is None:
             raise DishRuleError("INVALID_ARGUMENT", "Content-Length is required", rule="content_length_required")
@@ -125,7 +169,14 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 details={"expected_bytes": length, "received_bytes": len(body)},
             )
         try:
-            value = json.loads(body.decode("utf-8"))
+            value = json.loads(body.decode("utf-8"), object_pairs_hook=_object_without_duplicate_keys)
+        except _DuplicateJSONKey as exc:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "request JSON contains a duplicate object key",
+                rule="request_json_duplicate_key",
+                details={"field": exc.key},
+            ) from exc
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise DishRuleError("INVALID_ARGUMENT", "request body must be UTF-8 JSON", rule="request_json_invalid") from exc
         if not isinstance(value, dict):
@@ -405,6 +456,12 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 # GPT Actions classify non-2xx responses as transport failures. Expected
                 # Dish rule outcomes must remain readable canonical workflow envelopes.
                 status = HTTPStatus.OK
+            elif exc.rule in {
+                "request_content_type_required",
+                "request_content_type_ambiguous",
+                "request_content_type_unsupported",
+            }:
+                status = HTTPStatus.UNSUPPORTED_MEDIA_TYPE
             else:
                 status = HTTPStatus.BAD_REQUEST
             self._write_json(
