@@ -25,7 +25,6 @@ def _approve_and_submit(app, operation_id: str, run: str = "review"):
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id=run,
-        independence_attestation="independent",
     )
     assert approved["ok"]
     submitted = app.execute("submit", submission_id=operation_id)

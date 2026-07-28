@@ -323,7 +323,6 @@ def _complete_service_submission(service, backend):
             "reviewed_identity": reviewed["data"]["reviewed_identity"],
             "semantic_review_complete": True,
             "provenance_complete": True,
-            "independence_attestation": "independent",
         },
         principal=verifier,
         request_id="10000000-0000-4000-8000-000000000004",
@@ -929,7 +928,6 @@ def test_material_change_approval_finalizes_pending_entry_and_survives_restart(t
         semantic_review_complete=True,
         provenance_complete=True,
         run_id="change-review",
-        independence_attestation="independent",
     )
     assert approved["ok"]
     document = parse_task_document(f"{backend.title}\n{backend.notes}")
@@ -1009,7 +1007,6 @@ def test_submit_refuses_ready_task_with_latest_material_change_pending(tmp_path,
         semantic_review_complete=True,
         provenance_complete=True,
         run_id="change-review",
-        independence_attestation="independent",
     )
     assert approved["ok"]
 
@@ -1080,7 +1077,6 @@ def test_post_signoff_change_cannot_rewrite_material_change_history(tmp_path):
         semantic_review_complete=True,
         provenance_complete=True,
         run_id="first-review",
-        independence_attestation="independent",
     )
     assert approved["ok"]
     assert application.execute("submit", submission_id=first["submission_id"])["ok"]

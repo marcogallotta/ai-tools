@@ -219,7 +219,6 @@ def build_parser() -> JsonArgumentParser:
     )
     approve.add_argument("--reviewed-identity")
     approve.add_argument("--run-id")
-    approve.add_argument("--independence-attestation")
     approve.add_argument("--semantic-review-complete", action="store_true")
     approve.add_argument("--provenance-complete", action="store_true")
 

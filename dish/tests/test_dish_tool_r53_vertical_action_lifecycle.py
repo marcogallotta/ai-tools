@@ -116,7 +116,6 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
             reviewed_identity=review["data"]["reviewed_identity"],
             semantic_review_complete=True,
             provenance_complete=True,
-            independence_attestation="independent",
         )
         submitted = verifier.execute(
             "submit", submission_id=research["submission_id"]

@@ -950,7 +950,7 @@ def recover_operation(
                     complete_operation_step(conn, operation_id, "small_signoff")
                 else:
                     from .step7 import approve_live
-                    result = approve_live(conn, backend, operation_id=operation_id, agent=intended["agent"], reviewed_identity=live.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=intended.get("run_id"), independence_attestation=intended.get("independence_attestation"))
+                    result = approve_live(conn, backend, operation_id=operation_id, agent=intended["agent"], reviewed_identity=live.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=intended.get("run_id"))
                     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
                     complete_operation_step(conn, operation_id, "small_signoff")
                 actions.append({"kind": "workflow_step", "step": "small_signoff", "outcome": "confirmed"})

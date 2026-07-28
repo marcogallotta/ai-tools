@@ -28,7 +28,6 @@ def test_small_correction_is_written_rechecked_and_signed_same_pass(tmp_path):
         correction="small", file_path=str(candidate),
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review",
-        independence_attestation="independent",
     )
     assert result["ok"]
     assert "applied a small Verification correction" in backend.notes
@@ -127,7 +126,6 @@ def test_small_correction_cannot_replace_unreviewed_live_content(tmp_path):
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="small",
         file_path=str(candidate), reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="small-proof",
-        independence_attestation="independent",
     )
     assert result["code"] == "CONFLICT"
     assert result["errors"][0]["rule"] == "live_task_drift"
@@ -154,7 +152,6 @@ def test_approve_rejects_candidate_file_without_small_correction(tmp_path):
         correction="none", file_path=str(candidate),
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review-extra-file",
-        independence_attestation="independent",
     )
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"][0]["rule"] == "approval_file_unexpected"
@@ -167,7 +164,6 @@ def test_small_correction_requires_candidate_file(tmp_path):
         "approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
         correction="small", reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review-missing-file",
-        independence_attestation="independent",
     )
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"][0]["rule"] == "small_correction_file_required"

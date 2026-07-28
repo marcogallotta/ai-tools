@@ -217,9 +217,11 @@ def _write_document(conn, backend, op, live, document, *, schema=None, authoriza
         raise
 
 
-def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, file_path: str, reviewed_identity: str, semantic_review_complete: bool, provenance_complete: bool, run_id: str | None = None, independence_attestation: str | None = None, schema=None):
+def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, file_path: str, reviewed_identity: str, semantic_review_complete: bool, provenance_complete: bool, run_id: str | None = None, schema=None):
     op, cycle = _rows(conn, operation_id)
-    assert_verifier_authority(cycle, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
+    inherited_attestation = assert_verifier_authority(
+        cycle, agent=agent, run_id=run_id
+    )
     if not semantic_review_complete or not provenance_complete:
         raise DishRuleError("VALIDATION_FAILED", "semantic self-review and provenance completion are required", rule="verification_inputs_incomplete")
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
@@ -258,7 +260,7 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     intended_identity = content_identity(intended_title, intended_notes).digest
     declare_operation_step(conn, operation_id, "small_corrected_write", {"title": intended_title, "notes": intended_notes, "identity": intended_identity})
     declare_operation_step(conn, operation_id, "small_review_binding", {"cycle_id": cycle["cycle_id"], "identity": intended_identity})
-    declare_operation_step(conn, operation_id, "small_signoff", {"cycle_id": cycle["cycle_id"], "agent": agent, "run_id": run_id, "independence_attestation": independence_attestation})
+    declare_operation_step(conn, operation_id, "small_signoff", {"cycle_id": cycle["cycle_id"], "agent": agent, "run_id": run_id, "independence_attestation": inherited_attestation})
     confirmed = _write_document(conn, backend, op, live, corrected, schema=schema, authorization_ids=authorization_ids)
     complete_operation_step(conn, operation_id, "small_corrected_write")
     bind_cycle_review(
@@ -266,7 +268,7 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
         task_gid=op["task_gid"], identity=confirmed.identity, correction_class="small",
     )
     complete_operation_step(conn, operation_id, "small_review_binding")
-    result = approve_live(conn, backend, operation_id=operation_id, agent=agent, model=model, reviewed_identity=confirmed.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=run_id, independence_attestation=independence_attestation, schema=schema)
+    result = approve_live(conn, backend, operation_id=operation_id, agent=agent, model=model, reviewed_identity=confirmed.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=run_id, schema=schema)
     complete_operation_step(conn, operation_id, "small_signoff")
     return result
 

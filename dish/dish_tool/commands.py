@@ -655,7 +655,6 @@ def _step7_approve(
     semantic_review_complete: bool = False,
     provenance_complete: bool = False,
     run_id: str | None = None,
-    independence_attestation: str | None = None,
 ) -> dict[str, Any]:
     from .step7 import approve_live
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
@@ -670,9 +669,6 @@ def _step7_approve(
         )
     if routed.generation == "missing":
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
-    clean_attestation = validate_independence_attestation(
-        independence_attestation
-    )
     trace.validation_scope = scope_for_command("approve")
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
@@ -687,7 +683,7 @@ def _step7_approve(
             provenance_complete=provenance_complete,
             correction_class=correction,
             run_id=run_id,
-            independence_attestation=clean_attestation, schema=release.schema,
+            schema=release.schema,
         ),
         schema=release.schema,
     )
@@ -705,7 +701,7 @@ def _step7_approve(
 # Step 8 protocol-native rejection routes and Small same-pass correction.
 _step7_command_approve = _step7_approve
 
-def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, file_path: str | None = None, correction: str = "none", reviewed_identity: str | None = None, semantic_review_complete: bool = False, provenance_complete: bool = False, run_id: str | None = None, independence_attestation: str | None = None) -> dict[str, Any]:
+def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, file_path: str | None = None, correction: str = "none", reviewed_identity: str | None = None, semantic_review_complete: bool = False, provenance_complete: bool = False, run_id: str | None = None) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     if exists is not None and correction == "small" and not file_path:
@@ -721,17 +717,14 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None =
             rule="approval_file_unexpected",
         )
     if exists is None or correction != "small":
-        return _step7_command_approve(self, trace=trace, agent=agent, model=model, submission_id=submission_id, file_path=file_path, correction=correction, reviewed_identity=reviewed_identity, semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation)
-    clean_attestation = validate_independence_attestation(
-        independence_attestation
-    )
+        return _step7_command_approve(self, trace=trace, agent=agent, model=model, submission_id=submission_id, file_path=file_path, correction=correction, reviewed_identity=reviewed_identity, semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id)
     trace.validation_scope = scope_for_command("approve")
     from .step8 import approve_small
     release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
     data, view = self.operation_service.current.approve(
         operation_id,
-        lambda: approve_small(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, file_path=file_path, reviewed_identity=_clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity"), semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=clean_attestation, schema=release.schema),
+        lambda: approve_small(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, file_path=file_path, reviewed_identity=_clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity"), semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, schema=release.schema),
         schema=release.schema,
     )
     trace.state = view["status"]

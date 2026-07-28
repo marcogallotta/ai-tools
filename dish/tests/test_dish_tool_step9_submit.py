@@ -19,7 +19,6 @@ def _signed(tmp_path):
         "approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="submit-review",
-        independence_attestation="independent",
     )
     assert approved["ok"]
     return app, backend, operation_id

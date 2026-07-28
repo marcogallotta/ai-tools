@@ -29,7 +29,6 @@ def test_small_cannot_self_authorize_lock_change(tmp_path):
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="small",
         file_path=str(candidate), reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review",
-        independence_attestation="independent",
     )
     assert result["code"] == "VALIDATION_FAILED"
     assert result["errors"][0]["rule"] in {"small_correction_scope", "governed_change_unauthorized", "large_correction_required"}

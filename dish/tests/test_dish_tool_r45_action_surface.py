@@ -385,7 +385,8 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     assert "independence_attestation" in start_variants["verification"]["required"]
 
     approve = spec["paths"]["/v1/action/approve"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
-    assert "independence_attestation" in approve["required"]
+    assert "independence_attestation" not in approve["required"]
+    assert "independence_attestation" not in approve["properties"]
 
     prepare = spec["paths"]["/v1/action/prepare"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     assert "no_blockers" not in prepare.get("properties", {})

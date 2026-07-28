@@ -331,13 +331,21 @@ def replay_verification_read(
         ),
     }
 
+_INHERIT_ATTESTATION = object()
+
+
 def assert_verifier_authority(
-    cycle, *, agent: str, run_id: str | None, independence_attestation: str | None
-) -> None:
-    """Require the decision caller to match the exact persisted verifier proof."""
-    supplied_attestation = validate_independence_attestation(
-        independence_attestation
-    )
+    cycle,
+    *,
+    agent: str,
+    run_id: str | None,
+    independence_attestation: str | None | object = _INHERIT_ATTESTATION,
+) -> str:
+    """Require the decision caller to match the persisted verifier agent and run.
+
+    The attestation is authoritative only at Verification start. Decision calls
+    inherit the exact persisted value rather than asking the caller to repeat it.
+    """
     if cycle["verifier_agent"] != agent:
         raise DishRuleError(
             "AGENT_MISMATCH", "command agent is not the recorded verifier",
@@ -345,23 +353,31 @@ def assert_verifier_authority(
         )
     recorded_run = str(cycle["run_id"] or "").strip()
     supplied_run = str(run_id or "").strip()
-    recorded_attestation = str(cycle["independence_attestation"] or "").strip()
-    if (
-        not recorded_run
-        or supplied_run != recorded_run
-        or supplied_attestation != recorded_attestation
-    ):
+    if not recorded_run or supplied_run != recorded_run:
         raise DishRuleError(
             "AGENT_MISMATCH",
-            "decision caller does not match the exact recorded verifier proof",
+            "decision caller does not match the recorded verifier run",
             rule="verifier_proof_mismatch",
-            details={
-                "run_id_matches": supplied_run == recorded_run,
-                "independence_attestation_matches": (
-                    supplied_attestation == recorded_attestation
-                ),
-            },
+            details={"run_id_matches": supplied_run == recorded_run},
         )
+    recorded_attestation = validate_independence_attestation(
+        cycle["independence_attestation"]
+    )
+    if independence_attestation is not _INHERIT_ATTESTATION:
+        supplied_attestation = validate_independence_attestation(
+            independence_attestation
+        )
+        if supplied_attestation != recorded_attestation:
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "decision caller does not match the exact recorded verifier proof",
+                rule="verifier_proof_mismatch",
+                details={
+                    "run_id_matches": True,
+                    "independence_attestation_matches": False,
+                },
+            )
+    return recorded_attestation
 
 def approve_live(
     conn: sqlite3.Connection,
@@ -375,13 +391,11 @@ def approve_live(
     provenance_complete: bool,
     correction_class: str,
     run_id: str | None = None,
-    independence_attestation: str | None = None,
     schema: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     op, cycle = _operation_and_cycle(conn, operation_id)
-    assert_verifier_authority(
+    inherited_attestation = assert_verifier_authority(
         cycle, agent=agent, run_id=run_id,
-        independence_attestation=independence_attestation,
     )
     if not semantic_review_complete or not provenance_complete:
         raise DishRuleError("VALIDATION_FAILED", "explicit semantic self-review and provenance completion are required", rule="verification_inputs_incomplete")
@@ -456,6 +470,6 @@ def approve_live(
         governed_kind="decision",
         before_state={"outcome": None, "reviewed_identity": persisted_reviewed, "status": "pending-verification"},
         after_state={"outcome": "approved", "signed_identity": confirmed.identity, "status": "ready"},
-        actor_run_id=run_id, actor_attestation=independence_attestation,
+        actor_run_id=run_id, actor_attestation=inherited_attestation,
     )
     return {"operation_id": operation_id, "cycle_id": cycle["cycle_id"], "signed_identity": confirmed.identity, "task": dataclasses.asdict(confirmed)}

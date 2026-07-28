@@ -18,7 +18,6 @@ def test_approval_phase_response_and_inspect_agree(tmp_path):
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
         provenance_complete=True, run_id="review",
-        independence_attestation="independent",
     )
     assert approved["allowed_actions"] == ["submit"]
     row = app.conn.execute("SELECT status, phase FROM operations WHERE operation_id=?", (operation_id,)).fetchone()

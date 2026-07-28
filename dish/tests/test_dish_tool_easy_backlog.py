@@ -49,7 +49,7 @@ def test_verification_start_rejects_blank_attestation_before_mutation(
     ).fetchone()[0] == 0
 
 
-def test_approve_rejects_blank_attestation_then_accepts_corrected_call(tmp_path):
+def test_approve_rejects_attestation_argument_then_inherits_start_value(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
     review = app.execute(
         "start",
@@ -73,12 +73,12 @@ def test_approve_rejects_blank_attestation_then_accepts_corrected_call(tmp_path)
         semantic_review_complete=True,
         provenance_complete=True,
         run_id="approve-attestation",
-        independence_attestation=" ",
+        independence_attestation=ATTESTATION,
     )
     assert rejected["code"] == "INVALID_ARGUMENT"
-    assert rejected["retryable"] is True
+    assert rejected["retryable"] is False
     assert rejected["errors"][0] == {
-        "rule": "independence_attestation_required",
+        "rule": "argument_unexpected",
         "field": "independence_attestation",
     }
 
@@ -92,9 +92,19 @@ def test_approve_rejects_blank_attestation_then_accepts_corrected_call(tmp_path)
         semantic_review_complete=True,
         provenance_complete=True,
         run_id="approve-attestation",
-        independence_attestation=ATTESTATION,
     )
     assert corrected["ok"]
+    audit = app.conn.execute(
+        "SELECT actor_provenance FROM audit_events "
+        "WHERE operation_id=? AND event_type='verification.approved'",
+        (operation_id,),
+    ).fetchone()
+    assert json.loads(audit["actor_provenance"]) == {
+        "agent": "codex",
+        "independence_attestation": ATTESTATION,
+        "run_id": "approve-attestation",
+        "source": "command",
+    }
 
 
 def test_large_reject_rejects_blank_attestation_then_accepts_corrected_call(tmp_path):
@@ -238,7 +248,6 @@ def test_quantity_forced_verification_is_audited_large_through_approval(tmp_path
         semantic_review_complete=True,
         provenance_complete=True,
         run_id="quantity-review",
-        independence_attestation=ATTESTATION,
     )
     assert approved["ok"]
     verified_line = next(

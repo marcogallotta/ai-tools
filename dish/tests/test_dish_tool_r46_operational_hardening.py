@@ -102,7 +102,6 @@ def _approved(service: DishService):
             "semantic_review_complete": True,
             "provenance_complete": True,
             "run_id": "verifier-run",
-            "independence_attestation": "independent",
         },
         principal=verifier,
     )

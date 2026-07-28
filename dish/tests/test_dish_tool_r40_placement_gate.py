@@ -122,7 +122,6 @@ def test_real_sdk_full_placement_lifecycle(tmp_path, sdk_backend):
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=research["submission_id"], correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
         provenance_complete=True, run_id="verify-run",
-        independence_attestation="independent",
     )
     assert approved["ok"]
     inspected = app.execute("inspect", agent="gpt", submission_id=research["submission_id"])

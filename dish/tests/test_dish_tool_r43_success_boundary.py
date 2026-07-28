@@ -36,7 +36,6 @@ def test_post_success_view_failure_preserves_approval_success(monkeypatch, tmp_p
         "approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
         correction="none", reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review",
-        independence_attestation="independent",
     )
     assert result["ok"]
     assert result["allowed_actions"] == []

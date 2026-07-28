@@ -181,7 +181,6 @@ def test_fresh_verifier_run_persists_through_approve_and_submit(tmp_path):
             "reviewed_identity": review["data"]["reviewed_identity"],
             "semantic_review_complete": True,
             "provenance_complete": True,
-            "independence_attestation": "independent",
         },
         principal=verifier,
     )

@@ -21,7 +21,6 @@ def _approve(app, operation_id: str) -> None:
         semantic_review_complete=True,
         provenance_complete=True,
         run_id="review",
-        independence_attestation="independent",
     )
     assert approved["ok"]
 

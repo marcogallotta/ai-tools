@@ -123,7 +123,6 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "reviewed_identity",
             "semantic_review_complete",
             "provenance_complete",
-            "independence_attestation",
         ],
         "properties": {
             "submission_id": dict(DISH_UUID_SCHEMA),
@@ -134,7 +133,6 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "reviewed_identity": {"type": "string"},
             "semantic_review_complete": {"type": "boolean"},
             "provenance_complete": {"type": "boolean"},
-            "independence_attestation": {"type": "string"},
         },
     },
     "reject": {

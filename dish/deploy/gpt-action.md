@@ -59,9 +59,9 @@ Add an operating instruction with all of these requirements:
 - Independent Verification requires that run ID to differ from the run that constructed or last
   materially edited the candidate. A new operation ID, cycle ID, actor/model identity, or
   `independence_attestation` does not establish independence. A non-blank attestation is required as
-  supplementary audit context for Verification start and the decision routes that accept it, but it
-  cannot replace `client.run_id`. Evidence and Human Review rejection routes inherit the persisted
-  start attestation.
+  supplementary audit context for Verification start and Large rejection, but it cannot replace
+  `client.run_id`. Approval, Evidence rejection, and Human Review rejection inherit the exact
+  persisted start attestation and do not accept the field.
 - Follow only the returned `allowed_actions`. A completed cross-stage handoff names `start` plus
   `data.required_start_kind`; pass that exact value as `arguments.kind` and do not reopen the terminal
   prior operation. In particular, Planning → Research returns `required_start_kind: initial`: call

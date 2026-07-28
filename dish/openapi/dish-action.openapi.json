@@ -674,8 +674,7 @@
                       "correction",
                       "reviewed_identity",
                       "semantic_review_complete",
-                      "provenance_complete",
-                      "independence_attestation"
+                      "provenance_complete"
                     ],
                     "properties": {
                       "submission_id": {
@@ -712,9 +711,6 @@
                       },
                       "provenance_complete": {
                         "type": "boolean"
-                      },
-                      "independence_attestation": {
-                        "type": "string"
                       }
                     },
                     "type": "object",

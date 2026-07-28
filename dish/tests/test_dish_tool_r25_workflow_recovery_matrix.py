@@ -34,7 +34,6 @@ def test_approval_crash_after_signoff_recovers_await_submission(tmp_path, monkey
         semantic_review_complete=True,
         provenance_complete=True,
         run_id="review",
-        independence_attestation="independent",
     )
     assert result["code"] == "BACKEND_UNCERTAIN"
     assert result["retryable"] is False

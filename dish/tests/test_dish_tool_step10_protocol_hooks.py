@@ -21,7 +21,6 @@ def test_structural_pass_does_not_replace_verifier_semantic_attestation(tmp_path
         semantic_review_complete=False,
         provenance_complete=True,
         run_id="protocol-hook-review",
-        independence_attestation="independent",
     )
 
     assert not result["ok"]

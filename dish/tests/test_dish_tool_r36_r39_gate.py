@@ -85,7 +85,7 @@ def test_completed_evidence_and_consumed_authorization_are_immutable(tmp_path):
     assert inspected["ok"]
     approved = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
-        provenance_complete=True, run_id="verify-run", independence_attestation="independent")
+        provenance_complete=True, run_id="verify-run")
     assert approved["ok"]
     cycle = app.conn.execute("SELECT * FROM verification_cycles WHERE operation_id=? AND outcome='approved'", (operation_id,)).fetchone()
     attempt = app.conn.execute("SELECT * FROM write_attempts WHERE operation_id=? AND outcome='confirmed' ORDER BY started_at DESC LIMIT 1", (operation_id,)).fetchone()
@@ -121,7 +121,7 @@ def test_audit_repair_fallback_is_imported_and_completed(monkeypatch, tmp_path):
     monkeypatch.setattr(invocation_audit, "record_command_audit_repair", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("repair insert down")))
     result = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
-        provenance_complete=True, run_id="verify-run", independence_attestation="independent")
+        provenance_complete=True, run_id="verify-run")
     assert result["ok"]
     assert result["data"]["audit_repair_required"] is True
     assert result["data"]["audit_repair_persisted_in_database"] is False
@@ -214,7 +214,7 @@ def test_completed_persistence_evidence_is_fully_immutable(tmp_path):
     assert inspected["ok"]
     approved = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
-        provenance_complete=True, run_id="verify-run", independence_attestation="independent")
+        provenance_complete=True, run_id="verify-run")
     assert approved["ok"]
     submitted = app.execute("submit", submission_id=operation_id)
     assert submitted["ok"]
