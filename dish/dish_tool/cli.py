@@ -188,7 +188,15 @@ def build_parser() -> JsonArgumentParser:
     prepare.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
     prepare.add_argument("--model", required=True)
     prepare.add_argument("--file", dest="file_path", required=True)
-    prepare.add_argument("--material-classification", choices=("material", "non-material"))
+    prepare.add_argument(
+        "--material-classification",
+        choices=("material", "non-material"),
+        help=(
+            "required only for a post-signoff change that alters the canonical body: "
+            "classify that exact diff; Dish may force non-material to material when a "
+            "protocol-defined material path changed"
+        ),
+    )
 
     approve = subparsers.add_parser(
         "approve",

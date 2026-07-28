@@ -94,7 +94,7 @@ def test_service_restart_preserves_open_operation(tmp_path):
     )
     assert inspected["ok"]
     assert inspected["submission_id"] == started["submission_id"]
-    assert inspected["allowed_actions"] == ["prepare"]
+    assert inspected["allowed_actions"] == ["prepare", "reject"]
 
 
 def test_compatibility_failure_blocks_mutation_before_backend_write(tmp_path):
