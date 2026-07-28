@@ -58,9 +58,11 @@ rejected, `allowed_actions` reports the currently legal exposed continuation whe
 retryable candidate-validation failure therefore keeps the same corrective command available.
 Fresh bare tasks created by `create` report `data.required_start_kind: planning`. An Asana-completed
 bare task cannot start Planning directly: `start --kind planning` returns
-`planning_completed_task_reopen_required`, `data.required_admin_action: reopen-planning`, and
-`data.resolver: Marco/admin reopen-planning`. Marco's private `reopen-planning` command is the only
-route that clears the completion flag; it preserves exact
+`planning_completed_task_reopen_required`, `data.required_admin_action: reopen-planning`,
+`data.resolver: Marco/admin reopen-planning`, and `data.legal_next_step` directing Marco/admin to
+run that audited command with a reason and, only after success, directing the agent to retry
+`start` with `kind=planning` and a fresh `client.request_id`. Marco's private `reopen-planning`
+command is the only route that clears the completion flag; it preserves exact
 content and placement, persists a completion-state attempt, and records both domain and invocation
 audits before exposing `start` again. A completed cross-stage handoff reports `start` and the required
 start kind even though the old operation itself is terminal. Verification `start` exposes only `inspect` after the review binding is complete. The exact

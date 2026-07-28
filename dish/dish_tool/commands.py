@@ -181,7 +181,7 @@ class DishApplication:
                 })
             if exc.code == "BACKEND_UNCERTAIN" and exc.details.get("execution_id"):
                 result.setdefault("data", {}).update(exc.details)
-            for key in ("required_admin_action", "resolver"):
+            for key in ("required_admin_action", "resolver", "legal_next_step"):
                 if exc.details.get(key):
                     result.setdefault("data", {})[key] = exc.details[key]
             if trace.submission_id:
@@ -462,6 +462,10 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
                 details={
                     "required_admin_action": "reopen-planning",
                     "resolver": _admin_resolver("reopen-planning"),
+                    "legal_next_step": (
+                        "Marco/admin runs reopen-planning with a reason; after it succeeds, "
+                        "retry start with kind=planning using a fresh client.request_id"
+                    ),
                 },
             )
         if live.notes:

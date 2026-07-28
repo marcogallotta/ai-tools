@@ -89,6 +89,24 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                             "A planning-to-research handoff always requires kind=initial."
                         ),
                     },
+                    "required_admin_action": {
+                        "type": "string",
+                        "description": (
+                            "Exact private administrative Action required before the agent workflow "
+                            "may continue. It is not exposed in allowed_actions."
+                        ),
+                    },
+                    "resolver": {
+                        "type": "string",
+                        "description": "Required private Marco resolver for an administrative continuation.",
+                    },
+                    "legal_next_step": {
+                        "type": "string",
+                        "description": (
+                            "Exact legal continuation after a blocked agent mutation, including the "
+                            "private resolver and the fresh follow-up Action when applicable."
+                        ),
+                    },
                     "material_classification": {
                         "type": ["object", "null"],
                         "description": (

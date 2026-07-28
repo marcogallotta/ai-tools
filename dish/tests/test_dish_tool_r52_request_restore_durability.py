@@ -371,6 +371,10 @@ def test_completed_planning_reopen_is_marco_only_audited_and_request_replayed(tm
     assert blocked["code"] == "WRONG_STATE"
     assert blocked["data"]["required_admin_action"] == "reopen-planning"
     assert blocked["data"]["resolver"] == "Marco/admin reopen-planning"
+    assert blocked["data"]["legal_next_step"] == (
+        "Marco/admin runs reopen-planning with a reason; after it succeeds, "
+        "retry start with kind=planning using a fresh client.request_id"
+    )
 
     marco = ServicePrincipal(owner_id="admin", run_id="marco-run")
     request_id = "55555555-5555-4555-8555-555555555555"
