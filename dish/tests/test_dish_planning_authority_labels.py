@@ -105,3 +105,69 @@ def test_zero_width_space_duplicate_fails_before_planning_write(tmp_path):
     assert result["errors"][0]["rule"] == "planning_field_duplicate"
     assert backend.writes == 0
     assert backend.moves == 0
+
+
+def test_case_variant_process_subheading_reports_direct_canonical_diagnostic():
+    from tests.test_dish_tool_step2_canonical import TASK
+    from dish_tool.task_document import parse_task_document
+
+    candidate = TASK.replace("### Research basis", "### Research Basis")
+    with pytest.raises(DocumentParseError) as exc:
+        parse_task_document(candidate)
+    assert exc.value.rule == "process_subheading_noncanonical"
+    assert exc.value.details == {
+        "heading": "### Research Basis",
+        "canonical_heading": "### Research basis",
+        "line": candidate.splitlines().index("### Research Basis") + 1,
+    }
+
+
+def test_case_variant_process_subheading_is_detected_as_duplicate():
+    from tests.test_dish_tool_step2_canonical import TASK
+    from dish_tool.task_document import parse_task_document
+
+    candidate = TASK.replace(
+        "### Research basis",
+        "### Research basis\n### Research Basis",
+    )
+    with pytest.raises(DocumentParseError) as exc:
+        parse_task_document(candidate)
+    assert exc.value.rule == "process_subheading_duplicate"
+    assert exc.value.details == {
+        "heading": "### Research basis",
+        "occurrences": 2,
+        "lines": [
+            candidate.splitlines().index("### Research basis") + 1,
+            candidate.splitlines().index("### Research Basis") + 1,
+        ],
+    }
+
+
+def test_case_variant_top_level_heading_reports_direct_diagnostic():
+    from tests.test_dish_tool_step2_canonical import TASK
+    from dish_tool.task_document import parse_task_document
+
+    candidate = TASK.replace("## QUANTITIES", "## quantities")
+    with pytest.raises(DocumentParseError) as exc:
+        parse_task_document(candidate)
+    assert exc.value.rule == "section_heading_noncanonical"
+    assert exc.value.details == {
+        "heading": "## quantities",
+        "canonical_heading": "## QUANTITIES",
+        "line": candidate.splitlines().index("## quantities") + 1,
+    }
+
+
+def test_case_variant_process_heading_reports_direct_diagnostic():
+    from tests.test_dish_tool_step2_canonical import TASK
+    from dish_tool.task_document import parse_task_document
+
+    candidate = TASK.replace("## PROCESS RECORD", "## Process Record")
+    with pytest.raises(DocumentParseError) as exc:
+        parse_task_document(candidate)
+    assert exc.value.rule == "process_heading_noncanonical"
+    assert exc.value.details == {
+        "heading": "## Process Record",
+        "canonical_heading": "## PROCESS RECORD",
+        "line": candidate.splitlines().index("## Process Record") + 1,
+    }

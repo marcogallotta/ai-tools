@@ -22,6 +22,17 @@ REQUIRED_SECTIONS = (
 OPTIONAL_SECTIONS = ("WHY COOK IT", "CHECK BEFORE COOKING", "WATCH OUT FOR", "STORAGE")
 SECTION_ORDER = ("WHY COOK IT", "WHAT TO BUY", "CHECK BEFORE COOKING", "QUANTITIES", "HOW TO COOK IT", "WHAT SUCCESS LOOKS LIKE", "WATCH OUT FOR", "STORAGE")
 ALLOWED_SECTIONS = frozenset(SECTION_ORDER)
+TOP_LEVEL_HEADINGS = tuple(
+    name if name == "WHY COOK IT" else f"## {name}"
+    for name in SECTION_ORDER
+)
+PROCESS_HEADING = "## PROCESS RECORD"
+PROCESS_SUBHEADINGS = (
+    "### Planning brief",
+    "### Decisions",
+    "### Research basis",
+    "### Material changes",
+)
 ALLOWED_STATUSES = frozenset(
     {"pending-research", "pending-evidence", "pending-human-review", "pending-verification", "ready"}
 )
@@ -241,6 +252,89 @@ def _field_label_errors(
     return errors
 
 
+def _canonical_authority_heading(
+    heading: str, canonical_headings: Sequence[str]
+) -> str | None:
+    normalized = _normalized_authority_label(heading)
+    return next(
+        (
+            canonical
+            for canonical in canonical_headings
+            if _normalized_authority_label(canonical) == normalized
+        ),
+        None,
+    )
+
+
+def _heading_occurrences(
+    lines: Sequence[str],
+    canonical_headings: Sequence[str],
+    *,
+    line_numbers: Sequence[int],
+) -> dict[str, list[int]]:
+    occurrences: dict[str, list[int]] = {}
+    for line, line_number in zip(lines, line_numbers):
+        canonical = _canonical_authority_heading(line, canonical_headings)
+        if canonical is not None:
+            occurrences.setdefault(canonical, []).append(line_number)
+    return occurrences
+
+
+def _noncanonical_heading_errors(
+    lines: Sequence[str], separator: int
+) -> list[dict[str, object]]:
+    errors: list[dict[str, object]] = []
+
+    for line_number, line in enumerate(lines[2:separator], start=3):
+        canonical = _canonical_authority_heading(line, TOP_LEVEL_HEADINGS)
+        if canonical is None or line == canonical:
+            continue
+        errors.append(
+            {
+                "rule": "section_heading_noncanonical",
+                "heading": line,
+                "canonical_heading": canonical,
+                "line": line_number,
+                "message": (
+                    f"non-canonical section heading {line}; use {canonical}"
+                ),
+            }
+        )
+
+    if separator + 1 < len(lines):
+        line = lines[separator + 1]
+        canonical = _canonical_authority_heading(line, (PROCESS_HEADING,))
+        if canonical is not None and line != canonical:
+            errors.append(
+                {
+                    "rule": "process_heading_noncanonical",
+                    "heading": line,
+                    "canonical_heading": canonical,
+                    "line": separator + 2,
+                    "message": (
+                        f"non-canonical process heading {line}; use {canonical}"
+                    ),
+                }
+            )
+
+    for line_number, line in enumerate(lines[separator + 2 :], start=separator + 3):
+        canonical = _canonical_authority_heading(line, PROCESS_SUBHEADINGS)
+        if canonical is None or line == canonical:
+            continue
+        errors.append(
+            {
+                "rule": "process_subheading_noncanonical",
+                "heading": line,
+                "canonical_heading": canonical,
+                "line": line_number,
+                "message": (
+                    f"non-canonical process subheading {line}; use {canonical}"
+                ),
+            }
+        )
+    return errors
+
+
 def _duplicate_field_errors(
     lines: Sequence[str],
     names: Sequence[str],
@@ -369,29 +463,47 @@ def document_shape(notes: str) -> str:
 def _canonical_duplicate_errors(
     lines: Sequence[str], separator: int
 ) -> list[dict[str, object]]:
-    section_positions: dict[str, list[int]] = {}
-    for index in range(2, separator):
-        line = lines[index]
-        heading = None
-        if line == "WHY COOK IT":
-            heading = line
-        elif line.startswith("## "):
-            heading = line[3:]
-        if heading in ALLOWED_SECTIONS:
-            section_positions.setdefault(heading, []).append(index + 1)
+    section_positions = _heading_occurrences(
+        lines[2:separator],
+        TOP_LEVEL_HEADINGS,
+        line_numbers=list(range(3, separator + 1)),
+    )
     errors: list[dict[str, object]] = [
         {
             "rule": "section_duplicate",
-            "heading": heading,
+            "heading": (
+                canonical
+                if canonical == "WHY COOK IT"
+                else canonical[3:]
+            ),
             "occurrences": len(positions),
             "lines": positions,
-            "message": f"duplicate section {heading}",
+            "message": (
+                "duplicate section "
+                + (canonical if canonical == "WHY COOK IT" else canonical[3:])
+            ),
         }
-        for heading in SECTION_ORDER
-        if len(positions := section_positions.get(heading, [])) > 1
+        for canonical in TOP_LEVEL_HEADINGS
+        if len(positions := section_positions.get(canonical, [])) > 1
     ]
 
     process_start = separator + 2
+    subheading_positions = _heading_occurrences(
+        lines[process_start:],
+        PROCESS_SUBHEADINGS,
+        line_numbers=list(range(process_start + 1, len(lines) + 1)),
+    )
+    errors.extend(
+        {
+            "rule": "process_subheading_duplicate",
+            "heading": heading,
+            "occurrences": len(positions),
+            "lines": positions,
+            "message": f"duplicate process subheading {heading}",
+        }
+        for heading in PROCESS_SUBHEADINGS
+        if len(positions := subheading_positions.get(heading, [])) > 1
+    )
     try:
         planning_at = lines.index("### Planning brief", process_start)
     except ValueError:
@@ -449,8 +561,6 @@ def parse_task_document(text: str) -> CanonicalTaskDocument:
     if "---" not in lines:
         raise DocumentParseError("process_separator_missing", "missing process-record separator")
     separator = lines.index("---")
-    if separator + 1 >= len(lines) or lines[separator + 1] != "## PROCESS RECORD":
-        raise DocumentParseError("process_heading_missing", "separator must be followed by PROCESS RECORD")
 
     duplicate_errors = _canonical_duplicate_errors(lines, separator)
     if duplicate_errors:
@@ -465,6 +575,23 @@ def parse_task_document(text: str) -> CanonicalTaskDocument:
             },
             errors=duplicate_errors,
         )
+
+    heading_errors = _noncanonical_heading_errors(lines, separator)
+    if heading_errors:
+        first = heading_errors[0]
+        raise DocumentParseError(
+            str(first["rule"]),
+            str(first["message"]),
+            details={
+                key: value
+                for key, value in first.items()
+                if key not in {"rule", "message"}
+            },
+            errors=heading_errors,
+        )
+
+    if separator + 1 >= len(lines) or lines[separator + 1] != PROCESS_HEADING:
+        raise DocumentParseError("process_heading_missing", "separator must be followed by PROCESS RECORD")
 
     title, recognition = lines[0], lines[1]
     body_lines = lines[2:separator]
