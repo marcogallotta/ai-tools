@@ -183,6 +183,15 @@ def test_checked_in_contract_documents_current_access_and_rollout():
     assert "one laptop-hosted `dish-service` process" in runtime
     assert "Planning's read-only lookup" in runtime
     assert "There is intentionally no general-purpose `unblock`" in runtime
+    for mutation in (
+        "`create`", "`start`", "`prepare`", "`approve`", "`reject`", "`submit`",
+        "`migrate`", "`reopen`", "`recover`", "`repair-destination`",
+        "`supply-evidence`", "`record-human-decision`",
+        "`authorize-governed-change`", "`discard`", "`recover-lease`",
+        "`backup-create`", "`backup-restore`",
+    ):
+        assert mutation in runtime
+    assert "No mutation endpoint is exempt from request identity" in runtime
     assert "DISH_LIVE_MODE=1" in runtime and "DISH_MODE=service" in runtime
     assert "Action listener, intended for Tailscale Funnel" in runtime
     assert "does not itself authorize production activation" in readme
