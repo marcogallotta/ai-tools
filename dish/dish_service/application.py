@@ -864,6 +864,12 @@ class DishService:
                     if not operation_id:
                         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
                     operation = self._operation_row(conn, operation_id)
+                    if operation is None:
+                        raise DishRuleError(
+                            "NOT_FOUND",
+                            "operation not found",
+                            rule="operation_not_found",
+                        )
                     completed_submit = bool(
                         command == "submit"
                         and operation is not None

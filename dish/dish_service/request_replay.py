@@ -86,7 +86,11 @@ def complete_request(
     encoded = json.dumps(dict(result), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     conn.execute(
         """UPDATE service_requests
-              SET status=?, operation_id=?, task_gid=?, result_json=?, completed_at=?
+              SET status=?,
+                  operation_id=(
+                      SELECT operation_id FROM operations WHERE operation_id=?
+                  ),
+                  task_gid=?, result_json=?, completed_at=?
             WHERE request_id=? AND status='pending'""",
         (
             status,
