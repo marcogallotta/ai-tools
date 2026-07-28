@@ -17,6 +17,7 @@ class WorkflowSnapshot:
     latest_cycle_outcome: str | None
     latest_cycle_route: str | None
     validation_rules: tuple[str, ...]
+    operation_kind: str = ""
     pending_steps: tuple[str, ...] = ()
     unresolved_attempts: tuple[str, ...] = ()
     migration_reconciliation_required: bool = False
@@ -25,6 +26,8 @@ class WorkflowSnapshot:
     required_cycle_exists: bool = True
     signoff_bound: bool = True
     held_baseline_matches: bool = True
+    preconstruction_hold: bool = False
+    destination_repair_required: bool = False
 
 
 def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
@@ -42,6 +45,13 @@ def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
         return []
     phase = snapshot.operation_phase
     if phase == "prepare_required":
+        return [
+            action for action in snapshot.persisted_actions
+            if action != "reject" or snapshot.operation_kind == "initial"
+        ]
+    if phase == "held_evidence" and snapshot.preconstruction_hold:
+        return list(snapshot.persisted_actions)
+    if phase == "held_human" and snapshot.preconstruction_hold:
         return list(snapshot.persisted_actions)
     if snapshot.validation_rules:
         return []
@@ -54,9 +64,11 @@ def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
         ):
             return []
         return ["approve", "reject"] if snapshot.cycle_reviewed else ["verify"]
-    if phase == "await_submission":
+    if phase in {"await_submission", "ready_move_failed"}:
         if snapshot.live_status != "ready" or not snapshot.signoff_bound:
             return []
+        if phase == "ready_move_failed":
+            return ["repair-destination"] if snapshot.destination_repair_required else ["submit"]
         return list(snapshot.persisted_actions)
     if phase == "held_evidence":
         if snapshot.live_status != "pending-evidence":

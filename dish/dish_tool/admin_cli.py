@@ -18,8 +18,8 @@ from dish_service.database_ownership import ServiceDatabaseOwnership
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
-_ADMIN_COMMANDS = {"recover", "discard", "migrate", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease", "backup-create", "backup-restore"}
-_OPERATION_ADMIN_COMMANDS = {"recover", "discard", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease"}
+_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "migrate", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease", "backup-create", "backup-restore"}
+_OPERATION_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease"}
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -54,6 +54,15 @@ def build_parser() -> JsonArgumentParser:
         help="record only what the live reread proves; a contradictory outcome fails closed",
     )
     recover.add_argument("--reason", required=True)
+
+    repair_destination = subparsers.add_parser(
+        "repair-destination",
+        help="replace only the approved destination after an unrecoverable final movement failure",
+    )
+    repair_destination.add_argument("submission_id")
+    repair_destination.add_argument("--destination-section-gid", required=True)
+    repair_destination.add_argument("--reason", required=True)
+    repair_destination.add_argument("--run-id")
 
     discard = subparsers.add_parser("discard", help="abandon a stale open operation without applying it")
     discard.add_argument("submission_id")

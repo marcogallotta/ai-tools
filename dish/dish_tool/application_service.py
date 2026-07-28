@@ -1,6 +1,7 @@
 """Transport-neutral authority for current dish workflow operations."""
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from typing import Callable, TypeVar
@@ -91,45 +92,82 @@ class CurrentWorkflowService:
         required_cycle_exists = True
         signoff_bound = True
         held_baseline_matches = True
+        preconstruction_hold = False
+        research_hold = None
+        movement_failure = None
+        destination_repair_required = False
         phase = op["phase"]
         if phase == "await_verification":
             required_cycle_exists = bool(cycle is not None and cycle["completed_at"] is None)
             if cycle_reviewed:
                 required_identity = cycle["reviewed_identity"]
             required_section_gid = registry.verification_queue_gid
-        elif phase == "await_submission":
-            approved = self.conn.execute(
-                """SELECT * FROM verification_cycles
-                     WHERE operation_id=? AND outcome='approved'
-                     ORDER BY completed_at DESC LIMIT 1""",
-                (operation_id,),
-            ).fetchone()
+        elif phase in {"await_submission", "ready_move_failed"}:
+            from .step9 import latest_destination_failure, submission_identity_evidence
+
+            try:
+                identity_evidence = submission_identity_evidence(self.conn, operation_id)
+            except DishRuleError:
+                identity_evidence = None
             signoff_bound = bool(
-                approved is not None
-                and approved["signed_identity"]
-                and approved["signed_content_version_id"]
+                identity_evidence is not None
+                and identity_evidence.get("approved_identity")
+                and identity_evidence.get("approved_cycle_id")
                 and op["signoff_completed_at"] is not None
             )
-            required_identity = None if approved is None else approved["signed_identity"]
+            required_identity = (
+                None if identity_evidence is None
+                else identity_evidence["effective_identity"]
+            )
+            if phase == "ready_move_failed":
+                movement_failure = latest_destination_failure(self.conn, operation_id)
+                destination_repair_required = bool(
+                    movement_failure is not None
+                    and not bool(movement_failure.get("movement_retry_safe"))
+                )
             # Submission deliberately preserves a manual placement or recognises
-            # an already-applied destination move. Exact signed content remains mandatory.
+            # an already-applied destination move. Exact approved-or-repaired
+            # content remains mandatory.
             required_section_gid = None
         elif phase in {"held_evidence", "held_human"}:
-            held = self.conn.execute(
-                """SELECT * FROM verification_cycles
-                     WHERE operation_id=? AND completed_at IS NOT NULL
-                       AND (route IN ('evidence','human_review') OR outcome='two-pass-hold')
-                     ORDER BY cycle_number DESC LIMIT 1""",
+            preconstruction = self.conn.execute(
+                """SELECT intended_json FROM operation_steps
+                     WHERE operation_id=? AND step_name='research_preconstruction_hold'
+                       AND completed_at IS NOT NULL""",
                 (operation_id,),
             ).fetchone()
-            required_cycle_exists = held is not None
-            required_identity = None if held is None else held["hold_identity"]
-            required_section_gid = None if held is None else held["hold_section_gid"]
-            held_baseline_matches = bool(
-                held is not None and held["hold_identity"] and held["hold_section_gid"]
-                and live.identity == held["hold_identity"]
-                and live.section_gid == held["hold_section_gid"]
-            )
+            if (
+                preconstruction is not None
+                and op["operation_kind"] == "initial"
+                and op["content_write_completed_at"] is None
+            ):
+                import json
+
+                preconstruction_hold = True
+                research_hold = json.loads(preconstruction["intended_json"])
+                required_cycle_exists = True
+                required_identity = op["expected_identity"]
+                required_section_gid = op["expected_section_gid"]
+                held_baseline_matches = bool(
+                    live.identity == required_identity
+                    and live.section_gid == required_section_gid
+                )
+            else:
+                held = self.conn.execute(
+                    """SELECT * FROM verification_cycles
+                         WHERE operation_id=? AND completed_at IS NOT NULL
+                           AND (route IN ('evidence','human_review') OR outcome='two-pass-hold')
+                         ORDER BY cycle_number DESC LIMIT 1""",
+                    (operation_id,),
+                ).fetchone()
+                required_cycle_exists = held is not None
+                required_identity = None if held is None else held["hold_identity"]
+                required_section_gid = None if held is None else held["hold_section_gid"]
+                held_baseline_matches = bool(
+                    held is not None and held["hold_identity"] and held["hold_section_gid"]
+                    and live.identity == held["hold_identity"]
+                    and live.section_gid == held["hold_section_gid"]
+                )
         destination_movement = None
         if op["movement_completed_at"] is not None and op["destination_movement_attempt_id"]:
             destination_movement = self.conn.execute(
@@ -165,6 +203,7 @@ class CurrentWorkflowService:
         snapshot = WorkflowSnapshot(
             operation_status=op["status"],
             operation_phase=op["phase"],
+            operation_kind=op["operation_kind"],
             persisted_actions=tuple(self.repository.legal_actions(op)),
             live_status=live_status,
             live_section_gid=live.section_gid,
@@ -181,6 +220,8 @@ class CurrentWorkflowService:
             required_cycle_exists=required_cycle_exists,
             signoff_bound=signoff_bound,
             held_baseline_matches=held_baseline_matches,
+            preconstruction_hold=preconstruction_hold,
+            destination_repair_required=destination_repair_required,
         )
         recovery_reasons: list[str] = []
         if op["status"] == "uncertain":
@@ -208,6 +249,10 @@ class CurrentWorkflowService:
             "required_cycle_exists": required_cycle_exists,
             "signoff_bound": signoff_bound,
             "held_baseline_matches": held_baseline_matches,
+            "preconstruction_hold": preconstruction_hold,
+            "research_hold": research_hold,
+            "movement_failure": movement_failure,
+            "destination_repair_required": destination_repair_required,
             "recovery_required": bool(recovery_reasons),
             "recovery_reasons": recovery_reasons,
         }
@@ -234,7 +279,7 @@ class CurrentWorkflowService:
                 message = "operation requires recovery or migration reconciliation before any ordinary action"
             elif not view.get("identity_matches", True):
                 code = "CONFLICT"
-                if view.get("phase") == "await_submission":
+                if view.get("phase") in {"await_submission", "ready_move_failed"}:
                     rule = "post_signoff_content_drift"
                     message = "live content no longer matches the exact signed candidate"
                 else:
@@ -322,6 +367,9 @@ class CurrentWorkflowService:
 
     def submit(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         return self.mutate(operation_id, "submit", executor, schema=schema)
+
+    def repair_destination(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+        return self.mutate(operation_id, "repair-destination", executor, schema=schema)
 
     def create_task(self, executor: Callable[[], T]) -> T:
         return executor()

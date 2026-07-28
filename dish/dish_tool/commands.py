@@ -29,7 +29,7 @@ _AGENT_EXPOSED_ACTIONS = {
     "sections", "start", "submit",
 }
 _ADMIN_ONLY_ACTIONS = {
-    "record-human-decision", "reopen", "supply-evidence",
+    "record-human-decision", "reopen", "repair-destination", "supply-evidence",
 }
 
 
@@ -94,11 +94,13 @@ class DishApplication:
         *,
         release_loader: Callable[..., ResolvedRelease],
         invocation_run_id: str | None = None,
+        invocation_request_id: str | None = None,
     ) -> None:
         self.conn = conn
         self.backend = backend
         self.release_loader = release_loader
         self.invocation_run_id = str(invocation_run_id or "").strip() or None
+        self.invocation_request_id = str(invocation_request_id or "").strip() or None
         self.operation_service = OperationApplicationService(conn, backend)
         parameters = inspect.signature(release_loader).parameters.values()
         self._release_loader_accepts_role = any(
@@ -668,7 +670,7 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = 
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
     data, view = self.operation_service.current.reject(
         operation_id,
-        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema, honest_root=release.root),
+        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=independence_attestation, request_id=self.invocation_request_id, schema=release.schema, honest_root=release.root),
         schema=release.schema,
     )
     trace.state = view["status"]

@@ -520,7 +520,7 @@ def finalize_confirmed_write_attempt(
                  last_confirmed_content_version_id=excluded.last_confirmed_content_version_id""",
             (task_gid, identity.digest, identity.title, identity.notes, schema_version, now, version_id),
         )
-        conn.execute("UPDATE write_attempts SET outcome='confirmed', finished_at=?, confirmed_content_version_id=? WHERE attempt_id=?", (now, version_id, attempt_id))
+        conn.execute("UPDATE write_attempts SET outcome='confirmed', finished_at=COALESCE(finished_at, ?), confirmed_content_version_id=? WHERE attempt_id=?", (now, version_id, attempt_id))
         conn.execute("UPDATE operations SET content_write_completed_at=COALESCE(content_write_completed_at, ?) WHERE operation_id=?", (now, attempt["operation_id"]))
         context = json.loads(attempt["context_json"] or "{}")
         if attempt["purpose"] == "signoff":
@@ -787,11 +787,12 @@ def inspect_legacy_submissions(conn: sqlite3.Connection, *, task_gid: str | None
 
 
 _OPERATION_PHASE_ACTIONS = {
-    "prepare_required": ("prepare",),
+    "prepare_required": ("prepare", "reject"),
     "await_verification": ("verify", "approve", "reject"),
     "held_evidence": ("supply-evidence",),
     "held_human": ("record-human-decision",),
     "await_submission": ("submit",),
+    "ready_move_failed": ("submit", "repair-destination"),
     "terminal": (),
 }
 

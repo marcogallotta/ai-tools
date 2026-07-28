@@ -173,6 +173,65 @@ def _step8_admin_reopen(self, *, trace: AdminTrace, submission_id: str, category
     return result_envelope(command="reopen", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
 
+# Step 9 Marco-only destination repair after an unrecoverable final movement failure.
+def _step9_admin_repair_destination(
+    self,
+    *,
+    trace: AdminTrace,
+    submission_id: str,
+    destination_section_gid: str,
+    reason: str,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    operation_id = _clean_required(
+        submission_id, rule="operation_id_required", label="operation ID"
+    )
+    row = self.conn.execute(
+        "SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if row is None:
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    if self.backend is None or self.release_loader is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR",
+            "destination repair requires backend and current release",
+            rule="destination_repair_unavailable",
+        )
+    from .step9 import repair_destination_live
+
+    release = self.release_loader()
+    trace.submission_id = operation_id
+    trace.task_gid = row["task_gid"]
+    data, view = self.operation_service.current.repair_destination(
+        operation_id,
+        lambda: repair_destination_live(
+            self.conn,
+            self.backend,
+            operation_id=operation_id,
+            destination_section_gid=destination_section_gid,
+            reason=reason,
+            actor_run_id=run_id,
+            schema=release.schema,
+        ),
+        schema=release.schema,
+    )
+    trace.state = view["status"]
+    trace.audit_details.update({
+        "approved_identity": data.get("approved_identity"),
+        "repaired_identity": data.get("repaired_identity"),
+        "before_destination": data.get("before_destination"),
+        "after_destination": data.get("after_destination"),
+    })
+    return result_envelope(
+        command="repair-destination",
+        task_gid=trace.task_gid,
+        submission_id=operation_id,
+        state=view["status"],
+        allowed_actions=view["legal_actions"],
+        data=data,
+    )
+
+
 # Step 9 live-evidence recovery inspection for operation-backed work.
 def _step9_admin_recover(self, *, trace: AdminTrace, submission_id: str, outcome: str = "inspect", reason: str = "live inspection") -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
@@ -346,6 +405,7 @@ CURRENT_ADMIN_COMMAND_HANDLERS = {
     "migrate": _step5_admin_migrate,
     "reopen": _step8_admin_reopen,
     "recover": _step9_admin_recover,
+    "repair-destination": _step9_admin_repair_destination,
     "supply-evidence": _command_supply_evidence,
     "record-human-decision": _command_record_human_decision,
     "authorize-governed-change": _command_authorize_governed_change,
