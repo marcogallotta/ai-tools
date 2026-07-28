@@ -235,13 +235,23 @@ def _handling_only_change(old: str, new: str) -> bool:
     return True
 
 
+
+def _canonical_title_identity(value: str) -> str:
+    """Compare title identity while ignoring outer space and terminal punctuation."""
+    return re.sub(r"[\s\.!?;:,]+$", "", value.strip())
+
+
 def explicit_material_reasons(before, after) -> tuple[str, ...]:
     """Classify protocol-defined material changes from canonical field ownership."""
     reasons: list[str] = []
     diff = canonical_diff(before, after)
     for path, (old, new) in diff.items():
-        if path in {"title", "recognition", "introduction"}:
-            reasons.append("title_or_identity" if path != "introduction" else "premise")
+        if path in {"title", "recognition"}:
+            if _canonical_title_identity(old) != _canonical_title_identity(new):
+                reasons.append("title_identity" if path == "title" else "title_or_identity")
+            continue
+        if path == "introduction":
+            reasons.append("premise")
             continue
         if path == "decisions":
             reasons.append("decisions")

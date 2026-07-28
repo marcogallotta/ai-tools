@@ -27,6 +27,31 @@ def _review(app, *, run="review", agent="codex"):
     return result
 
 
+
+def test_editorial_recognition_punctuation_remains_non_material():
+    before = _doc()
+    after = _doc(TASK.replace(before.recognition, before.recognition + ","))
+    assert explicit_material_reasons(before, after) == ()
+    require_small_scope(before, after)
+
+
+def test_terminal_title_punctuation_and_outer_space_preserve_identity():
+    before = _doc()
+    lines = TASK.splitlines()
+    lines[0] = f"  {lines[0]}.  "
+    after = _doc("\n".join(lines))
+    assert explicit_material_reasons(before, after) == ()
+    require_small_scope(before, after)
+
+
+def test_internal_title_punctuation_remains_material():
+    before = _doc()
+    lines = TASK.splitlines()
+    lines[0] = lines[0].replace("Test dish", "Test, dish")
+    after = _doc("\n".join(lines))
+    assert "title_identity" in explicit_material_reasons(before, after)
+
+
 def _authorize_dish_candidate(app, backend, operation_id, *, before="Test dish", after="Different dish"):
     admin = DishAdminApplication(
         app.conn, backend=backend,
