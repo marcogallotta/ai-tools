@@ -259,6 +259,7 @@ def test_completed_task_requires_audited_marco_reopen_before_planning(tmp_path):
     assert blocked["code"] == "WRONG_STATE"
     assert blocked["errors"][0]["rule"] == "planning_completed_task_reopen_required"
     assert blocked["data"]["required_admin_action"] == "reopen-planning"
+    assert blocked["data"]["resolver"] == "Marco/admin reopen-planning"
     assert a.conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 0
 
     admin = DishAdminApplication(
