@@ -825,6 +825,62 @@ _OPERATION_PHASE_ACTIONS = {
     "terminal": (),
 }
 
+def resolve_signoff_cycle_for_identity(
+    conn: sqlite3.Connection, *, task_gid: str, identity: str
+) -> sqlite3.Row | None:
+    """Resolve the approved cycle whose signoff still governs an exact task head.
+
+    A directly approved identity is authoritative itself. A completed
+    non-material check-in carries that same cycle forward to its confirmed
+    candidate identity, allowing any number of non-material check-ins without
+    pretending that a later identity was independently re-verified.
+    """
+    direct = conn.execute(
+        """SELECT cycle.*
+             FROM verification_cycles AS cycle
+             JOIN content_versions AS signed
+               ON signed.content_version_id=cycle.signed_content_version_id
+            WHERE cycle.task_gid=? AND cycle.outcome='approved'
+              AND cycle.completed_at IS NOT NULL
+              AND cycle.signed_identity=?
+              AND signed.confirmed=1
+              AND signed.task_gid=cycle.task_gid
+              AND signed.identity=cycle.signed_identity
+            ORDER BY cycle.completed_at DESC LIMIT 1""",
+        (task_gid, identity),
+    ).fetchone()
+    if direct is not None:
+        return direct
+    return conn.execute(
+        """SELECT cycle.*
+             FROM operations AS lineage
+             JOIN write_attempts AS candidate_write
+               ON candidate_write.operation_id=lineage.operation_id
+              AND candidate_write.outcome='confirmed'
+             JOIN content_versions AS candidate
+               ON candidate.content_version_id=candidate_write.confirmed_content_version_id
+             JOIN verification_cycles AS cycle
+               ON cycle.cycle_id=lineage.inherited_signoff_cycle_id
+             JOIN content_versions AS signed
+               ON signed.content_version_id=cycle.signed_content_version_id
+            WHERE lineage.task_gid=?
+              AND lineage.status='completed'
+              AND lineage.terminal_outcome='non_material_checkin'
+              AND candidate_write.intended_identity=?
+              AND candidate.confirmed=1
+              AND candidate.task_gid=lineage.task_gid
+              AND candidate.identity=?
+              AND cycle.task_gid=lineage.task_gid
+              AND cycle.outcome='approved'
+              AND cycle.completed_at IS NOT NULL
+              AND signed.confirmed=1
+              AND signed.task_gid=cycle.task_gid
+              AND signed.identity=cycle.signed_identity
+            ORDER BY lineage.completed_at DESC LIMIT 1""",
+        (task_gid, identity, identity),
+    ).fetchone()
+
+
 def transition_operation(conn: sqlite3.Connection, operation_id: str, *, phase: str, status: str | None = None, terminal_outcome: str | None = None, inherited_signoff_cycle_id: str | None = None) -> sqlite3.Row:
     with atomic_persistence(conn, "operation_transition"):
         row = conn.execute(

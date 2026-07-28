@@ -1340,7 +1340,51 @@ BEFORE DELETE ON operation_executions
 BEGIN SELECT RAISE(ABORT, 'operation executions are append-only'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23}
+_MIGRATION_24 = """
+DROP TRIGGER operations_non_material_signoff_required;
+CREATE TRIGGER operations_non_material_signoff_required
+BEFORE UPDATE ON operations
+WHEN NEW.status='completed' AND NEW.terminal_outcome='non_material_checkin'
+ AND (
+     NEW.inherited_signoff_cycle_id IS NULL
+     OR NOT EXISTS (
+         SELECT 1
+           FROM verification_cycles AS cycle
+           JOIN content_versions AS signed
+             ON signed.content_version_id=cycle.signed_content_version_id
+          WHERE cycle.cycle_id=NEW.inherited_signoff_cycle_id
+            AND cycle.task_gid=NEW.task_gid
+            AND cycle.outcome='approved'
+            AND cycle.completed_at IS NOT NULL
+            AND signed.confirmed=1
+            AND signed.task_gid=NEW.task_gid
+            AND signed.identity=cycle.signed_identity
+            AND (
+                cycle.signed_identity=OLD.expected_identity
+                OR EXISTS (
+                    SELECT 1
+                      FROM operations AS lineage
+                      JOIN write_attempts AS candidate_write
+                        ON candidate_write.operation_id=lineage.operation_id
+                                AND candidate_write.outcome='confirmed'
+                      JOIN content_versions AS candidate
+                        ON candidate.content_version_id=candidate_write.confirmed_content_version_id
+                     WHERE lineage.task_gid=NEW.task_gid
+                       AND lineage.status='completed'
+                       AND lineage.terminal_outcome='non_material_checkin'
+                       AND lineage.inherited_signoff_cycle_id=NEW.inherited_signoff_cycle_id
+                       AND candidate_write.intended_identity=OLD.expected_identity
+                       AND candidate.confirmed=1
+                       AND candidate.task_gid=NEW.task_gid
+                       AND candidate.identity=OLD.expected_identity
+                )
+            )
+     )
+ )
+BEGIN SELECT RAISE(ABORT, 'non-material completion requires exact local signoff lineage'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -1608,12 +1652,34 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                     WHERE cycle.cycle_id=?""",
                 (row["inherited_signoff_cycle_id"],),
             ).fetchone()
+            lineage = conn.execute(
+                """SELECT 1
+                     FROM operations AS prior
+                     JOIN write_attempts AS candidate_write
+                       ON candidate_write.operation_id=prior.operation_id
+                              AND candidate_write.outcome='confirmed'
+                     JOIN content_versions AS candidate
+                       ON candidate.content_version_id=candidate_write.confirmed_content_version_id
+                    WHERE prior.task_gid=?
+                      AND prior.status='completed'
+                      AND prior.terminal_outcome='non_material_checkin'
+                      AND prior.inherited_signoff_cycle_id=?
+                      AND candidate_write.intended_identity=?
+                      AND candidate.confirmed=1
+                      AND candidate.task_gid=?
+                      AND candidate.identity=?
+                    LIMIT 1""",
+                (
+                    row["task_gid"], row["inherited_signoff_cycle_id"],
+                    row["expected_identity"], row["task_gid"], row["expected_identity"],
+                ),
+            ).fetchone()
             if (
                 inherited is None or inherited["outcome"] != "approved"
                 or inherited["completed_at"] is None
-                or inherited["signed_identity"] != row["expected_identity"]
-                or inherited["identity"] != row["expected_identity"]
+                or inherited["identity"] != inherited["signed_identity"]
                 or inherited["confirmed"] != 1 or inherited["task_gid"] != row["task_gid"]
+                or (inherited["signed_identity"] != row["expected_identity"] and lineage is None)
             ):
                 problems.append({"kind": "non_material_signoff_binding", "id": row["operation_id"]})
         if row["signoff_completed_at"] is not None:

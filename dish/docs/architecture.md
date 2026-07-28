@@ -118,6 +118,11 @@ is not sufficient evidence. Independence comes from durable client run lineage: 
 must differ from the constructor or latest material editor run. Operation IDs, cycle IDs, model
 labels, and caller attestations do not substitute for run identity.
 
+A completed non-material check-in does not create a new signoff. Its confirmed candidate identity
+inherits the exact approved cycle recorded on the operation. Later non-material check-ins resolve
+that durable operation/write lineage transitively, so the original signoff remains explicit without
+claiming that an intermediate identity was independently verified.
+
 ### Recovery is specific
 
 There is no generic `unblock`. Lease recovery, ambiguous-effect recovery, destination repair,

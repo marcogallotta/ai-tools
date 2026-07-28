@@ -8,7 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import create_verification_cycle, transition_operation, declare_operation_step, complete_operation_step, record_actor_fact
+from .database import (
+    create_verification_cycle, transition_operation, declare_operation_step,
+    complete_operation_step, record_actor_fact, resolve_signoff_cycle_for_identity,
+)
 from .errors import DishRuleError
 from .models import (
     ResolvedRelease,
@@ -366,20 +369,9 @@ def prepare_live(
     title, notes = _render_document(candidate)
     approved = None
     if op["operation_kind"] == "change" and state.values["Status"] != "pending-verification":
-        approved = conn.execute(
-            """SELECT cycle.cycle_id
-                 FROM verification_cycles AS cycle
-                 JOIN content_versions AS version
-                   ON version.content_version_id=cycle.signed_content_version_id
-                WHERE cycle.task_gid=? AND cycle.outcome='approved'
-                  AND cycle.completed_at IS NOT NULL
-                  AND cycle.signed_identity=?
-                  AND version.confirmed=1
-                  AND version.task_gid=cycle.task_gid
-                  AND version.identity=cycle.signed_identity
-                ORDER BY cycle.completed_at DESC LIMIT 1""",
-            (live.gid, op["expected_identity"]),
-        ).fetchone()
+        approved = resolve_signoff_cycle_for_identity(
+            conn, task_gid=live.gid, identity=op["expected_identity"]
+        )
         if approved is None:
             raise DishRuleError(
                 "CONFLICT",

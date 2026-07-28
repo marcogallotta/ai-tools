@@ -280,6 +280,54 @@ def test_inspect_suppresses_verify_and_submit_after_exact_content_drift(tmp_path
     assert review["code"] == "CONFLICT"
 
 
+def test_non_material_checkins_preserve_signoff_lineage_across_multiple_heads(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    _approve_and_submit(app, operation_id)
+    source_cycle = app.conn.execute(
+        "SELECT cycle_id FROM verification_cycles WHERE operation_id=? AND outcome='approved'",
+        (operation_id,),
+    ).fetchone()["cycle_id"]
+
+    first = app.execute(
+        "start", agent="codex", task_gid="t", kind="change",
+        change_level="small", change_reason="clarify gentle handling", run_id="lineage-one",
+    )
+    first_candidate = tmp_path / "lineage-one.txt"
+    first_candidate.write_text(
+        f"{backend.title}\n{backend.notes}".replace("1. Cook it.", "1. Cook it gently.")
+    )
+    first_result = app.execute(
+        "prepare", agent="codex", model="gpt-5.6-sol",
+        submission_id=first["submission_id"], file_path=str(first_candidate),
+        material_classification="non-material",
+    )
+    assert first_result["ok"]
+
+    second = app.execute(
+        "start", agent="gpt", task_gid="t", kind="change",
+        change_level="small", change_reason="clarify brief handling", run_id="lineage-two",
+    )
+    second_candidate = tmp_path / "lineage-two.txt"
+    second_candidate.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "1. Cook it gently.", "1. Cook it gently.\n2. Finish freshly just before serving."
+        )
+    )
+    second_result = app.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=second["submission_id"], file_path=str(second_candidate),
+        material_classification="non-material",
+    )
+    assert second_result["ok"], second_result
+    rows = app.conn.execute(
+        """SELECT operation_id,inherited_signoff_cycle_id
+             FROM operations
+            WHERE terminal_outcome='non_material_checkin'
+            ORDER BY completed_at"""
+    ).fetchall()
+    assert [row["inherited_signoff_cycle_id"] for row in rows] == [source_cycle, source_cycle]
+
+
 def test_non_material_checkin_requires_exact_local_signed_baseline(tmp_path):
     # Produce a genuinely ready live task, then attach a fresh local database
     # that has exact content evidence but no local approved Verification cycle.
