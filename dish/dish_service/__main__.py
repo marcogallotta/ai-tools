@@ -12,7 +12,7 @@ from typing import Any
 
 from .application import DishService
 from .config import ServiceConfig
-from .database_ownership import ServiceDatabaseOwnership
+from .database_ownership import ServiceDatabaseOwnership, service_process_lock_path
 from .http import DishHTTPServer, build_action_server, build_private_server
 from .process_lock import ServiceProcessLock
 from dish_tool.errors import DishRuleError
@@ -50,14 +50,19 @@ def _serve(
 def _shutdown_servers(
     servers: Sequence[DishHTTPServer],
     threads: Sequence[threading.Thread],
+    *,
+    started_count: int | None = None,
 ) -> None:
-    # serve_forever runs in the listener threads, so shutdown is safe here.
-    for server in servers:
+    count = len(threads) if started_count is None else started_count
+    # shutdown deadlocks when serve_forever never started, so call it only for
+    # listeners whose threads were successfully launched.
+    for server in servers[:count]:
         server.shutdown()
-    # block_on_close waits for every non-daemon request handler to finish.
+    # Every bound listener still owns a socket, including one whose thread did
+    # not start. Close all of them, then join only launched threads.
     for server in servers:
         server.server_close()
-    for thread in threads:
+    for thread in threads[:count]:
         thread.join()
 
 
@@ -84,14 +89,21 @@ def _run_servers(
         )
         for name, server in (("private", private_server), ("action", action_server))
     )
-    for thread in threads:
-        thread.start()
+    started_count = 0
     try:
-        stop.wait()
+        for thread in threads:
+            thread.start()
+            started_count += 1
+    except BaseException as exc:
+        failures.put(("startup", exc))
+        stop.set()
+    try:
+        if started_count == len(threads):
+            stop.wait()
     except KeyboardInterrupt:
         stop.set()
     finally:
-        _shutdown_servers(servers, threads)
+        _shutdown_servers(servers, threads, started_count=started_count)
 
     if failures.empty():
         return 0
@@ -124,7 +136,7 @@ def _build_servers(service: DishService) -> tuple[DishHTTPServer, DishHTTPServer
 
 
 def _run_configured_service(config: ServiceConfig) -> int:
-    lock_path = config.db_path.with_suffix(config.db_path.suffix + ".service.lock")
+    lock_path = service_process_lock_path(config.db_path)
     with ServiceProcessLock(lock_path):
         ServiceDatabaseOwnership(config.db_path).mark()
         service = DishService(config)

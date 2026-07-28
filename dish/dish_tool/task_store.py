@@ -53,12 +53,25 @@ def _section_gid(task: Mapping[str, Any], project_gid: str) -> str | None:
     memberships = task.get("memberships") or []
     if not isinstance(memberships, list):
         raise DishRuleError("VALIDATION_FAILED", "task memberships are malformed", rule="task_membership_malformed")
+    matching_memberships = [
+        item
+        for item in memberships
+        if isinstance(item, Mapping) and _gid(item.get("project")) == project_gid
+    ]
+    projects = task.get("projects") or []
+    if not isinstance(projects, list):
+        raise DishRuleError("VALIDATION_FAILED", "task projects are malformed", rule="task_projects_malformed")
+    in_project = bool(matching_memberships) or any(_gid(project) == project_gid for project in projects)
+    if not in_project:
+        raise DishRuleError(
+            "UNMANAGED_TASK",
+            f"task {_gid(task.get('gid')) or '<unknown>'} is not in the Cooking project",
+            rule="task_not_in_cooking",
+        )
     matches = {
         gid
-        for item in memberships
-        if isinstance(item, Mapping)
-        and _gid(item.get("project")) == project_gid
-        and (gid := _gid(item.get("section"))) is not None
+        for item in matching_memberships
+        if (gid := _gid(item.get("section"))) is not None
     }
     if len(matches) > 1:
         raise DishRuleError("VALIDATION_FAILED", "task has ambiguous project placement", rule="task_membership_ambiguous")
@@ -158,7 +171,14 @@ def write_exact_content(
     if after.identity == before.identity and after.section_gid == before.section_gid:
         finalize_not_applied_write_attempt(conn, attempt_id=attempt_id)
         if backend_error is not None:
-            raise BackendFailure("BACKEND_REJECTED", str(backend_error), status=backend_error.status, phase=backend_error.phase, retryable=True)
+            raise BackendFailure(
+                "BACKEND_REJECTED",
+                str(backend_error),
+                rule=backend_error.rule,
+                status=backend_error.status,
+                phase=backend_error.phase,
+                retryable=backend_error.retryable,
+            )
         raise BackendFailure("BACKEND_REJECTED", "content write was not applied", retryable=True)
 
     finish_operation_write_attempt(conn, attempt_id=attempt_id, outcome="uncertain")
@@ -218,7 +238,14 @@ def move_exact(
     if after.section_gid == expected_section_gid:
         finalize_not_applied_movement_attempt(conn, attempt_id=attempt_id)
         if backend_error is not None:
-            raise BackendFailure("BACKEND_REJECTED", str(backend_error), status=backend_error.status, phase=backend_error.phase, retryable=True)
+            raise BackendFailure(
+                "BACKEND_REJECTED",
+                str(backend_error),
+                rule=backend_error.rule,
+                status=backend_error.status,
+                phase=backend_error.phase,
+                retryable=backend_error.retryable,
+            )
         raise BackendFailure("BACKEND_REJECTED", "movement was not applied", retryable=True)
     finish_movement_attempt(conn, attempt_id=attempt_id, outcome="uncertain")
     raise BackendFailure("BACKEND_UNCERTAIN", "movement produced an unexpected placement", retryable=False)

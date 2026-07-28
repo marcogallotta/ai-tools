@@ -116,11 +116,16 @@ def close_sqlite_connections(monkeypatch, request, current_database_template):
 
     def tracked_connect(*args, **kwargs):
         conn = real_connect(*args, **kwargs)
-        # Unit and integration tests exercise logical transaction, recovery,
-        # locking, and schema behavior; they do not simulate power loss. Avoid
-        # filesystem sync latency while preserving SQLite's transactional rules.
-        conn.execute("PRAGMA synchronous = OFF")
         opened.append(conn)
+        try:
+            # Unit and integration tests exercise logical transaction, recovery,
+            # locking, and schema behavior; they do not simulate power loss. Avoid
+            # filesystem sync latency while preserving SQLite's transactional rules.
+            conn.execute("PRAGMA synchronous = OFF")
+        except Exception:
+            opened.remove(conn)
+            conn.close()
+            raise
         return conn
 
     def migrate_or_clone_current_schema(conn):

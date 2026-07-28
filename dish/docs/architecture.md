@@ -150,8 +150,9 @@ It does not decide workflow legality.
 - opens a fresh validated SQLite connection per request;
 - constructs the backend and current Honest release;
 - acquires/asserts/releases service leases;
+- takes a durable per-operation execution claim around each operation mutation so two requests cannot reach external effects concurrently;
 - delegates workflow work to `DishApplication` or `DishAdminApplication`;
-- preserves committed success if post-success lease bookkeeping fails;
+- preserves committed success if post-success lease or owned-resource cleanup fails;
 - records and replays every mutation request after a valid UUID establishes request identity;
 - keeps ordinary replay evidence in SQLite and restore replay evidence in an atomic sidecar outside the replaceable database;
 - owns health, backup, restore, and startup checks.
@@ -321,7 +322,7 @@ Do not bypass repository/database invariants with ad hoc SQL in workflow or tran
 
 All task writes and movements use the same protocol:
 
-1. reread the complete live task;
+1. reread the complete live task and reassert that it still belongs to the Cooking project;
 2. compare exact content identity and expected Cooking-project section;
 3. persist immutable intended effect;
 4. call the real Asana SDK with automatic retries disabled;
@@ -333,7 +334,7 @@ All task writes and movements use the same protocol:
 adapter. Placement is selected by the Cooking project GID; code must never use the first membership
 on a multi-project task.
 
-An empty or incomplete Asana response never proves success. Reread state is the proof.
+An empty or incomplete Asana response never proves success. Reread state is the proof. A confirmed unchanged reread proves only that an effect was not applied; it does not make a non-retryable backend rejection such as access denial retryable. Section-registry reads follow Asana pagination until no next-page offset remains.
 
 An uncertain result is not mechanically retryable. `dish-admin recover` rereads live state and may
 only reconcile it against the immutable expected/intended evidence already stored. Recovery uses the
@@ -341,9 +342,10 @@ same declared workflow steps and idempotent executors as normal execution.
 
 ## Concurrency and leases
 
-There are two distinct ownership mechanisms:
+There are three distinct concurrency/ownership mechanisms:
 
 - the database guarantees at most one active operation per task;
+- `operation_execution_claims` permits only one request at a time to execute an operation mutation and unresolved external attempts are unique per operation;
 - `service_leases` bind that operation to a client owner and run identity for a renewable period.
 
 A workflow handoff may release the actor lease while keeping the task operation active. `allowed_actions`
@@ -352,8 +354,15 @@ lease cannot execute. Read-only calls inspect lease state but never acquire, ren
 it. Expired leases fail closed and require `dish-admin recover-lease`, which releases stale ownership
 without assigning the operation to Marco. A run may reclaim a missing lease only when durable actor
 lineage proves it owns that workflow role. Protocol-specific admin continuations use request-scoped
-admin leases and release them before returning. Terminal lease release waits until workflow steps and
-ambiguous attempts have durable outcomes.
+admin leases and release them before returning. A cleanup failure after the continuation committed is
+reported as cleanup/recovery metadata and never reverses the command success. Terminal lease release
+waits until workflow steps and ambiguous attempts have durable outcomes. Acquire, renew, release, and
+terminal checks are transactional; the configured TTL must exceed the maximum admitted request lifetime
+plus the recovery margin.
+
+Workflow state changes and their governed audit facts commit in the same SQLite transaction. Audit-repair workers claim work transactionally, so concurrent workers cannot append duplicate repair events. Startup semantic validation rejects impossible combinations such as multiple unresolved attempts for one operation or an active lease on a terminal operation.
+
+The service process lock and ownership marker are derived from the canonical database target, not the supplied pathname, so symlink aliases cannot create independent ownership of the same SQLite database.
 
 `service_requests` is the ordinary mutation idempotency boundary. Every externally callable agent,
 admin, lease, and backup mutation requires a client UUID; reads do not. Once the UUID itself is valid,

@@ -200,6 +200,29 @@ class AsanaBackend:
     def __exit__(self, _exc_type, _exc, _traceback) -> None:
         self.close()
 
+    def call_envelope(
+        self,
+        function: Any,
+        *args: Any,
+        context: str | None = None,
+        phase_tracker: RequestPhaseTracker | None = None,
+        **kwargs: Any,
+    ) -> Mapping[str, Any]:
+        tracker = phase_tracker or RequestPhaseTracker()
+        try:
+            tracker.mark_send_started()
+            response = function(*args, _request_timeout=ASANA_REQUEST_TIMEOUT, **kwargs)
+            tracker.mark_response_received()
+            if not isinstance(response, Mapping) or "data" not in response:
+                raise ValueError("Asana response missing data envelope")
+            return response
+        except BackendFailure:
+            raise
+        except (Exception, asyncio.CancelledError) as exc:
+            raise map_backend_exception(
+                exc, phase=tracker.phase, context=context
+            ) from exc
+
     def call(
         self,
         function: Any,
@@ -208,37 +231,57 @@ class AsanaBackend:
         phase_tracker: RequestPhaseTracker | None = None,
         **kwargs: Any,
     ) -> Any:
-        tracker = phase_tracker or RequestPhaseTracker()
-        try:
-            tracker.mark_send_started()
-            response = function(*args, _request_timeout=ASANA_REQUEST_TIMEOUT, **kwargs)
-            tracker.mark_response_received()
-            if not isinstance(response, Mapping) or "data" not in response:
-                raise ValueError("Asana response missing data envelope")
-            return response["data"]
-        except BackendFailure:
-            raise
-        except (Exception, asyncio.CancelledError) as exc:
-            raise map_backend_exception(
-                exc, phase=tracker.phase, context=context
-            ) from exc
+        return self.call_envelope(
+            function,
+            *args,
+            context=context,
+            phase_tracker=phase_tracker,
+            **kwargs,
+        )["data"]
 
     def list_sections(self, project_gid: str) -> list[dict[str, Any]]:
         import asana
 
-        data = self.call(
-            asana.SectionsApi(self.client()).get_sections_for_project,
-            project_gid,
-            {"opt_fields": "gid,name", "limit": 100},
-            context=f"Cooking project {project_gid} sections",
-        )
-        if not isinstance(data, list) or not all(isinstance(item, Mapping) for item in data):
-            raise DishRuleError(
-                "INTERNAL_ERROR",
-                "Asana returned malformed section data",
-                rule="backend_response_malformed",
+        function = asana.SectionsApi(self.client()).get_sections_for_project
+        options: dict[str, Any] = {"opt_fields": "gid,name", "limit": 100}
+        sections: list[dict[str, Any]] = []
+        seen_offsets: set[str] = set()
+        while True:
+            envelope = self.call_envelope(
+                function,
+                project_gid,
+                options,
+                context=f"Cooking project {project_gid} sections",
             )
-        return [dict(item) for item in data]
+            data = envelope["data"]
+            if not isinstance(data, list) or not all(isinstance(item, Mapping) for item in data):
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "Asana returned malformed section data",
+                    rule="backend_response_malformed",
+                )
+            sections.extend(dict(item) for item in data)
+            next_page = envelope.get("next_page")
+            if next_page is None:
+                break
+            if not isinstance(next_page, Mapping):
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "Asana returned malformed section pagination data",
+                    rule="backend_response_malformed",
+                )
+            offset = str(next_page.get("offset") or "").strip()
+            if not offset:
+                break
+            if offset in seen_offsets:
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "Asana repeated a section pagination offset",
+                    rule="backend_pagination_loop",
+                )
+            seen_offsets.add(offset)
+            options = {"opt_fields": "gid,name", "limit": 100, "offset": offset}
+        return sections
 
     def read_task(self, task_gid: str) -> dict[str, Any]:
         import asana
