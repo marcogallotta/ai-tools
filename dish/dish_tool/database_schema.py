@@ -1638,11 +1638,37 @@ def _content_digest(title: str, notes: str) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def _semantic_problem(
+    invariant: str,
+    record_type: str,
+    record_id: Any,
+    *,
+    related_record_type: str | None = None,
+    related_record_id: Any | None = None,
+    observed_count: int | None = None,
+) -> dict[str, Any]:
+    """Build a payload-safe semantic diagnostic from stable identifiers only."""
+
+    problem: dict[str, Any] = {
+        "invariant": invariant,
+        "record_type": record_type,
+        "record_id": str(record_id),
+    }
+    if related_record_type is not None:
+        problem["related_record_type"] = related_record_type
+        problem["related_record_id"] = str(related_record_id)
+    if observed_count is not None:
+        problem["observed_count"] = int(observed_count)
+    return problem
+
+
 def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
     problems: list[dict[str, Any]] = []
     for row in conn.execute("SELECT * FROM content_versions WHERE confirmed=1"):
         if _content_digest(row["title"], row["notes"]) != row["identity"]:
-            problems.append({"kind": "content_identity_mismatch", "id": row["content_version_id"]})
+            problems.append(_semantic_problem(
+                "content_identity_mismatch", "content_versions", row["content_version_id"],
+            ))
     for row in conn.execute("SELECT * FROM task_content_state"):
         bound = conn.execute(
             """SELECT task_gid, identity, title, notes, confirmed
@@ -1657,26 +1683,36 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             or bound["title"] != row["last_confirmed_title"]
             or bound["notes"] != row["last_confirmed_notes"]
         ):
-            problems.append({"kind": "task_content_head_binding", "id": row["task_gid"]})
+            problems.append(_semantic_problem(
+                "task_content_head_binding", "task_content_state", row["task_gid"],
+            ))
     for row in conn.execute("SELECT * FROM write_attempts WHERE outcome='confirmed'"):
         bound = conn.execute(
             "SELECT identity,confirmed,operation_id FROM content_versions WHERE content_version_id=?",
             (row["confirmed_content_version_id"],),
         ).fetchone()
         if bound is None or bound["confirmed"] != 1 or bound["operation_id"] != row["operation_id"] or bound["identity"] != row["intended_identity"]:
-            problems.append({"kind": "confirmed_write_binding", "id": row["attempt_id"]})
+            problems.append(_semantic_problem(
+                "confirmed_write_binding", "write_attempts", row["attempt_id"],
+            ))
     for row in conn.execute("SELECT * FROM verification_cycles"):
         release = str(row["protocol_release"] or "")
         text = str(row["protocol_text"] or "")
         if release.startswith("sha256:") and hashlib.sha256(text.encode("utf-8")).hexdigest() != release.split(":", 1)[1].split(";", 1)[0].strip():
-            problems.append({"kind": "verification_protocol_identity", "id": row["cycle_id"]})
+            problems.append(_semantic_problem(
+                "verification_protocol_identity", "verification_cycles", row["cycle_id"],
+            ))
     for task in conn.execute("SELECT DISTINCT task_gid FROM verification_cycles"):
         numbers = [r[0] for r in conn.execute("SELECT cycle_number FROM verification_cycles WHERE task_gid=? ORDER BY cycle_number", (task[0],))]
         if numbers and numbers != list(range(1, max(numbers) + 1)):
-            problems.append({"kind": "verification_cycle_sequence", "id": task[0]})
+            problems.append(_semantic_problem(
+                "verification_cycle_sequence", "task_verification_cycles", task[0],
+            ))
     for row in conn.execute("SELECT * FROM marco_authorizations WHERE consumed_at IS NOT NULL"):
         if not row["consumed_identity"] or not row["reserved_by_operation_id"] or not row["reserved_at"]:
-            problems.append({"kind": "consumed_authorization_binding", "id": row["authorization_id"]})
+            problems.append(_semantic_problem(
+                "consumed_authorization_binding", "marco_authorizations", row["authorization_id"],
+            ))
     for row in conn.execute(
         """SELECT cycle.*, operation.migration_reconciliation_required
              FROM verification_cycles AS cycle
@@ -1695,7 +1731,9 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             and held["identity"] == row["hold_identity"]
         )
         if not valid and row["migration_reconciliation_required"] != 1:
-            problems.append({"kind": "hold_baseline_binding", "id": row["cycle_id"]})
+            problems.append(_semantic_problem(
+                "hold_baseline_binding", "verification_cycles", row["cycle_id"],
+            ))
     for row in conn.execute("SELECT * FROM verification_cycles WHERE outcome='approved'"):
         signed = conn.execute(
             "SELECT identity,confirmed,operation_id,task_gid FROM content_versions WHERE content_version_id=?",
@@ -1704,7 +1742,9 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
         if (row["completed_at"] is None or row["signed_identity"] is None or signed is None
                 or signed["confirmed"] != 1 or signed["operation_id"] != row["operation_id"]
                 or signed["task_gid"] != row["task_gid"] or signed["identity"] != row["signed_identity"]):
-            problems.append({"kind": "approved_cycle_binding", "id": row["cycle_id"]})
+            problems.append(_semantic_problem(
+                "approved_cycle_binding", "verification_cycles", row["cycle_id"],
+            ))
     for row in conn.execute("SELECT * FROM dish_inspect_facts"):
         cycle = conn.execute(
             """SELECT operation_id,task_gid,reviewed_content_version_id,reviewed_identity,
@@ -1738,20 +1778,32 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             or version["task_gid"] != row["task_gid"]
             or version["identity"] != row["reviewed_identity"] or version["confirmed"] != 1
         ):
-            problems.append({"kind": "dish_inspect_fact_binding", "id": row["fact_id"]})
+            problems.append(_semantic_problem(
+                "dish_inspect_fact_binding", "dish_inspect_facts", row["fact_id"],
+            ))
     for row in conn.execute("SELECT * FROM planning_reopen_attempts"):
         if row["outcome"] == "confirmed" and not row["finished_at"]:
-            problems.append({"kind": "planning_reopen_completion", "id": row["attempt_id"]})
+            problems.append(_semantic_problem(
+                "planning_reopen_completion", "planning_reopen_attempts", row["attempt_id"],
+            ))
         if row["outcome"] == "started" and row["finished_at"] is not None:
-            problems.append({"kind": "planning_reopen_pending", "id": row["attempt_id"]})
+            problems.append(_semantic_problem(
+                "planning_reopen_pending", "planning_reopen_attempts", row["attempt_id"],
+            ))
     for row in conn.execute("SELECT * FROM operations"):
         if row["status"] == "completed" and (row["completed_at"] is None or row["phase"] != "terminal" or not row["terminal_outcome"] or not row["schema_version"] or not row["expected_identity"]):
-            problems.append({"kind": "completed_operation_state", "id": row["operation_id"]})
+            problems.append(_semantic_problem(
+                "completed_operation_state", "operations", row["operation_id"],
+            ))
         if row["status"] in {"open", "uncertain"}:
             if row["expected_section_gid"] is None and row["migration_reconciliation_required"] != 1:
-                problems.append({"kind": "active_operation_placement_unbound", "id": row["operation_id"]})
+                problems.append(_semantic_problem(
+                    "active_operation_placement_unbound", "operations", row["operation_id"],
+                ))
             if row["migration_reconciliation_required"] == 1 and not str(row["migration_reconciliation_reason"] or "").strip():
-                problems.append({"kind": "migration_reconciliation_reason_missing", "id": row["operation_id"]})
+                problems.append(_semantic_problem(
+                    "migration_reconciliation_reason_missing", "operations", row["operation_id"],
+                ))
         if row["terminal_outcome"] == "non_material_checkin":
             inherited = conn.execute(
                 """SELECT cycle.signed_identity, cycle.signed_content_version_id,
@@ -1792,14 +1844,18 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 or inherited["confirmed"] != 1 or inherited["task_gid"] != row["task_gid"]
                 or (inherited["signed_identity"] != row["expected_identity"] and lineage is None)
             ):
-                problems.append({"kind": "non_material_signoff_binding", "id": row["operation_id"]})
+                problems.append(_semantic_problem(
+                    "non_material_signoff_binding", "operations", row["operation_id"],
+                ))
         if row["signoff_completed_at"] is not None:
             approved = conn.execute(
                 "SELECT 1 FROM verification_cycles WHERE operation_id=? AND outcome='approved' AND signed_identity IS NOT NULL AND signed_content_version_id IS NOT NULL",
                 (row["operation_id"],),
             ).fetchone()
             if approved is None:
-                problems.append({"kind": "operation_signoff_binding", "id": row["operation_id"]})
+                problems.append(_semantic_problem(
+                    "operation_signoff_binding", "operations", row["operation_id"],
+                ))
     for table in ("write_attempts", "movement_attempts"):
         for row in conn.execute(
             f"""SELECT operation_id, COUNT(*) AS unresolved_count
@@ -1808,11 +1864,14 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                  GROUP BY operation_id
                 HAVING COUNT(*) > 1"""
         ):
-            problems.append({
-                "kind": f"multiple_unresolved_{table}",
-                "id": row["operation_id"],
-                "count": int(row["unresolved_count"]),
-            })
+            problems.append(_semantic_problem(
+                f"multiple_unresolved_{table}",
+                "operations",
+                row["operation_id"],
+                related_record_type=table,
+                related_record_id=row["operation_id"],
+                observed_count=int(row["unresolved_count"]),
+            ))
     for row in conn.execute(
         """SELECT lease.lease_id, lease.operation_id
              FROM service_leases AS lease
@@ -1820,11 +1879,13 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             WHERE lease.released_at IS NULL
               AND operation.status IN ('completed','cancelled')"""
     ):
-        problems.append({
-            "kind": "active_lease_on_terminal_operation",
-            "id": row["lease_id"],
-            "operation_id": row["operation_id"],
-        })
+        problems.append(_semantic_problem(
+            "active_lease_on_terminal_operation",
+            "service_leases",
+            row["lease_id"],
+            related_record_type="operations",
+            related_record_id=row["operation_id"],
+        ))
     for row in conn.execute("SELECT * FROM operation_execution_claims"):
         if row["execution_id"] is None:
             continue
@@ -1837,35 +1898,54 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             or execution["operation_id"] != row["operation_id"]
             or execution["status"] != "started"
         ):
-            problems.append({
-                "kind": "operation_execution_claim_binding",
-                "id": row["claim_id"],
-            })
+            problems.append(_semantic_problem(
+                "operation_execution_claim_binding",
+                "operation_execution_claims",
+                row["claim_id"],
+            ))
     for row in conn.execute("SELECT * FROM operation_executions"):
         claim = conn.execute(
             "SELECT 1 FROM operation_execution_claims WHERE execution_id=?",
             (row["execution_id"],),
         ).fetchone()
         if row["status"] == "started" and claim is None:
-            problems.append({
-                "kind": "started_operation_execution_unclaimed",
-                "id": row["execution_id"],
-            })
+            problems.append(_semantic_problem(
+                "started_operation_execution_unclaimed",
+                "operation_executions",
+                row["execution_id"],
+            ))
         if row["status"] != "started" and claim is not None:
-            problems.append({
-                "kind": "completed_operation_execution_claimed",
-                "id": row["execution_id"],
-            })
+            problems.append(_semantic_problem(
+                "completed_operation_execution_claimed",
+                "operation_executions",
+                row["execution_id"],
+            ))
         if row["evidence_json"]:
-            recovery = json.loads(row["evidence_json"])
+            try:
+                recovery = json.loads(row["evidence_json"])
+            except (TypeError, ValueError):
+                problems.append(_semantic_problem(
+                    "operation_execution_evidence_document",
+                    "operation_executions",
+                    row["execution_id"],
+                ))
+                continue
+            if not isinstance(recovery, dict):
+                problems.append(_semantic_problem(
+                    "operation_execution_evidence_document",
+                    "operation_executions",
+                    row["execution_id"],
+                ))
+                continue
             if (
                 recovery.get("execution_id") != row["execution_id"]
                 or recovery.get("operation_id") != row["operation_id"]
             ):
-                problems.append({
-                    "kind": "operation_execution_evidence_binding",
-                    "id": row["execution_id"],
-                })
+                problems.append(_semantic_problem(
+                    "operation_execution_evidence_binding",
+                    "operation_executions",
+                    row["execution_id"],
+                ))
     for row in conn.execute("SELECT * FROM two_pass_resets"):
         version = conn.execute(
             """SELECT 1 FROM content_versions
@@ -1877,7 +1957,9 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             (row["source_cycle_id"], row["operation_id"]),
         ).fetchone()
         if version is None or cycle is None:
-            problems.append({"kind": "two_pass_reset_binding", "id": row["reset_id"]})
+            problems.append(_semantic_problem(
+                "two_pass_reset_binding", "two_pass_resets", row["reset_id"],
+            ))
     if problems:
         raise DishRuleError(
             "VALIDATION_FAILED", "database durable evidence is semantically inconsistent",

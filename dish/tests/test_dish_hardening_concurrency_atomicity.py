@@ -152,10 +152,95 @@ def test_terminal_operation_cannot_keep_active_lease_semantically(tmp_path):
     with pytest.raises(DishRuleError) as exc:
         initialize_database(db_path)
     assert exc.value.rule == "database_semantic_evidence_invalid"
-    assert any(
-        problem["kind"] == "active_lease_on_terminal_operation"
+    assert {
+        "invariant": "active_lease_on_terminal_operation",
+        "record_type": "service_leases",
+        "record_id": lease["lease_id"],
+        "related_record_type": "operations",
+        "related_record_id": "op",
+    } in exc.value.details["problems"]
+
+
+def test_semantic_evidence_diagnostic_omits_raw_content_payload(tmp_path):
+    db_path = tmp_path / "dish.db"
+    conn = initialize_database(db_path)
+    _insert_operation(conn)
+    conn.execute(
+        """INSERT INTO content_versions(
+               content_version_id,task_gid,operation_id,boundary,identity,
+               title,notes,confirmed,created_at
+           ) VALUES(?,?,?,?,?,?,?,?,?)""",
+        (
+            "content-version-42",
+            "task-op",
+            "op",
+            "candidate",
+            "SENSITIVE RAW IDENTITY",
+            "SENSITIVE RAW TITLE",
+            "SENSITIVE RAW NOTES",
+            1,
+            "2026-07-28T00:02:00Z",
+        ),
+    )
+    conn.close()
+
+    with pytest.raises(DishRuleError) as exc:
+        initialize_database(db_path)
+
+    assert exc.value.rule == "database_semantic_evidence_invalid"
+    assert {
+        "invariant": "content_identity_mismatch",
+        "record_type": "content_versions",
+        "record_id": "content-version-42",
+    } in exc.value.details["problems"]
+    rendered = repr(exc.value.details)
+    assert "SENSITIVE RAW IDENTITY" not in rendered
+    assert "SENSITIVE RAW TITLE" not in rendered
+    assert "SENSITIVE RAW NOTES" not in rendered
+    assert all(
+        set(problem).issubset({
+            "invariant",
+            "record_type",
+            "record_id",
+            "related_record_type",
+            "related_record_id",
+            "observed_count",
+        })
         for problem in exc.value.details["problems"]
     )
+
+
+def test_semantic_evidence_document_failure_omits_raw_json(tmp_path):
+    db_path = tmp_path / "dish.db"
+    conn = initialize_database(db_path)
+    _insert_operation(conn)
+    conn.execute(
+        """INSERT INTO operation_executions(
+               execution_id,operation_id,command,baseline_json,status,
+               evidence_json,created_at,completed_at
+           ) VALUES(?,?,?,?,?,?,?,?)""",
+        (
+            "execution-42",
+            "op",
+            "prepare",
+            "{}",
+            "completed",
+            '["SENSITIVE RAW RECOVERY PAYLOAD"]',
+            "2026-07-28T00:02:00Z",
+            "2026-07-28T00:03:00Z",
+        ),
+    )
+    conn.close()
+
+    with pytest.raises(DishRuleError) as exc:
+        initialize_database(db_path)
+
+    assert {
+        "invariant": "operation_execution_evidence_document",
+        "record_type": "operation_executions",
+        "record_id": "execution-42",
+    } in exc.value.details["problems"]
+    assert "SENSITIVE RAW RECOVERY PAYLOAD" not in repr(exc.value.details)
 
 
 def test_verifier_decision_requires_exact_start_attestation():
