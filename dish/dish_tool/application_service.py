@@ -8,6 +8,7 @@ from typing import Callable, TypeVar
 
 from .errors import DishRuleError
 from .legacy_adapter import LegacyReadOnlyAdapter
+from .operation_execution import claim_operation_execution, release_operation_execution
 from .task_gateway import ExactTaskGateway
 from .workflow_policy import WorkflowSnapshot, legal_actions
 from .workflow_repository import WorkflowRepository
@@ -340,6 +341,52 @@ class CurrentWorkflowService:
             }
             return result, fallback
 
+    def _execute_claimed(
+        self,
+        operation_id: str,
+        command: str,
+        executor: Callable[[], T],
+        *,
+        schema=None,
+        assert_action: bool = True,
+    ) -> tuple[T, dict[str, object]]:
+        claim = claim_operation_execution(
+            self.conn, operation_id=operation_id, command=command
+        )
+        completed = False
+        result: T
+        release_error: Exception | None = None
+        try:
+            if assert_action:
+                self.assert_action(operation_id, command, schema=schema)
+            result = executor()
+            completed = True
+        finally:
+            try:
+                release_operation_execution(self.conn, claim)
+            except Exception as exc:
+                if not completed:
+                    raise
+                release_error = exc
+        result, view = self._post_operation_view(operation_id, result, schema=schema)
+        if release_error is not None:
+            if isinstance(result, dict):
+                result = dict(result)
+                result.update({
+                    "operation_execution_recovery_required": True,
+                    "operation_execution_release_error": {
+                        "type": type(release_error).__name__,
+                        "message": str(release_error),
+                    },
+                })
+            view = dict(view)
+            view.update({
+                "legal_actions": [],
+                "recovery_required": True,
+                "operation_execution_recovery_required": True,
+            })
+        return result, view
+
     def mutate(
         self,
         operation_id: str,
@@ -348,10 +395,10 @@ class CurrentWorkflowService:
         *,
         schema=None,
     ) -> tuple[T, dict[str, object]]:
-        """Authorize, execute one use case, and return a fresh post-operation view."""
-        self.assert_action(operation_id, action, schema=schema)
-        result = executor()
-        return self._post_operation_view(operation_id, result, schema=schema)
+        """Authorize and execute exactly one operation mutation at a time."""
+        return self._execute_claimed(
+            operation_id, action, executor, schema=schema, assert_action=True
+        )
 
     def prepare(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         return self.mutate(operation_id, "prepare", executor, schema=schema)
@@ -385,20 +432,26 @@ class CurrentWorkflowService:
 
     def recover(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         self.operation(operation_id)
-        result = executor()
-        return self._post_operation_view(operation_id, result, schema=schema)
+        return self._execute_claimed(
+            operation_id, "recover", executor, schema=schema, assert_action=False
+        )
 
     def cancel(self, operation_id: str, executor: Callable[[], T], *, schema=None):
-        op = self.operation(operation_id)
-        if op["status"] not in {"open", "uncertain"}:
-            raise DishRuleError("WRONG_STATE", "operation is not cancellable", rule="operation_not_cancellable")
-        result = executor()
-        return self._post_operation_view(operation_id, result, schema=schema)
+        def checked() -> T:
+            op = self.operation(operation_id)
+            if op["status"] not in {"open", "uncertain"}:
+                raise DishRuleError("WRONG_STATE", "operation is not cancellable", rule="operation_not_cancellable")
+            return executor()
+        return self._execute_claimed(
+            operation_id, "cancel", checked, schema=schema, assert_action=False
+        )
 
     def authorize_governed_change(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         self.operation(operation_id)
-        result = executor()
-        return self._post_operation_view(operation_id, result, schema=schema)
+        return self._execute_claimed(
+            operation_id, "authorize-governed-change", executor,
+            schema=schema, assert_action=False,
+        )
 
 
 class OperationApplicationService:

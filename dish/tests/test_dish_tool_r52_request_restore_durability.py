@@ -318,7 +318,10 @@ def test_schema_20_upgrades_with_empty_request_ledger(tmp_path):
     db_path = tmp_path / "v20.sqlite3"
     conn = initialize_database(db_path)
     conn.execute("DROP TABLE service_requests")
-    conn.execute("DELETE FROM schema_migrations WHERE version=21")
+    conn.execute("DROP TABLE operation_execution_claims")
+    conn.execute("DROP INDEX write_attempts_one_unresolved_operation")
+    conn.execute("DROP INDEX movement_attempts_one_unresolved_operation")
+    conn.execute("DELETE FROM schema_migrations WHERE version>=21")
     conn.execute("PRAGMA user_version=20")
     conn.close()
 

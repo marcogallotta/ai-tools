@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import contextlib
+import inspect
+import logging
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -45,6 +47,8 @@ _OPERATION_ADMIN_COMMANDS = {
     "repair-destination",
 }
 _LEASE_FREE_ADMIN_COMMANDS = {"authorize-governed-change"}
+
+LOG = logging.getLogger("dish.service.application")
 
 
 def _now_stamp() -> str:
@@ -94,13 +98,28 @@ class DishService:
 
     def _release(self, role: str | None = None, *, include_migrations: bool = False):
         if self.release_loader is not None:
+            loader = self.release_loader
+            candidates = (
+                ((role,), {"include_migrations": include_migrations}),
+                ((role,), {}),
+                ((), {}),
+            )
             try:
-                return self.release_loader(role, include_migrations=include_migrations)
-            except TypeError:
+                signature = inspect.signature(loader)
+            except (TypeError, ValueError):
+                # Opaque callables get the full current contract exactly once.
+                return loader(role, include_migrations=include_migrations)
+            for args, kwargs in candidates:
                 try:
-                    return self.release_loader(role)
+                    signature.bind(*args, **kwargs)
                 except TypeError:
-                    return self.release_loader()
+                    continue
+                return loader(*args, **kwargs)
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "release loader has an unsupported call signature",
+                rule="release_loader_signature_unsupported",
+            )
         return resolve_release(
             self.config.honest_root,
             protocol_role=role,
@@ -118,7 +137,15 @@ class DishService:
             return
         close = getattr(backend, "close", None)
         if callable(close):
-            close()
+            try:
+                close()
+            except Exception as exc:
+                # Cleanup occurs after command authority may already be committed.
+                # Log it, but never replace the command result or skip DB closure.
+                LOG.warning(
+                    "backend_cleanup_failed error_type=%s",
+                    type(exc).__name__,
+                )
 
     @staticmethod
     def _default_principal(arguments: Mapping[str, Any], *, admin: bool = False) -> ServicePrincipal:
@@ -390,24 +417,142 @@ class DishService:
             result.setdefault("data", {})["service_lease"] = self._lease_payload(active)
         except Exception as exc:
             data = result.setdefault("data", {})
-            data["service_recovery_required"] = True
-            data["service_recovery"] = {
-                "kind": "lease_finalization",
-                "operation_id": operation_id,
-                "command": command,
-                "error_type": type(exc).__name__,
-                "do_not_retry_command": True,
-            }
+            fallback_error = None
             try:
+                op = conn.execute(
+                    "SELECT status,phase FROM operations WHERE operation_id=?",
+                    (operation_id,),
+                ).fetchone()
+                active = leases.active_for_operation(operation_id)
+                should_release = bool(
+                    active is not None
+                    and op is not None
+                    and (
+                        op["status"] in {"completed", "cancelled"}
+                        or (
+                            not admin
+                            and op["phase"] in _HANDOFF_PHASES
+                            and command in {"prepare", "reject"}
+                        )
+                    )
+                )
+                if should_release:
+                    leases.release(
+                        operation_id,
+                        None,
+                        reason=f"lease_finalization_fallback:{command}",
+                        admin=True,
+                    )
                 data["service_lease"] = self._lease_payload(
                     leases.active_for_operation(operation_id)
                 )
-            except Exception as lease_read_exc:
-                data["service_lease"] = None
-                data["service_recovery"]["lease_read_error_type"] = type(lease_read_exc).__name__
-            result["allowed_actions"] = []
-            result["retryable"] = False
+                data["service_cleanup_warning"] = {
+                    "kind": "lease_finalization",
+                    "operation_id": operation_id,
+                    "command": command,
+                    "error_type": type(exc).__name__,
+                    "fallback_release_applied": should_release,
+                }
+            except Exception as fallback_exc:
+                fallback_error = fallback_exc
+            if fallback_error is not None:
+                data["service_recovery_required"] = True
+                data["service_recovery"] = {
+                    "kind": "lease_finalization",
+                    "operation_id": operation_id,
+                    "command": command,
+                    "error_type": type(exc).__name__,
+                    "fallback_error_type": type(fallback_error).__name__,
+                    "do_not_retry_command": True,
+                }
+                try:
+                    data["service_lease"] = self._lease_payload(
+                        leases.active_for_operation(operation_id)
+                    )
+                except Exception as lease_read_exc:
+                    data["service_lease"] = None
+                    data["service_recovery"]["lease_read_error_type"] = type(lease_read_exc).__name__
+                result["allowed_actions"] = []
+                result["retryable"] = False
         return result
+
+    def _release_admin_request_lease(
+        self,
+        *,
+        result: dict[str, Any],
+        conn,
+        leases: LeaseManager,
+        operation_id: str,
+        principal: ServicePrincipal,
+        command: str,
+    ) -> dict[str, Any]:
+        """Release request-scoped admin ownership without reversing success."""
+        try:
+            active = leases.active_for_operation(operation_id)
+            if active is not None and leases.is_owned_by(active, principal):
+                leases.release(
+                    operation_id,
+                    principal,
+                    reason=f"admin_command_complete:{command}",
+                )
+            result.setdefault("data", {})["service_lease"] = self._lease_payload(
+                leases.active_for_operation(operation_id)
+            )
+            return result
+        except Exception as exc:
+            data = result.setdefault("data", {})
+            fallback_applied = False
+            fallback_error: Exception | None = None
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                active = conn.execute(
+                    "SELECT lease_id,owner_id,run_id FROM service_leases "
+                    "WHERE operation_id=? AND released_at IS NULL",
+                    (operation_id,),
+                ).fetchone()
+                if (
+                    active is not None
+                    and active["owner_id"] == principal.owner_id
+                    and active["run_id"] == principal.run_id
+                ):
+                    cursor = conn.execute(
+                        "UPDATE service_leases SET released_at=?, release_reason=? "
+                        "WHERE lease_id=? AND released_at IS NULL",
+                        (
+                            _now_stamp(),
+                            f"admin cleanup fallback:{command}",
+                            active["lease_id"],
+                        ),
+                    )
+                    fallback_applied = cursor.rowcount == 1
+                conn.execute("COMMIT")
+                data["service_lease"] = self._lease_payload(
+                    leases.active_for_operation(operation_id)
+                )
+                data["service_cleanup_warning"] = {
+                    "kind": "admin_lease_release",
+                    "operation_id": operation_id,
+                    "command": command,
+                    "error_type": type(exc).__name__,
+                    "fallback_release_applied": fallback_applied,
+                }
+            except Exception as fallback_exc:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                fallback_error = fallback_exc
+            if fallback_error is not None:
+                data["service_recovery_required"] = True
+                data["service_recovery"] = {
+                    "kind": "admin_lease_release",
+                    "operation_id": operation_id,
+                    "command": command,
+                    "error_type": type(exc).__name__,
+                    "fallback_error_type": type(fallback_error).__name__,
+                    "do_not_retry_command": True,
+                }
+                result["allowed_actions"] = []
+                result["retryable"] = False
+            return result
 
     def _reconcile_pending_start(
         self,
@@ -1100,16 +1245,16 @@ class DishService:
                         command=command,
                         admin=True,
                     )
-                    # Admin ownership is request-scoped.  Protocol continuation
-                    # never leaves the operation leased to marco-admin.
-                    active = leases.active_for_operation(operation_id)
-                    if active is not None and leases.is_owned_by(active, principal):
-                        leases.release(
-                            operation_id,
-                            principal,
-                            reason=f"admin_command_complete:{command}",
-                        )
-                        result.setdefault("data", {})["service_lease"] = None
+                    # Admin ownership is request-scoped. Cleanup failure after
+                    # a committed continuation must not reverse the success.
+                    result = self._release_admin_request_lease(
+                        result=result,
+                        conn=conn,
+                        leases=leases,
+                        operation_id=operation_id,
+                        principal=principal,
+                        command=command,
+                    )
                 elif not result.get("ok") and acquired_for_request and operation_id:
                     leases.release(operation_id, principal, reason="admin_command_rejected")
                 if request_id:
@@ -1203,8 +1348,8 @@ class DishService:
         with self._maintenance_gate.restore():
             principal = principal or self._default_principal({}, admin=True)
             replay_started = False
-            try:
-                if request_id:
+            if request_id:
+                try:
                     row, replay_started = self._restore_requests.begin(
                         request_id=request_id,
                         owner_id=principal.owner_id,
@@ -1217,6 +1362,36 @@ class DishService:
                         return prior
                     if not replay_started:
                         raise pending_error("backup-restore", request_id)
+                except DishRuleError as exc:
+                    result = error_envelope("backup-restore", exc)
+                    result.setdefault("data", {})["request_id"] = request_id
+                    return result
+
+            try:
+                self._restore_fault.set({
+                    "kind": "backup_restore_in_progress",
+                    "backup_id": str(backup_id),
+                    "request_id": request_id,
+                    "owner_id": principal.owner_id,
+                    "run_id": principal.run_id,
+                })
+            except Exception as marker_exc:
+                error = DishRuleError(
+                    "INTERNAL_ERROR",
+                    "restore lockout could not be persisted; the database was not replaced",
+                    rule="restore_lockout_persistence_failed",
+                    details={
+                        "error_type": type(marker_exc).__name__,
+                        "database_retained": True,
+                    },
+                )
+                result = error_envelope("backup-restore", error)
+                if request_id and replay_started:
+                    result.setdefault("data", {})["request_id"] = request_id
+                    self._restore_requests.complete(request_id=request_id, result=result)
+                return result
+
+            try:
                 data = self.backup_manager.restore(backup_id)
                 self._restore_fault.clear()
                 result = result_envelope(command="backup-restore", data=data)
@@ -1225,22 +1400,46 @@ class DishService:
                     self._restore_requests.complete(request_id=request_id, result=result)
                 return result
             except DishRuleError as exc:
-                if exc.rule == "backup_restore_and_rollback_failed":
-                    self._restore_fault.set({
-                        "kind": "backup_restore_and_rollback_failed",
-                        "rule": exc.rule,
-                        "details": dict(exc.details),
-                    })
+                unsafe = bool(
+                    exc.rule == "backup_restore_and_rollback_failed"
+                    or exc.details.get("database_retained") is False
+                )
+                if unsafe:
+                    try:
+                        self._restore_fault.set({
+                            "kind": "backup_restore_and_rollback_failed",
+                            "rule": exc.rule,
+                            "backup_id": str(backup_id),
+                            "request_id": request_id,
+                            "details": dict(exc.details),
+                        })
+                    except Exception:
+                        # The pre-armed in-progress marker is already the durable
+                        # fail-closed record. Never depend on an enrichment write.
+                        pass
+                else:
+                    try:
+                        self._restore_fault.clear()
+                    except Exception:
+                        # A stale lockout is safer than losing a required lockout.
+                        pass
                 result = error_envelope("backup-restore", exc)
                 if request_id and replay_started:
                     result.setdefault("data", {})["request_id"] = request_id
                     self._restore_requests.complete(request_id=request_id, result=result)
                 return result
             except Exception as exc:
-                self._restore_fault.set({
-                    "kind": "backup_restore_recovery_unknown",
-                    "error_type": type(exc).__name__,
-                })
+                try:
+                    self._restore_fault.set({
+                        "kind": "backup_restore_recovery_unknown",
+                        "backup_id": str(backup_id),
+                        "request_id": request_id,
+                        "error_type": type(exc).__name__,
+                    })
+                except Exception:
+                    # The pre-armed marker remains durable even when enrichment
+                    # cannot be written after the unknown outcome.
+                    pass
                 error = DishRuleError(
                     "INTERNAL_ERROR",
                     "database restore failed with an unclassified recovery outcome; "

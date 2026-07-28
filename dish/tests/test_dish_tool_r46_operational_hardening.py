@@ -9,6 +9,7 @@ from dish_service.client import DishServiceClient
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
 from dish_service.leases import ServicePrincipal
+from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database import initialize_database, record_command_audit_repair
 from dish_tool.errors import DishRuleError
 from dish_tool.results import result_envelope
@@ -37,7 +38,7 @@ class UnavailableBackend(Backend):
         )
 
 
-def _service(tmp_path, backend=None, *, clock=None, ttl=60):
+def _service(tmp_path, backend=None, *, clock=None, ttl=90):
     backend = backend or Backend()
     honest = tmp_path / "honest"
     honest.mkdir(exist_ok=True)
@@ -183,7 +184,7 @@ def test_startup_processes_pending_audit_repairs_and_reports_health(tmp_path):
     startup = service.startup_check()
     assert startup["ok"]
     assert startup["startup"]["audit_repairs_processed"] == 1
-    assert startup["database"]["schema_version"] == 21
+    assert startup["database"]["schema_version"] == SCHEMA_VERSION
     assert startup["audit"]["pending_repairs"] == 0
     assert startup["asana"]["ok"]
 
@@ -442,13 +443,13 @@ def test_post_success_lease_failure_never_reverses_submit(monkeypatch, tmp_path)
     assert result["ok"]
     assert result["retryable"] is False
     assert result["allowed_actions"] == []
-    assert result["data"]["service_recovery_required"] is True
-    assert result["data"]["service_recovery"] == {
+    assert "service_recovery_required" not in result["data"]
+    assert result["data"]["service_cleanup_warning"] == {
         "kind": "lease_finalization",
         "operation_id": operation_id,
         "command": "submit",
         "error_type": "RuntimeError",
-        "do_not_retry_command": True,
+        "fallback_release_applied": True,
     }
 
     conn = initialize_database(service.config.db_path)
@@ -465,4 +466,4 @@ def test_post_success_lease_failure_never_reverses_submit(monkeypatch, tmp_path)
         conn.close()
     assert tuple(operation[:2]) == ("completed", "terminal")
     assert operation["completed_at"] is not None
-    assert lease is not None
+    assert lease is None

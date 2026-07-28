@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from .constants import RECOVERY_QUARANTINE_SECONDS
-from .database import record_audit, transition_submission
+from .database import atomic_persistence, record_audit, transition_submission
 from .errors import DishRuleError
 from .models import ProcessIdentity, WriteAttempt, utc_now
 
@@ -321,36 +321,57 @@ def begin_operation_write_attempt(
     purpose: str = "content_write",
     context: dict[str, object] | None = None,
 ) -> str:
-    """Persist the complete write intent before the backend call begins."""
-    unresolved = conn.execute(
-        "SELECT attempt_id, outcome FROM write_attempts WHERE operation_id=? AND outcome IN ('started','uncertain') ORDER BY started_at LIMIT 1",
-        (operation_id,),
-    ).fetchone()
-    if unresolved is not None:
+    """Persist one complete write intent before the backend call begins."""
+    attempt_id = str(uuid.uuid4())
+    try:
+        with atomic_persistence(conn, "write_attempt_start"):
+            conn.execute(
+                """INSERT INTO write_attempts (
+                    attempt_id, operation_id, expected_identity, intended_identity, outcome, started_at,
+                    purpose, intended_title, intended_notes, schema_version, context_json
+                ) VALUES (?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?)""",
+                (attempt_id, operation_id, expected_identity, intended_identity, utc_now(), purpose,
+                 intended_title, intended_notes, schema_version,
+                 None if context is None else json.dumps(context, sort_keys=True, separators=(",", ":"))),
+            )
+            operation = conn.execute(
+                "SELECT task_gid FROM operations WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            if operation is None:
+                raise DishRuleError(
+                    "NOT_FOUND", "operation not found", rule="operation_not_found"
+                )
+            record_audit(
+                conn, submission_id=None, task_gid=operation["task_gid"],
+                operation_id=operation_id, event_type="write_attempt.started",
+                actor_agent=None,
+                details={
+                    "attempt_id": attempt_id, "purpose": purpose,
+                    "intended_identity": intended_identity,
+                },
+                result_code="OK", result_ok=True,
+            )
+    except sqlite3.IntegrityError as exc:
+        if "write_attempts.operation_id" not in str(exc):
+            raise
+        unresolved = conn.execute(
+            """SELECT attempt_id, outcome FROM write_attempts
+                 WHERE operation_id=? AND outcome IN ('started','uncertain')
+                 ORDER BY started_at LIMIT 1""",
+            (operation_id,),
+        ).fetchone()
         raise DishRuleError(
             "CONFLICT",
             "an earlier write attempt must be recovered before another write can begin",
             rule="unresolved_write_attempt",
-            details={"attempt_id": unresolved["attempt_id"], "outcome": unresolved["outcome"]},
-        )
-    attempt_id = str(uuid.uuid4())
-    conn.execute(
-        """INSERT INTO write_attempts (
-            attempt_id, operation_id, expected_identity, intended_identity, outcome, started_at,
-            purpose, intended_title, intended_notes, schema_version, context_json
-        ) VALUES (?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?)""",
-        (attempt_id, operation_id, expected_identity, intended_identity, utc_now(), purpose,
-         intended_title, intended_notes, schema_version,
-         None if context is None else json.dumps(context, sort_keys=True, separators=(",", ":"))),
-    )
-    task_gid = conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0]
-    record_audit(
-        conn, submission_id=None, task_gid=task_gid, operation_id=operation_id,
-        event_type="write_attempt.started", actor_agent=None,
-        details={"attempt_id": attempt_id, "purpose": purpose, "intended_identity": intended_identity},
-        result_code="OK", result_ok=True,
-    )
+            details={} if unresolved is None else {
+                "attempt_id": unresolved["attempt_id"],
+                "outcome": unresolved["outcome"],
+            },
+        ) from exc
     return attempt_id
+
 
 def finish_operation_write_attempt(
     conn: sqlite3.Connection,
@@ -360,30 +381,31 @@ def finish_operation_write_attempt(
 ) -> sqlite3.Row:
     if outcome not in {"not_applied", "uncertain"}:
         raise ValueError("confirmed writes must use finalize_confirmed_write_attempt with exact live evidence")
-    cursor = conn.execute(
-        """
-        UPDATE write_attempts
-           SET outcome = ?, finished_at = ?
-         WHERE attempt_id = ? AND outcome = 'started'
-        """,
-        (outcome, utc_now(), attempt_id),
-    )
-    if cursor.rowcount != 1:
-        raise DishRuleError(
-            "CONFLICT",
-            "write attempt is no longer open",
-            rule="stale_write_attempt",
+    with atomic_persistence(conn, "write_attempt_finish"):
+        cursor = conn.execute(
+            """UPDATE write_attempts
+                  SET outcome = ?, finished_at = ?
+                WHERE attempt_id = ? AND outcome = 'started'""",
+            (outcome, utc_now(), attempt_id),
         )
-    row = conn.execute(
-        "SELECT * FROM write_attempts WHERE attempt_id = ?", (attempt_id,)
-    ).fetchone()
-    task_gid = conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (row["operation_id"],)).fetchone()[0]
-    record_audit(
-        conn, submission_id=None, task_gid=task_gid, operation_id=row["operation_id"],
-        event_type="write_attempt.finished", actor_agent=None,
-        details={"attempt_id": attempt_id, "outcome": outcome},
-        result_code="OK", result_ok=True,
-    )
+        if cursor.rowcount != 1:
+            raise DishRuleError(
+                "CONFLICT", "write attempt is no longer open",
+                rule="stale_write_attempt",
+            )
+        row = conn.execute(
+            "SELECT * FROM write_attempts WHERE attempt_id = ?", (attempt_id,)
+        ).fetchone()
+        operation = conn.execute(
+            "SELECT task_gid FROM operations WHERE operation_id = ?",
+            (row["operation_id"],),
+        ).fetchone()
+        record_audit(
+            conn, submission_id=None, task_gid=operation["task_gid"],
+            operation_id=row["operation_id"], event_type="write_attempt.finished",
+            actor_agent=None, details={"attempt_id": attempt_id, "outcome": outcome},
+            result_code="OK", result_ok=True,
+        )
     return row
 
 
@@ -395,33 +417,55 @@ def begin_movement_attempt(
     intended_section_gid: str,
     purpose: str = "unspecified",
 ) -> str:
-    unresolved = conn.execute(
-        "SELECT attempt_id, outcome FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain') ORDER BY started_at LIMIT 1",
-        (operation_id,),
-    ).fetchone()
-    if unresolved is not None:
+    attempt_id = str(uuid.uuid4())
+    try:
+        with atomic_persistence(conn, "movement_attempt_start"):
+            conn.execute(
+                """INSERT INTO movement_attempts (
+                    attempt_id, operation_id, expected_section_gid, intended_section_gid,
+                    outcome, started_at, purpose
+                ) VALUES (?, ?, ?, ?, 'started', ?, ?)""",
+                (attempt_id, operation_id, expected_section_gid, intended_section_gid,
+                 utc_now(), purpose),
+            )
+            operation = conn.execute(
+                "SELECT task_gid FROM operations WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            if operation is None:
+                raise DishRuleError(
+                    "NOT_FOUND", "operation not found", rule="operation_not_found"
+                )
+            record_audit(
+                conn, submission_id=None, task_gid=operation["task_gid"],
+                operation_id=operation_id, event_type="movement_attempt.started",
+                actor_agent=None,
+                details={
+                    "attempt_id": attempt_id, "purpose": purpose,
+                    "intended_section_gid": intended_section_gid,
+                },
+                result_code="OK", result_ok=True,
+            )
+    except sqlite3.IntegrityError as exc:
+        if "movement_attempts.operation_id" not in str(exc):
+            raise
+        unresolved = conn.execute(
+            """SELECT attempt_id, outcome FROM movement_attempts
+                 WHERE operation_id=? AND outcome IN ('started','uncertain')
+                 ORDER BY started_at LIMIT 1""",
+            (operation_id,),
+        ).fetchone()
         raise DishRuleError(
             "CONFLICT",
             "an earlier movement attempt must be recovered before another movement can begin",
             rule="unresolved_movement_attempt",
-            details={"attempt_id": unresolved["attempt_id"], "outcome": unresolved["outcome"]},
-        )
-    attempt_id = str(uuid.uuid4())
-    conn.execute(
-        """INSERT INTO movement_attempts (
-            attempt_id, operation_id, expected_section_gid, intended_section_gid,
-            outcome, started_at, purpose
-        ) VALUES (?, ?, ?, ?, 'started', ?, ?)""",
-        (attempt_id, operation_id, expected_section_gid, intended_section_gid, utc_now(), purpose),
-    )
-    task_gid = conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()[0]
-    record_audit(
-        conn, submission_id=None, task_gid=task_gid, operation_id=operation_id,
-        event_type="movement_attempt.started", actor_agent=None,
-        details={"attempt_id": attempt_id, "purpose": purpose, "intended_section_gid": intended_section_gid},
-        result_code="OK", result_ok=True,
-    )
+            details={} if unresolved is None else {
+                "attempt_id": unresolved["attempt_id"],
+                "outcome": unresolved["outcome"],
+            },
+        ) from exc
     return attempt_id
+
 
 def finish_movement_attempt(
     conn: sqlite3.Connection,
@@ -431,28 +475,29 @@ def finish_movement_attempt(
 ) -> sqlite3.Row:
     if outcome not in {"not_applied", "uncertain"}:
         raise ValueError("confirmed movements must use finalize_confirmed_movement_attempt with exact live evidence")
-    cursor = conn.execute(
-        """
-        UPDATE movement_attempts
-           SET outcome = ?, finished_at = ?
-         WHERE attempt_id = ? AND outcome = 'started'
-        """,
-        (outcome, utc_now(), attempt_id),
-    )
-    if cursor.rowcount != 1:
-        raise DishRuleError(
-            "CONFLICT",
-            "movement attempt is no longer open",
-            rule="stale_movement_attempt",
+    with atomic_persistence(conn, "movement_attempt_finish"):
+        cursor = conn.execute(
+            """UPDATE movement_attempts
+                  SET outcome = ?, finished_at = ?
+                WHERE attempt_id = ? AND outcome = 'started'""",
+            (outcome, utc_now(), attempt_id),
         )
-    row = conn.execute(
-        "SELECT * FROM movement_attempts WHERE attempt_id = ?", (attempt_id,)
-    ).fetchone()
-    task_gid = conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (row["operation_id"],)).fetchone()[0]
-    record_audit(
-        conn, submission_id=None, task_gid=task_gid, operation_id=row["operation_id"],
-        event_type="movement_attempt.finished", actor_agent=None,
-        details={"attempt_id": attempt_id, "outcome": outcome},
-        result_code="OK", result_ok=True,
-    )
+        if cursor.rowcount != 1:
+            raise DishRuleError(
+                "CONFLICT", "movement attempt is no longer open",
+                rule="stale_movement_attempt",
+            )
+        row = conn.execute(
+            "SELECT * FROM movement_attempts WHERE attempt_id = ?", (attempt_id,)
+        ).fetchone()
+        operation = conn.execute(
+            "SELECT task_gid FROM operations WHERE operation_id = ?",
+            (row["operation_id"],),
+        ).fetchone()
+        record_audit(
+            conn, submission_id=None, task_gid=operation["task_gid"],
+            operation_id=row["operation_id"], event_type="movement_attempt.finished",
+            actor_agent=None, details={"attempt_id": attempt_id, "outcome": outcome},
+            result_code="OK", result_ok=True,
+        )
     return row

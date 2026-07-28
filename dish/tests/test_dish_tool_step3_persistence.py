@@ -219,12 +219,19 @@ def _build_v2_database(path: Path):
 def test_legacy_nonterminal_rows_are_backed_up_and_quarantined(tmp_path):
     db_path = tmp_path / "dish.db"
     _build_v2_database(db_path)
-    original = db_path.read_bytes()
-
     conn = initialize_database(db_path)
     backup = db_path.with_suffix(".db.legacy-v2.bak")
     assert backup.exists()
-    assert backup.read_bytes() == original
+    backup_conn = sqlite3.connect(backup)
+    try:
+        assert backup_conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert backup_conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        legacy_row = backup_conn.execute(
+            "SELECT status FROM submissions WHERE submission_id='legacy-open'"
+        ).fetchone()
+        assert legacy_row == ("ready",)
+    finally:
+        backup_conn.close()
 
     rows = inspect_legacy_submissions(conn, task_gid="task")
     assert len(rows) == 1

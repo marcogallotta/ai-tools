@@ -5,9 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import time
 import sqlite3
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -1276,24 +1276,74 @@ BEGIN SELECT RAISE(ABORT, 'service requests are append-only'); END;
 """
 
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21}
+_MIGRATION_22 = """
+CREATE TABLE operation_execution_claims (
+    operation_id TEXT PRIMARY KEY REFERENCES operations(operation_id),
+    claim_id TEXT NOT NULL UNIQUE,
+    command TEXT NOT NULL CHECK(length(trim(command)) > 0),
+    hostname TEXT NOT NULL CHECK(length(trim(hostname)) > 0),
+    pid INTEGER NOT NULL CHECK(pid > 0),
+    process_start TEXT NOT NULL CHECK(length(trim(process_start)) > 0),
+    acquired_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX write_attempts_one_unresolved_operation
+    ON write_attempts(operation_id)
+    WHERE outcome IN ('started','uncertain');
+CREATE UNIQUE INDEX movement_attempts_one_unresolved_operation
+    ON movement_attempts(operation_id)
+    WHERE outcome IN ('started','uncertain');
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
-    """Keep one byte-for-byte backup before the persistence redesign."""
+    """Keep one transactionally complete legacy snapshot before migration.
+
+    Copying only the main SQLite file can omit committed pages still resident in
+    a WAL file. Build the legacy backup through SQLite's online backup API and
+    replace any earlier incomplete artifact while the live database is still on
+    a pre-redesign schema.
+    """
 
     if not db_path.exists() or str(db_path) == ":memory:":
         return
     backup = db_path.with_suffix(db_path.suffix + ".legacy-v2.bak")
-    if backup.exists():
-        return
-    probe = sqlite3.connect(str(db_path))
+    source = sqlite3.connect(str(db_path), timeout=30, isolation_level=None)
+    source.row_factory = sqlite3.Row
+    temp_path: Path | None = None
     try:
-        version = int(probe.execute("PRAGMA user_version").fetchone()[0])
+        version = int(source.execute("PRAGMA user_version").fetchone()[0])
+        if version >= 3:
+            return
+        with tempfile.NamedTemporaryFile(
+            dir=backup.parent,
+            prefix=f".{backup.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temp_path = Path(handle.name)
+        target = sqlite3.connect(str(temp_path), timeout=30, isolation_level=None)
+        try:
+            source.backup(target)
+            target.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            target.close()
+        check = sqlite3.connect(str(temp_path), timeout=30, isolation_level=None)
+        try:
+            if check.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError("legacy backup integrity check failed")
+            if int(check.execute("PRAGMA user_version").fetchone()[0]) != version:
+                raise sqlite3.DatabaseError("legacy backup schema version mismatch")
+        finally:
+            check.close()
+        os.replace(temp_path, backup)
+        temp_path = None
     finally:
-        probe.close()
-    if version < 3:
-        shutil.copy2(db_path, backup)
+        source.close()
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 WAL_BUSY_TIMEOUT_MS = 100
@@ -1528,6 +1578,31 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             ).fetchone()
             if approved is None:
                 problems.append({"kind": "operation_signoff_binding", "id": row["operation_id"]})
+    for table in ("write_attempts", "movement_attempts"):
+        for row in conn.execute(
+            f"""SELECT operation_id, COUNT(*) AS unresolved_count
+                  FROM {table}
+                 WHERE outcome IN ('started','uncertain')
+                 GROUP BY operation_id
+                HAVING COUNT(*) > 1"""
+        ):
+            problems.append({
+                "kind": f"multiple_unresolved_{table}",
+                "id": row["operation_id"],
+                "count": int(row["unresolved_count"]),
+            })
+    for row in conn.execute(
+        """SELECT lease.lease_id, lease.operation_id
+             FROM service_leases AS lease
+             JOIN operations AS operation ON operation.operation_id=lease.operation_id
+            WHERE lease.released_at IS NULL
+              AND operation.status IN ('completed','cancelled')"""
+    ):
+        problems.append({
+            "kind": "active_lease_on_terminal_operation",
+            "id": row["lease_id"],
+            "operation_id": row["operation_id"],
+        })
     for row in conn.execute("SELECT * FROM two_pass_resets"):
         version = conn.execute(
             """SELECT 1 FROM content_versions
@@ -1554,7 +1629,7 @@ def _validate_current_database(conn: sqlite3.Connection) -> None:
     user_version, ledger_version = _schema_version_state(conn)
     if user_version != current or ledger_version != current:
         raise DishRuleError("VALIDATION_FAILED", "database did not converge to the current schema", rule="database_schema_not_current", details={"user_version": user_version, "ledger_version": ledger_version, "current": current})
-    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests"}
+    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims"}
     actual = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     missing = sorted(required - actual)
     if missing:

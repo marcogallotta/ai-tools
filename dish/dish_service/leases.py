@@ -66,30 +66,72 @@ class LeaseManager:
         return row["owner_id"] == principal.owner_id and row["run_id"] == principal.run_id
 
     def _operation(self, operation_id: str):
-        row = self.conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
+        row = self.conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+        ).fetchone()
         if row is None:
             raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
         return row
 
-    def acquire(self, operation_id: str, principal: ServicePrincipal):
-        op = self._operation(operation_id)
-        if op["status"] != "open":
+    def _assert_owned_row(
+        self,
+        row,
+        principal: ServicePrincipal,
+        *,
+        now: datetime,
+    ):
+        if row is None:
             raise DishRuleError(
-                "WRONG_STATE",
-                "service lease can be acquired only for an open operation",
-                rule="service_lease_operation_not_open",
-                details={"operation_id": operation_id, "status": op["status"]},
+                "CONFLICT", "operation has no active service lease",
+                rule="service_lease_missing",
             )
+        if _parse(row["expires_at"]) <= now:
+            raise DishRuleError(
+                "CONFLICT",
+                "service lease expired and requires administrative recovery",
+                rule="service_lease_expired",
+                details={"expires_at": row["expires_at"]},
+            )
+        if not self.is_owned_by(row, principal):
+            raise DishRuleError(
+                "AGENT_MISMATCH", "service lease belongs to another client run",
+                rule="service_lease_owner_mismatch",
+                details={"owner_id": row["owner_id"], "run_id": row["run_id"]},
+            )
+        return row
+
+    def _release_row(self, row, *, reason: str, now: datetime):
+        cursor = self.conn.execute(
+            """UPDATE service_leases
+                  SET released_at=?, release_reason=?
+                WHERE lease_id=? AND released_at IS NULL""",
+            (_stamp(now), str(reason).strip() or "released", row["lease_id"]),
+        )
+        if cursor.rowcount != 1:
+            raise DishRuleError(
+                "CONFLICT", "service lease changed before release",
+                rule="service_lease_conflict",
+            )
+        return self.conn.execute(
+            "SELECT * FROM service_leases WHERE lease_id=?", (row["lease_id"],)
+        ).fetchone()
+
+    def acquire(self, operation_id: str, principal: ServicePrincipal):
         now = self.now()
         expiry = now + timedelta(seconds=self.ttl_seconds)
         self.conn.execute("BEGIN IMMEDIATE")
         try:
-            existing = self.conn.execute(
-                "SELECT * FROM service_leases WHERE operation_id=? AND released_at IS NULL",
-                (operation_id,),
-            ).fetchone()
+            op = self._operation(operation_id)
+            if op["status"] != "open":
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "service lease can be acquired only for an open operation",
+                    rule="service_lease_operation_not_open",
+                    details={"operation_id": operation_id, "status": op["status"]},
+                )
+            existing = self.active_for_operation(operation_id)
             if existing is not None:
-                if existing["owner_id"] == principal.owner_id and existing["run_id"] == principal.run_id:
+                if self.is_owned_by(existing, principal):
                     if _parse(existing["expires_at"]) <= now:
                         raise DishRuleError(
                             "CONFLICT",
@@ -99,14 +141,12 @@ class LeaseManager:
                         )
                     self.conn.execute("COMMIT")
                     return existing
-                rule = "service_lease_expired" if _parse(existing["expires_at"]) <= now else "service_lease_held"
-                message = (
-                    "service lease expired and requires administrative recovery"
-                    if rule == "service_lease_expired"
-                    else "operation is leased to another client run"
-                )
+                expired = _parse(existing["expires_at"]) <= now
                 raise DishRuleError(
-                    "CONFLICT", message, rule=rule,
+                    "CONFLICT",
+                    "service lease expired and requires administrative recovery"
+                    if expired else "operation is leased to another client run",
+                    rule="service_lease_expired" if expired else "service_lease_held",
                     details={
                         "operation_id": operation_id,
                         "owner_id": existing["owner_id"],
@@ -131,139 +171,214 @@ class LeaseManager:
                        lease_id,operation_id,task_gid,owner_id,run_id,
                        acquired_at,renewed_at,expires_at
                    ) VALUES(?,?,?,?,?,?,?,?)""",
-                (lease_id, operation_id, op["task_gid"], principal.owner_id, principal.run_id,
-                 stamp, stamp, _stamp(expiry)),
+                (lease_id, operation_id, op["task_gid"], principal.owner_id,
+                 principal.run_id, stamp, stamp, _stamp(expiry)),
             )
-            row = self.conn.execute("SELECT * FROM service_leases WHERE lease_id=?", (lease_id,)).fetchone()
+            row = self.conn.execute(
+                "SELECT * FROM service_leases WHERE lease_id=?", (lease_id,)
+            ).fetchone()
             self.conn.execute("COMMIT")
             return row
-        except DishRuleError:
-            if self.conn.in_transaction:
-                self.conn.execute("ROLLBACK")
-            raise
         except sqlite3.IntegrityError as exc:
             if self.conn.in_transaction:
                 self.conn.execute("ROLLBACK")
-            raise DishRuleError("CONFLICT", "service lease acquisition collided", rule="service_lease_conflict") from exc
+            raise DishRuleError(
+                "CONFLICT", "service lease acquisition collided",
+                rule="service_lease_conflict",
+            ) from exc
         except Exception:
             if self.conn.in_transaction:
                 self.conn.execute("ROLLBACK")
             raise
 
     def assert_owned(self, operation_id: str, principal: ServicePrincipal):
-        row = self.active_for_operation(operation_id)
-        if row is None:
-            raise DishRuleError("CONFLICT", "operation has no active service lease", rule="service_lease_missing")
-        now = self.now()
-        if _parse(row["expires_at"]) <= now:
-            raise DishRuleError(
-                "CONFLICT", "service lease expired and requires administrative recovery",
-                rule="service_lease_expired", details={"expires_at": row["expires_at"]},
-            )
-        if row["owner_id"] != principal.owner_id or row["run_id"] != principal.run_id:
-            raise DishRuleError(
-                "AGENT_MISMATCH", "service lease belongs to another client run",
-                rule="service_lease_owner_mismatch",
-                details={"owner_id": row["owner_id"], "run_id": row["run_id"]},
-            )
-        return row
+        return self._assert_owned_row(
+            self.active_for_operation(operation_id), principal, now=self.now()
+        )
 
     def renew(self, operation_id: str, principal: ServicePrincipal):
-        row = self.assert_owned(operation_id, principal)
         now = self.now()
         expiry = now + timedelta(seconds=self.ttl_seconds)
-        self.conn.execute(
-            "UPDATE service_leases SET renewed_at=?, expires_at=? WHERE lease_id=?",
-            (_stamp(now), _stamp(expiry), row["lease_id"]),
-        )
-        return self.active_for_operation(operation_id)
-
-    def release(self, operation_id: str, principal: ServicePrincipal | None, *, reason: str, admin: bool = False):
-        row = self.active_for_operation(operation_id)
-        if row is None:
-            return None
-        if not admin:
-            if principal is None:
-                raise DishRuleError("INVALID_ARGUMENT", "service principal is required", rule="service_principal_required")
-            self.assert_owned(operation_id, principal)
-        now = _stamp(self.now())
-        self.conn.execute(
-            "UPDATE service_leases SET released_at=?, release_reason=? WHERE lease_id=?",
-            (now, str(reason).strip() or "released", row["lease_id"]),
-        )
-        return self.conn.execute("SELECT * FROM service_leases WHERE lease_id=?", (row["lease_id"],)).fetchone()
-
-    def release_for_handoff(self, operation_id: str, principal: ServicePrincipal, *, reason: str):
-        op = self._operation(operation_id)
-        if op["status"] not in {"open", "uncertain"}:
-            return self.release(operation_id, principal, reason=reason)
-        if op["phase"] not in {"await_verification", "held_evidence", "held_human"}:
-            raise DishRuleError(
-                "WRONG_STATE", "owner lease cannot be released before a workflow handoff",
-                rule="service_lease_release_forbidden",
-                details={"phase": op["phase"]},
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            op = self._operation(operation_id)
+            if op["status"] != "open":
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "service lease cannot be renewed for a terminal operation",
+                    rule="service_lease_operation_not_open",
+                    details={"operation_id": operation_id, "status": op["status"]},
+                )
+            row = self._assert_owned_row(
+                self.active_for_operation(operation_id), principal, now=now
             )
-        unresolved = self.conn.execute(
-            """SELECT 1 FROM write_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
-               UNION ALL
-               SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
-               LIMIT 1""",
-            (operation_id, operation_id),
-        ).fetchone()
-        pending = self.conn.execute(
-            "SELECT 1 FROM operation_steps WHERE operation_id=? AND completed_at IS NULL LIMIT 1",
-            (operation_id,),
-        ).fetchone()
-        if unresolved or pending:
-            raise DishRuleError(
-                "WRONG_STATE", "owner lease cannot be released before durable completion markers",
-                rule="service_lease_completion_pending",
+            cursor = self.conn.execute(
+                """UPDATE service_leases SET renewed_at=?, expires_at=?
+                     WHERE lease_id=? AND released_at IS NULL
+                       AND owner_id=? AND run_id=? AND expires_at>?""",
+                (_stamp(now), _stamp(expiry), row["lease_id"], principal.owner_id,
+                 principal.run_id, _stamp(now)),
             )
-        return self.release(operation_id, principal, reason=reason)
+            if cursor.rowcount != 1:
+                raise DishRuleError(
+                    "CONFLICT", "service lease changed before renewal",
+                    rule="service_lease_conflict",
+                )
+            renewed = self.active_for_operation(operation_id)
+            self.conn.execute("COMMIT")
+            return renewed
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
+            raise
 
-    def release_terminal(self, operation_id: str, principal: ServicePrincipal, *, reason: str = "operation_terminal"):
-        op = self._operation(operation_id)
-        if op["status"] not in {"completed", "cancelled"}:
-            raise DishRuleError(
-                "WRONG_STATE", "task lock remains active until the operation is terminal",
-                rule="service_task_lock_active",
+    def release(
+        self,
+        operation_id: str,
+        principal: ServicePrincipal | None,
+        *,
+        reason: str,
+        admin: bool = False,
+    ):
+        now = self.now()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = self.active_for_operation(operation_id)
+            if row is None:
+                self.conn.execute("COMMIT")
+                return None
+            if not admin:
+                if principal is None:
+                    raise DishRuleError(
+                        "INVALID_ARGUMENT", "service principal is required",
+                        rule="service_principal_required",
+                    )
+                self._assert_owned_row(row, principal, now=now)
+            released = self._release_row(row, reason=reason, now=now)
+            self.conn.execute("COMMIT")
+            return released
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
+            raise
+
+    def release_for_handoff(
+        self, operation_id: str, principal: ServicePrincipal, *, reason: str
+    ):
+        now = self.now()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            op = self._operation(operation_id)
+            row = self._assert_owned_row(
+                self.active_for_operation(operation_id), principal, now=now
             )
-        pending = self.conn.execute(
-            "SELECT 1 FROM operation_steps WHERE operation_id=? AND completed_at IS NULL LIMIT 1",
-            (operation_id,),
-        ).fetchone()
-        unresolved = self.conn.execute(
-            """SELECT 1 FROM write_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
-               UNION ALL
-               SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
-               LIMIT 1""",
-            (operation_id, operation_id),
-        ).fetchone()
-        if pending or unresolved:
-            raise DishRuleError(
-                "WRONG_STATE", "task lock cannot release before all completion markers are durable",
-                rule="service_lease_completion_pending",
+            if op["status"] in {"open", "uncertain"} and op["phase"] not in {
+                "await_verification", "held_evidence", "held_human"
+            }:
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "owner lease cannot be released before a workflow handoff",
+                    rule="service_lease_release_forbidden",
+                    details={"phase": op["phase"]},
+                )
+            unresolved = self.conn.execute(
+                """SELECT 1 FROM write_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
+                   UNION ALL
+                   SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
+                   LIMIT 1""",
+                (operation_id, operation_id),
+            ).fetchone()
+            pending = self.conn.execute(
+                "SELECT 1 FROM operation_steps WHERE operation_id=? AND completed_at IS NULL LIMIT 1",
+                (operation_id,),
+            ).fetchone()
+            if unresolved or pending:
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "owner lease cannot be released before durable completion markers",
+                    rule="service_lease_completion_pending",
+                )
+            released = self._release_row(row, reason=reason, now=now)
+            self.conn.execute("COMMIT")
+            return released
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
+            raise
+
+    def release_terminal(
+        self,
+        operation_id: str,
+        principal: ServicePrincipal,
+        *,
+        reason: str = "operation_terminal",
+    ):
+        now = self.now()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            op = self._operation(operation_id)
+            row = self._assert_owned_row(
+                self.active_for_operation(operation_id), principal, now=now
             )
-        return self.release(operation_id, principal, reason=reason)
+            if op["status"] not in {"completed", "cancelled"}:
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "task lock remains active until the operation is terminal",
+                    rule="service_task_lock_active",
+                )
+            pending = self.conn.execute(
+                "SELECT 1 FROM operation_steps WHERE operation_id=? AND completed_at IS NULL LIMIT 1",
+                (operation_id,),
+            ).fetchone()
+            unresolved = self.conn.execute(
+                """SELECT 1 FROM write_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
+                   UNION ALL
+                   SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
+                   LIMIT 1""",
+                (operation_id, operation_id),
+            ).fetchone()
+            if pending or unresolved:
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "task lock cannot release before all completion markers are durable",
+                    rule="service_lease_completion_pending",
+                )
+            released = self._release_row(row, reason=reason, now=now)
+            self.conn.execute("COMMIT")
+            return released
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
+            raise
 
-    def admin_recover(self, operation_id: str, principal: ServicePrincipal, *, reason: str):
-        """Release a stale lease without transferring workflow ownership to admin.
-
-        Administrative recovery proves that the prior run is gone.  It does not make
-        Marco the constructor/verifier and must not leave an operation permanently
-        owned by the admin credential.  A workflow run with durable actor lineage may
-        reclaim the now-missing lease on its next legal mutation.
-        """
+    def admin_recover(
+        self,
+        operation_id: str,
+        principal: ServicePrincipal,
+        *,
+        reason: str,
+    ):
         del principal
-        self._operation(operation_id)
-        row = self.active_for_operation(operation_id)
-        if row is None:
-            return None
-        if _parse(row["expires_at"]) > self.now():
-            raise DishRuleError(
-                "CONFLICT", "active lease is not stale",
-                rule="service_lease_not_stale", details={"expires_at": row["expires_at"]},
+        now = self.now()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._operation(operation_id)
+            row = self.active_for_operation(operation_id)
+            if row is None:
+                self.conn.execute("COMMIT")
+                return None
+            if _parse(row["expires_at"]) > now:
+                raise DishRuleError(
+                    "CONFLICT", "active lease is not stale",
+                    rule="service_lease_not_stale",
+                    details={"expires_at": row["expires_at"]},
+                )
+            released = self._release_row(
+                row, reason=f"admin recovery: {reason}", now=now
             )
-        return self.release(
-            operation_id, None, reason=f"admin recovery: {reason}", admin=True
-        )
+            self.conn.execute("COMMIT")
+            return released
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
+            raise

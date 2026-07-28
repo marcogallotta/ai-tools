@@ -269,10 +269,23 @@ def assert_verifier_authority(
         )
     recorded_run = str(cycle["run_id"] or "").strip()
     supplied_run = str(run_id or "").strip()
-    if not recorded_run or supplied_run != recorded_run:
+    recorded_attestation = str(cycle["independence_attestation"] or "").strip()
+    supplied_attestation = str(independence_attestation or "").strip()
+    if (
+        not recorded_run
+        or supplied_run != recorded_run
+        or supplied_attestation != recorded_attestation
+    ):
         raise DishRuleError(
-            "AGENT_MISMATCH", "decision caller does not match the recorded verifier run",
+            "AGENT_MISMATCH",
+            "decision caller does not match the exact recorded verifier proof",
             rule="verifier_proof_mismatch",
+            details={
+                "run_id_matches": supplied_run == recorded_run,
+                "independence_attestation_matches": (
+                    supplied_attestation == recorded_attestation
+                ),
+            },
         )
 
 def approve_live(

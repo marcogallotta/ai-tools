@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import sqlite3
@@ -12,6 +13,21 @@ from .constants import SUBMISSION_STATES
 from .database_schema import MIGRATIONS, initialize_database, migrate_database
 from .errors import DishRuleError
 from .models import ContentIdentity, OperationActors, agent_family, utc_now
+
+
+@contextlib.contextmanager
+def atomic_persistence(conn: sqlite3.Connection, label: str):
+    """Make a local state mutation and its required audit one SQLite unit."""
+    savepoint = f"dish_{label}_{uuid.uuid4().hex}"
+    conn.execute(f"SAVEPOINT {savepoint}")
+    try:
+        yield
+    except Exception:
+        conn.execute(f"ROLLBACK TO {savepoint}")
+        conn.execute(f"RELEASE {savepoint}")
+        raise
+    else:
+        conn.execute(f"RELEASE {savepoint}")
 
 def record_audit(
     conn: sqlite3.Connection,
@@ -734,15 +750,25 @@ def mark_operation_completion(
         column = columns[marker]
     except KeyError as exc:
         raise ValueError(f"unknown completion marker: {marker}") from exc
-    conn.execute(f"UPDATE operations SET {column} = ? WHERE operation_id = ?", (utc_now(), operation_id))
-    row = conn.execute("SELECT * FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
-    if row is None:
-        raise DishRuleError("NOT_FOUND", f"operation not found: {operation_id}", rule="operation_not_found")
-    record_audit(
-        conn, submission_id=None, task_gid=row["task_gid"], operation_id=operation_id,
-        event_type="operation.marker", actor_agent=None,
-        details={"marker": marker}, result_code="OK", result_ok=True,
-    )
+    with atomic_persistence(conn, "operation_marker"):
+        conn.execute(
+            f"UPDATE operations SET {column} = ? WHERE operation_id = ?",
+            (utc_now(), operation_id),
+        )
+        row = conn.execute(
+            "SELECT * FROM operations WHERE operation_id = ?", (operation_id,)
+        ).fetchone()
+        if row is None:
+            raise DishRuleError(
+                "NOT_FOUND", f"operation not found: {operation_id}",
+                rule="operation_not_found",
+            )
+        record_audit(
+            conn, submission_id=None, task_gid=row["task_gid"],
+            operation_id=operation_id, event_type="operation.marker",
+            actor_agent=None, details={"marker": marker},
+            result_code="OK", result_ok=True,
+        )
     return row
 
 
@@ -755,23 +781,26 @@ def create_verification_cycle(
     route: str | None = None, resume_state: str | None = None,
 ) -> sqlite3.Row:
     cycle_id = str(uuid.uuid4())
-    conn.execute(
-        """INSERT INTO verification_cycles (
-            cycle_id, operation_id, task_gid, cycle_number, protocol_release, protocol_text,
-            verifier_agent, run_id, independence_attestation, correction_class,
-            outcome, route, resume_state, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (cycle_id, operation_id, task_gid, cycle_number, protocol_release, protocol_text,
-         verifier_agent, run_id, independence_attestation, correction_class,
-         outcome, route, resume_state, utc_now()),
-    )
-    row = conn.execute("SELECT * FROM verification_cycles WHERE cycle_id = ?", (cycle_id,)).fetchone()
-    record_audit(
-        conn, submission_id=None, task_gid=task_gid, operation_id=operation_id,
-        event_type="verification_cycle.created", actor_agent=verifier_agent,
-        details={"cycle_number": cycle_number, "protocol_release": protocol_release},
-        result_code="OK", result_ok=True,
-    )
+    with atomic_persistence(conn, "verification_cycle"):
+        conn.execute(
+            """INSERT INTO verification_cycles (
+                cycle_id, operation_id, task_gid, cycle_number, protocol_release, protocol_text,
+                verifier_agent, run_id, independence_attestation, correction_class,
+                outcome, route, resume_state, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (cycle_id, operation_id, task_gid, cycle_number, protocol_release, protocol_text,
+             verifier_agent, run_id, independence_attestation, correction_class,
+             outcome, route, resume_state, utc_now()),
+        )
+        row = conn.execute(
+            "SELECT * FROM verification_cycles WHERE cycle_id = ?", (cycle_id,)
+        ).fetchone()
+        record_audit(
+            conn, submission_id=None, task_gid=task_gid, operation_id=operation_id,
+            event_type="verification_cycle.created", actor_agent=verifier_agent,
+            details={"cycle_number": cycle_number, "protocol_release": protocol_release},
+            result_code="OK", result_ok=True,
+        )
     return row
 
 
@@ -797,15 +826,46 @@ _OPERATION_PHASE_ACTIONS = {
 }
 
 def transition_operation(conn: sqlite3.Connection, operation_id: str, *, phase: str, status: str | None = None, terminal_outcome: str | None = None, inherited_signoff_cycle_id: str | None = None) -> sqlite3.Row:
-    row = conn.execute("SELECT * FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
-    if row is None:
-        raise DishRuleError("NOT_FOUND", f"operation not found: {operation_id}", rule="operation_not_found")
-    next_status = status or row["status"]
-    completed_at = utc_now() if next_status in {"completed", "cancelled"} else row["completed_at"]
-    conn.execute("""UPDATE operations SET phase=?, status=?, terminal_outcome=COALESCE(?, terminal_outcome), inherited_signoff_cycle_id=COALESCE(?, inherited_signoff_cycle_id), completed_at=? WHERE operation_id=?""", (phase, next_status, terminal_outcome, inherited_signoff_cycle_id, completed_at, operation_id))
-    updated = conn.execute("SELECT * FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
-    record_audit(conn, submission_id=None, task_gid=row["task_gid"], operation_id=operation_id, event_type="operation.transition", actor_agent=None, details={"from_phase": row["phase"], "to_phase": phase, "from_status": row["status"], "to_status": next_status, "terminal_outcome": terminal_outcome}, result_code="OK", result_ok=True)
+    with atomic_persistence(conn, "operation_transition"):
+        row = conn.execute(
+            "SELECT * FROM operations WHERE operation_id = ?", (operation_id,)
+        ).fetchone()
+        if row is None:
+            raise DishRuleError(
+                "NOT_FOUND", f"operation not found: {operation_id}",
+                rule="operation_not_found",
+            )
+        next_status = status or row["status"]
+        completed_at = (
+            utc_now() if next_status in {"completed", "cancelled"}
+            else row["completed_at"]
+        )
+        conn.execute(
+            """UPDATE operations
+                  SET phase=?, status=?,
+                      terminal_outcome=COALESCE(?, terminal_outcome),
+                      inherited_signoff_cycle_id=COALESCE(?, inherited_signoff_cycle_id),
+                      completed_at=?
+                WHERE operation_id=?""",
+            (phase, next_status, terminal_outcome, inherited_signoff_cycle_id,
+             completed_at, operation_id),
+        )
+        updated = conn.execute(
+            "SELECT * FROM operations WHERE operation_id = ?", (operation_id,)
+        ).fetchone()
+        record_audit(
+            conn, submission_id=None, task_gid=row["task_gid"],
+            operation_id=operation_id, event_type="operation.transition",
+            actor_agent=None,
+            details={
+                "from_phase": row["phase"], "to_phase": phase,
+                "from_status": row["status"], "to_status": next_status,
+                "terminal_outcome": terminal_outcome,
+            },
+            result_code="OK", result_ok=True,
+        )
     return updated
+
 
 def legal_operation_actions(operation: Mapping[str, Any]) -> list[str]:
     if operation["status"] not in {"open", "uncertain"}:
@@ -846,39 +906,61 @@ def pending_operation_steps(conn: sqlite3.Connection, operation_id: str) -> list
 
 
 def record_actor_fact(conn: sqlite3.Connection, *, operation_id: str, task_gid: str, role: str, agent: str, run_id: str | None = None, independence_attestation: str | None = None, candidate_identity: str | None = None, source_cycle_id: str | None = None) -> sqlite3.Row:
-    """Record an immutable actor fact idempotently.
-
-    Recovery may replay a local suffix after the external content effect is already
-    confirmed. The same exact actor/candidate fact is therefore a no-op; a
-    conflicting fact for the same run and role fails closed.
-    """
+    """Record an immutable actor fact idempotently within one operation."""
     clean_run = str(run_id or '').strip() or None
     clean_attestation = str(independence_attestation or '').strip() or None
-    if clean_run is not None:
-        existing_rows = conn.execute(
-            "SELECT * FROM operation_actor_facts WHERE task_gid=? AND role=? AND run_id=? ORDER BY created_at, fact_id",
-            (task_gid, role, clean_run),
-        ).fetchall()
-        for existing in existing_rows:
-            if existing["agent"] != agent or existing["operation_id"] != operation_id:
-                raise DishRuleError(
-                    "CONFLICT", "actor lineage fact conflicts with persisted history",
-                    rule="actor_fact_conflict", details={"role": role, "run_id": clean_run},
-                )
-            if existing["candidate_identity"] == candidate_identity:
-                return existing
-        if existing_rows:
-            operation = conn.execute("SELECT expected_identity FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
-            baseline = None if operation is None else operation["expected_identity"]
-            if not all(row["candidate_identity"] in {None, baseline} for row in existing_rows):
-                raise DishRuleError(
-                    "CONFLICT", "actor lineage fact conflicts with persisted candidate",
-                    rule="actor_fact_conflict", details={"role": role, "run_id": clean_run},
-                )
-            # Append a new exact-candidate fact; never rewrite actor history.
-    fact_id = str(uuid.uuid4())
-    conn.execute("""INSERT INTO operation_actor_facts(fact_id,operation_id,task_gid,role,agent,run_id,independence_attestation,candidate_identity,source_cycle_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)""", (fact_id, operation_id, task_gid, role, agent, clean_run, clean_attestation, candidate_identity, source_cycle_id, utc_now()))
-    return conn.execute("SELECT * FROM operation_actor_facts WHERE fact_id=?", (fact_id,)).fetchone()
+    with atomic_persistence(conn, "actor_fact"):
+        if clean_run is not None:
+            existing_rows = conn.execute(
+                """SELECT * FROM operation_actor_facts
+                     WHERE operation_id=? AND role=? AND run_id=?
+                     ORDER BY created_at, fact_id""",
+                (operation_id, role, clean_run),
+            ).fetchall()
+            for existing in existing_rows:
+                if existing["agent"] != agent:
+                    raise DishRuleError(
+                        "CONFLICT",
+                        "actor lineage fact conflicts with persisted history",
+                        rule="actor_fact_conflict",
+                        details={"role": role, "run_id": clean_run},
+                    )
+                if (
+                    existing["candidate_identity"] == candidate_identity
+                    and str(existing["independence_attestation"] or "").strip()
+                    == str(clean_attestation or "").strip()
+                ):
+                    return existing
+            if existing_rows:
+                operation = conn.execute(
+                    "SELECT expected_identity FROM operations WHERE operation_id=?",
+                    (operation_id,),
+                ).fetchone()
+                baseline = None if operation is None else operation["expected_identity"]
+                if not all(
+                    row["candidate_identity"] in {None, baseline}
+                    for row in existing_rows
+                ):
+                    raise DishRuleError(
+                        "CONFLICT",
+                        "actor lineage fact conflicts with persisted candidate",
+                        rule="actor_fact_conflict",
+                        details={"role": role, "run_id": clean_run},
+                    )
+        fact_id = str(uuid.uuid4())
+        conn.execute(
+            """INSERT INTO operation_actor_facts(
+                   fact_id,operation_id,task_gid,role,agent,run_id,
+                   independence_attestation,candidate_identity,source_cycle_id,created_at
+               ) VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (fact_id, operation_id, task_gid, role, agent, clean_run,
+             clean_attestation, candidate_identity, source_cycle_id, utc_now()),
+        )
+        row = conn.execute(
+            "SELECT * FROM operation_actor_facts WHERE fact_id=?", (fact_id,)
+        ).fetchone()
+    return row
+
 
 def assert_fresh_verifier(conn: sqlite3.Connection, *, operation_id: str, agent: str, run_id: str | None, independence_attestation: str | None) -> None:
     clean_run = str(run_id or '').strip()
@@ -888,8 +970,13 @@ def assert_fresh_verifier(conn: sqlite3.Connection, *, operation_id: str, agent:
             "a verifier run ID is required",
             rule="verifier_identity_required",
         )
-    task_gid = conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)).fetchone()[0]
-    prior = conn.execute("SELECT role FROM operation_actor_facts WHERE task_gid=? AND run_id=? AND role IN ('constructor','material_editor') LIMIT 1", (task_gid, clean_run)).fetchone()
+    prior = conn.execute(
+        """SELECT role FROM operation_actor_facts
+             WHERE operation_id=? AND run_id=?
+               AND role IN ('constructor','material_editor')
+             LIMIT 1""",
+        (operation_id, clean_run),
+    ).fetchone()
     if prior is not None:
         raise DishRuleError("AGENT_MISMATCH", "verifier run is already part of the candidate lineage", rule="verifier_not_independent", details={"prior_role": prior['role']})
 
@@ -1067,60 +1154,70 @@ def _import_command_audit_repair_fallback(conn: sqlite3.Connection) -> int:
 
 
 def process_command_audit_repairs(conn: sqlite3.Connection, *, limit: int = 100) -> int:
-    """Import and replay pending invocation-audit repairs idempotently."""
+    """Import and replay pending invocation-audit repairs exactly once."""
     _import_command_audit_repair_fallback(conn)
-    rows = conn.execute(
-        "SELECT * FROM command_audit_repairs WHERE repaired_at IS NULL ORDER BY created_at, repair_id LIMIT ?",
-        (limit,),
-    ).fetchall()
+    conn.execute("BEGIN IMMEDIATE")
     repaired = 0
-    for row in rows:
-        result = json.loads(row["result_json"])
-        payload = result.get("_audit_payload") if isinstance(result, dict) else None
-        if isinstance(payload, dict):
-            event_type = str(payload.get("event_type") or row["command"])
-            details = dict(payload.get("details") or {})
-            audit_kwargs = dict(payload.get("audit_kwargs") or {})
-        else:
-            event_type = str(row["command"])
-            if not (event_type.startswith("dish.") or event_type.startswith("dish-admin.")):
-                event_type = f"dish.{event_type}"
-            details = {
-                "command": row["command"],
-                "ok": bool(result.get("ok")),
-                "code": result.get("code"),
-                "state": result.get("state"),
-                "retryable": bool(result.get("retryable")),
-                "errors": list(result.get("errors") or ()),
-            }
-            audit_kwargs = {}
-        details.update({
-            "repaired_from": row["repair_id"],
-            "original_audit_error": row["audit_error"],
-        })
-        conn.execute("SAVEPOINT audit_repair")
-        try:
-            record_audit(
-                conn,
-                submission_id=row["submission_id"],
-                task_gid=row["task_gid"],
-                operation_id=row["operation_id"],
-                event_type=event_type,
-                actor_agent=row["actor_agent"],
-                details=details,
-                result_code=result.get("code"),
-                result_ok=bool(result.get("ok")),
-                actor_source="audit-repair-worker",
-                **audit_kwargs,
-            )
-            conn.execute(
-                "UPDATE command_audit_repairs SET repaired_at=? WHERE repair_id=? AND repaired_at IS NULL",
-                (utc_now(), row["repair_id"]),
-            )
-            conn.execute("RELEASE audit_repair")
-            repaired += 1
-        except Exception:
-            conn.execute("ROLLBACK TO audit_repair")
-            conn.execute("RELEASE audit_repair")
-            break
-    return repaired
+    try:
+        rows = conn.execute(
+            """SELECT * FROM command_audit_repairs
+                 WHERE repaired_at IS NULL
+                 ORDER BY created_at, repair_id LIMIT ?""",
+            (limit,),
+        ).fetchall()
+        for row in rows:
+            result = json.loads(row["result_json"])
+            payload = result.get("_audit_payload") if isinstance(result, dict) else None
+            if isinstance(payload, dict):
+                event_type = str(payload.get("event_type") or row["command"])
+                details = dict(payload.get("details") or {})
+                audit_kwargs = dict(payload.get("audit_kwargs") or {})
+            else:
+                event_type = str(row["command"])
+                if not (event_type.startswith("dish.") or event_type.startswith("dish-admin.")):
+                    event_type = f"dish.{event_type}"
+                details = {
+                    "command": row["command"],
+                    "ok": bool(result.get("ok")),
+                    "code": result.get("code"),
+                    "state": result.get("state"),
+                    "retryable": bool(result.get("retryable")),
+                    "errors": list(result.get("errors") or ()),
+                }
+                audit_kwargs = {}
+            details.update({
+                "repaired_from": row["repair_id"],
+                "original_audit_error": row["audit_error"],
+            })
+            conn.execute("SAVEPOINT audit_repair")
+            try:
+                record_audit(
+                    conn, submission_id=row["submission_id"],
+                    task_gid=row["task_gid"], operation_id=row["operation_id"],
+                    event_type=event_type, actor_agent=row["actor_agent"],
+                    details=details, result_code=result.get("code"),
+                    result_ok=bool(result.get("ok")),
+                    actor_source="audit-repair-worker", **audit_kwargs,
+                )
+                cursor = conn.execute(
+                    """UPDATE command_audit_repairs SET repaired_at=?
+                         WHERE repair_id=? AND repaired_at IS NULL""",
+                    (utc_now(), row["repair_id"]),
+                )
+                if cursor.rowcount != 1:
+                    raise DishRuleError(
+                        "CONFLICT", "audit repair was claimed by another worker",
+                        rule="audit_repair_claim_lost",
+                    )
+                conn.execute("RELEASE audit_repair")
+                repaired += 1
+            except Exception:
+                conn.execute("ROLLBACK TO audit_repair")
+                conn.execute("RELEASE audit_repair")
+                break
+        conn.execute("COMMIT")
+        return repaired
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
