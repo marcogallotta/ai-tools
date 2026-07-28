@@ -7,7 +7,7 @@ from typing import Any, Mapping
 from dish_tool.errors import DishRuleError
 from dish_tool.models import validate_actor_model
 from .identifiers import (
-    CANONICAL_DISH_UUID_PATTERN,
+    CANONICAL_DISH_UUID_SCHEMA,
     require_asana_gid,
     require_dish_uuid,
 )
@@ -17,11 +17,7 @@ ACTION_LEASE_COMMAND = "renew-lease"
 REPLAY_SAFE_COMMANDS = AGENT_MUTATION_COMMANDS | {ACTION_LEASE_COMMAND}
 REPLAY_CAPABLE_COMMANDS = REPLAY_SAFE_COMMANDS
 
-DISH_UUID_SCHEMA = {
-    "type": "string",
-    "format": "uuid",
-    "pattern": CANONICAL_DISH_UUID_PATTERN,
-}
+DISH_UUID_SCHEMA = dict(CANONICAL_DISH_UUID_SCHEMA)
 CLIENT_RUN_ID_SCHEMA = {
     **DISH_UUID_SCHEMA,
     "description": (

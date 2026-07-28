@@ -19,6 +19,14 @@ _DISH_UUID_FIELDS = {
 CANONICAL_DISH_UUID_PATTERN = (
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
+CANONICAL_DISH_UUID_LENGTH = 36
+CANONICAL_DISH_UUID_SCHEMA = {
+    "type": "string",
+    "format": "uuid",
+    "pattern": CANONICAL_DISH_UUID_PATTERN,
+    "minLength": CANONICAL_DISH_UUID_LENGTH,
+    "maxLength": CANONICAL_DISH_UUID_LENGTH,
+}
 _NUMERIC_GID_RE = re.compile(r"[1-9][0-9]*")
 _CANONICAL_DISH_UUID_RE = re.compile(CANONICAL_DISH_UUID_PATTERN)
 

@@ -103,7 +103,13 @@ Before any task mutation:
 5. Confirm the Preview request succeeds through the standard HTTPS URL, not the private `:8444`
    endpoint.
 6. Review the GPT configuration and confirm no CLI, admin, or Asana secret is present.
-7. Inspect the imported `create` and `start` operations and confirm `client.request_id` is a required UUID.
+7. Inspect every imported operation and visibly confirm `client.run_id` is constrained as a
+   canonical lowercase UUID; for `create`, `start`, `prepare`, `approve`, `reject`, `submit`, and
+   `renew-lease`, also confirm `client.request_id` is required and has the same UUID constraints.
+
+Automated generator and checked-in-schema tests establish local acceptance only. Connected acceptance
+is not established until this exact schema is re-imported and the UUID constraints above are visibly
+verified in the GPT editor, followed by the Preview call.
 
 Then run the complete disposable-task procedure in `live-test-project-smoke.md`. Preview success for
 `sections` is connectivity proof, not authorization for production Cooking.

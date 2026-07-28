@@ -95,3 +95,92 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     assert "service_request_identity_conflict" in runtime
     assert "matching pending or uncertain request is never blindly executed again" in runtime
     assert "fresh UUID represents new work" in runtime
+
+
+def test_every_run_and_request_id_openapi_occurrence_uses_shared_uuid_authority():
+    import json
+
+    from dish_service.command_spec import ACTION_COMMANDS, REPLAY_SAFE_COMMANDS
+    from dish_service.identifiers import CANONICAL_DISH_UUID_SCHEMA
+
+    generated = action_openapi()
+    checked = json.loads((ROOT / "openapi" / "dish-action.openapi.json").read_text())
+
+    def named_identifier_schemas(document):
+        found = {}
+
+        def collect(value, path=()):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    child_path = (*path, key)
+                    if key in {"run_id", "request_id"}:
+                        found[child_path] = child
+                    collect(child, child_path)
+            elif isinstance(value, list):
+                for index, child in enumerate(value):
+                    collect(child, (*path, str(index)))
+
+        collect(document)
+        return found
+
+    expected_run_paths = {
+        (
+            "paths",
+            f"/v1/action/{command}",
+            "post",
+            "requestBody",
+            "content",
+            "application/json",
+            "schema",
+            "properties",
+            "client",
+            "properties",
+            "run_id",
+        )
+        for command in ACTION_COMMANDS
+    }
+    expected_request_paths = {
+        (
+            "paths",
+            f"/v1/action/{command}",
+            "post",
+            "requestBody",
+            "content",
+            "application/json",
+            "schema",
+            "properties",
+            "client",
+            "properties",
+            "request_id",
+        )
+        for command in REPLAY_SAFE_COMMANDS
+    }
+    expected_request_paths.add(
+        (
+            "components",
+            "schemas",
+            "ResultEnvelope",
+            "properties",
+            "data",
+            "properties",
+            "request_id",
+        )
+    )
+    expected_paths = expected_run_paths | expected_request_paths
+
+    for document in (generated, checked):
+        found = named_identifier_schemas(document)
+        assert set(found) == expected_paths
+        for path, schema in found.items():
+            for key, expected in CANONICAL_DISH_UUID_SCHEMA.items():
+                assert schema.get(key) == expected, (path, key)
+
+
+def test_connected_uuid_acceptance_remains_explicitly_reimport_gated():
+    action_guide = " ".join(
+        (ROOT / "deploy" / "gpt-action.md").read_text(encoding="utf-8").split()
+    )
+
+    assert "local acceptance only" in action_guide
+    assert "Connected acceptance is not established until this exact schema is re-imported" in action_guide
+    assert "visibly verified in the GPT editor" in action_guide
