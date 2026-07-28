@@ -48,6 +48,45 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                             "A planning-to-research handoff always requires kind=initial."
                         ),
                     },
+                    "material_classification": {
+                        "type": ["object", "null"],
+                        "description": (
+                            "Prepare classification for a changed post-signoff canonical body. "
+                            "When Dish overrides a requested non-material classification, "
+                            "forced_material_reasons names every detected protocol reason."
+                        ),
+                        "required": [
+                            "classified_subject",
+                            "requested",
+                            "effective",
+                            "forced_material_reasons",
+                            "route",
+                        ],
+                        "additionalProperties": False,
+                        "properties": {
+                            "classified_subject": {"type": "string"},
+                            "requested": {
+                                "type": "string",
+                                "enum": ["material", "non-material"],
+                            },
+                            "effective": {
+                                "type": "string",
+                                "enum": ["material", "non-material"],
+                            },
+                            "forced_material_reasons": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "Exact protocol classifier reasons that forced the effective "
+                                    "classification to material; empty when no override occurred."
+                                ),
+                            },
+                            "route": {
+                                "type": "string",
+                                "enum": ["verification", "signed-check-in"],
+                            },
+                        },
+                    },
                 },
             },
             "errors": {"type": "array", "items": {"type": "object", "additionalProperties": True}},

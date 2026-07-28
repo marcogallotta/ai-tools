@@ -1136,6 +1136,54 @@
                   "verification"
                 ],
                 "description": "Exact arguments.kind for the returned start action: planning starts Planning from a bare task; initial starts the first Research construction after Planning; verification starts independent Verification after Research. A planning-to-research handoff always requires kind=initial."
+              },
+              "material_classification": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "description": "Prepare classification for a changed post-signoff canonical body. When Dish overrides a requested non-material classification, forced_material_reasons names every detected protocol reason.",
+                "required": [
+                  "classified_subject",
+                  "requested",
+                  "effective",
+                  "forced_material_reasons",
+                  "route"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "classified_subject": {
+                    "type": "string"
+                  },
+                  "requested": {
+                    "type": "string",
+                    "enum": [
+                      "material",
+                      "non-material"
+                    ]
+                  },
+                  "effective": {
+                    "type": "string",
+                    "enum": [
+                      "material",
+                      "non-material"
+                    ]
+                  },
+                  "forced_material_reasons": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Exact protocol classifier reasons that forced the effective classification to material; empty when no override occurred."
+                  },
+                  "route": {
+                    "type": "string",
+                    "enum": [
+                      "verification",
+                      "signed-check-in"
+                    ]
+                  }
+                }
               }
             }
           },
