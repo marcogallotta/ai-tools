@@ -258,6 +258,12 @@ def test_pending_restore_request_is_not_blindly_repeated(tmp_path, monkeypatch):
         command="backup-restore",
         arguments={"backup_id": "candidate.sqlite3"},
     )
+    # A legacy pending record has no exact-effect checkpoint and must remain
+    # fail-closed rather than being re-executed from inference.
+    journal_path = service._restore_requests._record_path(REQUEST_ID)
+    legacy = json.loads(journal_path.read_text(encoding="utf-8"))
+    legacy.pop("checkpoints", None)
+    service._restore_requests._write(journal_path, legacy)
 
     def forbidden_restore(self, _backup_id):
         raise AssertionError("pending restore was repeated")

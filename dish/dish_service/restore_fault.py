@@ -46,9 +46,21 @@ class RestoreFaultMarker:
                 os.fsync(handle.fileno())
             os.replace(temp_path, self.path)
             temp_path = None
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
         finally:
             if temp_path is not None:
                 temp_path.unlink(missing_ok=True)
 
     def clear(self) -> None:
+        existed = self.path.exists()
         self.path.unlink(missing_ok=True)
+        if existed:
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)

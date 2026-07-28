@@ -252,7 +252,7 @@ cannot silently create separate live authorities.
 | external effects | `write_attempts`, `movement_attempts` |
 | governed authority | `marco_authorizations` |
 | execution and ownership | `operation_executions`, `operation_execution_claims`, `service_leases` |
-| request replay | `service_requests`; sibling journal for `backup-restore` |
+| request replay | `service_requests`; sibling identity, checkpoint, and result journal for `backup-restore` |
 | audit and repair | `audit_events`, `command_audit_repairs` |
 | historical quarantine | `legacy_submission_quarantine` and read-only legacy records |
 
@@ -276,7 +276,11 @@ does not replace exact content/signoff bindings.
 Every externally callable service mutation has a client request UUID whose first authoritative
 outcome is replay-bound. Pending or uncertain work is inspected or reconstructed, not reissued.
 `backup-restore` uses a sibling journal because replacing SQLite would replace an ordinary
-in-database request record. Exact response and replay behavior belongs in the runtime contract.
+in-database request record. Its append-only checkpoints bind the accepted request to the source
+backup, prepared candidate, pre-restore snapshot attempt, atomic replacement, validation, and any
+rollback. Restart recovery advances only from an exact durable checkpoint and matching file
+fingerprints; a legacy pending row without that evidence remains fail-closed. Exact response and
+replay behavior belongs in the runtime contract.
 
 The only durable state deliberately outside SQLite is tied to database ownership or replacement:
 the service-ownership marker, restore request journal, and restore-fault marker. Do not create a new

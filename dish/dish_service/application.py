@@ -5,6 +5,7 @@ import contextlib
 import inspect
 import logging
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -1416,6 +1417,183 @@ class DishService:
             finally:
                 conn.close()
 
+    @staticmethod
+    def _restore_result_requires_lockout(result: Mapping[str, Any]) -> bool:
+        if result.get("ok"):
+            return False
+        errors = result.get("errors")
+        first = errors[0] if isinstance(errors, list) and errors else {}
+        database_retained = first.get("database_retained")
+        return bool(
+            first.get("rule") == "backup_restore_and_rollback_failed"
+            or database_retained is False
+            or (
+                result.get("code") == "BACKEND_UNCERTAIN"
+                and database_retained is not True
+            )
+        )
+
+    def _restore_checkpoint_writer(
+        self,
+        *,
+        request_id: str | None,
+        marker_context: Mapping[str, Any],
+    ):
+        def persist(stage: str, details: Mapping[str, Any]) -> None:
+            # The detailed exact-effect plan belongs in the request journal. The
+            # fault marker remains a small fail-closed locator exposed by health.
+            if request_id:
+                self._restore_requests.checkpoint(
+                    request_id=request_id, stage=stage, details=details
+                )
+            try:
+                self._restore_fault.set({
+                    **dict(marker_context),
+                    "kind": "backup_restore_in_progress",
+                    "stage": stage,
+                })
+            except Exception:
+                # The marker was durably pre-armed before restore execution. Its
+                # stage enrichment is diagnostic only; the journal checkpoint is
+                # the exact recovery authority and must not be undone or turned
+                # into a second restore attempt because enrichment failed.
+                pass
+
+        return persist
+
+    def _finalize_restore_result(
+        self,
+        *,
+        request_id: str | None,
+        backup_id: str,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        if request_id:
+            result.setdefault("data", {})["request_id"] = request_id
+            try:
+                # The replay result commits before the lockout is cleared. A
+                # kill in between therefore replays the committed result and
+                # startup can safely remove only the stale marker.
+                self._restore_requests.complete(
+                    request_id=request_id, result=result
+                )
+            except Exception as exc:
+                result.setdefault("data", {})["service_recovery_required"] = True
+                result["data"]["journal_error_type"] = type(exc).__name__
+                return result
+
+        if self._restore_result_requires_lockout(result):
+            errors = result.get("errors")
+            first = errors[0] if isinstance(errors, list) and errors else {}
+            try:
+                self._restore_fault.set({
+                    "kind": "backup_restore_recovery_required",
+                    "backup_id": str(backup_id),
+                    "request_id": request_id,
+                    "rule": first.get("rule"),
+                    "details": {
+                        key: value
+                        for key, value in first.items()
+                        if key not in {"message"}
+                    },
+                })
+            except Exception:
+                # The already-armed marker is the durable fail-closed record.
+                pass
+        else:
+            try:
+                self._restore_fault.clear()
+            except Exception as exc:
+                result.setdefault("data", {})["service_cleanup_warning"] = {
+                    "kind": "restore_fault_marker_clear_failed",
+                    "error_type": type(exc).__name__,
+                    "do_not_retry": True,
+                }
+        return result
+
+    def _execute_restore_locked(
+        self,
+        *,
+        backup_id: str,
+        request_id: str | None,
+        marker_context: Mapping[str, Any],
+        checkpoint: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        manager = self.backup_manager
+        manager.set_restore_checkpoint(
+            self._restore_checkpoint_writer(
+                request_id=request_id, marker_context=marker_context
+            )
+        )
+        try:
+            if checkpoint is None:
+                data = manager.restore(backup_id)
+            else:
+                data = manager.recover_restore(backup_id, checkpoint)
+                data = {
+                    **data,
+                    "restore_recovered": True,
+                    "recovered_from_stage": checkpoint.get("stage"),
+                }
+            result = result_envelope(command="backup-restore", data=data)
+        except DishRuleError as exc:
+            result = error_envelope("backup-restore", exc)
+        except Exception as exc:
+            error = DishRuleError(
+                "INTERNAL_ERROR",
+                "database restore failed with an unclassified recovery outcome; "
+                "workflow mutations are disabled",
+                rule="backup_restore_recovery_unknown",
+                details={
+                    "error_type": type(exc).__name__,
+                    "database_retained": False,
+                },
+            )
+            result = error_envelope("backup-restore", error)
+        finally:
+            manager.set_restore_checkpoint(None)
+        return self._finalize_restore_result(
+            request_id=request_id, backup_id=backup_id, result=result
+        )
+
+    def _recover_interrupted_restore_locked(self) -> dict[str, Any] | None:
+        marker = self._restore_fault.read()
+        if not isinstance(marker, dict) or marker.get("kind") != "backup_restore_in_progress":
+            return None
+        request_id = str(marker.get("request_id") or "").strip() or None
+        backup_id = str(marker.get("backup_id") or "").strip()
+        if not request_id or not backup_id:
+            return None
+        try:
+            row = self._restore_requests.read(request_id)
+        except DishRuleError:
+            return None
+        if row is None:
+            return None
+        prior = self._restore_requests.stored_result(row)
+        if prior is not None:
+            # stored_result adds replay metadata, which is suitable for a later
+            # exact retry and harmless in the startup recovery summary.
+            if not self._restore_result_requires_lockout(prior):
+                try:
+                    self._restore_fault.clear()
+                except Exception:
+                    pass
+            return prior
+        checkpoint = self._restore_requests.last_checkpoint(row)
+        marker_context = {
+            "backup_id": backup_id,
+            "request_id": request_id,
+            "owner_id": marker.get("owner_id"),
+            "run_id": marker.get("run_id"),
+        }
+        return self._execute_restore_locked(
+            backup_id=backup_id,
+            request_id=request_id,
+            marker_context=marker_context,
+            checkpoint=checkpoint,
+        )
+
     def restore_backup(
         self,
         backup_id: str,
@@ -1425,34 +1603,67 @@ class DishService:
     ) -> dict[str, Any]:
         with self._maintenance_gate.restore():
             principal = principal or self._default_principal({}, admin=True)
-            replay_started = False
-            if request_id:
-                try:
-                    row, replay_started = self._restore_requests.begin(
-                        request_id=request_id,
-                        owner_id=principal.owner_id,
-                        run_id=principal.run_id,
-                        command="backup-restore",
-                        arguments={"backup_id": backup_id},
-                    )
-                    prior = self._restore_requests.stored_result(row)
-                    if prior is not None:
-                        return prior
-                    if not replay_started:
-                        raise pending_error("backup-restore", request_id)
-                except DishRuleError as exc:
-                    result = error_envelope("backup-restore", exc)
-                    result.setdefault("data", {})["request_id"] = request_id
-                    return result
+            supplied_request_id = request_id is not None
 
+            # Reconcile the exact interrupted request identified by the durable
+            # marker before accepting another restore. A caller without the old
+            # UUID receives the recovered outcome rather than causing a duplicate.
+            recovered = self._recover_interrupted_restore_locked()
+            if recovered is not None:
+                recovered_data = recovered.get("data")
+                recovered_backup = (
+                    recovered_data.get("restored", {}).get("source_backup_id")
+                    if isinstance(recovered_data, dict)
+                    and isinstance(recovered_data.get("restored"), dict)
+                    else None
+                )
+                recovered_request_id = (
+                    recovered_data.get("request_id")
+                    if isinstance(recovered_data, dict)
+                    else None
+                )
+                if (
+                    not supplied_request_id
+                    or (
+                        recovered.get("ok")
+                        and recovered_backup == str(backup_id)
+                        and request_id != recovered_request_id
+                    )
+                ):
+                    return recovered
+
+            request_id = request_id or str(uuid.uuid4())
+            checkpoint = None
             try:
-                self._restore_fault.set({
-                    "kind": "backup_restore_in_progress",
-                    "backup_id": str(backup_id),
-                    "request_id": request_id,
-                    "owner_id": principal.owner_id,
-                    "run_id": principal.run_id,
-                })
+                row, replay_started = self._restore_requests.begin(
+                    request_id=request_id,
+                    owner_id=principal.owner_id,
+                    run_id=principal.run_id,
+                    command="backup-restore",
+                    arguments={"backup_id": backup_id},
+                )
+                prior = self._restore_requests.stored_result(row)
+                if prior is not None:
+                    return prior
+                if not replay_started:
+                    checkpoint = self._restore_requests.last_checkpoint(row)
+                    if checkpoint is None:
+                        raise pending_error("backup-restore", request_id)
+            except DishRuleError as exc:
+                result = error_envelope("backup-restore", exc)
+                result.setdefault("data", {})["request_id"] = request_id
+                return result
+
+            marker_context = {
+                "kind": "backup_restore_in_progress",
+                "stage": "armed",
+                "backup_id": str(backup_id),
+                "request_id": request_id,
+                "owner_id": principal.owner_id,
+                "run_id": principal.run_id,
+            }
+            try:
+                self._restore_fault.set(marker_context)
             except Exception as marker_exc:
                 error = DishRuleError(
                     "INTERNAL_ERROR",
@@ -1464,72 +1675,18 @@ class DishService:
                     },
                 )
                 result = error_envelope("backup-restore", error)
-                if request_id and replay_started:
-                    result.setdefault("data", {})["request_id"] = request_id
-                    self._restore_requests.complete(request_id=request_id, result=result)
-                return result
+                return self._finalize_restore_result(
+                    request_id=request_id,
+                    backup_id=backup_id,
+                    result=result,
+                )
 
-            try:
-                data = self.backup_manager.restore(backup_id)
-                self._restore_fault.clear()
-                result = result_envelope(command="backup-restore", data=data)
-                if request_id:
-                    result.setdefault("data", {})["request_id"] = request_id
-                    self._restore_requests.complete(request_id=request_id, result=result)
-                return result
-            except DishRuleError as exc:
-                unsafe = bool(
-                    exc.rule == "backup_restore_and_rollback_failed"
-                    or exc.details.get("database_retained") is False
-                )
-                if unsafe:
-                    try:
-                        self._restore_fault.set({
-                            "kind": "backup_restore_and_rollback_failed",
-                            "rule": exc.rule,
-                            "backup_id": str(backup_id),
-                            "request_id": request_id,
-                            "details": dict(exc.details),
-                        })
-                    except Exception:
-                        # The pre-armed in-progress marker is already the durable
-                        # fail-closed record. Never depend on an enrichment write.
-                        pass
-                else:
-                    try:
-                        self._restore_fault.clear()
-                    except Exception:
-                        # A stale lockout is safer than losing a required lockout.
-                        pass
-                result = error_envelope("backup-restore", exc)
-                if request_id and replay_started:
-                    result.setdefault("data", {})["request_id"] = request_id
-                    self._restore_requests.complete(request_id=request_id, result=result)
-                return result
-            except Exception as exc:
-                try:
-                    self._restore_fault.set({
-                        "kind": "backup_restore_recovery_unknown",
-                        "backup_id": str(backup_id),
-                        "request_id": request_id,
-                        "error_type": type(exc).__name__,
-                    })
-                except Exception:
-                    # The pre-armed marker remains durable even when enrichment
-                    # cannot be written after the unknown outcome.
-                    pass
-                error = DishRuleError(
-                    "INTERNAL_ERROR",
-                    "database restore failed with an unclassified recovery outcome; "
-                    "workflow mutations are disabled",
-                    rule="backup_restore_recovery_unknown",
-                    details={"error_type": type(exc).__name__},
-                )
-                result = error_envelope("backup-restore", error)
-                if request_id and replay_started:
-                    result.setdefault("data", {})["request_id"] = request_id
-                    self._restore_requests.complete(request_id=request_id, result=result)
-                return result
+            return self._execute_restore_locked(
+                backup_id=backup_id,
+                request_id=request_id,
+                marker_context=marker_context,
+                checkpoint=checkpoint,
+            )
 
     def record_restore_validation_failure(
         self,
@@ -1559,12 +1716,20 @@ class DishService:
             return result
 
     def startup_check(self) -> dict[str, Any]:
-        """Report startup state without hiding diagnosis and restore endpoints."""
+        """Report startup state and reconcile a durably checkpointed restore."""
         repaired = 0
         release = None
         database_initialization_error_type = None
         audit_repair_error_type = None
         compatibility_error_type = None
+        restore_recovery_result: dict[str, Any] | None = None
+        restore_recovery_error_type = None
+        try:
+            with self._maintenance_gate.restore():
+                restore_recovery_result = self._recover_interrupted_restore_locked()
+        except Exception as exc:
+            restore_recovery_error_type = type(exc).__name__
+
         try:
             conn = initialize_database(self.config.db_path)
         except Exception as exc:
@@ -1590,6 +1755,23 @@ class DishService:
         startup["database_initialization_error_type"] = database_initialization_error_type
         startup["audit_repair_error_type"] = audit_repair_error_type
         startup["compatibility_error_type"] = compatibility_error_type
+        recovery_summary: dict[str, Any] = {
+            "attempted": restore_recovery_result is not None,
+            "error_type": restore_recovery_error_type,
+        }
+        if restore_recovery_result is not None:
+            errors = restore_recovery_result.get("errors")
+            first = errors[0] if isinstance(errors, list) and errors else {}
+            data = restore_recovery_result.get("data")
+            recovery_summary.update({
+                "ok": bool(restore_recovery_result.get("ok")),
+                "code": restore_recovery_result.get("code"),
+                "rule": first.get("rule") if isinstance(first, dict) else None,
+                "request_id": (
+                    data.get("request_id") if isinstance(data, dict) else None
+                ),
+            })
+        startup["restore_recovery"] = recovery_summary
         # Configuration is the listener-start boundary. Database, compatibility,
         # Asana, and restore faults leave the process available for diagnosis,
         # lease recovery, backup attempts, and administrative restore.

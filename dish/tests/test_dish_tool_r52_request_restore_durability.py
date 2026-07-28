@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
@@ -407,3 +409,435 @@ def test_completed_planning_reopen_is_marco_only_audited_and_request_replayed(tm
         ).fetchone()[0] == 1
     finally:
         conn.close()
+
+
+class SimulatedSigkill(BaseException):
+    pass
+
+
+def _restore_source(service):
+    initialize_database(service.config.db_path).close()
+    source = service.backup_manager.create(label="sigkill-source")
+    conn = initialize_database(service.config.db_path)
+    try:
+        conn.execute(
+            "UPDATE schema_migrations SET applied_at='2999-01-01T00:00:00Z' "
+            "WHERE version=(SELECT MAX(version) FROM schema_migrations)"
+        )
+    finally:
+        conn.close()
+    return source
+
+
+def _restart_service(service, backend):
+    return DishService(
+        service.config,
+        backend_factory=lambda: backend,
+        release_loader=service.release_loader,
+    )
+
+
+@pytest.mark.parametrize(
+    "kill_stage",
+    [
+        "preparation_started",
+        "candidate_prepared",
+        "pre_restore_attempted",
+        "pre_restore_captured",
+        "replacement_started",
+        "replacement_committed",
+        "validated",
+    ],
+)
+def test_sigkill_interrupted_restore_recovers_from_exact_checkpoint(
+    monkeypatch, tmp_path, kill_stage
+):
+    service, backend = _service(tmp_path)
+    source = _restore_source(service)
+    request_id = "44444444-4444-4444-8444-444444444444"
+    original_checkpoint = service._restore_requests.checkpoint
+
+    def checkpoint_then_kill(*, request_id, stage, details):
+        checkpoint = original_checkpoint(
+            request_id=request_id, stage=stage, details=details
+        )
+        if stage == kill_stage:
+            raise SimulatedSigkill(stage)
+        return checkpoint
+
+    monkeypatch.setattr(service._restore_requests, "checkpoint", checkpoint_then_kill)
+    with pytest.raises(SimulatedSigkill):
+        service.restore_backup(
+            source.backup_id,
+            principal=_principal("restore-run"),
+            request_id=request_id,
+        )
+
+    pre_restore_before = sorted(
+        service.config.backup_dir.glob("*pre-restore*.sqlite3")
+    )
+    assert service._restore_fault.active()
+
+    restarted = _restart_service(service, backend)
+    recovered = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("restore-run"),
+        request_id=request_id,
+    )
+    assert recovered["ok"]
+    assert recovered["data"]["restore_recovered"] is True
+    assert recovered["data"]["request_id"] == request_id
+    assert (
+        recovered["data"]["restored"]["source_backup_id"]
+        == source.backup_id
+    )
+    assert not restarted._restore_fault.active()
+    pre_restore_after = sorted(
+        service.config.backup_dir.glob("*pre-restore*.sqlite3")
+    )
+    if kill_stage in {"preparation_started", "candidate_prepared", "pre_restore_attempted"}:
+        assert len(pre_restore_before) == 0
+        assert len(pre_restore_after) == 1
+    else:
+        assert len(pre_restore_before) == 1
+        assert pre_restore_after == pre_restore_before
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        assert conn.execute(
+            "SELECT applied_at FROM schema_migrations "
+            "WHERE version=(SELECT MAX(version) FROM schema_migrations)"
+        ).fetchone()[0] != "2999-01-01T00:00:00Z"
+    finally:
+        conn.close()
+
+    replayed = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("restore-run"),
+        request_id=request_id,
+    )
+    assert replayed["ok"]
+    assert replayed["data"]["request_replayed"] is True
+
+
+def test_restore_recovers_when_killed_after_request_acceptance_before_marker(
+    monkeypatch, tmp_path
+):
+    service, backend = _service(tmp_path)
+    source = _restore_source(service)
+    request_id = "66666666-6666-4666-8666-666666666666"
+
+    def kill_before_marker(details):
+        raise SimulatedSigkill("request-accepted")
+
+    monkeypatch.setattr(service._restore_fault, "set", kill_before_marker)
+    with pytest.raises(SimulatedSigkill):
+        service.restore_backup(
+            source.backup_id,
+            principal=_principal("restore-run"),
+            request_id=request_id,
+        )
+    assert not service._restore_fault.active()
+
+    restarted = _restart_service(service, backend)
+    recovered = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("restore-run"),
+        request_id=request_id,
+    )
+    assert recovered["ok"]
+    assert recovered["data"]["restore_recovered"] is True
+    assert recovered["data"]["recovered_from_stage"] == "request_accepted"
+    assert not restarted._restore_fault.active()
+
+
+def test_new_client_request_returns_recovered_restore_without_second_swap(
+    monkeypatch, tmp_path
+):
+    service, backend = _service(tmp_path)
+    source = _restore_source(service)
+    interrupted_request = "77777777-7777-4777-8777-777777777777"
+    retry_request = "88888888-8888-4888-8888-888888888888"
+    original_checkpoint = service._restore_requests.checkpoint
+
+    def checkpoint_then_kill(*, request_id, stage, details):
+        checkpoint = original_checkpoint(
+            request_id=request_id, stage=stage, details=details
+        )
+        if stage == "replacement_committed":
+            raise SimulatedSigkill(stage)
+        return checkpoint
+
+    monkeypatch.setattr(service._restore_requests, "checkpoint", checkpoint_then_kill)
+    with pytest.raises(SimulatedSigkill):
+        service.restore_backup(
+            source.backup_id,
+            principal=_principal("restore-run"),
+            request_id=interrupted_request,
+        )
+    pre_restore_before = sorted(
+        service.config.backup_dir.glob("*pre-restore*.sqlite3")
+    )
+
+    restarted = _restart_service(service, backend)
+    recovered = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("restore-run"),
+        request_id=retry_request,
+    )
+    assert recovered["ok"]
+    assert recovered["data"]["request_id"] == interrupted_request
+    assert recovered["data"]["restore_recovered"] is True
+    assert sorted(service.config.backup_dir.glob("*pre-restore*.sqlite3")) == (
+        pre_restore_before
+    )
+    assert restarted._restore_requests.read(retry_request) is None
+
+
+def test_completed_restore_retry_clears_stale_in_progress_marker(
+    monkeypatch, tmp_path
+):
+    service, backend = _service(tmp_path)
+    source = _restore_source(service)
+    request_id = "55555555-5555-4555-8555-555555555555"
+
+    def kill_instead_of_clear():
+        raise SimulatedSigkill("after-journal-complete")
+
+    monkeypatch.setattr(service._restore_fault, "clear", kill_instead_of_clear)
+    with pytest.raises(SimulatedSigkill):
+        service.restore_backup(
+            source.backup_id,
+            principal=_principal("restore-run"),
+            request_id=request_id,
+        )
+    assert service._restore_fault.active()
+
+    restarted = _restart_service(service, backend)
+    replayed = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("restore-run"),
+        request_id=request_id,
+    )
+    assert replayed["ok"]
+    assert replayed["data"]["request_replayed"] is True
+    assert not restarted._restore_fault.active()
+
+
+def test_restart_startup_recovers_interrupted_restore_before_health(
+    monkeypatch, tmp_path
+):
+    service, backend = _service(tmp_path)
+    source = _restore_source(service)
+    request_id = "99999999-9999-4999-8999-999999999999"
+    original_checkpoint = service._restore_requests.checkpoint
+
+    def checkpoint_then_kill(*, request_id, stage, details):
+        checkpoint = original_checkpoint(
+            request_id=request_id, stage=stage, details=details
+        )
+        if stage == "replacement_committed":
+            raise SimulatedSigkill(stage)
+        return checkpoint
+
+    monkeypatch.setattr(service._restore_requests, "checkpoint", checkpoint_then_kill)
+    with pytest.raises(SimulatedSigkill):
+        service.restore_backup(
+            source.backup_id,
+            principal=_principal("restore-run"),
+            request_id=request_id,
+        )
+
+    restarted = _restart_service(service, backend)
+    startup = restarted.startup_check()
+    assert startup["startup"]["restore_recovery"] == {
+        "attempted": True,
+        "error_type": None,
+        "ok": True,
+        "code": "OK",
+        "rule": None,
+        "request_id": request_id,
+    }
+    assert startup["maintenance"]["restore_recovery_required"] is False
+    assert not restarted._restore_fault.active()
+
+    replayed = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("restore-run"),
+        request_id=request_id,
+    )
+    assert replayed["ok"]
+    assert replayed["data"]["request_replayed"] is True
+
+
+def test_sigkill_after_pre_restore_snapshot_commit_reuses_exact_snapshot(
+    monkeypatch, tmp_path
+):
+    service, backend = _service(tmp_path)
+    source = _restore_source(service)
+    request_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    from dish_service.backup import BackupManager
+
+    original_snapshot = BackupManager._snapshot_to
+    killed = False
+
+    def snapshot_then_kill(manager, destination):
+        nonlocal killed
+        record = original_snapshot(manager, destination)
+        if not killed and "pre-restore" in destination.name:
+            killed = True
+            raise SimulatedSigkill("pre-restore-snapshot-committed")
+        return record
+
+    monkeypatch.setattr(BackupManager, "_snapshot_to", snapshot_then_kill)
+    with pytest.raises(SimulatedSigkill):
+        service.restore_backup(
+            source.backup_id,
+            principal=_principal("restore-run"),
+            request_id=request_id,
+        )
+    before = sorted(service.config.backup_dir.glob("*pre-restore*.sqlite3"))
+    assert len(before) == 1
+
+    restarted = _restart_service(service, backend)
+    recovered = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("restore-run"),
+        request_id=request_id,
+    )
+    assert recovered["ok"]
+    assert recovered["data"]["recovered_from_stage"] == "pre_restore_attempted"
+    assert sorted(service.config.backup_dir.glob("*pre-restore*.sqlite3")) == before
+
+
+def test_sigkill_after_database_swap_before_commit_checkpoint_is_reconciled(
+    monkeypatch, tmp_path
+):
+    service, backend = _service(tmp_path)
+    source = _restore_source(service)
+    request_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    from dish_service.backup import BackupManager
+
+    original_fsync = BackupManager._fsync_directory
+    killed = False
+
+    def fsync_then_kill(path):
+        nonlocal killed
+        original_fsync(path)
+        if not killed and path == service.config.db_path.parent:
+            killed = True
+            raise SimulatedSigkill("database-swap-committed")
+
+    monkeypatch.setattr(BackupManager, "_fsync_directory", staticmethod(fsync_then_kill))
+    with pytest.raises(SimulatedSigkill):
+        service.restore_backup(
+            source.backup_id,
+            principal=_principal("restore-run"),
+            request_id=request_id,
+        )
+    row = service._restore_requests.read(request_id)
+    assert service._restore_requests.last_checkpoint(row)["stage"] == (
+        "replacement_started"
+    )
+
+    restarted = _restart_service(service, backend)
+    recovered = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("restore-run"),
+        request_id=request_id,
+    )
+    assert recovered["ok"]
+    assert recovered["data"]["recovered_from_stage"] == "replacement_started"
+    assert not restarted._restore_fault.active()
+
+
+@pytest.mark.parametrize(
+    "kill_stage", ["rollback_prepared", "rollback_started", "rolled_back"]
+)
+def test_sigkill_interrupted_rollback_resumes_exact_candidate(
+    monkeypatch, tmp_path, kill_stage
+):
+    import dish_service.backup as backup_module
+
+    service, backend = _service(tmp_path)
+    source = _restore_source(service)
+    request_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    original_initialize = backup_module.initialize_database
+    original_checkpoint = service._restore_requests.checkpoint
+
+    def fail_only_installed_restore(path):
+        conn = original_initialize(path)
+        if path == service.config.db_path:
+            applied_at = conn.execute(
+                "SELECT applied_at FROM schema_migrations "
+                "WHERE version=(SELECT MAX(version) FROM schema_migrations)"
+            ).fetchone()[0]
+            if applied_at != "2999-01-01T00:00:00Z":
+                conn.close()
+                raise RuntimeError("simulated installed-candidate validation failure")
+        return conn
+
+    def checkpoint_then_kill(*, request_id, stage, details):
+        checkpoint = original_checkpoint(
+            request_id=request_id, stage=stage, details=details
+        )
+        if stage == kill_stage:
+            raise SimulatedSigkill(stage)
+        return checkpoint
+
+    monkeypatch.setattr(backup_module, "initialize_database", fail_only_installed_restore)
+    monkeypatch.setattr(service._restore_requests, "checkpoint", checkpoint_then_kill)
+    with pytest.raises(SimulatedSigkill):
+        service.restore_backup(
+            source.backup_id,
+            principal=_principal("restore-run"),
+            request_id=request_id,
+        )
+    assert service._restore_fault.active()
+
+    restarted = _restart_service(service, backend)
+    recovered = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("restore-run"),
+        request_id=request_id,
+    )
+    assert recovered["ok"] is False
+    assert recovered["errors"][0]["rule"] == "backup_restore_failed_rolled_back"
+    assert recovered["errors"][0]["database_retained"] is True
+    assert not restarted._restore_fault.active()
+
+    conn = original_initialize(service.config.db_path)
+    try:
+        assert conn.execute(
+            "SELECT applied_at FROM schema_migrations "
+            "WHERE version=(SELECT MAX(version) FROM schema_migrations)"
+        ).fetchone()[0] == "2999-01-01T00:00:00Z"
+    finally:
+        conn.close()
+
+
+def test_checkpoint_marker_enrichment_failure_does_not_abort_exact_restore(
+    monkeypatch, tmp_path
+):
+    service, _backend = _service(tmp_path)
+    source = _restore_source(service)
+    request_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    original_set = service._restore_fault.set
+    calls = 0
+
+    def set_initial_marker_only(details):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return original_set(details)
+        raise OSError("simulated marker enrichment failure")
+
+    monkeypatch.setattr(service._restore_fault, "set", set_initial_marker_only)
+    restored = service.restore_backup(
+        source.backup_id,
+        principal=_principal("restore-run"),
+        request_id=request_id,
+    )
+    assert restored["ok"]
+    assert restored["data"]["request_id"] == request_id
+    assert not service._restore_fault.active()

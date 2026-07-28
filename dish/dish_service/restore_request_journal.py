@@ -15,6 +15,21 @@ from dish_tool.models import utc_now
 from .request_replay import request_hash
 
 
+_CHECKPOINT_ORDER = {
+    "request_accepted": 0,
+    "preparation_started": 5,
+    "candidate_prepared": 10,
+    "pre_restore_attempted": 15,
+    "pre_restore_captured": 20,
+    "replacement_started": 30,
+    "replacement_committed": 40,
+    "validated": 50,
+    "rollback_prepared": 60,
+    "rollback_started": 70,
+    "rolled_back": 80,
+}
+
+
 class RestoreRequestJournal:
     """Atomic per-request journal for database restore mutations.
 
@@ -54,7 +69,7 @@ class RestoreRequestJournal:
                 "restore request journal is unreadable; do not repeat the restore",
                 rule="restore_request_journal_unreadable",
                 retryable=False,
-                details={"path": str(path)},
+                details={},
             ) from exc
         if not isinstance(value, dict):
             raise DishRuleError(
@@ -62,7 +77,7 @@ class RestoreRequestJournal:
                 "restore request journal is invalid; do not repeat the restore",
                 rule="restore_request_journal_invalid",
                 retryable=False,
-                details={"path": str(path)},
+                details={},
             )
         return value
 
@@ -108,6 +123,7 @@ class RestoreRequestJournal:
         with self._locked():
             row = self._read(path)
             if row is None:
+                created_at = utc_now()
                 row = {
                     "request_id": request_id,
                     "owner_id": owner_id,
@@ -117,7 +133,15 @@ class RestoreRequestJournal:
                     "arguments": dict(arguments),
                     "status": "pending",
                     "result": None,
-                    "created_at": utc_now(),
+                    "recovery_protocol": 1,
+                    "checkpoints": [
+                        {
+                            "stage": "request_accepted",
+                            "details": {"arguments": dict(arguments)},
+                            "recorded_at": created_at,
+                        }
+                    ],
+                    "created_at": created_at,
                     "completed_at": None,
                 }
                 self._write(path, row)
@@ -135,6 +159,115 @@ class RestoreRequestJournal:
                     details={"request_id": request_id},
                 )
             return row, False
+
+    def read(self, request_id: str) -> dict[str, Any] | None:
+        """Return one journal record under the journal lock."""
+        path = self._record_path(request_id)
+        with self._locked():
+            row = self._read(path)
+            return None if row is None else json.loads(json.dumps(row))
+
+    @staticmethod
+    def last_checkpoint(row: Mapping[str, Any]) -> dict[str, Any] | None:
+        checkpoints = row.get("checkpoints")
+        if checkpoints is None:
+            # Records created before checkpoint support remain safely pending.
+            return None
+        if not isinstance(checkpoints, list):
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "restore request checkpoints are invalid; do not repeat the restore",
+                rule="restore_request_checkpoint_invalid",
+                retryable=False,
+                details={"request_id": row.get("request_id")},
+            )
+        if not checkpoints:
+            return None
+        checkpoint = checkpoints[-1]
+        if not isinstance(checkpoint, dict):
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "restore request checkpoint is invalid; do not repeat the restore",
+                rule="restore_request_checkpoint_invalid",
+                retryable=False,
+                details={"request_id": row.get("request_id")},
+            )
+        return json.loads(json.dumps(checkpoint))
+
+    def checkpoint(
+        self,
+        *,
+        request_id: str,
+        stage: str,
+        details: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        if stage not in _CHECKPOINT_ORDER:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "restore request checkpoint stage is invalid",
+                rule="restore_request_checkpoint_stage_invalid",
+                retryable=False,
+                details={"request_id": request_id, "stage": stage},
+            )
+        path = self._record_path(request_id)
+        with self._locked():
+            row = self._read(path)
+            if row is None:
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "restore request journal entry is missing",
+                    rule="restore_request_journal_missing",
+                    retryable=False,
+                    details={"request_id": request_id},
+                )
+            if row.get("status") != "pending":
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "a terminal restore request cannot accept progress",
+                    rule="restore_request_checkpoint_after_terminal",
+                    retryable=False,
+                    details={"request_id": request_id},
+                )
+            checkpoints = row.setdefault("checkpoints", [])
+            if not isinstance(checkpoints, list):
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "restore request checkpoints are invalid; do not repeat the restore",
+                    rule="restore_request_checkpoint_invalid",
+                    retryable=False,
+                    details={"request_id": request_id},
+                )
+            checkpoint = {
+                "stage": stage,
+                "details": json.loads(json.dumps(dict(details))),
+                "recorded_at": utc_now(),
+            }
+            if checkpoints:
+                previous = checkpoints[-1]
+                previous_stage = previous.get("stage") if isinstance(previous, dict) else None
+                if previous_stage not in _CHECKPOINT_ORDER:
+                    raise DishRuleError(
+                        "INTERNAL_ERROR",
+                        "restore request checkpoint lineage is invalid; do not repeat the restore",
+                        rule="restore_request_checkpoint_invalid",
+                        retryable=False,
+                        details={"request_id": request_id},
+                    )
+                if _CHECKPOINT_ORDER[stage] <= _CHECKPOINT_ORDER[previous_stage]:
+                    raise DishRuleError(
+                        "INTERNAL_ERROR",
+                        "restore request checkpoint order regressed",
+                        rule="restore_request_checkpoint_order_invalid",
+                        retryable=False,
+                        details={
+                            "request_id": request_id,
+                            "previous_stage": previous_stage,
+                            "stage": stage,
+                        },
+                    )
+            checkpoints.append(checkpoint)
+            self._write(path, row)
+            return json.loads(json.dumps(checkpoint))
 
     @staticmethod
     def stored_result(row: Mapping[str, Any]) -> dict[str, Any] | None:
