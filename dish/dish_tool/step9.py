@@ -1,19 +1,21 @@
 """Step 9 movement-only submit and live-evidence recovery."""
 from __future__ import annotations
 
+import dataclasses
 import re
 import json
 import sqlite3
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import finalize_confirmed_movement_attempt, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step
+from .database import content_identity, finalize_confirmed_movement_attempt, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step
 from .errors import DishRuleError
 from .lifecycle import assert_transition, require_status
 from .models import SectionRegistry, resolve_destination, utc_now
-from .task_document import DESTINATION_RE, DocumentParseError, parse_task_document, validate_task_document
-from .task_store import move_exact, read_complete_task
+from .task_document import DESTINATION_RE, DocumentParseError, PlanningBrief, parse_task_document, validate_task_document
+from .task_store import move_exact, read_complete_task, write_exact_content
 from .recovery import begin_movement_attempt
+from .governed_diff import canonical_diff
 
 
 def _operation(conn: sqlite3.Connection, operation_id: str):
@@ -27,23 +29,119 @@ def _operation(conn: sqlite3.Connection, operation_id: str):
     return row
 
 
-def _signed_identity(conn: sqlite3.Connection, operation_id: str) -> str:
+
+def _approved_signoff(conn: sqlite3.Connection, operation_id: str):
     row = conn.execute(
-        """SELECT signed_identity, signed_content_version_id
-             FROM verification_cycles
-            WHERE operation_id = ? AND outcome = 'approved' AND completed_at IS NOT NULL
-            ORDER BY cycle_number DESC LIMIT 1""",
+        """SELECT cycle.*, version.identity AS version_identity,
+                  version.confirmed AS version_confirmed,
+                  version.task_gid AS version_task_gid
+             FROM verification_cycles AS cycle
+             JOIN content_versions AS version
+               ON version.content_version_id=cycle.signed_content_version_id
+            WHERE cycle.operation_id=? AND cycle.outcome='approved'
+              AND cycle.completed_at IS NOT NULL
+            ORDER BY cycle.completed_at DESC, cycle.rowid DESC LIMIT 1""",
         (operation_id,),
     ).fetchone()
-    if row is None or not row["signed_identity"] or not row["signed_content_version_id"]:
-        raise DishRuleError("CONFLICT", "confirmed signed content version is missing", rule="signed_identity_missing")
-    version = conn.execute(
-        "SELECT identity FROM content_versions WHERE content_version_id = ? AND confirmed = 1",
-        (row["signed_content_version_id"],),
+    if (
+        row is None
+        or not row["signed_identity"]
+        or not row["signed_content_version_id"]
+        or row["version_confirmed"] != 1
+        or row["version_identity"] != row["signed_identity"]
+        or row["version_task_gid"] != row["task_gid"]
+    ):
+        raise DishRuleError(
+            "CONFLICT",
+            "confirmed signed content version is missing or inconsistent",
+            rule="signed_content_binding_invalid",
+        )
+    return row
+
+
+def submission_identity_evidence(
+    conn: sqlite3.Connection, operation_id: str
+) -> dict[str, Any]:
+    """Return the immutable approval plus any completed Marco destination-repair chain."""
+    approved = _approved_signoff(conn, operation_id)
+    approved_identity = approved["signed_identity"]
+    effective_identity = approved_identity
+    latest_repair = None
+    rows = conn.execute(
+        """SELECT attempt.*, version.identity AS version_identity,
+                  version.confirmed AS version_confirmed
+             FROM write_attempts AS attempt
+             JOIN content_versions AS version
+               ON version.content_version_id=attempt.confirmed_content_version_id
+            WHERE attempt.operation_id=?
+              AND attempt.purpose='destination_repair'
+              AND attempt.outcome='confirmed'
+            ORDER BY attempt.started_at, attempt.rowid""",
+        (operation_id,),
+    ).fetchall()
+    for row in rows:
+        context = json.loads(row["context_json"] or "{}")
+        step_name = str(context.get("repair_step") or "")
+        completed_step = (
+            None
+            if not step_name
+            else conn.execute(
+                "SELECT completed_at FROM operation_steps WHERE operation_id=? AND step_name=?",
+                (operation_id, step_name),
+            ).fetchone()
+        )
+        if completed_step is None or completed_step["completed_at"] is None:
+            continue
+        if (
+            context.get("authorization_kind") != "marco_destination_repair"
+            or context.get("approved_identity") != approved_identity
+            or context.get("source_identity") != effective_identity
+            or row["expected_identity"] != effective_identity
+            or row["intended_identity"] != row["version_identity"]
+            or row["version_confirmed"] != 1
+        ):
+            raise DishRuleError(
+                "CONFLICT",
+                "destination repair evidence is inconsistent",
+                rule="destination_repair_evidence_invalid",
+            )
+        effective_identity = row["intended_identity"]
+        latest_repair = {
+            "repair_step": step_name,
+            "source_identity": context.get("source_identity"),
+            "repaired_identity": effective_identity,
+            "before_destination": context.get("before_destination"),
+            "after_destination": context.get("after_destination"),
+            "reason": context.get("reason"),
+            "actor_run_id": context.get("actor_run_id"),
+            "write_attempt_id": row["attempt_id"],
+            "content_version_id": row["confirmed_content_version_id"],
+        }
+    return {
+        "approved_identity": approved_identity,
+        "approved_cycle_id": approved["cycle_id"],
+        "effective_identity": effective_identity,
+        "destination_repair": latest_repair,
+    }
+
+
+def latest_destination_failure(conn: sqlite3.Connection, operation_id: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        """SELECT details FROM audit_events
+             WHERE operation_id=? AND event_type='operation.destination_movement_failed'
+             ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+        (operation_id,),
     ).fetchone()
-    if version is None or version["identity"] != row["signed_identity"]:
-        raise DishRuleError("CONFLICT", "signed content binding is inconsistent", rule="signed_content_binding_invalid")
-    return row["signed_identity"]
+    if row is None:
+        return None
+    try:
+        details = json.loads(row["details"])
+    except (TypeError, json.JSONDecodeError):
+        return None
+    return details if isinstance(details, dict) else None
+
+def _signed_identity(conn: sqlite3.Connection, operation_id: str) -> str:
+    return str(_approved_signoff(conn, operation_id)["signed_identity"])
 
 
 def _destination(document, registry: SectionRegistry):
@@ -68,15 +166,202 @@ def _latest_movement_attempt(conn: sqlite3.Connection, operation_id: str):
     ).fetchone()
 
 
+def _movement_failure_details(
+    *,
+    op,
+    destination_gid: str | None,
+    retry_safe: bool,
+    reason: str,
+) -> dict[str, Any]:
+    return {
+        "task_gid": op["task_gid"],
+        "failed_destination_gid": destination_gid,
+        "operation_state": "ready_move_failed",
+        "content_approved": True,
+        "movement_retry_safe": retry_safe,
+        "required_authorization": (
+            None if retry_safe else "Marco admin destination repair"
+        ),
+        "legal_next_action": (
+            "submit" if retry_safe else "dish-admin repair-destination"
+        ),
+        "retryable": bool(retry_safe),
+        "failure_reason": reason,
+    }
+
+
+def _record_movement_failure(
+    conn: sqlite3.Connection,
+    *,
+    op,
+    destination_gid: str | None,
+    retry_safe: bool,
+    reason: str,
+) -> dict[str, Any]:
+    transition_operation(conn, op["operation_id"], phase="ready_move_failed")
+    details = _movement_failure_details(
+        op=op,
+        destination_gid=destination_gid,
+        retry_safe=retry_safe,
+        reason=reason,
+    )
+    record_audit(
+        conn,
+        submission_id=None,
+        task_gid=op["task_gid"],
+        operation_id=op["operation_id"],
+        event_type="operation.destination_movement_failed",
+        actor_agent=None,
+        details=details,
+        result_code="BACKEND_REJECTED" if retry_safe else "VALIDATION_FAILED",
+        result_ok=False,
+    )
+    return details
+
+
+def completed_submit_live(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    operation_id: str,
+    schema=None,
+) -> dict[str, Any]:
+    """Prove and return an already completed submission without mutating again."""
+    op = conn.execute(
+        "SELECT * FROM operations WHERE operation_id = ?", (operation_id,)
+    ).fetchone()
+    if op is None:
+        raise DishRuleError(
+            "NOT_FOUND", f"operation not found: {operation_id}", rule="operation_not_found"
+        )
+    if op["status"] != "completed" or op["terminal_outcome"] != "destination_handled":
+        raise DishRuleError(
+            "WRONG_STATE",
+            "operation is not an already completed submission",
+            rule="operation_not_open",
+            details={"actual": op["status"]},
+        )
+    identity_evidence = submission_identity_evidence(conn, operation_id)
+    signed_identity = _signed_identity(conn, operation_id)
+    effective_identity = (
+        identity_evidence["effective_identity"]
+        if identity_evidence["destination_repair"] is not None
+        else signed_identity
+    )
+    live = read_complete_task(
+        backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    if live.identity != effective_identity:
+        raise DishRuleError(
+            "CONFLICT",
+            "completed submission content no longer matches its signed identity",
+            rule="post_signoff_content_drift",
+            details={
+                "signed_identity": signed_identity,
+                "effective_identity": effective_identity,
+                "actual_identity": live.identity,
+            },
+        )
+    try:
+        document = parse_task_document(f"{live.title}\n{live.notes}")
+    except DocumentParseError as exc:
+        raise DishRuleError(
+            "VALIDATION_FAILED", "signed task is no longer canonical", rule=exc.rule
+        ) from exc
+    check = validate_task_document(
+        document, expected_schema_version=op["schema_version"], schema=schema
+    )
+    if not check.ok or document.state.values["Verified by"] == "None":
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "live task is not the completed signed ready task",
+            rule="signed_ready_required",
+        )
+    require_status(document.state, {"ready"}, action="submit")
+
+    audit = conn.execute(
+        """SELECT details FROM audit_events
+             WHERE operation_id=? AND event_type='operation.submitted'
+               AND result_ok=1
+             ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    if audit is None:
+        raise DishRuleError(
+            "CONFLICT",
+            "completed submission lacks durable terminal evidence",
+            rule="completed_submission_evidence_missing",
+        )
+    details = json.loads(audit["details"])
+    recorded_section = str(details.get("section_gid") or "")
+    if not recorded_section or live.section_gid != recorded_section:
+        raise DishRuleError(
+            "CONFLICT",
+            "completed submission placement no longer matches terminal evidence",
+            rule="post_movement_placement_drift",
+            details={
+                "recorded_section_gid": recorded_section or None,
+                "actual_section_gid": live.section_gid,
+            },
+        )
+    if details.get("moved") or details.get("handoff") == "already_at_destination":
+        movement = conn.execute(
+            """SELECT * FROM movement_attempts
+                 WHERE operation_id=? AND purpose='destination_submission'
+                   AND outcome='confirmed'
+                 ORDER BY finished_at DESC, rowid DESC LIMIT 1""",
+            (operation_id,),
+        ).fetchone()
+        if movement is None or movement["intended_section_gid"] != live.section_gid:
+            raise DishRuleError(
+                "CONFLICT",
+                "completed submission movement evidence is inconsistent",
+                rule="completed_submission_movement_evidence_invalid",
+            )
+
+    destination_value = document.planning_brief.values["Destination section"]
+    destination = None
+    match = DESTINATION_RE.match(destination_value)
+    if match is not None:
+        destination = {"name": match.group("name"), "gid": match.group("gid")}
+    return {
+        "operation_id": operation_id,
+        "signed_identity": signed_identity,
+        "effective_identity": effective_identity,
+        "destination_repair": identity_evidence["destination_repair"],
+        "handoff": details.get("handoff"),
+        "moved": bool(details.get("moved")),
+        "destination": destination,
+        "destination_diagnostic": details.get("destination_diagnostic"),
+        "task": {
+            "gid": live.gid,
+            "title": live.title,
+            "notes": live.notes,
+            "section_gid": live.section_gid,
+        },
+        "completed_submission_reused": True,
+    }
+
+
 def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, schema=None) -> dict[str, Any]:
     op = _operation(conn, operation_id)
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
+    identity_evidence = submission_identity_evidence(conn, operation_id)
     signed_identity = _signed_identity(conn, operation_id)
-    if live.identity != signed_identity:
+    effective_identity = (
+        identity_evidence["effective_identity"]
+        if identity_evidence["destination_repair"] is not None
+        else signed_identity
+    )
+    if live.identity != effective_identity:
         raise DishRuleError(
             "CONFLICT", "task content changed after signoff; a new Verification cycle is required",
             rule="post_signoff_content_drift",
-            details={"signed_identity": signed_identity, "actual_identity": live.identity},
+            details={
+                "signed_identity": signed_identity,
+                "effective_identity": effective_identity,
+                "actual_identity": live.identity,
+            },
         )
     try:
         document = parse_task_document(f"{live.title}\n{live.notes}")
@@ -86,6 +371,19 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
     if not check.ok or document.state.values["Verified by"] == "None":
         raise DishRuleError("VALIDATION_FAILED", "live task is not a valid signed ready task", rule="signed_ready_required")
     require_status(document.state, {"ready"}, action="submit")
+    if document.material_changes and document.material_changes[-1].endswith(
+        " — pending-verification"
+    ):
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "the latest Material changes entry still claims verification is pending",
+            rule="material_change_verification_pending",
+            retryable=False,
+            details={
+                "latest_material_change": document.material_changes[-1],
+                "required_state": "verified",
+            },
+        )
     assert_transition(action="submit", before="ready", after="ready")
 
     registry = SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
@@ -93,13 +391,24 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
     current = live.section_gid
     handoff = diagnostic
     moved = False
-    declare_operation_step(
-        conn, operation_id, "submission_terminal",
-        {"phase": "terminal", "status": "completed", "terminal_outcome": "destination_handled"},
-    )
-
     if destination is None:
-        handoff = diagnostic
+        destination_value = document.planning_brief.values["Destination section"]
+        destination_match = DESTINATION_RE.match(destination_value)
+        destination_gid = None if destination_match is None else destination_match.group("gid")
+        details = _record_movement_failure(
+            conn,
+            op=op,
+            destination_gid=destination_gid,
+            retry_safe=False,
+            reason=str(diagnostic or "destination_invalid"),
+        )
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "approved content is ready but its destination cannot be resolved",
+            rule="destination_movement_unresolvable",
+            retryable=False,
+            details=details,
+        )
     elif current == destination.gid:
         handoff = "already_at_destination"
         if op["movement_completed_at"] is None:
@@ -116,11 +425,31 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
             # A confirmed move cannot be repeated. The live reread above is authoritative;
             # reaching this branch means placement subsequently drifted.
             raise DishRuleError("CONFLICT", "confirmed destination movement no longer matches live placement", rule="post_movement_placement_drift")
-        live = move_exact(
-            conn, backend, operation_id=operation_id, task_gid=op["task_gid"],
-            project_gid=COOKING_PROJECT_GID, expected_identity=signed_identity,
-            expected_section_gid=current, intended_section_gid=destination.gid, purpose="destination_submission",
-        )
+        try:
+            live = move_exact(
+                conn, backend, operation_id=operation_id, task_gid=op["task_gid"],
+                project_gid=COOKING_PROJECT_GID, expected_identity=effective_identity,
+                expected_section_gid=current, intended_section_gid=destination.gid, purpose="destination_submission",
+            )
+        except DishRuleError as exc:
+            attempt = _latest_movement_attempt(conn, operation_id)
+            if attempt is not None and attempt["outcome"] == "not_applied":
+                details = _record_movement_failure(
+                    conn,
+                    op=op,
+                    destination_gid=destination.gid,
+                    retry_safe=True,
+                    reason=exc.rule or "destination_movement_rejected",
+                )
+                raise DishRuleError(
+                    exc.code,
+                    str(exc),
+                    rule=exc.rule or "destination_movement_rejected",
+                    retryable=exc.retryable,
+                    details={**exc.details, **details},
+                    errors=exc.errors,
+                ) from exc
+            raise
         moved = True
         handoff = "moved_to_destination"
     elif current == registry.research_queue_gid:
@@ -128,6 +457,10 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
     else:
         handoff = "manual_placement_preserved"
 
+    declare_operation_step(
+        conn, operation_id, "submission_terminal",
+        {"phase": "terminal", "status": "completed", "terminal_outcome": "destination_handled"},
+    )
     transition_operation(conn, operation_id, phase="terminal", status="completed", terminal_outcome="destination_handled")
     complete_operation_step(conn, operation_id, "submission_terminal")
     record_audit(
@@ -142,11 +475,257 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
     return {
         "operation_id": operation_id,
         "signed_identity": signed_identity,
+        "effective_identity": effective_identity,
+        "destination_repair": identity_evidence["destination_repair"],
         "handoff": handoff,
         "moved": moved,
         "destination": None if destination is None else {"name": destination.name, "gid": destination.gid},
         "destination_diagnostic": diagnostic,
         "task": {"gid": live.gid, "title": live.title, "notes": live.notes, "section_gid": live.section_gid},
+    }
+
+
+def _complete_destination_repair_step(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    step_name: str,
+    context: dict[str, Any],
+    repaired_identity: str,
+    recovered: bool = False,
+) -> None:
+    complete_operation_step(conn, operation_id, step_name)
+    transition_operation(conn, operation_id, phase="await_submission")
+    prior = conn.execute(
+        """SELECT 1 FROM audit_events
+             WHERE operation_id=? AND event_type='operation.destination_repaired'
+               AND json_extract(details, '$.repair_step')=? LIMIT 1""",
+        (operation_id, step_name),
+    ).fetchone()
+    if prior is None:
+        op = conn.execute(
+            "SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)
+        ).fetchone()
+        record_audit(
+            conn,
+            submission_id=None,
+            task_gid=op["task_gid"],
+            operation_id=operation_id,
+            event_type="operation.destination_repaired",
+            actor_agent=None,
+            details={
+                **context,
+                "repair_step": step_name,
+                "repaired_identity": repaired_identity,
+                "recovered": recovered,
+            },
+            result_code="OK",
+            result_ok=True,
+            governed_kind="decision",
+            before_state={
+                "identity": context.get("source_identity"),
+                "destination": context.get("before_destination"),
+            },
+            after_state={
+                "identity": repaired_identity,
+                "destination": context.get("after_destination"),
+            },
+            actor_run_id=context.get("actor_run_id"),
+            actor_source="recovery" if recovered else "marco-admin",
+        )
+
+
+def repair_destination_live(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    operation_id: str,
+    destination_section_gid: str,
+    reason: str,
+    actor_run_id: str | None = None,
+    schema=None,
+) -> dict[str, Any]:
+    op = _operation(conn, operation_id)
+    if op["phase"] != "ready_move_failed":
+        raise DishRuleError(
+            "WRONG_STATE",
+            "destination repair is legal only after an unrecoverable final movement failure",
+            rule="destination_repair_not_required",
+            details={"actual_phase": op["phase"]},
+        )
+    failure = latest_destination_failure(conn, operation_id)
+    if failure is None or bool(failure.get("movement_retry_safe")):
+        raise DishRuleError(
+            "WRONG_STATE",
+            "the failed movement is retryable without changing the approved destination",
+            rule="destination_repair_not_required",
+            details={"legal_next_action": "submit"},
+        )
+    clean_gid = str(destination_section_gid or "").strip()
+    clean_reason = str(reason or "").strip()
+    if not clean_gid:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "replacement destination section GID is required",
+            rule="destination_section_gid_required",
+            details={"field": "destination_section_gid"},
+        )
+    if not clean_reason:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "destination repair reason is required",
+            rule="destination_repair_reason_required",
+            details={"field": "reason"},
+        )
+
+    identity_evidence = submission_identity_evidence(conn, operation_id)
+    live = read_complete_task(
+        backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    if live.identity != identity_evidence["effective_identity"]:
+        raise DishRuleError(
+            "CONFLICT",
+            "live task does not match the approved destination-repair baseline",
+            rule="post_signoff_content_drift",
+            details={
+                "required_identity": identity_evidence["effective_identity"],
+                "actual_identity": live.identity,
+            },
+        )
+    try:
+        document = parse_task_document(f"{live.title}\n{live.notes}")
+    except DocumentParseError as exc:
+        raise DishRuleError(
+            "VALIDATION_FAILED", "signed task is no longer canonical", rule=exc.rule
+        ) from exc
+    check = validate_task_document(
+        document, expected_schema_version=op["schema_version"], schema=schema
+    )
+    if not check.ok or document.state.values["Status"] != "ready":
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "destination repair requires the approved ready task",
+            rule="signed_ready_required",
+        )
+
+    registry = SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
+    replacement = registry.by_gid.get(clean_gid)
+    if replacement is None:
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "replacement destination does not exist in Cooking",
+            rule="destination_unresolved",
+            details={"gid": clean_gid},
+        )
+    replacement = resolve_destination(replacement.name, replacement.gid, registry)
+    before_destination = document.planning_brief.values["Destination section"]
+    after_destination = f"{replacement.name} — {replacement.gid}"
+    if before_destination == after_destination:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "replacement destination is unchanged",
+            rule="destination_repair_unchanged",
+            details={"destination": after_destination},
+        )
+    failed_gid = str(failure.get("failed_destination_gid") or "").strip() or None
+    current_match = DESTINATION_RE.match(before_destination)
+    current_gid = None if current_match is None else current_match.group("gid")
+    if failed_gid is not None and current_gid != failed_gid:
+        raise DishRuleError(
+            "CONFLICT",
+            "live destination no longer matches the recorded movement failure",
+            rule="destination_repair_failure_drift",
+            details={"failed_destination_gid": failed_gid, "live_destination_gid": current_gid},
+        )
+
+    values = dict(document.planning_brief.values)
+    values["Destination section"] = after_destination
+    repaired = dataclasses.replace(
+        document, planning_brief=PlanningBrief(values)
+    )
+    diff = canonical_diff(document, repaired)
+    if set(diff) != {"planning.Destination section"}:
+        raise DishRuleError(
+            "INTERNAL_ERROR",
+            "destination repair attempted to change unrelated canonical content",
+            rule="destination_repair_scope_invalid",
+            details={"changed_paths": sorted(diff)},
+        )
+    rendered = repaired.render().splitlines()
+    title = rendered[0]
+    notes = "\n".join(rendered[1:]) + "\n"
+    intended_identity = content_identity(title, notes).digest
+    step_name = f"destination_repair:{intended_identity}"
+    context = {
+        "authorization_kind": "marco_destination_repair",
+        "approved_identity": identity_evidence["approved_identity"],
+        "approved_cycle_id": identity_evidence["approved_cycle_id"],
+        "source_identity": identity_evidence["effective_identity"],
+        "before_destination": before_destination,
+        "after_destination": after_destination,
+        "failed_destination_gid": failed_gid,
+        "reason": clean_reason,
+        "actor_run_id": str(actor_run_id or "").strip() or None,
+        "repair_step": step_name,
+    }
+    declare_operation_step(
+        conn,
+        operation_id,
+        step_name,
+        {"title": title, "notes": notes, **context},
+    )
+    try:
+        confirmed = write_exact_content(
+            conn,
+            backend,
+            operation_id=operation_id,
+            task_gid=op["task_gid"],
+            project_gid=COOKING_PROJECT_GID,
+            expected_identity=live.identity,
+            expected_section_gid=live.section_gid,
+            title=title,
+            notes=notes,
+            schema_version=op["schema_version"],
+            purpose="destination_repair",
+            context=context,
+        )
+    except DishRuleError:
+        attempt = conn.execute(
+            """SELECT * FROM write_attempts
+                 WHERE operation_id=? AND purpose='destination_repair'
+                   AND intended_identity=?
+                 ORDER BY started_at DESC, rowid DESC LIMIT 1""",
+            (operation_id, intended_identity),
+        ).fetchone()
+        if attempt is not None and attempt["outcome"] == "not_applied":
+            complete_operation_step(conn, operation_id, step_name)
+        raise
+    _complete_destination_repair_step(
+        conn,
+        operation_id=operation_id,
+        step_name=step_name,
+        context=context,
+        repaired_identity=confirmed.identity,
+    )
+    return {
+        "operation_id": operation_id,
+        "task_gid": op["task_gid"],
+        "content_approved": True,
+        "approval_cycle_id": identity_evidence["approved_cycle_id"],
+        "approved_identity": identity_evidence["approved_identity"],
+        "source_identity": identity_evidence["effective_identity"],
+        "repaired_identity": confirmed.identity,
+        "before_destination": before_destination,
+        "after_destination": {"name": replacement.name, "gid": replacement.gid},
+        "reason": clean_reason,
+        "movement_retry_safe": True,
+        "legal_next_action": "submit",
+        "task": {
+            "gid": confirmed.gid,
+            "title": confirmed.title,
+            "notes": confirmed.notes,
+            "section_gid": confirmed.section_gid,
+        },
     }
 
 
@@ -200,6 +779,21 @@ def recover_operation(
                     raise DishRuleError("CONFLICT", "requested outcome contradicts live write evidence", rule="recovery_outcome_mismatch")
                 finalize_not_applied_write_attempt(conn, attempt_id=write_attempt["attempt_id"])
                 actions.append({"kind": "content_write", "outcome": "not_applied"})
+                if write_attempt["purpose"] == "destination_repair":
+                    context = json.loads(write_attempt["context_json"] or "{}")
+                    repair_step = str(context.get("repair_step") or "")
+                    if repair_step:
+                        pending = conn.execute(
+                            "SELECT completed_at FROM operation_steps WHERE operation_id=? AND step_name=?",
+                            (operation_id, repair_step),
+                        ).fetchone()
+                        if pending is not None and pending["completed_at"] is None:
+                            complete_operation_step(conn, operation_id, repair_step)
+                            actions.append({
+                                "kind": "workflow_step",
+                                "step": repair_step,
+                                "outcome": "not_applied",
+                            })
                 content_state = "reconciled_not_applied_content_write"
         else:
             evidence = "unresolved"
@@ -249,7 +843,27 @@ def recover_operation(
     if requested_outcome == "applied":
         for step in pending_steps:
             intended = json.loads(step["intended_json"])
-            if step["step_name"] == "candidate_write":
+            if step["step_name"].startswith("destination_repair:"):
+                if live.title != intended.get("title") or live.notes != intended.get("notes"):
+                    raise DishRuleError(
+                        "CONFLICT",
+                        "live content does not satisfy destination-repair intent",
+                        rule="workflow_step_evidence_mismatch",
+                    )
+                _complete_destination_repair_step(
+                    conn,
+                    operation_id=operation_id,
+                    step_name=step["step_name"],
+                    context=intended,
+                    repaired_identity=live.identity,
+                    recovered=True,
+                )
+                actions.append({
+                    "kind": "workflow_step",
+                    "step": step["step_name"],
+                    "outcome": "confirmed",
+                })
+            elif step["step_name"] == "candidate_write":
                 if live.title == intended.get("title") and live.notes == intended.get("notes"):
                     complete_operation_step(conn, operation_id, "candidate_write")
                     actions.append({"kind": "workflow_step", "step": "candidate_write", "outcome": "confirmed"})
