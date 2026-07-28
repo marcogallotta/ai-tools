@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import json
 import logging
 import sqlite3
 import tempfile
@@ -61,13 +62,44 @@ def _now_stamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
+def _classify_database_initialization_exception(
+    exc: BaseException,
+) -> tuple[str, dict[str, Any]]:
+    details: dict[str, Any] = {"error_type": type(exc).__name__}
+    if isinstance(exc, DishRuleError):
+        details.update({
+            "error_classification": "dish_rule_error",
+            "original_code": exc.code,
+            "original_rule": exc.rule,
+            "original_retryable": exc.retryable,
+        })
+    elif isinstance(exc, sqlite3.Error):
+        details["error_classification"] = "sqlite_error"
+        error_code = getattr(exc, "sqlite_errorcode", None)
+        error_name = getattr(exc, "sqlite_errorname", None)
+        if error_code is not None:
+            details["sqlite_errorcode"] = error_code
+        if error_name is not None:
+            details["sqlite_errorname"] = error_name
+    elif isinstance(exc, OSError):
+        details["error_classification"] = "filesystem_error"
+        if exc.errno is not None:
+            details["errno"] = exc.errno
+    elif isinstance(exc, (TypeError, ValueError, AssertionError)):
+        details["error_classification"] = "database_contract_error"
+    else:
+        details["error_classification"] = "unexpected_error"
+    return str(details["error_classification"]), details
+
+
 def _database_unavailable_error(exc: BaseException) -> DishRuleError:
+    _classification, details = _classify_database_initialization_exception(exc)
     return DishRuleError(
         "INTERNAL_ERROR",
         "Dish database is unavailable; the request was not executed",
         rule="service_database_unavailable",
         retryable=True,
-        details={"error_type": type(exc).__name__},
+        details=details,
     )
 
 
@@ -155,6 +187,48 @@ class DishService:
         self._maintenance_gate = MaintenanceGate()
         self._restore_fault = RestoreFaultMarker(self.config.db_path)
         self._restore_requests = RestoreRequestJournal(self.config.db_path)
+
+    def _initialize_database(
+        self,
+        *,
+        surface: str,
+        command: str | None = None,
+        request_id: str | None = None,
+        principal: ServicePrincipal | None = None,
+        task_gid: str | None = None,
+        operation_id: str | None = None,
+        backup_id: str | None = None,
+    ) -> sqlite3.Connection:
+        """Initialize SQLite and retain safe diagnostics for every failure."""
+
+        try:
+            return initialize_database(self.config.db_path)
+        except Exception as exc:
+            classification, _details = _classify_database_initialization_exception(exc)
+            context = {
+                key: value
+                for key, value in {
+                    "surface": surface,
+                    "command": command,
+                    "request_id": request_id,
+                    "owner_id": None if principal is None else principal.owner_id,
+                    "run_id": None if principal is None else principal.run_id,
+                    "task_gid": task_gid,
+                    "operation_id": operation_id,
+                    "backup_id": backup_id,
+                }.items()
+                if value not in {None, ""}
+            }
+            # Only explicitly selected identifiers are logged. Never serialize
+            # command arguments, candidate text, rejection reasons, or tokens.
+            LOG.error(
+                "database_initialization_failed classification=%s error_type=%s context=%s",
+                classification,
+                type(exc).__name__,
+                json.dumps(context, sort_keys=True, separators=(",", ":")),
+                exc_info=(type(exc), exc, exc.__traceback__),
+            )
+            raise
 
     @property
     def backup_manager(self) -> BackupManager:
@@ -785,22 +859,33 @@ class DishService:
         request_id: str | None = None,
     ) -> dict[str, Any]:
         with self._maintenance_gate.request():
+            explicit_principal = principal is not None
+            principal = principal or self._default_principal(arguments)
+            task_gid = str(arguments.get("task_gid") or "").strip() or None
+            requested_operation_id = (
+                str(arguments.get("submission_id") or "").strip() or None
+            )
             try:
-                conn = initialize_database(self.config.db_path)
+                conn = self._initialize_database(
+                    surface="agent",
+                    command=command,
+                    request_id=request_id,
+                    principal=principal,
+                    task_gid=task_gid,
+                    operation_id=requested_operation_id,
+                )
             except Exception as exc:
                 return error_envelope(
                     command,
                     _database_unavailable_error(exc),
-                    task_gid=str(arguments.get("task_gid") or "").strip() or None,
-                    submission_id=str(arguments.get("submission_id") or "").strip() or None,
+                    task_gid=task_gid,
+                    submission_id=requested_operation_id,
                 )
             backend = None
             acquired_for_request = False
             operation_id = None
             replay_started = False
             completed_submit = False
-            explicit_principal = principal is not None
-            principal = principal or self._default_principal(arguments)
             invocation_run_id = (
                 principal.run_id
                 if explicit_principal
@@ -1037,7 +1122,16 @@ class DishService:
     ) -> dict[str, Any]:
         """Persist pre-application validation outcomes for replay-sensitive calls."""
         with self._maintenance_gate.request():
-            conn = initialize_database(self.config.db_path)
+            conn = self._initialize_database(
+                surface="agent-validation",
+                command=command,
+                request_id=request_id,
+                principal=principal,
+                task_gid=str(arguments.get("task_gid") or "").strip() or None,
+                operation_id=(
+                    str(arguments.get("submission_id") or "").strip() or None
+                ),
+            )
             try:
                 row, started = begin_request(
                     conn,
@@ -1068,7 +1162,13 @@ class DishService:
     ) -> dict[str, Any]:
         with self._maintenance_gate.request():
             try:
-                conn = initialize_database(self.config.db_path)
+                conn = self._initialize_database(
+                    surface="lease",
+                    command="renew-lease",
+                    request_id=request_id,
+                    principal=principal,
+                    operation_id=operation_id,
+                )
             except Exception as exc:
                 return error_envelope(
                     "renew-lease",
@@ -1145,7 +1245,13 @@ class DishService:
     ) -> dict[str, Any]:
         with self._maintenance_gate.request():
             try:
-                conn = initialize_database(self.config.db_path)
+                conn = self._initialize_database(
+                    surface="lease",
+                    command="recover-lease",
+                    request_id=request_id,
+                    principal=principal,
+                    operation_id=operation_id,
+                )
             except Exception as exc:
                 return error_envelope(
                     "recover-lease",
@@ -1234,7 +1340,14 @@ class DishService:
         context: Mapping[str, Any],
     ) -> dict[str, Any]:
         with self._maintenance_gate.request():
-            conn = initialize_database(self.config.db_path)
+            conn = self._initialize_database(
+                surface="agent-argument-validation",
+                command=command,
+                task_gid=str(context.get("task_gid") or "").strip() or None,
+                operation_id=(
+                    str(context.get("submission_id") or "").strip() or None
+                ),
+            )
             backend = self.backend_factory()
             try:
                 app = DishApplication(
@@ -1268,7 +1381,13 @@ class DishService:
         context: Mapping[str, Any],
     ) -> dict[str, Any]:
         with self._maintenance_gate.request():
-            conn = initialize_database(self.config.db_path)
+            conn = self._initialize_database(
+                surface="admin-argument-validation",
+                command=command,
+                operation_id=(
+                    str(context.get("submission_id") or "").strip() or None
+                ),
+            )
             backend = self.backend_factory()
             try:
                 app = DishAdminApplication(
@@ -1302,16 +1421,25 @@ class DishService:
         request_id: str | None = None,
     ) -> dict[str, Any]:
         with self._maintenance_gate.request():
+            principal = principal or self._default_principal(arguments, admin=True)
+            requested_operation_id = (
+                str(arguments.get("submission_id") or "").strip() or None
+            )
             try:
-                conn = initialize_database(self.config.db_path)
+                conn = self._initialize_database(
+                    surface="admin",
+                    command=command,
+                    request_id=request_id,
+                    principal=principal,
+                    operation_id=requested_operation_id,
+                )
             except Exception as exc:
                 return error_envelope(
                     command,
                     _database_unavailable_error(exc),
-                    submission_id=str(arguments.get("submission_id") or "").strip() or None,
+                    submission_id=requested_operation_id,
                 )
             backend = None
-            principal = principal or self._default_principal(arguments, admin=True)
             prepared_arguments = dict(arguments)
             supplied_run_id = str(prepared_arguments.get("run_id") or "").strip()
             if command in _RUN_ID_ADMIN_COMMANDS and not supplied_run_id:
@@ -1461,7 +1589,12 @@ class DishService:
             principal = principal or self._default_principal({}, admin=True)
             replay_started = False
             try:
-                conn = initialize_database(self.config.db_path)
+                conn = self._initialize_database(
+                    surface="admin",
+                    command="backup-create",
+                    request_id=request_id,
+                    principal=principal,
+                )
             except Exception as exc:
                 return error_envelope(
                     "backup-create", _database_unavailable_error(exc)
@@ -1817,7 +1950,7 @@ class DishService:
             restore_recovery_error_type = type(exc).__name__
 
         try:
-            conn = initialize_database(self.config.db_path)
+            conn = self._initialize_database(surface="startup", command="startup-check")
         except Exception as exc:
             database_initialization_error_type = type(exc).__name__
             conn = None
@@ -1884,7 +2017,7 @@ class DishService:
 
             conn = None
             try:
-                conn = initialize_database(self.config.db_path)
+                conn = self._initialize_database(surface="health", command="health")
                 _probe_database_write_readiness(conn)
                 database = {"ok": True, "schema_version": SCHEMA_VERSION, "write_ready": True}
                 audit["pending_repairs"] = conn.execute(
