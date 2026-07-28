@@ -1187,7 +1187,25 @@ def assert_fresh_verifier(conn: sqlite3.Connection, *, operation_id: str, agent:
         raise DishRuleError("AGENT_MISMATCH", "verifier run is already part of the candidate lineage", rule="verifier_not_independent", details={"prior_role": prior['role']})
 
 
+def _authorization_grant_audit_exists(
+    conn: sqlite3.Connection, authorization_id: str
+) -> bool:
+    return conn.execute(
+        """SELECT 1 FROM audit_events
+             WHERE event_type='marco.authorization'
+               AND json_extract(details, '$.authorization_id')=?
+             LIMIT 1""",
+        (authorization_id,),
+    ).fetchone() is not None
+
+
 def record_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, operation_id: str | None, field_name: str, before: Any, after: Any, reason: str, actor_run_id: str | None = None) -> sqlite3.Row:
+    """Create one audited authorization capability as one SQLite decision.
+
+    The operation lifecycle check, exact semantic deduplication, capability row,
+    and authoritative grant audit share one ``BEGIN IMMEDIATE`` transaction.
+    An unaudited historical row is never silently reused or duplicated.
+    """
     authorization_id = str(uuid.uuid4())
     clean_reason = str(reason or "").strip()
     if not clean_reason:
@@ -1195,34 +1213,78 @@ def record_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, opera
     before_json = json.dumps(before, sort_keys=True)
     after_json = json.dumps(after, sort_keys=True)
     clean_run_id = str(actor_run_id or "").strip() or None
-    existing = conn.execute(
-        """SELECT * FROM marco_authorizations
-             WHERE task_gid=? AND operation_id IS ?
-               AND field_name=? AND before_json=? AND after_json=?
-               AND reason=? AND actor_run_id IS ?
-               AND consumed_at IS NULL
-             ORDER BY created_at LIMIT 1""",
-        (
-            task_gid,
-            operation_id,
-            field_name,
-            before_json,
-            after_json,
-            clean_reason,
-            clean_run_id,
-        ),
-    ).fetchone()
-    if existing is not None:
-        return existing
-    conn.execute(
-        """INSERT INTO marco_authorizations(authorization_id,task_gid,operation_id,field_name,before_json,after_json,reason,actor_run_id,created_at)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
-        (authorization_id, task_gid, operation_id, field_name, before_json, after_json, clean_reason, clean_run_id, utc_now()),
-    )
-    record_audit(conn, submission_id=None, task_gid=task_gid, operation_id=operation_id, event_type="marco.authorization", actor_agent=None,
-                 details={"authorization_id": authorization_id, "field": field_name, "reason": clean_reason}, result_code="OK", result_ok=True,
-                 governed_kind="decision", before_state={field_name: before}, after_state={field_name: after}, actor_run_id=actor_run_id, actor_source="marco-admin")
-    return conn.execute("SELECT * FROM marco_authorizations WHERE authorization_id=?", (authorization_id,)).fetchone()
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        if operation_id is not None:
+            operation = conn.execute(
+                "SELECT task_gid,status FROM operations WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+            if operation is None:
+                raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+            if operation["task_gid"] != task_gid:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "authorization task does not match the bound operation",
+                    rule="authorization_operation_task_mismatch",
+                )
+            if operation["status"] != "open":
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "governed changes may only be authorized for an open operation",
+                    rule="authorization_operation_not_open",
+                    details={"actual": operation["status"]},
+                )
+        existing_rows = conn.execute(
+            """SELECT * FROM marco_authorizations
+                 WHERE task_gid=? AND operation_id IS ?
+                   AND field_name=? AND before_json=? AND after_json=?
+                   AND reason=? AND actor_run_id IS ?
+                   AND consumed_at IS NULL
+                 ORDER BY created_at, authorization_id""",
+            (
+                task_gid, operation_id, field_name, before_json, after_json,
+                clean_reason, clean_run_id,
+            ),
+        ).fetchall()
+        if len(existing_rows) > 1:
+            raise DishRuleError(
+                "CONFLICT",
+                "historical duplicate unused authorizations require operator review",
+                rule="governed_authorization_history_ambiguous",
+                retryable=False,
+                details={"field": field_name, "authorization_count": len(existing_rows)},
+            )
+        if existing_rows:
+            existing = existing_rows[0]
+            if not _authorization_grant_audit_exists(conn, existing["authorization_id"]):
+                raise DishRuleError(
+                    "CONFLICT",
+                    "an existing authorization lacks its authoritative grant audit",
+                    rule="governed_authorization_grant_audit_missing",
+                    retryable=False,
+                    details={"authorization_id": existing["authorization_id"]},
+                )
+            conn.execute("COMMIT")
+            return existing
+        conn.execute(
+            """INSERT INTO marco_authorizations(authorization_id,task_gid,operation_id,field_name,before_json,after_json,reason,actor_run_id,created_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (authorization_id, task_gid, operation_id, field_name, before_json, after_json, clean_reason, clean_run_id, utc_now()),
+        )
+        record_audit(conn, submission_id=None, task_gid=task_gid, operation_id=operation_id, event_type="marco.authorization", actor_agent=None,
+                     details={"authorization_id": authorization_id, "field": field_name, "reason": clean_reason}, result_code="OK", result_ok=True,
+                     governed_kind="decision", before_state={field_name: before}, after_state={field_name: after}, actor_run_id=actor_run_id, actor_source="marco-admin")
+        row = conn.execute(
+            "SELECT * FROM marco_authorizations WHERE authorization_id=?",
+            (authorization_id,),
+        ).fetchone()
+        conn.execute("COMMIT")
+        return row
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
 
 def reserve_marco_authorizations(
     conn: sqlite3.Connection,
@@ -1239,19 +1301,57 @@ def reserve_marco_authorizations(
     """
     conn.execute("BEGIN IMMEDIATE")
     try:
+        operation = conn.execute(
+            "SELECT task_gid,status FROM operations WHERE operation_id=?",
+            (operation_id,),
+        ).fetchone()
+        if operation is None:
+            raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+        if operation["task_gid"] != task_gid:
+            raise DishRuleError(
+                "CONFLICT",
+                "authorization task does not match the reserving operation",
+                rule="authorization_operation_task_mismatch",
+            )
+        if operation["status"] != "open":
+            raise DishRuleError(
+                "WRONG_STATE",
+                "governed authorization cannot be reserved for a terminal operation",
+                rule="authorization_operation_not_open",
+                details={"actual": operation["status"]},
+            )
         rows: list[sqlite3.Row] = []
         for change in changes:
             before_json = json.dumps(change["before"], sort_keys=True)
             after_json = json.dumps(change["after"], sort_keys=True)
-            row = conn.execute(
-                """SELECT * FROM marco_authorizations
-                     WHERE task_gid=? AND (operation_id IS NULL OR operation_id=?)
-                       AND field_name=? AND before_json=? AND after_json=?
-                       AND consumed_at IS NULL
-                       AND (reserved_by_operation_id IS NULL OR reserved_by_operation_id=?)
-                     ORDER BY created_at LIMIT 1""",
+            candidates = conn.execute(
+                """SELECT authorization.*
+                     FROM marco_authorizations AS authorization
+                    WHERE authorization.task_gid=?
+                      AND (authorization.operation_id IS NULL OR authorization.operation_id=?)
+                      AND authorization.field_name=?
+                      AND authorization.before_json=?
+                      AND authorization.after_json=?
+                      AND authorization.consumed_at IS NULL
+                      AND (authorization.reserved_by_operation_id IS NULL
+                           OR authorization.reserved_by_operation_id=?)
+                      AND EXISTS (
+                          SELECT 1 FROM audit_events AS grant
+                           WHERE grant.event_type='marco.authorization'
+                             AND json_extract(grant.details, '$.authorization_id')=authorization.authorization_id
+                      )
+                    ORDER BY authorization.created_at, authorization.authorization_id""",
                 (task_gid, operation_id, change["field"], before_json, after_json, operation_id),
-            ).fetchone()
+            ).fetchall()
+            if len(candidates) > 1:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "multiple equivalent unused authorizations require operator review",
+                    rule="governed_authorization_history_ambiguous",
+                    retryable=False,
+                    details={"field": change["field"], "authorization_count": len(candidates)},
+                )
+            row = candidates[0] if candidates else None
             if row is None:
                 raise DishRuleError(
                     "VALIDATION_FAILED",
