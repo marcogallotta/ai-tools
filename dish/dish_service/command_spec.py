@@ -77,7 +77,6 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "string",
                 "enum": ["planning", "initial", "change", "verification"],
             },
-            "run_id": {"type": "string"},
             "independence_attestation": {"type": "string"},
             "change_level": {"type": "string", "enum": ["small", "large"]},
             "change_reason": {"type": "string"},
@@ -122,7 +121,6 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "reviewed_identity": {"type": "string"},
             "semantic_review_complete": {"type": "boolean"},
             "provenance_complete": {"type": "boolean"},
-            "run_id": {"type": "string"},
             "independence_attestation": {"type": "string"},
         },
     },
@@ -142,7 +140,6 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "string",
                 "enum": ["pending-research", "pending-verification"],
             },
-            "run_id": {"type": "string"},
             "independence_attestation": {"type": "string"},
         },
     },
@@ -154,7 +151,36 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
 
 
 def action_openapi_argument_schema(command: str) -> dict[str, Any]:
-    """Return the public Action schema, including route-specific reject shapes."""
+    """Return the public Action schema, including route-specific shapes."""
+    if command == "start":
+        base = ARGUMENT_SCHEMAS["start"]["properties"]
+        common = {name: deepcopy(base[name]) for name in ("task_gid", "agent")}
+
+        def start_variant(kind: str, *extras: str) -> dict[str, Any]:
+            properties = deepcopy(common)
+            properties["kind"] = {
+                "type": "string",
+                "const": kind,
+                "description": f"Start a {kind} operation.",
+            }
+            for name in extras:
+                properties[name] = deepcopy(base[name])
+            return {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["task_gid", "agent", "kind"],
+                "properties": properties,
+            }
+
+        return {
+            "oneOf": [
+                start_variant("planning"),
+                start_variant("initial"),
+                start_variant("change", "change_level", "change_reason"),
+                start_variant("verification", "independence_attestation"),
+            ],
+            "discriminator": {"propertyName": "kind"},
+        }
     if command != "reject":
         return action_argument_schema(command)
 
@@ -181,7 +207,7 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
         "oneOf": [
             variant(
                 "large",
-                extra=("model", "file_text", "run_id", "independence_attestation"),
+                extra=("model", "file_text", "independence_attestation"),
                 required=("model", "file_text"),
             ),
             variant(
@@ -292,6 +318,12 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
             "request_field_required",
             field="client.request_id",
         )
+    if request_id is not None and command not in REPLAY_SAFE_COMMANDS:
+        raise _argument_error(
+            "client.request_id is not accepted for read Actions",
+            "request_field_unexpected",
+            field="client.request_id",
+        )
     if request_id is not None:
         if not isinstance(request_id, str):
             raise _argument_error(
@@ -320,4 +352,14 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
         )
     for field, value in arguments.items():
         _validate_scalar(field, value, properties[field])
+    if (
+        command == "start"
+        and arguments.get("kind") != "verification"
+        and "independence_attestation" in arguments
+    ):
+        raise _argument_error(
+            "independence_attestation is accepted only for verification starts",
+            "argument_unexpected",
+            field="independence_attestation",
+        )
     return dict(client), dict(arguments)

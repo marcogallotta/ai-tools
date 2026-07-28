@@ -123,11 +123,6 @@
                         "type": "string",
                         "format": "uuid",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work."
                       }
                     }
                   },
@@ -199,11 +194,6 @@
                         "type": "string",
                         "format": "uuid",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work."
                       }
                     }
                   },
@@ -280,11 +270,6 @@
                         "type": "string",
                         "format": "uuid",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work."
                       }
                     }
                   },
@@ -371,52 +356,136 @@
                     }
                   },
                   "arguments": {
-                    "required": [
-                      "task_gid",
-                      "agent",
-                      "kind"
-                    ],
-                    "properties": {
-                      "task_gid": {
-                        "type": "string",
-                        "pattern": "^[0-9]+$"
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "task_gid",
+                          "agent",
+                          "kind"
+                        ],
+                        "properties": {
+                          "task_gid": {
+                            "type": "string",
+                            "pattern": "^[0-9]+$"
+                          },
+                          "agent": {
+                            "type": "string",
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "planning",
+                            "description": "Start a planning operation."
+                          }
+                        }
                       },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "task_gid",
+                          "agent",
+                          "kind"
+                        ],
+                        "properties": {
+                          "task_gid": {
+                            "type": "string",
+                            "pattern": "^[0-9]+$"
+                          },
+                          "agent": {
+                            "type": "string",
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "initial",
+                            "description": "Start a initial operation."
+                          }
+                        }
                       },
-                      "kind": {
-                        "type": "string",
-                        "enum": [
-                          "planning",
-                          "initial",
-                          "change",
-                          "verification"
-                        ]
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "task_gid",
+                          "agent",
+                          "kind"
+                        ],
+                        "properties": {
+                          "task_gid": {
+                            "type": "string",
+                            "pattern": "^[0-9]+$"
+                          },
+                          "agent": {
+                            "type": "string",
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "change",
+                            "description": "Start a change operation."
+                          },
+                          "change_level": {
+                            "type": "string",
+                            "enum": [
+                              "small",
+                              "large"
+                            ]
+                          },
+                          "change_reason": {
+                            "type": "string"
+                          }
+                        }
                       },
-                      "run_id": {
-                        "type": "string"
-                      },
-                      "independence_attestation": {
-                        "type": "string"
-                      },
-                      "change_level": {
-                        "type": "string",
-                        "enum": [
-                          "small",
-                          "large"
-                        ]
-                      },
-                      "change_reason": {
-                        "type": "string"
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "task_gid",
+                          "agent",
+                          "kind"
+                        ],
+                        "properties": {
+                          "task_gid": {
+                            "type": "string",
+                            "pattern": "^[0-9]+$"
+                          },
+                          "agent": {
+                            "type": "string",
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string",
+                            "const": "verification",
+                            "description": "Start a verification operation."
+                          },
+                          "independence_attestation": {
+                            "type": "string"
+                          }
+                        }
                       }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
+                    ],
+                    "discriminator": {
+                      "propertyName": "kind"
+                    }
                   }
                 }
               }
@@ -621,9 +690,6 @@
                       "provenance_complete": {
                         "type": "boolean"
                       },
-                      "run_id": {
-                        "type": "string"
-                      },
                       "independence_attestation": {
                         "type": "string"
                       }
@@ -729,9 +795,6 @@
                             "type": "string"
                           },
                           "file_text": {
-                            "type": "string"
-                          },
-                          "run_id": {
                             "type": "string"
                           },
                           "independence_attestation": {
@@ -1065,6 +1128,7 @@
               "required_start_kind": {
                 "type": "string",
                 "enum": [
+                  "planning",
                   "initial",
                   "verification"
                 ]

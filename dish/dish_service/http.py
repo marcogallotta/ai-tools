@@ -117,6 +117,13 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         except socket.timeout as exc:
             raise DishRuleError("BACKEND_REJECTED", "request body timed out", rule="request_timeout", retryable=True) from exc
         self._request_body_consumed = len(body) == length
+        if not self._request_body_consumed:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "request body ended before Content-Length bytes were received",
+                rule="request_body_incomplete",
+                details={"expected_bytes": length, "received_bytes": len(body)},
+            )
         try:
             value = json.loads(body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -124,6 +131,35 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(value, dict):
             raise DishRuleError("INVALID_ARGUMENT", "request body must be a JSON object", rule="request_object_required")
         return value
+
+    @staticmethod
+    def _validate_request_shape(
+        surface: str, command: str, request: dict[str, Any]
+    ) -> None:
+        if surface in {"agent", "action", "admin"}:
+            allowed = {"client", "arguments"}
+        elif surface in {"lease", "action-lease"}:
+            allowed = {"client"}
+        elif surface == "admin-lease":
+            allowed = {"client", "reason"}
+        elif surface == "admin-backup":
+            allowed = (
+                {"client", "label"}
+                if command == "backup-create"
+                else {"client", "backup_id"}
+            )
+        elif surface in {"argument-failure", "admin-argument-failure"}:
+            allowed = {"client", "error", "context"}
+        else:
+            return
+        extras = sorted(set(request) - allowed)
+        if extras:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "request contains an unexpected field",
+                rule="request_field_unexpected",
+                details={"field": extras[0]},
+            )
 
     def _tokens(self) -> dict[str, tuple[str, str]]:
         config = self.server.service.config
@@ -225,19 +261,11 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             else:
                 credential = self._credential("admin")
             request = self._read_json()
+            self._validate_request_shape(surface, command, request)
             if surface == "action":
                 principal = self._principal(credential, request)
                 _client, arguments = validate_action_request(command, request)
                 request = {"client": _client, "arguments": arguments}
-            elif surface == "action-lease":
-                extras = sorted(set(request) - {"client"})
-                if extras:
-                    raise DishRuleError(
-                        "INVALID_ARGUMENT",
-                        "request contains an unexpected field",
-                        rule="request_field_unexpected",
-                        details={"field": extras[0]},
-                    )
             if principal is None:
                 principal = self._principal(credential, request)
             client_payload = request.get("client") if isinstance(request.get("client"), dict) else {}

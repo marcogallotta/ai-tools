@@ -1,11 +1,16 @@
 """Configuration for the laptop-hosted dish service."""
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from dish_tool.constants import DB_PATH
+from dish_tool.constants import (
+    DB_PATH,
+    MAX_REQUEST_LIFETIME_SECONDS,
+    RECOVERY_SAFETY_MARGIN_SECONDS,
+)
 from dish_tool.errors import DishRuleError
 from dish_tool.releases import configured_honest_path
 
@@ -35,7 +40,15 @@ class ServiceConfig:
         }
         required = ("agent", "admin", "action") if require_action else ("agent", "admin")
         for name in required:
-            value = str(tokens[name] or "").strip()
+            raw_value = str(tokens[name] or "")
+            value = raw_value.strip()
+            if raw_value != value:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    f"{name} service token must not contain surrounding whitespace",
+                    rule="service_token_whitespace",
+                    details={"token": name},
+                )
             if not value:
                 raise DishRuleError(
                     "INVALID_ARGUMENT",
@@ -69,13 +82,26 @@ class ServiceConfig:
             ("request_timeout_seconds", self.request_timeout_seconds),
             ("lease_ttl_seconds", self.lease_ttl_seconds),
         ):
-            if value <= 0:
+            if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise DishRuleError(
                     "INVALID_ARGUMENT",
                     f"{field} must be positive",
                     rule="service_config_nonpositive",
                     details={"field": field},
                 )
+        minimum_lease_ttl = (
+            MAX_REQUEST_LIFETIME_SECONDS + RECOVERY_SAFETY_MARGIN_SECONDS
+        )
+        if self.lease_ttl_seconds <= minimum_lease_ttl:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "lease_ttl_seconds must exceed the longest legitimate request plus the recovery safety margin",
+                rule="service_lease_ttl_too_short",
+                details={
+                    "field": "lease_ttl_seconds",
+                    "minimum_exclusive": minimum_lease_ttl,
+                },
+            )
         for field, value in (("port", self.port), ("action_port", self.action_port)):
             if not 0 <= value <= 65535:
                 raise DishRuleError(

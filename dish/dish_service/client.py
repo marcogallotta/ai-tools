@@ -1,7 +1,10 @@
 """HTTP clients for the canonical shared-service result contract."""
 from __future__ import annotations
 
+import http.client
 import json
+import math
+import socket
 import uuid
 from pathlib import Path
 from typing import Any, Mapping
@@ -23,7 +26,13 @@ class DishServiceClient:
         timeout: float = 65.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
+        if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "service request timeout must be a finite positive number",
+                rule="service_timeout_invalid",
+            )
+        self.timeout = float(timeout)
         self.token = str(token or "").strip()
         self.run_id = str(run_id or "").strip()
         if not self.token:
@@ -53,15 +62,22 @@ class DishServiceClient:
             with urlopen(request, timeout=self.timeout) as response:
                 return json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
-            try:
-                return json.loads(exc.read().decode("utf-8"))
-            except Exception as parse_exc:
-                raise DishRuleError(
-                    "INTERNAL_ERROR",
-                    "dish service returned an unreadable error",
-                    rule="service_response_invalid",
-                ) from parse_exc
-        except URLError as exc:
+            with exc:
+                try:
+                    return json.loads(exc.read().decode("utf-8"))
+                except Exception as parse_exc:
+                    raise DishRuleError(
+                        "INTERNAL_ERROR",
+                        "dish service returned an unreadable error",
+                        rule="service_response_invalid",
+                    ) from parse_exc
+        except (
+            URLError,
+            http.client.RemoteDisconnected,
+            ConnectionResetError,
+            TimeoutError,
+            socket.timeout,
+        ) as exc:
             raise DishRuleError(
                 "BACKEND_REJECTED",
                 "dish service is unavailable",

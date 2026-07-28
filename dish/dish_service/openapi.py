@@ -40,7 +40,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                     },
                     "required_start_kind": {
                         "type": "string",
-                        "enum": ["initial", "verification"],
+                        "enum": ["planning", "initial", "verification"],
                     },
                 },
             },
@@ -70,7 +70,11 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                                         "additionalProperties": False,
                                         "properties": {
                                             "run_id": dict(CLIENT_RUN_ID_SCHEMA),
-                                            "request_id": dict(CLIENT_REQUEST_ID_SCHEMA),
+                                            **(
+                                                {"request_id": dict(CLIENT_REQUEST_ID_SCHEMA)}
+                                                if command in REPLAY_SAFE_COMMANDS
+                                                else {}
+                                            ),
                                         },
                                     },
                                     "arguments": argument_schema,
