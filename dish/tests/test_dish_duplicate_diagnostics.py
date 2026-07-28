@@ -4,6 +4,10 @@ import pytest
 
 from dish_tool.task_document import DocumentParseError, parse_planning_brief
 from tests.test_dish_tool_step5_commands import Backend, TASK, app
+from tests.test_dish_tool_step6_prepare import (
+    Backend as TrackingBackend,
+    app as planning_app,
+)
 
 
 def _read(tmp_path, content: str):
@@ -162,3 +166,66 @@ def test_standalone_planning_parser_exposes_duplicate_details():
         "occurrences": 2,
         "lines": [2, 3],
     }
+
+
+def test_case_insensitive_planning_duplicate_is_rejected_before_execution_claim(tmp_path):
+    backend = TrackingBackend()
+    application = planning_app(tmp_path, backend)
+    started = application.execute(
+        "start",
+        agent="gpt",
+        task_gid="t",
+        kind="planning",
+        change_level=None,
+        change_reason=None,
+    )
+    operation_id = started["submission_id"]
+    candidate = tmp_path / "planning-case-duplicate.txt"
+    candidate.write_text(
+        "Dish candidate: Test dish\n"
+        "Purpose: Texture\n"
+        "purpose: Aroma\n"
+        "Role: main\n"
+        "Priors: None\n"
+        "Locks: None\n"
+        "Exemptions: None\n"
+        "Research emphasis: Compare\n"
+        "Destination section: Reference — 12345\n"
+    )
+
+    result = application.execute(
+        "prepare",
+        agent="gpt",
+        model="gpt-5.6-sol",
+        submission_id=operation_id,
+        file_path=str(candidate),
+    )
+
+    assert result["code"] == "VALIDATION_FAILED"
+    assert result["errors"] == [
+        {
+            "field": "Purpose",
+            "lines": [2, 3],
+            "message": "duplicate planning field Purpose",
+            "occurrences": 2,
+            "rule": "planning_field_duplicate",
+        }
+    ]
+    assert backend.writes == 0
+    assert backend.moves == 0
+    assert tuple(
+        application.conn.execute(
+            "SELECT status,phase FROM operations WHERE operation_id=?",
+            (operation_id,),
+        ).fetchone()
+    ) == ("open", "prepare_required")
+    for table in (
+        "operation_steps",
+        "write_attempts",
+        "movement_attempts",
+        "operation_executions",
+        "operation_execution_claims",
+    ):
+        assert application.conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE operation_id=?", (operation_id,)
+        ).fetchone()[0] == 0, table

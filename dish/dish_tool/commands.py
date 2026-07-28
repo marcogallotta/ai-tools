@@ -548,7 +548,7 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
 
 
 def _step6_prepare(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, file_path: str | None = None, material_classification: str | None = None, run_id: str | None = None) -> dict[str, Any]:
-    from .step6 import prepare_live
+    from .step6 import prepare_live, preflight_planning_candidate_labels
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     route_release = self._load_release(None)
     routed = self.operation_service.route(operation_id, command="prepare", protocol_version=route_release.protocol_version)
@@ -571,6 +571,8 @@ def _step6_prepare(self, *, trace: CommandTrace, agent: str, model: str | None =
         "prepare", operation_kind=operation_kind
     )
     release = self._load_release("planning" if operation_kind == "planning" else "research")
+    if operation_kind == "planning":
+        preflight_planning_candidate_labels(file_path or "")
     data, view = self.operation_service.current.prepare(
         operation_id,
         lambda: prepare_live(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, file_path=file_path or "", release=release, material_classification=material_classification),

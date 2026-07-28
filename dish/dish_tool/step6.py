@@ -32,6 +32,7 @@ from .task_document import (
     parse_canonical_planning_notes,
     parse_planning_brief,
     parse_task_document,
+    preflight_planning_authority_labels,
     render_planning_brief_notes,
     validate_planning_brief,
     validate_task_document,
@@ -55,6 +56,18 @@ def _candidate(path: str) -> str:
         raise DishRuleError("INVALID_ARGUMENT", f"candidate file not found: {clean}", rule="candidate_file_not_found") from exc
     except (OSError, UnicodeError) as exc:
         raise DishRuleError("INVALID_ARGUMENT", f"candidate file could not be read: {clean}", rule="candidate_file_unreadable") from exc
+
+
+def preflight_planning_candidate_labels(file_path: str) -> None:
+    """Validate Planning label authority before an execution claim is persisted."""
+    try:
+        preflight_planning_authority_labels(_candidate(file_path))
+    except DocumentParseError as exc:
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "Planning candidate is malformed",
+            errors=document_parse_error_payloads(exc),
+        ) from exc
 
 
 def _operation(conn: sqlite3.Connection, operation_id: str):

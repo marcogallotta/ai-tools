@@ -362,16 +362,15 @@ def _duplicate_field_errors(
     ]
 
 
-def _parse_exact_fields(
+def _reject_field_label_errors(
     lines: Sequence[str],
     names: Sequence[str],
     *,
     context: str,
-    line_numbers: Sequence[int] | None = None,
-) -> dict[str, str]:
-    exact_line_numbers = list(line_numbers or range(1, len(lines) + 1))
+    line_numbers: Sequence[int],
+) -> None:
     duplicate_errors = _duplicate_field_errors(
-        lines, names, context=context, line_numbers=exact_line_numbers
+        lines, names, context=context, line_numbers=line_numbers
     )
     if duplicate_errors:
         first = duplicate_errors[0]
@@ -387,7 +386,7 @@ def _parse_exact_fields(
         )
 
     label_errors = _field_label_errors(
-        lines, names, context=context, line_numbers=exact_line_numbers
+        lines, names, context=context, line_numbers=line_numbers
     )
     if label_errors:
         first = label_errors[0]
@@ -401,6 +400,34 @@ def _parse_exact_fields(
             },
             errors=label_errors,
         )
+
+
+def preflight_planning_authority_labels(text: str) -> None:
+    """Reject duplicate or non-canonical Planning labels without mutating workflow state."""
+    lines = text.strip().splitlines()
+    line_numbers = list(range(1, len(lines) + 1))
+    if lines and lines[0] == "### Planning brief":
+        lines = lines[1:]
+        line_numbers = line_numbers[1:]
+    _reject_field_label_errors(
+        lines,
+        PLANNING_FIELDS,
+        context="planning",
+        line_numbers=line_numbers,
+    )
+
+
+def _parse_exact_fields(
+    lines: Sequence[str],
+    names: Sequence[str],
+    *,
+    context: str,
+    line_numbers: Sequence[int] | None = None,
+) -> dict[str, str]:
+    exact_line_numbers = list(line_numbers or range(1, len(lines) + 1))
+    _reject_field_label_errors(
+        lines, names, context=context, line_numbers=exact_line_numbers
+    )
 
     values: dict[str, str] = {}
     current: str | None = None
