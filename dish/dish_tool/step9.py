@@ -12,7 +12,17 @@ from .database import content_identity, finalize_confirmed_movement_attempt, rec
 from .errors import DishRuleError
 from .lifecycle import assert_transition, require_status
 from .models import SectionRegistry, resolve_destination, utc_now
-from .task_document import DESTINATION_RE, DocumentParseError, PlanningBrief, parse_task_document, validate_task_document
+from .task_document import (
+    DESTINATION_RE,
+    DocumentParseError,
+    PlanningBrief,
+    document_parse_error_payloads,
+    finding_payload,
+    parse_canonical_planning_notes,
+    parse_task_document,
+    validate_planning_brief,
+    validate_task_document,
+)
 from .task_store import move_exact, read_complete_task, write_exact_content
 from .recovery import begin_movement_attempt
 from .governed_diff import canonical_diff
@@ -729,6 +739,26 @@ def repair_destination_live(
     }
 
 
+def _assert_recoverable_planning_content(notes: str) -> None:
+    try:
+        brief = parse_canonical_planning_notes(notes)
+    except DocumentParseError as exc:
+        raise DishRuleError(
+            "CONFLICT",
+            "Planning recovery will not accept non-canonical live content",
+            rule="planning_recovery_validation_failed",
+            errors=document_parse_error_payloads(exc),
+        ) from exc
+    findings = validate_planning_brief(brief).findings
+    if findings:
+        raise DishRuleError(
+            "CONFLICT",
+            "Planning recovery will not accept invalid live content",
+            rule="planning_recovery_validation_failed",
+            errors=[finding_payload(finding) for finding in findings],
+        )
+
+
 def recover_operation(
     conn: sqlite3.Connection,
     backend: Any,
@@ -765,6 +795,8 @@ def recover_operation(
             if requested_outcome != "inspect":
                 if requested_outcome != "applied":
                     raise DishRuleError("CONFLICT", "requested outcome contradicts live write evidence", rule="recovery_outcome_mismatch")
+                if op["operation_kind"] == "planning":
+                    _assert_recoverable_planning_content(live.notes)
                 version = finalize_confirmed_write_attempt(
                     conn, attempt_id=write_attempt["attempt_id"], task_gid=op["task_gid"],
                     title=live.title, notes=live.notes, schema_version=write_attempt["schema_version"] or op["schema_version"],
@@ -819,6 +851,11 @@ def recover_operation(
             if requested_outcome != "inspect":
                 if requested_outcome != "applied":
                     raise DishRuleError("CONFLICT", "requested outcome contradicts live movement evidence", rule="recovery_outcome_mismatch")
+                if (
+                    op["operation_kind"] == "planning"
+                    and movement_attempt["purpose"] == "planning_handoff"
+                ):
+                    _assert_recoverable_planning_content(live.notes)
                 finalized = finalize_confirmed_movement_attempt(conn, attempt_id=movement_attempt["attempt_id"], live_section_gid=live.section_gid)
                 actions.append({"kind": "movement", "outcome": "confirmed", "purpose": finalized["purpose"]})
                 movement_state = "reconciled_confirmed_movement"
@@ -902,6 +939,8 @@ def recover_operation(
                 complete_operation_step(conn, operation_id, "verification_cycle")
                 actions.append({"kind": "workflow_step", "step": "verification_cycle", "outcome": "confirmed"})
             elif step["step_name"] in {"planning_write", "migration_write", "small_corrected_write", "hold_write", "large_write", "reopen_write", "hold_resolution_write", "signoff_write"} or step["step_name"].startswith("route_write:"):
+                if step["step_name"] == "planning_write":
+                    _assert_recoverable_planning_content(live.notes)
                 if live.title == intended.get("title") and live.notes == intended.get("notes"):
                     complete_operation_step(conn, operation_id, step["step_name"])
                     actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
@@ -910,6 +949,8 @@ def recover_operation(
             elif step["step_name"] in {"verification_handoff", "planning_handoff"}:
                 target = intended["section_gid"]
                 purpose = "verification_handoff" if step["step_name"] == "verification_handoff" else "planning_handoff"
+                if step["step_name"] == "planning_handoff":
+                    _assert_recoverable_planning_content(live.notes)
                 if live.section_gid != target:
                     live = move_exact(conn, backend, operation_id=operation_id, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID, expected_identity=live.identity, expected_section_gid=live.section_gid, intended_section_gid=target, purpose=purpose)
                 complete_operation_step(conn, operation_id, step["step_name"])
@@ -1100,6 +1141,8 @@ def recover_operation(
                 complete_operation_step(conn, operation_id, "signoff_finalize")
                 actions.append({"kind": "workflow_step", "step": "signoff_finalize", "outcome": "confirmed"})
             elif step["step_name"] in {"reopen_phase", "hold_resolution_phase", "submission_terminal", "planning_terminal", "migration_terminal", "verification_phase", "non_material_terminal"} or step["step_name"].startswith("route_phase:"):
+                if step["step_name"] == "planning_terminal":
+                    _assert_recoverable_planning_content(live.notes)
                 if step["step_name"] == "submission_terminal":
                     unresolved = conn.execute("SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain') LIMIT 1", (operation_id,)).fetchone()
                     if unresolved is not None:

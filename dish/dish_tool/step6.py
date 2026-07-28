@@ -29,8 +29,10 @@ from .task_document import (
     DocumentParseError,
     PlanningBrief,
     TaskState,
+    parse_canonical_planning_notes,
     parse_planning_brief,
     parse_task_document,
+    render_planning_brief_notes,
     validate_planning_brief,
     validate_task_document,
 )
@@ -216,7 +218,22 @@ def prepare_live(
         resolve_destination(
             destination_match.group("name"), destination_match.group("gid"), registry
         )
-        notes = brief.render(heading=True).rstrip() + "\n"
+        notes = render_planning_brief_notes(brief)
+        try:
+            exact_brief = parse_canonical_planning_notes(notes)
+        except DocumentParseError as exc:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "Planning candidate could not be rendered canonically",
+                errors=document_parse_error_payloads(exc),
+            ) from exc
+        exact_findings = validate_planning_brief(exact_brief).findings
+        if exact_findings:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "rendered Planning candidate failed validation",
+                errors=[finding_payload(finding) for finding in exact_findings],
+            )
         declare_operation_step(conn, operation_id, "planning_write", {"title": live.title, "notes": notes, "schema_version": release.schema_version})
         declare_operation_step(conn, operation_id, "planning_handoff", {"section_gid": registry.research_queue_gid})
         declare_operation_step(conn, operation_id, "planning_terminal", {"status": "completed", "phase": "terminal", "terminal_outcome": "planning_handoff_confirmed"})

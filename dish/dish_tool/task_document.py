@@ -443,6 +443,21 @@ def parse_planning_brief(text: str) -> PlanningBrief:
     )
 
 
+def render_planning_brief_notes(brief: PlanningBrief) -> str:
+    return brief.render(heading=True).rstrip() + "\n"
+
+
+def parse_canonical_planning_notes(text: str) -> PlanningBrief:
+    brief = parse_planning_brief(text)
+    if text != render_planning_brief_notes(brief):
+        raise DocumentParseError(
+            "planning_brief_noncanonical",
+            "Planning brief text is not in canonical rendered form",
+            details={"required_heading": "### Planning brief"},
+        )
+    return brief
+
+
 def document_shape(notes: str) -> str:
     """Classify live task notes by structural markers, without attempting a parse.
 
