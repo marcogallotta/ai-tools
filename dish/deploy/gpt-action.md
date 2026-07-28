@@ -60,9 +60,11 @@ Add an operating instruction with all of these requirements:
   cannot replace `client.run_id`. Evidence and Human Review rejection routes inherit the persisted
   start attestation.
 - Follow only the returned `allowed_actions`. A completed cross-stage handoff names `start` plus
-  `data.required_start_kind`; it does not reopen the terminal prior operation. After Verification
-  `start`, call `inspect` before making an approval or rejection decision. Do not reconstruct workflow
-  transitions from conversation history.
+  `data.required_start_kind`; pass that exact value as `arguments.kind` and do not reopen the terminal
+  prior operation. In particular, Planning → Research returns `required_start_kind: initial`: call
+  `start` with `kind: initial` to begin Research, and never start another Planning operation.
+  After Verification `start`, call `inspect` before making an approval or rejection decision. Do not
+  reconstruct workflow transitions from conversation history.
 - Treat `file_text` as the complete candidate. Never send a partial patch or assume that the service
   can read a local file.
 - A tool pass proves deterministic conformance only; complete the semantic work required by the

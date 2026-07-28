@@ -381,7 +381,7 @@
                           "kind": {
                             "type": "string",
                             "const": "planning",
-                            "description": "Start a planning operation."
+                            "description": "Start Planning from a bare Cooking task."
                           }
                         }
                       },
@@ -409,7 +409,7 @@
                           "kind": {
                             "type": "string",
                             "const": "initial",
-                            "description": "Start a initial operation."
+                            "description": "Start the first Research construction after Planning. For a planning-to-research handoff, use kind=initial; do not start Planning again."
                           }
                         }
                       },
@@ -437,7 +437,7 @@
                           "kind": {
                             "type": "string",
                             "const": "change",
-                            "description": "Start a change operation."
+                            "description": "Start a post-signoff change operation."
                           },
                           "change_level": {
                             "type": "string",
@@ -476,7 +476,7 @@
                           "kind": {
                             "type": "string",
                             "const": "verification",
-                            "description": "Start a verification operation."
+                            "description": "Start independent Verification after Research."
                           },
                           "independence_attestation": {
                             "type": "string"
@@ -1134,7 +1134,8 @@
                   "planning",
                   "initial",
                   "verification"
-                ]
+                ],
+                "description": "Exact arguments.kind for the returned start action: planning starts Planning from a bare task; initial starts the first Research construction after Planning; verification starts independent Verification after Research. A planning-to-research handoff always requires kind=initial."
               }
             }
           },

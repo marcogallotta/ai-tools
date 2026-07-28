@@ -157,6 +157,16 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
         base = ARGUMENT_SCHEMAS["start"]["properties"]
         common = {name: deepcopy(base[name]) for name in ("task_gid", "agent")}
 
+        start_kind_descriptions = {
+            "planning": "Start Planning from a bare Cooking task.",
+            "initial": (
+                "Start the first Research construction after Planning. "
+                "For a planning-to-research handoff, use kind=initial; do not start Planning again."
+            ),
+            "change": "Start a post-signoff change operation.",
+            "verification": "Start independent Verification after Research.",
+        }
+
         def start_variant(
             kind: str, *extras: str, required: tuple[str, ...] = ()
         ) -> dict[str, Any]:
@@ -164,7 +174,7 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
             properties["kind"] = {
                 "type": "string",
                 "const": kind,
-                "description": f"Start a {kind} operation.",
+                "description": start_kind_descriptions[kind],
             }
             for name in extras:
                 properties[name] = deepcopy(base[name])
