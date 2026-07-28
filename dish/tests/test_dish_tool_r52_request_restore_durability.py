@@ -337,3 +337,73 @@ def test_schema_20_upgrades_with_empty_request_ledger(tmp_path):
         assert upgraded.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         upgraded.close()
+
+
+def test_completed_planning_reopen_is_marco_only_audited_and_request_replayed(tmp_path):
+    class CompletedBackend(Backend):
+        def __init__(self):
+            super().__init__()
+            self.title = "Bare"
+            self.notes = ""
+            self.completed = True
+            self.reopens = 0
+
+        def read_task(self, gid):
+            task = super().read_task(gid)
+            task["completed"] = self.completed
+            return task
+
+        def update_task_completed(self, *, task_gid, completed):
+            self.reopens += 1
+            self.completed = completed
+
+    backend = CompletedBackend()
+    service, _ = _service(tmp_path, backend)
+    planner = ServicePrincipal(owner_id="action", run_id="planner-run")
+    blocked = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": "t", "kind": "planning"},
+        principal=planner,
+        request_id="44444444-4444-4444-8444-444444444444",
+    )
+    assert blocked["code"] == "WRONG_STATE"
+    assert blocked["data"]["required_admin_action"] == "reopen-planning"
+
+    marco = ServicePrincipal(owner_id="admin", run_id="marco-run")
+    request_id = "55555555-5555-4555-8555-555555555555"
+    first = service.execute_admin(
+        "reopen-planning",
+        {"task_gid": "t", "reason": "repeat the cook"},
+        principal=marco,
+        request_id=request_id,
+    )
+    replayed = service.execute_admin(
+        "reopen-planning",
+        {"task_gid": "t", "reason": "repeat the cook"},
+        principal=marco,
+        request_id=request_id,
+    )
+    assert first["ok"], first
+    assert replayed["ok"], replayed
+    assert backend.reopens == 1
+    assert replayed["data"]["request_replayed"] is True
+
+    started = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": "t", "kind": "planning"},
+        principal=planner,
+        request_id="66666666-6666-4666-8666-666666666666",
+    )
+    assert started["ok"]
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        attempt = conn.execute(
+            "SELECT request_id,actor_run_id,outcome FROM planning_reopen_attempts WHERE task_gid='t'"
+        ).fetchone()
+        assert tuple(attempt) == (request_id, "marco-run", "confirmed")
+        assert conn.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE task_gid='t' AND event_type='planning.task_reopened'"
+        ).fetchone()[0] == 1
+    finally:
+        conn.close()

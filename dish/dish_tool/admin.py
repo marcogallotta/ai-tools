@@ -44,10 +44,13 @@ class DishAdminApplication:
         backend: Any | None = None,
         release_loader: Callable[[], Any] | None = None,
         invocation_request_id: str | None = None,
+        invocation_run_id: str | None = None,
     ) -> None:
         self.conn = conn
         self.backend = backend
         self.release_loader = release_loader
+        self.invocation_request_id = invocation_request_id
+        self.invocation_run_id = invocation_run_id
         self.operation_service = (
             None
             if backend is None
@@ -156,6 +159,90 @@ def _step5_admin_migrate(self, *, trace: AdminTrace, task_gid: str) -> dict[str,
     trace.audit_details.update({"schema_version": release.schema_version, "confirmed_identity": live.identity})
     return result_envelope(command="migrate", task_gid=clean, data={"task_gid": clean, "schema_version": release.schema_version, "content_identity": live.identity, "confirmed": True})
 
+
+
+def _step5_admin_reopen_planning(
+    self, *, trace: AdminTrace, task_gid: str, reason: str
+) -> dict[str, Any]:
+    from .constants import COOKING_PROJECT_GID
+    from .models import SectionRegistry, is_protocol_managed
+    from .step5 import diagnostics_for
+    from .task_store import read_complete_task, reopen_completed_task_for_planning
+
+    clean = _clean_required(task_gid, rule="task_gid_required", label="task GID")
+    clean_reason = _clean_required(
+        reason, rule="planning_reopen_reason_required", label="reopen reason"
+    )
+    trace.task_gid = clean
+    if self.backend is None or self.release_loader is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR", "planning reopen backend is unavailable",
+            rule="planning_reopen_backend_unavailable",
+        )
+    active = self.conn.execute(
+        """SELECT operation_id FROM operations
+             WHERE task_gid=? AND status IN ('open','uncertain') LIMIT 1""",
+        (clean,),
+    ).fetchone()
+    if active is not None:
+        raise DishRuleError(
+            "CONFLICT", "task already has an active operation",
+            rule="active_operation_exists",
+            details={"operation_id": active["operation_id"]},
+        )
+    live = read_complete_task(
+        self.backend, task_gid=clean, project_gid=COOKING_PROJECT_GID
+    )
+    registry = SectionRegistry.from_sections(
+        self.backend.list_sections(COOKING_PROJECT_GID)
+    )
+    if not is_protocol_managed(live.section_gid, registry):
+        raise DishRuleError(
+            "UNMANAGED_TASK", f"task {clean} is in an excluded Cooking section",
+            rule="task_in_excluded_section",
+        )
+    release = self.release_loader()
+    diagnostics = diagnostics_for(live, release)
+    if live.notes:
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "a completed task can be reopened for Planning only while it is bare",
+            rule="planning_reopen_notes_not_empty",
+            errors=diagnostics["validation"],
+        )
+    reopened, attempt_id = reopen_completed_task_for_planning(
+        self.conn,
+        self.backend,
+        task_gid=clean,
+        project_gid=COOKING_PROJECT_GID,
+        reason=clean_reason,
+        actor_run_id=self.invocation_run_id,
+        request_id=self.invocation_request_id,
+    )
+    trace.audit_details.update({
+        "attempt_id": attempt_id,
+        "reason": clean_reason,
+        "completed_before": True,
+        "completed_after": False,
+        "identity": reopened.identity,
+        "section_gid": reopened.section_gid,
+    })
+    return result_envelope(
+        command="reopen-planning",
+        task_gid=clean,
+        allowed_actions=["start"],
+        data={
+            "attempt_id": attempt_id,
+            "reason": clean_reason,
+            "task": {
+                "gid": reopened.gid,
+                "completed": reopened.completed,
+                "identity": reopened.identity,
+                "section_gid": reopened.section_gid,
+            },
+            "required_start_kind": "planning",
+        },
+    )
 
 
 # Step 8 Marco-only two-pass hold reopen.
@@ -414,6 +501,7 @@ def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, r
 
 CURRENT_ADMIN_COMMAND_HANDLERS = {
     "migrate": _step5_admin_migrate,
+    "reopen-planning": _step5_admin_reopen_planning,
     "reopen": _step8_admin_reopen,
     "recover": _step9_admin_recover,
     "repair-destination": _step9_admin_repair_destination,

@@ -1410,7 +1410,53 @@ BEFORE DELETE ON dish_inspect_facts
 BEGIN SELECT RAISE(ABORT, 'dish inspect facts are append-only'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25}
+
+_MIGRATION_26 = """
+CREATE TABLE IF NOT EXISTS planning_reopen_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    task_gid TEXT NOT NULL CHECK(length(trim(task_gid)) > 0),
+    request_id TEXT,
+    expected_identity TEXT NOT NULL CHECK(length(trim(expected_identity)) > 0),
+    expected_section_gid TEXT,
+    expected_modified_at TEXT,
+    reason TEXT NOT NULL CHECK(length(trim(reason)) > 0),
+    actor_run_id TEXT,
+    outcome TEXT NOT NULL CHECK(outcome IN ('started','confirmed','not_applied','uncertain')),
+    created_at TEXT NOT NULL,
+    finished_at TEXT,
+    confirmed_modified_at TEXT,
+    CHECK ((outcome='started' AND finished_at IS NULL AND confirmed_modified_at IS NULL)
+        OR (outcome IN ('confirmed','not_applied','uncertain') AND finished_at IS NOT NULL)),
+    UNIQUE(request_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS planning_reopen_attempts_one_unresolved_task
+    ON planning_reopen_attempts(task_gid) WHERE outcome IN ('started','uncertain');
+CREATE INDEX IF NOT EXISTS planning_reopen_attempts_task_history
+    ON planning_reopen_attempts(task_gid, created_at);
+CREATE TRIGGER IF NOT EXISTS planning_reopen_attempts_identity_immutable_update
+BEFORE UPDATE ON planning_reopen_attempts
+WHEN NEW.attempt_id IS NOT OLD.attempt_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.request_id IS NOT OLD.request_id
+  OR NEW.expected_identity IS NOT OLD.expected_identity
+  OR NEW.expected_section_gid IS NOT OLD.expected_section_gid
+  OR NEW.expected_modified_at IS NOT OLD.expected_modified_at
+  OR NEW.reason IS NOT OLD.reason
+  OR NEW.actor_run_id IS NOT OLD.actor_run_id
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'planning reopen attempt identity is immutable'); END;
+CREATE TRIGGER IF NOT EXISTS planning_reopen_attempts_status_monotonic_update
+BEFORE UPDATE OF outcome, finished_at, confirmed_modified_at ON planning_reopen_attempts
+WHEN OLD.outcome <> 'started'
+  OR NEW.outcome NOT IN ('confirmed','not_applied','uncertain')
+  OR NEW.finished_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'planning reopen attempt completion is one-way'); END;
+CREATE TRIGGER IF NOT EXISTS planning_reopen_attempts_append_only_delete
+BEFORE DELETE ON planning_reopen_attempts
+BEGIN SELECT RAISE(ABORT, 'planning reopen attempts are append-only'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -1693,6 +1739,11 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             or version["identity"] != row["reviewed_identity"] or version["confirmed"] != 1
         ):
             problems.append({"kind": "dish_inspect_fact_binding", "id": row["fact_id"]})
+    for row in conn.execute("SELECT * FROM planning_reopen_attempts"):
+        if row["outcome"] == "confirmed" and not row["finished_at"]:
+            problems.append({"kind": "planning_reopen_completion", "id": row["attempt_id"]})
+        if row["outcome"] == "started" and row["finished_at"] is not None:
+            problems.append({"kind": "planning_reopen_pending", "id": row["attempt_id"]})
     for row in conn.execute("SELECT * FROM operations"):
         if row["status"] == "completed" and (row["completed_at"] is None or row["phase"] != "terminal" or not row["terminal_outcome"] or not row["schema_version"] or not row["expected_identity"]):
             problems.append({"kind": "completed_operation_state", "id": row["operation_id"]})
@@ -1841,7 +1892,7 @@ def _validate_current_database(conn: sqlite3.Connection) -> None:
     user_version, ledger_version = _schema_version_state(conn)
     if user_version != current or ledger_version != current:
         raise DishRuleError("VALIDATION_FAILED", "database did not converge to the current schema", rule="database_schema_not_current", details={"user_version": user_version, "ledger_version": ledger_version, "current": current})
-    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims", "operation_executions"}
+    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims", "operation_executions", "dish_inspect_facts", "planning_reopen_attempts"}
     actual = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     missing = sorted(required - actual)
     if missing:

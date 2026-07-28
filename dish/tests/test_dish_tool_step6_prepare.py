@@ -58,14 +58,15 @@ Destination section: Sichuan — 12345
 """
 
 class Backend:
-    def __init__(self, title="Bare", notes="", section="rq"):
-        self.title, self.notes, self.section = title, notes, section
+    def __init__(self, title="Bare", notes="", section="rq", completed=False):
+        self.title, self.notes, self.section, self.completed = title, notes, section, completed
         self.sections = [{"gid":"rq","name":"Research Queue"},{"gid":"vq","name":"Verification Queue"},{"gid":"12345","name":"Sichuan"},{"gid":"ref","name":"Reference"},{"gid":"src","name":"Sourcing"}]
         self.writes = 0; self.moves = 0
     def list_sections(self, project_gid): return self.sections
     def read_task(self, gid):
-        return {"gid":gid,"name":self.title,"notes":self.notes,"completed":False,"modified_at":"now","projects":[{"gid":COOKING_PROJECT_GID}],"memberships":[{"project":{"gid":COOKING_PROJECT_GID},"section":{"gid":self.section}}]}
+        return {"gid":gid,"name":self.title,"notes":self.notes,"completed":self.completed,"modified_at":"now","projects":[{"gid":COOKING_PROJECT_GID}],"memberships":[{"project":{"gid":COOKING_PROJECT_GID},"section":{"gid":self.section}}]}
     def update_task_content(self, *, task_gid, title, notes): self.writes += 1; self.title, self.notes = title, notes
+    def update_task_completed(self, *, task_gid, completed): self.writes += 1; self.completed = completed
     def move_task_to_section(self, *, task_gid, section_gid): self.moves += 1; self.section=section_gid
 
 def release(root, role=None):
@@ -245,3 +246,67 @@ def test_prepare_rejects_placement_drift_for_all_operation_kinds(tmp_path):
         assert exc.value.rule == "live_task_placement_drift"
         assert b.writes == 0
         assert b.moves == 0
+
+
+def test_completed_task_requires_audited_marco_reopen_before_planning(tmp_path):
+    from dish_tool.admin import DishAdminApplication
+
+    b = Backend(completed=True)
+    a = app(tmp_path, b)
+    blocked = a.execute(
+        "start", agent="gpt", task_gid="t", kind="planning", run_id="plan-run"
+    )
+    assert blocked["code"] == "WRONG_STATE"
+    assert blocked["errors"][0]["rule"] == "planning_completed_task_reopen_required"
+    assert blocked["data"]["required_admin_action"] == "reopen-planning"
+    assert a.conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 0
+
+    admin = DishAdminApplication(
+        a.conn,
+        backend=b,
+        release_loader=lambda: a._load_release(None),
+        invocation_request_id="reopen-request",
+        invocation_run_id="marco-run",
+    )
+    reopened = admin.execute(
+        "reopen-planning", task_gid="t", reason="cook this dish again"
+    )
+    assert reopened["ok"]
+    assert reopened["allowed_actions"] == ["start"]
+    assert reopened["data"]["required_start_kind"] == "planning"
+    assert b.completed is False
+    attempt = a.conn.execute(
+        "SELECT * FROM planning_reopen_attempts WHERE task_gid='t'"
+    ).fetchone()
+    assert attempt["outcome"] == "confirmed"
+    assert attempt["reason"] == "cook this dish again"
+    assert attempt["actor_run_id"] == "marco-run"
+    assert attempt["request_id"] == "reopen-request"
+    audit = a.conn.execute(
+        "SELECT event_type,actor_provenance FROM audit_events WHERE task_gid='t' AND event_type='planning.task_reopened'"
+    ).fetchone()
+    assert audit is not None
+    assert "marco-run" in audit["actor_provenance"]
+
+    started = a.execute(
+        "start", agent="gpt", task_gid="t", kind="planning", run_id="plan-run"
+    )
+    assert started["ok"]
+
+
+def test_planning_reopen_rejects_non_bare_completed_task(tmp_path):
+    from dish_tool.admin import DishAdminApplication
+
+    b = Backend(notes="not bare", completed=True)
+    a = app(tmp_path, b)
+    admin = DishAdminApplication(
+        a.conn, backend=b, release_loader=lambda: a._load_release(None),
+        invocation_run_id="marco-run",
+    )
+    result = admin.execute("reopen-planning", task_gid="t", reason="retry")
+    assert result["code"] == "VALIDATION_FAILED"
+    assert any(
+        error["rule"] == "planning_reopen_notes_not_empty" for error in result["errors"]
+    )
+    assert b.completed is True
+    assert a.conn.execute("SELECT COUNT(*) FROM planning_reopen_attempts").fetchone()[0] == 0

@@ -18,7 +18,7 @@ from dish_service.database_ownership import ServiceDatabaseOwnership
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
-_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "migrate", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease", "backup-create", "backup-restore"}
+_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease", "backup-create", "backup-restore"}
 _OPERATION_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease"}
 
 
@@ -91,6 +91,13 @@ def build_parser() -> JsonArgumentParser:
         "migrate", help="migrate one individually encountered older-schema task after cutover"
     )
     migrate.add_argument("task_gid")
+
+    reopen_planning = subparsers.add_parser(
+        "reopen-planning",
+        help="explicitly reopen one completed bare task before a new Planning operation",
+    )
+    reopen_planning.add_argument("task_gid")
+    reopen_planning.add_argument("--reason", required=True)
 
     recover_lease = subparsers.add_parser(
         "recover-lease", help="reclaim an expired service lease before an admin operation"
@@ -185,7 +192,7 @@ def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
         and not argv[1].startswith("-")
     ):
         submission_id = argv[1]
-    if command == "migrate" and len(argv) > 1 and not argv[1].startswith("-"):
+    if command in {"migrate", "reopen-planning"} and len(argv) > 1 and not argv[1].startswith("-"):
         task_gid = argv[1]
     return {"command": command, "submission_id": submission_id, "task_gid": task_gid}
 

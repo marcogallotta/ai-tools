@@ -87,3 +87,13 @@ def test_all_step10_reports_execute_against_current_empty_schema(tmp_path):
             conn.execute(query).fetchall()
     finally:
         conn.close()
+
+
+def test_reopen_planning_admin_cli_contract():
+    from dish_tool.admin_cli import build_parser
+    parsed = build_parser().parse_args([
+        "reopen-planning", "task-gid", "--reason", "cook again"
+    ])
+    assert parsed.command == "reopen-planning"
+    assert parsed.task_gid == "task-gid"
+    assert parsed.reason == "cook again"

@@ -130,8 +130,10 @@ claiming that an intermediate identity was independently verified.
 ### Recovery is specific
 
 There is no generic `unblock`. Lease recovery, ambiguous-effect recovery, destination repair,
-discard, Evidence resolution, Human Review, and reopen each have narrow preconditions and preserve
-different evidence. Add a new recovery route only when its durable facts and legal continuation
+discard, Evidence resolution, Human Review, completed-task Planning reopen, and two-pass hold reopen
+each have narrow preconditions and preserve different evidence. A completed task cannot directly
+claim a Planning operation: Marco must use `reopen-planning`, which records an exact completion-state
+attempt and audit before the task becomes eligible. Add a new recovery route only when its durable facts and legal continuation
 cannot be represented by an existing route.
 
 ### Compatibility does not become a second engine
@@ -209,6 +211,7 @@ The ordinary lifecycle is:
 
 ```text
 create
+→ for a completed bare task, Marco explicitly reopens it for Planning
 → start planning / initial / change
 → prepare
 → start verification

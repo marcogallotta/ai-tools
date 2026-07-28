@@ -51,9 +51,13 @@ authorization failures retain HTTP 401/403, and unexpected server failures retai
 Agent-facing action guidance is authoritative even on failures. When an operation-scoped command is
 rejected, `allowed_actions` reports the currently legal exposed continuation when one exists. A
 retryable candidate-validation failure therefore keeps the same corrective command available.
-Fresh bare tasks created by `create` report `data.required_start_kind: planning`. A completed
-cross-stage handoff reports `start` and the required start kind even though the old operation itself is
-terminal. Verification `start` exposes only `inspect` after the review binding is complete. The exact
+Fresh bare tasks created by `create` report `data.required_start_kind: planning`. An Asana-completed
+bare task cannot start Planning directly: `start --kind planning` returns
+`planning_completed_task_reopen_required` and `data.required_admin_action: reopen-planning`. Marco's
+private `reopen-planning` command is the only route that clears the completion flag; it preserves exact
+content and placement, persists a completion-state attempt, and records both domain and invocation
+audits before exposing `start` again. A completed cross-stage handoff reports `start` and the required
+start kind even though the old operation itself is terminal. Verification `start` exposes only `inspect` after the review binding is complete. The exact
 verifier run must then inspect the still-current candidate in Verification Queue; that reread appends
 a cycle-bound `dish_inspect` fact and only then exposes `approve` and `reject`. Task-level `read` responses expose any active operation, its submission
 ID, workflow state, and principal-filtered next actions. Successful operation-scoped lease renewal

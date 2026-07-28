@@ -1309,6 +1309,7 @@ class DishService:
                     backend=backend,
                     release_loader=lambda: self._release(None, include_migrations=True),
                     invocation_request_id=request_id,
+                    invocation_run_id=principal.run_id,
                 )
                 with self._candidate_file(prepared_arguments) as prepared:
                     result = app.execute(command, **prepared)

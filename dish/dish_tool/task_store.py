@@ -12,6 +12,10 @@ from .database import (
     finalize_confirmed_write_attempt,
     finalize_not_applied_movement_attempt,
     finalize_not_applied_write_attempt,
+    begin_planning_reopen_attempt,
+    finish_planning_reopen_attempt,
+    record_audit,
+    atomic_persistence,
 )
 from .errors import BackendFailure, DishRuleError
 from .recovery import (
@@ -25,6 +29,7 @@ from .recovery import (
 class TaskBackend(Protocol):
     def read_task(self, task_gid: str) -> dict[str, Any]: ...
     def update_task_content(self, *, task_gid: str, title: str, notes: str) -> None: ...
+    def update_task_completed(self, *, task_gid: str, completed: bool) -> None: ...
     def move_task_to_section(self, *, task_gid: str, section_gid: str) -> None: ...
 
 
@@ -124,6 +129,109 @@ def assert_live_matches_confirmed(
     live = read_complete_task(backend, task_gid=task_gid, project_gid=project_gid)
     _assert_expected(live, expected_identity=row["last_confirmed_identity"], expected_section_gid=expected_section_gid)
     return live
+
+
+def reopen_completed_task_for_planning(
+    conn: sqlite3.Connection,
+    backend: TaskBackend,
+    *,
+    task_gid: str,
+    project_gid: str,
+    reason: str,
+    actor_run_id: str | None,
+    request_id: str | None,
+) -> tuple[LiveTask, str]:
+    """Marco-authorized exact reopen of one completed bare task for Planning."""
+    before = read_complete_task(backend, task_gid=task_gid, project_gid=project_gid)
+    if not before.completed:
+        raise DishRuleError(
+            "WRONG_STATE", "task is not completed", rule="planning_reopen_task_not_completed",
+        )
+    attempt = begin_planning_reopen_attempt(
+        conn,
+        task_gid=task_gid,
+        expected_identity=before.identity,
+        expected_section_gid=before.section_gid,
+        expected_modified_at=before.modified_at,
+        reason=reason,
+        actor_run_id=actor_run_id,
+        request_id=request_id,
+    )
+    backend_error: BackendFailure | None = None
+    try:
+        backend.update_task_completed(task_gid=task_gid, completed=False)
+    except BackendFailure as exc:
+        backend_error = exc
+
+    try:
+        after = read_complete_task(backend, task_gid=task_gid, project_gid=project_gid)
+    except Exception as exc:
+        finish_planning_reopen_attempt(
+            conn, attempt_id=attempt["attempt_id"], outcome="uncertain"
+        )
+        raise BackendFailure(
+            "BACKEND_UNCERTAIN",
+            "planning reopen outcome could not be confirmed by reread",
+            retryable=False,
+            details={"attempt_id": attempt["attempt_id"], "task_gid": task_gid},
+        ) from exc
+
+    if after.identity != before.identity or after.section_gid != before.section_gid:
+        finish_planning_reopen_attempt(
+            conn, attempt_id=attempt["attempt_id"], outcome="uncertain",
+            confirmed_modified_at=after.modified_at,
+        )
+        raise BackendFailure(
+            "BACKEND_UNCERTAIN",
+            "planning reopen coincided with unexpected task content or placement drift",
+            retryable=False,
+            details={
+                "attempt_id": attempt["attempt_id"],
+                "task_gid": task_gid,
+                "expected_identity": before.identity,
+                "actual_identity": after.identity,
+                "expected_section_gid": before.section_gid,
+                "actual_section_gid": after.section_gid,
+            },
+        )
+    if not after.completed:
+        with atomic_persistence(conn, "planning_reopen_confirmed"):
+            finish_planning_reopen_attempt(
+                conn, attempt_id=attempt["attempt_id"], outcome="confirmed",
+                confirmed_modified_at=after.modified_at,
+            )
+            record_audit(
+                conn, submission_id=None, task_gid=task_gid, operation_id=None,
+                event_type="planning.task_reopened", actor_agent=None,
+                actor_run_id=actor_run_id, actor_source="marco-admin",
+                details={
+                    "attempt_id": attempt["attempt_id"],
+                    "reason": reason,
+                    "expected_identity": before.identity,
+                    "section_gid": before.section_gid,
+                    "completed_before": True,
+                    "completed_after": False,
+                },
+                result_code="OK", result_ok=True,
+            )
+        return after, attempt["attempt_id"]
+
+    finish_planning_reopen_attempt(
+        conn, attempt_id=attempt["attempt_id"], outcome="not_applied",
+        confirmed_modified_at=after.modified_at,
+    )
+    if backend_error is not None:
+        raise BackendFailure(
+            "BACKEND_REJECTED", str(backend_error), rule=backend_error.rule,
+            status=backend_error.status, phase=backend_error.phase,
+            retryable=backend_error.retryable,
+            details={"attempt_id": attempt["attempt_id"], "task_gid": task_gid},
+        )
+    raise BackendFailure(
+        "BACKEND_REJECTED", "task completion state was not reopened",
+        retryable=True,
+        details={"attempt_id": attempt["attempt_id"], "task_gid": task_gid},
+    )
 
 
 def write_exact_content(

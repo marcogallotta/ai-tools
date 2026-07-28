@@ -438,6 +438,42 @@ class AsanaBackend:
                 details={"expected_task_gid": task_gid, "actual_task_gid": response_gid},
             )
 
+    def update_task_completed(self, *, task_gid: str, completed: bool) -> None:
+        """Set only the Asana completion flag and verify the response identity."""
+        try:
+            import asana
+
+            tasks_api = asana.TasksApi(self.client())
+        except BackendFailure:
+            raise
+        except (Exception, asyncio.CancelledError) as exc:
+            raise map_backend_exception(
+                exc,
+                phase=RequestPhase.PRE_SEND,
+                context=f"task {task_gid} completion",
+            ) from exc
+
+        data = self.call(
+            tasks_api.update_task,
+            {"data": {"completed": bool(completed)}},
+            task_gid,
+            {"opt_fields": "gid"},
+            context=f"task {task_gid} completion",
+        )
+        response_gid = (
+            str(data.get("gid") or "").strip()
+            if isinstance(data, Mapping)
+            else ""
+        )
+        if response_gid != task_gid:
+            raise BackendFailure(
+                "BACKEND_UNCERTAIN",
+                "Asana returned malformed data after the completion-state write",
+                phase=RequestPhase.RESPONSE_RECEIVED.value,
+                retryable=False,
+                details={"expected_task_gid": task_gid, "actual_task_gid": response_gid},
+            )
+
     def move_task_to_section(self, *, task_gid: str, section_gid: str) -> None:
         """Place a task in a section after the caller resolves live state."""
 

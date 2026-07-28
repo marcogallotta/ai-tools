@@ -825,6 +825,59 @@ _OPERATION_PHASE_ACTIONS = {
     "terminal": (),
 }
 
+def begin_planning_reopen_attempt(
+    conn: sqlite3.Connection,
+    *,
+    task_gid: str,
+    expected_identity: str,
+    expected_section_gid: str | None,
+    expected_modified_at: str | None,
+    reason: str,
+    actor_run_id: str | None,
+    request_id: str | None,
+) -> sqlite3.Row:
+    attempt_id = str(uuid.uuid4())
+    conn.execute(
+        """INSERT INTO planning_reopen_attempts(
+               attempt_id,task_gid,request_id,expected_identity,expected_section_gid,
+               expected_modified_at,reason,actor_run_id,outcome,created_at
+           ) VALUES (?,?,?,?,?,?,?,?, 'started', ?)""",
+        (
+            attempt_id, task_gid, request_id, expected_identity, expected_section_gid,
+            expected_modified_at, reason, actor_run_id, utc_now(),
+        ),
+    )
+    return conn.execute(
+        "SELECT * FROM planning_reopen_attempts WHERE attempt_id=?", (attempt_id,)
+    ).fetchone()
+
+
+def finish_planning_reopen_attempt(
+    conn: sqlite3.Connection,
+    *,
+    attempt_id: str,
+    outcome: str,
+    confirmed_modified_at: str | None = None,
+) -> sqlite3.Row:
+    if outcome not in {"confirmed", "not_applied", "uncertain"}:
+        raise ValueError(f"invalid planning reopen outcome: {outcome}")
+    conn.execute(
+        """UPDATE planning_reopen_attempts
+              SET outcome=?, finished_at=?, confirmed_modified_at=?
+            WHERE attempt_id=? AND outcome='started'""",
+        (outcome, utc_now(), confirmed_modified_at, attempt_id),
+    )
+    row = conn.execute(
+        "SELECT * FROM planning_reopen_attempts WHERE attempt_id=?", (attempt_id,)
+    ).fetchone()
+    if row is None or row["outcome"] != outcome:
+        raise DishRuleError(
+            "CONFLICT", "planning reopen attempt is not pending",
+            rule="planning_reopen_attempt_not_pending",
+        )
+    return row
+
+
 def current_dish_inspect_fact(
     conn: sqlite3.Connection, *, cycle: Mapping[str, Any], section_gid: str
 ) -> sqlite3.Row | None:

@@ -181,6 +181,8 @@ class DishApplication:
                 })
             if exc.code == "BACKEND_UNCERTAIN" and exc.details.get("execution_id"):
                 result.setdefault("data", {}).update(exc.details)
+            if exc.details.get("required_admin_action"):
+                result.setdefault("data", {})["required_admin_action"] = exc.details["required_admin_action"]
             if trace.submission_id:
                 try:
                     release = self._load_release(None)
@@ -446,6 +448,13 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
         raise DishRuleError("UNMANAGED_TASK", f"task {task_gid} is in an excluded Cooking section", rule="task_in_excluded_section")
     diag = diagnostics_for(live, release)
     if kind == "planning":
+        if live.completed:
+            raise DishRuleError(
+                "WRONG_STATE",
+                "completed tasks require Marco to reopen them before Planning",
+                rule="planning_completed_task_reopen_required",
+                details={"required_admin_action": "reopen-planning"},
+            )
         if live.notes:
             raise DishRuleError("VALIDATION_FAILED", "planning must start from a bare task", rule="planning_notes_not_empty")
     else:
