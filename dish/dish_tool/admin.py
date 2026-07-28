@@ -67,13 +67,7 @@ class DishAdminApplication:
         trace = AdminTrace(submission_id=arguments.get("submission_id"))
         handler = CURRENT_ADMIN_COMMAND_HANDLERS.get(command)
         try:
-            if handler is None:
-                raise DishRuleError(
-                    "INVALID_ARGUMENT",
-                    f"unknown dish-admin command: {command}",
-                    rule="invalid_command",
-                )
-            reject_undeclared_arguments(handler, arguments)
+            handler = self.validate_arguments(command, arguments)
             result = handler(self, trace=trace, **arguments)
         except DishRuleError as exc:
             if exc.code == "WRONG_STATE" and exc.details.get("actual"):
@@ -102,6 +96,19 @@ class DishAdminApplication:
             )
         self._record_invocation(command, trace, result)
         return result
+
+    @staticmethod
+    def validate_arguments(command: str, arguments: Mapping[str, Any]):
+        """Return the selected handler after deterministic signature validation."""
+        handler = CURRENT_ADMIN_COMMAND_HANDLERS.get(command)
+        if handler is None:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                f"unknown dish-admin command: {command}",
+                rule="invalid_command",
+            )
+        reject_undeclared_arguments(handler, arguments)
+        return handler
 
     def record_argument_failure(
         self,

@@ -1340,6 +1340,21 @@ class DishService:
                             "command_run_id": supplied_run_id,
                         },
                     )
+                argument_app = DishAdminApplication(
+                    conn,
+                    invocation_request_id=request_id,
+                    invocation_run_id=principal.run_id,
+                )
+                try:
+                    argument_app.validate_arguments(command, prepared_arguments)
+                except DishRuleError as exc:
+                    result = argument_app.record_argument_failure(
+                        command, exc, submission_id=operation_id,
+                    )
+                    if request_id:
+                        result.setdefault("data", {})["request_id"] = request_id
+                        complete_request(conn, request_id=request_id, result=result)
+                    return result
                 backend = self.backend_factory()
                 self._assert_mutation_ready(backend)
                 if (

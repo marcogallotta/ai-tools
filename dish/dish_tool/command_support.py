@@ -40,29 +40,49 @@ class CommandTrace:
 def reject_undeclared_arguments(
     handler: Any, arguments: Mapping[str, Any]
 ) -> None:
-    """Reject dispatcher arguments that the selected handler did not declare."""
-    parameters = inspect.signature(handler).parameters.values()
+    """Validate required and undeclared dispatcher arguments from the signature."""
+    parameters = tuple(inspect.signature(handler).parameters.values())
     if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters):
         return
-    declared = {
-        parameter.name
+    declared_parameters = tuple(
+        parameter
         for parameter in parameters
         if parameter.kind
         in {
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
             inspect.Parameter.KEYWORD_ONLY,
         }
-    } - {"self", "trace"}
-    unexpected = sorted(set(arguments) - declared)
-    if not unexpected:
-        return
-    field = unexpected[0]
-    raise DishRuleError(
-        "INVALID_ARGUMENT",
-        f"{field} is not accepted by this command",
-        rule="argument_unexpected",
-        details={"field": field},
+        and parameter.name not in {"self", "trace"}
     )
+    declared = {
+        parameter.name
+        for parameter in declared_parameters
+    }
+    unexpected = sorted(set(arguments) - declared)
+    if unexpected:
+        field = unexpected[0]
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            f"{field} is not accepted by this command",
+            rule="argument_unexpected",
+            details={"field": field},
+        )
+    missing = next(
+        (
+            parameter.name
+            for parameter in declared_parameters
+            if parameter.default is inspect.Parameter.empty
+            and parameter.name not in arguments
+        ),
+        None,
+    )
+    if missing is not None:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            f"{missing} is required",
+            rule="argument_required",
+            details={"field": missing},
+        )
 
 
 def _clean_required(value: Any, *, rule: str, label: str) -> str:
