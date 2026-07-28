@@ -9,6 +9,7 @@ from .command_spec import (
     ACTION_COMMANDS,
     CLIENT_REQUEST_ID_SCHEMA,
     CLIENT_RUN_ID_SCHEMA,
+    DISH_UUID_SCHEMA,
     REPLAY_SAFE_COMMANDS,
     action_openapi_argument_schema,
 )
@@ -22,7 +23,10 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
             "command": {"type": "string"},
             "code": {"type": "string"},
             "task_gid": {"type": ["string", "null"]},
-            "submission_id": {"type": ["string", "null"]},
+            "submission_id": {
+                **DISH_UUID_SCHEMA,
+                "type": ["string", "null"],
+            },
             "state": {"type": ["string", "null"]},
             "retryable": {"type": "boolean"},
             "allowed_actions": {"type": "array", "items": {"type": "string"}},
@@ -141,7 +145,14 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
             "operationId": "dish_renew_lease",
             "summary": "Renew the current GPT Action operation lease",
             "security": [{"actionBearer": []}],
-            "parameters": [{"name": "operation_id", "in": "path", "required": True, "schema": {"type": "string", "format": "uuid"}}],
+            "parameters": [
+                {
+                    "name": "operation_id",
+                    "in": "path",
+                    "required": True,
+                    "schema": dict(DISH_UUID_SCHEMA),
+                }
+            ],
             "requestBody": {
                 "required": True,
                 "content": {"application/json": {"schema": {

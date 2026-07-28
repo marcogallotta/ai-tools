@@ -16,7 +16,11 @@ _DISH_UUID_FIELDS = {
     "cycle_id",
     "verification_cycle_id",
 }
+CANONICAL_DISH_UUID_PATTERN = (
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
 _NUMERIC_GID_RE = re.compile(r"[1-9][0-9]*")
+_CANONICAL_DISH_UUID_RE = re.compile(CANONICAL_DISH_UUID_PATTERN)
 
 
 def _invalid_identifier(
@@ -47,7 +51,7 @@ def require_asana_gid(value: Any, *, field: str) -> str:
 
 def require_dish_uuid(value: Any, *, field: str) -> str:
     """Return a canonical Dish UUID or reject it without database access."""
-    if not isinstance(value, str):
+    if not isinstance(value, str) or _CANONICAL_DISH_UUID_RE.fullmatch(value) is None:
         raise _invalid_identifier(
             field,
             "uuid_identifier_required",

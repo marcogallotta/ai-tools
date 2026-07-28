@@ -343,17 +343,27 @@ def test_trimmed_openapi_contains_only_action_workflow_and_renewal_paths():
 
 
 def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
+    from dish_service.identifiers import CANONICAL_DISH_UUID_PATTERN
+
     spec = action_openapi(server_url="https://dish.example.test")
     create_client = spec["paths"]["/v1/action/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["client"]
     run_id = create_client["properties"]["run_id"]
     request_id = create_client["properties"]["request_id"]
     assert run_id["format"] == "uuid"
+    assert run_id["pattern"] == CANONICAL_DISH_UUID_PATTERN
     assert "canonical lowercase uuid" in run_id["description"].lower()
     assert request_id["format"] == "uuid"
+    assert request_id["pattern"] == CANONICAL_DISH_UUID_PATTERN
     assert "Newly generated UUID" in request_id["description"]
 
     renew_client = spec["paths"]["/v1/action/leases/{operation_id}/renew"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["client"]
     assert renew_client["properties"]["run_id"]["format"] == "uuid"
+    renew_parameter = spec["paths"]["/v1/action/leases/{operation_id}/renew"]["post"]["parameters"][0]["schema"]
+    assert renew_parameter["pattern"] == CANONICAL_DISH_UUID_PATTERN
+
+    envelope_submission = spec["components"]["schemas"]["ResultEnvelope"]["properties"]["submission_id"]
+    assert envelope_submission["format"] == "uuid"
+    assert envelope_submission["pattern"] == CANONICAL_DISH_UUID_PATTERN
 
     reject = spec["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     variants = {item["properties"]["route"]["const"]: item for item in reject["oneOf"]}
@@ -378,6 +388,38 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
 
     prepare = spec["paths"]["/v1/action/prepare"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     assert "no_blockers" not in prepare.get("properties", {})
+
+
+def test_every_openapi_uuid_schema_requires_canonical_lowercase_pattern():
+    from jsonschema import Draft202012Validator
+
+    from dish_service.identifiers import CANONICAL_DISH_UUID_PATTERN
+
+    spec = action_openapi()
+    uuid_schemas = []
+
+    def collect(value):
+        if isinstance(value, dict):
+            if value.get("format") == "uuid":
+                uuid_schemas.append(value)
+            for child in value.values():
+                collect(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect(child)
+
+    collect(spec)
+    assert uuid_schemas
+    assert all(
+        schema.get("pattern") == CANONICAL_DISH_UUID_PATTERN
+        for schema in uuid_schemas
+    )
+    canonical = "11111111-1111-4111-8111-111111111111"
+    uppercase = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
+    for schema in uuid_schemas:
+        validator = Draft202012Validator(schema)
+        assert validator.is_valid(canonical)
+        assert not validator.is_valid(uppercase)
 
 
 def test_uuid_validation_message_names_field_and_expected_format(tmp_path):

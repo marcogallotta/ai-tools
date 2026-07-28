@@ -5,23 +5,30 @@ from copy import deepcopy
 from typing import Any, Mapping
 
 from dish_tool.errors import DishRuleError
-from .identifiers import require_asana_gid, require_dish_uuid
+from .identifiers import (
+    CANONICAL_DISH_UUID_PATTERN,
+    require_asana_gid,
+    require_dish_uuid,
+)
 
 AGENT_MUTATION_COMMANDS = {"create", "start", "prepare", "approve", "reject", "submit"}
 REPLAY_SAFE_COMMANDS = AGENT_MUTATION_COMMANDS
 REPLAY_CAPABLE_COMMANDS = AGENT_MUTATION_COMMANDS
 
-CLIENT_RUN_ID_SCHEMA = {
+DISH_UUID_SCHEMA = {
     "type": "string",
     "format": "uuid",
+    "pattern": CANONICAL_DISH_UUID_PATTERN,
+}
+CLIENT_RUN_ID_SCHEMA = {
+    **DISH_UUID_SCHEMA,
     "description": (
         "Canonical lowercase UUID identifying this agent run. Reuse it for every "
         "call made by the same run; a new run must generate a new UUID."
     ),
 }
 CLIENT_REQUEST_ID_SCHEMA = {
-    "type": "string",
-    "format": "uuid",
+    **DISH_UUID_SCHEMA,
     "description": (
         "Newly generated UUID identifying this request. Reuse it only to replay "
         "the exact same command after a lost response; never reuse it for different work."
@@ -64,7 +71,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     "inspect": {
         "required": ["submission_id", "agent"],
         "properties": {
-            "submission_id": {"type": "string", "format": "uuid"},
+            "submission_id": dict(DISH_UUID_SCHEMA),
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
         },
     },
@@ -85,7 +92,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     "prepare": {
         "required": ["submission_id", "agent", "model", "file_text"],
         "properties": {
-            "submission_id": {"type": "string", "format": "uuid"},
+            "submission_id": dict(DISH_UUID_SCHEMA),
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "model": {"type": "string"},
             "file_text": {"type": "string"},
@@ -114,7 +121,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "independence_attestation",
         ],
         "properties": {
-            "submission_id": {"type": "string", "format": "uuid"},
+            "submission_id": dict(DISH_UUID_SCHEMA),
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "model": {"type": "string"},
             "correction": {"type": "string", "enum": ["none", "small"]},
@@ -128,7 +135,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     "reject": {
         "required": ["submission_id", "agent", "reason", "route"],
         "properties": {
-            "submission_id": {"type": "string", "format": "uuid"},
+            "submission_id": dict(DISH_UUID_SCHEMA),
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "model": {"type": "string"},
             "reason": {"type": "string"},
@@ -146,7 +153,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     },
     "submit": {
         "required": ["submission_id"],
-        "properties": {"submission_id": {"type": "string", "format": "uuid"}},
+        "properties": {"submission_id": dict(DISH_UUID_SCHEMA)},
     },
 }
 
@@ -286,10 +293,10 @@ def _validate_scalar(field: str, value: Any, schema: Mapping[str, Any]) -> None:
         raise _argument_error(
             f"{field} has an unsupported value", "argument_value_invalid", field=field
         )
-    if isinstance(value, str) and "pattern" in schema:
-        require_asana_gid(value, field=field)
     if isinstance(value, str) and schema.get("format") == "uuid":
         require_dish_uuid(value, field=field)
+    elif isinstance(value, str) and "pattern" in schema:
+        require_asana_gid(value, field=field)
 
 
 def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:

@@ -42,11 +42,13 @@
                       "run_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
                       },
                       "request_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work."
                       }
                     }
@@ -122,6 +124,7 @@
                       "run_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
                       }
                     }
@@ -193,6 +196,7 @@
                       "run_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
                       }
                     }
@@ -269,6 +273,7 @@
                       "run_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
                       }
                     }
@@ -281,7 +286,8 @@
                     "properties": {
                       "submission_id": {
                         "type": "string",
-                        "format": "uuid"
+                        "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                       },
                       "agent": {
                         "type": "string",
@@ -346,11 +352,13 @@
                       "run_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
                       },
                       "request_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work."
                       }
                     }
@@ -539,11 +547,13 @@
                       "run_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
                       },
                       "request_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work."
                       }
                     }
@@ -558,7 +568,8 @@
                     "properties": {
                       "submission_id": {
                         "type": "string",
-                        "format": "uuid"
+                        "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                       },
                       "agent": {
                         "type": "string",
@@ -637,11 +648,13 @@
                       "run_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
                       },
                       "request_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work."
                       }
                     }
@@ -660,7 +673,8 @@
                     "properties": {
                       "submission_id": {
                         "type": "string",
-                        "format": "uuid"
+                        "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                       },
                       "agent": {
                         "type": "string",
@@ -750,11 +764,13 @@
                       "run_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
                       },
                       "request_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work."
                       }
                     }
@@ -776,7 +792,8 @@
                         "properties": {
                           "submission_id": {
                             "type": "string",
-                            "format": "uuid"
+                            "format": "uuid",
+                            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                           },
                           "agent": {
                             "type": "string",
@@ -818,7 +835,8 @@
                         "properties": {
                           "submission_id": {
                             "type": "string",
-                            "format": "uuid"
+                            "format": "uuid",
+                            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                           },
                           "agent": {
                             "type": "string",
@@ -858,7 +876,8 @@
                         "properties": {
                           "submission_id": {
                             "type": "string",
-                            "format": "uuid"
+                            "format": "uuid",
+                            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                           },
                           "agent": {
                             "type": "string",
@@ -941,11 +960,13 @@
                       "run_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
                       },
                       "request_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work."
                       }
                     }
@@ -957,7 +978,8 @@
                     "properties": {
                       "submission_id": {
                         "type": "string",
-                        "format": "uuid"
+                        "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
                       }
                     },
                     "type": "object",
@@ -998,7 +1020,8 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid"
+              "format": "uuid",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
             }
           }
         ],
@@ -1024,11 +1047,13 @@
                       "run_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
                       },
                       "request_id": {
                         "type": "string",
                         "format": "uuid",
+                        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "description": "Newly generated UUID identifying this request. Reuse it only to replay the exact same command after a lost response; never reuse it for different work."
                       }
                     }
@@ -1092,7 +1117,9 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "format": "uuid",
+            "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
           },
           "state": {
             "type": [
