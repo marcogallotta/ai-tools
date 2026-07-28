@@ -75,7 +75,9 @@ class DishService:
     Every request gets a fresh SQLite connection. Ordinary requests may run
     concurrently, while an in-process maintenance gate gives database replacement
     exclusive access. Durable operation constraints and service leases remain the
-    cross-request workflow authority.
+    cross-request workflow authority. An explicitly supplied backend_factory and
+    every resource it creates remain caller-owned; only the default internally
+    selected backend factory produces service-owned instances that Dish closes.
     """
 
     def __init__(

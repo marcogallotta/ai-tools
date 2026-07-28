@@ -152,6 +152,10 @@ Agent and admin dispatch use the explicit `CURRENT_COMMAND_HANDLERS` and
 `CURRENT_ADMIN_COMMAND_HANDLERS` registries. Do not reintroduce import-time subclass rebinding or a
 compatibility dispatcher.
 
+`DishService` owns and closes backend instances only when it selects its internal default factory.
+An explicitly injected `backend_factory` and every resource returned by it remain caller-owned; the
+service must never close them or infer a different ownership mode from the returned object.
+
 The numbered workflow modules reflect implementation order, not separate authorities:
 
 | Module | Responsibility |

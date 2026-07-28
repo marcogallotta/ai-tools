@@ -20,17 +20,23 @@ def authenticate_bearer(
     tokens: dict[str, tuple[str, str]],
     allowed_scopes: Iterable[str],
 ) -> Credential:
-    value = str(authorization or "").strip()
+    value = str(authorization or "")
+    if value != value.strip():
+        raise DishRuleError(
+            "AGENT_MISMATCH",
+            "service bearer token is invalid",
+            rule="service_auth_invalid",
+        )
     if not value.startswith("Bearer "):
         raise DishRuleError(
             "AGENT_MISMATCH",
             "service bearer authentication is required",
             rule="service_auth_required",
         )
-    supplied = value[7:].strip()
-    if not supplied:
+    supplied = value[7:]
+    if not supplied or supplied != supplied.strip():
         raise DishRuleError(
-            "AGENT_MISMATCH", "service bearer token is empty", rule="service_auth_invalid"
+            "AGENT_MISMATCH", "service bearer token is invalid", rule="service_auth_invalid"
         )
     matched = None
     for token, identity in tokens.items():

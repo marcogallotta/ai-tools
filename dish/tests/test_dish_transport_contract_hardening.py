@@ -53,6 +53,54 @@ def test_runtime_rejects_surrounding_token_whitespace(tmp_path, token_name):
     assert exc.value.details["token"] == token_name.removesuffix("_token")
 
 
+@pytest.mark.parametrize(
+    ("path", "token", "payload"),
+    [
+        (
+            "/v1/commands/sections",
+            " agent-secret",
+            {"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}},
+        ),
+        (
+            "/v1/admin/backups/create",
+            "admin-secret ",
+            {"client": {"run_id": RUN_ID, "request_id": REQUEST_ID}, "label": "x"},
+        ),
+        (
+            "/v1/action/sections",
+            " action-secret ",
+            {"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}},
+        ),
+    ],
+)
+def test_protected_routes_reject_presented_token_whitespace(
+    tmp_path, path, token, payload
+):
+    _service, _backend, server, thread, url = _running(tmp_path)
+    try:
+        status, result = _post(url, path, token=token, payload=payload)
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=2)
+    assert status == 401
+    assert result["code"] == "AGENT_MISMATCH"
+    assert result["errors"][0]["rule"] == "service_auth_invalid"
+
+
+def test_unmodified_bearer_token_remains_accepted(tmp_path):
+    _service, _backend, server, thread, url = _running(tmp_path)
+    try:
+        status, result = _post(
+            url,
+            "/v1/commands/sections",
+            token="agent-secret",
+            payload={"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}},
+        )
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=2)
+    assert status == 200
+    assert result["ok"] is True
+
+
 @pytest.mark.parametrize("timeout", [math.nan, math.inf, -math.inf, 0.0])
 def test_runtime_rejects_nonfinite_or_nonpositive_timeout(tmp_path, timeout):
     with pytest.raises(DishRuleError) as exc:

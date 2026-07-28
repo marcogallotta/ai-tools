@@ -213,6 +213,30 @@ def test_release_loader_internal_typeerror_is_not_retried(tmp_path):
     assert calls == 1
 
 
+def test_injected_backend_factory_resources_remain_caller_owned(tmp_path):
+    class InjectedBackend:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    backend = InjectedBackend()
+    service = DishService(
+        ServiceConfig(db_path=tmp_path / "dish.db", honest_root=tmp_path),
+        backend_factory=lambda: backend,
+    )
+
+    result = service.record_agent_argument_failure(
+        "prepare",
+        {"code": "INVALID_ARGUMENT", "message": "bad", "rule": "bad_argument"},
+        {},
+    )
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert backend.closed is False
+
+
 def test_owned_backend_cleanup_failure_does_not_replace_result_or_skip_db_close(
     monkeypatch, tmp_path
 ):
