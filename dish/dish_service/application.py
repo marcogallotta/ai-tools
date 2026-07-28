@@ -434,8 +434,15 @@ class DishService:
             }
             data["recovery_required"] = True
         elif op["status"] != "open":
-            actions = []
-            access = {"state": "terminal"}
+            terminal_handoff = (
+                actions == ["start"]
+                and data.get("required_start_kind") in {"initial", "verification"}
+            )
+            if terminal_handoff:
+                access = {"state": "handoff"}
+            else:
+                actions = []
+                access = {"state": "terminal"}
         elif active is not None:
             if leases.is_expired(active):
                 actions = []
