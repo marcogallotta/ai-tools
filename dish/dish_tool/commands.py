@@ -64,7 +64,7 @@ def _exposed_action_contract(
     return exposed, required_start_kind, required_admin_action
 
 
-def _exposed_view(view: Mapping[str, Any]) -> dict[str, Any]:
+def expose_authoritative_view(view: Mapping[str, Any]) -> dict[str, Any]:
     """Return an agent-facing copy of an authoritative internal view."""
     exposed = dict(view)
     actions, required_start_kind, required_admin_action = _exposed_action_contract(
@@ -76,6 +76,12 @@ def _exposed_view(view: Mapping[str, Any]) -> dict[str, Any]:
     if required_admin_action is not None:
         exposed["required_admin_action"] = required_admin_action
     return exposed
+
+
+def _exposed_view(view: Mapping[str, Any]) -> dict[str, Any]:
+    """Backward-compatible internal alias for the shared exposure contract."""
+
+    return expose_authoritative_view(view)
 
 
 def _exposed_result_contract(

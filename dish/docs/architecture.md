@@ -85,6 +85,9 @@ legal transitions from it, and ordinary mutations assert the selected action aga
 Clients, transports, and individual use cases must not independently reconstruct which action is
 legal. Agent-facing callers follow only `allowed_actions`. Private continuations are reported as
 `data.required_admin_action`, not exposed as agent actions.
+Principal and lease filtering must update every exposed current-action projection together. Actions
+that may become legal only after a private recovery are reported separately and never mixed into a
+current `allowed_actions` or nested authoritative view.
 
 ### Exact live state, not assumed state
 

@@ -14,7 +14,7 @@ from typing import Any, Callable, Mapping
 
 from dish_tool.admin import DishAdminApplication
 from dish_tool.backend import AsanaBackend
-from dish_tool.commands import DishApplication
+from dish_tool.commands import DishApplication, expose_authoritative_view
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
 from dish_tool.database import initialize_database, process_command_audit_repairs
 from dish_tool.errors import DishRuleError
@@ -56,6 +56,21 @@ _OPERATION_ADMIN_COMMANDS = {
 _LEASE_FREE_ADMIN_COMMANDS = {"authorize-governed-change"}
 
 LOG = logging.getLogger("dish.service.application")
+
+
+def _lease_recovery_details(
+    operation_id: str, after_recovery_actions: list[str]
+) -> dict[str, Any]:
+    return {
+        "recovery_required": True,
+        "required_admin_action": "recover-lease",
+        "resolver": "Marco/admin recover-lease",
+        "admin_command": (
+            f"dish-admin recover-lease {operation_id} --reason TEXT"
+        ),
+        "legal_next_actions": [],
+        "after_recovery": {"legal_actions": list(after_recovery_actions)},
+    }
 
 
 def _now_stamp() -> str:
@@ -441,6 +456,84 @@ class DishService:
         }
 
     @staticmethod
+    def _synchronize_exposed_actions(
+        result: dict[str, Any], actions: list[str], *, ensure_legal_next: bool = False
+    ) -> None:
+        result["allowed_actions"] = list(actions)
+        data = result.setdefault("data", {})
+        if ensure_legal_next or "legal_next_actions" in data:
+            data["legal_next_actions"] = list(actions)
+        authoritative_view = data.get("authoritative_view")
+        if isinstance(authoritative_view, dict):
+            authoritative_view["legal_actions"] = list(actions)
+        active_operation = data.get("active_operation")
+        if isinstance(active_operation, dict):
+            active_view = active_operation.get("authoritative_view")
+            if isinstance(active_view, dict):
+                active_view["legal_actions"] = list(actions)
+
+    def _exposed_operation_view(
+        self,
+        conn,
+        operation_id: str,
+        *,
+        app: DishApplication | None = None,
+    ) -> dict[str, Any] | None:
+        owned_backend = None
+        try:
+            if app is None:
+                owned_backend = self.backend_factory()
+                app = DishApplication(
+                    conn,
+                    owned_backend,
+                    release_loader=lambda role=None: self._release(role),
+                )
+            release = self._release(None)
+            return expose_authoritative_view(
+                app.operation_service.authoritative_view(
+                    operation_id, schema=release.schema
+                )
+            )
+        except Exception as exc:
+            LOG.warning(
+                "lease_recovery_view_unavailable operation_id=%s error_type=%s",
+                operation_id,
+                type(exc).__name__,
+            )
+            return None
+        finally:
+            self._close_backend(owned_backend)
+
+    def _apply_expired_lease_guidance(
+        self,
+        result: dict[str, Any],
+        *,
+        operation_id: str,
+        after_recovery_actions: list[str],
+        authoritative_view: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        data = result.setdefault("data", {})
+        if authoritative_view is not None:
+            data["authoritative_view"] = dict(authoritative_view)
+        self._synchronize_exposed_actions(
+            result, [], ensure_legal_next=True
+        )
+        guidance = _lease_recovery_details(
+            operation_id, after_recovery_actions
+        )
+        data.update(guidance)
+        access = data.setdefault("service_access", {})
+        access.update({
+            "state": "expired",
+            "rule": "service_lease_expired",
+            "required_admin_action": "recover-lease",
+            "resolver": guidance["resolver"],
+            "admin_command": guidance["admin_command"],
+            "after_recovery": guidance["after_recovery"],
+        })
+        return result
+
+    @staticmethod
     def _operation_row(conn, operation_id: str):
         return conn.execute(
             "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
@@ -567,6 +660,7 @@ class DishService:
         active = leases.active_for_operation(operation_id)
         data["service_lease"] = self._lease_payload(active)
         actions = list(result.get("allowed_actions") or [])
+        after_recovery_actions: list[str] = []
 
         access: dict[str, Any] = {"state": "available"}
         if op["status"] == "uncertain":
@@ -589,6 +683,7 @@ class DishService:
                 access = {"state": "terminal"}
         elif active is not None:
             if leases.is_expired(active):
+                after_recovery_actions = list(actions)
                 actions = []
                 access = {
                     "state": "expired",
@@ -629,13 +724,19 @@ class DishService:
                 }
                 data["recovery_required"] = True
 
-        result["allowed_actions"] = actions
+        self._synchronize_exposed_actions(result, actions)
         data["service_access"] = access
         required_admin_action = access.get("required_admin_action")
         if required_admin_action:
             data["required_admin_action"] = required_admin_action
         else:
             data.pop("required_admin_action", None)
+        if access.get("rule") == "service_lease_expired":
+            return self._apply_expired_lease_guidance(
+                result,
+                operation_id=operation_id,
+                after_recovery_actions=after_recovery_actions,
+            )
         return result
 
     def _assert_mutation_ready(self, backend: Any) -> None:
@@ -952,6 +1053,7 @@ class DishService:
                     submission_id=requested_operation_id,
                 )
             backend = None
+            app = None
             acquired_for_request = False
             operation_id = None
             replay_started = False
@@ -1172,7 +1274,23 @@ class DishService:
                     validation_scope=validation_scope,
                 )
                 if exc.rule == "service_lease_expired":
-                    result.setdefault("data", {})["required_admin_action"] = "recover-lease"
+                    view = (
+                        self._exposed_operation_view(
+                            conn, operation_id, app=app
+                        )
+                        if operation_id
+                        else None
+                    )
+                    result = self._apply_expired_lease_guidance(
+                        result,
+                        operation_id=operation_id or "unknown",
+                        after_recovery_actions=(
+                            list(view.get("legal_actions") or [])
+                            if view is not None
+                            else []
+                        ),
+                        authoritative_view=view,
+                    )
                 if request_id and command in {"create", "start", "prepare", "approve", "reject", "submit"} and replay_started:
                     result.setdefault("data", {})["request_id"] = request_id
                     complete_request(conn, request_id=request_id, result=result)
@@ -1302,7 +1420,17 @@ class DishService:
                     state=None if operation is None else operation["status"],
                 )
                 if exc.rule == "service_lease_expired":
-                    result.setdefault("data", {})["required_admin_action"] = "recover-lease"
+                    view = self._exposed_operation_view(conn, operation_id)
+                    result = self._apply_expired_lease_guidance(
+                        result,
+                        operation_id=operation_id,
+                        after_recovery_actions=(
+                            list(view.get("legal_actions") or [])
+                            if view is not None
+                            else []
+                        ),
+                        authoritative_view=view,
+                    )
                 if request_id and replay_started:
                     result.setdefault("data", {})["request_id"] = request_id
                     complete_request(conn, request_id=request_id, result=result)
