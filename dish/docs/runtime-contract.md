@@ -37,11 +37,16 @@ The CLI adds `DISH_SERVICE_TOKEN`; Marco's admin shell adds `DISH_ADMIN_TOKEN`. 
 The service host is the only place that defines `ASANA_PAT` or `ASANA_ENV`. It runs one process, enforced by a host file lock tied to the shared database. The process exposes two loopback listeners:
 
 - private CLI/admin listener, intended for Tailscale Serve;
-- Action-only listener, intended for Tailscale Funnel.
+- Action listener, intended for Tailscale Funnel.
 
-The public listener does not route private CLI, admin, health, migration, recovery, or backup endpoints. HTTP status remains transport information; workflow meaning remains in the canonical JSON result code. On the GPT Action surface, expected authenticated Dish rule outcomes (including `INVALID_ARGUMENT`, state conflicts, and validation failures) use HTTP 200 so the Action runtime returns the canonical envelope to the agent instead of reclassifying it as a transport failure. Authentication and authorization failures retain HTTP 401/403, and unexpected server failures retain HTTP 500.
-
-
+Both listeners also serve the unauthenticated, read-only generated Action schema at
+`GET /openapi/action.json`; that document is outside the bearer-token permission surface. The public
+listener does not route private CLI, admin, health, migration, recovery, or backup endpoints. HTTP
+status remains transport information; workflow meaning remains in the canonical JSON result code.
+On the GPT Action surface, expected authenticated Dish rule outcomes (including `INVALID_ARGUMENT`,
+state conflicts, and validation failures) use HTTP 200 so the Action runtime returns the canonical
+envelope to the agent instead of reclassifying it as a transport failure. Authentication and
+authorization failures retain HTTP 401/403, and unexpected server failures retain HTTP 500.
 
 Agent-facing action guidance is authoritative even on failures. When an operation-scoped command is
 rejected, `allowed_actions` reports the currently legal exposed continuation when one exists. A
@@ -58,11 +63,27 @@ includes both `task_gid` and `submission_id`; renewal of a terminal operation re
 
 The durable `operations` constraint is the one-active-operation-per-task lock. A separate durable `operation_execution_claims` row serializes mutation execution for that operation, and partial unique indexes prohibit multiple unresolved writes or movements for it. The service also writes a persistent ownership sidecar and process lock derived from the canonical database target rather than the caller-supplied pathname; direct local CLI/admin mode will not open the same database through a symlink alias, including while the service process is stopped. `service_leases` bind the current actor to an owner identity and run identity with a renewable expiry. Workflow handoff may release the actor lease, but it does not release the task operation lock. `allowed_actions` is principal-aware: a different or expired run receives no ordinary mutation actions even when the underlying workflow phase has one. Read-only inspection never mutates lease state. Expired leases fail closed and require Marco to run `dish-admin recover-lease`; recovery releases stale ownership but does not transfer the workflow to Marco. Only a run whose durable actor lineage matches the required workflow role may reclaim a missing lease. Admin hold/recovery continuations use temporary request-scoped leases and return the operation unleased for the next valid actor.
 
-A terminal lease is released only after the operation is terminal and every declared step and ambiguous write/movement attempt has a durable completion outcome. Lease acquire, renew, release, and terminal checks are transactional, and the configured TTL must exceed the maximum permitted request lifetime plus the recovery safety margin. If post-success lease or owned-resource cleanup fails after the governed mutation committed, the original command still returns success. A safe fallback may release the lease and report `service_cleanup_warning`; otherwise `service_recovery_required` suppresses follow-on actions and explicitly tells the client not to retry the mutation. Ordinary full-state write and approval retries remain naturally idempotent by exact live-state comparison. All agent mutations are replay-bound, and every externally callable agent, administrative, lease, and backup mutation requires a client-generated UUID `client.request_id`; reads (`sections`, `read`, `inspect`, and `health`) do not. This includes `create`, `start`, `prepare`, `approve`, `reject`, and `submit`. Reuse that UUID only when retrying the exact same logical call after a lost response.
+A terminal lease is released only after the operation is terminal and every declared step and
+ambiguous write/movement attempt has a durable completion outcome. Lease acquire, renew, release,
+and terminal checks are transactional. Configuration requires the lease TTL to exceed one
+maximum-duration Asana SDK call plus the recovery safety margin; the default TTL is substantially
+longer. This validation is not a whole-command deadline: one Dish command may perform several
+sequential Asana calls. If post-success lease or owned-resource cleanup fails after the governed
+mutation committed, the original command still returns success. A safe fallback may release the
+lease and report `service_cleanup_warning`; otherwise `service_recovery_required` suppresses
+follow-on actions and explicitly tells the client not to retry the mutation. Ordinary full-state
+write and approval retries remain naturally idempotent by exact live-state comparison. In service
+mode, all agent mutations are replay-bound, and every externally callable agent, administrative,
+lease, and backup mutation requires a client-generated UUID `client.request_id`; reads (`sections`,
+`read`, `inspect`, and `health`) do not. This includes `create`, `start`, `prepare`, `approve`,
+`reject`, and `submit`. Reuse that UUID only when retrying the exact same logical call after a lost
+response.
 
 ## Request replay contract
 
-The first authoritative outcome of every agent, administrative, lease, backup-create, or backup-restore mutation is durably bound to `client.request_id`. Request identity includes the command, canonical arguments, authenticated owner identity, and run identity.
+In service mode, the first authoritative outcome of every agent, administrative, lease,
+backup-create, or backup-restore mutation is durably bound to `client.request_id`. Request identity
+includes the command, canonical arguments, authenticated owner identity, and run identity.
 
 - Missing or malformed request IDs are rejected before a request record exists. Once the UUID is accepted, expected argument, state, authorization, and workflow failures are stored just like successes.
 - A repeated completed request returns the original stored result with `data.request_replayed: true` and `data.request_id`.
@@ -72,7 +93,13 @@ The first authoritative outcome of every agent, administrative, lease, backup-cr
 - A completed `submit` is replayed from the request ledger. A fresh request ID for the same already-completed logical submission is also satisfied from exact signed-content and destination-movement evidence, without reacquiring a lease or repeating the external movement.
 - Ordinary request records live in `service_requests` and survive service restart. `backup-restore` uses an atomic sibling sidecar journal because the restore replaces the database that contains ordinary request records. The sidecar binds the request to the selected backup and terminal result across replacement and restart.
 
-The bundled HTTP clients generate an ID for a first call, but a caller handling transport failure must retain and reuse that value. GPT Action calls must supply it explicitly through the imported schema. The public schema marks both `client.request_id` and `client.run_id` as canonical lowercase UUIDs; `run_id` remains stable for the whole agent run.
+The bundled CLI and admin clients generate an ID internally for each first mutation call, but their
+command-line interfaces neither accept a request ID nor expose the generated value after a
+transport failure. A CLI caller therefore cannot perform an exact request replay after response
+loss and must inspect live and durable state instead of blindly rerunning the mutation. A
+programmatic HTTP client may supply and retain an explicit request ID. GPT Action calls must supply
+it explicitly through the imported schema. The public schema marks both `client.request_id` and
+`client.run_id` as canonical lowercase UUIDs; `run_id` remains stable for the whole agent run.
 
 ## Health, backup, and startup
 
@@ -106,7 +133,9 @@ Every complete task reread reasserts Cooking-project membership, so a task remov
 
 ## JSON response contract
 
-Every invocation writes exactly one compact JSON object to stdout:
+Every governed CLI or admin command writes exactly one compact canonical result envelope to stdout.
+Help and stage walkthroughs are documentation output; the HTTP health and OpenAPI endpoints return
+their own JSON documents rather than this envelope:
 
 ```json
 {
