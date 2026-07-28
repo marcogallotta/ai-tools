@@ -7,8 +7,9 @@ from typing import Any, Mapping
 from dish_tool.errors import DishRuleError
 from .identifiers import require_asana_gid, require_dish_uuid
 
-REPLAY_SAFE_COMMANDS = {"create", "start"}
-REPLAY_CAPABLE_COMMANDS = {"create", "start", "prepare", "approve", "reject", "submit"}
+AGENT_MUTATION_COMMANDS = {"create", "start", "prepare", "approve", "reject", "submit"}
+REPLAY_SAFE_COMMANDS = AGENT_MUTATION_COMMANDS
+REPLAY_CAPABLE_COMMANDS = AGENT_MUTATION_COMMANDS
 
 CLIENT_RUN_ID_SCHEMA = {
     "type": "string",
@@ -92,6 +93,13 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "material_classification": {
                 "type": "string",
                 "enum": ["material", "non-material"],
+                "description": (
+                    "Required only when a post-signoff change candidate changes the canonical "
+                    "body. It classifies that exact body diff from the signed baseline. The "
+                    "caller may propose non-material, but Dish forces material when a "
+                    "protocol-defined material path changed; material opens Verification, while "
+                    "an accepted non-material diff preserves the exact prior signoff."
+                ),
             },
         },
     },
@@ -280,7 +288,7 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
         not isinstance(request_id, str) or not request_id.strip()
     ):
         raise _argument_error(
-            "client.request_id is required for replay-sensitive mutations",
+            "client.request_id is required for mutations",
             "request_field_required",
             field="client.request_id",
         )

@@ -152,7 +152,8 @@ It does not decide workflow legality.
 - acquires/asserts/releases service leases;
 - delegates workflow work to `DishApplication` or `DishAdminApplication`;
 - preserves committed success if post-success lease bookkeeping fails;
-- records and replays response-loss-sensitive service requests;
+- records and replays every mutation request after a valid UUID establishes request identity;
+- keeps ordinary replay evidence in SQLite and restore replay evidence in an atomic sidecar outside the replaceable database;
 - owns health, backup, restore, and startup checks.
 
 The service must not duplicate stage-specific workflow rules.
@@ -196,7 +197,7 @@ The numbered module names reflect the implementation sequence, not separate runt
 | `step6.py` | guarded prepare/check-in, canonical candidate validation, content write, and queue handoff |
 | `step7.py` | Verification read/binding, independent verifier evidence, approval, and exact signoff |
 | `step8.py` | rejection routes, Small/Large correction handling, Evidence/Human holds, and two-pass reopen |
-| `step9.py` | signed destination submission and recovery of interrupted current operations |
+| `step9.py` | signed destination submission, Marco-only destination repair, and recovery of interrupted current operations |
 
 The normal lifecycle is:
 
@@ -240,6 +241,39 @@ non-material. A change operation's validated level and reason are captured as im
 `operation_steps` intent at `start`, so later canonical Material changes output does not reconstruct
 or guess that provenance.
 
+`material_classification` classifies only the canonical body diff of a post-signoff change against
+the signed baseline. It is required when that body changed and invalid when no such diff exists. The
+caller proposes `material` or `non-material`; Dish remains authoritative for protocol-defined
+material paths and reports the requested classification, effective classification, forced reasons,
+and resulting route. An accepted non-material diff preserves the prior exact signoff; an effective
+material diff creates a new Verification route.
+
+Material-change records use a tool-normalized authority model. An initial canonical candidate may
+propose entries using the documented seven-field grammar. Once a canonical baseline exists, prior
+entries are immutable and tool-owned: a later candidate may preserve them or omit them, in which case
+Dish restores them; any supplied rewrite is rejected. Dish appends the current workflow entry from
+durable change intent and the independent approval transition finalizes the latest pending entry. A
+ready or submitted task whose latest relevant entry still says `pending-verification` is invalid.
+
+Final destination failure has a split recovery contract. If live reread proves a movement was not
+applied, `submit` remains the only legal retry and does not rewrite content. If the approved section
+no longer resolves or is no longer legal, the operation remains open in `ready_move_failed`; the
+agent surface exposes no mutation and names `repair-destination` as the required Marco-admin action.
+`dish-admin repair-destination` is legal only in that state. It validates the replacement against the
+live Cooking section registry, proves that the complete canonical diff is exactly
+`planning.Destination section`, writes and rereads the complete task once, and records the admin run,
+reason, old/new destination, approved identity, and repaired identity in the operation step, write
+attempt, and audit trail. The original Verification cycle and signed identity are immutable. The
+confirmed repair identity becomes the exact content baseline for the later `submit`, which performs
+only the still-pending movement and never repeats approval or an already confirmed content write.
+
+A fresh initial Research operation may enter an Evidence or Human Review hold before candidate
+construction through the existing `reject` action with `resume_status=pending-research`. This is an
+operation hold, not a content rejection: it records the route, reason, originating agent/run and
+request UUID, resolver, timestamp, and the explicit fact that no candidate content or Verification
+cycle existed. Resolution returns the same operation to `prepare_required` without installing partial
+canonical content or inventing review evidence.
+
 Verification binds an exact confirmed `content_versions` record. Signoff is valid only for that
 exact identity. A live `Verified by` string is not sufficient local evidence. Independent
 Verification is proven by the verifier's durable `client.run_id` differing from the run that
@@ -266,7 +300,7 @@ Conceptually important tables are:
 | external effects | `write_attempts`, `movement_attempts` |
 | governed authority | `marco_authorizations` |
 | shared ownership | `service_leases` |
-| HTTP request replay | `service_requests` |
+| mutation request replay | `service_requests`; restore-safe sibling request journal for `backup-restore` |
 | audit and repair | `audit_events`, `command_audit_repairs` |
 | historical quarantine | `legacy_submission_quarantine` and retained read-only legacy records |
 
@@ -321,13 +355,15 @@ lineage proves it owns that workflow role. Protocol-specific admin continuations
 admin leases and release them before returning. Terminal lease release waits until workflow steps and
 ambiguous attempts have durable outcomes.
 
-`service_requests` is a separate idempotency boundary for response loss across agent mutations. The
-immutable record binds request UUID, owner, run, command, and canonical argument hash before the
-authoritative result. `create` and non-verification `start` require the ID; the remaining mutations
-apply the same binding whenever one is supplied. Completion is one-way and stores expected failures as
-well as successes. Exact repeats return the stored result, mismatched reuse fails, and unresolved
-`create` remains uncertain instead of being reissued. This ledger complements, rather than replaces,
-operation constraints and exact external-effect attempt records.
+`service_requests` is the ordinary mutation idempotency boundary. Every externally callable agent,
+admin, lease, and backup mutation requires a client UUID; reads do not. Once the UUID itself is valid,
+the immutable record binds request UUID, owner, run, command, and canonical argument hash before
+command validation or external effects, so expected failures and successes replay identically. Exact
+repeats return the stored result; mismatched reuse fails; pending or uncertain work is not blindly
+reissued. `backup-restore` uses an atomic sibling journal because replacing the database would replace
+an in-database replay record. These request records complement, rather than replace, operation
+constraints and exact external-effect attempt records.
+A fresh request for an already completed logical submission is resolved from the exact signed-content and confirmed destination-movement evidence rather than reopening the operation or repeating movement.
 
 The host process lock is not a substitute for database operation constraints. The client run ID is
 the durable unit of actor/verifier lineage, but it does not replace exact candidate bindings and

@@ -126,11 +126,20 @@ start initial/change
 
 The bounded agent surface contains discovery/read commands (`sections`, `read`, `inspect`) and
 governed mutations (`create`, `start`, `prepare`, `approve`, `reject`, `submit`). `create` is a
-mutation even though it starts from a bare task. `create` and non-verification `start` carry a
-client-generated request UUID so an exact call can be replayed safely after response loss without
-creating duplicate work.
+mutation even though it starts from a bare task. Every agent, admin, lease, and backup mutation
+carries a client-generated request UUID so the first authoritative success or expected failure is
+replayed safely after response loss. Reads do not require one.
 
 Run `dish --help`, `dish <command> --help`, and the stage walkthroughs for exact arguments.
+
+For post-signoff change operations, `prepare --material-classification` classifies the exact canonical
+body diff from the signed baseline. Supply it only when the body changed; Dish reports the effective
+route and may force material handling for protocol-governed material paths.
+
+An initial Research run that is blocked before constructing canonical content may use the existing
+`reject` action with route `evidence` or `human-review` and resume status `pending-research`. The same
+operation resumes at `prepare` after the corresponding admin resolution; no candidate or Verification
+evidence is fabricated.
 
 ## Administrative operations
 
@@ -138,11 +147,24 @@ Run `dish --help`, `dish <command> --help`, and the stage walkthroughs for exact
 
 - `recover-lease` to release an expired client/run lease without transferring workflow ownership to Marco;
 - `recover` for ambiguous write or movement evidence;
+- `repair-destination` to replace only an approved Planning destination after an unrecoverable final movement failure, while preserving the original Verification evidence;
 - `discard` for a provably unapplied stale operation;
 - `reopen`, `supply-evidence`, and `record-human-decision` for the existing protocol-specific hold routes;
 - `authorize-governed-change` for one exact governed-field change;
 - `migrate` for explicit task-schema migration;
 - `backup-create` and `backup-restore` for managed shared-database snapshots.
+
+For destination repair, use the exact admin continuation returned by `dish inspect`:
+
+```sh
+dish-admin repair-destination OPERATION_ID \
+  --destination-section-gid SECTION_GID \
+  --reason "approved destination was deleted or became inaccessible"
+```
+
+The replacement must be a current legal Cooking destination. The command changes no recipe content,
+does not replace or rewrite the approved Verification cycle, and returns `submit` for the pending
+movement.
 
 There is intentionally no generic `unblock` mutation. Existing protocol-specific recovery routes remain authoritative.
 

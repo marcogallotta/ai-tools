@@ -138,11 +138,15 @@ class DishServiceClient:
             },
         )
 
-    def renew_lease(self, operation_id: str) -> dict[str, Any]:
+    def renew_lease(
+        self, operation_id: str, *, request_id: str | None = None
+    ) -> dict[str, Any]:
+        if request_id is None:
+            request_id = str(uuid.uuid4())
         return self._json_request(
             f"/v1/leases/{operation_id}/renew",
             method="POST",
-            payload={"client": self._client()},
+            payload={"client": self._client(request_id=request_id)},
         )
 
 
@@ -214,18 +218,26 @@ class DishAdminServiceClient(DishServiceClient):
             },
         )
 
-    def create_backup(self, *, label: str = "manual") -> dict[str, Any]:
+    def create_backup(
+        self, *, label: str = "manual", request_id: str | None = None
+    ) -> dict[str, Any]:
+        if request_id is None:
+            request_id = str(uuid.uuid4())
         return self._json_request(
             "/v1/admin/backups/create",
             method="POST",
-            payload={"label": label, "client": self._client()},
+            payload={"label": label, "client": self._client(request_id=request_id)},
         )
 
-    def restore_backup(self, backup_id: str) -> dict[str, Any]:
+    def restore_backup(
+        self, backup_id: str, *, request_id: str | None = None
+    ) -> dict[str, Any]:
+        if request_id is None:
+            request_id = str(uuid.uuid4())
         return self._json_request(
             "/v1/admin/backups/restore",
             method="POST",
-            payload={"backup_id": backup_id, "client": self._client()},
+            payload={"backup_id": backup_id, "client": self._client(request_id=request_id)},
         )
 
 
@@ -252,9 +264,13 @@ class DishActionClient(DishServiceClient):
             },
         )
 
-    def renew_lease(self, operation_id: str) -> dict[str, Any]:
+    def renew_lease(
+        self, operation_id: str, *, request_id: str | None = None
+    ) -> dict[str, Any]:
+        if request_id is None:
+            request_id = str(uuid.uuid4())
         return self._json_request(
             f"/v1/action/leases/{operation_id}/renew",
             method="POST",
-            payload={"client": self._client()},
+            payload={"client": self._client(request_id=request_id)},
         )

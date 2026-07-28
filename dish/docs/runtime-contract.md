@@ -58,31 +58,20 @@ includes both `task_gid` and `submission_id`; renewal of a terminal operation re
 
 The durable `operations` constraint is the one-active-operation-per-task lock. The service also writes a persistent ownership sidecar for its database; direct local CLI/admin mode will not open a service-owned database, including while the service process is stopped. `service_leases` bind the current actor to an owner identity and run identity with a renewable expiry. Workflow handoff may release the actor lease, but it does not release the task operation lock. `allowed_actions` is principal-aware: a different or expired run receives no ordinary mutation actions even when the underlying workflow phase has one. Read-only inspection never mutates lease state. Expired leases fail closed and require Marco to run `dish-admin recover-lease`; recovery releases stale ownership but does not transfer the workflow to Marco. Only a run whose durable actor lineage matches the required workflow role may reclaim a missing lease. Admin hold/recovery continuations use temporary request-scoped leases and return the operation unleased for the next valid actor.
 
-A terminal lease is released only after the operation is terminal and every declared step and ambiguous write/movement attempt has a durable completion outcome. If post-success lease finalization fails after the governed mutation committed, the original command still returns success with `service_recovery_required`, suppresses follow-on actions, and explicitly tells the client not to retry the mutation. Ordinary full-state write and approval retries remain naturally idempotent by exact live-state comparison. All agent mutations are replay-bound when a valid `client.request_id` is supplied. The response-loss-sensitive `create` and non-verification `start` commands currently require that ID; `prepare`, `approve`, `reject`, and `submit` accept it and apply the same completed-result and conflicting-reuse rules. Reuse an ID only when retrying the exact same logical call after a lost response.
+A terminal lease is released only after the operation is terminal and every declared step and ambiguous write/movement attempt has a durable completion outcome. If post-success lease finalization fails after the governed mutation committed, the original command still returns success with `service_recovery_required`, suppresses follow-on actions, and explicitly tells the client not to retry the mutation. Ordinary full-state write and approval retries remain naturally idempotent by exact live-state comparison. All agent mutations are replay-bound, and every externally callable agent, administrative, lease, and backup mutation requires a client-generated UUID `client.request_id`; reads (`sections`, `read`, `inspect`, and `health`) do not. This includes `create`, `start`, `prepare`, `approve`, `reject`, and `submit`. Reuse that UUID only when retrying the exact same logical call after a lost response.
 
 ## Request replay contract
 
-A request ID is a canonical lowercase UUID chosen before the first attempt. The immutable replay
-identity includes the command, authenticated owner and run, and canonical arguments.
+The first authoritative outcome of every agent, administrative, lease, backup-create, or backup-restore mutation is durably bound to `client.request_id`. Request identity includes the command, canonical arguments, authenticated owner identity, and run identity.
 
-- `create` and non-verification `start` require `client.request_id` because blind repetition can
-  create duplicate external or operation state.
-- `prepare`, `approve`, `reject`, and `submit` are also replay-capable. When a request ID is supplied,
-  their first authoritative success or expected failure is bound to it.
-- Reuse the same ID only for the exact same logical request. A completed repeat returns the original
-  stored envelope with `data.request_replayed: true`; changed reuse returns `CONFLICT`.
-- Validation failures reached after a valid replay identity is accepted are stored and cannot later
-  be repurposed for different work. Missing or malformed request IDs are rejected before such an
-  identity exists.
-- Replay records survive service restart. A process interruption after `start` is reconciled only
-  when exact durable operation evidence proves the existing operation.
-- A process interruption around `create` cannot be inferred safely from local state, so the same
-  request returns `BACKEND_UNCERTAIN` rather than risking a duplicate task.
+- Missing or malformed request IDs are rejected before a request record exists. Once the UUID is accepted, expected argument, state, authorization, and workflow failures are stored just like successes.
+- A repeated completed request returns the original stored result with `data.request_replayed: true` and `data.request_id`.
+- Reusing an ID for a different command, owner/run, or arguments returns non-retryable `CONFLICT` with `service_request_identity_conflict`.
+- A matching pending or uncertain request is never blindly executed again. `start` may be reconciled only when exact durable operation and live-state evidence proves the original result; otherwise the caller receives non-retryable `BACKEND_UNCERTAIN`.
+- A completed `submit` is replayed from the request ledger. A fresh request ID for the same already-completed logical submission is also satisfied from exact signed-content and destination-movement evidence, without reacquiring a lease or repeating the external movement.
+- Ordinary request records live in `service_requests` and survive service restart. `backup-restore` uses an atomic sibling sidecar journal because the restore replaces the database that contains ordinary request records. The sidecar binds the request to the selected backup and terminal result across replacement and restart.
 
-The bundled clients generate IDs for required first calls, but a caller handling transport failure
-must retain the ID and reuse it. GPT Action callers supply the UUID through `client.request_id`. The
-public schema marks both `client.request_id` and `client.run_id` as UUIDs; `run_id` must be canonical
-lowercase form and remains stable for the whole agent run.
+The bundled HTTP clients generate an ID for a first call, but a caller handling transport failure must retain and reuse that value. GPT Action calls must supply it explicitly through the imported schema. The public schema marks both `client.request_id` and `client.run_id` as canonical lowercase UUIDs; `run_id` remains stable for the whole agent run.
 
 ## Health, backup, and startup
 
@@ -102,6 +91,7 @@ Admin recovery remains specific rather than generic:
 
 - `recover-lease` releases only an expired actor lease; it never assigns workflow ownership to the admin caller;
 - `recover` reconciles ambiguous backend evidence by live reread;
+- `repair-destination` changes only the canonical Planning destination after an unrecoverable final movement failure, preserving the original approval and creating linked repair evidence for a later movement-only `submit`;
 - `discard` cancels only a provably unapplied operation;
 - `supply-evidence`, `record-human-decision`, and `reopen` retain their existing protocol meanings.
 
@@ -204,6 +194,18 @@ shape and do not accept candidate text, model, or independence-attestation field
 - **Execution error or ambiguous result:** preserve task state and content. Report it as a tooling failure, not a dish blocker.
 - **Tool/protocol disagreement:** fail closed, preserve the exact live task, stop the affected transition, and report the conformance defect. The protocol wins.
 
+## Material classification
+
+`material_classification` applies only to the canonical body diff of a post-signoff change from its signed baseline. It is required when that body changed and rejected when no body diff exists. The caller proposes `material` or `non-material`; Dish may force the effective classification to material when a protocol-defined material path changed. The result reports the classified subject, requested and effective values, forced reasons, and route. Effective material changes enter Verification; accepted non-material changes preserve the exact prior signoff.
+
+## Material-change audit lifecycle
+
+Material changes use the documented seven-field order: date, agent, model, concrete change, reason, Small/Large materiality, and verification state. Dish owns existing canonical history after the first baseline: later candidates may preserve it exactly or omit it for normalization, but cannot rewrite it. The independent approval transition finalizes the latest pending entry, and `submit` fails closed while the latest relevant entry still claims `pending-verification`.
+
+## Pre-construction Research hold
+
+During a fresh initial Research operation, `reject --route evidence|human-review --resume-status pending-research` may hold the operation before `prepare`. The durable record says `Research blocked before construction`, retains the originating task, agent/run, request UUID, route, reason, resolver, timestamp, and records `candidate_content_existed: false`. It must not create a candidate identity, Verification cycle, or Material-change record. `supply-evidence` or `record-human-decision` resolves the same operation back to `prepare_required`; other resume states and candidate-bearing resolutions fail closed.
+
 ## Rerun rules
 
 - Reread or inspect before deciding what to rerun.
@@ -213,7 +215,7 @@ shape and do not accept candidate text, model, or independence-attestation field
 - A successful `approve` returns `submit`; the verifier runs it in the same pass.
 - If the task is already at its valid destination, `submit` records a confirmed no-op `destination_submission` movement attempt and then completes idempotently.
 - Approval never implies final movement. Planning and Verification handoffs use their own movement purposes; only a confirmed `destination_submission` attempt satisfies final submission movement.
-- Missing/invalid destination leaves the task `ready` with diagnostics and blocks movement only.
+- A final destination failure leaves approved content intact in recoverable `ready_move_failed` state. When live evidence proves the move was not applied, unchanged `submit` is the only legal retry. When the destination is unresolved or illegal, the agent receives no mutation action and `data.required_admin_action: repair-destination`; Marco runs `dish-admin repair-destination OPERATION_ID --destination-section-gid GID --reason TEXT`. The command validates the live section, changes only `Planning brief / Destination section`, preserves the immutable approved identity, records a linked repaired identity, and returns `submit`. The later `submit` uses that repaired identity and must not repeat the content write or approval.
 
 ## Troubleshooting checklist
 
@@ -222,7 +224,8 @@ shape and do not accept candidate text, model, or independence-attestation field
 3. Compare the reported live identity, reviewed/signed identity, placement, schema version, and legal actions.
 4. For compatibility failure, confirm `DISH_HONEST_PATH`, `DISH_VERSION`, schema assets, and the exact supported protocol/schema pair.
 5. For migration required, stop normal commands and ask Marco to run `dish-admin migrate`.
-6. For a `started` or `uncertain` write/movement, do not retry the backend mutation. Use `dish-admin recover` after a live reread; recovery must match persisted expected/intended evidence and records the reconciliation outcome durably.
-7. For tool/protocol disagreement, preserve the task unchanged and report both the protocol clause and tool rule.
+6. For a `started` or `uncertain` write/movement, do not retry the backend mutation. Use `dish-admin recover` after a live reread; recovery must match persisted expected/intended evidence and records the reconciliation outcome durably. This includes an interrupted destination-repair content write.
+7. For an unrecoverable destination failure, use only the returned `repair-destination` admin action; do not reopen Verification or edit the task directly.
+8. For tool/protocol disagreement, preserve the task unchanged and report both the protocol clause and tool rule.
 
 The corpus migration rehearsal and live cutover remain separately authorized Step 12 work. Passing this Step 11 contract does not itself authorize production Cooking-task activation.

@@ -24,6 +24,33 @@ from .openapi import action_openapi
 LOG = logging.getLogger("dish.service")
 
 
+def _requires_request_id(surface: str, command: str) -> bool:
+    if surface in {"agent", "action"}:
+        return command in REPLAY_SAFE_COMMANDS
+    return surface in {"lease", "action-lease", "admin", "admin-lease", "admin-backup"}
+
+
+def _replay_arguments(
+    surface: str,
+    command: str,
+    request: dict[str, Any],
+    parts: list[str],
+) -> dict[str, Any]:
+    if surface in {"agent", "action", "admin"}:
+        arguments = request.get("arguments")
+        return dict(arguments) if isinstance(arguments, dict) else {}
+    if surface in {"lease", "action-lease"}:
+        operation_id = parts[2] if surface == "lease" else parts[3]
+        return {"operation_id": operation_id}
+    if surface == "admin-lease":
+        return {"operation_id": parts[3], "reason": str(request.get("reason") or "").strip()}
+    if surface == "admin-backup" and command == "backup-create":
+        return {"label": str(request.get("label") or "manual")}
+    if surface == "admin-backup" and command == "backup-restore":
+        return {"backup_id": str(request.get("backup_id") or "")}
+    return {}
+
+
 class DishHTTPServer(ThreadingHTTPServer):
     # Request handlers may own a database transaction or an in-flight Asana
     # mutation.  They must be drained before process exit rather than abandoned
@@ -211,34 +238,38 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                         rule="request_field_unexpected",
                         details={"field": extras[0]},
                     )
-            if surface in {"lease", "action-lease", "admin-lease"}:
-                operation_id = parts[2] if surface == "lease" else parts[3]
-                require_dish_uuid(operation_id, field="operation_id")
-            arguments = request.get("arguments")
-            if isinstance(arguments, dict):
-                validate_identifier_fields(arguments)
-            context = request.get("context")
-            if isinstance(context, dict):
-                validate_identifier_fields(context, allow_null=True)
             if principal is None:
                 principal = self._principal(credential, request)
             client_payload = request.get("client") if isinstance(request.get("client"), dict) else {}
             request_id = client_payload.get("request_id")
             if request_id is not None:
                 require_dish_uuid(request_id, field="client.request_id")
-            if surface == "agent" and command in REPLAY_SAFE_COMMANDS:
+            if _requires_request_id(surface, command):
                 if not isinstance(request_id, str) or not request_id.strip():
                     raise DishRuleError(
                         "INVALID_ARGUMENT",
-                        "client.request_id is required for replay-sensitive mutations",
+                        "client.request_id is required for mutations",
                         rule="request_field_required",
                         details={"field": "client.request_id"},
                     )
                 require_dish_uuid(request_id, field="client.request_id")
+            arguments = request.get("arguments")
+            if isinstance(arguments, dict):
+                validate_identifier_fields(arguments)
+            context = request.get("context")
+            if isinstance(context, dict):
+                validate_identifier_fields(context, allow_null=True)
+            if surface in {"lease", "action-lease", "admin-lease"}:
+                operation_id = parts[2] if surface == "lease" else parts[3]
+                require_dish_uuid(operation_id, field="operation_id")
             if surface == "lease":
-                payload = self.server.service.renew_lease(parts[2], principal)
+                payload = self.server.service.renew_lease(
+                    parts[2], principal, request_id=request_id
+                )
             elif surface == "action-lease":
-                payload = self.server.service.renew_lease(parts[3], principal)
+                payload = self.server.service.renew_lease(
+                    parts[3], principal, request_id=request_id
+                )
             elif surface == "admin-lease":
                 reason = str(request.get("reason") or "").strip()
                 if not reason:
@@ -246,9 +277,17 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 payload = self.server.service.recover_lease(parts[3], principal, reason=reason, request_id=request_id)
             elif surface == "admin-backup":
                 if command == "backup-create":
-                    payload = self.server.service.create_backup(label=str(request.get("label") or "manual"))
+                    payload = self.server.service.create_backup(
+                        label=str(request.get("label") or "manual"),
+                        principal=principal,
+                        request_id=request_id,
+                    )
                 else:
-                    payload = self.server.service.restore_backup(str(request.get("backup_id") or ""))
+                    payload = self.server.service.restore_backup(
+                        str(request.get("backup_id") or ""),
+                        principal=principal,
+                        request_id=request_id,
+                    )
             elif surface == "admin":
                 if "arguments" not in request:
                     raise DishRuleError(
@@ -291,13 +330,13 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             if (
                 (
                     (surface in {"action", "agent"} and command in REPLAY_CAPABLE_COMMANDS)
-                    or surface in {"admin", "admin-lease"}
+                    or surface in {"lease", "action-lease", "admin", "admin-lease", "admin-backup"}
                 )
                 and principal is not None
                 and isinstance(request, dict)
             ):
                 client_payload = request.get("client")
-                raw_arguments = request.get("arguments")
+                replay_arguments = _replay_arguments(surface, command, request, parts)
                 candidate_request_id = (
                     client_payload.get("request_id")
                     if isinstance(client_payload, dict)
@@ -309,13 +348,24 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                     except DishRuleError:
                         pass
                     else:
-                        replay_payload = self.server.service.record_replay_validation_failure(
-                            command,
-                            raw_arguments if isinstance(raw_arguments, dict) else {},
-                            principal=principal,
-                            request_id=candidate_request_id,
-                            error=exc,
-                        )
+                        try:
+                            if surface == "admin-backup" and command == "backup-restore":
+                                replay_payload = self.server.service.record_restore_validation_failure(
+                                    backup_id=str(replay_arguments.get("backup_id") or ""),
+                                    principal=principal,
+                                    request_id=candidate_request_id,
+                                    error=exc,
+                                )
+                            else:
+                                replay_payload = self.server.service.record_replay_validation_failure(
+                                    command,
+                                    replay_arguments,
+                                    principal=principal,
+                                    request_id=candidate_request_id,
+                                    error=exc,
+                                )
+                        except DishRuleError as replay_exc:
+                            replay_payload = error_envelope(command, replay_exc)
             if replay_payload is not None:
                 self._write_json(HTTPStatus.OK, replay_payload)
                 return

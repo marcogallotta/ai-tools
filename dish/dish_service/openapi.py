@@ -98,8 +98,11 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                 "content": {"application/json": {"schema": {
                     "type": "object", "required": ["client"], "additionalProperties": False,
                     "properties": {"client": {
-                        "type": "object", "required": ["run_id"], "additionalProperties": False,
-                        "properties": {"run_id": dict(CLIENT_RUN_ID_SCHEMA)},
+                        "type": "object", "required": ["run_id", "request_id"], "additionalProperties": False,
+                        "properties": {
+                            "run_id": dict(CLIENT_RUN_ID_SCHEMA),
+                            "request_id": dict(CLIENT_REQUEST_ID_SCHEMA),
+                        },
                     }},
                 }}},
             },
