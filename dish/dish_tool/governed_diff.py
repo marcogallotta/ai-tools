@@ -38,7 +38,10 @@ def preserve_material_change_history(before, after):
 
 def governed_changes(before, after) -> tuple[GovernedChange, ...]:
     changes: list[GovernedChange] = []
-    for field in ("Dish candidate", "Purpose", "Role", "Locks", "Exemptions", "Research emphasis", "Destination section"):
+    for field in (
+        "Dish candidate", "Purpose", "Role", "Priors", "Locks", "Exemptions",
+        "Research emphasis", "Destination section",
+    ):
         old, new = before.planning_brief.values[field], after.planning_brief.values[field]
         if old != new:
             changes.append(GovernedChange(field, old, new))

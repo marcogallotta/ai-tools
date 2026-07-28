@@ -321,6 +321,46 @@ def test_non_material_checkin_requires_exact_local_signed_baseline(tmp_path):
     assert result["errors"][0]["rule"] == "non_material_signed_baseline_missing"
 
 
+def test_post_planning_priors_change_requires_exact_marco_authorization(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    _approve_and_submit(app, operation_id)
+    started = app.execute(
+        "start", agent="codex", task_gid="t", kind="change",
+        change_level="small", change_reason="record prior route", run_id="later-editor",
+    )
+    assert started["ok"]
+    candidate = tmp_path / "priors-change.txt"
+    candidate.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "Priors: None", "Priors: Earlier steamed route was too soft"
+        )
+    )
+    blocked = app.execute(
+        "prepare", agent="codex", model="gpt-5.6-sol",
+        submission_id=started["submission_id"], file_path=str(candidate),
+        material_classification="non-material",
+    )
+    assert blocked["code"] == "VALIDATION_FAILED"
+    assert blocked["errors"][0]["rule"] == "governed_change_unauthorized"
+
+    admin = DishAdminApplication(
+        app.conn, backend=backend, release_loader=lambda: app._load_release("verification")
+    )
+    authorized = admin.execute(
+        "authorize-governed-change", submission_id=started["submission_id"],
+        field="Priors", before="None", after="Earlier steamed route was too soft",
+        reason="Marco authorized recording the prior result", run_id="marco-priors",
+    )
+    assert authorized["ok"]
+    prepared = app.execute(
+        "prepare", agent="codex", model="gpt-5.6-sol",
+        submission_id=started["submission_id"], file_path=str(candidate),
+        material_classification="non-material",
+    )
+    assert prepared["ok"]
+    assert prepared["data"]["material_classification"]["effective"] == "non-material"
+
+
 def test_decisions_authorization_preserves_typed_values(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     admin = DishAdminApplication(app.conn, backend=backend, release_loader=lambda: app._load_release("verification"))
