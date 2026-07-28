@@ -358,11 +358,7 @@ def prepare_live(
         )
 
     title, notes = _render_document(candidate)
-    declare_operation_step(conn, operation_id, "candidate_write", {"title": title, "notes": notes, "schema_version": release.schema_version})
-    if state.values["Status"] == "pending-verification":
-        declare_operation_step(conn, operation_id, "verification_cycle", {"protocol_release": state.values["Verification protocol release"], "protocol_text": verification_snapshot.text})
-        declare_operation_step(conn, operation_id, "verification_handoff", {"section_gid": registry.verification_queue_gid})
-        declare_operation_step(conn, operation_id, "verification_phase", {"phase": "await_verification", "status": "open"})
+    approved = None
     if op["operation_kind"] == "change" and state.values["Status"] != "pending-verification":
         approved = conn.execute(
             """SELECT cycle.cycle_id
@@ -385,6 +381,27 @@ def prepare_live(
                 rule="non_material_signed_baseline_missing",
                 details={"baseline_identity": op["expected_identity"]},
             )
+
+    # Declare recovery intent only after every deterministic pre-write gate has
+    # passed. A correctable validation failure must not strand append-only
+    # pending steps or be misreported as a partial external write.
+    declare_operation_step(conn, operation_id, "candidate_write", {"title": title, "notes": notes, "schema_version": release.schema_version})
+    declare_operation_step(
+        conn,
+        operation_id,
+        "handoff_validation",
+        {
+            "title": title,
+            "notes": notes,
+            "schema_version": release.schema_version,
+            "schema": release.schema,
+        },
+    )
+    if state.values["Status"] == "pending-verification":
+        declare_operation_step(conn, operation_id, "verification_cycle", {"protocol_release": state.values["Verification protocol release"], "protocol_text": verification_snapshot.text})
+        declare_operation_step(conn, operation_id, "verification_handoff", {"section_gid": registry.verification_queue_gid})
+        declare_operation_step(conn, operation_id, "verification_phase", {"phase": "await_verification", "status": "open"})
+    elif approved is not None:
         declare_operation_step(conn, operation_id, "non_material_terminal", {
             "phase": "terminal", "status": "completed",
             "terminal_outcome": "non_material_checkin",
@@ -405,6 +422,7 @@ def prepare_live(
     check = validate_task_document(exact, expected_schema_version=release.schema_version, schema=release.schema)
     if not check.ok:
         raise DishRuleError("BACKEND_UNCERTAIN", "confirmed live candidate failed deterministic handoff validation", rule="handoff_validation_failed")
+    complete_operation_step(conn, operation_id, "handoff_validation")
 
     cycle = None
     if exact.state.values["Status"] == "pending-verification":

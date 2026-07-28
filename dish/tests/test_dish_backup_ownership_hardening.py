@@ -136,6 +136,7 @@ def test_restore_metadata_hashes_actual_migrated_bytes(tmp_path):
     old = initialize_database(source)
     old.execute("DROP TABLE service_requests")
     old.execute("DROP TABLE operation_execution_claims")
+    old.execute("DROP TABLE operation_executions")
     old.execute("DROP INDEX write_attempts_one_unresolved_operation")
     old.execute("DROP INDEX movement_attempts_one_unresolved_operation")
     old.execute("DELETE FROM schema_migrations WHERE version>=21")

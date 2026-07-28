@@ -107,7 +107,9 @@ class DishApplication:
         self.release_loader = release_loader
         self.invocation_run_id = str(invocation_run_id or "").strip() or None
         self.invocation_request_id = str(invocation_request_id or "").strip() or None
-        self.operation_service = OperationApplicationService(conn, backend)
+        self.operation_service = OperationApplicationService(
+            conn, backend, request_id=self.invocation_request_id
+        )
         parameters = inspect.signature(release_loader).parameters.values()
         self._release_loader_accepts_role = any(
             parameter.kind
@@ -157,6 +159,8 @@ class DishApplication:
                 state=trace.state,
                 validation_scope=trace.validation_scope,
             )
+            if exc.code == "BACKEND_UNCERTAIN" and exc.details.get("execution_id"):
+                result.setdefault("data", {}).update(exc.details)
             if trace.submission_id:
                 try:
                     release = self._load_release(None)

@@ -32,7 +32,13 @@ def test_approval_crash_after_signoff_recovers_await_submission(tmp_path, monkey
         provenance_complete=True,
         run_id="review",
     )
-    assert result["code"] == "INTERNAL_ERROR"
+    assert result["code"] == "BACKEND_UNCERTAIN"
+    assert result["retryable"] is False
+    assert result["data"]["write_committed"] is True
+    assert result["data"]["failed_step"] == "signoff_finalize"
+    assert result["data"]["required_admin_action"] == "recover"
+    assert result["data"]["required_admin_outcome"] == "applied"
+    assert result["data"]["safe_to_retry"] is False
     row = app.conn.execute("SELECT phase, signoff_completed_at FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
     assert row["phase"] == "await_verification"
     assert row["signoff_completed_at"] is not None
@@ -64,7 +70,13 @@ def test_large_crash_before_new_cycle_recovers_missing_suffix(tmp_path, monkeypa
         file_path=str(candidate),
         run_id="first",
     )
-    assert result["code"] == "INTERNAL_ERROR"
+    assert result["code"] == "BACKEND_UNCERTAIN"
+    assert result["retryable"] is False
+    assert result["data"]["write_committed"] is True
+    assert result["data"]["cycle_created"] is False
+    assert result["data"]["failed_step"].startswith("route_new_cycle:")
+    assert result["data"]["required_admin_action"] == "recover"
+    assert result["data"]["safe_to_retry"] is False
     assert app.conn.execute("SELECT COUNT(*) FROM verification_cycles WHERE operation_id=?", (operation_id,)).fetchone()[0] == 1
     assert "120 g" in backend.notes
 

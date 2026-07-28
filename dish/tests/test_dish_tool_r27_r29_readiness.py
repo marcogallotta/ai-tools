@@ -63,7 +63,11 @@ def test_reopen_recovery_records_editor_before_cycle_is_usable(tmp_path, monkeyp
         after="Compare hydration routes after a substantive premise reset.",
         editor="codex", run_id="reopen-run", file_path=str(corrected), date="2026-07-25",
     )
-    assert failed["code"] == "INTERNAL_ERROR"
+    assert failed["code"] == "BACKEND_UNCERTAIN"
+    assert failed["data"]["write_committed"] is True
+    assert failed["data"]["failed_step"] == "reopen_actor"
+    assert failed["data"]["required_admin_action"] == "recover"
+    assert failed["data"]["safe_to_retry"] is False
     assert app.conn.execute(
         "SELECT COUNT(*) FROM operation_actor_facts WHERE task_gid='t' AND run_id='reopen-run'"
     ).fetchone()[0] == 0
@@ -103,7 +107,11 @@ def test_material_hold_resolution_recovery_records_editor_before_cycle(tmp_path,
         resume_status="pending-verification", file_path=str(corrected),
         editor="codex", model="gpt-5.6-sol", run_id="hold-editor",
     )
-    assert failed["code"] == "INTERNAL_ERROR"
+    assert failed["code"] == "BACKEND_UNCERTAIN"
+    assert failed["data"]["write_committed"] is True
+    assert failed["data"]["failed_step"] == "hold_resolution_actor"
+    assert failed["data"]["required_admin_action"] == "recover"
+    assert failed["data"]["safe_to_retry"] is False
     monkeypatch.setattr(step8, "record_actor_fact", original)
     recovered = recover_operation(app.conn, backend, operation_id=operation_id, requested_outcome="applied")
     assert any(action.get("step") == "hold_resolution_actor" for action in recovered["actions"])
@@ -134,7 +142,11 @@ def test_non_material_terminal_phase_recovers_after_confirmed_write(tmp_path, mo
         "prepare", model="gpt-5.6-sol", agent="codex", submission_id=started["submission_id"],
         file_path=str(candidate), material_classification="non-material",
     )
-    assert failed["code"] == "INTERNAL_ERROR"
+    assert failed["code"] == "BACKEND_UNCERTAIN"
+    assert failed["data"]["write_committed"] is True
+    assert failed["data"]["failed_step"] == "non_material_terminal"
+    assert failed["data"]["required_admin_action"] == "recover"
+    assert failed["data"]["safe_to_retry"] is False
     monkeypatch.setattr(step6, "transition_operation", original)
     recovered = recover_operation(
         app.conn, backend, operation_id=started["submission_id"], requested_outcome="applied"

@@ -8,7 +8,12 @@ from typing import Callable, TypeVar
 
 from .errors import DishRuleError
 from .legacy_adapter import LegacyReadOnlyAdapter
-from .operation_execution import claim_operation_execution, release_operation_execution
+from .operation_execution import (
+    claim_operation_execution,
+    execution_recovery_state,
+    finish_operation_execution,
+    partial_write_error,
+)
 from .task_gateway import ExactTaskGateway
 from .workflow_policy import WorkflowSnapshot, legal_actions
 from .workflow_repository import WorkflowRepository
@@ -25,9 +30,16 @@ class RoutedTarget:
 class CurrentWorkflowService:
     """Single authorization and result-state boundary for current mutations."""
 
-    def __init__(self, conn: sqlite3.Connection, backend) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        backend,
+        *,
+        request_id: str | None = None,
+    ) -> None:
         self.conn = conn
         self.backend = backend
+        self.request_id = str(request_id or "").strip() or None
         self.repository = WorkflowRepository(conn)
         self.gateway = ExactTaskGateway(conn, backend)
 
@@ -351,25 +363,73 @@ class CurrentWorkflowService:
         assert_action: bool = True,
     ) -> tuple[T, dict[str, object]]:
         claim = claim_operation_execution(
-            self.conn, operation_id=operation_id, command=command
+            self.conn,
+            operation_id=operation_id,
+            command=command,
+            request_id=self.request_id,
         )
-        completed = False
         result: T
-        release_error: Exception | None = None
         try:
             if assert_action:
                 self.assert_action(operation_id, command, schema=schema)
             result = executor()
-            completed = True
-        finally:
+        except Exception as exc:
+            recovery = execution_recovery_state(
+                self.conn,
+                execution_id=claim.execution_id,
+                failure_rule=(exc.rule if isinstance(exc, DishRuleError) else type(exc).__name__),
+            )
+            controlled_failure = isinstance(exc, DishRuleError) and exc.code in {
+                "INVALID_ARGUMENT",
+                "VALIDATION_FAILED",
+                "CONFLICT",
+                "WRONG_STATE",
+                "AGENT_MISMATCH",
+                "BACKEND_REJECTED",
+                "NOT_FOUND",
+            }
+            partial_failure = bool(
+                recovery is not None
+                and recovery["recovery_required"]
+                and (
+                    not controlled_failure
+                    or recovery["write_state"] in {"confirmed", "uncertain"}
+                    or recovery["movement_state"] in {"confirmed", "uncertain"}
+                    or (
+                        isinstance(exc, DishRuleError)
+                        and exc.code == "BACKEND_UNCERTAIN"
+                    )
+                )
+            )
+            if partial_failure:
+                try:
+                    finish_operation_execution(
+                        self.conn, claim, status="uncertain", evidence=recovery
+                    )
+                except Exception as journal_error:
+                    recovery = dict(recovery)
+                    recovery["execution_journal_completion_failed"] = {
+                        "type": type(journal_error).__name__,
+                        "message": str(journal_error),
+                    }
+                raise partial_write_error(exc, recovery) from exc
             try:
-                release_operation_execution(self.conn, claim)
-            except Exception as exc:
-                if not completed:
-                    raise
-                release_error = exc
+                finish_operation_execution(self.conn, claim, status="completed")
+            except Exception:
+                raise
+            raise
+
+        release_error: Exception | None = None
+        try:
+            finish_operation_execution(self.conn, claim, status="completed")
+        except Exception as exc:
+            release_error = exc
         result, view = self._post_operation_view(operation_id, result, schema=schema)
         if release_error is not None:
+            recovery = execution_recovery_state(
+                self.conn, execution_id=claim.execution_id,
+                failure_rule="operation_execution_completion_lost",
+            )
             if isinstance(result, dict):
                 result = dict(result)
                 result.update({
@@ -378,6 +438,7 @@ class CurrentWorkflowService:
                         "type": type(release_error).__name__,
                         "message": str(release_error),
                     },
+                    "operation_execution_recovery": recovery,
                 })
             view = dict(view)
             view.update({
@@ -440,27 +501,47 @@ class CurrentWorkflowService:
         def checked() -> T:
             op = self.operation(operation_id)
             if op["status"] not in {"open", "uncertain"}:
-                raise DishRuleError("WRONG_STATE", "operation is not cancellable", rule="operation_not_cancellable")
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "operation is not cancellable",
+                    rule="operation_not_cancellable",
+                )
             return executor()
+
         return self._execute_claimed(
             operation_id, "cancel", checked, schema=schema, assert_action=False
         )
 
-    def authorize_governed_change(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+    def authorize_governed_change(
+        self, operation_id: str, executor: Callable[[], T], *, schema=None
+    ):
         self.operation(operation_id)
         return self._execute_claimed(
-            operation_id, "authorize-governed-change", executor,
-            schema=schema, assert_action=False,
+            operation_id,
+            "authorize-governed-change",
+            executor,
+            schema=schema,
+            assert_action=False,
         )
 
 
 class OperationApplicationService:
     """Generation router plus the current workflow mutation authority."""
 
-    def __init__(self, conn: sqlite3.Connection, backend=None) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        backend=None,
+        *,
+        request_id: str | None = None,
+    ) -> None:
         self.conn = conn
         self.legacy = LegacyReadOnlyAdapter(conn)
-        self.current = None if backend is None else CurrentWorkflowService(conn, backend)
+        self.current = (
+            None
+            if backend is None
+            else CurrentWorkflowService(conn, backend, request_id=request_id)
+        )
 
     def route(self, identifier: str, *, command: str, protocol_version: str) -> RoutedTarget:
         operation = self.conn.execute(

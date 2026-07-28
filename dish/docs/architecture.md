@@ -157,6 +157,9 @@ It does not decide workflow legality.
 - acquires/asserts/releases service leases;
 - takes a durable per-operation execution claim around workflow mutations routed through
   `CurrentWorkflowService`, so two such requests cannot reach external effects concurrently;
+- records a request-scoped execution baseline for each such mutation, then derives
+  uncertain-failure evidence only from attempts, content versions, cycles, workflow steps, actor
+  facts, governed audit facts, and operation state created or changed by that exact execution;
 - delegates workflow work to `DishApplication` or `DishAdminApplication`;
 - preserves committed success if post-success lease or owned-resource cleanup fails;
 - records and replays every mutation request after a valid UUID establishes request identity;
@@ -202,6 +205,19 @@ execution claim. Two current exceptions are `authorize-governed-change` and `dis
 `discard` also takes a request-scoped admin lease, while `authorize-governed-change` is deliberately
 lease-free. Direct local mode has only the handlers' checks and SQLite constraints. Do not extend
 this exception to new commands.
+
+Every multi-step workflow mutation routed through the current operation service owns an immutable
+`operation_executions` row. Its baseline snapshots the exact pre-call attempt, cycle, step,
+content-head, and operation state. On an unexpected post-effect failure, Dish compares current
+durable evidence with that baseline. It does not infer a failed call's effects from older operation
+history. Confirmed writes and movements come from their exact durable attempts; authoritative
+content identity comes from the confirmed content version bound to that execution; cycle and
+workflow-step facts include both newly inserted rows and monotonic updates to pre-existing recovery
+rows. The resulting non-retryable `BACKEND_UNCERTAIN` names the failed step, committed effects,
+authoritative identity, and exact `dish-admin recover` outcome. A service restart reconstructs the
+same result from the request-bound execution row. Proven non-application remains a `not-applied`
+recovery outcome even when declared suffix steps remain pending. A matching replay while the
+original process claim is still live remains pending and is never misclassified as a crash.
 
 ## Workflow use cases
 

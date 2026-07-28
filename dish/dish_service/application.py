@@ -16,6 +16,10 @@ from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
 from dish_tool.database import initialize_database, process_command_audit_repairs
 from dish_tool.errors import DishRuleError
 from dish_tool.models import SectionRegistry
+from dish_tool.operation_execution import (
+    execution_claim_is_live,
+    execution_recovery_state,
+)
 from dish_tool.step5 import diagnostics_for, start_result_data
 from dish_tool.step7 import replay_verification_read
 from dish_tool.task_store import read_complete_task
@@ -236,6 +240,64 @@ class DishService:
         return conn.execute(
             "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
         ).fetchone()
+
+    def _reconcile_pending_operation_request(
+        self,
+        *,
+        conn,
+        command: str,
+        request_id: str,
+    ) -> dict[str, Any] | None:
+        """Return durable recovery guidance before constructing a backend.
+
+        A dead execution with no observed effects may resume through the normal
+        command path. Active, completed-without-result, and partial executions
+        remain fail-closed.
+        """
+        recovery = execution_recovery_state(
+            conn, request_id=request_id, include_completed=True
+        )
+        if recovery is None:
+            raise pending_error(command, request_id)
+        if execution_claim_is_live(conn, execution_id=recovery["execution_id"]):
+            raise pending_error(command, request_id)
+        if not (
+            recovery.get("result_persistence_missing")
+            or recovery["recovery_required"]
+        ):
+            return None
+
+        operation_id = recovery["operation_id"]
+        operation = self._operation_row(conn, operation_id)
+        if recovery.get("result_persistence_missing"):
+            message = (
+                "the mutation completed durably but its response envelope was "
+                "not persisted"
+            )
+            rule = "service_request_result_missing"
+        else:
+            message = (
+                "an earlier operation execution has durable effects; do not "
+                "repeat the mutation"
+            )
+            rule = "service_request_pending"
+        result = error_envelope(
+            command,
+            DishRuleError(
+                "BACKEND_UNCERTAIN",
+                message,
+                rule=rule,
+                retryable=False,
+                details=recovery,
+            ),
+            task_gid=None if operation is None else operation["task_gid"],
+            submission_id=operation_id,
+            state=None if operation is None else operation["status"],
+        )
+        result.setdefault("data", {}).update(recovery)
+        result["data"]["request_id"] = request_id
+        complete_request(conn, request_id=request_id, result=result)
+        return result
 
     @staticmethod
     def _run_has_role(conn, operation_id: str, run_id: str, roles: tuple[str, ...]) -> bool:
@@ -695,6 +757,12 @@ class DishService:
                     prior = stored_result(request_row)
                     if prior is not None:
                         return prior
+                    if not replay_started and command != "start":
+                        reconciled = self._reconcile_pending_operation_request(
+                            conn=conn, command=command, request_id=request_id
+                        )
+                        if reconciled is not None:
+                            return reconciled
 
                 backend = self.backend_factory()
                 if command not in _READ_ONLY_AGENT_COMMANDS:
@@ -710,14 +778,16 @@ class DishService:
                 # A prior process may have committed start before it could persist
                 # the result envelope. Reconcile only from exact durable workflow
                 # and live-state evidence; otherwise fail uncertain.
-                if request_row is not None and not replay_started:
-                    if command == "start":
-                        return self._reconcile_pending_start(
-                            conn=conn, backend=backend, app=app, leases=leases,
-                            principal=principal, arguments=prepared_arguments,
-                            request_id=request_id,
-                        )
-                    raise pending_error(command, request_id)
+                if (
+                    request_row is not None
+                    and not replay_started
+                    and command == "start"
+                ):
+                    return self._reconcile_pending_start(
+                        conn=conn, backend=backend, app=app, leases=leases,
+                        principal=principal, arguments=prepared_arguments,
+                        request_id=request_id,
+                    )
 
                 operation_id = self._operation_for_request(
                     conn, command, prepared_arguments,
@@ -1190,7 +1260,11 @@ class DishService:
                     if prior is not None:
                         return prior
                     if not replay_started:
-                        raise pending_error(command, request_id)
+                        reconciled = self._reconcile_pending_operation_request(
+                            conn=conn, command=command, request_id=request_id
+                        )
+                        if reconciled is not None:
+                            return reconciled
                 if (
                     command in _RUN_ID_ADMIN_COMMANDS
                     and supplied_run_id
@@ -1232,6 +1306,7 @@ class DishService:
                     conn,
                     backend=backend,
                     release_loader=lambda: self._release(None, include_migrations=True),
+                    invocation_request_id=request_id,
                 )
                 with self._candidate_file(prepared_arguments) as prepared:
                     result = app.execute(command, **prepared)

@@ -67,7 +67,8 @@ The first authoritative outcome of every agent, administrative, lease, backup-cr
 - Missing or malformed request IDs are rejected before a request record exists. Once the UUID is accepted, expected argument, state, authorization, and workflow failures are stored just like successes.
 - A repeated completed request returns the original stored result with `data.request_replayed: true` and `data.request_id`.
 - Reusing an ID for a different command, owner/run, or arguments returns non-retryable `CONFLICT` with `service_request_identity_conflict`.
-- A matching pending or uncertain request is never blindly executed again. `start` may be reconciled only when exact durable operation and live-state evidence proves the original result; otherwise the caller receives non-retryable `BACKEND_UNCERTAIN`.
+- A matching pending or uncertain request is never blindly executed again. `start` may be reconciled only when exact durable operation and live-state evidence proves the original result. For multi-step workflow mutations routed through the current operation service, an active execution claim remains pending; a dead execution is reconstructed from its request-scoped durable baseline and exact changed attempts, content versions, Verification cycles, workflow steps, actor facts, and operation state.
+- Reconstructed partial-effect failures return non-retryable `BACKEND_UNCERTAIN` with `write_committed`, `move_committed`, `cycle_created`, `failed_step`, `authoritative_task_identity`, `required_admin_action: recover`, `required_admin_outcome`, and `safe_to_retry: false`. These values are evidence-backed and stable across restart. Confirmed writes or movements are never repeated by recovery.
 - A completed `submit` is replayed from the request ledger. A fresh request ID for the same already-completed logical submission is also satisfied from exact signed-content and destination-movement evidence, without reacquiring a lease or repeating the external movement.
 - Ordinary request records live in `service_requests` and survive service restart. `backup-restore` uses an atomic sibling sidecar journal because the restore replaces the database that contains ordinary request records. The sidecar binds the request to the selected backup and terminal result across replacement and restart.
 
@@ -181,7 +182,7 @@ promise that the submitted candidate text was written byte-for-byte unchanged.
 | `CONFLICT` | 3 | Stale identity, open-operation conflict, placement conflict, or another exact-state conflict. Preserve live content and restart/inspect as directed. |
 | `HUMAN_ACTION_REQUIRED` | 3 | Stop normal agent workflow. This is valid only when the underlying protocol condition independently requires Marco; a tool message alone never creates Evidence or Human Review. |
 | `BACKEND_REJECTED` | 4 | Backend proved non-application. Preserve state, diagnose, and rerun only when the reported cause is corrected. |
-| `BACKEND_UNCERTAIN` | 5 | Outcome is ambiguous. Do not repeat the mutation. Preserve the task and use Marco-only recovery after a live reread. |
+| `BACKEND_UNCERTAIN` | 5 | Outcome is ambiguous or only partially completed. Do not repeat the mutation. For operation-backed work, follow the durable `failed_step`, committed-effect fields, and `required_admin_action`; use Marco-only `dish-admin recover` with the reported outcome after a live reread. |
 | `INTERNAL_ERROR` | 1 | Tooling failure. Preserve live task/content and report the command, identifiers, content identity, error, and diagnostics. |
 
 The JSON `retryable` field is authoritative for mechanical retry advice. Even when true, correct the reported condition first. Never retry `BACKEND_UNCERTAIN` as a normal command.

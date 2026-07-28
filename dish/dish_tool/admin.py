@@ -42,11 +42,18 @@ class DishAdminApplication:
         *,
         backend: Any | None = None,
         release_loader: Callable[[], Any] | None = None,
+        invocation_request_id: str | None = None,
     ) -> None:
         self.conn = conn
         self.backend = backend
         self.release_loader = release_loader
-        self.operation_service = None if backend is None else OperationApplicationService(conn, backend)
+        self.operation_service = (
+            None
+            if backend is None
+            else OperationApplicationService(
+                conn, backend, request_id=invocation_request_id
+            )
+        )
 
     def execute(self, command: str, **arguments: Any) -> dict[str, Any]:
         try:
@@ -73,6 +80,8 @@ class DishAdminApplication:
                 submission_id=trace.submission_id,
                 state=trace.state,
             )
+            if exc.code == "BACKEND_UNCERTAIN" and exc.details.get("execution_id"):
+                result.setdefault("data", {}).update(exc.details)
         except Exception:
             error = DishRuleError(
                 "INTERNAL_ERROR",

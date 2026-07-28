@@ -869,6 +869,31 @@ def recover_operation(
                     actions.append({"kind": "workflow_step", "step": "candidate_write", "outcome": "confirmed"})
                 else:
                     raise DishRuleError("CONFLICT", "live content does not satisfy candidate-write intent", rule="workflow_step_evidence_mismatch")
+            elif step["step_name"] == "handoff_validation":
+                if live.title != intended.get("title") or live.notes != intended.get("notes"):
+                    raise DishRuleError(
+                        "CONFLICT",
+                        "live content does not satisfy handoff-validation intent",
+                        rule="workflow_step_evidence_mismatch",
+                    )
+                exact = parse_task_document(f"{live.title}\n{live.notes}")
+                validation = validate_task_document(
+                    exact,
+                    expected_schema_version=intended["schema_version"],
+                    schema=intended.get("schema"),
+                )
+                if not validation.ok:
+                    raise DishRuleError(
+                        "CONFLICT",
+                        "confirmed candidate still fails deterministic handoff validation",
+                        rule="handoff_validation_failed",
+                    )
+                complete_operation_step(conn, operation_id, "handoff_validation")
+                actions.append({
+                    "kind": "workflow_step",
+                    "step": "handoff_validation",
+                    "outcome": "confirmed",
+                })
             elif step["step_name"] == "verification_cycle":
                 existing = conn.execute("SELECT cycle_id FROM verification_cycles WHERE operation_id=? AND completed_at IS NULL ORDER BY cycle_number DESC LIMIT 1", (operation_id,)).fetchone()
                 if existing is None:
@@ -987,6 +1012,72 @@ def recover_operation(
                     )
                 complete_operation_step(conn, operation_id, step["step_name"])
                 actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed", "cycle_id": existing["cycle_id"]})
+            elif step["step_name"] == "research_preconstruction_hold_resolution":
+                refreshed_op = conn.execute(
+                    "SELECT * FROM operations WHERE operation_id=?",
+                    (operation_id,),
+                ).fetchone()
+                expected_phase = (
+                    "held_evidence"
+                    if intended.get("resolution_kind") == "evidence"
+                    else "held_human"
+                )
+                if live.identity != refreshed_op["expected_identity"]:
+                    raise DishRuleError(
+                        "CONFLICT",
+                        "live task changed while the pre-construction hold resolution was interrupted",
+                        rule="workflow_step_evidence_mismatch",
+                    )
+                if refreshed_op["phase"] == expected_phase:
+                    transition_operation(
+                        conn, operation_id, phase="prepare_required", status="open"
+                    )
+                elif refreshed_op["phase"] != "prepare_required":
+                    raise DishRuleError(
+                        "CONFLICT",
+                        "operation phase does not match the pre-construction hold resolution intent",
+                        rule="workflow_step_evidence_mismatch",
+                        details={
+                            "expected_phases": [expected_phase, "prepare_required"],
+                            "actual_phase": refreshed_op["phase"],
+                        },
+                    )
+                prior = conn.execute(
+                    "SELECT 1 FROM audit_events "
+                    "WHERE operation_id=? AND event_type='research.preconstruction_resolved' "
+                    "LIMIT 1",
+                    (operation_id,),
+                ).fetchone()
+                if prior is None:
+                    record_audit(
+                        conn,
+                        submission_id=None,
+                        task_gid=op["task_gid"],
+                        operation_id=operation_id,
+                        event_type="research.preconstruction_resolved",
+                        actor_agent=None,
+                        details=dict(intended),
+                        result_code="OK",
+                        result_ok=True,
+                        governed_kind="decision",
+                        before_state={
+                            "phase": expected_phase,
+                            "candidate_content_existed": False,
+                        },
+                        after_state={
+                            "phase": "prepare_required",
+                            "resume_status": "pending-research",
+                        },
+                        actor_source="recovery",
+                    )
+                complete_operation_step(
+                    conn, operation_id, "research_preconstruction_hold_resolution"
+                )
+                actions.append({
+                    "kind": "workflow_step",
+                    "step": "research_preconstruction_hold_resolution",
+                    "outcome": "confirmed",
+                })
             elif step["step_name"] == "hold_resolution_decision":
                 prior = conn.execute(
                     "SELECT 1 FROM audit_events WHERE operation_id=? AND event_type='hold.resolved' LIMIT 1",

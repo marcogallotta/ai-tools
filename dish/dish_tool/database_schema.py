@@ -1295,7 +1295,52 @@ CREATE UNIQUE INDEX movement_attempts_one_unresolved_operation
     WHERE outcome IN ('started','uncertain');
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22}
+_MIGRATION_23 = """
+CREATE TABLE operation_executions (
+    execution_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    request_id TEXT,
+    command TEXT NOT NULL CHECK(length(trim(command)) > 0),
+    baseline_json TEXT NOT NULL CHECK(json_valid(baseline_json)),
+    status TEXT NOT NULL CHECK(status IN ('started','completed','uncertain')),
+    evidence_json TEXT CHECK(evidence_json IS NULL OR json_valid(evidence_json)),
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    CHECK ((status='started' AND evidence_json IS NULL AND completed_at IS NULL)
+        OR (status IN ('completed','uncertain') AND evidence_json IS NOT NULL AND completed_at IS NOT NULL))
+);
+CREATE INDEX operation_executions_operation_idx
+    ON operation_executions(operation_id, created_at);
+CREATE UNIQUE INDEX operation_executions_request_idx
+    ON operation_executions(request_id) WHERE request_id IS NOT NULL;
+
+ALTER TABLE operation_execution_claims
+    ADD COLUMN execution_id TEXT REFERENCES operation_executions(execution_id);
+
+CREATE TRIGGER operation_executions_identity_immutable_update
+BEFORE UPDATE ON operation_executions
+WHEN NEW.execution_id IS NOT OLD.execution_id
+  OR NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.request_id IS NOT OLD.request_id
+  OR NEW.command IS NOT OLD.command
+  OR NEW.baseline_json IS NOT OLD.baseline_json
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'operation execution identity is immutable'); END;
+
+CREATE TRIGGER operation_executions_status_monotonic_update
+BEFORE UPDATE OF status, evidence_json, completed_at ON operation_executions
+WHEN OLD.status <> 'started'
+  OR NEW.status NOT IN ('completed','uncertain')
+  OR NEW.completed_at IS NULL
+  OR NEW.evidence_json IS NULL
+BEGIN SELECT RAISE(ABORT, 'operation execution completion is one-way'); END;
+
+CREATE TRIGGER operation_executions_append_only_delete
+BEFORE DELETE ON operation_executions
+BEGIN SELECT RAISE(ABORT, 'operation executions are append-only'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -1603,6 +1648,47 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             "id": row["lease_id"],
             "operation_id": row["operation_id"],
         })
+    for row in conn.execute("SELECT * FROM operation_execution_claims"):
+        if row["execution_id"] is None:
+            continue
+        execution = conn.execute(
+            "SELECT operation_id,status FROM operation_executions WHERE execution_id=?",
+            (row["execution_id"],),
+        ).fetchone()
+        if (
+            execution is None
+            or execution["operation_id"] != row["operation_id"]
+            or execution["status"] != "started"
+        ):
+            problems.append({
+                "kind": "operation_execution_claim_binding",
+                "id": row["claim_id"],
+            })
+    for row in conn.execute("SELECT * FROM operation_executions"):
+        claim = conn.execute(
+            "SELECT 1 FROM operation_execution_claims WHERE execution_id=?",
+            (row["execution_id"],),
+        ).fetchone()
+        if row["status"] == "started" and claim is None:
+            problems.append({
+                "kind": "started_operation_execution_unclaimed",
+                "id": row["execution_id"],
+            })
+        if row["status"] != "started" and claim is not None:
+            problems.append({
+                "kind": "completed_operation_execution_claimed",
+                "id": row["execution_id"],
+            })
+        if row["evidence_json"]:
+            recovery = json.loads(row["evidence_json"])
+            if (
+                recovery.get("execution_id") != row["execution_id"]
+                or recovery.get("operation_id") != row["operation_id"]
+            ):
+                problems.append({
+                    "kind": "operation_execution_evidence_binding",
+                    "id": row["execution_id"],
+                })
     for row in conn.execute("SELECT * FROM two_pass_resets"):
         version = conn.execute(
             """SELECT 1 FROM content_versions
@@ -1629,7 +1715,7 @@ def _validate_current_database(conn: sqlite3.Connection) -> None:
     user_version, ledger_version = _schema_version_state(conn)
     if user_version != current or ledger_version != current:
         raise DishRuleError("VALIDATION_FAILED", "database did not converge to the current schema", rule="database_schema_not_current", details={"user_version": user_version, "ledger_version": ledger_version, "current": current})
-    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims"}
+    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims", "operation_executions"}
     actual = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     missing = sorted(required - actual)
     if missing:

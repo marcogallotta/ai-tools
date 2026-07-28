@@ -44,6 +44,8 @@ def test_redesigned_schema_is_idempotent_and_complete(tmp_path):
         "movement_attempts",
         "audit_events",
         "legacy_submission_quarantine",
+        "operation_execution_claims",
+        "operation_executions",
     } <= tables
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
