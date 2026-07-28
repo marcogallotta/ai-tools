@@ -320,7 +320,7 @@ def approve_live(
             verified_by=verification_actor_line(agent, model, date),
         ),
     )
-    if correction_class == "small" and signed.material_changes:
+    if signed.material_changes:
         latest = signed.material_changes[-1]
         if latest.endswith(" — pending-verification"):
             verified_state = (

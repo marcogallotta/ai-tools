@@ -1,10 +1,12 @@
 """Operation-aware protection for protocol-governed canonical facts."""
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass
 
 from .database import reserve_marco_authorizations
+from .errors import DishRuleError
 
 
 @dataclass(frozen=True)
@@ -12,6 +14,26 @@ class GovernedChange:
     field: str
     before: object
     after: object
+
+
+def preserve_material_change_history(before, after):
+    """Normalize omitted tool-owned history and reject any supplied rewrite."""
+    expected = tuple(before.material_changes)
+    supplied = tuple(after.material_changes)
+    if supplied == expected:
+        return after
+    if expected and not supplied:
+        return dataclasses.replace(after, material_changes=expected)
+    raise DishRuleError(
+        "VALIDATION_FAILED",
+        "candidate must omit Material changes or preserve every existing entry exactly",
+        rule="material_change_history_modified",
+        details={
+            "expected_entry_count": len(expected),
+            "supplied_entry_count": len(supplied),
+            "authority": "Dish appends and finalizes the current workflow entry",
+        },
+    )
 
 
 def governed_changes(before, after) -> tuple[GovernedChange, ...]:

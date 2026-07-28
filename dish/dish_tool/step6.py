@@ -15,6 +15,7 @@ from .models import (
     SectionRegistry,
     material_change_line,
     material_editor_line,
+    resolve_destination,
     utc_now,
 )
 from .lifecycle import assert_transition, pending_verification
@@ -30,7 +31,11 @@ from .task_document import (
     validate_task_document,
 )
 from .task_store import LiveTask, move_exact, read_complete_task, write_exact_content
-from .governed_diff import explicit_material_reasons, require_governed_authorization
+from .governed_diff import (
+    explicit_material_reasons,
+    require_governed_authorization,
+    preserve_material_change_history,
+)
 
 
 def _candidate(path: str) -> str:
@@ -120,6 +125,26 @@ def prepare_live(
 ) -> dict[str, Any]:
     op = _operation(conn, operation_id)
     _require_actor(op, agent)
+    requested_classification = None
+    if material_classification is not None:
+        requested_classification = str(material_classification).strip()
+        if requested_classification not in {"material", "non-material"}:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "material classification must be material or non-material",
+                rule="material_classification_invalid",
+                details={"field": "material_classification"},
+            )
+        if op["operation_kind"] != "change":
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "material classification applies only to post-signoff change operations",
+                rule="material_classification_not_applicable",
+                details={
+                    "field": "material_classification",
+                    "operation_kind": op["operation_kind"],
+                },
+            )
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     if live.identity != op["expected_identity"]:
         raise DishRuleError("CONFLICT", "live task changed since start", rule="live_task_drift", details={"expected_identity": op["expected_identity"], "actual_identity": live.identity})
@@ -165,6 +190,27 @@ def prepare_live(
         findings = validate_planning_brief(brief).findings
         if findings:
             raise DishRuleError("VALIDATION_FAILED", "Planning candidate failed validation", errors=[finding_payload(f) for f in findings])
+        destination_value = brief.values["Destination section"]
+        if destination_value in {"[destination missing]", "[destination invalid]"}:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "Planning requires a resolvable destination section",
+                rule="planning_destination_unresolved",
+                details={"field": "Destination section", "value": destination_value},
+            )
+        from .task_document import DESTINATION_RE
+
+        destination_match = DESTINATION_RE.match(destination_value)
+        if destination_match is None:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "Planning destination is malformed",
+                rule="planning_destination_invalid",
+                details={"field": "Destination section"},
+            )
+        resolve_destination(
+            destination_match.group("name"), destination_match.group("gid"), registry
+        )
         notes = brief.render(heading=True).rstrip() + "\n"
         declare_operation_step(conn, operation_id, "planning_write", {"title": live.title, "notes": notes, "schema_version": release.schema_version})
         declare_operation_step(conn, operation_id, "planning_handoff", {"section_gid": registry.research_queue_gid})
@@ -219,10 +265,35 @@ def prepare_live(
         candidate_state = dict(candidate.state.values)
         candidate_state["Researched by"] = prior.state.values["Researched by"]
         candidate = dataclasses.replace(candidate, state=TaskState(candidate_state))
+        candidate = preserve_material_change_history(prior, candidate)
 
     verification_snapshot = None
     material_changes = list(candidate.material_changes)
     body_changed = prior is not None and _body_changed(prior, candidate)
+    effective_classification = None
+    forced_material_reasons: tuple[str, ...] = ()
+
+    if op["operation_kind"] == "change":
+        if body_changed and requested_classification is None:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "a changed canonical body requires material or non-material classification",
+                rule="material_classification_required",
+                details={
+                    "field": "material_classification",
+                    "classified_subject": "canonical body diff from the signed baseline",
+                },
+            )
+        if not body_changed and requested_classification is not None:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "material classification is not applicable because the canonical body did not change",
+                rule="material_classification_not_applicable",
+                details={
+                    "field": "material_classification",
+                    "classified_subject": "canonical body diff from the signed baseline",
+                },
+            )
 
     if op["operation_kind"] == "initial":
         verification_snapshot = current_verification_protocol_release(release.root)
@@ -234,13 +305,11 @@ def prepare_live(
         state_values["Self-verified"] = actor_line
         state = TaskState(state_values)
     elif op["operation_kind"] == "change" and body_changed:
-        classification = str(material_classification or "").strip()
-        if classification not in {"material", "non-material"}:
-            raise DishRuleError("INVALID_ARGUMENT", "body edits require material or non-material classification", rule="material_classification_required")
-        forced_reasons = explicit_material_reasons(prior, candidate)
-        if classification == "non-material" and forced_reasons:
-            classification = "material"
-        if classification == "material":
+        effective_classification = requested_classification
+        forced_material_reasons = explicit_material_reasons(prior, candidate)
+        if effective_classification == "non-material" and forced_material_reasons:
+            effective_classification = "material"
+        if effective_classification == "material":
             intent_row = conn.execute(
                 """SELECT intended_json FROM operation_steps
                      WHERE operation_id=? AND step_name='change_intent'
@@ -368,5 +437,16 @@ def prepare_live(
         "handoff": "verification" if cycle is not None else "checked-in",
         "content_normalization": _content_normalization_contract(
             submitted_candidate, candidate
+        ),
+        "material_classification": (
+            None
+            if op["operation_kind"] != "change" or not body_changed
+            else {
+                "classified_subject": "canonical body diff from the signed baseline",
+                "requested": requested_classification,
+                "effective": effective_classification,
+                "forced_material_reasons": list(forced_material_reasons),
+                "route": "verification" if effective_classification == "material" else "signed-check-in",
+            }
         ),
     }

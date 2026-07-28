@@ -39,6 +39,11 @@ MATERIAL_CHANGE_RE = re.compile(
     rf".+ — .+ — (?:Small|Large) — "
     rf"(?:pending-verification|verified — {ACTOR_NAME_PATTERN}, {MODEL_PATTERN}, {DATE_PATTERN})$"
 )
+MATERIAL_CHANGE_ACCEPTED_SYNTAX = (
+    "<YYYY-MM-DD> — <ChatGPT|Custom GPT|Claude|Codex> — <model> — "
+    "<change> — <reason> — <Small|Large> — "
+    "<pending-verification|verified — <agent>, <model>, <YYYY-MM-DD>>"
+)
 
 
 class FindingKind(str, Enum):
@@ -306,6 +311,81 @@ def validate_planning_brief(brief: PlanningBrief) -> DocumentValidation:
     return DocumentValidation(tuple(findings))
 
 
+def _material_change_findings(line: str, *, index: int) -> tuple[DocumentFinding, ...]:
+    """Return all detectable grammar defects for one seven-field audit entry."""
+    findings: list[DocumentFinding] = []
+    location = f"Material changes[{index}]"
+    parts = line.split(" — ", 6)
+    if len(parts) != 7:
+        return (
+            DocumentFinding(
+                "material-changes.format",
+                FindingKind.SYNTAX,
+                f"Material changes entries require exactly seven fields in this order: {MATERIAL_CHANGE_ACCEPTED_SYNTAX}",
+                location,
+            ),
+            DocumentFinding(
+                "material-changes.field-count",
+                FindingKind.SYNTAX,
+                f"expected seven fields separated by ' — '; found {len(parts)}",
+                location,
+            ),
+        )
+
+    date, agent, model, change, reason, materiality, verification = parts
+    if re.fullmatch(DATE_PATTERN, date) is None:
+        findings.append(DocumentFinding(
+            "material-changes.date", FindingKind.SYNTAX,
+            "date must use YYYY-MM-DD", f"{location}.date",
+        ))
+    if re.fullmatch(ACTOR_NAME_PATTERN, agent) is None:
+        findings.append(DocumentFinding(
+            "material-changes.agent", FindingKind.SYNTAX,
+            "agent must be ChatGPT, Custom GPT, Claude, or Codex", f"{location}.agent",
+        ))
+    if not model.strip() or re.fullmatch(MODEL_PATTERN, model) is None:
+        findings.append(DocumentFinding(
+            "material-changes.model", FindingKind.SYNTAX,
+            "model is required and must not contain a comma or em dash", f"{location}.model",
+        ))
+    if not change.strip():
+        findings.append(DocumentFinding(
+            "material-changes.change", FindingKind.SYNTAX,
+            "change must describe the concrete edit", f"{location}.change",
+        ))
+    if not reason.strip():
+        findings.append(DocumentFinding(
+            "material-changes.reason", FindingKind.SYNTAX,
+            "reason is required", f"{location}.reason",
+        ))
+    if materiality not in {"Small", "Large"}:
+        findings.append(DocumentFinding(
+            "material-changes.materiality", FindingKind.SYNTAX,
+            "materiality must be Small or Large", f"{location}.materiality",
+        ))
+
+    if verification != "pending-verification":
+        verified = re.fullmatch(
+            rf"verified — (?P<agent>{ACTOR_NAME_PATTERN}), (?P<model>{MODEL_PATTERN}), (?P<date>{DATE_PATTERN})",
+            verification,
+        )
+        if verified is None:
+            findings.append(DocumentFinding(
+                "material-changes.verification", FindingKind.SYNTAX,
+                "verification must be pending-verification or verified — <agent>, <model>, <YYYY-MM-DD>",
+                f"{location}.verification",
+            ))
+
+    if findings:
+        findings.insert(0, DocumentFinding(
+            "material-changes.format",
+            FindingKind.SYNTAX,
+            f"Material changes entry must use: {MATERIAL_CHANGE_ACCEPTED_SYNTAX}",
+            location,
+        ))
+    return tuple(findings)
+
+
 def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_version: str | None = None, schema: Mapping[str, object] | None = None) -> DocumentValidation:
     findings: list[DocumentFinding] = list(validate_planning_brief(document.planning_brief).findings)
     task_schema = schema.get("task_document") if schema else None
@@ -372,14 +452,8 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
     for line in document.decisions:
         if not line.startswith(human_prefix + " "):
             findings.append(DocumentFinding("decisions.human-format", FindingKind.SYNTAX, "Decisions entries must use Human — Marco format", "Decisions"))
-    for line in document.material_changes:
-        if not MATERIAL_CHANGE_RE.match(line):
-            findings.append(DocumentFinding(
-                "material-changes.format",
-                FindingKind.SYNTAX,
-                "Material changes entry must use date — agent — model — change — reason — Small|Large — verification state",
-                "Material changes",
-            ))
+    for index, line in enumerate(document.material_changes, start=1):
+        findings.extend(_material_change_findings(line, index=index))
     if document.planning_brief.values["Role"].startswith("non-main") != document.is_non_main:
         findings.append(DocumentFinding("role.title-brief-disagreement", FindingKind.ILLEGAL_COMBINATION, "title role and Planning brief Role disagree", "title"))
     return DocumentValidation(tuple(findings))
