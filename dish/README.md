@@ -80,7 +80,7 @@ progress remain bound to their recorded Verification protocol release.
 The service binds two loopback listeners:
 
 - private CLI/admin listener on `127.0.0.1:8765`;
-- Action-only listener on `127.0.0.1:8766`.
+- Action listener on `127.0.0.1:8766`, including the read-only generated Action schema.
 
 See `deploy/tailscale/README.md` before configuring Serve or Funnel.
 
@@ -93,7 +93,7 @@ export DISH_LIVE_MODE=1
 export DISH_MODE=service
 export DISH_SERVICE_URL=https://<laptop-tailnet-name>:8444
 export DISH_SERVICE_TOKEN=<private CLI token>
-export DISH_CLIENT_RUN_ID=<unique run identity>
+export DISH_CLIENT_RUN_ID=<canonical lowercase UUID for this run>
 ```
 
 Marco's admin shell uses the same private tailnet URL but a separate token:
@@ -103,16 +103,17 @@ export DISH_LIVE_MODE=1
 export DISH_MODE=service
 export DISH_SERVICE_URL=https://<laptop-tailnet-name>:8444
 export DISH_ADMIN_TOKEN=<Marco-admin token>
-export DISH_CLIENT_RUN_ID=<unique admin run identity>
+export DISH_CLIENT_RUN_ID=<canonical lowercase UUID for this admin run>
 ```
 
 Never place the CLI/admin token in the GPT Action configuration.
 
 ## Workflow
 
-Every response is one canonical JSON result envelope. Follow only `allowed_actions`; they are
-derived from the exact live content, placement, durable operation evidence, pending recovery work,
-and signoff state.
+Every CLI command response is one canonical JSON result envelope. Follow only `allowed_actions`;
+they are derived from the exact live content, placement, durable operation evidence, pending
+recovery work, and signoff state. The HTTP health and OpenAPI documents have their own response
+shapes.
 
 Typical Research and Verification lifecycle:
 
@@ -126,9 +127,11 @@ start initial/change
 
 The bounded agent surface contains discovery/read commands (`sections`, `read`, `inspect`) and
 governed mutations (`create`, `start`, `prepare`, `approve`, `reject`, `submit`). `create` is a
-mutation even though it starts from a bare task. Every agent, admin, lease, and backup mutation
-carries a client-generated request UUID so the first authoritative success or expected failure is
-replayed safely after response loss. Reads do not require one.
+mutation even though it starts from a bare task. In service mode, every agent, admin, lease, and
+backup mutation carries a client-generated request UUID that durably binds its first authoritative
+outcome. The GPT Action supplies and can reuse this UUID for an exact replay after response loss.
+The bundled CLIs generate it internally and do not expose it after a transport failure, so inspect
+the live state instead of blindly rerunning a lost-response mutation. Reads do not require an ID.
 
 Run `dish --help`, `dish <command> --help`, and the stage walkthroughs for exact arguments.
 
@@ -206,7 +209,7 @@ openapi/dish-action.openapi.json
 
 The checked-in schema intentionally uses the placeholder server `https://dish.example.invalid`. Before importing it, replace that server with the exact Funnel URL, or import the runtime schema from the public listener at `GET /openapi/action.json` so the server URL is generated from the request host. Validate the final URL and HTTPS port in the GPT Action editor before activation.
 
-The Action listener serves only the bounded `/v1/action/*` workflow and lease-renewal routes. Admin, recovery, migration, backup, private CLI, and generic Asana routes are not present on that listener or in the Action OpenAPI document. The OpenAPI generator and HTTP request validator share one command specification; missing, extra, wrongly typed, or invalid-enum Action arguments are rejected before backend or workflow code. Every Action mutation requires `client.request_id`; reads neither advertise nor accept one. `client.run_id` is the single run identity, and `independence_attestation` appears only on Verification start and decision routes. The GPT must reuse the same canonical lowercase request UUID only when replaying the exact call after a lost response. Both UUID fields use canonical lowercase form.
+The Action listener serves the bounded `/v1/action/*` workflow and lease-renewal routes plus the read-only generated schema at `GET /openapi/action.json`. Admin, recovery, migration, backup, private CLI, and generic Asana routes are not present on that listener or in the Action OpenAPI document. The OpenAPI generator and HTTP request validator share one command specification; missing, extra, wrongly typed, or invalid-enum Action arguments are rejected before backend or workflow code. Every Action mutation requires `client.request_id`; reads neither advertise nor accept one. `client.run_id` is the single run identity, and `independence_attestation` appears only on Verification start and decision routes. The GPT must reuse the same canonical lowercase request UUID only when replaying the exact call after a lost response. Both UUID fields use canonical lowercase form.
 
 Follow `deploy/gpt-action.md` for the exact editor configuration, run-identity rules, Preview gate,
 lease handling, and token rotation.
