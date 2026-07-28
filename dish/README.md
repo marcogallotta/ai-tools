@@ -88,8 +88,11 @@ so pathname aliases do not create another authority. A service-owned database ca
 opened through direct local mode.
 
 The two listeners are one supervised service. Failure to bind either listener stops startup and
-closes the other. On shutdown, the service stops accepting requests, closes both listeners, and
-waits for active handlers because they may own a transaction or an in-flight Asana effect.
+closes the other. On shutdown, one process-wide admission gate closes both surfaces before either
+listener is drained. Requests that have not crossed that gate are disconnected without dispatch;
+requests already executing are allowed to finish because they may own a transaction or an in-flight
+Asana effect. Loopback HTTP responses close their backend connection, so Serve or Funnel must open a
+new connection—and cross admission again—for every later request.
 
 See `deploy/tailscale/README.md` before configuring Serve or Funnel.
 

@@ -197,6 +197,14 @@ listener. The Action token is invalid on private/admin routes, and the Action su
 raw Asana, migration, recovery, health, or backup route. `dish_service.command_spec` is shared by the
 Action validator and OpenAPI generator so their accepted arguments cannot drift.
 
+Shutdown has one process-wide admission boundary across both listeners. A connection does not own
+request authority merely because the kernel accepted its socket: each request must cross the gate
+before authentication, replay, database, or workflow dispatch. Once shutdown begins, unadmitted
+connections are closed and all responses terminate the loopback backend connection, preventing a
+reverse proxy from carrying later work over pre-shutdown keep-alive state. A handler that already
+crossed admission remains non-daemon and drains to completion; listener shutdown must never abandon
+a transaction or external-effect attempt.
+
 Every protected POST authenticates before reading its body, then requires exactly one
 `application/json` media type. The shared decoder rejects duplicate object keys recursively before
 client identity, request replay, or workflow validation can observe a parser-selected value. Private

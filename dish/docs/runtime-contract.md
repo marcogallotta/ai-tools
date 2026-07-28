@@ -53,6 +53,13 @@ before JSON parsing. JSON objects with duplicate keys are rejected recursively b
 request replay, or mutation. Private media-type failures use HTTP 415; authenticated Action failures
 remain canonical HTTP-200 Dish envelopes.
 
+SIGTERM and SIGINT close one shared admission gate before listener teardown. Requests that have not
+crossed that gate are disconnected before authentication, body parsing, replay journaling, database
+access, or workflow execution; callers may therefore observe an ordinary transport-unavailable
+failure during restart. Requests already inside dispatch drain normally. Every Dish response includes
+`Connection: close`, so a reverse proxy cannot reuse a pre-shutdown loopback connection to admit new
+work while systemd is waiting for the active handlers to finish.
+
 Agent-facing action guidance is authoritative even on failures. When an operation-scoped command is
 rejected, `allowed_actions` reports the currently legal exposed continuation when one exists. A
 retryable candidate-validation failure therefore keeps the same corrective command available.

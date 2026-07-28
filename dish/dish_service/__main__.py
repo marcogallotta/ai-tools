@@ -54,6 +54,12 @@ def _shutdown_servers(
     started_count: int | None = None,
 ) -> None:
     count = len(threads) if started_count is None else started_count
+    # Close admission on both surfaces before waiting for either serve loop.
+    # Existing handlers that already crossed admission still drain below.
+    for server in servers:
+        stop_accepting = getattr(server, "stop_accepting", None)
+        if stop_accepting is not None:
+            stop_accepting()
     # shutdown deadlocks when serve_forever never started, so call it only for
     # listeners whose threads were successfully launched.
     for server in servers[:count]:
@@ -75,6 +81,10 @@ def _run_servers(
     stop = stop_event or threading.Event()
     failures: "queue.SimpleQueue[tuple[str, BaseException]]" = queue.SimpleQueue()
     servers = (private_server, action_server)
+    for server in servers:
+        attach_stop_event = getattr(server, "attach_stop_event", None)
+        if attach_stop_event is not None:
+            attach_stop_event(stop)
     threads = tuple(
         threading.Thread(
             target=_serve,
@@ -119,8 +129,10 @@ def _run_servers(
 
 def _signal_handler(stop_event: threading.Event):
     def handle(signum: int, _frame: FrameType | None) -> None:
-        LOG.info("shutdown_requested signal=%s", signal.Signals(signum).name)
+        # Admission closes before logging so a slow handler cannot extend the
+        # window in which a request is allowed to start.
         stop_event.set()
+        LOG.info("shutdown_requested signal=%s", signal.Signals(signum).name)
 
     return handle
 

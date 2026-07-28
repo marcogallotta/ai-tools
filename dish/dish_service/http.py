@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import socket
+import threading
 import time
 import uuid
 from http import HTTPStatus
@@ -67,7 +68,7 @@ def _replay_arguments(
 
 class DishHTTPServer(ThreadingHTTPServer):
     # Request handlers may own a database transaction or an in-flight Asana
-    # mutation.  They must be drained before process exit rather than abandoned
+    # mutation. They must be drained before process exit rather than abandoned
     # as daemon threads.
     daemon_threads = False
     block_on_close = True
@@ -77,10 +78,63 @@ class DishHTTPServer(ThreadingHTTPServer):
             raise ValueError("invalid HTTP surface mode")
         self.service = service
         self.surface_mode = surface_mode
+        self._stop_event = threading.Event()
+        self._admission_lock = threading.Lock()
+        self._pending_connections: set[socket.socket] = set()
         service.config.validate_runtime(require_action=surface_mode == "action" or (
             surface_mode == "combined" and service.config.action_token is not None
         ))
         super().__init__(address, DishRequestHandler)
+
+    def attach_stop_event(self, stop_event: threading.Event) -> None:
+        """Bind request admission to the process-wide shutdown event."""
+        with self._admission_lock:
+            if self._pending_connections:
+                raise RuntimeError("cannot replace stop event after accepting connections")
+            self._stop_event = stop_event
+
+    @staticmethod
+    def _close_socket(connection: socket.socket) -> None:
+        try:
+            connection.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        try:
+            connection.close()
+        except OSError:
+            pass
+
+    def get_request(self):
+        connection, address = super().get_request()
+        with self._admission_lock:
+            if self._stop_event.is_set():
+                reject = True
+            else:
+                self._pending_connections.add(connection)
+                reject = False
+        if reject:
+            self._close_socket(connection)
+            raise OSError("server is shutting down")
+        return connection, address
+
+    def admit_request(self, connection: socket.socket) -> bool:
+        """Atomically move one parsed request across the shutdown boundary."""
+        with self._admission_lock:
+            self._pending_connections.discard(connection)
+            return not self._stop_event.is_set()
+
+    def release_connection(self, connection: socket.socket) -> None:
+        with self._admission_lock:
+            self._pending_connections.discard(connection)
+
+    def stop_accepting(self) -> None:
+        """Reject new work and wake handlers waiting for their first request."""
+        with self._admission_lock:
+            self._stop_event.set()
+            pending = tuple(self._pending_connections)
+            self._pending_connections.clear()
+        for connection in pending:
+            self._close_socket(connection)
 
     def serve_forever(self, poll_interval: float = 0.05) -> None:
         super().serve_forever(poll_interval=poll_interval)
@@ -94,21 +148,35 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         super().setup()
         self.connection.settimeout(self.server.service.config.request_timeout_seconds)
 
+    def finish(self) -> None:
+        try:
+            super().finish()
+        finally:
+            self.server.release_connection(self.connection)
+
+    def parse_request(self) -> bool:
+        if not self.server.admit_request(self.connection):
+            self.close_connection = True
+            return False
+        try:
+            return super().parse_request()
+        finally:
+            # The loopback transport is deliberately one request per connection.
+            # A reverse proxy must reconnect, and therefore cross admission again,
+            # before Dish will dispatch more work.
+            self.close_connection = True
+
     def log_message(self, fmt: str, *args: Any) -> None:
         LOG.info("http_request remote=%s message=%s", self.client_address[0], fmt % args)
 
-    def _write_json(
-        self, status: int, payload: Any, *, close_connection: bool = False
-    ) -> None:
+    def _write_json(self, status: int, payload: Any) -> None:
         body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        if close_connection:
-            self.close_connection = True
+        self.close_connection = True
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        if close_connection:
-            self.send_header("Connection", "close")
+        self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.write(body)
 
@@ -283,21 +351,18 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(
                     HTTPStatus.NOT_FOUND,
                     {"ok": False, "error": "not_found"},
-                    close_connection=True,
                 )
                 return
             if self.server.surface_mode == "private" and surface == "action":
                 self._write_json(
                     HTTPStatus.NOT_FOUND,
                     {"ok": False, "error": "not_found"},
-                    close_connection=True,
                 )
                 return
             if self.server.surface_mode == "action" and surface != "action":
                 self._write_json(
                     HTTPStatus.NOT_FOUND,
                     {"ok": False, "error": "not_found"},
-                    close_connection=True,
                 )
                 return
             if surface in {"agent", "lease", "argument-failure"}:
@@ -466,7 +531,6 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             self._write_json(
                 status,
                 error_envelope(command, exc),
-                close_connection=not self._request_body_consumed,
             )
         except Exception:
             request_id = str(uuid.uuid4())
@@ -486,7 +550,6 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 self._write_json(
                     HTTPStatus.INTERNAL_SERVER_ERROR,
                     error_envelope(command, error),
-                    close_connection=True,
                 )
             except Exception:
                 LOG.exception(

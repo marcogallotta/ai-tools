@@ -54,12 +54,21 @@ def test_dish_service_fails_closed_when_repository_virtualenv_is_missing(tmp_pat
     assert f"dish-service: no virtualenv at {expected}" in completed.stderr
 
 
-def test_sigterm_handler_requests_orderly_shutdown():
+def test_sigterm_handler_closes_admission_before_logging(monkeypatch):
     import threading
 
     stop = threading.Event()
+    observed = []
+    monkeypatch.setattr(
+        service_main.LOG,
+        "info",
+        lambda *_args, **_kwargs: observed.append(stop.is_set()),
+    )
+
     service_main._signal_handler(stop)(signal.SIGTERM, None)
+
     assert stop.is_set()
+    assert observed == [True]
 
 
 def test_second_listener_bind_failure_closes_first(monkeypatch):
