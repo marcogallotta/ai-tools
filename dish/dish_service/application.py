@@ -1686,6 +1686,7 @@ class DishService:
         request_id: str | None,
         backup_id: str,
         result: dict[str, Any],
+        recovered_from_interruption: bool = False,
     ) -> dict[str, Any]:
         if request_id:
             result.setdefault("data", {})["request_id"] = request_id
@@ -1694,7 +1695,9 @@ class DishService:
                 # kill in between therefore replays the committed result and
                 # startup can safely remove only the stale marker.
                 self._restore_requests.complete(
-                    request_id=request_id, result=result
+                    request_id=request_id,
+                    result=result,
+                    recovered_from_interruption=recovered_from_interruption,
                 )
             except Exception as exc:
                 result.setdefault("data", {})["service_recovery_required"] = True
@@ -1737,6 +1740,7 @@ class DishService:
         request_id: str | None,
         marker_context: Mapping[str, Any],
         checkpoint: Mapping[str, Any] | None = None,
+        recovered_from_interruption: bool = False,
     ) -> dict[str, Any]:
         manager = self.backup_manager
         manager.set_restore_checkpoint(
@@ -1772,25 +1776,85 @@ class DishService:
         finally:
             manager.set_restore_checkpoint(None)
         return self._finalize_restore_result(
-            request_id=request_id, backup_id=backup_id, result=result
+            request_id=request_id,
+            backup_id=backup_id,
+            result=result,
+            recovered_from_interruption=recovered_from_interruption,
         )
 
     def _recover_interrupted_restore_locked(self) -> dict[str, Any] | None:
         marker = self._restore_fault.read()
-        if not isinstance(marker, dict) or marker.get("kind") != "backup_restore_in_progress":
+        marker_present = isinstance(marker, dict)
+        if marker_present and marker.get("kind") != "backup_restore_in_progress":
             return None
-        request_id = str(marker.get("request_id") or "").strip() or None
-        backup_id = str(marker.get("backup_id") or "").strip()
-        if not request_id or not backup_id:
-            return None
-        try:
+
+        if marker_present:
+            request_id = str(marker.get("request_id") or "").strip()
+            backup_id = str(marker.get("backup_id") or "").strip()
+            if not request_id or not backup_id:
+                raise DishRuleError(
+                    "BACKEND_UNCERTAIN",
+                    "restore recovery marker is incomplete; do not repeat the restore",
+                    rule="restore_recovery_marker_invalid",
+                    retryable=False,
+                    details={},
+                )
             row = self._restore_requests.read(request_id)
-        except DishRuleError:
-            return None
-        if row is None:
-            return None
+            if row is None:
+                raise DishRuleError(
+                    "BACKEND_UNCERTAIN",
+                    "restore recovery journal entry is missing; do not repeat the restore",
+                    rule="restore_request_journal_missing",
+                    retryable=False,
+                    details={"request_id": request_id},
+                )
+        else:
+            row = self._restore_requests.pending_restore()
+            if row is None:
+                return None
+            request_id = str(row.get("request_id") or "").strip()
+            arguments = row.get("arguments")
+            backup_id = (
+                str(arguments.get("backup_id") or "").strip()
+                if isinstance(arguments, dict)
+                else ""
+            )
+            if not request_id or not backup_id:
+                raise DishRuleError(
+                    "BACKEND_UNCERTAIN",
+                    "restore request journal is incomplete; do not repeat the restore",
+                    rule="restore_request_journal_invalid",
+                    retryable=False,
+                    details={"request_id": request_id or None},
+                )
+
+        row_arguments = row.get("arguments")
+        journal_backup_id = (
+            str(row_arguments.get("backup_id") or "").strip()
+            if isinstance(row_arguments, dict)
+            else ""
+        )
+        if (
+            row.get("command") != "backup-restore"
+            or not journal_backup_id
+            or journal_backup_id != backup_id
+        ):
+            raise DishRuleError(
+                "BACKEND_UNCERTAIN",
+                "restore marker and request journal disagree; do not repeat the restore",
+                rule="restore_recovery_identity_mismatch",
+                retryable=False,
+                details={"request_id": request_id},
+            )
+
         prior = self._restore_requests.stored_result(row)
         if prior is not None:
+            # A crash after terminal journal completion but before marker cleanup
+            # is still an interrupted restore. Preserve that fact before clearing
+            # the only startup locator so one fresh client UUID can replay it.
+            self._restore_requests.mark_recovered_from_interruption(
+                request_id=request_id
+            )
             # stored_result adds replay metadata, which is suitable for a later
             # exact retry and harmless in the startup recovery summary.
             if not self._restore_result_requires_lockout(prior):
@@ -1799,18 +1863,48 @@ class DishService:
                 except Exception:
                     pass
             return prior
+
         checkpoint = self._restore_requests.last_checkpoint(row)
+        if checkpoint is None:
+            raise pending_error("backup-restore", request_id)
+
         marker_context = {
+            "kind": "backup_restore_in_progress",
+            "stage": checkpoint.get("stage") or "request_accepted",
             "backup_id": backup_id,
             "request_id": request_id,
-            "owner_id": marker.get("owner_id"),
-            "run_id": marker.get("run_id"),
+            "owner_id": row.get("owner_id"),
+            "run_id": row.get("run_id"),
         }
+        if not marker_present:
+            try:
+                # The exact-effect journal can outlive a crash before the small
+                # locator was written. Re-arm the fail-closed marker before any
+                # recovery mutation is attempted.
+                self._restore_fault.set(marker_context)
+            except Exception as marker_exc:
+                error = DishRuleError(
+                    "INTERNAL_ERROR",
+                    "restore lockout could not be persisted; the database was not replaced",
+                    rule="restore_lockout_persistence_failed",
+                    details={
+                        "error_type": type(marker_exc).__name__,
+                        "database_retained": True,
+                    },
+                )
+                return self._finalize_restore_result(
+                    request_id=request_id,
+                    backup_id=backup_id,
+                    result=error_envelope("backup-restore", error),
+                    recovered_from_interruption=True,
+                )
+
         return self._execute_restore_locked(
             backup_id=backup_id,
             request_id=request_id,
             marker_context=marker_context,
             checkpoint=checkpoint,
+            recovered_from_interruption=True,
         )
 
     def restore_backup(
@@ -1822,12 +1916,18 @@ class DishService:
     ) -> dict[str, Any]:
         with self._maintenance_gate.restore():
             principal = principal or self._default_principal({}, admin=True)
-            supplied_request_id = request_id is not None
+            request_id = request_id or str(uuid.uuid4())
+            arguments = {"backup_id": backup_id}
 
-            # Reconcile the exact interrupted request identified by the durable
-            # marker before accepting another restore. A caller without the old
-            # UUID receives the recovered outcome rather than causing a duplicate.
-            recovered = self._recover_interrupted_restore_locked()
+            # Reconcile exact interrupted work before accepting another restore.
+            # The journal remains discoverable even when the process died before
+            # the small fault-marker locator was written.
+            try:
+                recovered = self._recover_interrupted_restore_locked()
+            except DishRuleError as exc:
+                result = error_envelope("backup-restore", exc)
+                result.setdefault("data", {})["request_id"] = request_id
+                return result
             if recovered is not None:
                 recovered_data = recovered.get("data")
                 recovered_backup = (
@@ -1837,21 +1937,45 @@ class DishService:
                     else None
                 )
                 recovered_request_id = (
-                    recovered_data.get("request_id")
+                    str(recovered_data.get("request_id") or "")
                     if isinstance(recovered_data, dict)
-                    else None
+                    else ""
                 )
-                if (
-                    not supplied_request_id
-                    or (
-                        recovered.get("ok")
-                        and recovered_backup == str(backup_id)
-                        and request_id != recovered_request_id
+                if request_id == recovered_request_id:
+                    return recovered
+                if recovered_backup == str(backup_id):
+                    alias = self._restore_requests.claim_recovered_result(
+                        request_id=request_id,
+                        owner_id=principal.owner_id,
+                        run_id=principal.run_id,
+                        command="backup-restore",
+                        arguments=arguments,
                     )
-                ):
+                    if alias is not None:
+                        return alias
+                elif not recovered.get("ok"):
+                    # A failed or uncertain recovery must be surfaced before a
+                    # different restore can be considered.
                     return recovered
 
-            request_id = request_id or str(uuid.uuid4())
+            # Startup may already have completed and cleared an interrupted
+            # restore. Bind the first fresh UUID for the same backup to that
+            # recovered result before creating any new pending work.
+            try:
+                alias = self._restore_requests.claim_recovered_result(
+                    request_id=request_id,
+                    owner_id=principal.owner_id,
+                    run_id=principal.run_id,
+                    command="backup-restore",
+                    arguments=arguments,
+                )
+                if alias is not None:
+                    return alias
+            except DishRuleError as exc:
+                result = error_envelope("backup-restore", exc)
+                result.setdefault("data", {})["request_id"] = request_id
+                return result
+
             checkpoint = None
             try:
                 row, replay_started = self._restore_requests.begin(
@@ -1859,7 +1983,7 @@ class DishService:
                     owner_id=principal.owner_id,
                     run_id=principal.run_id,
                     command="backup-restore",
-                    arguments={"backup_id": backup_id},
+                    arguments=arguments,
                 )
                 prior = self._restore_requests.stored_result(row)
                 if prior is not None:
@@ -1905,6 +2029,7 @@ class DishService:
                 request_id=request_id,
                 marker_context=marker_context,
                 checkpoint=checkpoint,
+                recovered_from_interruption=checkpoint is not None,
             )
 
     def record_restore_validation_failure(

@@ -587,12 +587,131 @@ def test_new_client_request_returns_recovered_restore_without_second_swap(
         request_id=retry_request,
     )
     assert recovered["ok"]
-    assert recovered["data"]["request_id"] == interrupted_request
+    assert recovered["data"]["request_id"] == retry_request
+    assert recovered["data"]["recovered_request_id"] == interrupted_request
+    assert recovered["data"]["request_replayed"] is True
     assert recovered["data"]["restore_recovered"] is True
     assert sorted(service.config.backup_dir.glob("*pre-restore*.sqlite3")) == (
         pre_restore_before
     )
-    assert restarted._restore_requests.read(retry_request) is None
+    alias = restarted._restore_requests.read(retry_request)
+    assert alias is not None
+    assert alias["replay_of_request_id"] == interrupted_request
+
+    replayed = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("restore-run"),
+        request_id=retry_request,
+    )
+    assert replayed["ok"]
+    assert replayed["data"]["request_id"] == retry_request
+    assert replayed["data"]["recovered_request_id"] == interrupted_request
+    assert replayed["data"]["request_replayed"] is True
+    assert sorted(service.config.backup_dir.glob("*pre-restore*.sqlite3")) == (
+        pre_restore_before
+    )
+
+
+def test_fresh_request_recovers_request_accepted_before_marker_without_duplicate(
+    monkeypatch, tmp_path
+):
+    service, backend = _service(tmp_path)
+    source = _restore_source(service)
+    interrupted_request = "12121212-1212-4212-8212-121212121212"
+    retry_request = "13131313-1313-4313-8313-131313131313"
+
+    def kill_before_marker(_details):
+        raise SimulatedSigkill("request-accepted")
+
+    monkeypatch.setattr(service._restore_fault, "set", kill_before_marker)
+    with pytest.raises(SimulatedSigkill):
+        service.restore_backup(
+            source.backup_id,
+            principal=_principal("restore-run"),
+            request_id=interrupted_request,
+        )
+    assert not service._restore_fault.active()
+    assert service._restore_requests.last_checkpoint(
+        service._restore_requests.read(interrupted_request)
+    )["stage"] == "request_accepted"
+
+    restarted = _restart_service(service, backend)
+    recovered = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("restore-run"),
+        request_id=retry_request,
+    )
+    assert recovered["ok"]
+    assert recovered["data"]["request_id"] == retry_request
+    assert recovered["data"]["recovered_request_id"] == interrupted_request
+    assert recovered["data"]["restore_recovered"] is True
+    assert recovered["data"]["recovered_from_stage"] == "request_accepted"
+    assert recovered["data"]["request_replayed"] is True
+    assert not restarted._restore_fault.active()
+    assert restarted._restore_requests.read(retry_request)[
+        "replay_of_request_id"
+    ] == interrupted_request
+
+
+def test_fresh_request_after_startup_recovery_replays_without_second_restore(
+    monkeypatch, tmp_path
+):
+    from dish_service.backup import BackupManager
+
+    service, backend = _service(tmp_path)
+    source = _restore_source(service)
+    interrupted_request = "14141414-1414-4414-8414-141414141414"
+    retry_request = "15151515-1515-4515-8515-151515151515"
+    original_checkpoint = service._restore_requests.checkpoint
+
+    def checkpoint_then_kill(*, request_id, stage, details):
+        checkpoint = original_checkpoint(
+            request_id=request_id, stage=stage, details=details
+        )
+        if stage == "replacement_committed":
+            raise SimulatedSigkill(stage)
+        return checkpoint
+
+    monkeypatch.setattr(service._restore_requests, "checkpoint", checkpoint_then_kill)
+    with pytest.raises(SimulatedSigkill):
+        service.restore_backup(
+            source.backup_id,
+            principal=_principal("restore-run"),
+            request_id=interrupted_request,
+        )
+
+    restarted = _restart_service(service, backend)
+    startup = restarted.startup_check()
+    assert startup["startup"]["restore_recovery"]["ok"] is True
+    assert startup["startup"]["restore_recovery"]["request_id"] == interrupted_request
+    assert not restarted._restore_fault.active()
+    pre_restore_before = sorted(
+        service.config.backup_dir.glob("*pre-restore*.sqlite3")
+    )
+
+    def forbidden_restore(self, _backup_id):
+        raise AssertionError("restore executed again after startup recovery")
+
+    def forbidden_recover(self, _backup_id, _checkpoint):
+        raise AssertionError("restore recovery executed again")
+
+    monkeypatch.setattr(BackupManager, "restore", forbidden_restore)
+    monkeypatch.setattr(BackupManager, "recover_restore", forbidden_recover)
+    replayed = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("fresh-run"),
+        request_id=retry_request,
+    )
+    assert replayed["ok"]
+    assert replayed["data"]["request_id"] == retry_request
+    assert replayed["data"]["recovered_request_id"] == interrupted_request
+    assert replayed["data"]["request_replayed"] is True
+    assert sorted(service.config.backup_dir.glob("*pre-restore*.sqlite3")) == (
+        pre_restore_before
+    )
+    assert restarted._restore_requests.read(retry_request)[
+        "replay_of_request_id"
+    ] == interrupted_request
 
 
 def test_completed_restore_retry_clears_stale_in_progress_marker(
@@ -623,6 +742,57 @@ def test_completed_restore_retry_clears_stale_in_progress_marker(
     assert replayed["ok"]
     assert replayed["data"]["request_replayed"] is True
     assert not restarted._restore_fault.active()
+
+
+def test_fresh_request_after_terminal_result_marker_recovery_does_not_restore_again(
+    monkeypatch, tmp_path
+):
+    from dish_service.backup import BackupManager
+
+    service, backend = _service(tmp_path)
+    source = _restore_source(service)
+    interrupted_request = "56565656-5656-4656-8656-565656565656"
+    retry_request = "57575757-5757-4757-8757-575757575757"
+
+    def kill_instead_of_clear():
+        raise SimulatedSigkill("after-journal-complete")
+
+    monkeypatch.setattr(service._restore_fault, "clear", kill_instead_of_clear)
+    with pytest.raises(SimulatedSigkill):
+        service.restore_backup(
+            source.backup_id,
+            principal=_principal("restore-run"),
+            request_id=interrupted_request,
+        )
+
+    restarted = _restart_service(service, backend)
+    startup = restarted.startup_check()
+    assert startup["startup"]["restore_recovery"]["ok"] is True
+    assert startup["startup"]["restore_recovery"]["request_id"] == interrupted_request
+    source_row = restarted._restore_requests.read(interrupted_request)
+    assert source_row["recovered_from_interruption"] is True
+    assert not restarted._restore_fault.active()
+
+    def forbidden_restore(self, _backup_id):
+        raise AssertionError("restore executed again after terminal-result recovery")
+
+    def forbidden_recover(self, _backup_id, _checkpoint):
+        raise AssertionError("restore recovery executed again")
+
+    monkeypatch.setattr(BackupManager, "restore", forbidden_restore)
+    monkeypatch.setattr(BackupManager, "recover_restore", forbidden_recover)
+    replayed = restarted.restore_backup(
+        source.backup_id,
+        principal=_principal("fresh-run"),
+        request_id=retry_request,
+    )
+    assert replayed["ok"]
+    assert replayed["data"]["request_id"] == retry_request
+    assert replayed["data"]["recovered_request_id"] == interrupted_request
+    assert replayed["data"]["request_replayed"] is True
+    assert restarted._restore_requests.read(retry_request)[
+        "replay_of_request_id"
+    ] == interrupted_request
 
 
 def test_restart_startup_recovers_interrupted_restore_before_health(
