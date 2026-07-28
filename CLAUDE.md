@@ -16,7 +16,7 @@ documentation roles are:
   troubleshooting contract;
 - `dish/docs/rollout.md` — separately authorized test-project rehearsal,
   migration, production cutover, and rollback;
-- `dish/docs/dish-tool-future.md` — only work not already implemented.
+- `dish/docs/future.md` — only work not already implemented.
 
 `dish-tool-update.md` is a historical change record. It may explain why a decision was made, but it
 does not override the current architecture, runtime contract, code, or Honest protocol/schema

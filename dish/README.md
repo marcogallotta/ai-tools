@@ -250,7 +250,7 @@ Do not copy or package `.venv`; it is interpreter-local. The committed implement
 - `docs/architecture.md` — mandatory agent change map: authorities, invariants, owning layers, and routed reading.
 - `docs/runtime-contract.md` — JSON meanings, exit statuses, retry rules, and operational recovery.
 - `docs/rollout.md` — separately authorized test-project rehearsal, migration, production cutover, and rollback.
-- `docs/dish-tool-future.md` — only work that is not already implemented.
+- `docs/future.md` — only work that is not already implemented.
 - `docs/dish-tool-update.md` — historical change analysis, not current architecture authority.
 
 The implementation does not itself authorize production activation. Follow

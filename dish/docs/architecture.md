@@ -17,7 +17,7 @@ loading every Dish document.
 | Tailscale Serve or Funnel | [`../deploy/tailscale/README.md`](../deploy/tailscale/README.md) |
 | test-project rehearsal, corpus migration, production cutover, or rollback | [`rollout.md`](rollout.md) |
 | the protocol's own structure, canonical fields, process records, or change classes | `~/honest-pantry/dish-docs-design.md` and the relevant current Honest assets |
-| work not yet implemented | [`dish-tool-future.md`](dish-tool-future.md) |
+| work not yet implemented | [`future.md`](future.md) |
 
 `dish-tool-update.md` is historical provenance. It never overrides the current code, this document,
 the runtime contract, or current Honest assets. Removed plans remain available in Git history.
@@ -328,5 +328,5 @@ clear home.
 Dish is not a general multi-user platform, raw Asana proxy, generic task editor, automatic semantic
 recipe judge, or writable legacy workflow. It has no arbitrary admin unblock.
 
-Potential post-activation work belongs in [`dish-tool-future.md`](dish-tool-future.md), not in a
+Potential post-activation work belongs in [`future.md`](future.md), not in a
 description of current architecture.
