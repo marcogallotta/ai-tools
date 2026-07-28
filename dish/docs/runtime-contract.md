@@ -290,4 +290,6 @@ During a fresh initial Research operation, `reject --route evidence|human-review
 7. For an unrecoverable destination failure, use only the returned `repair-destination` admin action; do not reopen Verification or edit the task directly.
 8. For tool/protocol disagreement, preserve the task unchanged and report both the protocol clause and tool rule.
 
-The corpus migration rehearsal and live cutover remain separately authorized Step 12 work. Passing this Step 11 contract does not itself authorize production Cooking-task activation.
+The corpus migration rehearsal and live cutover remain separately authorized work. Passing this
+runtime contract does not itself authorize production Cooking-task activation; follow
+[`rollout.md`](rollout.md).

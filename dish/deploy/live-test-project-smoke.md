@@ -1,10 +1,10 @@
-# Optional Step 12 live test-project smoke
+# Optional live test-project smoke
 
 Do not run this against production Cooking. Use a disposable task in the configured test project and preserve the complete JSON transcript.
 
 ## Preconditions
 
-- Step 11 unit and hermetic SDK tests pass.
+- The complete unit and hermetic SDK suites pass.
 - Service host uses `DISH_HONEST_PATH=/home/marco/honest-pantry-dish-rollout`.
 - Service host uses the test `DISH_COOKING_PROJECT_GID=1216693403164366`.
 - Test state is isolated under `/home/marco/.local/state/dish/test/`; it does not reuse the

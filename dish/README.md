@@ -52,7 +52,7 @@ ASANA_ENV=/home/marco/.config/asana-cli/.env
 
 Only the service-host environment contains Asana credentials. Protect the environment file and state directory with owner-only permissions. All three service tokens are required for the live dual-listener process, must be distinct, and must not use placeholder or short values. Listener hosts must remain loopback and the private and Action ports must be distinct. Invalid configuration fails before either listener binds.
 
-For the controlled Step 12 test deployment, keep test state separate from production:
+For the controlled rollout test deployment, keep test state separate from production:
 
 ```sh
 DISH_HONEST_PATH=/home/marco/honest-pantry-dish-rollout
@@ -64,7 +64,7 @@ DISH_SERVICE_BACKUP_DIR=/home/marco/.local/state/dish/test/backups
 Do not switch those values to the production checkout, project, or database until the separately
 authorized production cutover.
 
-Install and start the systemd unit only during the controlled Step 12 activation:
+Install and start the systemd unit only during the controlled rollout:
 
 ```sh
 sudo install -m 0644 deploy/systemd/dish-service.service /etc/systemd/system/
@@ -243,13 +243,16 @@ Use the fast suite during normal iteration, then run the complete suite before h
 .venv/bin/python -m pytest
 ```
 
-Do not copy or package `.venv`; it is interpreter-local. The committed Step 11 tests cover service restart, concurrency, leases, credential scopes, the generated Asana SDK path, Action/CLI equivalence, private/admin HTTP parity, backup/restore, operational health, and private/public surface separation.
+Do not copy or package `.venv`; it is interpreter-local. The committed implementation tests cover service restart, concurrency, leases, credential scopes, the generated Asana SDK path, Action/CLI equivalence, private/admin HTTP parity, backup/restore, operational health, and private/public surface separation.
 
 ## Documentation map
 
 - `docs/architecture.md` — mandatory agent change map: authorities, invariants, owning layers, and routed reading.
 - `docs/runtime-contract.md` — JSON meanings, exit statuses, retry rules, and operational recovery.
+- `docs/rollout.md` — separately authorized test-project rehearsal, migration, production cutover, and rollback.
 - `docs/dish-tool-future.md` — only work that is not already implemented.
-- `docs/dish-tool-update.md` and `docs/dish-tool-update-imp.md` — historical change analysis and implementation provenance, not current architecture authority.
+- `docs/dish-tool-update.md` — historical change analysis, not current architecture authority.
 
-Step 11 implements the shared-service and GPT Action gate. It does not itself authorize production activation; migration rehearsal, live test-project smoke, cutover, and rollback remain Step 12.
+The implementation does not itself authorize production activation. Follow
+[`docs/rollout.md`](docs/rollout.md) for the separately authorized migration rehearsal, live
+test-project smoke, cutover, and rollback.

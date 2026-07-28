@@ -172,9 +172,10 @@ def test_admin_cli_exposes_backup_restore_and_stale_lease_recovery(capsys):
     ]
 
 
-def test_checked_in_contract_documents_final_step11_access_paths():
+def test_checked_in_contract_documents_current_access_and_rollout():
     runtime = (ROOT / "docs" / "runtime-contract.md").read_text()
     readme = (ROOT / "README.md").read_text()
+    rollout = (ROOT / "docs" / "rollout.md").read_text()
     tailscale = (ROOT / "deploy" / "tailscale" / "README.md").read_text()
     action_guide = (ROOT / "deploy" / "gpt-action.md").read_text()
     smoke = (ROOT / "deploy" / "live-test-project-smoke.md").read_text()
@@ -183,8 +184,12 @@ def test_checked_in_contract_documents_final_step11_access_paths():
     assert "Planning's read-only lookup" in runtime
     assert "There is intentionally no general-purpose `unblock`" in runtime
     assert "DISH_LIVE_MODE=1" in runtime and "DISH_MODE=service" in runtime
-    assert "Action-only listener" in runtime
-    assert "Step 12" in readme and "does not itself authorize production activation" in readme
+    assert "Action listener, intended for Tailscale Funnel" in runtime
+    assert "does not itself authorize production activation" in readme
+    assert "docs/rollout.md" in readme
+    assert "coordinated rollout of both" in rollout
+    assert "Honest protocol/schema overhaul" in rollout
+    assert "a mixed production state is forbidden" in rollout
     assert "--https=8444" in tailscale and "--https=443" in tailscale
     assert "port 443 is free" in tailscale and "do not overwrite" in tailscale
     assert "127.0.0.1:8765" in tailscale and "127.0.0.1:8766" in tailscale
@@ -195,8 +200,11 @@ def test_checked_in_contract_documents_final_step11_access_paths():
     assert "client.run_id" in action_guide and "allowed_actions" in action_guide
     assert "canonical lowercase UUID" in action_guide
     assert "After Verification" in action_guide and "call `inspect`" in action_guide
-    assert "All agent mutations are replay-bound" in runtime
-    assert "prepare`, `approve`, `reject`, and `submit`" in runtime
+    assert "all agent mutations are replay-bound" in runtime
+    assert all(
+        f"`{command}`" in runtime
+        for command in ("create", "start", "prepare", "approve", "reject", "submit")
+    )
     assert "BACKEND_UNCERTAIN" in action_guide and "recover-lease" in action_guide
 
 

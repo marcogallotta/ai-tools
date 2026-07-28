@@ -14,12 +14,14 @@ documentation roles are:
   invariants, persistence, recovery, and extension rules;
 - `dish/docs/runtime-contract.md` — response, exit-status, retry, and
   troubleshooting contract;
+- `dish/docs/rollout.md` — separately authorized test-project rehearsal,
+  migration, production cutover, and rollback;
 - `dish/docs/dish-tool-future.md` — only work not already implemented.
 
-`dish-tool-update.md` and `dish-tool-update-imp.md` are historical change records.
-They may explain why a decision was made, but they do not override the current architecture,
-runtime contract, code, or Honest protocol/schema assets. Older design and implementation
-plans were removed; use Git history when their exact text is needed.
+`dish-tool-update.md` is a historical change record. It may explain why a decision was made, but it
+does not override the current architecture, runtime contract, code, or Honest protocol/schema
+assets. Older design and implementation plans were removed; use Git history when their exact text
+is needed.
 
 ## Dish agent environment
 

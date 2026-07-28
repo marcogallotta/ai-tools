@@ -15,11 +15,12 @@ loading every Dish document.
 | response fields, exit status, retry, leases, recovery, or client-visible behavior | [`runtime-contract.md`](runtime-contract.md) |
 | GPT Action exposure or editor configuration | [`../deploy/gpt-action.md`](../deploy/gpt-action.md) |
 | Tailscale Serve or Funnel | [`../deploy/tailscale/README.md`](../deploy/tailscale/README.md) |
+| test-project rehearsal, corpus migration, production cutover, or rollback | [`rollout.md`](rollout.md) |
 | the protocol's own structure, canonical fields, process records, or change classes | `~/honest-pantry/dish-docs-design.md` and the relevant current Honest assets |
 | work not yet implemented | [`dish-tool-future.md`](dish-tool-future.md) |
 
-`dish-tool-update.md` and `dish-tool-update-imp.md` are historical provenance. They never override
-the current code, this document, the runtime contract, or current Honest assets.
+`dish-tool-update.md` is historical provenance. It never overrides the current code, this document,
+the runtime contract, or current Honest assets. Removed plans remain available in Git history.
 
 Update this document in the same commit when a change moves an authority boundary, adds a runtime
 surface, changes the workflow state model, or changes which component owns a durable fact. Do not
