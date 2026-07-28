@@ -21,6 +21,20 @@ def _review(app, *, run="review", agent="codex"):
     return result
 
 
+def _authorize_dish_candidate(app, backend, operation_id, *, before="Test dish", after="Different dish"):
+    admin = DishAdminApplication(
+        app.conn, backend=backend,
+        release_loader=lambda: app._load_release("verification"),
+    )
+    result = admin.execute(
+        "authorize-governed-change", submission_id=operation_id,
+        field="Dish candidate", before=before, after=after,
+        reason="Marco authorized the candidate identity change", run_id="marco",
+    )
+    assert result["ok"]
+    return result
+
+
 @pytest.mark.parametrize(
     "mutator,expected_reason",
     [
@@ -178,6 +192,20 @@ def test_post_signoff_non_material_request_is_forced_material_for_dish_candidate
     candidate.write_text(f"{backend.title}\n{backend.notes}".replace(
         "Dish candidate: Test dish", "Dish candidate: Different dish"
     ))
+    unauthorized = app.execute(
+        "prepare", agent="codex", model="gpt-5.6-sol",
+        submission_id=started["submission_id"], file_path=str(candidate),
+        material_classification="non-material",
+    )
+    assert unauthorized["code"] == "VALIDATION_FAILED"
+    assert unauthorized["retryable"] is True
+    assert unauthorized["allowed_actions"] == ["prepare"]
+    assert unauthorized["errors"][0] == {
+        "rule": "governed_change_unauthorized",
+        "field": "Dish candidate",
+    }
+
+    _authorize_dish_candidate(app, backend, started["submission_id"])
     prepared = app.execute(
         "prepare", agent="codex", model="gpt-5.6-sol",
         submission_id=started["submission_id"], file_path=str(candidate),

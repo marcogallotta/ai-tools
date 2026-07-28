@@ -216,8 +216,10 @@ paths. Change-operation level and reason are captured as immutable intent at `st
 
 Dish owns canonical Material-change history after the first baseline. A later candidate may preserve
 or omit prior entries but cannot rewrite them; Dish appends from durable intent and independent
-approval finalizes the pending entry. Caller-supplied `model` is display metadata, never
-authenticated provenance.
+approval finalizes the pending entry. Changes to the governed Planning facts—including `Dish
+candidate`, Purpose, Role, Locks, Exemptions, Research emphasis, Destination section, and
+Decisions—require an exact persisted Marco authorization before any candidate write. Caller-supplied
+`model` is display metadata, never authenticated provenance.
 
 Specialized client-visible rules for material classification, audit normalization, pre-construction
 Research holds, destination repair, and reruns belong in the corresponding sections of

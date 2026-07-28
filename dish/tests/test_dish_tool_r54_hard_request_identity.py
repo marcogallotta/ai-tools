@@ -870,7 +870,7 @@ def test_material_change_approval_finalizes_pending_entry_and_survives_restart(t
     from dish_tool.database import initialize_database
     from dish_tool.task_document import parse_task_document
     from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
-    from tests.test_dish_tool_r42_authority_matrix import _review
+    from tests.test_dish_tool_r42_authority_matrix import _authorize_dish_candidate, _review
     from tests.test_dish_tool_step7_verification import make_app
 
     application, backend, initial_operation, _ = make_app(tmp_path)
@@ -893,6 +893,7 @@ def test_material_change_approval_finalizes_pending_entry_and_survives_restart(t
             "Dish candidate: Test dish", "Dish candidate: Different dish"
         )
     )
+    _authorize_dish_candidate(application, backend, operation_id)
     prepared = application.execute(
         "prepare",
         agent="gpt",
@@ -954,7 +955,7 @@ def test_submit_refuses_ready_task_with_latest_material_change_pending(tmp_path,
     from dish_tool import step9
     from dish_tool.task_document import parse_task_document
     from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
-    from tests.test_dish_tool_r42_authority_matrix import _review
+    from tests.test_dish_tool_r42_authority_matrix import _authorize_dish_candidate, _review
     from tests.test_dish_tool_step7_verification import make_app
 
     application, backend, initial_operation, _ = make_app(tmp_path)
@@ -975,6 +976,7 @@ def test_submit_refuses_ready_task_with_latest_material_change_pending(tmp_path,
             "Dish candidate: Test dish", "Dish candidate: Different dish"
         )
     )
+    _authorize_dish_candidate(application, backend, operation_id)
     assert application.execute(
         "prepare",
         agent="gpt",
@@ -1024,7 +1026,7 @@ def test_submit_refuses_ready_task_with_latest_material_change_pending(tmp_path,
 
 def test_post_signoff_change_cannot_rewrite_material_change_history(tmp_path):
     from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
-    from tests.test_dish_tool_r42_authority_matrix import _review
+    from tests.test_dish_tool_r42_authority_matrix import _authorize_dish_candidate, _review
     from tests.test_dish_tool_step7_verification import make_app
 
     application, backend, initial_operation, _ = make_app(tmp_path)
@@ -1045,6 +1047,7 @@ def test_post_signoff_change_cannot_rewrite_material_change_history(tmp_path):
             "Dish candidate: Test dish", "Dish candidate: Different dish"
         )
     )
+    _authorize_dish_candidate(application, backend, first["submission_id"])
     assert application.execute(
         "prepare",
         agent="gpt",
@@ -1135,6 +1138,7 @@ def test_material_classification_is_required_only_for_changed_post_signoff_body(
 
 def test_material_classification_reports_effective_route_and_forced_reasons(tmp_path):
     from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
+    from tests.test_dish_tool_r42_authority_matrix import _authorize_dish_candidate
     from tests.test_dish_tool_step7_verification import make_app
 
     application, backend, initial_operation, _ = make_app(tmp_path)
@@ -1154,6 +1158,7 @@ def test_material_classification_reports_effective_route_and_forced_reasons(tmp_
             "Dish candidate: Test dish", "Dish candidate: Different dish"
         )
     )
+    _authorize_dish_candidate(application, backend, started["submission_id"])
     prepared = application.execute(
         "prepare",
         agent="gpt",
