@@ -25,6 +25,15 @@ Future proposals should build on those mechanisms rather than reintroduce parall
 
 ## Near-term candidates after activation evidence
 
+### Serve the Honest repository to agents
+
+Expose the current `DISH_HONEST_PATH` checkout read-only through the Dish Action surface. Agents
+should be able to list directories and request one file at a time with full repository read access.
+
+This replaces packaging, versioning, and repeatedly uploading a `.tgz` copy to the Custom GPT
+configuration. Repository changes become available immediately, with Dish preventing writes and
+paths outside the configured checkout.
+
 ### Bounded direct-dependency surfacing
 
 Surface only direct candidates that can be identified deterministically, such as exact task GIDs,
