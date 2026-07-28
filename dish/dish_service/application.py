@@ -92,13 +92,79 @@ def _classify_database_initialization_exception(
     return str(details["error_classification"]), details
 
 
-def _database_unavailable_error(exc: BaseException) -> DishRuleError:
+def _semantic_evidence_error(
+    exc: DishRuleError,
+    *,
+    execution_occurred: bool,
+    request_id_consumed: bool,
+) -> DishRuleError:
+    """Preserve semantic classification and make retry safety explicit."""
+
+    details = dict(exc.details)
+    details.update({
+        "execution_occurred": execution_occurred,
+        "request_id_consumed": request_id_consumed,
+        "retry_condition": (
+            "after_database_semantic_evidence_repair_with_fresh_request_id"
+            if request_id_consumed
+            else "after_database_semantic_evidence_repair"
+        ),
+    })
+    return DishRuleError(
+        exc.code,
+        str(exc),
+        rule=exc.rule,
+        retryable=True,
+        details=details,
+        errors=exc.errors,
+    )
+
+
+def _database_initialization_error(exc: BaseException) -> DishRuleError:
+    if (
+        isinstance(exc, DishRuleError)
+        and exc.rule == "database_semantic_evidence_invalid"
+    ):
+        return _semantic_evidence_error(
+            exc,
+            execution_occurred=False,
+            request_id_consumed=False,
+        )
+
     _classification, details = _classify_database_initialization_exception(exc)
+    details.update({
+        "execution_occurred": False,
+        "request_id_consumed": False,
+        "retry_condition": "after_database_availability_restored",
+    })
     return DishRuleError(
         "INTERNAL_ERROR",
         "Dish database is unavailable; the request was not executed",
         rule="service_database_unavailable",
         retryable=True,
+        details=details,
+    )
+
+
+def _database_execution_unavailable_error(
+    exc: BaseException,
+    *,
+    request_id_consumed: bool,
+) -> DishRuleError:
+    """Report post-start database failures without implying a safe blind retry."""
+
+    _classification, details = _classify_database_initialization_exception(exc)
+    details.update({
+        "execution_occurred": True,
+        "request_id_consumed": request_id_consumed,
+        "retry_condition": "reconcile_request_state_before_retry",
+    })
+    return DishRuleError(
+        "INTERNAL_ERROR",
+        "Dish database became unavailable after request execution began; "
+        "reconcile request state before retrying",
+        rule="service_database_unavailable",
+        retryable=False,
         details=details,
     )
 
@@ -877,7 +943,7 @@ class DishService:
             except Exception as exc:
                 return error_envelope(
                     command,
-                    _database_unavailable_error(exc),
+                    _database_initialization_error(exc),
                     task_gid=task_gid,
                     submission_id=requested_operation_id,
                 )
@@ -1177,7 +1243,7 @@ class DishService:
             except Exception as exc:
                 return error_envelope(
                     "renew-lease",
-                    _database_unavailable_error(exc),
+                    _database_initialization_error(exc),
                     submission_id=operation_id,
                 )
             replay_started = False
@@ -1260,7 +1326,7 @@ class DishService:
             except Exception as exc:
                 return error_envelope(
                     "recover-lease",
-                    _database_unavailable_error(exc),
+                    _database_initialization_error(exc),
                     submission_id=operation_id,
                 )
             replay_started = False
@@ -1441,7 +1507,7 @@ class DishService:
             except Exception as exc:
                 return error_envelope(
                     command,
-                    _database_unavailable_error(exc),
+                    _database_initialization_error(exc),
                     submission_id=requested_operation_id,
                 )
             backend = None
@@ -1602,7 +1668,7 @@ class DishService:
                 )
             except Exception as exc:
                 return error_envelope(
-                    "backup-create", _database_unavailable_error(exc)
+                    "backup-create", _database_initialization_error(exc)
                 )
             try:
                 if request_id:
@@ -1626,6 +1692,12 @@ class DishService:
                     complete_request(conn, request_id=request_id, result=result)
                 return result
             except DishRuleError as exc:
+                if exc.rule == "database_semantic_evidence_invalid":
+                    exc = _semantic_evidence_error(
+                        exc,
+                        execution_occurred=True,
+                        request_id_consumed=bool(request_id and replay_started),
+                    )
                 result = error_envelope("backup-create", exc)
                 if request_id and replay_started:
                     result.setdefault("data", {})["request_id"] = request_id
@@ -1633,7 +1705,11 @@ class DishService:
                 return result
             except Exception as exc:
                 result = error_envelope(
-                    "backup-create", _database_unavailable_error(exc)
+                    "backup-create",
+                    _database_execution_unavailable_error(
+                        exc,
+                        request_id_consumed=bool(request_id and replay_started),
+                    ),
                 )
                 if request_id:
                     result.setdefault("data", {})["request_id"] = request_id
@@ -1765,6 +1841,12 @@ class DishService:
                 }
             result = result_envelope(command="backup-restore", data=data)
         except DishRuleError as exc:
+            if exc.rule == "database_semantic_evidence_invalid":
+                exc = _semantic_evidence_error(
+                    exc,
+                    execution_occurred=True,
+                    request_id_consumed=bool(request_id),
+                )
             result = error_envelope("backup-restore", exc)
         except Exception as exc:
             error = DishRuleError(

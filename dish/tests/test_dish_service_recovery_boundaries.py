@@ -72,6 +72,11 @@ def test_corrupt_database_returns_structured_unavailable_results(tmp_path):
         assert result["retryable"] is True
         assert result["errors"][0]["rule"] == "service_database_unavailable"
         assert result["errors"][0]["error_type"] == "DatabaseError"
+        assert result["errors"][0]["execution_occurred"] is False
+        assert result["errors"][0]["request_id_consumed"] is False
+        assert result["errors"][0]["retry_condition"] == (
+            "after_database_availability_restored"
+        )
         assert result["data"]["message"] == (
             "Dish database is unavailable; the request was not executed"
         )
