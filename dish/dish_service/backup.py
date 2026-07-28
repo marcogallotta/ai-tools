@@ -199,6 +199,16 @@ class BackupManager:
         finally:
             os.close(directory_fd)
 
+    @staticmethod
+    def _enforce_owner_only_database_mode(path: Path) -> None:
+        """Persist the owner-only mode required for live database installation."""
+        os.chmod(path, 0o600)
+        file_fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(file_fd)
+        finally:
+            os.close(file_fd)
+
     def _snapshot_to(self, destination: Path) -> BackupRecord:
         try:
             self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -537,6 +547,7 @@ class BackupManager:
                     exc, backup_id=str(plan.get("backup_id") or "")
                 ) from exc
             raise
+        self._enforce_owner_only_database_mode(candidate_path)
         candidate_record = self._record(
             candidate_path, backup_id=str(plan.get("backup_id") or candidate_path.name)
         )
@@ -647,6 +658,7 @@ class BackupManager:
             finally:
                 rollback_source.close()
             self._validate_snapshot(rollback_temp)
+            self._enforce_owner_only_database_mode(rollback_temp)
             rollback_record = self._record(
                 rollback_temp, backup_id=str(pre_restore.get("backup_id") or rollback_temp.name)
             )
@@ -658,6 +670,7 @@ class BackupManager:
             }
             self._emit_restore_checkpoint("rollback_prepared", plan)
             self._emit_restore_checkpoint("rollback_started", plan)
+            self._enforce_owner_only_database_mode(rollback_temp)
             os.replace(rollback_temp, self.db_path)
             rollback_temp = None
             self._fsync_directory(self.db_path.parent)
@@ -693,6 +706,7 @@ class BackupManager:
             )
         self._cleanup_live_sidecars()
         try:
+            self._enforce_owner_only_database_mode(self.db_path)
             validation = initialize_database(self.db_path)
             validation.close()
         except Exception as exc:
@@ -726,6 +740,7 @@ class BackupManager:
         if not replacement_already_started:
             self._emit_restore_checkpoint("replacement_started", plan)
         try:
+            self._enforce_owner_only_database_mode(candidate_path)
             os.replace(candidate_path, self.db_path)
             self._fsync_directory(self.db_path.parent)
             self._cleanup_live_sidecars()
@@ -827,9 +842,11 @@ class BackupManager:
                 )
             if not already_started:
                 self._emit_restore_checkpoint("rollback_started", plan)
+            self._enforce_owner_only_database_mode(path)
             os.replace(path, self.db_path)
             self._fsync_directory(self.db_path.parent)
         self._cleanup_live_sidecars()
+        self._enforce_owner_only_database_mode(self.db_path)
         validation = initialize_database(self.db_path)
         validation.close()
         plan["rolled_back"] = self._database_fingerprint()
@@ -934,6 +951,7 @@ class BackupManager:
                     retryable=False,
                     details={"database_retained": False},
                 )
+            self._enforce_owner_only_database_mode(self.db_path)
             self._validate_snapshot(self.db_path)
             return dict(result)
 
@@ -955,6 +973,7 @@ class BackupManager:
                     retryable=False,
                     details={"database_retained": False},
                 )
+            self._enforce_owner_only_database_mode(self.db_path)
             self._validate_snapshot(self.db_path)
             raise self._rolled_back_error(str(plan.get("restore_error_type") or "UnknownError"))
 
