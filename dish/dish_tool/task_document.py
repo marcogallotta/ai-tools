@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Iterable, Mapping, Sequence
@@ -171,6 +172,51 @@ def document_parse_error_payloads(exc: DocumentParseError) -> list[dict[str, obj
     return [payload]
 
 
+def _normalized_authority_label(label: str) -> str:
+    normalized = unicodedata.normalize("NFKC", label)
+    return " ".join(normalized.split()).casefold()
+
+
+def _canonical_authority_label(label: str, names: Sequence[str]) -> str | None:
+    normalized = _normalized_authority_label(label)
+    return next(
+        (name for name in names if _normalized_authority_label(name) == normalized),
+        None,
+    )
+
+
+def _field_label_errors(
+    lines: Sequence[str],
+    names: Sequence[str],
+    *,
+    context: str,
+    line_numbers: Sequence[int],
+) -> list[dict[str, object]]:
+    errors: list[dict[str, object]] = []
+    for line, line_number in zip(lines, line_numbers):
+        match = re.match(r"^([^:]+):(?:\s*(.*))$", line)
+        if match is None:
+            continue
+        label = match.group(1)
+        canonical = _canonical_authority_label(label, names)
+        if canonical is None or label == canonical:
+            continue
+        errors.append(
+            {
+                "rule": f"{context}_field_label_noncanonical",
+                "field": canonical,
+                "label": label,
+                "canonical_label": canonical,
+                "line": line_number,
+                "message": (
+                    f"non-canonical {context} field label {label}; "
+                    f"use {canonical}"
+                ),
+            }
+        )
+    return errors
+
+
 def _duplicate_field_errors(
     lines: Sequence[str],
     names: Sequence[str],
@@ -179,11 +225,12 @@ def _duplicate_field_errors(
     line_numbers: Sequence[int],
 ) -> list[dict[str, object]]:
     occurrences: dict[str, list[int]] = {}
-    allowed = set(names)
     for line, line_number in zip(lines, line_numbers):
         match = re.match(r"^([^:]+):(?:\s*(.*))$", line)
-        if match and match.group(1) in allowed:
-            occurrences.setdefault(match.group(1), []).append(line_number)
+        if match:
+            canonical = _canonical_authority_label(match.group(1), names)
+            if canonical is not None:
+                occurrences.setdefault(canonical, []).append(line_number)
     return [
         {
             "rule": f"{context}_field_duplicate",
@@ -219,6 +266,22 @@ def _parse_exact_fields(
                 "lines": first["lines"],
             },
             errors=duplicate_errors,
+        )
+
+    label_errors = _field_label_errors(
+        lines, names, context=context, line_numbers=exact_line_numbers
+    )
+    if label_errors:
+        first = label_errors[0]
+        raise DocumentParseError(
+            str(first["rule"]),
+            str(first["message"]),
+            details={
+                key: value
+                for key, value in first.items()
+                if key not in {"rule", "message"}
+            },
+            errors=label_errors,
         )
 
     values: dict[str, str] = {}
