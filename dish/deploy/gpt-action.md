@@ -45,11 +45,14 @@ Add an operating instruction with all of these requirements:
   renders that identifier as the human-readable actor name `Custom GPT`.
 - Create one canonical lowercase UUID as `client.run_id` for the current agent run and reuse it for
   every Action call and lease renewal in that run. A genuinely new run uses a new UUID.
-- Before each `create` or non-verification `start`, create a new canonical lowercase UUID as
-  `client.request_id`. Other mutations may also carry a fresh request ID and then receive the same
-  durable replay protection. Preserve the ID with the attempted call. If the response is lost, repeat
-  the exact same command and arguments with the same UUID. Never reuse that UUID for different work or
-  generate a new one merely to bypass an uncertain result.
+- Before every mutation—`create`, `start`, `prepare`, `approve`, `reject`, `submit`, and lease
+  renewal—create a new canonical lowercase UUID as `client.request_id` and preserve it with the
+  attempted call. Read-only `sections`, `read`, and `inspect` do not accept a request ID. Dish binds
+  the first authoritative success or expected failure to the exact command, canonical arguments,
+  authenticated owner, and run. If the response is lost, repeat only that exact call with the same
+  UUID; a completed replay returns the stored result with `data.request_replayed: true`. Reusing the
+  UUID for different work conflicts. A matching pending or uncertain request is not executed again,
+  so never generate a new UUID merely to bypass that outcome.
 - The authenticated `client.run_id` is both lease ownership and the durable agent-run identity. The
   service applies it to `start`, `prepare`, `approve`, and `reject`; do not invent a separate
   workflow run ID. A redundant `arguments.run_id`, when supplied, must match it exactly.

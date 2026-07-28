@@ -14,6 +14,23 @@ from .command_spec import (
     action_openapi_argument_schema,
 )
 
+
+def _action_operation_description(command: str) -> str:
+    if command in REPLAY_SAFE_COMMANDS:
+        return (
+            "Replay-bound mutation. client.request_id is required and identifies the exact "
+            "command, canonical arguments, authenticated owner, and run. Dish stores the first "
+            "authoritative success or expected failure. An exact completed replay returns that "
+            "stored result with data.request_replayed=true and data.request_id; reuse for "
+            "different work conflicts, and matching pending or uncertain work is not executed "
+            "again."
+        )
+    return (
+        "Read-only Action. It does not accept client.request_id, create a replay record, or "
+        "authorize a mutation."
+    )
+
+
 def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[str, Any]:
     envelope = {
         "type": "object",
@@ -28,12 +45,32 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                 "type": ["string", "null"],
             },
             "state": {"type": ["string", "null"]},
-            "retryable": {"type": "boolean"},
+            "retryable": {
+                "type": "boolean",
+                "description": (
+                    "Mechanical advice for a corrected or fresh call. It does not override exact "
+                    "request replay: reuse the same request_id only after response loss, and never "
+                    "retry BACKEND_UNCERTAIN as new work."
+                ),
+            },
             "allowed_actions": {"type": "array", "items": {"type": "string"}},
             "data": {
                 "type": "object",
                 "additionalProperties": True,
                 "properties": {
+                    "request_id": {
+                        **DISH_UUID_SCHEMA,
+                        "description": (
+                            "The accepted mutation request UUID. Present on a replayed stored result."
+                        ),
+                    },
+                    "request_replayed": {
+                        "type": "boolean",
+                        "description": (
+                            "True only when this response was reconstructed from the durable result "
+                            "of the exact same completed request."
+                        ),
+                    },
                     "validation_scope": {
                         "type": "array",
                         "items": {
@@ -103,6 +140,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
             "post": {
                 "operationId": f"dish_{command.replace('-', '_')}",
                 "summary": f"Run dish {command}",
+                "description": _action_operation_description(command),
                 "security": [{"actionBearer": []}],
                 "requestBody": {
                     "required": True,
@@ -144,6 +182,10 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
         "post": {
             "operationId": "dish_renew_lease",
             "summary": "Renew the current GPT Action operation lease",
+            "description": (
+                "Replay-bound mutation with the same request identity and completed, conflict, "
+                "pending, and uncertain semantics as workflow mutations."
+            ),
             "security": [{"actionBearer": []}],
             "parameters": [
                 {

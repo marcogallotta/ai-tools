@@ -30,8 +30,12 @@ CLIENT_RUN_ID_SCHEMA = {
 CLIENT_REQUEST_ID_SCHEMA = {
     **DISH_UUID_SCHEMA,
     "description": (
-        "Newly generated UUID identifying this request. Reuse it only to replay "
-        "the exact same command after a lost response; never reuse it for different work."
+        "Canonical lowercase UUID for one logical mutation. Dish durably binds the "
+        "first authoritative success or expected failure to the exact command, canonical "
+        "arguments, authenticated owner, and run. Reuse it only for an exact replay after "
+        "a lost response: a completed replay returns the stored result with "
+        "data.request_replayed=true and data.request_id, different work conflicts, and a "
+        "matching pending or uncertain request is not executed again."
     ),
 }
 

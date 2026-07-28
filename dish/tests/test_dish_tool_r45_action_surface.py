@@ -354,7 +354,8 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     assert "canonical lowercase uuid" in run_id["description"].lower()
     assert request_id["format"] == "uuid"
     assert request_id["pattern"] == CANONICAL_DISH_UUID_PATTERN
-    assert "Newly generated UUID" in request_id["description"]
+    assert "one logical mutation" in request_id["description"]
+    assert "lost response" in request_id["description"]
 
     renew_client = spec["paths"]["/v1/action/leases/{operation_id}/renew"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["client"]
     assert renew_client["properties"]["run_id"]["format"] == "uuid"
