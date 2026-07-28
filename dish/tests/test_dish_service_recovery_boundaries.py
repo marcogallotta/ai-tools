@@ -92,7 +92,7 @@ def test_restore_recovers_corrupt_live_database_without_pre_restore_snapshot(tmp
     assert restored["ok"]
     assert restored["data"]["pre_restore_backup"] is None
     assert restored["data"]["pre_restore_unavailable"]["reason"] == "live_database_not_validated"
-    assert restored["data"]["restored_schema_version"] == SCHEMA_VERSION
+    assert restored["data"]["restored"]["installed_database"]["schema_version"] == SCHEMA_VERSION
     assert service.health()["database"]["ok"] is True
 
 
@@ -116,8 +116,8 @@ def test_restore_migrates_previous_schema_copy_without_mutating_backup(tmp_path)
     restored = service.restore_backup(old_backup.name)
 
     assert restored["ok"]
-    assert restored["data"]["source_schema_version"] == 20
-    assert restored["data"]["restored_schema_version"] == SCHEMA_VERSION
+    assert restored["data"]["restored"]["source_schema_version"] == 20
+    assert restored["data"]["restored"]["installed_database"]["schema_version"] == SCHEMA_VERSION
     assert _digest(old_backup) == before
     live = initialize_database(service.config.db_path)
     try:

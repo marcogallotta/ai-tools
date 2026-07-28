@@ -31,6 +31,40 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _immutable_backup_validation_error(
+    exc: DishRuleError, *, backup_id: str
+) -> DishRuleError:
+    """Bind deterministic validation failure to the selected immutable input."""
+
+    details = dict(exc.details)
+    details.update({"backup_id": backup_id, "immutable_input": True})
+    return DishRuleError(
+        exc.code,
+        str(exc),
+        rule=exc.rule,
+        retryable=False,
+        details=details,
+        errors=exc.errors,
+    )
+
+
+def _backup_destination_error(exc: OSError, *, reason: str) -> DishRuleError:
+    """Classify managed-backup filesystem failure without blaming the live DB."""
+
+    return DishRuleError(
+        "BACKEND_REJECTED",
+        "managed backup destination is unavailable; the live database was not changed",
+        rule="backup_destination_unavailable",
+        retryable=True,
+        details={
+            "resource": "managed_backup_directory",
+            "reason": reason,
+            "error_type": type(exc).__name__,
+            "database_retained": True,
+        },
+    )
+
+
 @dataclass(frozen=True)
 class BackupRecord:
     backup_id: str
@@ -84,17 +118,26 @@ class BackupManager:
     @staticmethod
     def _raw_connection(path: Path) -> sqlite3.Connection:
         conn = sqlite3.connect(str(path), timeout=30, isolation_level=None)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        conn.execute("PRAGMA busy_timeout = 30000")
-        return conn
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA busy_timeout = 30000")
+            return conn
+        except Exception:
+            conn.close()
+            raise
 
     @classmethod
     def _validate_integrity(cls, path: Path) -> int:
         if not path.is_file():
             raise DishRuleError("NOT_FOUND", "backup not found", rule="backup_not_found")
-        conn = cls._raw_connection(path)
+        conn: sqlite3.Connection | None = None
         try:
+            # Opening the connection also applies PRAGMAs. SQLite can reject a
+            # physically invalid file during that setup, before integrity_check
+            # itself runs, so connection construction belongs inside the same
+            # deterministic immutable-input boundary.
+            conn = cls._raw_connection(path)
             integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
             if integrity != "ok":
                 raise DishRuleError(
@@ -111,7 +154,8 @@ class BackupManager:
                 rule="backup_database_invalid",
             ) from exc
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
 
     @classmethod
     def _validate_snapshot(cls, path: Path) -> None:
@@ -138,31 +182,67 @@ class BackupManager:
         return BackupRecord(backup_id or path.name, _sha256(path), path.stat().st_size)
 
     def _snapshot_to(self, destination: Path) -> BackupRecord:
-        self.backup_dir.mkdir(parents=True, exist_ok=True)
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            self.backup_dir.mkdir(parents=True, exist_ok=True)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if not self.backup_dir.is_dir():
+                raise NotADirectoryError("managed backup path is not a directory")
+        except OSError as exc:
+            reason = (
+                "permission_denied"
+                if isinstance(exc, PermissionError)
+                else "not_directory"
+                if isinstance(exc, (FileExistsError, NotADirectoryError))
+                else "path_unavailable"
+            )
+            raise _backup_destination_error(exc, reason=reason) from exc
+
         source = initialize_database(self.db_path)
         temp_path: Path | None = None
         try:
-            with tempfile.NamedTemporaryFile(
-                dir=destination.parent,
-                prefix=f".{destination.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as handle:
-                temp_path = Path(handle.name)
+            try:
+                with tempfile.NamedTemporaryFile(
+                    dir=destination.parent,
+                    prefix=f".{destination.name}.",
+                    suffix=".tmp",
+                    delete=False,
+                ) as handle:
+                    temp_path = Path(handle.name)
+            except OSError as exc:
+                reason = (
+                    "permission_denied"
+                    if isinstance(exc, PermissionError)
+                    else "not_directory"
+                    if isinstance(exc, NotADirectoryError)
+                    else "path_unavailable"
+                )
+                raise _backup_destination_error(exc, reason=reason) from exc
             target = self._raw_connection(temp_path)
             try:
                 source.backup(target)
             finally:
                 target.close()
             self._validate_snapshot(temp_path)
-            os.replace(temp_path, destination)
-            temp_path = None
-            return self._record(destination)
+            try:
+                os.replace(temp_path, destination)
+                temp_path = None
+                return self._record(destination)
+            except OSError as exc:
+                reason = (
+                    "permission_denied"
+                    if isinstance(exc, PermissionError)
+                    else "not_directory"
+                    if isinstance(exc, NotADirectoryError)
+                    else "path_unavailable"
+                )
+                raise _backup_destination_error(exc, reason=reason) from exc
         finally:
             source.close()
             if temp_path is not None:
-                temp_path.unlink(missing_ok=True)
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def create(self, *, label: str = "manual") -> BackupRecord:
         safe_label = re.sub(r"[^A-Za-z0-9_-]+", "-", str(label or "manual").strip()).strip("-") or "manual"
@@ -172,7 +252,14 @@ class BackupManager:
 
     def restore(self, backup_id: str) -> dict[str, Any]:
         source_path = self._managed_path(backup_id)
-        source_schema_version = self._validate_integrity(source_path)
+        try:
+            source_schema_version = self._validate_integrity(source_path)
+        except DishRuleError as exc:
+            if exc.code == "VALIDATION_FAILED":
+                raise _immutable_backup_validation_error(
+                    exc, backup_id=source_path.name
+                ) from exc
+            raise
         if source_path.resolve() == self.db_path.resolve():
             raise DishRuleError(
                 "INVALID_ARGUMENT",
@@ -200,7 +287,14 @@ class BackupManager:
             finally:
                 target.close()
                 source.close()
-            self._migrate_and_validate_candidate(candidate_path)
+            try:
+                self._migrate_and_validate_candidate(candidate_path)
+            except DishRuleError as exc:
+                if exc.code == "VALIDATION_FAILED":
+                    raise _immutable_backup_validation_error(
+                        exc, backup_id=source_path.name
+                    ) from exc
+                raise
 
             try:
                 pre_restore = self.create(label="pre-restore")
@@ -298,14 +392,20 @@ class BackupManager:
             if candidate_path is not None:
                 candidate_path.unlink(missing_ok=True)
 
-        restored = self._record(self.db_path, backup_id=source_path.name)
+        installed = self._record(self.db_path)
         return {
-            "restored": restored.as_dict(),
+            "restored": {
+                "source_backup_id": source_path.name,
+                "source_schema_version": source_schema_version,
+                "installed_database": {
+                    "sha256": installed.sha256,
+                    "size_bytes": installed.size_bytes,
+                    "schema_version": SCHEMA_VERSION,
+                },
+            },
             "pre_restore_backup": None if pre_restore is None else pre_restore.as_dict(),
             "pre_restore_unavailable": None if pre_restore is not None else {
                 "reason": "live_database_not_validated",
                 "error_type": pre_restore_error_type,
             },
-            "source_schema_version": source_schema_version,
-            "restored_schema_version": SCHEMA_VERSION,
         }

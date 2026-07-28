@@ -13,6 +13,7 @@ from dish_service.database_ownership import (
     service_process_lock_path,
 )
 from dish_service.process_lock import ServiceProcessLock
+from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database_schema import MIGRATIONS, initialize_database
 from dish_tool.errors import DishRuleError
 from tests.test_dish_tool_r46_operational_hardening import _service
@@ -148,9 +149,14 @@ def test_restore_metadata_hashes_actual_migrated_bytes(tmp_path):
     restored = service.restore_backup(source.name)
     assert restored["ok"]
     live_hash = _sha(service.config.db_path)
-    assert restored["data"]["restored"]["backup_id"] == source.name
-    assert restored["data"]["restored"]["sha256"] == live_hash
-    assert restored["data"]["restored"]["size_bytes"] == service.config.db_path.stat().st_size
+    restore_metadata = restored["data"]["restored"]
+    assert restore_metadata["source_backup_id"] == source.name
+    assert restore_metadata["source_schema_version"] == 20
+    assert "backup_id" not in restore_metadata
+    installed = restore_metadata["installed_database"]
+    assert installed["sha256"] == live_hash
+    assert installed["size_bytes"] == service.config.db_path.stat().st_size
+    assert installed["schema_version"] == SCHEMA_VERSION
     assert live_hash != source_hash
 
 
