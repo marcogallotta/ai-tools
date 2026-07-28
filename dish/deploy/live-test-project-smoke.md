@@ -14,6 +14,7 @@ Saved reports:
 - `/tmp/dish-admin-smoke-c381280a.txt`
 - `/tmp/dish-backend-database-smoke-8b0f2b01.txt`
 - `/tmp/dish-broader-smoke-e9cad9e1.txt`
+- `/tmp/dish-postfix-smoke-7ab6dc94.txt`
 
 These `/tmp` reports are working evidence, not permanent release records. Copy the final Stage 3
 transcript to the approved rollout record location before relying on it for activation.
@@ -71,51 +72,57 @@ Before treating Stage 1 as an activation record, rerun and record the preconditi
 smoke reports do not prove that the complete unit/hermetic suites, Asana-project backup, or every
 service-host environment value were checked in the same run.
 
-## Stage 2 — adversarial admin and resilience smoke: done, regression gates open
+## Stage 2 — adversarial admin and resilience smoke: post-fix regression run
 
 Admin identifiers, authority, replay, leases, backups, restore interruption, filesystem failures,
 protocol input boundaries, and database recovery were probed. Reproduce a suspected defect twice
 where safe, apply no code fix during smoke testing, and rerun the affected gate after a fix is
 claimed.
 
-### Confirmed on the current broader-smoke revision
+### Post-fix run 2026-07-28
 
-These gates must pass after their fixes:
+Tested checkout `f99f46d8a8e255bf553ccff3bec7adab8bcdab4f` with run ID
+`7ab6dc94-8dd6-4fd3-ae63-a62cdad1601c`. Complete redacted requests and responses are in:
 
-1. An undeclared command argument must return a field-specific `INVALID_ARGUMENT`, not
-   `INTERNAL_ERROR`.
-2. Agent and admin bearer tokens with leading or trailing whitespace must be rejected as
-   noncanonical.
-3. A `SIGKILL`-interrupted backup restore must expose a documented, executable inspection or
-   reconciliation path; it must not strand a pending request behind an unusable `inspect`
-   instruction.
-4. An unwritable backup directory must identify the backup destination failure, not report the live
-   database as unavailable.
-5. Health must not report the writable service database healthy when permissions prevent durable
-   mutations.
-6. An invalid immutable backup must return accurate retry guidance; exact retry cannot repair a
-   truncated or schema-mismatched backup.
+- `/tmp/dish-postfix-smoke/live-http.jsonl`
+- `/tmp/dish-postfix-smoke/isolated-http.jsonl`
+- `/tmp/dish-postfix-smoke/cli.jsonl`
+- `/tmp/dish-postfix-smoke-7ab6dc94.txt`
 
-For each fix, repeat the original failing input, its safe neighboring cases, exact request replay,
-and changed-payload request-ID reuse. Preserve the complete post-fix responses.
+The following original gates now pass and remain normal regression coverage:
 
-### Earlier admin findings still requiring a current-build recheck
+- undeclared arguments return field-specific `INVALID_ARGUMENT`;
+- raw leading and trailing bearer-token whitespace is rejected on agent and admin scopes;
+- the original interrupted restore request ID recovers successfully after restart;
+- unwritable backup destinations identify the destination rather than the live database;
+- read-only database health returns HTTP 503 with `write_ready:false`;
+- truncated and schema-altered immutable backups are non-retryable;
+- protected JSON routes require `application/json`;
+- duplicate JSON keys are rejected recursively;
+- duplicate Planning fields and full-document headings return actionable occurrence and line data;
+- padded operation IDs return a canonical CLI result without a traceback;
+- leading-zero task IDs and malformed/uppercase run IDs are rejected;
+- migration lookup is no longer globally blocked by the old release asset;
+- wrong-principal reads advertise no mutation action;
+- terminal `recover-lease` preserves task/operation identity and has stable replay;
+- successful backup and governed-authorization mutations replay exactly and conflicting reuse fails;
+- semantic duplicate governed authorization returns the existing fully bound authorization.
 
-The first admin smoke used an earlier service/database revision. Do not carry these findings forward
-as current defects without reproducing them, but do not drop their regression coverage:
+The post-fix run confirmed these remaining defects:
 
-- whitespace-padded operation IDs caused a raw CLI `InvalidURL` traceback;
-- `migrate` was blocked by a protocol-version-mismatched asset and accepted a leading-zero task ID;
-- admin mutations ignored exact replay and conflicting request-ID reuse;
-- missing admin arguments returned `INTERNAL_ERROR`;
-- malformed or uppercase run IDs were accepted;
-- principal-filtered reads advertised another actor's continuation;
-- exact duplicate governed-change authorization created distinct authority records and did not
-  expose enough binding evidence.
+1. Every generic admin command tested returns `INTERNAL_ERROR` for a present but empty
+   `arguments` object instead of identifying its missing fields.
+2. Unknown-operation admin failures are unstable: `recover` returns HTTP 500 then strands the
+   accepted request as `BACKEND_UNCERTAIN`, while `discard` mislabels the domain failure as database
+   unavailability and does not bind exact or conflicting replay.
+3. After a checkpointed restore interruption, a new request UUID naming the same backup performs a
+   second restore instead of returning the recovered original result.
+4. A successful restore changes the installed database mode from owner-only `0600` to `0644`.
 
-Later backend testing already rechecked successful/failed-first agent replay, corrupt-database
-diagnostics, process-lock startup, and expired `recover-lease` response identity successfully.
-Keep those as ordinary regression tests rather than open findings.
+Repeat each original failing input twice after a fix, plus partial arguments, another unknown
+operation, both restore retry orderings, and normal/migrated/reconciled restore permission checks.
+The interactive-shell `DISH_SERVICE_URL` still names the public listener without `:8444`; this pass
+used the documented private endpoint explicitly and did not change configuration.
 
 ## Stage 3 — complete the live rehearsal
 
