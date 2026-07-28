@@ -23,7 +23,7 @@ from .governed_diff import (
     preserve_material_change_history,
     require_small_scope,
 )
-from .step7 import approve_live, assert_verifier_authority, bind_cycle_review
+from .step7 import approve_live, assert_verifier_authority
 
 ROUTES = {"large", "evidence", "human-review"}
 RESET_CATEGORIES = {"evidence", "premise", "method", "scope"}
@@ -158,6 +158,42 @@ def _confirmed_version(conn: sqlite3.Connection, *, operation_id: str, task_gid:
     return row
 
 
+def _assert_small_correction_write_lineage(
+    conn: sqlite3.Connection,
+    *,
+    cycle,
+    corrected_identity: str,
+):
+    """Prove the exact reviewed candidate produced the corrected candidate."""
+    corrected_version = _confirmed_version(
+        conn,
+        operation_id=cycle["operation_id"],
+        task_gid=cycle["task_gid"],
+        identity=corrected_identity,
+    )
+    correction_write = conn.execute(
+        """SELECT * FROM write_attempts
+             WHERE operation_id=? AND purpose='content_write' AND outcome='confirmed'
+               AND expected_identity=? AND intended_identity=?
+               AND confirmed_content_version_id=?
+             ORDER BY started_at DESC, rowid DESC LIMIT 1""",
+        (
+            cycle["operation_id"],
+            cycle["reviewed_identity"],
+            corrected_identity,
+            corrected_version["content_version_id"],
+        ),
+    ).fetchone()
+    if correction_write is None:
+        raise DishRuleError(
+            "CONFLICT",
+            "Small correction lacks an exact reviewed-to-corrected write binding",
+            rule="small_correction_lineage_invalid",
+            details={"cycle_id": cycle["cycle_id"]},
+        )
+    return corrected_version
+
+
 def _held_document(conn: sqlite3.Connection, *, cycle, live):
     if not cycle["hold_content_version_id"] or not cycle["hold_identity"] or not cycle["hold_section_gid"]:
         raise DishRuleError(
@@ -259,16 +295,56 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
     intended_title, intended_notes = _render(corrected)
     intended_identity = content_identity(intended_title, intended_notes).digest
     declare_operation_step(conn, operation_id, "small_corrected_write", {"title": intended_title, "notes": intended_notes, "identity": intended_identity})
-    declare_operation_step(conn, operation_id, "small_review_binding", {"cycle_id": cycle["cycle_id"], "identity": intended_identity})
-    declare_operation_step(conn, operation_id, "small_signoff", {"cycle_id": cycle["cycle_id"], "agent": agent, "run_id": run_id, "independence_attestation": inherited_attestation})
+    declare_operation_step(
+        conn,
+        operation_id,
+        "small_review_binding",
+        {
+            "cycle_id": cycle["cycle_id"],
+            "reviewed_identity": persisted_reviewed,
+            "corrected_identity": intended_identity,
+        },
+    )
+    declare_operation_step(
+        conn,
+        operation_id,
+        "small_signoff",
+        {
+            "cycle_id": cycle["cycle_id"],
+            "agent": agent,
+            "model": model,
+            "run_id": run_id,
+            "independence_attestation": inherited_attestation,
+            "reviewed_identity": persisted_reviewed,
+            "corrected_identity": intended_identity,
+        },
+    )
     confirmed = _write_document(conn, backend, op, live, corrected, schema=schema, authorization_ids=authorization_ids)
     complete_operation_step(conn, operation_id, "small_corrected_write")
-    bind_cycle_review(
-        conn, cycle_id=cycle["cycle_id"], operation_id=operation_id,
-        task_gid=op["task_gid"], identity=confirmed.identity, correction_class="small",
+    if confirmed.identity != intended_identity:
+        raise DishRuleError(
+            "BACKEND_UNCERTAIN",
+            "confirmed Small correction identity does not match its durable intent",
+            rule="small_correction_identity_mismatch",
+        )
+    _assert_small_correction_write_lineage(
+        conn, cycle=cycle, corrected_identity=confirmed.identity
     )
     complete_operation_step(conn, operation_id, "small_review_binding")
-    result = approve_live(conn, backend, operation_id=operation_id, agent=agent, model=model, reviewed_identity=confirmed.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=run_id, schema=schema)
+    result = approve_live(
+        conn,
+        backend,
+        operation_id=operation_id,
+        agent=agent,
+        model=model,
+        reviewed_identity=persisted_reviewed,
+        approval_candidate_identity=confirmed.identity,
+        semantic_review_complete=True,
+        provenance_complete=True,
+        correction_class="small",
+        run_id=run_id,
+        schema=schema,
+    )
     complete_operation_step(conn, operation_id, "small_signoff")
     return result
 

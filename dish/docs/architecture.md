@@ -125,6 +125,16 @@ the exact reviewed content identity in Verification Queue. The fact is bound to 
 content version, verifier actor fact, attestation, and queue placement; a new cycle or changed live
 head therefore requires a new inspection.
 
+A Small correction does not rewrite that reviewed binding. The cycle keeps the exact content version
+and identity that produced the inspection fact. A confirmed correction write links that reviewed
+identity to the verifier's corrected pending-verification identity, and the confirmed signoff write
+links the corrected identity to the cycle's signed ready identity. Every current Small transition
+with a distinct corrected candidate must prove this three-part lineage. Historical collapsed rows
+that have no distinct reviewed-to-corrected transition remain readable without fabricated evidence.
+Approval, including restart recovery that completes a pending Small signoff, validates semantic
+evidence before its execution journal can complete successfully, so the request that creates an
+invalid approval cannot return `OK` and leave a later request to discover it.
+
 A completed non-material check-in does not create a new signoff. Its confirmed candidate identity
 inherits the exact approved cycle recorded on the operation. Later non-material check-ins resolve
 that durable operation/write lineage transitively, so the original signoff remains explicit without

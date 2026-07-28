@@ -66,25 +66,16 @@ def bind_cycle_review(
     operation_id: str,
     task_gid: str,
     identity: str,
-    correction_class: str | None = None,
 ):
     version = _content_version_for_identity(
         conn, operation_id=operation_id, task_gid=task_gid, identity=identity
     )
-    if correction_class is None:
-        conn.execute(
-            """UPDATE verification_cycles
-                  SET reviewed_content_version_id = ?, reviewed_identity = ?
-                WHERE cycle_id = ?""",
-            (version["content_version_id"], identity, cycle_id),
-        )
-    else:
-        conn.execute(
-            """UPDATE verification_cycles
-                  SET reviewed_content_version_id = ?, reviewed_identity = ?, correction_class = ?
-                WHERE cycle_id = ?""",
-            (version["content_version_id"], identity, correction_class, cycle_id),
-        )
+    conn.execute(
+        """UPDATE verification_cycles
+              SET reviewed_content_version_id = ?, reviewed_identity = ?
+            WHERE cycle_id = ?""",
+        (version["content_version_id"], identity, cycle_id),
+    )
     return version
 
 def record_current_dish_inspect(
@@ -390,6 +381,7 @@ def approve_live(
     semantic_review_complete: bool,
     provenance_complete: bool,
     correction_class: str,
+    approval_candidate_identity: str | None = None,
     run_id: str | None = None,
     schema: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -407,8 +399,41 @@ def approve_live(
         raise DishRuleError("WRONG_STATE", "Verification cycle has no persisted reviewed content", rule="reviewed_content_missing")
     if reviewed_identity != persisted_reviewed:
         raise DishRuleError("CONFLICT", "caller review identity does not match the persisted review", rule="reviewed_identity_mismatch", retryable=True, details={"persisted_reviewed_identity": persisted_reviewed, "supplied_identity": reviewed_identity})
-    if live.identity != persisted_reviewed:
-        raise DishRuleError("CONFLICT", "live candidate changed after verifier review", rule="stale_verifier_review", details={"reviewed_identity": persisted_reviewed, "actual_identity": live.identity})
+    if correction_class == "small":
+        if not approval_candidate_identity:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "Small-correction approval lacks its corrected candidate identity",
+                rule="small_correction_candidate_missing",
+            )
+        expected_live_identity = approval_candidate_identity
+    else:
+        if approval_candidate_identity is not None:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "No-correction approval cannot substitute another candidate identity",
+                rule="approval_candidate_unexpected",
+            )
+        expected_live_identity = persisted_reviewed
+    if live.identity != expected_live_identity:
+        raise DishRuleError(
+            "CONFLICT",
+            (
+                "live corrected candidate changed before approval"
+                if correction_class == "small"
+                else "live candidate changed after verifier review"
+            ),
+            rule=(
+                "approval_candidate_drift"
+                if correction_class == "small"
+                else "stale_verifier_review"
+            ),
+            details={
+                "reviewed_identity": persisted_reviewed,
+                "expected_approval_candidate_identity": expected_live_identity,
+                "actual_identity": live.identity,
+            },
+        )
     document = parse_task_document(f"{live.title}\n{live.notes}")
     check = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not check.ok or document.state.values["Status"] != "pending-verification":
@@ -458,6 +483,9 @@ def approve_live(
     if exact.state.values["Status"] != "ready" or exact.state.values["Verified by"] == "None":
         raise DishRuleError("BACKEND_UNCERTAIN", "signoff reread did not confirm ready state", rule="signoff_not_confirmed")
     complete_operation_step(conn, operation_id, "signoff_write")
+    approved_candidate_version = _content_version_for_identity(
+        conn, operation_id=operation_id, task_gid=op["task_gid"], identity=live.identity
+    )
     signed_version = _content_version_for_identity(
         conn, operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity
     )
@@ -466,10 +494,26 @@ def approve_live(
     record_audit(
         conn, submission_id=None, task_gid=live.gid, operation_id=operation_id,
         event_type="verification.approved", actor_agent=agent,
-        details={"cycle_id": cycle["cycle_id"], "signed_identity": confirmed.identity, "signed_content_version_id": signed_version["content_version_id"]}, result_code="OK", result_ok=True,
+        details={
+            "cycle_id": cycle["cycle_id"],
+            "reviewed_identity": persisted_reviewed,
+            "reviewed_content_version_id": cycle["reviewed_content_version_id"],
+            "approved_candidate_identity": live.identity,
+            "approved_candidate_content_version_id": approved_candidate_version["content_version_id"],
+            "signed_identity": confirmed.identity,
+            "signed_content_version_id": signed_version["content_version_id"],
+            "correction_class": correction_class,
+        }, result_code="OK", result_ok=True,
         governed_kind="decision",
         before_state={"outcome": None, "reviewed_identity": persisted_reviewed, "status": "pending-verification"},
         after_state={"outcome": "approved", "signed_identity": confirmed.identity, "status": "ready"},
         actor_run_id=run_id, actor_attestation=inherited_attestation,
     )
-    return {"operation_id": operation_id, "cycle_id": cycle["cycle_id"], "signed_identity": confirmed.identity, "task": dataclasses.asdict(confirmed)}
+    return {
+        "operation_id": operation_id,
+        "cycle_id": cycle["cycle_id"],
+        "reviewed_identity": persisted_reviewed,
+        "approved_candidate_identity": live.identity,
+        "signed_identity": confirmed.identity,
+        "task": dataclasses.asdict(confirmed),
+    }

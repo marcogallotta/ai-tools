@@ -6,6 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Callable, TypeVar
 
+from .database_schema import _validate_semantic_evidence
 from .errors import DishRuleError
 from .legacy_adapter import LegacyReadOnlyAdapter
 from .operation_execution import (
@@ -391,6 +392,23 @@ class CurrentWorkflowService:
             if assert_action:
                 self.assert_action(operation_id, command, schema=schema)
             result = executor()
+            recovered_small_signoff = bool(
+                command == "recover"
+                and isinstance(result, dict)
+                and any(
+                    isinstance(action, dict)
+                    and action.get("kind") == "workflow_step"
+                    and action.get("step") == "small_signoff"
+                    for action in result.get("actions", ())
+                )
+            )
+            if command == "approve" or recovered_small_signoff:
+                # Approval is not authoritative success until the complete
+                # reviewed/corrected/signed evidence graph validates. Run this
+                # before completing the execution journal or returning OK so a
+                # broken approval is reported on the request that created it,
+                # including restart recovery that finishes a Small signoff.
+                _validate_semantic_evidence(self.conn)
         except Exception as exc:
             recovery = execution_recovery_state(
                 self.conn,

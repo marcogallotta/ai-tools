@@ -1745,6 +1745,69 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             problems.append(_semantic_problem(
                 "approved_cycle_binding", "verification_cycles", row["cycle_id"],
             ))
+    for row in conn.execute(
+        """SELECT cycle.*
+             FROM verification_cycles AS cycle
+             JOIN operations AS operation ON operation.operation_id=cycle.operation_id
+            WHERE cycle.outcome='approved' AND cycle.correction_class='small'
+              AND cycle.reviewed_identity IS NOT cycle.signed_identity
+              AND operation.migration_reconciliation_required != 1"""
+    ):
+        signoff_attempt = None
+        for attempt in conn.execute(
+            """SELECT * FROM write_attempts
+                 WHERE operation_id=? AND purpose='signoff' AND outcome='confirmed'
+                   AND confirmed_content_version_id=? AND intended_identity=?
+                 ORDER BY started_at DESC, rowid DESC""",
+            (
+                row["operation_id"],
+                row["signed_content_version_id"],
+                row["signed_identity"],
+            ),
+        ):
+            try:
+                context = json.loads(attempt["context_json"] or "{}")
+            except (TypeError, ValueError):
+                continue
+            if (
+                isinstance(context, dict)
+                and context.get("cycle_id") == row["cycle_id"]
+                and context.get("correction_class") == "small"
+            ):
+                signoff_attempt = attempt
+                break
+        corrected_version = None
+        correction_write = None
+        if signoff_attempt is not None:
+            corrected_version = conn.execute(
+                """SELECT content_version_id,operation_id,task_gid,identity,confirmed
+                     FROM content_versions
+                    WHERE operation_id=? AND task_gid=? AND identity=? AND confirmed=1
+                    ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+                (
+                    row["operation_id"],
+                    row["task_gid"],
+                    signoff_attempt["expected_identity"],
+                ),
+            ).fetchone()
+        if corrected_version is not None:
+            correction_write = conn.execute(
+                """SELECT attempt_id FROM write_attempts
+                     WHERE operation_id=? AND purpose='content_write' AND outcome='confirmed'
+                       AND expected_identity=? AND intended_identity=?
+                       AND confirmed_content_version_id=?
+                     ORDER BY started_at DESC, rowid DESC LIMIT 1""",
+                (
+                    row["operation_id"],
+                    row["reviewed_identity"],
+                    corrected_version["identity"],
+                    corrected_version["content_version_id"],
+                ),
+            ).fetchone()
+        if signoff_attempt is None or corrected_version is None or correction_write is None:
+            problems.append(_semantic_problem(
+                "small_correction_lineage", "verification_cycles", row["cycle_id"],
+            ))
     for row in conn.execute("SELECT * FROM dish_inspect_facts"):
         cycle = conn.execute(
             """SELECT operation_id,task_gid,reviewed_content_version_id,reviewed_identity,

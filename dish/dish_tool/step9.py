@@ -963,12 +963,34 @@ def recover_operation(
                     transition_operation(conn, operation_id, phase="await_verification")
                 actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
             elif step["step_name"] == "small_review_binding":
-                from .step7 import bind_cycle_review
-                if live.identity != intended["identity"]:
+                from .step8 import _assert_small_correction_write_lineage
+                cycle = conn.execute(
+                    "SELECT * FROM verification_cycles WHERE cycle_id=?",
+                    (intended["cycle_id"],),
+                ).fetchone()
+                if cycle is None:
+                    raise DishRuleError(
+                        "CONFLICT",
+                        "Small-correction cycle is missing",
+                        rule="workflow_cycle_missing",
+                    )
+                reviewed_identity = (
+                    intended.get("reviewed_identity") or cycle["reviewed_identity"]
+                )
+                corrected_identity = (
+                    intended.get("corrected_identity")
+                    or intended.get("identity")
+                )
+                if cycle["reviewed_identity"] != reviewed_identity:
+                    raise DishRuleError(
+                        "CONFLICT",
+                        "Small-correction review binding no longer matches its inspected candidate",
+                        rule="workflow_step_evidence_mismatch",
+                    )
+                if live.identity != corrected_identity:
                     raise DishRuleError("CONFLICT", "live correction does not match review-binding intent", rule="workflow_step_evidence_mismatch")
-                bind_cycle_review(
-                    conn, cycle_id=intended["cycle_id"], operation_id=operation_id,
-                    task_gid=op["task_gid"], identity=live.identity, correction_class="small",
+                _assert_small_correction_write_lineage(
+                    conn, cycle=cycle, corrected_identity=corrected_identity,
                 )
                 complete_operation_step(conn, operation_id, "small_review_binding")
                 actions.append({"kind": "workflow_step", "step": "small_review_binding", "outcome": "confirmed"})
@@ -996,7 +1018,31 @@ def recover_operation(
                     complete_operation_step(conn, operation_id, "small_signoff")
                 else:
                     from .step7 import approve_live
-                    result = approve_live(conn, backend, operation_id=operation_id, agent=intended["agent"], reviewed_identity=live.identity, semantic_review_complete=True, provenance_complete=True, correction_class="small", run_id=intended.get("run_id"))
+                    if cycle is None:
+                        raise DishRuleError(
+                            "CONFLICT",
+                            "Small-correction cycle is missing",
+                            rule="workflow_cycle_missing",
+                        )
+                    reviewed_identity = (
+                        intended.get("reviewed_identity") or cycle["reviewed_identity"]
+                    )
+                    corrected_identity = (
+                        intended.get("corrected_identity") or live.identity
+                    )
+                    result = approve_live(
+                        conn,
+                        backend,
+                        operation_id=operation_id,
+                        agent=intended["agent"],
+                        model=intended.get("model"),
+                        reviewed_identity=reviewed_identity,
+                        approval_candidate_identity=corrected_identity,
+                        semantic_review_complete=True,
+                        provenance_complete=True,
+                        correction_class="small",
+                        run_id=intended.get("run_id"),
+                    )
                     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
                     complete_operation_step(conn, operation_id, "small_signoff")
                 actions.append({"kind": "workflow_step", "step": "small_signoff", "outcome": "confirmed"})
