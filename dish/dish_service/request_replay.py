@@ -67,10 +67,21 @@ def begin_request(
         raise
 
 
-def stored_result(row) -> dict[str, Any] | None:
-    if row["status"] not in {"completed", "uncertain"} or row["result_json"] is None:
+def stored_result(
+    row, *, permit_uncertain_resume: bool = False
+) -> dict[str, Any] | None:
+    if row["status"] not in {"completed", "uncertain"}:
         return None
-    result = json.loads(row["result_json"])
+    if row["status"] == "uncertain" and permit_uncertain_resume:
+        return None
+    encoded = (
+        row["resolution_result_json"]
+        if row["status"] == "completed" and row["resolution_result_json"]
+        else row["result_json"]
+    )
+    if encoded is None:
+        return None
+    result = json.loads(encoded)
     result.setdefault("data", {})["request_replayed"] = True
     result["data"]["request_id"] = row["request_id"]
     return result
@@ -84,23 +95,36 @@ def complete_request(
 ) -> None:
     status = "uncertain" if result.get("code") == "BACKEND_UNCERTAIN" else "completed"
     encoded = json.dumps(dict(result), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    conn.execute(
-        """UPDATE service_requests
-              SET status=?,
-                  operation_id=(
-                      SELECT operation_id FROM operations WHERE operation_id=?
-                  ),
-                  task_gid=?, result_json=?, completed_at=?
-            WHERE request_id=? AND status='pending'""",
-        (
-            status,
-            result.get("submission_id"),
-            result.get("task_gid"),
-            encoded,
-            utc_now(),
-            request_id,
-        ),
-    )
+    row = conn.execute(
+        "SELECT status FROM service_requests WHERE request_id=?", (request_id,)
+    ).fetchone()
+    if row is None:
+        return
+    if row["status"] == "pending":
+        conn.execute(
+            """UPDATE service_requests
+                  SET status=?,
+                      operation_id=(
+                          SELECT operation_id FROM operations WHERE operation_id=?
+                      ),
+                      task_gid=?, result_json=?, completed_at=?
+                WHERE request_id=? AND status='pending'""",
+            (
+                status,
+                result.get("submission_id"),
+                result.get("task_gid"),
+                encoded,
+                utc_now(),
+                request_id,
+            ),
+        )
+    elif row["status"] == "uncertain" and status == "completed":
+        conn.execute(
+            """UPDATE service_requests
+                  SET status='completed', resolution_result_json=?, resolved_at=?
+                WHERE request_id=? AND status='uncertain' AND resolved_at IS NULL""",
+            (encoded, utc_now(), request_id),
+        )
 
 
 def pending_error(command: str, request_id: str, *, operation_id: str | None = None):

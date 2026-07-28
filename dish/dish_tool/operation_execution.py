@@ -19,6 +19,7 @@ class OperationExecutionClaim:
     execution_id: str
     command: str
     request_id: str | None
+    resuming_uncertain: bool = False
 
 
 _OPERATION_FIELDS = (
@@ -331,6 +332,69 @@ def claim_operation_execution(
                 (operation_id, existing["claim_id"]),
             )
 
+        unresolved = conn.execute(
+            """SELECT * FROM operation_executions
+                 WHERE operation_id=? AND status='uncertain'
+                   AND resolved_at IS NULL
+                 ORDER BY created_at, rowid""",
+            (operation_id,),
+        ).fetchall()
+        if unresolved:
+            if len(unresolved) != 1:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "multiple unresolved operation executions require operator review",
+                    rule="operation_execution_recovery_ambiguous",
+                    retryable=False,
+                    details={
+                        "operation_id": operation_id,
+                        "execution_ids": [row["execution_id"] for row in unresolved],
+                        "required_admin_action": "recover",
+                    },
+                )
+            prior = unresolved[0]
+            exact_resume = bool(
+                prior["command"] == clean_command
+                and (
+                    (clean_request is not None and prior["request_id"] == clean_request)
+                    or (clean_request is None and prior["request_id"] is None)
+                )
+            )
+            if not exact_resume and clean_command != "recover":
+                recovery = json.loads(prior["evidence_json"] or "{}")
+                details = dict(recovery) if isinstance(recovery, dict) else {}
+                details.update({
+                    "operation_id": operation_id,
+                    "command": prior["command"],
+                    "execution_id": prior["execution_id"],
+                    "request_id": prior["request_id"],
+                    "required_admin_action": "recover",
+                })
+                raise DishRuleError(
+                    "CONFLICT",
+                    "an unresolved uncertain mutation must be reconciled before another mutation",
+                    rule="operation_mutation_recovery_required",
+                    retryable=False,
+                    details=details,
+                )
+            conn.execute(
+                """INSERT INTO operation_execution_claims(
+                       operation_id,claim_id,command,hostname,pid,process_start,
+                       acquired_at,execution_id
+                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                (
+                    operation_id, claim_id, clean_command, identity.hostname,
+                    identity.pid, identity.process_start, utc_now(),
+                    prior["execution_id"],
+                ),
+            )
+            conn.execute("COMMIT")
+            return OperationExecutionClaim(
+                operation_id=operation_id, claim_id=claim_id,
+                execution_id=prior["execution_id"], command=clean_command,
+                request_id=clean_request, resuming_uncertain=True,
+            )
+
         baseline = _execution_baseline(conn, operation_id)
         conn.execute(
             """INSERT INTO operation_executions(
@@ -512,6 +576,18 @@ def _failure_step(
     failure_rule: str | None,
 ) -> str:
     if pending_steps:
+        # Report the authoritative suffix that failed, not an earlier effect
+        # intent that remains pending only because the atomic finalizer rolled
+        # back.  This preserves stable recovery diagnostics while allowing
+        # intent steps to fence and reconstruct the decision.
+        if "signoff_finalize" in pending_steps:
+            return "signoff_finalize"
+        route_new_cycle = next(
+            (step for step in pending_steps if step.startswith("route_new_cycle:")),
+            None,
+        )
+        if route_new_cycle is not None:
+            return route_new_cycle
         return pending_steps[0]
     unresolved_write = next(
         (row for row in writes if row["outcome"] in {"started", "uncertain"}),
@@ -539,6 +615,7 @@ def execution_recovery_state(
     request_id: str | None = None,
     failure_rule: str | None = None,
     include_completed: bool = False,
+    refresh: bool = False,
 ) -> dict[str, Any] | None:
     """Reconstruct only durable effects caused by one exact execution."""
     if execution_id:
@@ -577,7 +654,7 @@ def execution_recovery_state(
             "recovery_required": False,
         })
         return evidence
-    if row["evidence_json"]:
+    if row["evidence_json"] and not refresh:
         return json.loads(row["evidence_json"])
 
     baseline = json.loads(row["baseline_json"])
@@ -766,13 +843,42 @@ def finish_operation_execution(
     )
     conn.execute("BEGIN IMMEDIATE")
     try:
-        updated = conn.execute(
-            """UPDATE operation_executions
-                  SET status=?, evidence_json=?, completed_at=?
-                WHERE execution_id=? AND status='started'""",
-            (status, encoded, utc_now(), claim.execution_id),
-        )
-        if updated.rowcount != 1:
+        current = conn.execute(
+            "SELECT status FROM operation_executions WHERE execution_id=?",
+            (claim.execution_id,),
+        ).fetchone()
+        if current is None:
+            raise DishRuleError(
+                "CONFLICT", "operation execution is missing",
+                rule="operation_execution_binding_invalid",
+                details={"execution_id": claim.execution_id},
+            )
+        if current["status"] == "started":
+            updated = conn.execute(
+                """UPDATE operation_executions
+                      SET status=?, evidence_json=?, completed_at=?
+                    WHERE execution_id=? AND status='started'""",
+                (status, encoded, utc_now(), claim.execution_id),
+            )
+        elif current["status"] == "uncertain" and status == "completed":
+            updated = conn.execute(
+                """UPDATE operation_executions
+                      SET status='completed', resolution_evidence_json=?, resolved_at=?
+                    WHERE execution_id=? AND status='uncertain' AND resolved_at IS NULL""",
+                (encoded, utc_now(), claim.execution_id),
+            )
+        elif current["status"] == "uncertain" and status == "uncertain":
+            updated = None
+        else:
+            updated = None
+            raise DishRuleError(
+                "CONFLICT",
+                "operation execution changed before completion",
+                rule="operation_execution_completion_lost",
+                retryable=False,
+                details={"execution_id": claim.execution_id},
+            )
+        if updated is not None and updated.rowcount != 1:
             raise DishRuleError(
                 "CONFLICT",
                 "operation execution changed before completion",
@@ -797,6 +903,59 @@ def finish_operation_execution(
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
+
+
+def resolve_recovered_unclaimed_local_executions(
+    conn: sqlite3.Connection, *, operation_id: str
+) -> list[str]:
+    """Resolve requestless uncertain executions after direct authoritative recovery.
+
+    Service-journalled requests are resolved by exact replay so their authoritative
+    result envelope remains reconstructable. This helper exists for local direct
+    mode and tests, where no service request row owns the execution.
+    """
+    rows = conn.execute(
+        """SELECT execution_id FROM operation_executions AS execution
+             WHERE operation_id=? AND status='uncertain' AND resolved_at IS NULL
+               AND request_id IS NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM operation_execution_claims AS claim
+                    WHERE claim.execution_id=execution.execution_id
+               )
+             ORDER BY created_at, rowid""",
+        (operation_id,),
+    ).fetchall()
+    resolved: list[str] = []
+    for row in rows:
+        state = execution_recovery_state(
+            conn, execution_id=row["execution_id"], refresh=True
+        )
+        if (
+            state is None
+            or state.get("pending_steps")
+            or state.get("write_state") == "uncertain"
+            or state.get("movement_state") == "uncertain"
+        ):
+            continue
+        encoded = json.dumps(state, sort_keys=True, separators=(",", ":"))
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            updated = conn.execute(
+                """UPDATE operation_executions
+                      SET status='completed', resolution_evidence_json=?, resolved_at=?
+                    WHERE execution_id=? AND status='uncertain'
+                      AND resolved_at IS NULL AND request_id IS NULL""",
+                (encoded, utc_now(), row["execution_id"]),
+            )
+            conn.execute("COMMIT")
+        except Exception:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+        if updated.rowcount == 1:
+            resolved.append(row["execution_id"])
+    return resolved
+
 
 
 def partial_write_error(

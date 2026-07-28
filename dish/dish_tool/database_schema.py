@@ -1456,7 +1456,69 @@ BEFORE DELETE ON planning_reopen_attempts
 BEGIN SELECT RAISE(ABORT, 'planning reopen attempts are append-only'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26}
+
+
+_MIGRATION_27 = """
+ALTER TABLE operation_executions ADD COLUMN resolution_evidence_json TEXT
+    CHECK(resolution_evidence_json IS NULL OR json_valid(resolution_evidence_json));
+ALTER TABLE operation_executions ADD COLUMN resolved_at TEXT;
+ALTER TABLE service_requests ADD COLUMN resolution_result_json TEXT
+    CHECK(resolution_result_json IS NULL OR json_valid(resolution_result_json));
+ALTER TABLE service_requests ADD COLUMN resolved_at TEXT;
+
+DROP TRIGGER operation_executions_status_monotonic_update;
+CREATE TRIGGER operation_executions_status_monotonic_update
+BEFORE UPDATE OF status, evidence_json, completed_at, resolution_evidence_json, resolved_at
+ON operation_executions
+WHEN NOT (
+    (
+        OLD.status='started'
+        AND NEW.status IN ('completed','uncertain')
+        AND NEW.completed_at IS NOT NULL
+        AND NEW.evidence_json IS NOT NULL
+        AND NEW.resolution_evidence_json IS NULL
+        AND NEW.resolved_at IS NULL
+    )
+    OR
+    (
+        OLD.status='uncertain'
+        AND NEW.status='completed'
+        AND NEW.evidence_json IS OLD.evidence_json
+        AND NEW.completed_at IS OLD.completed_at
+        AND NEW.resolution_evidence_json IS NOT NULL
+        AND NEW.resolved_at IS NOT NULL
+    )
+)
+BEGIN SELECT RAISE(ABORT, 'operation execution completion or resolution is invalid'); END;
+
+DROP TRIGGER service_requests_status_monotonic_update;
+CREATE TRIGGER service_requests_status_monotonic_update
+BEFORE UPDATE OF status, operation_id, task_gid, result_json, completed_at, resolution_result_json, resolved_at
+ON service_requests
+WHEN NOT (
+    (
+        OLD.status='pending'
+        AND NEW.status IN ('completed','uncertain')
+        AND NEW.result_json IS NOT NULL
+        AND NEW.completed_at IS NOT NULL
+        AND NEW.resolution_result_json IS NULL
+        AND NEW.resolved_at IS NULL
+    )
+    OR
+    (
+        OLD.status='uncertain'
+        AND NEW.status='completed'
+        AND NEW.operation_id IS OLD.operation_id
+        AND NEW.task_gid IS OLD.task_gid
+        AND NEW.result_json IS OLD.result_json
+        AND NEW.completed_at IS OLD.completed_at
+        AND NEW.resolution_result_json IS NOT NULL
+        AND NEW.resolved_at IS NOT NULL
+    )
+)
+BEGIN SELECT RAISE(ABORT, 'service request completion or resolution is invalid'); END;
+"""
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -1978,13 +2040,16 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
         if row["execution_id"] is None:
             continue
         execution = conn.execute(
-            "SELECT operation_id,status FROM operation_executions WHERE execution_id=?",
+            "SELECT operation_id,status,resolved_at FROM operation_executions WHERE execution_id=?",
             (row["execution_id"],),
         ).fetchone()
         if (
             execution is None
             or execution["operation_id"] != row["operation_id"]
-            or execution["status"] != "started"
+            or not (
+                execution["status"] == "started"
+                or (execution["status"] == "uncertain" and execution["resolved_at"] is None)
+            )
         ):
             problems.append(_semantic_problem(
                 "operation_execution_claim_binding",
@@ -2002,7 +2067,10 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 "operation_executions",
                 row["execution_id"],
             ))
-        if row["status"] != "started" and claim is not None:
+        if (
+            row["status"] not in {"started", "uncertain"}
+            or (row["status"] == "uncertain" and row["resolved_at"] is not None)
+        ) and claim is not None:
             problems.append(_semantic_problem(
                 "completed_operation_execution_claimed",
                 "operation_executions",

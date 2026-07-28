@@ -8,7 +8,7 @@ from typing import Any, Callable, Mapping
 
 from .application_service import OperationApplicationService
 from .command_support import reject_undeclared_arguments
-from .database import process_command_audit_repairs, record_audit
+from .database import atomic_persistence, complete_operation_step, declare_operation_step, process_command_audit_repairs, record_audit
 from .invocation_audit import record_invocation_audit
 from .errors import DishRuleError
 from .results import error_envelope, result_envelope
@@ -501,10 +501,46 @@ def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, r
             details={"expected_identity": op["expected_identity"], "actual_identity": live.identity},
         )
     from .database import transition_operation
-    final = transition_operation(self.conn, operation_id, phase="terminal", status="cancelled", terminal_outcome="cancelled_by_marco")
-    record_audit(self.conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="operation.cancelled", actor_agent=None, details={"reason": _clean_required(reason, rule="discard_reason_required", label="discard reason")}, result_code="OK", result_ok=True, actor_source="marco-admin")
-    trace.submission_id=operation_id; trace.task_gid=op["task_gid"]; trace.state=final["status"]
-    return result_envelope(command="discard", task_gid=op["task_gid"], submission_id=operation_id, state=final["status"], data={"reason": reason})
+    clean_reason = _clean_required(
+        reason, rule="discard_reason_required", label="discard reason"
+    )
+    cancel_step = "operation_cancel"
+
+    def finalize_cancel():
+        # Declare the decision intent only after the operation execution claim
+        # exists, so a failed cancellation suffix is visible as changed durable
+        # evidence and fences later mutations.
+        declare_operation_step(
+            self.conn, operation_id, cancel_step, {"reason": clean_reason}
+        )
+        with atomic_persistence(self.conn, "operation_cancel"):
+            final = transition_operation(
+                self.conn, operation_id, phase="terminal", status="cancelled",
+                terminal_outcome="cancelled_by_marco",
+            )
+            record_audit(
+                self.conn, submission_id=None, task_gid=op["task_gid"],
+                operation_id=operation_id, event_type="operation.cancelled",
+                actor_agent=None, details={"reason": clean_reason},
+                result_code="OK", result_ok=True, governed_kind="decision",
+                before_state={"status": "open"},
+                after_state={"status": "cancelled"},
+                actor_source="marco-admin",
+            )
+            complete_operation_step(self.conn, operation_id, cancel_step)
+        return {"reason": clean_reason}
+
+    data, view = self.operation_service.current.cancel(
+        operation_id, finalize_cancel
+    )
+    trace.submission_id = operation_id
+    trace.task_gid = op["task_gid"]
+    trace.state = view["status"]
+    return result_envelope(
+        command="discard", task_gid=op["task_gid"],
+        submission_id=operation_id, state=view["status"],
+        allowed_actions=view["legal_actions"], data=data,
+    )
 
 CURRENT_ADMIN_COMMAND_HANDLERS = {
     "migrate": _step5_admin_migrate,

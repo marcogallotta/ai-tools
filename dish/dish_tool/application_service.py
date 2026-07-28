@@ -219,6 +219,19 @@ class CurrentWorkflowService:
             (operation_id, operation_id),
         ).fetchall()
         unresolved_attempts = tuple(row["item"] for row in unresolved_rows)
+        unresolved_executions = tuple(
+            row["execution_id"]
+            for row in self.conn.execute(
+                """SELECT execution_id FROM operation_executions
+                     WHERE operation_id=? AND status='uncertain' AND resolved_at IS NULL
+                     ORDER BY created_at, rowid""",
+                (operation_id,),
+            ).fetchall()
+        )
+        if unresolved_executions:
+            unresolved_attempts += tuple(
+                f"execution:{execution_id}" for execution_id in unresolved_executions
+            )
         pending_steps = tuple(row["step_name"] for row in self.repository.pending_steps(operation_id))
         migration_required = bool(op["migration_reconciliation_required"])
         snapshot = WorkflowSnapshot(
@@ -268,6 +281,7 @@ class CurrentWorkflowService:
             "validation_rules": validation_rules,
             "pending_steps": list(pending_steps),
             "unresolved_attempts": list(unresolved_attempts),
+            "unresolved_execution_ids": list(unresolved_executions),
             "required_cycle_exists": required_cycle_exists,
             "cycle_reviewed": cycle_reviewed,
             "dish_inspect_current": dish_inspect_current,
@@ -389,7 +403,7 @@ class CurrentWorkflowService:
         )
         result: T
         try:
-            if assert_action:
+            if assert_action and not claim.resuming_uncertain:
                 self.assert_action(operation_id, command, schema=schema)
             result = executor()
             recovered_small_signoff = bool(
@@ -414,7 +428,12 @@ class CurrentWorkflowService:
                 self.conn,
                 execution_id=claim.execution_id,
                 failure_rule=(exc.rule if isinstance(exc, DishRuleError) else type(exc).__name__),
+                refresh=claim.resuming_uncertain,
             )
+            if claim.resuming_uncertain and recovery is not None:
+                recovery = dict(recovery)
+                recovery.setdefault("root_command", recovery.get("command"))
+                recovery["command"] = claim.command
             controlled_failure = isinstance(exc, DishRuleError) and exc.code in {
                 "INVALID_ARGUMENT",
                 "VALIDATION_FAILED",
@@ -424,9 +443,25 @@ class CurrentWorkflowService:
                 "BACKEND_REJECTED",
                 "NOT_FOUND",
             }
+            replayed_authoritative_failure = bool(
+                claim.resuming_uncertain
+                and controlled_failure
+                and recovery is not None
+                and not recovery.get("pending_steps")
+                and recovery.get("write_state") != "uncertain"
+                and recovery.get("movement_state") != "uncertain"
+                and not (
+                    isinstance(exc, DishRuleError)
+                    and (
+                        exc.code == "BACKEND_UNCERTAIN"
+                        or exc.rule == "database_semantic_evidence_invalid"
+                    )
+                )
+            )
             partial_failure = bool(
                 recovery is not None
                 and recovery["recovery_required"]
+                and not replayed_authoritative_failure
                 and (
                     not controlled_failure
                     or recovery["write_state"] in {"confirmed", "uncertain"}
@@ -450,14 +485,28 @@ class CurrentWorkflowService:
                     }
                 raise partial_write_error(exc, recovery) from exc
             try:
-                finish_operation_execution(self.conn, claim, status="completed")
+                finish_operation_execution(
+                    self.conn,
+                    claim,
+                    status="completed",
+                    evidence=(recovery if claim.resuming_uncertain else None),
+                )
             except Exception:
                 raise
             raise
 
         release_error: Exception | None = None
         try:
-            finish_operation_execution(self.conn, claim, status="completed")
+            resolution = (
+                execution_recovery_state(
+                    self.conn, execution_id=claim.execution_id, refresh=True
+                )
+                if claim.resuming_uncertain
+                else None
+            )
+            finish_operation_execution(
+                self.conn, claim, status="completed", evidence=resolution
+            )
         except Exception as exc:
             release_error = exc
         result, view = self._post_operation_view(operation_id, result, schema=schema)

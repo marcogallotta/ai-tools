@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import re
 import json
 import sqlite3
@@ -208,25 +209,43 @@ def _record_movement_failure(
     retry_safe: bool,
     reason: str,
 ) -> dict[str, Any]:
-    transition_operation(conn, op["operation_id"], phase="ready_move_failed")
     details = _movement_failure_details(
         op=op,
         destination_gid=destination_gid,
         retry_safe=retry_safe,
         reason=reason,
     )
-    record_audit(
-        conn,
-        submission_id=None,
-        task_gid=op["task_gid"],
-        operation_id=op["operation_id"],
-        event_type="operation.destination_movement_failed",
-        actor_agent=None,
-        details=details,
-        result_code="BACKEND_REJECTED" if retry_safe else "VALIDATION_FAILED",
-        result_ok=False,
-    )
-    return details
+    digest = hashlib.sha256(
+        json.dumps(details, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()[:20]
+    step_name = f"destination_failure:{digest}"
+    intended = {**details, "classification_step": step_name}
+    declare_operation_step(conn, op["operation_id"], step_name, intended)
+    with atomic_persistence(conn, "destination_failure_classification"):
+        if op["phase"] != "ready_move_failed":
+            transition_operation(
+                conn, op["operation_id"], phase="ready_move_failed"
+            )
+        prior = conn.execute(
+            """SELECT 1 FROM audit_events
+                 WHERE operation_id=?
+                   AND event_type='operation.destination_movement_failed'
+                   AND json_extract(details, '$.classification_step')=? LIMIT 1""",
+            (op["operation_id"], step_name),
+        ).fetchone()
+        if prior is None:
+            record_audit(
+                conn, submission_id=None, task_gid=op["task_gid"],
+                operation_id=op["operation_id"],
+                event_type="operation.destination_movement_failed",
+                actor_agent=None, details=intended,
+                result_code="BACKEND_REJECTED" if retry_safe else "VALIDATION_FAILED",
+                result_ok=False, governed_kind="decision",
+                before_state={"phase": op["phase"]},
+                after_state={"phase": "ready_move_failed", "retry_safe": retry_safe},
+            )
+        complete_operation_step(conn, op["operation_id"], step_name)
+    return intended
 
 
 def completed_submit_live(
@@ -353,8 +372,138 @@ def completed_submit_live(
     }
 
 
+def _finalize_submission_terminal(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    intended: dict[str, Any],
+    recovered: bool,
+) -> None:
+    op = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if op is None:
+        raise DishRuleError(
+            "NOT_FOUND", "operation not found", rule="operation_not_found"
+        )
+    if intended.get("movement_attempt_id"):
+        movement = conn.execute(
+            """SELECT * FROM movement_attempts
+                 WHERE attempt_id=? AND operation_id=?""",
+            (intended["movement_attempt_id"], operation_id),
+        ).fetchone()
+        if (
+            movement is None
+            or movement["outcome"] != "confirmed"
+            or movement["confirmed_section_gid"] != intended.get("section_gid")
+        ):
+            raise DishRuleError(
+                "CONFLICT", "submission movement evidence is incomplete",
+                rule="workflow_movement_incomplete",
+            )
+    with atomic_persistence(conn, "submission_terminal"):
+        declare_operation_step(conn, operation_id, "submission_terminal", intended)
+        if op["status"] != "completed":
+            transition_operation(
+                conn, operation_id, phase="terminal", status="completed",
+                terminal_outcome="destination_handled",
+            )
+        else:
+            # Acquire the local writer lock before any fault-injection pause in
+            # the proof audit, so readers cannot interleave inside the suffix.
+            conn.execute(
+                "UPDATE operations SET phase=phase WHERE operation_id=?",
+                (operation_id,),
+            )
+        prior = conn.execute(
+            """SELECT 1 FROM audit_events
+                 WHERE operation_id=? AND event_type='operation.submitted' LIMIT 1""",
+            (operation_id,),
+        ).fetchone()
+        if prior is None:
+            record_audit(
+                conn, submission_id=None, task_gid=op["task_gid"],
+                operation_id=operation_id, event_type="operation.submitted",
+                actor_agent=None,
+                details={
+                    "handoff": intended.get("handoff"),
+                    "moved": bool(intended.get("moved")),
+                    "section_gid": intended.get("section_gid"),
+                    "destination_diagnostic": intended.get("destination_diagnostic"),
+                    "movement_attempt_id": intended.get("movement_attempt_id"),
+                    "recovered": recovered,
+                },
+                result_code="OK", result_ok=True, governed_kind="lock",
+                before_state={"operation_id": operation_id, "status": "open"},
+                after_state={"operation_id": operation_id, "status": "completed"},
+                actor_source="recovery" if recovered else "submission-command",
+            )
+        complete_operation_step(conn, operation_id, "submission_terminal")
+        intent_step = conn.execute(
+            "SELECT completed_at FROM operation_steps WHERE operation_id=? AND step_name='submission_terminal_intent'",
+            (operation_id,),
+        ).fetchone()
+        if intent_step is not None and intent_step["completed_at"] is None:
+            complete_operation_step(conn, operation_id, "submission_terminal_intent")
+
+
+def _resume_submission_terminal(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    operation_id: str,
+) -> dict[str, Any] | None:
+    step = conn.execute(
+        """SELECT * FROM operation_steps
+             WHERE operation_id=?
+               AND step_name IN ('submission_terminal_intent','submission_terminal')
+               AND completed_at IS NULL
+             ORDER BY CASE step_name WHEN 'submission_terminal_intent' THEN 0 ELSE 1 END
+             LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    if step is None:
+        return None
+    intended = json.loads(step["intended_json"])
+    op = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    live = read_complete_task(
+        backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    if (
+        live.identity != intended.get("effective_identity")
+        or live.section_gid != intended.get("section_gid")
+    ):
+        raise DishRuleError(
+            "CONFLICT", "live task does not satisfy submission terminal intent",
+            rule="workflow_step_evidence_mismatch",
+        )
+    _finalize_submission_terminal(
+        conn, operation_id=operation_id, intended=intended, recovered=True
+    )
+    destination = intended.get("destination")
+    return {
+        "operation_id": operation_id,
+        "signed_identity": intended.get("signed_identity"),
+        "effective_identity": intended.get("effective_identity"),
+        "destination_repair": intended.get("destination_repair"),
+        "handoff": intended.get("handoff"),
+        "moved": bool(intended.get("moved")),
+        "destination": destination,
+        "destination_diagnostic": intended.get("destination_diagnostic"),
+        "task": dataclasses.asdict(live),
+        "submission_recovered": True,
+    }
+
+
 def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, schema=None) -> dict[str, Any]:
     op = _operation(conn, operation_id)
+    resumed = _resume_submission_terminal(
+        conn, backend, operation_id=operation_id
+    )
+    if resumed is not None:
+        return resumed
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     identity_evidence = submission_identity_evidence(conn, operation_id)
     signed_identity = _signed_identity(conn, operation_id)
@@ -467,26 +616,34 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
     else:
         handoff = "manual_placement_preserved"
 
-    # The external movement attempt is already durably confirmed above.  The
-    # remaining local terminal evidence must appear as one SQLite fact: readers
-    # may see the pre-terminal operation or the complete terminal record, never
-    # a terminal operation with a half-written step/audit tail.
-    with atomic_persistence(conn, "submission_terminal"):
-        declare_operation_step(
-            conn, operation_id, "submission_terminal",
-            {"phase": "terminal", "status": "completed", "terminal_outcome": "destination_handled"},
-        )
-        transition_operation(conn, operation_id, phase="terminal", status="completed", terminal_outcome="destination_handled")
-        complete_operation_step(conn, operation_id, "submission_terminal")
-        record_audit(
-            conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
-            event_type="operation.submitted", actor_agent=None,
-            details={"handoff": handoff, "moved": moved, "section_gid": live.section_gid, "destination_diagnostic": diagnostic},
-            result_code="OK", result_ok=True, governed_kind="lock",
-            before_state={"operation_id": operation_id, "status": "open"},
-            after_state={"operation_id": operation_id, "status": "completed"},
-            actor_source="submission-command",
-        )
+    # Persist a recoverable terminal intent after exact movement confirmation.
+    # The operation remains open until the proof audit, terminal state, and step
+    # completion commit together.
+    movement_attempt_id = op["destination_movement_attempt_id"]
+    refreshed_op = conn.execute(
+        "SELECT destination_movement_attempt_id FROM operations WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()
+    if refreshed_op is not None and refreshed_op["destination_movement_attempt_id"]:
+        movement_attempt_id = refreshed_op["destination_movement_attempt_id"]
+    terminal_intent = {
+        "phase": "terminal", "status": "completed",
+        "terminal_outcome": "destination_handled",
+        "signed_identity": signed_identity,
+        "effective_identity": effective_identity,
+        "destination_repair": identity_evidence["destination_repair"],
+        "handoff": handoff, "moved": moved,
+        "section_gid": live.section_gid,
+        "destination": None if destination is None else {"name": destination.name, "gid": destination.gid},
+        "destination_diagnostic": diagnostic,
+        "movement_attempt_id": movement_attempt_id,
+    }
+    declare_operation_step(
+        conn, operation_id, "submission_terminal_intent", terminal_intent
+    )
+    _finalize_submission_terminal(
+        conn, operation_id=operation_id, intended=terminal_intent, recovered=False
+    )
     return {
         "operation_id": operation_id,
         "signed_identity": signed_identity,
@@ -509,45 +666,134 @@ def _complete_destination_repair_step(
     repaired_identity: str,
     recovered: bool = False,
 ) -> None:
-    complete_operation_step(conn, operation_id, step_name)
-    transition_operation(conn, operation_id, phase="await_submission")
+    with atomic_persistence(conn, "destination_repair_finalize"):
+        op = conn.execute(
+            "SELECT task_gid, phase FROM operations WHERE operation_id=?",
+            (operation_id,),
+        ).fetchone()
+        if op is None:
+            raise DishRuleError(
+                "NOT_FOUND", "operation not found", rule="operation_not_found"
+            )
+        complete_operation_step(conn, operation_id, step_name)
+        if op["phase"] != "await_submission":
+            transition_operation(conn, operation_id, phase="await_submission")
+        prior = conn.execute(
+            """SELECT 1 FROM audit_events
+                 WHERE operation_id=? AND event_type='operation.destination_repaired'
+                   AND json_extract(details, '$.repair_step')=? LIMIT 1""",
+            (operation_id, step_name),
+        ).fetchone()
+        if prior is None:
+            record_audit(
+                conn,
+                submission_id=None,
+                task_gid=op["task_gid"],
+                operation_id=operation_id,
+                event_type="operation.destination_repaired",
+                actor_agent=None,
+                details={
+                    **context,
+                    "repair_step": step_name,
+                    "repaired_identity": repaired_identity,
+                    "recovered": recovered,
+                },
+                result_code="OK",
+                result_ok=True,
+                governed_kind="decision",
+                before_state={
+                    "identity": context.get("source_identity"),
+                    "destination": context.get("before_destination"),
+                },
+                after_state={
+                    "identity": repaired_identity,
+                    "destination": context.get("after_destination"),
+                },
+                actor_run_id=context.get("actor_run_id"),
+                actor_source="recovery" if recovered else "marco-admin",
+            )
+
+
+def _resume_destination_repair(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    operation_id: str,
+    destination_section_gid: str,
+    reason: str,
+    actor_run_id: str | None,
+) -> dict[str, Any] | None:
+    attempt = conn.execute(
+        """SELECT * FROM write_attempts
+             WHERE operation_id=? AND purpose='destination_repair'
+               AND outcome='confirmed'
+             ORDER BY started_at DESC, rowid DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    if attempt is None:
+        return None
+    context = json.loads(attempt["context_json"] or "{}")
+    step_name = str(context.get("repair_step") or "")
+    if not step_name:
+        return None
+    step = conn.execute(
+        "SELECT * FROM operation_steps WHERE operation_id=? AND step_name=?",
+        (operation_id, step_name),
+    ).fetchone()
     prior = conn.execute(
         """SELECT 1 FROM audit_events
              WHERE operation_id=? AND event_type='operation.destination_repaired'
                AND json_extract(details, '$.repair_step')=? LIMIT 1""",
         (operation_id, step_name),
     ).fetchone()
-    if prior is None:
-        op = conn.execute(
-            "SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)
-        ).fetchone()
-        record_audit(
-            conn,
-            submission_id=None,
-            task_gid=op["task_gid"],
-            operation_id=operation_id,
-            event_type="operation.destination_repaired",
-            actor_agent=None,
-            details={
-                **context,
-                "repair_step": step_name,
-                "repaired_identity": repaired_identity,
-                "recovered": recovered,
-            },
-            result_code="OK",
-            result_ok=True,
-            governed_kind="decision",
-            before_state={
-                "identity": context.get("source_identity"),
-                "destination": context.get("before_destination"),
-            },
-            after_state={
-                "identity": repaired_identity,
-                "destination": context.get("after_destination"),
-            },
-            actor_run_id=context.get("actor_run_id"),
-            actor_source="recovery" if recovered else "marco-admin",
+    if step is None or (step["completed_at"] is not None and prior is not None):
+        return None
+    if str(destination_section_gid or "").strip() != str(context.get("after_destination") or "").rsplit(" — ", 1)[-1]:
+        raise DishRuleError(
+            "CONFLICT", "destination repair replay differs from durable intent",
+            rule="destination_repair_replay_mismatch",
         )
+    if str(reason or "").strip() != str(context.get("reason") or "").strip():
+        raise DishRuleError(
+            "CONFLICT", "destination repair reason differs from durable intent",
+            rule="destination_repair_replay_mismatch",
+        )
+    expected_run = str(context.get("actor_run_id") or "").strip() or None
+    supplied_run = str(actor_run_id or "").strip() or None
+    if expected_run != supplied_run:
+        raise DishRuleError(
+            "AGENT_MISMATCH", "destination repair run differs from durable intent",
+            rule="destination_repair_replay_mismatch",
+        )
+    op = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    live = read_complete_task(
+        backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    if live.identity != attempt["intended_identity"]:
+        raise DishRuleError(
+            "CONFLICT", "live content does not satisfy destination repair intent",
+            rule="workflow_step_evidence_mismatch",
+        )
+    _complete_destination_repair_step(
+        conn, operation_id=operation_id, step_name=step_name, context=context,
+        repaired_identity=live.identity, recovered=True,
+    )
+    after_name, after_gid = str(context["after_destination"]).rsplit(" — ", 1)
+    return {
+        "operation_id": operation_id, "task_gid": op["task_gid"],
+        "content_approved": True,
+        "approval_cycle_id": context.get("approved_cycle_id"),
+        "approved_identity": context.get("approved_identity"),
+        "source_identity": context.get("source_identity"),
+        "repaired_identity": live.identity,
+        "before_destination": context.get("before_destination"),
+        "after_destination": {"name": after_name, "gid": after_gid},
+        "reason": context.get("reason"),
+        "movement_retry_safe": True, "legal_next_action": "submit",
+        "task": dataclasses.asdict(live), "repair_recovered": True,
+    }
 
 
 def repair_destination_live(
@@ -560,6 +806,13 @@ def repair_destination_live(
     actor_run_id: str | None = None,
     schema=None,
 ) -> dict[str, Any]:
+    resumed = _resume_destination_repair(
+        conn, backend, operation_id=operation_id,
+        destination_section_gid=destination_section_gid, reason=reason,
+        actor_run_id=actor_run_id,
+    )
+    if resumed is not None:
+        return resumed
     op = _operation(conn, operation_id)
     if op["phase"] != "ready_move_failed":
         raise DishRuleError(
@@ -1191,19 +1444,26 @@ def recover_operation(
                 transition_operation(conn, operation_id, phase="await_submission")
                 complete_operation_step(conn, operation_id, "signoff_finalize")
                 actions.append({"kind": "workflow_step", "step": "signoff_finalize", "outcome": "confirmed"})
-            elif step["step_name"] in {"reopen_phase", "hold_resolution_phase", "submission_terminal", "planning_terminal", "migration_terminal", "verification_phase", "non_material_terminal"} or step["step_name"].startswith("route_phase:"):
+            elif step["step_name"] in {"reopen_phase", "hold_resolution_phase", "submission_terminal_intent", "submission_terminal", "planning_terminal", "migration_terminal", "verification_phase", "non_material_terminal"} or step["step_name"].startswith("route_phase:"):
                 if step["step_name"] == "planning_terminal":
                     _assert_recoverable_planning_content(live.notes)
-                if step["step_name"] == "submission_terminal":
-                    unresolved = conn.execute("SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain') LIMIT 1", (operation_id,)).fetchone()
-                    if unresolved is not None:
-                        raise DishRuleError("CONFLICT", "submission movement still requires recovery", rule="workflow_movement_incomplete")
-                transition_operation(
-                    conn, operation_id, phase=intended.get("phase", "terminal"),
-                    status=intended.get("status"), terminal_outcome=intended.get("terminal_outcome"),
-                    inherited_signoff_cycle_id=intended.get("inherited_signoff_cycle_id"),
-                )
-                complete_operation_step(conn, operation_id, step["step_name"])
+                if step["step_name"] in {"submission_terminal_intent", "submission_terminal"}:
+                    if live.identity != intended.get("effective_identity") or live.section_gid != intended.get("section_gid"):
+                        raise DishRuleError(
+                            "CONFLICT",
+                            "live task does not satisfy submission terminal intent",
+                            rule="workflow_step_evidence_mismatch",
+                        )
+                    _finalize_submission_terminal(
+                        conn, operation_id=operation_id, intended=intended, recovered=True
+                    )
+                else:
+                    transition_operation(
+                        conn, operation_id, phase=intended.get("phase", "terminal"),
+                        status=intended.get("status"), terminal_outcome=intended.get("terminal_outcome"),
+                        inherited_signoff_cycle_id=intended.get("inherited_signoff_cycle_id"),
+                    )
+                    complete_operation_step(conn, operation_id, step["step_name"])
                 actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
 
     refreshed = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
@@ -1212,10 +1472,15 @@ def recover_operation(
                  details={"requested_outcome": requested_outcome, "reason": reason, "actions": actions,
                           "content_state": content_state, "movement_state": movement_state},
                  result_code="OK", result_ok=True)
+    from .operation_execution import resolve_recovered_unclaimed_local_executions
+    resolved_local_executions = resolve_recovered_unclaimed_local_executions(
+        conn, operation_id=operation_id
+    )
     return {
         "operation_id": operation_id, "live_identity": live.identity, "live_section_gid": live.section_gid,
         "content_recovery_state": content_state, "movement_recovery_state": movement_state,
         "actions": actions, "operation_status": refreshed["status"],
+        "resolved_local_execution_ids": resolved_local_executions,
         "write_attempt": None if write_attempt is None else {k: write_attempt[k] for k in write_attempt.keys()},
         "movement_attempt": None if movement_attempt is None else {k: movement_attempt[k] for k in movement_attempt.keys()},
     }

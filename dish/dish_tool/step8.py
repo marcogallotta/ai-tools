@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import create_verification_cycle, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step, content_identity, release_marco_authorization_reservations
+from .database import atomic_persistence, create_verification_cycle, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step, content_identity, release_marco_authorization_reservations
 from .errors import DishRuleError
 from .models import material_change_line, material_editor_line, utc_now
 from .lifecycle import assert_transition, hold, pending_verification, require_status, resumed
@@ -424,6 +424,325 @@ def _validate_rejection_route_arguments(
         )
 
 
+
+def _resume_pending_rejection_finalize(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    operation_id: str,
+    agent: str,
+    route: str,
+    reason: str,
+    run_id: str | None,
+    independence_attestation: str | None,
+) -> dict[str, Any] | None:
+    step = conn.execute(
+        """SELECT * FROM operation_steps
+             WHERE operation_id=? AND step_name LIKE 'route_cycle_finalize:%'
+               AND completed_at IS NULL
+             ORDER BY rowid DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    if step is None:
+        return None
+    intended = json.loads(step["intended_json"])
+    if intended.get("decision_route") != route:
+        raise DishRuleError(
+            "CONFLICT", "rejection replay route differs from durable intent",
+            rule="rejection_replay_mismatch",
+        )
+    if intended.get("decision_reason") != reason:
+        raise DishRuleError(
+            "CONFLICT", "rejection replay reason differs from durable intent",
+            rule="rejection_replay_mismatch",
+        )
+    cycle_id = intended.get("cycle_id")
+    cycle = conn.execute(
+        "SELECT * FROM verification_cycles WHERE cycle_id=? AND operation_id=?",
+        (cycle_id, operation_id),
+    ).fetchone()
+    op = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if cycle is None or op is None or op["status"] != "open":
+        return None
+    authority_attestation = (
+        independence_attestation if route == "large" else cycle["independence_attestation"]
+    )
+    assert_verifier_authority(
+        cycle, agent=agent, run_id=run_id,
+        independence_attestation=authority_attestation,
+    )
+    decision_identity = intended.get("decision_identity")
+    attempt = conn.execute(
+        """SELECT * FROM write_attempts
+             WHERE operation_id=? AND outcome='confirmed'
+               AND intended_identity=?
+             ORDER BY started_at DESC, rowid DESC LIMIT 1""",
+        (operation_id, decision_identity),
+    ).fetchone()
+    if attempt is None or not attempt["confirmed_content_version_id"]:
+        return None
+    version = conn.execute(
+        """SELECT * FROM content_versions
+             WHERE content_version_id=? AND operation_id=? AND confirmed=1""",
+        (attempt["confirmed_content_version_id"], operation_id),
+    ).fetchone()
+    if version is None or version["identity"] != decision_identity:
+        raise DishRuleError(
+            "CONFLICT", "rejection write evidence differs from durable intent",
+            rule="rejection_replay_mismatch",
+        )
+    live = read_complete_task(
+        backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    if live.identity != decision_identity:
+        raise DishRuleError(
+            "CONFLICT", "live rejection outcome differs from durable intent",
+            rule="rejection_replay_mismatch",
+        )
+    suffix = str(cycle_id)
+    route_write_step = f"route_write:{suffix}"
+    route_actor_step = f"route_actor:{suffix}"
+    route_cycle_step = f"route_cycle_finalize:{suffix}"
+    route_new_cycle_step = f"route_new_cycle:{suffix}"
+    route_phase_step = f"route_phase:{suffix}"
+    two_pass = bool(intended.get("two_pass_hold"))
+    outcome = str(intended.get("outcome") or ("two-pass-hold" if two_pass else "rejected"))
+    persisted_route = intended.get("route")
+    resume_state = intended.get("resume_state")
+    target_phase_row = conn.execute(
+        "SELECT intended_json FROM operation_steps WHERE operation_id=? AND step_name=?",
+        (operation_id, route_phase_step),
+    ).fetchone()
+    if target_phase_row is None:
+        raise DishRuleError(
+            "CONFLICT", "rejection phase intent is missing",
+            rule="workflow_step_evidence_mismatch",
+        )
+    target_phase = json.loads(target_phase_row["intended_json"]).get("phase")
+    new_cycle = None
+    with atomic_persistence(conn, "verification_rejected_replay_finalize"):
+        complete_operation_step(conn, operation_id, route_write_step)
+        if route == "large":
+            actor_row = conn.execute(
+                "SELECT intended_json FROM operation_steps WHERE operation_id=? AND step_name=?",
+                (operation_id, route_actor_step),
+            ).fetchone()
+            if actor_row is None:
+                raise DishRuleError(
+                    "CONFLICT", "rejection actor intent is missing",
+                    rule="workflow_step_evidence_mismatch",
+                )
+            actor = json.loads(actor_row["intended_json"])
+            record_actor_fact(
+                conn, operation_id=operation_id, task_gid=op["task_gid"],
+                role=actor["role"], agent=actor["agent"], run_id=actor["run_id"],
+                independence_attestation=actor.get("independence_attestation"),
+                candidate_identity=actor.get("candidate_identity"),
+                source_cycle_id=actor.get("source_cycle_id"),
+            )
+            complete_operation_step(conn, operation_id, route_actor_step)
+            conn.execute(
+                "UPDATE operations SET editor_agent=?, verifier_agent=NULL, run_id=?, independence_attestation=? WHERE operation_id=?",
+                (actor["agent"], actor["run_id"], actor.get("independence_attestation"), operation_id),
+            )
+        if target_phase and op["phase"] != target_phase:
+            transition_operation(conn, operation_id, phase=target_phase)
+        hold_fields = (None, None, None)
+        if two_pass or route in {"evidence", "human-review"}:
+            hold_fields = (version["content_version_id"], decision_identity, live.section_gid)
+        conn.execute(
+            """UPDATE verification_cycles
+                  SET correction_class=?, outcome=?, route=?, resume_state=?, completed_at=?,
+                      hold_content_version_id=?, hold_identity=?, hold_section_gid=?
+                WHERE cycle_id=? AND completed_at IS NULL""",
+            (
+                intended.get("correction_class"), outcome, persisted_route,
+                resume_state, utc_now(), hold_fields[0], hold_fields[1],
+                hold_fields[2], cycle_id,
+            ),
+        )
+        complete_operation_step(conn, operation_id, route_cycle_step)
+        if route == "large" and not two_pass:
+            next_step = conn.execute(
+                "SELECT intended_json FROM operation_steps WHERE operation_id=? AND step_name=?",
+                (operation_id, route_new_cycle_step),
+            ).fetchone()
+            if next_step is None:
+                raise DishRuleError(
+                    "CONFLICT", "next Verification cycle intent is missing",
+                    rule="workflow_step_evidence_mismatch",
+                )
+            next_intended = json.loads(next_step["intended_json"])
+            next_number = conn.execute(
+                "SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid=?",
+                (op["task_gid"],),
+            ).fetchone()[0]
+            new_cycle = create_verification_cycle(
+                conn, operation_id=operation_id, task_gid=op["task_gid"],
+                cycle_number=next_number,
+                protocol_release=next_intended["protocol_release"],
+                protocol_text=next_intended["protocol_text"], route=None,
+            )
+            complete_operation_step(conn, operation_id, route_new_cycle_step)
+        complete_operation_step(conn, operation_id, route_phase_step)
+        prior = conn.execute(
+            """SELECT 1 FROM audit_events
+                 WHERE operation_id=? AND event_type='verification.rejected'
+                   AND json_extract(details, '$.cycle_id')=? LIMIT 1""",
+            (operation_id, cycle_id),
+        ).fetchone()
+        if prior is None:
+            record_audit(
+                conn, submission_id=None, task_gid=op["task_gid"],
+                operation_id=operation_id, event_type="verification.rejected",
+                actor_agent=agent,
+                details={
+                    "cycle_id": cycle_id, "route": route, "reason": reason,
+                    "two_pass_hold": two_pass, "identity": decision_identity,
+                    "recovered": True,
+                },
+                result_code="OK", result_ok=True, governed_kind="decision",
+                before_state={
+                    "outcome": None,
+                    "reviewed_identity": cycle["reviewed_identity"],
+                    "status": "pending-verification",
+                },
+                after_state={
+                    "outcome": outcome, "route": route,
+                    "resume_state": resume_state,
+                    "status": intended.get("decision_status"),
+                },
+                actor_run_id=run_id, actor_attestation=authority_attestation,
+                actor_source="exact-replay",
+            )
+    return {
+        "operation_id": operation_id, "route": route,
+        "two_pass_hold": two_pass,
+        "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"],
+        "task": dataclasses.asdict(live),
+        "rejection_recovered": True,
+    }
+
+
+def _resume_rejected_cycle(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    operation_id: str,
+    agent: str,
+    route: str,
+    reason: str,
+    run_id: str | None,
+    independence_attestation: str | None,
+) -> dict[str, Any] | None:
+    pending = _resume_pending_rejection_finalize(
+        conn, backend, operation_id=operation_id, agent=agent, route=route,
+        reason=reason, run_id=run_id,
+        independence_attestation=independence_attestation,
+    )
+    if pending is not None:
+        return pending
+    op = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if op is None or op["status"] != "open":
+        return None
+    cycle = conn.execute(
+        """SELECT * FROM verification_cycles
+             WHERE operation_id=? AND completed_at IS NOT NULL
+               AND outcome IN ('rejected','two-pass-hold')
+             ORDER BY completed_at DESC, rowid DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    if cycle is None:
+        return None
+    persisted_route = (
+        "large" if cycle["correction_class"] == "large"
+        else "human-review" if cycle["route"] == "human_review"
+        else cycle["route"]
+    )
+    if persisted_route != route:
+        return None
+    suffix = cycle["cycle_id"]
+    required_steps = [f"route_cycle_finalize:{suffix}", f"route_phase:{suffix}"]
+    if route == "large" and cycle["outcome"] != "two-pass-hold":
+        required_steps.append(f"route_new_cycle:{suffix}")
+    rows = conn.execute(
+        f"SELECT step_name, completed_at FROM operation_steps WHERE operation_id=? AND step_name IN ({','.join('?' for _ in required_steps)})",
+        (operation_id, *required_steps),
+    ).fetchall()
+    completed = {row["step_name"] for row in rows if row["completed_at"] is not None}
+    if set(required_steps) != completed:
+        return None
+    prior = conn.execute(
+        """SELECT 1 FROM audit_events
+             WHERE operation_id=? AND event_type='verification.rejected'
+               AND json_extract(details, '$.cycle_id')=? LIMIT 1""",
+        (operation_id, cycle["cycle_id"]),
+    ).fetchone()
+    unresolved = conn.execute(
+        """SELECT 1 FROM operation_executions
+             WHERE operation_id=? AND command='reject'
+               AND status='uncertain' AND resolved_at IS NULL LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    if prior is not None and unresolved is None:
+        return None
+    authority_attestation = (
+        independence_attestation if route == "large" else cycle["independence_attestation"]
+    )
+    assert_verifier_authority(
+        cycle, agent=agent, run_id=run_id,
+        independence_attestation=authority_attestation,
+    )
+    live = read_complete_task(
+        backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    if cycle["hold_identity"] and live.identity != cycle["hold_identity"]:
+        raise DishRuleError(
+            "CONFLICT", "live rejection outcome differs from durable cycle evidence",
+            rule="rejection_replay_mismatch",
+        )
+    document = parse_task_document(f"{live.title}\n{live.notes}")
+    if prior is None:
+        with atomic_persistence(conn, "rejection_replay_audit"):
+            record_audit(
+                conn, submission_id=None, task_gid=op["task_gid"],
+                operation_id=operation_id, event_type="verification.rejected",
+                actor_agent=agent,
+                details={
+                    "cycle_id": cycle["cycle_id"],
+                    "route": route, "reason": reason,
+                    "two_pass_hold": cycle["outcome"] == "two-pass-hold",
+                    "identity": live.identity, "recovered": True,
+                },
+                result_code="OK", result_ok=True, governed_kind="decision",
+                before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"},
+                after_state={
+                    "outcome": cycle["outcome"], "route": route,
+                    "resume_state": document.state.values["Resume status"],
+                    "status": document.state.values["Status"],
+                },
+                actor_run_id=run_id, actor_attestation=authority_attestation,
+                actor_source="exact-replay",
+            )
+    new_cycle = conn.execute(
+        """SELECT cycle_id FROM verification_cycles
+             WHERE operation_id=? AND completed_at IS NULL
+             ORDER BY cycle_number DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    return {
+        "operation_id": operation_id, "route": route,
+        "two_pass_hold": cycle["outcome"] == "two-pass-hold",
+        "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"],
+        "task": dataclasses.asdict(live),
+        "rejection_recovered": prior is None,
+    }
+
+
 def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, request_id: str | None = None, schema=None, honest_root=None):
 
     route = str(route or "").strip()
@@ -439,6 +758,13 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         resume_status=resume_status,
         independence_attestation=independence_attestation,
     )
+    resumed = _resume_rejected_cycle(
+        conn, backend, operation_id=operation_id, agent=agent, route=route,
+        reason=reason, run_id=run_id,
+        independence_attestation=independence_attestation,
+    )
+    if resumed is not None:
+        return resumed
     op = conn.execute(
         "SELECT * FROM operations WHERE operation_id = ?", (operation_id,)
     ).fetchone()
@@ -529,6 +855,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         task_gid=op["task_gid"], operation_id=operation_id,
     )
     intended_title, intended_notes = _render(document)
+    intended_identity = content_identity(intended_title, intended_notes).digest
     outcome = "two-pass-hold" if two_pass else "rejected"
     target_phase = "held_human" if (two_pass or route == "human-review") else ("held_evidence" if route == "evidence" else "await_verification")
     route_suffix = cycle["cycle_id"]
@@ -544,66 +871,75 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
             "agent": agent,
             "run_id": cycle["run_id"],
             "independence_attestation": cycle["independence_attestation"],
-            "candidate_identity": content_identity(intended_title, intended_notes).digest,
+            "candidate_identity": intended_identity,
             "source_cycle_id": cycle["cycle_id"],
         })
     declare_operation_step(conn, operation_id, route_cycle_step, {
         "cycle_id": cycle["cycle_id"], "correction_class": "large" if route == "large" else None,
         "outcome": outcome, "route": {"evidence": "evidence", "human-review": "human_review"}.get(route),
         "resume_state": document.state.values["Resume status"],
-        "hold_identity": content_identity(intended_title, intended_notes).digest if (two_pass or route in {"evidence", "human-review"}) else None,
+        "hold_identity": intended_identity if (two_pass or route in {"evidence", "human-review"}) else None,
         "hold_section_gid": live.section_gid if (two_pass or route in {"evidence", "human-review"}) else None,
+        "decision_route": route,
+        "decision_reason": reason,
+        "decision_identity": intended_identity,
+        "decision_status": document.state.values["Status"],
+        "two_pass_hold": two_pass,
+        "actor_agent": agent,
+        "actor_run_id": run_id,
+        "actor_attestation": authority_attestation,
     })
     if route == "large" and not two_pass:
         declare_operation_step(conn, operation_id, route_new_cycle_step, {"protocol_release": snapshot.identity, "protocol_text": snapshot.text})
     declare_operation_step(conn, operation_id, route_phase_step, {"phase": target_phase})
     confirmed = _write_document(conn, backend, op, live, document, schema=schema, authorization_ids=authorization_ids)
-    complete_operation_step(conn, operation_id, route_write_step)
-    if route == "large":
-        record_actor_fact(
-            conn, operation_id=operation_id, task_gid=op["task_gid"],
-            role="material_editor", agent=agent, run_id=cycle["run_id"],
-            independence_attestation=cycle["independence_attestation"],
-            candidate_identity=confirmed.identity, source_cycle_id=cycle["cycle_id"],
-        )
-        complete_operation_step(conn, operation_id, route_actor_step)
+    with atomic_persistence(conn, "verification_rejected_finalize"):
+        complete_operation_step(conn, operation_id, route_write_step)
+        if route == "large":
+            record_actor_fact(
+                conn, operation_id=operation_id, task_gid=op["task_gid"],
+                role="material_editor", agent=agent, run_id=cycle["run_id"],
+                independence_attestation=cycle["independence_attestation"],
+                candidate_identity=confirmed.identity, source_cycle_id=cycle["cycle_id"],
+            )
+            complete_operation_step(conn, operation_id, route_actor_step)
+            conn.execute(
+                "UPDATE operations SET editor_agent=?, verifier_agent=NULL, run_id=?, independence_attestation=? WHERE operation_id=?",
+                (agent, cycle["run_id"], cycle["independence_attestation"], operation_id),
+            )
+        if two_pass or route == "human-review":
+            transition_operation(conn, operation_id, phase="held_human")
+        elif route == "evidence":
+            transition_operation(conn, operation_id, phase="held_evidence")
+        hold_fields = (None, None, None)
+        if two_pass or route in {"evidence", "human-review"}:
+            hold_version = _confirmed_version(
+                conn, operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity
+            )
+            hold_fields = (hold_version["content_version_id"], confirmed.identity, confirmed.section_gid)
         conn.execute(
-            "UPDATE operations SET editor_agent=?, verifier_agent=NULL, run_id=?, independence_attestation=? WHERE operation_id=?",
-            (agent, cycle["run_id"], cycle["independence_attestation"], operation_id),
+            """UPDATE verification_cycles
+                  SET correction_class=?, outcome=?, route=?, resume_state=?, completed_at=?,
+                      hold_content_version_id=?, hold_identity=?, hold_section_gid=?
+                WHERE cycle_id=?""",
+            (
+                "large" if route == "large" else None,
+                outcome,
+                {"evidence": "evidence", "human-review": "human_review"}.get(route),
+                document.state.values["Resume status"], utc_now(),
+                hold_fields[0], hold_fields[1], hold_fields[2], cycle["cycle_id"],
+            ),
         )
-    if two_pass or route == "human-review":
-        transition_operation(conn, operation_id, phase="held_human")
-    elif route == "evidence":
-        transition_operation(conn, operation_id, phase="held_evidence")
-    hold_fields = (None, None, None)
-    if two_pass or route in {"evidence", "human-review"}:
-        hold_version = _confirmed_version(
-            conn, operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity
-        )
-        hold_fields = (hold_version["content_version_id"], confirmed.identity, confirmed.section_gid)
-    conn.execute(
-        """UPDATE verification_cycles
-              SET correction_class=?, outcome=?, route=?, resume_state=?, completed_at=?,
-                  hold_content_version_id=?, hold_identity=?, hold_section_gid=?
-            WHERE cycle_id=?""",
-        (
-            "large" if route == "large" else None,
-            outcome,
-            {"evidence": "evidence", "human-review": "human_review"}.get(route),
-            document.state.values["Resume status"], utc_now(),
-            hold_fields[0], hold_fields[1], hold_fields[2], cycle["cycle_id"],
-        ),
-    )
-    complete_operation_step(conn, operation_id, route_cycle_step)
-    if route == "large" and not two_pass:
-        next_number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
-        new_cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=next_number, protocol_release=snapshot.identity, protocol_text=snapshot.text, route=None)
-        complete_operation_step(conn, operation_id, route_new_cycle_step)
-        transition_operation(conn, operation_id, phase="await_verification")
-    else:
-        new_cycle = None
-    complete_operation_step(conn, operation_id, route_phase_step)
-    record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "two_pass_hold": two_pass, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
+        complete_operation_step(conn, operation_id, route_cycle_step)
+        if route == "large" and not two_pass:
+            next_number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
+            new_cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=next_number, protocol_release=snapshot.identity, protocol_text=snapshot.text, route=None)
+            complete_operation_step(conn, operation_id, route_new_cycle_step)
+            transition_operation(conn, operation_id, phase="await_verification")
+        else:
+            new_cycle = None
+        complete_operation_step(conn, operation_id, route_phase_step)
+        record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "two_pass_hold": two_pass, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
     return {"operation_id": operation_id, "route": route, "two_pass_hold": two_pass, "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"], "task": dataclasses.asdict(confirmed)}
 
 

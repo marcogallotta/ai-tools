@@ -1141,10 +1141,17 @@ class DishService:
                         command=command,
                         arguments=prepared_arguments,
                     )
-                    prior = stored_result(request_row)
+                    prior = stored_result(
+                        request_row,
+                        permit_uncertain_resume=command in {"approve", "reject", "submit"},
+                    )
                     if prior is not None:
                         return prior
-                    if not replay_started and command != "start":
+                    if (
+                        not replay_started
+                        and command != "start"
+                        and request_row["status"] != "uncertain"
+                    ):
                         reconciled = self._reconcile_pending_operation_request(
                             conn=conn, command=command, request_id=request_id
                         )
@@ -1743,10 +1750,13 @@ class DishService:
                         command=command,
                         arguments=prepared_arguments,
                     )
-                    prior = stored_result(request_row)
+                    prior = stored_result(
+                        request_row,
+                        permit_uncertain_resume=command in {"repair-destination", "discard"},
+                    )
                     if prior is not None:
                         return prior
-                    if not replay_started:
+                    if not replay_started and request_row["status"] != "uncertain":
                         reconciled = self._reconcile_pending_operation_request(
                             conn=conn, command=command, request_id=request_id
                         )

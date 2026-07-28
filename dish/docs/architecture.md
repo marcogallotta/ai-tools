@@ -296,12 +296,23 @@ cannot silently create separate live authorities.
 
 Triggers enforce append-only or monotonic evidence where recovery depends on history. Workflow state
 and its governed audit facts commit in one transaction. Workflow and transport code must use
-repository primitives rather than bypassing those invariants with ad hoc SQL.
+repository primitives rather than bypassing those invariants with ad hoc SQL. A Marco authorization
+grant is one `BEGIN IMMEDIATE` unit: the operation-open check, exact semantic deduplication,
+authorization row, and `marco.authorization` audit either all commit or all roll back. Reservation
+never treats an unaudited historical row as a usable capability.
+
+An unresolved `uncertain` operation execution remains an operation-scoped mutation fence even after
+its active process claim is gone. Only exact replay of that request or explicit authoritative
+recovery may reacquire the operation. Resolution is monotonic: the original uncertainty evidence is
+preserved, while separate resolution evidence and a resolution result complete the execution and
+request once the missing governed proof is durable. Fresh request UUIDs cannot bypass that fence.
 
 External-effect intent and confirmation are intentionally visible between transactions because they
-are the recovery authority around Asana calls. Local terminalization is different: submit's terminal
-step, operation transition, transition audit, and submission audit commit as one SQLite unit, so a
-reader sees either the pre-terminal operation or the complete terminal evidence.
+are the recovery authority around Asana calls. Local terminalization is different: after exact
+movement confirmation, submit persists a `submission_terminal_intent`; the terminal step, operation
+transition, transition audit, and `operation.submitted` audit then commit as one SQLite unit. A
+failed terminal audit therefore leaves an open, explicitly recoverable operation whose movement is
+not repeated, rather than a completed submission without proof.
 
 Concurrency uses separate mechanisms for separate facts:
 

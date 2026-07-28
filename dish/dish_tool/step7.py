@@ -9,7 +9,7 @@ from .constants import COOKING_PROJECT_GID
 from .database import (
     mark_operation_completion, record_audit, transition_operation, assert_fresh_verifier,
     record_actor_fact, declare_operation_step, complete_operation_step, content_identity,
-    record_dish_inspect_fact,
+    record_dish_inspect_fact, atomic_persistence,
 )
 from .errors import DishRuleError
 from .models import (
@@ -370,6 +370,135 @@ def assert_verifier_authority(
             )
     return recorded_attestation
 
+def _resume_approved_cycle(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    operation_id: str,
+    agent: str,
+    reviewed_identity: str,
+    semantic_review_complete: bool,
+    provenance_complete: bool,
+    correction_class: str,
+    approval_candidate_identity: str | None,
+    run_id: str | None,
+) -> dict[str, Any] | None:
+    """Finish or replay an approval whose signoff is already durable."""
+    op = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if op is None or op["status"] != "open":
+        return None
+    cycle = conn.execute(
+        """SELECT * FROM verification_cycles
+             WHERE operation_id=? AND outcome='approved' AND completed_at IS NOT NULL
+             ORDER BY completed_at DESC, rowid DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    if cycle is None:
+        return None
+    attempt = conn.execute(
+        """SELECT * FROM write_attempts
+             WHERE operation_id=? AND purpose='signoff' AND outcome='confirmed'
+               AND json_extract(context_json, '$.cycle_id')=?
+             ORDER BY started_at DESC, rowid DESC LIMIT 1""",
+        (operation_id, cycle["cycle_id"]),
+    ).fetchone()
+    if attempt is None:
+        return None
+    inherited_attestation = assert_verifier_authority(
+        cycle, agent=agent, run_id=run_id,
+    )
+    if not semantic_review_complete or not provenance_complete:
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "explicit semantic self-review and provenance completion are required",
+            rule="verification_inputs_incomplete",
+        )
+    if reviewed_identity != cycle["reviewed_identity"]:
+        raise DishRuleError(
+            "CONFLICT",
+            "caller review identity does not match the persisted review",
+            rule="reviewed_identity_mismatch",
+            retryable=True,
+        )
+    if correction_class != cycle["correction_class"]:
+        raise DishRuleError(
+            "CONFLICT", "approval correction differs from durable signoff",
+            rule="approval_replay_mismatch",
+        )
+    approved_candidate_identity = attempt["expected_identity"]
+    if correction_class == "small":
+        if approval_candidate_identity != approved_candidate_identity:
+            raise DishRuleError(
+                "CONFLICT", "corrected approval candidate differs from durable signoff",
+                rule="approval_replay_mismatch",
+            )
+    elif approval_candidate_identity is not None:
+        raise DishRuleError(
+            "CONFLICT", "no-correction approval cannot substitute another candidate",
+            rule="approval_replay_mismatch",
+        )
+    live = read_complete_task(
+        backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    if live.identity != cycle["signed_identity"]:
+        raise DishRuleError(
+            "CONFLICT", "live signed candidate differs from durable approval",
+            rule="post_signoff_content_drift",
+        )
+    approved_version = _content_version_for_identity(
+        conn, operation_id=operation_id, task_gid=op["task_gid"],
+        identity=approved_candidate_identity,
+    )
+    signed_version = _content_version_for_identity(
+        conn, operation_id=operation_id, task_gid=op["task_gid"],
+        identity=cycle["signed_identity"],
+    )
+    prior = conn.execute(
+        """SELECT 1 FROM audit_events
+             WHERE operation_id=? AND event_type='verification.approved'
+               AND json_extract(details, '$.cycle_id')=? LIMIT 1""",
+        (operation_id, cycle["cycle_id"]),
+    ).fetchone()
+    with atomic_persistence(conn, "approval_replay_finalize"):
+        complete_operation_step(conn, operation_id, "signoff_write")
+        if op["phase"] != "await_submission":
+            transition_operation(conn, operation_id, phase="await_submission")
+        complete_operation_step(conn, operation_id, "signoff_finalize")
+        if prior is None:
+            record_audit(
+                conn, submission_id=None, task_gid=op["task_gid"],
+                operation_id=operation_id, event_type="verification.approved",
+                actor_agent=agent,
+                details={
+                    "cycle_id": cycle["cycle_id"],
+                    "reviewed_identity": cycle["reviewed_identity"],
+                    "reviewed_content_version_id": cycle["reviewed_content_version_id"],
+                    "approved_candidate_identity": approved_candidate_identity,
+                    "approved_candidate_content_version_id": approved_version["content_version_id"],
+                    "signed_identity": cycle["signed_identity"],
+                    "signed_content_version_id": signed_version["content_version_id"],
+                    "correction_class": correction_class,
+                    "recovered": True,
+                },
+                result_code="OK", result_ok=True, governed_kind="decision",
+                before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"},
+                after_state={"outcome": "approved", "signed_identity": cycle["signed_identity"], "status": "ready"},
+                actor_run_id=run_id, actor_attestation=inherited_attestation,
+                actor_source="exact-replay",
+            )
+    return {
+        "operation_id": operation_id,
+        "cycle_id": cycle["cycle_id"],
+        "reviewed_identity": cycle["reviewed_identity"],
+        "approved_candidate_identity": approved_candidate_identity,
+        "signed_identity": cycle["signed_identity"],
+        "task": dataclasses.asdict(live),
+        "approval_recovered": prior is None,
+    }
+
+
 def approve_live(
     conn: sqlite3.Connection,
     backend: Any,
@@ -385,6 +514,17 @@ def approve_live(
     run_id: str | None = None,
     schema: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    resumed = _resume_approved_cycle(
+        conn, backend, operation_id=operation_id, agent=agent,
+        reviewed_identity=reviewed_identity,
+        semantic_review_complete=semantic_review_complete,
+        provenance_complete=provenance_complete,
+        correction_class=correction_class,
+        approval_candidate_identity=approval_candidate_identity,
+        run_id=run_id,
+    )
+    if resumed is not None:
+        return resumed
     op, cycle = _operation_and_cycle(conn, operation_id)
     inherited_attestation = assert_verifier_authority(
         cycle, agent=agent, run_id=run_id,
@@ -482,33 +622,34 @@ def approve_live(
     exact = parse_task_document(f"{confirmed.title}\n{confirmed.notes}")
     if exact.state.values["Status"] != "ready" or exact.state.values["Verified by"] == "None":
         raise DishRuleError("BACKEND_UNCERTAIN", "signoff reread did not confirm ready state", rule="signoff_not_confirmed")
-    complete_operation_step(conn, operation_id, "signoff_write")
     approved_candidate_version = _content_version_for_identity(
         conn, operation_id=operation_id, task_gid=op["task_gid"], identity=live.identity
     )
     signed_version = _content_version_for_identity(
         conn, operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity
     )
-    transition_operation(conn, operation_id, phase="await_submission")
-    complete_operation_step(conn, operation_id, "signoff_finalize")
-    record_audit(
-        conn, submission_id=None, task_gid=live.gid, operation_id=operation_id,
-        event_type="verification.approved", actor_agent=agent,
-        details={
-            "cycle_id": cycle["cycle_id"],
-            "reviewed_identity": persisted_reviewed,
-            "reviewed_content_version_id": cycle["reviewed_content_version_id"],
-            "approved_candidate_identity": live.identity,
-            "approved_candidate_content_version_id": approved_candidate_version["content_version_id"],
-            "signed_identity": confirmed.identity,
-            "signed_content_version_id": signed_version["content_version_id"],
-            "correction_class": correction_class,
-        }, result_code="OK", result_ok=True,
-        governed_kind="decision",
-        before_state={"outcome": None, "reviewed_identity": persisted_reviewed, "status": "pending-verification"},
-        after_state={"outcome": "approved", "signed_identity": confirmed.identity, "status": "ready"},
-        actor_run_id=run_id, actor_attestation=inherited_attestation,
-    )
+    with atomic_persistence(conn, "verification_approved_finalize"):
+        complete_operation_step(conn, operation_id, "signoff_write")
+        transition_operation(conn, operation_id, phase="await_submission")
+        complete_operation_step(conn, operation_id, "signoff_finalize")
+        record_audit(
+            conn, submission_id=None, task_gid=live.gid, operation_id=operation_id,
+            event_type="verification.approved", actor_agent=agent,
+            details={
+                "cycle_id": cycle["cycle_id"],
+                "reviewed_identity": persisted_reviewed,
+                "reviewed_content_version_id": cycle["reviewed_content_version_id"],
+                "approved_candidate_identity": live.identity,
+                "approved_candidate_content_version_id": approved_candidate_version["content_version_id"],
+                "signed_identity": confirmed.identity,
+                "signed_content_version_id": signed_version["content_version_id"],
+                "correction_class": correction_class,
+            }, result_code="OK", result_ok=True,
+            governed_kind="decision",
+            before_state={"outcome": None, "reviewed_identity": persisted_reviewed, "status": "pending-verification"},
+            after_state={"outcome": "approved", "signed_identity": confirmed.identity, "status": "ready"},
+            actor_run_id=run_id, actor_attestation=inherited_attestation,
+        )
     return {
         "operation_id": operation_id,
         "cycle_id": cycle["cycle_id"],
