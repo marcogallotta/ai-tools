@@ -10,11 +10,23 @@ from dish_tool.errors import DishRuleError
 from dish_tool.models import utc_now
 
 
+
+
+def canonical_database_path(db_path: Path) -> Path:
+    """Return the filesystem identity used for service ownership artifacts."""
+    return Path(db_path).expanduser().resolve(strict=False)
+
+
+def service_process_lock_path(db_path: Path) -> Path:
+    canonical = canonical_database_path(db_path)
+    return canonical.with_suffix(canonical.suffix + ".service.lock")
+
+
 class ServiceDatabaseOwnership:
     """Mark a database as belonging exclusively to the shared service runtime."""
 
     def __init__(self, db_path: Path) -> None:
-        db_path = Path(db_path).expanduser()
+        db_path = canonical_database_path(db_path)
         self.db_path = db_path
         self.path = db_path.parent / f"{db_path.name}.service-owned.json"
 

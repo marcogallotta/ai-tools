@@ -49,8 +49,8 @@ class BackupManager:
     """Create validated snapshots and restore only managed snapshot names."""
 
     def __init__(self, db_path: Path, backup_dir: Path) -> None:
-        self.db_path = Path(db_path).expanduser()
-        self.backup_dir = Path(backup_dir).expanduser()
+        self.db_path = Path(db_path).expanduser().resolve(strict=False)
+        self.backup_dir = Path(backup_dir).expanduser().resolve(strict=False)
 
     def _managed_path(self, backup_id: str) -> Path:
         clean = str(backup_id or "").strip()
@@ -61,10 +61,22 @@ class BackupManager:
                 rule="backup_id_invalid",
             )
         path = self.backup_dir / clean
-        if path.parent.resolve() != self.backup_dir.resolve():
+        if path.parent.resolve() != self.backup_dir:
             raise DishRuleError(
                 "INVALID_ARGUMENT",
                 "backup must be inside the managed backup directory",
+                rule="backup_path_outside_managed_directory",
+            )
+        if path.is_symlink():
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "managed backup filenames must not be symbolic links",
+                rule="backup_path_symlink",
+            )
+        if path.exists() and path.resolve().parent != self.backup_dir:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "backup resolves outside the managed backup directory",
                 rule="backup_path_outside_managed_directory",
             )
         return path
@@ -122,8 +134,8 @@ class BackupManager:
             Path(str(path) + suffix).unlink(missing_ok=True)
         cls._validate_snapshot(path)
 
-    def _record(self, path: Path) -> BackupRecord:
-        return BackupRecord(path.name, _sha256(path), path.stat().st_size)
+    def _record(self, path: Path, *, backup_id: str | None = None) -> BackupRecord:
+        return BackupRecord(backup_id or path.name, _sha256(path), path.stat().st_size)
 
     def _snapshot_to(self, destination: Path) -> BackupRecord:
         self.backup_dir.mkdir(parents=True, exist_ok=True)
@@ -286,7 +298,7 @@ class BackupManager:
             if candidate_path is not None:
                 candidate_path.unlink(missing_ok=True)
 
-        restored = self._record(source_path)
+        restored = self._record(self.db_path, backup_id=source_path.name)
         return {
             "restored": restored.as_dict(),
             "pre_restore_backup": None if pre_restore is None else pre_restore.as_dict(),
