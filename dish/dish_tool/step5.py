@@ -217,7 +217,15 @@ def inspect_operation(conn: sqlite3.Connection, operation_id: str) -> dict[str, 
     actions = legal_operation_actions(op)
     return {
         "operation": {k: op[k] for k in op.keys()},
-        "content": None if state is None else {"expected_identity": op["expected_identity"], "confirmed_identity": state["last_confirmed_identity"], "schema_version": state["schema_version"]},
+        "content": (
+            None
+            if state is None
+            else {
+                "operation_baseline_identity": op["expected_identity"],
+                "confirmed_identity": state["last_confirmed_identity"],
+                "schema_version": state["schema_version"],
+            }
+        ),
         "actors": {"editor": op["editor_agent"], "researcher": op["researcher_agent"], "verifier": op["verifier_agent"], "run_id": op["run_id"], "independence_attestation": op["independence_attestation"]},
         "verification_cycles": [{k: row[k] for k in row.keys()} for row in cycles],
         "completion": {"content_write": op["content_write_completed_at"], "signoff": op["signoff_completed_at"], "movement": op["movement_completed_at"]},

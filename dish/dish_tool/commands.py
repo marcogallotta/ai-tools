@@ -422,6 +422,11 @@ def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str)
     view = _exposed_view(internal_view)
     data["legal_next_actions"] = view["legal_actions"]
     data["authoritative_view"] = view
+    content = data.get("content")
+    if isinstance(content, dict):
+        content["live_identity"] = view.get("live_identity")
+        content["required_identity"] = view.get("required_identity")
+        content["identity_matches"] = view.get("identity_matches")
     if view.get("required_start_kind") is not None:
         data["required_start_kind"] = view["required_start_kind"]
     if view.get("required_admin_action") is not None:
