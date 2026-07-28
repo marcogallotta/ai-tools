@@ -116,7 +116,11 @@ actions. Never tell a client to repeat an external effect that durable evidence 
 Verification signs one exact confirmed `content_versions` identity. A rendered `Verified by` field
 is not sufficient evidence. Independence comes from durable client run lineage: the verifier run
 must differ from the constructor or latest material editor run. Operation IDs, cycle IDs, model
-labels, and caller attestations do not substitute for run identity.
+labels, and caller attestations do not substitute for run identity. Approval and rejection additionally
+require an append-only `dish_inspect_facts` row produced by the exact verifier run after rereading
+the exact reviewed content identity in Verification Queue. The fact is bound to the cycle, confirmed
+content version, verifier actor fact, attestation, and queue placement; a new cycle or changed live
+head therefore requires a new inspection.
 
 A completed non-material check-in does not create a new signoff. Its confirmed candidate identity
 inherits the exact approved cycle recorded on the operation. Later non-material check-ins resolve
@@ -208,6 +212,7 @@ create
 → start planning / initial / change
 → prepare
 → start verification
+→ inspect the exact current reviewed candidate
 → approve or reject
 → submit after approval
 ```

@@ -30,6 +30,8 @@ def test_large_cycle_freezes_current_release_and_preserves_all_run_lineage(tmp_p
     app, backend, operation_id, _ = make_app(tmp_path)
     first = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="editor-run", independence_attestation="independent")
     assert first["ok"]
+    inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
+    assert inspected["ok"]
     protocol = app._load_release("verification").root / "dish-verification-protocol.md"
     protocol.write_text("# changed verification protocol\n")
     candidate = tmp_path / "large.txt"
@@ -53,6 +55,8 @@ def test_governed_lock_change_requires_human_authorization(tmp_path):
     app, _, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-run", independence_attestation="independent")
     assert review["ok"]
+    inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
+    assert inspected["ok"]
     candidate = tmp_path / "bad-large.txt"
     candidate.write_text(TASK.replace("Locks: Keep crisp", "Locks: Remove crispness constraint"))
     result = app.execute(
@@ -68,6 +72,8 @@ def test_evidence_hold_has_executable_resume_to_verification(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-run", independence_attestation="independent")
     assert review["ok"]
+    inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
+    assert inspected["ok"]
     held = app.execute(
         "reject", agent="codex", submission_id=operation_id, route="evidence",
         reason="confirm source", resume_status="pending-verification", run_id="review-run",
@@ -92,6 +98,8 @@ def test_hold_resuming_research_clears_release_immediately(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-run", independence_attestation="independent")
     assert review["ok"]
+    inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
+    assert inspected["ok"]
     held = app.execute(
         "reject", agent="codex", submission_id=operation_id, route="evidence",
         reason="new research needed", resume_status="pending-research", run_id="review-run",

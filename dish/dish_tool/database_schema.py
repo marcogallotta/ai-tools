@@ -1341,7 +1341,7 @@ BEGIN SELECT RAISE(ABORT, 'operation executions are append-only'); END;
 """
 
 _MIGRATION_24 = """
-DROP TRIGGER operations_non_material_signoff_required;
+DROP TRIGGER IF EXISTS operations_non_material_signoff_required;
 CREATE TRIGGER operations_non_material_signoff_required
 BEFORE UPDATE ON operations
 WHEN NEW.status='completed' AND NEW.terminal_outcome='non_material_checkin'
@@ -1384,7 +1384,33 @@ WHEN NEW.status='completed' AND NEW.terminal_outcome='non_material_checkin'
 BEGIN SELECT RAISE(ABORT, 'non-material completion requires exact local signoff lineage'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24}
+_MIGRATION_25 = """
+CREATE TABLE IF NOT EXISTS dish_inspect_facts (
+    fact_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    cycle_id TEXT NOT NULL REFERENCES verification_cycles(cycle_id),
+    task_gid TEXT NOT NULL,
+    reviewed_content_version_id TEXT NOT NULL REFERENCES content_versions(content_version_id),
+    reviewed_identity TEXT NOT NULL CHECK(length(trim(reviewed_identity)) > 0),
+    verifier_agent TEXT NOT NULL CHECK(verifier_agent IN ('claude','gpt','codex')),
+    run_id TEXT NOT NULL CHECK(length(trim(run_id)) > 0),
+    independence_attestation TEXT,
+    section_gid TEXT NOT NULL CHECK(length(trim(section_gid)) > 0),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS dish_inspect_facts_cycle_idx
+    ON dish_inspect_facts(cycle_id, created_at);
+CREATE INDEX IF NOT EXISTS dish_inspect_facts_operation_idx
+    ON dish_inspect_facts(operation_id, created_at);
+CREATE TRIGGER IF NOT EXISTS dish_inspect_facts_append_only_update
+BEFORE UPDATE ON dish_inspect_facts
+BEGIN SELECT RAISE(ABORT, 'dish inspect facts are append-only'); END;
+CREATE TRIGGER IF NOT EXISTS dish_inspect_facts_append_only_delete
+BEFORE DELETE ON dish_inspect_facts
+BEGIN SELECT RAISE(ABORT, 'dish inspect facts are append-only'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -1633,6 +1659,40 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 or signed["confirmed"] != 1 or signed["operation_id"] != row["operation_id"]
                 or signed["task_gid"] != row["task_gid"] or signed["identity"] != row["signed_identity"]):
             problems.append({"kind": "approved_cycle_binding", "id": row["cycle_id"]})
+    for row in conn.execute("SELECT * FROM dish_inspect_facts"):
+        cycle = conn.execute(
+            """SELECT operation_id,task_gid,reviewed_content_version_id,reviewed_identity,
+                      verifier_agent,run_id,independence_attestation
+                 FROM verification_cycles WHERE cycle_id=?""",
+            (row["cycle_id"],),
+        ).fetchone()
+        version = conn.execute(
+            "SELECT operation_id,task_gid,identity,confirmed FROM content_versions WHERE content_version_id=?",
+            (row["reviewed_content_version_id"],),
+        ).fetchone()
+        actor = conn.execute(
+            """SELECT 1 FROM operation_actor_facts
+                 WHERE operation_id=? AND task_gid=? AND role='verifier'
+                   AND agent=? AND run_id=?
+                   AND COALESCE(independence_attestation,'')=COALESCE(?, '')
+                   AND candidate_identity=? AND source_cycle_id=? LIMIT 1""",
+            (row["operation_id"], row["task_gid"], row["verifier_agent"], row["run_id"],
+             row["independence_attestation"], row["reviewed_identity"], row["cycle_id"]),
+        ).fetchone()
+        if (
+            cycle is None or version is None or actor is None
+            or cycle["operation_id"] != row["operation_id"]
+            or cycle["task_gid"] != row["task_gid"]
+            or cycle["reviewed_content_version_id"] != row["reviewed_content_version_id"]
+            or cycle["reviewed_identity"] != row["reviewed_identity"]
+            or cycle["verifier_agent"] != row["verifier_agent"]
+            or cycle["run_id"] != row["run_id"]
+            or (cycle["independence_attestation"] or "") != (row["independence_attestation"] or "")
+            or version["operation_id"] != row["operation_id"]
+            or version["task_gid"] != row["task_gid"]
+            or version["identity"] != row["reviewed_identity"] or version["confirmed"] != 1
+        ):
+            problems.append({"kind": "dish_inspect_fact_binding", "id": row["fact_id"]})
     for row in conn.execute("SELECT * FROM operations"):
         if row["status"] == "completed" and (row["completed_at"] is None or row["phase"] != "terminal" or not row["terminal_outcome"] or not row["schema_version"] or not row["expected_identity"]):
             problems.append({"kind": "completed_operation_state", "id": row["operation_id"]})

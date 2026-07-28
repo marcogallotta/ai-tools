@@ -9,6 +9,8 @@ def _approve(app, operation_id: str) -> None:
         independence_attestation="independent",
     )
     assert review["ok"]
+    inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
+    assert inspected["ok"]
     approved = app.execute(
         "approve",
         model="gpt-5.6-sol",

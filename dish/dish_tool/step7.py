@@ -6,7 +6,11 @@ import sqlite3
 from typing import Any, Mapping
 
 from .constants import COOKING_PROJECT_GID
-from .database import mark_operation_completion, record_audit, transition_operation, assert_fresh_verifier, record_actor_fact, declare_operation_step, complete_operation_step, content_identity
+from .database import (
+    mark_operation_completion, record_audit, transition_operation, assert_fresh_verifier,
+    record_actor_fact, declare_operation_step, complete_operation_step, content_identity,
+    record_dish_inspect_fact,
+)
 from .errors import DishRuleError
 from .models import (
     SectionRegistry,
@@ -82,6 +86,68 @@ def bind_cycle_review(
             (version["content_version_id"], identity, correction_class, cycle_id),
         )
     return version
+
+def record_current_dish_inspect(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    operation_id: str,
+    agent: str,
+    invocation_run_id: str | None,
+    schema: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Record an inspect fact only for the exact current verifier/cycle/live head."""
+    op = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if op is None:
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    if op["status"] != "open" or op["phase"] != "await_verification":
+        return None
+    cycle = conn.execute(
+        """SELECT * FROM verification_cycles
+             WHERE operation_id=? AND completed_at IS NULL
+             ORDER BY cycle_number DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    if cycle is None or not (
+        cycle["reviewed_content_version_id"]
+        and cycle["reviewed_identity"]
+        and cycle["verifier_agent"]
+        and str(cycle["run_id"] or "").strip()
+    ):
+        return None
+    # Inspection remains readable by any agent, but only the exact verifier
+    # principal can create the decision-enabling fact. Local direct-mode calls
+    # have no service principal run, so they use the already-persisted run proof.
+    if agent != cycle["verifier_agent"]:
+        return None
+    principal_run = str(invocation_run_id or "").strip()
+    if principal_run and principal_run != str(cycle["run_id"]).strip():
+        return None
+    live = read_complete_task(
+        backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    registry = SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
+    if (
+        live.identity != cycle["reviewed_identity"]
+        or live.section_gid != registry.verification_queue_gid
+    ):
+        return None
+    try:
+        document = parse_task_document(f"{live.title}\n{live.notes}")
+    except Exception:
+        return None
+    validation = validate_task_document(
+        document, expected_schema_version=op["schema_version"], schema=schema
+    )
+    if not validation.ok or document.state.values["Status"] != "pending-verification":
+        return None
+    fact = record_dish_inspect_fact(
+        conn, cycle=cycle, section_gid=registry.verification_queue_gid
+    )
+    return {key: fact[key] for key in fact.keys()}
+
 
 def verification_read(
     conn: sqlite3.Connection,

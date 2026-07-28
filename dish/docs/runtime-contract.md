@@ -53,8 +53,9 @@ rejected, `allowed_actions` reports the currently legal exposed continuation whe
 retryable candidate-validation failure therefore keeps the same corrective command available.
 Fresh bare tasks created by `create` report `data.required_start_kind: planning`. A completed
 cross-stage handoff reports `start` and the required start kind even though the old operation itself is
-terminal. Verification `start` includes `inspect` so the agent can review exact identity, provenance,
-and lineage before deciding. Task-level `read` responses expose any active operation, its submission
+terminal. Verification `start` exposes only `inspect` after the review binding is complete. The exact
+verifier run must then inspect the still-current candidate in Verification Queue; that reread appends
+a cycle-bound `dish_inspect` fact and only then exposes `approve` and `reject`. Task-level `read` responses expose any active operation, its submission
 ID, workflow state, and principal-filtered next actions. Successful operation-scoped lease renewal
 includes both `task_gid` and `submission_id`; renewal of a terminal operation reports
 `WRONG_STATE / operation_not_open` with the terminal status.
@@ -193,7 +194,10 @@ Planning and `verification` after Research. Clients must not look for a separate
 Verification `start` and `inspect` expose `data.verification_lineage`. `candidate_runs` lists the
 constructor and material-editor run facts that contribute to verifier independence enforcement.
 `current_run` reports the authenticated caller run, whether it is eligible to verify, and the exact
-disqualifying role/rule when it is not. Agents must inspect this before deciding; an approval call is
+disqualifying role/rule when it is not. A qualifying verifier inspection appends an immutable fact
+bound to the exact open cycle, reviewed content version and identity, verifier run/attestation, and
+Verification Queue placement. `approve` and `reject` require that current fact; a later cycle or live
+content/placement change cannot reuse it. Agents must inspect before deciding; an approval call is
 not the discovery mechanism for lineage conflicts.
 
 Marco-only continuations such as `supply-evidence`, `record-human-decision`, and `reopen` never

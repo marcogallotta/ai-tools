@@ -116,6 +116,8 @@ def test_real_sdk_full_placement_lifecycle(tmp_path, sdk_backend):
 
     review = app.execute("start", agent="codex", task_gid=task_gid, kind="verification", run_id="verify-run", independence_attestation="independent")
     assert review["ok"]
+    review_inspect = app.execute("inspect", agent="codex", submission_id=research["submission_id"])
+    assert review_inspect["ok"]
     approved = app.execute(
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=research["submission_id"], correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,

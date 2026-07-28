@@ -12,6 +12,8 @@ from test_dish_tool_step7_verification import TASK, make_app
 def test_approval_phase_response_and_inspect_agree(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review", independence_attestation="independent")
+    inspected_review = app.execute("inspect", agent="codex", submission_id=operation_id)
+    assert inspected_review["ok"]
     approved = app.execute(
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,

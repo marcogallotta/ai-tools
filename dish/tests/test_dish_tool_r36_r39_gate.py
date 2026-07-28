@@ -81,6 +81,8 @@ def test_completed_evidence_and_consumed_authorization_are_immutable(tmp_path):
     from tests.test_dish_tool_step7_verification import make_app
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="verify-run", independence_attestation="independent")
+    inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
+    assert inspected["ok"]
     approved = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
         provenance_complete=True, run_id="verify-run", independence_attestation="independent")
@@ -111,6 +113,8 @@ def test_audit_repair_fallback_is_imported_and_completed(monkeypatch, tmp_path):
     from tests.test_dish_tool_step7_verification import make_app
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="verify-run", independence_attestation="independent")
+    inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
+    assert inspected["ok"]
     original_audit = invocation_audit.record_audit
     original_repair = invocation_audit.record_command_audit_repair
     monkeypatch.setattr(invocation_audit, "record_audit", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("audit down")))
@@ -206,6 +210,8 @@ def test_completed_persistence_evidence_is_fully_immutable(tmp_path):
     from tests.test_dish_tool_step7_verification import make_app
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="verify-run", independence_attestation="independent")
+    inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
+    assert inspected["ok"]
     approved = app.execute("approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
         provenance_complete=True, run_id="verify-run", independence_attestation="independent")

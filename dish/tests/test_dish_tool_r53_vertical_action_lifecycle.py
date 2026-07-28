@@ -100,6 +100,13 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
             request_id="44444444-4444-4444-8444-444444444444",
             independence_attestation="independent",
         )
+        review_inspect = verifier.execute(
+            "inspect",
+            agent="codex",
+            submission_id=research["submission_id"],
+        )
+        assert review_inspect["ok"], review_inspect
+        assert review_inspect["data"].get("dish_inspect_fact"), review_inspect
         approved = verifier.execute(
             "approve",
             agent="codex",
@@ -122,7 +129,8 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
 
     assert created["ok"] and planning["ok"] and planned["ok"]
     assert research["ok"] and prepared["ok"] and review["ok"]
-    assert approved["ok"] and submitted["ok"]
+    assert approved["ok"], approved
+    assert submitted["ok"], submitted
     assert transport.tasks[task_gid]["section"] == "333"
 
     placement_calls = [

@@ -825,6 +825,103 @@ _OPERATION_PHASE_ACTIONS = {
     "terminal": (),
 }
 
+def current_dish_inspect_fact(
+    conn: sqlite3.Connection, *, cycle: Mapping[str, Any], section_gid: str
+) -> sqlite3.Row | None:
+    """Return an exact inspect fact for the current reviewed cycle binding."""
+    if not (
+        cycle["reviewed_content_version_id"]
+        and cycle["reviewed_identity"]
+        and cycle["verifier_agent"]
+        and str(cycle["run_id"] or "").strip()
+    ):
+        return None
+    return conn.execute(
+        """SELECT * FROM dish_inspect_facts
+             WHERE operation_id=? AND cycle_id=? AND task_gid=?
+               AND reviewed_content_version_id=? AND reviewed_identity=?
+               AND verifier_agent=? AND run_id=?
+               AND COALESCE(independence_attestation,'')=COALESCE(?, '')
+               AND section_gid=?
+             ORDER BY created_at DESC, rowid DESC LIMIT 1""",
+        (
+            cycle["operation_id"], cycle["cycle_id"], cycle["task_gid"],
+            cycle["reviewed_content_version_id"], cycle["reviewed_identity"],
+            cycle["verifier_agent"], cycle["run_id"],
+            cycle["independence_attestation"], section_gid,
+        ),
+    ).fetchone()
+
+
+def record_dish_inspect_fact(
+    conn: sqlite3.Connection, *, cycle: Mapping[str, Any], section_gid: str
+) -> sqlite3.Row:
+    """Append one exact verifier inspection fact after an authoritative reread."""
+    existing = current_dish_inspect_fact(conn, cycle=cycle, section_gid=section_gid)
+    if existing is not None:
+        return existing
+    actor = conn.execute(
+        """SELECT 1 FROM operation_actor_facts
+             WHERE operation_id=? AND task_gid=? AND role='verifier'
+               AND agent=? AND run_id=?
+               AND COALESCE(independence_attestation,'')=COALESCE(?, '')
+               AND candidate_identity=? AND source_cycle_id=? LIMIT 1""",
+        (
+            cycle["operation_id"], cycle["task_gid"], cycle["verifier_agent"],
+            cycle["run_id"], cycle["independence_attestation"],
+            cycle["reviewed_identity"], cycle["cycle_id"],
+        ),
+    ).fetchone()
+    version = conn.execute(
+        """SELECT 1 FROM content_versions
+             WHERE content_version_id=? AND operation_id=? AND task_gid=?
+               AND identity=? AND confirmed=1""",
+        (
+            cycle["reviewed_content_version_id"], cycle["operation_id"],
+            cycle["task_gid"], cycle["reviewed_identity"],
+        ),
+    ).fetchone()
+    if actor is None or version is None:
+        raise DishRuleError(
+            "CONFLICT",
+            "the current Verification review binding is incomplete",
+            rule="dish_inspect_review_binding_invalid",
+        )
+    fact_id = str(uuid.uuid4())
+    with atomic_persistence(conn, "dish_inspect_fact"):
+        conn.execute(
+            """INSERT INTO dish_inspect_facts(
+                   fact_id,operation_id,cycle_id,task_gid,reviewed_content_version_id,
+                   reviewed_identity,verifier_agent,run_id,independence_attestation,
+                   section_gid,created_at
+               ) VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                fact_id, cycle["operation_id"], cycle["cycle_id"], cycle["task_gid"],
+                cycle["reviewed_content_version_id"], cycle["reviewed_identity"],
+                cycle["verifier_agent"], cycle["run_id"],
+                cycle["independence_attestation"], section_gid, utc_now(),
+            ),
+        )
+        record_audit(
+            conn, submission_id=None, task_gid=cycle["task_gid"],
+            operation_id=cycle["operation_id"], event_type="verification.inspected",
+            actor_agent=cycle["verifier_agent"],
+            actor_run_id=cycle["run_id"],
+            actor_attestation=cycle["independence_attestation"],
+            actor_source="dish-inspect",
+            details={
+                "fact_id": fact_id, "cycle_id": cycle["cycle_id"],
+                "reviewed_identity": cycle["reviewed_identity"],
+                "reviewed_content_version_id": cycle["reviewed_content_version_id"],
+                "section_gid": section_gid,
+            },
+            result_code="OK", result_ok=True,
+        )
+    return conn.execute(
+        "SELECT * FROM dish_inspect_facts WHERE fact_id=?", (fact_id,)
+    ).fetchone()
+
+
 def resolve_signoff_cycle_for_identity(
     conn: sqlite3.Connection, *, task_gid: str, identity: str
 ) -> sqlite3.Row | None:

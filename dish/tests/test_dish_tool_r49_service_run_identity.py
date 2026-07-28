@@ -43,6 +43,12 @@ def _start_verification(service, operation_id: str, *, run_id: str = "verifier-r
     )
     assert review["ok"]
     assert review["submission_id"] == operation_id
+    inspected = service.execute_agent(
+        "inspect",
+        {"agent": "codex", "submission_id": operation_id},
+        principal=principal,
+    )
+    assert inspected["ok"]
     return principal, review
 
 

@@ -12,6 +12,9 @@ from test_dish_tool_step7_verification import TASK, make_app
 def _review(app, agent, task="t", run="review"):
     result = app.execute("start", agent=agent, task_gid=task, kind="verification", run_id=run, independence_attestation="independent")
     assert result["ok"]
+    inspected = app.execute("inspect", agent=agent, submission_id=result["submission_id"])
+    assert inspected["ok"]
+    assert inspected["allowed_actions"] == ["approve", "reject"]
     return result
 
 
@@ -182,6 +185,7 @@ def test_hold_routes_reject_large_only_arguments(tmp_path):
         app, _backend, operation_id, _ = make_app(case_dir)
         review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id=f"review-{suffix}", independence_attestation="independent")
         assert review["ok"]
+        assert app.execute("inspect", agent="codex", submission_id=operation_id)["ok"]
         result = app.execute(
             "reject", agent="codex", submission_id=operation_id, route="evidence",
             reason="Marco must confirm a fact", resume_status="pending-verification",
@@ -194,6 +198,7 @@ def test_hold_routes_reject_large_only_arguments(tmp_path):
 def test_large_route_rejects_hold_resume_status(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-large-resume", independence_attestation="independent")
+    assert app.execute("inspect", agent="codex", submission_id=operation_id)["ok"]
     candidate = tmp_path / "large.txt"
     candidate.write_text(TASK.replace("100 g", "120 g"))
     result = app.execute(
@@ -215,6 +220,7 @@ def test_hold_route_reports_all_incompatible_arguments_and_permitted_set(tmp_pat
         independence_attestation="independent",
     )
     assert review["ok"]
+    assert app.execute("inspect", agent="codex", submission_id=operation_id)["ok"]
     result = app.execute(
         "reject",
         agent="codex",

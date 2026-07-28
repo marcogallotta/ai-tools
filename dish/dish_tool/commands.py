@@ -400,16 +400,22 @@ def _current_operation_view(self, operation_id: str, *, schema=None) -> dict[str
 
 def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str) -> dict[str, Any]:
     from .step5 import inspect_operation, verification_lineage
+    from .step7 import record_current_dish_inspect
     agent_family(agent)
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     exists = self.conn.execute("SELECT 1 FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     if exists is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    release = self._load_release(None)
+    inspect_fact = record_current_dish_inspect(
+        self.conn, self.backend, operation_id=operation_id, agent=agent,
+        invocation_run_id=self.invocation_run_id, schema=release.schema,
+    )
     data = inspect_operation(self.conn, operation_id)
+    data["dish_inspect_fact"] = inspect_fact
     data["verification_lineage"] = verification_lineage(
         self.conn, operation_id, current_run_id=self.invocation_run_id
     )
-    release = self._load_release(None)
     internal_view = _current_operation_view(self, operation_id, schema=release.schema)
     view = _exposed_view(internal_view)
     data["legal_next_actions"] = view["legal_actions"]
@@ -610,10 +616,8 @@ def _step7_start(
     trace.submission_id = operation_id
     trace.state = view["status"]
     legal_actions, data = _exposed_result_contract(view, data)
-    # Verification start binds the reviewed identity, but agents still need the
-    # explicit inspect step to see lineage, provenance, and the authoritative
-    # snapshot before deciding. Keep the decision actions visible as follow-ons.
-    legal_actions = ["inspect", *(action for action in legal_actions if action != "inspect")]
+    # The reviewed binding is not decision-ready until the verifier performs an
+    # exact current inspect, which records the durable fact exposed by policy.
     return result_envelope(
         command="start", task_gid=task_gid, submission_id=operation_id,
         state=view["status"], allowed_actions=legal_actions, data=data,

@@ -12,6 +12,9 @@ from test_dish_tool_step7_verification import TASK, make_app
 def _review(app, run="review"):
     result = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id=run, independence_attestation="independent")
     assert result["ok"]
+    inspected = app.execute("inspect", agent="codex", submission_id=result["submission_id"])
+    assert inspected["ok"]
+    assert inspected["allowed_actions"] == ["approve", "reject"]
     return result
 
 

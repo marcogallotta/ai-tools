@@ -301,6 +301,12 @@ def _complete_service_submission(service, backend):
         request_id="10000000-0000-4000-8000-000000000003",
     )
     assert reviewed["ok"]
+    inspected = service.execute_agent(
+        "inspect",
+        {"agent": "codex", "submission_id": started["submission_id"]},
+        principal=verifier,
+    )
+    assert inspected["ok"]
     approved = service.execute_agent(
         "approve",
         {

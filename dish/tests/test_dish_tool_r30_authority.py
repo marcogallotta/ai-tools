@@ -13,6 +13,9 @@ from test_dish_tool_step7_verification import TASK, make_app
 def _review(app, agent, run):
     result = app.execute("start", agent=agent, task_gid="t", kind="verification", run_id=run, independence_attestation="independent")
     assert result["ok"]
+    inspected = app.execute("inspect", agent=agent, submission_id=result["submission_id"])
+    assert inspected["ok"]
+    assert inspected["allowed_actions"] == ["approve", "reject"]
     return result
 
 
@@ -47,7 +50,7 @@ def test_verification_read_local_facts_are_atomic(monkeypatch, tmp_path):
 
     monkeypatch.undo()
     retry = _review(app, "codex", "review-run")
-    assert retry["allowed_actions"] == ["inspect", "approve", "reject"]
+    assert retry["allowed_actions"] == ["inspect"]
 
 
 def test_large_route_actor_is_recoverable_before_cycle_is_usable(monkeypatch, tmp_path):

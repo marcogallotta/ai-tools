@@ -28,6 +28,7 @@ class WorkflowSnapshot:
     held_baseline_matches: bool = True
     preconstruction_hold: bool = False
     destination_repair_required: bool = False
+    dish_inspect_current: bool = False
 
 
 def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
@@ -63,7 +64,9 @@ def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
             or snapshot.live_section_gid != snapshot.verification_queue_gid
         ):
             return []
-        return ["approve", "reject"] if snapshot.cycle_reviewed else ["verify"]
+        if not snapshot.cycle_reviewed:
+            return ["verify"]
+        return ["approve", "reject"] if snapshot.dish_inspect_current else ["inspect"]
     if phase in {"await_submission", "ready_move_failed"}:
         if snapshot.live_status != "ready" or not snapshot.signoff_bound:
             return []

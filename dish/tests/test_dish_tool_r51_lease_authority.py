@@ -195,6 +195,12 @@ def test_admin_hold_resolution_uses_ephemeral_lease_and_hands_back_to_verificati
         principal=verifier,
     )
     assert reviewed["ok"]
+    inspected = service.execute_agent(
+        "inspect",
+        {"agent": "codex", "submission_id": operation_id},
+        principal=verifier,
+    )
+    assert inspected["ok"]
     held = service.execute_agent(
         "reject",
         {

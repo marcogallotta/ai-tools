@@ -85,6 +85,12 @@ def _approved(service: DishService):
         principal=verifier,
     )
     assert review["ok"]
+    inspected = service.execute_agent(
+        "inspect",
+        {"agent": "codex", "submission_id": started["submission_id"]},
+        principal=verifier,
+    )
+    assert inspected["ok"]
     approved = service.execute_agent(
         "approve",
         {

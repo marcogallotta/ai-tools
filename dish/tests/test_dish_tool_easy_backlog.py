@@ -59,6 +59,9 @@ def test_approve_rejects_blank_attestation_then_accepts_corrected_call(tmp_path)
         run_id="approve-attestation",
         independence_attestation=ATTESTATION,
     )
+    assert app.execute(
+        "inspect", agent="codex", submission_id=operation_id
+    )["ok"]
 
     rejected = app.execute(
         "approve",
@@ -104,6 +107,9 @@ def test_large_reject_rejects_blank_attestation_then_accepts_corrected_call(tmp_
         run_id="reject-attestation",
         independence_attestation=ATTESTATION,
     )
+    assert app.execute(
+        "inspect", agent="codex", submission_id=operation_id
+    )["ok"]
     candidate = tmp_path / "large.txt"
     candidate.write_text(TASK)
 
@@ -150,6 +156,9 @@ def test_hold_rejection_inherits_persisted_attestation(route, tmp_path):
         run_id="hold-attestation",
         independence_attestation=ATTESTATION,
     )
+    assert app.execute(
+        "inspect", agent="codex", submission_id=operation_id
+    )["ok"]
 
     held = app.execute(
         "reject",
@@ -216,6 +225,9 @@ def test_quantity_forced_verification_is_audited_large_through_approval(tmp_path
         run_id="quantity-review",
         independence_attestation=ATTESTATION,
     )
+    assert app.execute(
+        "inspect", agent="codex", submission_id=changed["submission_id"]
+    )["ok"]
     approved = app.execute(
         "approve",
         agent="codex",
@@ -254,6 +266,9 @@ def test_blocked_start_preserves_held_operation_guidance(
         run_id="hold-review",
         independence_attestation=ATTESTATION,
     )
+    assert app.execute(
+        "inspect", agent="codex", submission_id=operation_id
+    )["ok"]
     held = app.execute(
         "reject",
         agent="codex",
@@ -341,6 +356,9 @@ def test_hold_route_argument_error_is_retryable_and_diagnostic_uses_action_field
         run_id="route-review",
         independence_attestation=ATTESTATION,
     )
+    assert app.execute(
+        "inspect", agent="codex", submission_id=operation_id
+    )["ok"]
     candidate = tmp_path / "not-accepted.txt"
     candidate.write_text(TASK)
 

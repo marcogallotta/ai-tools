@@ -96,6 +96,13 @@ class CurrentWorkflowService:
                 ).fetchone()
             cycle_reviewed = bool(binding_ok and actor is not None)
 
+        dish_inspect_current = False
+        if cycle_reviewed and cycle is not None:
+            from .database import current_dish_inspect_fact
+            dish_inspect_current = current_dish_inspect_fact(
+                self.conn, cycle=cycle, section_gid=registry.verification_queue_gid
+            ) is not None
+
         task_head = self.conn.execute(
             "SELECT last_confirmed_identity FROM task_content_state WHERE task_gid=?",
             (op["task_gid"],),
@@ -235,6 +242,7 @@ class CurrentWorkflowService:
             held_baseline_matches=held_baseline_matches,
             preconstruction_hold=preconstruction_hold,
             destination_repair_required=destination_repair_required,
+            dish_inspect_current=dish_inspect_current,
         )
         recovery_reasons: list[str] = []
         if op["status"] == "uncertain":
@@ -260,6 +268,8 @@ class CurrentWorkflowService:
             "pending_steps": list(pending_steps),
             "unresolved_attempts": list(unresolved_attempts),
             "required_cycle_exists": required_cycle_exists,
+            "cycle_reviewed": cycle_reviewed,
+            "dish_inspect_current": dish_inspect_current,
             "signoff_bound": signoff_bound,
             "held_baseline_matches": held_baseline_matches,
             "preconstruction_hold": preconstruction_hold,
@@ -306,6 +316,14 @@ class CurrentWorkflowService:
                     code = "CONFLICT"
                     rule = "live_task_placement_drift"
                     message = "live task placement does not match the authoritative workflow placement"
+            elif (
+                action in {"approve", "reject"}
+                and view.get("phase") == "await_verification"
+                and view.get("cycle_reviewed")
+                and not view.get("dish_inspect_current")
+            ):
+                rule = "dish_inspect_required"
+                message = "approve or reject requires a current dish inspect fact"
             elif not view.get("required_cycle_exists", True):
                 rule = "verification_cycle_missing"
                 message = "the required Verification cycle is missing"

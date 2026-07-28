@@ -8,6 +8,8 @@ def test_structural_pass_does_not_replace_verifier_semantic_attestation(tmp_path
         independence_attestation="independent",
     )
     assert review["ok"]
+    inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
+    assert inspected["ok"]
 
     result = app.execute(
         "approve",

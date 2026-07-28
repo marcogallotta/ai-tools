@@ -119,7 +119,7 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
         independence_attestation="independent",
     )
     assert verification["ok"]
-    assert verification["allowed_actions"] == ["inspect", "approve", "reject"]
+    assert verification["allowed_actions"] == ["inspect"]
 
 def test_planning_prepare_reports_every_missing_field_and_required_label(tmp_path):
     b = Backend("Planning task", "")
