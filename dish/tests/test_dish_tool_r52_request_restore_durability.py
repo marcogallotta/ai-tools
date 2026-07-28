@@ -204,6 +204,7 @@ def test_pending_verification_start_reconstructs_exact_review_context(tmp_path):
         "task_gid": "t",
         "kind": "verification",
         "run_id": "verifier-run",
+        "independence_attestation": "independent",
     }
     conn = initialize_database(service.config.db_path)
     try:
@@ -228,7 +229,7 @@ def test_pending_verification_start_reconstructs_exact_review_context(tmp_path):
 
     replayed = service.execute_agent(
         "start",
-        {"agent": "codex", "task_gid": "t", "kind": "verification"},
+        {"agent": "codex", "task_gid": "t", "kind": "verification", "independence_attestation": "independent"},
         principal=verifier,
         request_id=VERIFY_REQUEST,
     )

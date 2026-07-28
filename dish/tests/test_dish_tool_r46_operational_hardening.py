@@ -81,7 +81,7 @@ def _approved(service: DishService):
     assert prepared["ok"]
     review = service.execute_agent(
         "start",
-        {"agent": "codex", "task_gid": "t", "kind": "verification", "run_id": "verifier-run"},
+        {"agent": "codex", "task_gid": "t", "kind": "verification", "run_id": "verifier-run", "independence_attestation": "independent"},
         principal=verifier,
     )
     assert review["ok"]
@@ -96,6 +96,7 @@ def _approved(service: DishService):
             "semantic_review_complete": True,
             "provenance_complete": True,
             "run_id": "verifier-run",
+            "independence_attestation": "independent",
         },
         principal=verifier,
     )

@@ -8,7 +8,7 @@ from test_dish_tool_step7_verification import TASK, make_app
 
 
 def _review(app, agent="codex", run="review"):
-    result = app.execute("start", agent=agent, task_gid="t", kind="verification", run_id=run)
+    result = app.execute("start", agent=agent, task_gid="t", kind="verification", run_id=run, independence_attestation="independent")
     assert result["ok"]
     return result
 
@@ -31,6 +31,7 @@ def test_approval_crash_after_signoff_recovers_await_submission(tmp_path, monkey
         semantic_review_complete=True,
         provenance_complete=True,
         run_id="review",
+        independence_attestation="independent",
     )
     assert result["code"] == "BACKEND_UNCERTAIN"
     assert result["retryable"] is False
@@ -69,6 +70,7 @@ def test_large_crash_before_new_cycle_recovers_missing_suffix(tmp_path, monkeypa
         reason="replace method",
         file_path=str(candidate),
         run_id="first",
+        independence_attestation="independent",
     )
     assert result["code"] == "BACKEND_UNCERTAIN"
     assert result["retryable"] is False

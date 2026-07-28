@@ -24,7 +24,7 @@ def test_current_workflow_service_is_same_authority_used_by_inspect(tmp_path):
 
 def test_current_workflow_service_rejects_action_after_live_placement_drift(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-run")
+    app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-run", independence_attestation="independent")
     backend.section = "rq"
     service = CurrentWorkflowService(app.conn, backend)
     view = service.authoritative_view(operation_id, schema=app._load_release(None).schema)

@@ -116,6 +116,7 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
     verification = a.execute(
         "start", agent="codex", task_gid="t", kind="verification",
         run_id="fresh-verification-run",
+        independence_attestation="independent",
     )
     assert verification["ok"]
     assert verification["allowed_actions"] == ["inspect", "approve", "reject"]

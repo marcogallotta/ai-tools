@@ -4,7 +4,8 @@ from tests.test_dish_tool_step7_verification import make_app
 def test_structural_pass_does_not_replace_verifier_semantic_attestation(tmp_path):
     app, _backend, operation_id, _candidate = make_app(tmp_path)
     review = app.execute(
-        "start", agent="codex", task_gid="t", kind="verification", run_id="protocol-hook-review"
+        "start", agent="codex", task_gid="t", kind="verification", run_id="protocol-hook-review",
+        independence_attestation="independent",
     )
     assert review["ok"]
 
@@ -18,6 +19,7 @@ def test_structural_pass_does_not_replace_verifier_semantic_attestation(tmp_path
         semantic_review_complete=False,
         provenance_complete=True,
         run_id="protocol-hook-review",
+        independence_attestation="independent",
     )
 
     assert not result["ok"]

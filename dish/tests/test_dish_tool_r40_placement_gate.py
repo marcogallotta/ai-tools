@@ -114,12 +114,13 @@ def test_real_sdk_full_placement_lifecycle(tmp_path, sdk_backend):
     prepared = app.execute("prepare", model="gpt-5.6-sol", agent="gpt", submission_id=research["submission_id"], file_path=str(candidate))
     assert prepared["ok"] and transport.tasks[task_gid]["section"] == "vq"
 
-    review = app.execute("start", agent="codex", task_gid=task_gid, kind="verification", run_id="verify-run")
+    review = app.execute("start", agent="codex", task_gid=task_gid, kind="verification", run_id="verify-run", independence_attestation="independent")
     assert review["ok"]
     approved = app.execute(
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=research["submission_id"], correction="none",
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True,
         provenance_complete=True, run_id="verify-run",
+        independence_attestation="independent",
     )
     assert approved["ok"]
     inspected = app.execute("inspect", agent="gpt", submission_id=research["submission_id"])

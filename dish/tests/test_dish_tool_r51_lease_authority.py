@@ -191,7 +191,7 @@ def test_admin_hold_resolution_uses_ephemeral_lease_and_hands_back_to_verificati
     verifier = _principal("action", "verifier-run")
     reviewed = service.execute_agent(
         "start",
-        {"agent": "codex", "task_gid": "t", "kind": "verification"},
+        {"agent": "codex", "task_gid": "t", "kind": "verification", "independence_attestation": "independent"},
         principal=verifier,
     )
     assert reviewed["ok"]
@@ -230,7 +230,7 @@ def test_admin_hold_resolution_uses_ephemeral_lease_and_hands_back_to_verificati
     next_verifier = _principal("action", "next-verifier-run")
     review2 = service.execute_agent(
         "start",
-        {"agent": "codex", "task_gid": "t", "kind": "verification"},
+        {"agent": "codex", "task_gid": "t", "kind": "verification", "independence_attestation": "independent"},
         principal=next_verifier,
     )
     assert review2["ok"]
@@ -277,14 +277,14 @@ def test_failed_repeat_verification_start_does_not_release_existing_lease(tmp_pa
     verifier = _principal("action", "verifier-run")
     first = service.execute_agent(
         "start",
-        {"agent": "codex", "task_gid": "t", "kind": "verification"},
+        {"agent": "codex", "task_gid": "t", "kind": "verification", "independence_attestation": "independent"},
         principal=verifier,
     )
     assert first["ok"]
 
     repeated = service.execute_agent(
         "start",
-        {"agent": "codex", "task_gid": "t", "kind": "verification"},
+        {"agent": "codex", "task_gid": "t", "kind": "verification", "independence_attestation": "independent"},
         principal=verifier,
     )
     assert not repeated["ok"]

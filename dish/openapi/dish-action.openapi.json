@@ -457,7 +457,8 @@
                         "required": [
                           "task_gid",
                           "agent",
-                          "kind"
+                          "kind",
+                          "independence_attestation"
                         ],
                         "properties": {
                           "task_gid": {
@@ -653,7 +654,8 @@
                       "correction",
                       "reviewed_identity",
                       "semantic_review_complete",
-                      "provenance_complete"
+                      "provenance_complete",
+                      "independence_attestation"
                     ],
                     "properties": {
                       "submission_id": {
@@ -768,7 +770,8 @@
                           "reason",
                           "route",
                           "model",
-                          "file_text"
+                          "file_text",
+                          "independence_attestation"
                         ],
                         "properties": {
                           "submission_id": {

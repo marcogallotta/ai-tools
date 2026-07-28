@@ -16,7 +16,7 @@ def _doc(text=TASK):
 
 
 def _review(app, *, run="review", agent="codex"):
-    result = app.execute("start", agent=agent, task_gid="t", kind="verification", run_id=run)
+    result = app.execute("start", agent=agent, task_gid="t", kind="verification", run_id=run, independence_attestation="independent")
     assert result["ok"]
     return result
 
@@ -143,6 +143,7 @@ def test_real_small_route_accepts_fresh_basil_after_reheating(tmp_path):
         correction="small", file_path=str(candidate),
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review",
+        independence_attestation="independent",
     )
     assert result["ok"]
     assert result["allowed_actions"] == ["submit"]
@@ -159,6 +160,7 @@ def test_real_small_route_rejects_same_keyword_halal_reversal(tmp_path):
         correction="small", file_path=str(candidate),
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review",
+        independence_attestation="independent",
     )
     assert result["code"] == "VALIDATION_FAILED"
     assert result["errors"][0]["rule"] == "large_correction_required"
@@ -246,7 +248,7 @@ def test_inspect_suppresses_verify_and_submit_after_exact_content_drift(tmp_path
     backend.title += " externally changed"
     inspected = app.execute("inspect", agent="gpt", submission_id=operation_id)
     assert inspected["allowed_actions"] == []
-    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review")
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review", independence_attestation="independent")
     assert review["code"] == "CONFLICT"
 
 
@@ -261,6 +263,7 @@ def test_non_material_checkin_requires_exact_local_signed_baseline(tmp_path):
         "approve", agent="codex", model="gpt-5.6-sol", submission_id=source_operation,
         correction="none", reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="source-review",
+        independence_attestation="independent",
     )
     assert approved["ok"]
 

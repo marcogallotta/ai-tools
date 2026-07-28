@@ -55,8 +55,10 @@ Add an operating instruction with all of these requirements:
   workflow run ID. A redundant `arguments.run_id`, when supplied, must match it exactly.
 - Independent Verification requires that run ID to differ from the run that constructed or last
   materially edited the candidate. A new operation ID, cycle ID, actor/model identity, or
-  `independence_attestation` does not establish independence. An attestation may remain as
-  supplementary audit context but cannot replace `client.run_id`.
+  `independence_attestation` does not establish independence. A non-blank attestation is required as
+  supplementary audit context for Verification start and the decision routes that accept it, but it
+  cannot replace `client.run_id`. Evidence and Human Review rejection routes inherit the persisted
+  start attestation.
 - Follow only the returned `allowed_actions`. A completed cross-stage handoff names `start` plus
   `data.required_start_kind`; it does not reopen the terminal prior operation. After Verification
   `start`, call `inspect` before making an approval or rejection decision. Do not reconstruct workflow

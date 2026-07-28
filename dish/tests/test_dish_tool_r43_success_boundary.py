@@ -10,7 +10,7 @@ from tests.test_dish_tool_step7_verification import make_app
 
 
 def _review(app, operation_id, *, run="review"):
-    result = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id=run)
+    result = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id=run, independence_attestation="independent")
     assert result["ok"]
     return result
 
@@ -33,6 +33,7 @@ def test_post_success_view_failure_preserves_approval_success(monkeypatch, tmp_p
         "approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
         correction="none", reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review",
+        independence_attestation="independent",
     )
     assert result["ok"]
     assert result["allowed_actions"] == []

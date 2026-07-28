@@ -11,7 +11,7 @@ from test_dish_tool_step7_verification import Backend, TASK, make_app
 
 
 def _review(app, run: str, agent: str = "codex"):
-    result = app.execute("start", agent=agent, task_gid="t", kind="verification", run_id=run)
+    result = app.execute("start", agent=agent, task_gid="t", kind="verification", run_id=run, independence_attestation="independent")
     assert result["ok"]
     return result
 
@@ -22,6 +22,7 @@ def _approve_and_submit(app, operation_id: str, run: str = "review"):
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="none",
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id=run,
+        independence_attestation="independent",
     )
     assert approved["ok"]
     submitted = app.execute("submit", submission_id=operation_id)
@@ -36,11 +37,13 @@ def test_reopen_recovery_records_editor_before_cycle_is_usable(tmp_path, monkeyp
     assert app.execute(
         "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="first", file_path=str(candidate), run_id="one",
+        independence_attestation="independent",
     )["ok"]
     _review(app, "two", agent="gpt")
     assert app.execute(
         "reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="second", file_path=str(candidate), run_id="two",
+        independence_attestation="independent",
     )["ok"]
 
     corrected = tmp_path / "corrected.txt"
@@ -75,7 +78,7 @@ def test_reopen_recovery_records_editor_before_cycle_is_usable(tmp_path, monkeyp
     monkeypatch.setattr(step8, "record_actor_fact", original)
     recovered = recover_operation(app.conn, backend, operation_id=operation_id, requested_outcome="applied")
     assert any(action.get("step") == "reopen_actor" for action in recovered["actions"])
-    barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="reopen-run")
+    barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="reopen-run", independence_attestation="independent")
     assert barred["code"] == "AGENT_MISMATCH"
 
 
@@ -115,7 +118,7 @@ def test_material_hold_resolution_recovery_records_editor_before_cycle(tmp_path,
     monkeypatch.setattr(step8, "record_actor_fact", original)
     recovered = recover_operation(app.conn, backend, operation_id=operation_id, requested_outcome="applied")
     assert any(action.get("step") == "hold_resolution_actor" for action in recovered["actions"])
-    barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="hold-editor")
+    barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="hold-editor", independence_attestation="independent")
     assert barred["code"] == "AGENT_MISMATCH"
 
 

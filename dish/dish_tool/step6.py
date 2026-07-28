@@ -32,6 +32,7 @@ from .task_document import (
 )
 from .task_store import LiveTask, move_exact, read_complete_task, write_exact_content
 from .governed_diff import (
+    effective_material_change_level,
     explicit_material_reasons,
     require_governed_authorization,
     preserve_material_change_history,
@@ -279,6 +280,7 @@ def prepare_live(
                 "INVALID_ARGUMENT",
                 "a changed canonical body requires material or non-material classification",
                 rule="material_classification_required",
+                retryable=True,
                 details={
                     "field": "material_classification",
                     "classified_subject": "canonical body diff from the signed baseline",
@@ -289,6 +291,7 @@ def prepare_live(
                 "INVALID_ARGUMENT",
                 "material classification is not applicable because the canonical body did not change",
                 rule="material_classification_not_applicable",
+                retryable=True,
                 details={
                     "field": "material_classification",
                     "classified_subject": "canonical body diff from the signed baseline",
@@ -323,13 +326,16 @@ def prepare_live(
                     rule="change_intent_missing",
                 )
             change_intent = json.loads(intent_row["intended_json"])
+            effective_change_level = effective_material_change_level(
+                str(change_intent["level"]), forced_material_reasons
+            )
             material_changes.append(material_change_line(
                 agent,
                 model,
                 utc_now()[:10],
                 change="updated the candidate",
                 reason=str(change_intent["reason"]),
-                materiality=str(change_intent["level"]).capitalize(),
+                materiality=effective_change_level.capitalize(),
             ))
             verification_snapshot = current_verification_protocol_release(release.root)
             assert_transition(action="material_edit", before=prior.state.values["Status"], after="pending-verification")

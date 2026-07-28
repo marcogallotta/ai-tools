@@ -86,6 +86,8 @@ _STORAGE_CONDITION_RE = re.compile(
     re.I,
 )
 
+_QUANTITY_MATERIAL_REASONS = frozenset({"quantities", "quantity", "portions"})
+
 _PLANNING_MATERIAL = {
     "Dish candidate": "dish_candidate",
     "Purpose": "purpose_or_test",
@@ -274,6 +276,16 @@ def explicit_material_reasons(before, after) -> tuple[str, ...]:
                 if _signature(pattern, old) != _signature(pattern, new) or old != new:
                     reasons.append(name)
     return tuple(dict.fromkeys(reasons))
+
+
+def effective_material_change_level(
+    requested_level: str, material_reasons: tuple[str, ...]
+) -> str:
+    """Return the audit level required by the canonical material classifier."""
+
+    if _QUANTITY_MATERIAL_REASONS.intersection(material_reasons):
+        return "large"
+    return requested_level
 
 
 def require_small_scope(before, after) -> None:

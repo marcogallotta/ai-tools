@@ -6,6 +6,7 @@ from tests.test_dish_tool_step7_verification import make_app
 def _approve(app, operation_id: str) -> None:
     review = app.execute(
         "start", agent="codex", task_gid="t", kind="verification", run_id="review",
+        independence_attestation="independent",
     )
     assert review["ok"]
     approved = app.execute(
@@ -18,6 +19,7 @@ def _approve(app, operation_id: str) -> None:
         semantic_review_complete=True,
         provenance_complete=True,
         run_id="review",
+        independence_attestation="independent",
     )
     assert approved["ok"]
 

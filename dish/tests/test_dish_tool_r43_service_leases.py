@@ -132,7 +132,7 @@ def test_workflow_handoff_releases_owner_lease_but_keeps_task_operation_lock(tmp
     verifier = _principal("verifier", "verify-run")
     review = service.execute_agent(
         "start",
-        {"agent": "codex", "task_gid": "t", "kind": "verification", "run_id": "verify-run"},
+        {"agent": "codex", "task_gid": "t", "kind": "verification", "run_id": "verify-run", "independence_attestation": "independent"},
         principal=verifier,
     )
     assert review["ok"]

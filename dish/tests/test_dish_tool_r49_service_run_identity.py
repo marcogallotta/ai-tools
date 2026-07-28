@@ -38,7 +38,7 @@ def _start_verification(service, operation_id: str, *, run_id: str = "verifier-r
     principal = _principal("verifier", run_id)
     review = service.execute_agent(
         "start",
-        {"agent": "codex", "task_gid": "t", "kind": "verification"},
+        {"agent": "codex", "task_gid": "t", "kind": "verification", "independence_attestation": "independent"},
         principal=principal,
     )
     assert review["ok"]
@@ -175,6 +175,7 @@ def test_fresh_verifier_run_persists_through_approve_and_submit(tmp_path):
             "reviewed_identity": review["data"]["reviewed_identity"],
             "semantic_review_complete": True,
             "provenance_complete": True,
+            "independence_attestation": "independent",
         },
         principal=verifier,
     )
@@ -238,6 +239,7 @@ def test_large_correction_preserves_constructor_and_fresh_verifier_runs(tmp_path
             "route": "large",
             "reason": "material correction",
             "file_text": candidate,
+            "independence_attestation": "independent",
         },
         principal=first_verifier,
     )

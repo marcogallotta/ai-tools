@@ -10,7 +10,7 @@ from test_dish_tool_step7_verification import TASK, make_app
 
 
 def _review(app, agent, task="t", run="review"):
-    result = app.execute("start", agent=agent, task_gid=task, kind="verification", run_id=run)
+    result = app.execute("start", agent=agent, task_gid=task, kind="verification", run_id=run, independence_attestation="independent")
     assert result["ok"]
     return result
 
@@ -25,6 +25,7 @@ def test_small_correction_is_written_rechecked_and_signed_same_pass(tmp_path):
         correction="small", file_path=str(candidate),
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review",
+        independence_attestation="independent",
     )
     assert result["ok"]
     assert "applied a small Verification correction" in backend.notes
@@ -38,19 +39,19 @@ def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     _review(app, "codex", run="first")
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK.replace("100 g", "120 g"))
-    first = app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="method needs replacement", file_path=str(candidate), run_id="first")
+    first = app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="method needs replacement", file_path=str(candidate), run_id="first", independence_attestation="independent")
     assert first["ok"] and first["data"]["new_cycle_id"]
     assert first["allowed_actions"] == ["start"]
     assert first["data"]["required_start_kind"] == "verification"
-    barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="first")
+    barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="first", independence_attestation="independent")
     assert barred["code"] == "AGENT_MISMATCH"
     _review(app, "gpt", run="second")
     candidate.write_text(TASK.replace("100 g", "130 g"))
-    second = app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="premise still unresolved", file_path=str(candidate), run_id="second")
+    second = app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="premise still unresolved", file_path=str(candidate), run_id="second", independence_attestation="independent")
     assert second["ok"] and second["data"]["two_pass_hold"]
     assert "Status: pending-human-review" in backend.notes
     assert "Resume status: pending-verification" in backend.notes
-    blocked = app.execute("start", agent="gpt", task_gid="t", kind="verification", run_id="third")
+    blocked = app.execute("start", agent="gpt", task_gid="t", kind="verification", run_id="third", independence_attestation="independent")
     assert blocked["code"] == "WRONG_STATE"
 
 
@@ -89,9 +90,9 @@ def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK)
     _review(app, "codex", run="one")
-    app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="first", file_path=str(candidate), run_id="one")
+    app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="first", file_path=str(candidate), run_id="one", independence_attestation="independent")
     _review(app, "gpt", run="two")
-    app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="second", file_path=str(candidate), run_id="two")
+    app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="second", file_path=str(candidate), run_id="two", independence_attestation="independent")
     admin = DishAdminApplication(app.conn, backend=backend)
     bad = admin.execute("reopen", submission_id=operation_id, category="hash", before="a", after="b", editor="codex", model="gpt-5.6-sol", run_id="reopen-run", file_path=str(candidate), date="2026-07-25")
     assert bad["code"] == "INVALID_ARGUMENT"
@@ -123,6 +124,7 @@ def test_small_correction_cannot_replace_unreviewed_live_content(tmp_path):
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="small",
         file_path=str(candidate), reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="small-proof",
+        independence_attestation="independent",
     )
     assert result["code"] == "CONFLICT"
     assert result["errors"][0]["rule"] == "live_task_drift"
@@ -141,7 +143,7 @@ def test_reject_requires_exact_verifier_run_proof(tmp_path):
 
 def test_approve_rejects_candidate_file_without_small_correction(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
-    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-extra-file")
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-extra-file", independence_attestation="independent")
     candidate = tmp_path / "unused.txt"
     candidate.write_text(TASK)
     result = app.execute(
@@ -149,6 +151,7 @@ def test_approve_rejects_candidate_file_without_small_correction(tmp_path):
         correction="none", file_path=str(candidate),
         reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review-extra-file",
+        independence_attestation="independent",
     )
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"][0]["rule"] == "approval_file_unexpected"
@@ -156,11 +159,12 @@ def test_approve_rejects_candidate_file_without_small_correction(tmp_path):
 
 def test_small_correction_requires_candidate_file(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
-    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-missing-file")
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-missing-file", independence_attestation="independent")
     result = app.execute(
         "approve", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
         correction="small", reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review-missing-file",
+        independence_attestation="independent",
     )
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"][0]["rule"] == "small_correction_file_required"
@@ -176,7 +180,7 @@ def test_hold_routes_reject_large_only_arguments(tmp_path):
         case_dir = tmp_path / suffix
         case_dir.mkdir()
         app, _backend, operation_id, _ = make_app(case_dir)
-        review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id=f"review-{suffix}")
+        review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id=f"review-{suffix}", independence_attestation="independent")
         assert review["ok"]
         result = app.execute(
             "reject", agent="codex", submission_id=operation_id, route="evidence",
@@ -189,13 +193,14 @@ def test_hold_routes_reject_large_only_arguments(tmp_path):
 
 def test_large_route_rejects_hold_resume_status(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
-    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-large-resume")
+    review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-large-resume", independence_attestation="independent")
     candidate = tmp_path / "large.txt"
     candidate.write_text(TASK.replace("100 g", "120 g"))
     result = app.execute(
         "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
         route="large", reason="material correction", file_path=str(candidate),
         resume_status="pending-verification", run_id="review-large-resume",
+        independence_attestation="independent",
     )
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"][0]["rule"] == "large_resume_status_unexpected"
@@ -206,7 +211,8 @@ def test_hold_route_reports_all_incompatible_arguments_and_permitted_set(tmp_pat
     candidate.write_text(TASK)
     app, _backend, operation_id, _ = make_app(tmp_path)
     review = app.execute(
-        "start", agent="codex", task_gid="t", kind="verification", run_id="aggregate-route-errors"
+        "start", agent="codex", task_gid="t", kind="verification", run_id="aggregate-route-errors",
+        independence_attestation="independent",
     )
     assert review["ok"]
     result = app.execute(
@@ -233,5 +239,5 @@ def test_hold_route_reports_all_incompatible_arguments_and_permitted_set(tmp_pat
         item for item in result["errors"] if item["rule"] == "rejection_route_arguments_invalid"
     )
     assert overall["permitted_arguments"] == [
-        "submission_id", "agent", "reason", "route", "resume_status", "run_id"
+        "submission_id", "agent", "reason", "route", "resume_status"
     ]

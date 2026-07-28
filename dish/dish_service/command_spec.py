@@ -111,6 +111,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "reviewed_identity",
             "semantic_review_complete",
             "provenance_complete",
+            "independence_attestation",
         ],
         "properties": {
             "submission_id": {"type": "string", "format": "uuid"},
@@ -156,7 +157,9 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
         base = ARGUMENT_SCHEMAS["start"]["properties"]
         common = {name: deepcopy(base[name]) for name in ("task_gid", "agent")}
 
-        def start_variant(kind: str, *extras: str) -> dict[str, Any]:
+        def start_variant(
+            kind: str, *extras: str, required: tuple[str, ...] = ()
+        ) -> dict[str, Any]:
             properties = deepcopy(common)
             properties["kind"] = {
                 "type": "string",
@@ -168,7 +171,7 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
             return {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["task_gid", "agent", "kind"],
+                "required": ["task_gid", "agent", "kind", *required],
                 "properties": properties,
             }
 
@@ -177,7 +180,11 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
                 start_variant("planning"),
                 start_variant("initial"),
                 start_variant("change", "change_level", "change_reason"),
-                start_variant("verification", "independence_attestation"),
+                start_variant(
+                    "verification",
+                    "independence_attestation",
+                    required=("independence_attestation",),
+                ),
             ],
             "discriminator": {"propertyName": "kind"},
         }
@@ -208,7 +215,7 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
             variant(
                 "large",
                 extra=("model", "file_text", "independence_attestation"),
-                required=("model", "file_text"),
+                required=("model", "file_text", "independence_attestation"),
             ),
             variant(
                 "evidence",

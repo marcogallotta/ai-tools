@@ -272,6 +272,7 @@ class VerifierIdentity:
                 rule="verifier_not_independent",
                 details={"verifier_run_id": run_id},
             )
+        validate_independence_attestation(self.independence_attestation)
 
 
 
@@ -366,6 +367,21 @@ def validate_change_reason(reason: str) -> str:
         ),
         forbidden_literals=("—",),
     )
+
+
+def validate_independence_attestation(attestation: str | None) -> str:
+    """Return the exact persisted verifier attestation or reject a blank claim."""
+
+    clean = str(attestation or "").strip()
+    if not clean:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "a non-blank independence attestation is required",
+            rule="independence_attestation_required",
+            retryable=True,
+            details={"field": "independence_attestation"},
+        )
+    return clean
 
 
 def self_reported_model(model: str) -> str:

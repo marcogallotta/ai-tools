@@ -358,7 +358,9 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     reject = spec["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     variants = {item["properties"]["route"]["const"]: item for item in reject["oneOf"]}
     assert set(variants) == {"large", "evidence", "human-review"}
-    assert {"model", "file_text"}.issubset(variants["large"]["required"])
+    assert {"model", "file_text", "independence_attestation"}.issubset(
+        variants["large"]["required"]
+    )
     assert "resume_status" not in variants["large"]["properties"]
     for route in ("evidence", "human-review"):
         props = variants[route]["properties"]
@@ -366,6 +368,13 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
         assert "file_text" not in props
         assert "model" not in props
         assert "independence_attestation" not in props
+
+    start = spec["paths"]["/v1/action/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
+    start_variants = {item["properties"]["kind"]["const"]: item for item in start["oneOf"]}
+    assert "independence_attestation" in start_variants["verification"]["required"]
+
+    approve = spec["paths"]["/v1/action/approve"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
+    assert "independence_attestation" in approve["required"]
 
     prepare = spec["paths"]["/v1/action/prepare"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     assert "no_blockers" not in prepare.get("properties", {})

@@ -282,13 +282,13 @@ def _validate_rejection_route_arguments(
     permitted = {
         "large": [
             "submission_id", "agent", "reason", "route", "model", "file_path",
-            "run_id", "independence_attestation",
+            "independence_attestation",
         ],
         "evidence": [
-            "submission_id", "agent", "reason", "route", "resume_status", "run_id",
+            "submission_id", "agent", "reason", "route", "resume_status",
         ],
         "human-review": [
-            "submission_id", "agent", "reason", "route", "resume_status", "run_id",
+            "submission_id", "agent", "reason", "route", "resume_status",
         ],
     }[route]
     errors: list[dict[str, Any]] = []
@@ -340,6 +340,7 @@ def _validate_rejection_route_arguments(
             "INVALID_ARGUMENT",
             "arguments are incompatible with the selected rejection route",
             rule="rejection_route_arguments_invalid",
+            retryable=True,
             details={"route": route, "permitted_arguments": permitted},
             errors=errors,
         )
@@ -386,11 +387,16 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
             model=model,
         )
     op, cycle = _rows(conn, operation_id)
+    authority_attestation = (
+        independence_attestation
+        if route == "large"
+        else cycle["independence_attestation"]
+    )
     assert_verifier_authority(
         cycle,
         agent=agent,
         run_id=run_id,
-        independence_attestation=independence_attestation,
+        independence_attestation=authority_attestation,
     )
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     persisted_reviewed = cycle["reviewed_identity"]
@@ -519,7 +525,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     else:
         new_cycle = None
     complete_operation_step(conn, operation_id, route_phase_step)
-    record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "two_pass_hold": two_pass, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=independence_attestation)
+    record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "two_pass_hold": two_pass, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
     return {"operation_id": operation_id, "route": route, "two_pass_hold": two_pass, "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"], "task": dataclasses.asdict(confirmed)}
 
 

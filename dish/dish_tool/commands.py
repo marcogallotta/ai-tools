@@ -25,6 +25,7 @@ from .models import (
     agent_family,
     is_protocol_managed,
     validate_change_reason,
+    validate_independence_attestation,
 )
 from .results import error_envelope, result_envelope
 from .validation_scope import scope_for_command
@@ -88,6 +89,12 @@ def _exposed_result_contract(
     if required_admin_action is not None:
         exposed_data["required_admin_action"] = required_admin_action
     return actions, exposed_data
+
+
+def _admin_resolver(action: str | None) -> str | None:
+    if action is None:
+        return None
+    return f"Marco/admin {action}"
 
 
 class DishApplication:
@@ -159,6 +166,17 @@ class DishApplication:
                 state=trace.state,
                 validation_scope=trace.validation_scope,
             )
+            if exc.rule == "open_operation_exists":
+                result.setdefault("data", {}).update({
+                    key: exc.details[key]
+                    for key in (
+                        "existing_submission_id",
+                        "phase",
+                        "required_admin_action",
+                        "resolver",
+                    )
+                    if key in exc.details
+                })
             if exc.code == "BACKEND_UNCERTAIN" and exc.details.get("execution_id"):
                 result.setdefault("data", {}).update(exc.details)
             if trace.submission_id:
@@ -439,18 +457,50 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
             raise DishRuleError("VALIDATION_FAILED", "task schema is older than the current schema; migration required", rule="migration_required", details={"task_schema_version": diag["schema_version"], "current_schema_version": release.schema_version})
         if diag["parsed"] is not None and diag["validation"]:
             raise DishRuleError("VALIDATION_FAILED", "task failed current structural validation", errors=diag["validation"])
-    op = self.operation_service.current.start_operation(
-        lambda: claim_operation(
-            self.conn,
-            live=live,
-            release=release,
-            kind=kind,
-            agent=agent,
-            run_id=run_id,
-            change_level=change_level,
-            change_reason=change_reason,
+    try:
+        op = self.operation_service.current.start_operation(
+            lambda: claim_operation(
+                self.conn,
+                live=live,
+                release=release,
+                kind=kind,
+                agent=agent,
+                run_id=run_id,
+                change_level=change_level,
+                change_reason=change_reason,
+            )
         )
-    )
+    except DishRuleError as exc:
+        if exc.rule != "open_operation_exists":
+            raise
+        existing = self.conn.execute(
+            """SELECT operation_id FROM operations
+                 WHERE task_gid=? AND status IN ('open','uncertain')
+                 ORDER BY created_at DESC LIMIT 1""",
+            (task_gid,),
+        ).fetchone()
+        if existing is None:
+            raise
+        existing_id = existing["operation_id"]
+        view = _exposed_view(
+            self.operation_service.authoritative_view(
+                existing_id, schema=release.schema
+            )
+        )
+        required_admin_action = view.get("required_admin_action")
+        trace.submission_id = existing_id
+        trace.state = str(view.get("status") or "") or None
+        raise DishRuleError(
+            "CONFLICT",
+            "task already has an open operation",
+            rule="open_operation_exists",
+            details={
+                "existing_submission_id": existing_id,
+                "phase": view.get("phase"),
+                "required_admin_action": required_admin_action,
+                "resolver": _admin_resolver(required_admin_action),
+            },
+        ) from exc
     trace.submission_id = op["operation_id"]
     trace.state = op["status"]
     return result_envelope(
@@ -532,6 +582,9 @@ def _step7_start(
             change_level=change_level, change_reason=change_reason, run_id=run_id,
         )
     from .step7 import verification_read
+    clean_attestation = validate_independence_attestation(
+        independence_attestation
+    )
     agent_family(agent)
     task_gid = _clean_required(task_gid, rule="task_gid_required", label="task GID")
     trace.task_gid = task_gid
@@ -548,7 +601,7 @@ def _step7_start(
         lambda: verification_read(
             self.conn, self.backend, operation_id=operation_id, agent=agent,
             honest_root=release.root, run_id=run_id,
-            independence_attestation=independence_attestation, schema=release.schema,
+            independence_attestation=clean_attestation, schema=release.schema,
         ),
         schema=release.schema,
     )
@@ -593,6 +646,9 @@ def _step7_approve(
         )
     if routed.generation == "missing":
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    clean_attestation = validate_independence_attestation(
+        independence_attestation
+    )
     trace.validation_scope = scope_for_command("approve")
     trace.submission_id = operation_id
     trace.task_gid = exists["task_gid"]
@@ -607,7 +663,7 @@ def _step7_approve(
             provenance_complete=provenance_complete,
             correction_class=correction,
             run_id=run_id,
-            independence_attestation=independence_attestation, schema=release.schema,
+            independence_attestation=clean_attestation, schema=release.schema,
         ),
         schema=release.schema,
     )
@@ -642,13 +698,16 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None =
         )
     if exists is None or correction != "small":
         return _step7_command_approve(self, trace=trace, agent=agent, model=model, submission_id=submission_id, file_path=file_path, correction=correction, reviewed_identity=reviewed_identity, semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation)
+    clean_attestation = validate_independence_attestation(
+        independence_attestation
+    )
     trace.validation_scope = scope_for_command("approve")
     from .step8 import approve_small
     release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
     data, view = self.operation_service.current.approve(
         operation_id,
-        lambda: approve_small(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, file_path=file_path, reviewed_identity=_clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity"), semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=independence_attestation, schema=release.schema),
+        lambda: approve_small(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, file_path=file_path, reviewed_identity=_clean_required(reviewed_identity, rule="reviewed_identity_required", label="reviewed content identity"), semantic_review_complete=semantic_review_complete, provenance_complete=provenance_complete, run_id=run_id, independence_attestation=clean_attestation, schema=release.schema),
         schema=release.schema,
     )
     trace.state = view["status"]
@@ -678,13 +737,28 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = 
         )
     if routed.generation == "missing":
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    preconstruction_hold = bool(
+        exists["status"] == "open"
+        and exists["phase"] == "prepare_required"
+        and exists["operation_kind"] == "initial"
+        and exists["content_write_completed_at"] is None
+    )
+    clean_attestation = (
+        None
+        if preconstruction_hold
+        else (
+            validate_independence_attestation(independence_attestation)
+            if route == "large"
+            else independence_attestation
+        )
+    )
     trace.validation_scope = scope_for_command("reject")
     from .step8 import reject_route
     release = self._load_release("verification")
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
     data, view = self.operation_service.current.reject(
         operation_id,
-        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=independence_attestation, request_id=self.invocation_request_id, schema=release.schema, honest_root=release.root),
+        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=clean_attestation, request_id=self.invocation_request_id, schema=release.schema, honest_root=release.root),
         schema=release.schema,
     )
     trace.state = view["status"]

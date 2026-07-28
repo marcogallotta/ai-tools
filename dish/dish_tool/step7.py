@@ -8,7 +8,13 @@ from typing import Any, Mapping
 from .constants import COOKING_PROJECT_GID
 from .database import mark_operation_completion, record_audit, transition_operation, assert_fresh_verifier, record_actor_fact, declare_operation_step, complete_operation_step, content_identity
 from .errors import DishRuleError
-from .models import VerifierIdentity, verification_actor_line, utc_now, SectionRegistry
+from .models import (
+    SectionRegistry,
+    VerifierIdentity,
+    utc_now,
+    validate_independence_attestation,
+    verification_actor_line,
+)
 from .lifecycle import assert_transition, ready, require_status
 from .releases import resolve_verification_protocol
 from .task_document import TaskState, parse_task_document, validate_task_document, finding_payload
@@ -92,9 +98,10 @@ def verification_read(
     handoff = conn.execute("SELECT completed_at FROM operation_steps WHERE operation_id=? AND step_name='verification_handoff'", (operation_id,)).fetchone()
     if handoff is not None and handoff["completed_at"] is None:
         raise DishRuleError("WRONG_STATE", "Verification handoff is incomplete", rule="verification_handoff_incomplete")
-    identity = VerifierIdentity(agent, run_id, independence_attestation)
+    clean_attestation = validate_independence_attestation(independence_attestation)
+    identity = VerifierIdentity(agent, run_id, clean_attestation)
     identity.validate(editor_agent=op["editor_agent"], researcher_agent=op["researcher_agent"], constructor_run_id=None)
-    assert_fresh_verifier(conn, operation_id=operation_id, agent=agent, run_id=run_id, independence_attestation=independence_attestation)
+    assert_fresh_verifier(conn, operation_id=operation_id, agent=agent, run_id=run_id, independence_attestation=clean_attestation)
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     registry = SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
     if live.section_gid != registry.verification_queue_gid:
@@ -131,15 +138,15 @@ def verification_read(
         )
         conn.execute(
             "UPDATE operations SET verifier_agent = ?, independence_attestation = ? WHERE operation_id = ?",
-            (agent, str(independence_attestation or "").strip() or None, operation_id),
+            (agent, clean_attestation, operation_id),
         )
         conn.execute(
             "UPDATE verification_cycles SET verifier_agent = ?, run_id = ?, independence_attestation = ? WHERE cycle_id = ?",
-            (agent, str(run_id or "").strip() or None, str(independence_attestation or "").strip() or None, cycle["cycle_id"]),
+            (agent, str(run_id or "").strip() or None, clean_attestation, cycle["cycle_id"]),
         )
         record_actor_fact(
             conn, operation_id=operation_id, task_gid=op["task_gid"], role="verifier",
-            agent=agent, run_id=run_id, independence_attestation=independence_attestation,
+            agent=agent, run_id=run_id, independence_attestation=clean_attestation,
             candidate_identity=live.identity, source_cycle_id=cycle["cycle_id"],
         )
         record_audit(
@@ -147,7 +154,7 @@ def verification_read(
             event_type="verification.review_started", actor_agent=agent,
             details={"cycle_id": cycle["cycle_id"], "reviewed_identity": live.identity, "reviewed_content_version_id": reviewed_version["content_version_id"]},
             result_code="OK", result_ok=True, actor_run_id=run_id,
-            actor_attestation=independence_attestation,
+            actor_attestation=clean_attestation,
         )
     except Exception:
         conn.execute("ROLLBACK TO verification_read_local")
@@ -161,7 +168,7 @@ def verification_read(
         "reviewed_identity": live.identity,
         "task": dataclasses.asdict(live),
         "verification_protocol": {"identity": snapshot.identity, "text": snapshot.text},
-        "verifier": {"agent": agent, "run_id": run_id, "independence_attestation": independence_attestation},
+        "verifier": {"agent": agent, "run_id": run_id, "independence_attestation": clean_attestation},
         "verification_lineage": verification_lineage(
             conn, operation_id, current_run_id=run_id
         ),
@@ -262,6 +269,9 @@ def assert_verifier_authority(
     cycle, *, agent: str, run_id: str | None, independence_attestation: str | None
 ) -> None:
     """Require the decision caller to match the exact persisted verifier proof."""
+    supplied_attestation = validate_independence_attestation(
+        independence_attestation
+    )
     if cycle["verifier_agent"] != agent:
         raise DishRuleError(
             "AGENT_MISMATCH", "command agent is not the recorded verifier",
@@ -270,7 +280,6 @@ def assert_verifier_authority(
     recorded_run = str(cycle["run_id"] or "").strip()
     supplied_run = str(run_id or "").strip()
     recorded_attestation = str(cycle["independence_attestation"] or "").strip()
-    supplied_attestation = str(independence_attestation or "").strip()
     if (
         not recorded_run
         or supplied_run != recorded_run

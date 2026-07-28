@@ -129,7 +129,7 @@ There is intentionally no general-purpose `unblock` mutation.
 
 HTTP bodies are executed only when exactly the declared `Content-Length` bytes were received; a short body is rejected before JSON parsing. Tokens reject surrounding whitespace, numeric timeouts must be finite and positive, and private lease/backup routes reject undeclared fields just like Action/admin routes. The client closes failed HTTP response objects and maps abrupt disconnects into structured service-unavailable envelopes.
 
-Every complete task reread reasserts Cooking-project membership, so a task removed between the initial scope check and the authoritative read cannot open or continue an operation with a null placement. Asana section enumeration follows all pages. Verification approval/rejection must repeat the exact verifier run and independence attestation recorded at Verification start; actor facts are scoped to an operation, allowing a run to participate legally in a later operation without rewriting earlier lineage.
+Every complete task reread reasserts Cooking-project membership, so a task removed between the initial scope check and the authoritative read cannot open or continue an operation with a null placement. Asana section enumeration follows all pages. Verification start requires a non-blank independence attestation. Approval and Large rejection repeat the exact verifier run and persisted attestation; Evidence and Human Review rejection routes inherit that persisted attestation because their public route shapes do not accept the field. Actor facts are scoped to an operation, allowing a run to participate legally in a later operation without rewriting earlier lineage.
 
 ## Exact external-effect contract
 
@@ -232,7 +232,7 @@ promise that the submitted candidate text was written byte-for-byte unchanged.
 | `BACKEND_UNCERTAIN` | 5 | Outcome is ambiguous or only partially completed. Do not repeat the mutation. For operation-backed work, follow the durable `failed_step`, committed-effect fields, and `required_admin_action`; use Marco-only `dish-admin recover` with the reported outcome after a live reread. |
 | `INTERNAL_ERROR` | 1 | Tooling failure. Preserve live task/content and report the command, identifiers, content identity, error, and diagnostics. |
 
-The JSON `retryable` field is authoritative for mechanical retry advice. Even when true, correct the reported condition first. Never retry `BACKEND_UNCERTAIN` as a normal command.
+The JSON `retryable` field is authoritative for mechanical retry advice. A correctable argument or candidate-validation failure is retryable when the operation remains open, the same Action remains legal, and no irreversible mutation occurred; corrected arguments may then be sent on that same operation. Identity, authorization, terminal-state, and exact-state conflicts remain non-retryable unless their specific contract says otherwise. Even when true, correct the reported condition first. Never retry `BACKEND_UNCERTAIN` as a normal command.
 
 For `reject`, route-specific validation is aggregate. A single `INVALID_ARGUMENT` response reports
 all supplied fields incompatible with the selected route and includes that route's
@@ -250,7 +250,7 @@ shape and do not accept candidate text, model, or independence-attestation field
 
 ## Material classification
 
-`material_classification` applies only to the canonical body diff of a post-signoff change from its signed baseline. It is required when that body changed and rejected when no body diff exists. The caller proposes `material` or `non-material`; Dish may force the effective classification to material when a protocol-defined material path changed. The result reports the classified subject, requested and effective values, forced reasons, and route. Effective material changes enter Verification; accepted non-material changes preserve the exact prior signoff.
+`material_classification` applies only to the canonical body diff of a post-signoff change from its signed baseline. It is required when that body changed and rejected when no body diff exists. The caller proposes `material` or `non-material`; Dish may force the effective classification to material when a protocol-defined material path changed. The result reports the classified subject, requested and effective values, forced reasons, and route. Effective material changes enter Verification; accepted non-material changes preserve the exact prior signoff. When the canonical classifier proves a quantity or portion change, Dish records the generated Material-change entry as `Large` even if the caller started the change as `small`; other material edits retain their applicable Small/Large rule.
 
 ## Material-change audit lifecycle
 
@@ -266,7 +266,7 @@ fails closed while the latest relevant entry still claims `pending-verification`
 
 ## Pre-construction Research hold
 
-During a fresh initial Research operation, `reject --route evidence|human-review --resume-status pending-research` may hold the operation before `prepare`. The durable record says `Research blocked before construction`, retains the originating task, agent/run, request UUID, route, reason, resolver, timestamp, and records `candidate_content_existed: false`. It must not create a candidate identity, Verification cycle, or Material-change record. `supply-evidence` or `record-human-decision` resolves the same operation back to `prepare_required`; other resume states and candidate-bearing resolutions fail closed.
+During a fresh initial Research operation, `reject --route evidence|human-review --resume-status pending-research` may hold the operation before `prepare`. The durable record says `Research blocked before construction`, retains the originating task, agent/run, request UUID, route, reason, resolver, timestamp, and records `candidate_content_existed: false`. It must not create a candidate identity, Verification cycle, or Material-change record. `supply-evidence` or `record-human-decision` resolves the same operation back to `prepare_required`; other resume states and candidate-bearing resolutions fail closed. A new `start` blocked by any held operation returns the existing submission ID, held phase, exact required admin action, and `Marco/admin <action>` resolver guidance; it never creates another operation.
 
 ## Rerun rules
 

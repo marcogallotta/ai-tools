@@ -10,7 +10,7 @@ from test_dish_tool_step7_verification import TASK, make_app
 
 
 def _review(app, run="review"):
-    result = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id=run)
+    result = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id=run, independence_attestation="independent")
     assert result["ok"]
     return result
 
@@ -26,6 +26,7 @@ def test_small_cannot_self_authorize_lock_change(tmp_path):
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="small",
         file_path=str(candidate), reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review",
+        independence_attestation="independent",
     )
     assert result["code"] == "VALIDATION_FAILED"
     assert result["errors"][0]["rule"] in {"small_correction_scope", "governed_change_unauthorized", "large_correction_required"}
