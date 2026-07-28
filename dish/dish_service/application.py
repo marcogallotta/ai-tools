@@ -65,9 +65,12 @@ def _lease_recovery_details(
         "recovery_required": True,
         "required_admin_action": "recover-lease",
         "resolver": "Marco/admin recover-lease",
+        "continuation_surface": "private-admin",
+        "connected_action_available": False,
         "admin_command": (
             f"dish-admin recover-lease {operation_id} --reason TEXT"
         ),
+        "admin_route": f"POST /v1/admin/leases/{operation_id}/recover",
         "legal_next_actions": [],
         "after_recovery": {"legal_actions": list(after_recovery_actions)},
     }
@@ -528,7 +531,10 @@ class DishService:
             "rule": "service_lease_expired",
             "required_admin_action": "recover-lease",
             "resolver": guidance["resolver"],
+            "continuation_surface": guidance["continuation_surface"],
+            "connected_action_available": guidance["connected_action_available"],
             "admin_command": guidance["admin_command"],
+            "admin_route": guidance["admin_route"],
             "after_recovery": guidance["after_recovery"],
         })
         return result

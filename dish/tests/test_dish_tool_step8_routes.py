@@ -71,6 +71,17 @@ def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path)
         "agent-semantic-review",
     ]
     assert "provenance-signoff" not in good["data"]["validation_scope"]
+    assert good["data"]["continuation_surface"] == "private-admin"
+    assert good["data"]["connected_action_available"] is False
+    assert good["data"]["admin_command"] == (
+        f"dish-admin supply-evidence {operation_id} --detail TEXT --resume-status pending-verification"
+    )
+    assert good["data"]["after_resolution"] == {
+        "legal_actions": ["start"], "required_start_kind": "verification", "phase": "await_verification",
+    }
+    inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
+    assert inspected["data"]["admin_command"] == good["data"]["admin_command"]
+    assert inspected["data"]["continuation_surface"] == "private-admin"
 
 
 

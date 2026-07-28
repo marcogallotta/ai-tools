@@ -234,6 +234,13 @@ not the discovery mechanism for lineage conflicts.
 Marco-only continuations such as `supply-evidence`, `record-human-decision`, and `reopen` never
 appear in an agent response's `allowed_actions`. When one is required, agent responses return an
 empty action list and identify the exact private continuation in `data.required_admin_action`.
+For an Evidence hold specifically (`required_admin_action: supply-evidence`), `read`, `inspect`,
+`reject`, and a `start` blocked by the existing held operation all also return
+`data.continuation_surface: private-admin`, `data.connected_action_available: false`, an exact
+`data.admin_command` (including `--resume-status` when the pending resume state is known from the
+preconstruction hold or the held Verification cycle), and `data.after_resolution.legal_actions`
+naming what becomes legal once Marco resolves the hold. `admin_command`/`connected_action_available`
+follow the same private-continuation convention already used for `recover-lease`.
 
 Governed boundary responses include `data.validation_scope`, an ordered list drawn from:
 

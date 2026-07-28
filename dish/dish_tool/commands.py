@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import sqlite3
 from typing import Any, Callable, Mapping
 
@@ -102,6 +103,72 @@ def _admin_resolver(action: str | None) -> str | None:
     if action is None:
         return None
     return f"Marco/admin {action}"
+
+
+def _evidence_hold_continuation(
+    conn: sqlite3.Connection, operation_id: str, view: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Describe the reachable private continuation for an Evidence hold."""
+
+    if view.get("required_admin_action") != "supply-evidence":
+        return {}
+    phase = str(view.get("phase") or "")
+    resume_status = None
+    preconstruction = conn.execute(
+        """SELECT intended_json FROM operation_steps
+             WHERE operation_id=? AND step_name='research_preconstruction_hold'
+               AND completed_at IS NOT NULL""",
+        (operation_id,),
+    ).fetchone()
+    if preconstruction is not None:
+        try:
+            intended = json.loads(preconstruction["intended_json"])
+        except (TypeError, ValueError):
+            intended = {}
+        resume_status = intended.get("resume_status")
+    if resume_status is None:
+        cycle = conn.execute(
+            """SELECT resume_state FROM verification_cycles
+                 WHERE operation_id=? AND route='evidence'
+                 ORDER BY cycle_number DESC LIMIT 1""",
+            (operation_id,),
+        ).fetchone()
+        if cycle is not None:
+            resume_status = cycle["resume_state"]
+
+    after_resolution: dict[str, Any] = {"legal_actions": []}
+    if resume_status == "pending-research":
+        after_resolution = {
+            "legal_actions": ["prepare"],
+            "phase": "prepare_required",
+        }
+    elif resume_status == "pending-verification":
+        after_resolution = {
+            "legal_actions": ["start"],
+            "required_start_kind": "verification",
+            "phase": "await_verification",
+        }
+
+    command = f"dish-admin supply-evidence {operation_id} --detail TEXT"
+    if resume_status:
+        command += f" --resume-status {resume_status}"
+    return {
+        "phase": phase,
+        "existing_submission_id": operation_id,
+        "required_admin_action": "supply-evidence",
+        "resolver": "Marco/admin supply-evidence",
+        "continuation_surface": "private-admin",
+        "connected_action_available": False,
+        "admin_command": command,
+        "after_resolution": after_resolution,
+    }
+
+
+def _apply_hold_continuation(
+    conn: sqlite3.Connection, operation_id: str, view: Mapping[str, Any], data: dict[str, Any]
+) -> dict[str, Any]:
+    data.update(_evidence_hold_continuation(conn, operation_id, view))
+    return data
 
 
 class DishApplication:
@@ -395,6 +462,7 @@ def _step5_read(self, *, trace: CommandTrace, agent: str, task_gid: str) -> dict
         data["required_start_kind"] = view["required_start_kind"]
     if view.get("required_admin_action") is not None:
         data["required_admin_action"] = view["required_admin_action"]
+    _apply_hold_continuation(self.conn, operation_id, view, data)
     trace.submission_id = operation_id
     trace.state = view["status"]
     return result_envelope(
@@ -438,6 +506,7 @@ def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str)
         data["required_start_kind"] = view["required_start_kind"]
     if view.get("required_admin_action") is not None:
         data["required_admin_action"] = view["required_admin_action"]
+    _apply_hold_continuation(self.conn, operation_id, view, data)
     trace.submission_id = operation_id
     trace.task_gid = data["operation"]["task_gid"]
     trace.state = view["status"]
@@ -535,6 +604,7 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
                 "phase": view.get("phase"),
                 "required_admin_action": required_admin_action,
                 "resolver": _admin_resolver(required_admin_action),
+                **_evidence_hold_continuation(self.conn, existing_id, view),
             },
         ) from exc
     trace.submission_id = op["operation_id"]
@@ -792,6 +862,11 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = 
     )
     trace.state = view["status"]
     legal_actions, data = _exposed_result_contract(view, data)
+    _apply_hold_continuation(
+        self.conn, operation_id,
+        {**view, "required_admin_action": data.get("required_admin_action")},
+        data,
+    )
     return result_envelope(
         command="reject", task_gid=trace.task_gid, submission_id=operation_id,
         state=view["status"], allowed_actions=legal_actions, data=data,
