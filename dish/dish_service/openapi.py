@@ -16,10 +16,9 @@ from .command_spec import (
 
 
 REPLAY_MUTATION_DESCRIPTION = (
-    "Replay-bound. request_id binds the command and arguments to the authenticated owner and "
-    "client.run_id, including expected failures across restarts. Exact same-identity replays "
-    "return the stored result. Changed identity conflicts; pending or uncertain requests stay "
-    "fail-closed and are not rerun."
+    "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays "
+    "return the stored success or failure across restarts. Changed reuse conflicts. Pending or "
+    "uncertain work stays fail-closed and is not rerun."
 )
 
 

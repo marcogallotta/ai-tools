@@ -14,7 +14,7 @@
       "post": {
         "operationId": "dish_create",
         "summary": "Run dish create",
-        "description": "Replay-bound. request_id binds the command and arguments to the authenticated owner and client.run_id, including expected failures across restarts. Exact same-identity replays return the stored result. Changed identity conflicts; pending or uncertain requests stay fail-closed and are not rerun.",
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
           {
             "actionBearer": []
@@ -328,7 +328,7 @@
       "post": {
         "operationId": "dish_start",
         "summary": "Run dish start",
-        "description": "Replay-bound. request_id binds the command and arguments to the authenticated owner and client.run_id, including expected failures across restarts. Exact same-identity replays return the stored result. Changed identity conflicts; pending or uncertain requests stay fail-closed and are not rerun.",
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
           {
             "actionBearer": []
@@ -524,7 +524,7 @@
       "post": {
         "operationId": "dish_prepare",
         "summary": "Run dish prepare",
-        "description": "Replay-bound. request_id binds the command and arguments to the authenticated owner and client.run_id, including expected failures across restarts. Exact same-identity replays return the stored result. Changed identity conflicts; pending or uncertain requests stay fail-closed and are not rerun.",
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
           {
             "actionBearer": []
@@ -626,7 +626,7 @@
       "post": {
         "operationId": "dish_approve",
         "summary": "Run dish approve",
-        "description": "Replay-bound. request_id binds the command and arguments to the authenticated owner and client.run_id, including expected failures across restarts. Exact same-identity replays return the stored result. Changed identity conflicts; pending or uncertain requests stay fail-closed and are not rerun.",
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
           {
             "actionBearer": []
@@ -739,7 +739,7 @@
       "post": {
         "operationId": "dish_reject",
         "summary": "Run dish reject",
-        "description": "Replay-bound. request_id binds the command and arguments to the authenticated owner and client.run_id, including expected failures across restarts. Exact same-identity replays return the stored result. Changed identity conflicts; pending or uncertain requests stay fail-closed and are not rerun.",
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
           {
             "actionBearer": []
@@ -936,7 +936,7 @@
       "post": {
         "operationId": "dish_submit",
         "summary": "Run dish submit",
-        "description": "Replay-bound. request_id binds the command and arguments to the authenticated owner and client.run_id, including expected failures across restarts. Exact same-identity replays return the stored result. Changed identity conflicts; pending or uncertain requests stay fail-closed and are not rerun.",
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
           {
             "actionBearer": []
@@ -1013,7 +1013,7 @@
       "post": {
         "operationId": "dish_renew_lease",
         "summary": "Renew the current GPT Action operation lease",
-        "description": "Replay-bound. request_id binds the command and arguments to the authenticated owner and client.run_id, including expected failures across restarts. Exact same-identity replays return the stored result. Changed identity conflicts; pending or uncertain requests stay fail-closed and are not rerun.",
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
           {
             "actionBearer": []

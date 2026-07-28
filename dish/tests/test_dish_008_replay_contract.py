@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from dish_service.command_spec import ACTION_COMMANDS, REPLAY_SAFE_COMMANDS
@@ -25,13 +26,10 @@ def test_openapi_documents_complete_action_replay_semantics():
         if command in REPLAY_SAFE_COMMANDS:
             assert "request_id" in client["required"]
             assert len(post["description"]) <= 300
-            assert "command and arguments" in description
-            assert "authenticated owner" in description
-            assert "client.run_id" in description
-            assert "including expected failures" in description
-            assert "across restarts" in description
-            assert "same-identity replays" in description
-            assert "changed identity conflicts" in description
+            assert "binds command, arguments, owner, and client.run_id" in description
+            assert "stored success or failure across restarts" in description
+            assert "exact replays" in description
+            assert "changed reuse conflicts" in description
             assert "pending or uncertain" in description
             assert "not rerun" in description
             assert "fail-closed" in description
@@ -48,13 +46,10 @@ def test_openapi_documents_complete_action_replay_semantics():
     assert "request_id" in renew_client["required"]
     renew_description = renew["description"].lower()
     for phrase in (
-        "command and arguments",
-        "authenticated owner",
-        "client.run_id",
-        "including expected failures",
-        "across restarts",
-        "same-identity replays",
-        "changed identity conflicts",
+        "binds command, arguments, owner, and client.run_id",
+        "stored success or failure across restarts",
+        "exact replays",
+        "changed reuse conflicts",
         "pending or uncertain",
         "not rerun",
         "fail-closed",
@@ -68,6 +63,17 @@ def test_openapi_documents_complete_action_replay_semantics():
     assert request_id["pattern"] == CANONICAL_DISH_UUID_PATTERN
     assert "fresh call" in envelope["retryable"]["description"]
     assert "does not override exact request replay" in envelope["retryable"]["description"]
+
+
+def test_generated_and_checked_in_operation_descriptions_fit_importer_limit():
+    generated = action_openapi()
+    checked = json.loads(
+        (ROOT / "openapi" / "dish-action.openapi.json").read_text(encoding="utf-8")
+    )
+    for spec in (generated, checked):
+        for path, item in spec["paths"].items():
+            description = item["post"]["description"]
+            assert len(description) <= 300, (path, len(description))
 
 
 def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
