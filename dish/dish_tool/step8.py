@@ -15,7 +15,7 @@ from .database import create_verification_cycle, record_audit, record_actor_fact
 from .errors import DishRuleError
 from .models import material_change_line, material_editor_line, utc_now
 from .lifecycle import assert_transition, hold, pending_verification, require_status, resumed
-from .task_document import DocumentParseError, TaskState, parse_task_document, validate_task_document, finding_payload
+from .task_document import DocumentParseError, TaskState, document_parse_error_payloads, parse_task_document, validate_task_document, finding_payload
 from .task_store import read_complete_task, write_exact_content
 from .releases import current_verification_protocol_release
 from .governed_diff import (
@@ -135,7 +135,7 @@ def _candidate(path: str):
     except (OSError, UnicodeError) as exc:
         raise DishRuleError("INVALID_ARGUMENT", "corrected candidate could not be read", rule="candidate_file_unreadable") from exc
     except DocumentParseError as exc:
-        raise DishRuleError("VALIDATION_FAILED", "corrected candidate is not canonical", rule=exc.rule) from exc
+        raise DishRuleError("VALIDATION_FAILED", "corrected candidate is not canonical", errors=document_parse_error_payloads(exc)) from exc
 
 
 def _render(document):

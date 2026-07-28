@@ -25,6 +25,7 @@ from .lifecycle import assert_transition, pending_verification
 from .releases import current_verification_protocol_release
 from .task_document import (
     finding_payload,
+    document_parse_error_payloads,
     DocumentParseError,
     PlanningBrief,
     TaskState,
@@ -189,7 +190,7 @@ def prepare_live(
             raise DishRuleError(
                 "VALIDATION_FAILED",
                 "Planning candidate is malformed",
-                rule=exc.rule,
+                errors=document_parse_error_payloads(exc),
             ) from exc
         findings = validate_planning_brief(brief).findings
         if findings:
@@ -245,7 +246,7 @@ def prepare_live(
     try:
         candidate = parse_task_document(text)
     except DocumentParseError as exc:
-        raise DishRuleError("VALIDATION_FAILED", "candidate is not a canonical complete task", rule=exc.rule) from exc
+        raise DishRuleError("VALIDATION_FAILED", "candidate is not a canonical complete task", errors=document_parse_error_payloads(exc)) from exc
 
     submitted_candidate = candidate
 

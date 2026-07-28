@@ -150,22 +150,83 @@ class CanonicalTaskDocument:
 
 class DocumentParseError(ValueError):
     def __init__(
-        self, rule: str, message: str, *, details: Mapping[str, object] | None = None
+        self,
+        rule: str,
+        message: str,
+        *,
+        details: Mapping[str, object] | None = None,
+        errors: Sequence[Mapping[str, object]] | None = None,
     ):
         super().__init__(message)
         self.rule = rule
         self.details = dict(details or {})
+        self.errors = tuple(dict(item) for item in (errors or ()))
 
 
-def _parse_exact_fields(lines: Sequence[str], names: Sequence[str], *, context: str) -> dict[str, str]:
+def document_parse_error_payloads(exc: DocumentParseError) -> list[dict[str, object]]:
+    if exc.errors:
+        return [dict(item) for item in exc.errors]
+    payload: dict[str, object] = {"rule": exc.rule, "message": str(exc)}
+    payload.update(exc.details)
+    return [payload]
+
+
+def _duplicate_field_errors(
+    lines: Sequence[str],
+    names: Sequence[str],
+    *,
+    context: str,
+    line_numbers: Sequence[int],
+) -> list[dict[str, object]]:
+    occurrences: dict[str, list[int]] = {}
+    allowed = set(names)
+    for line, line_number in zip(lines, line_numbers):
+        match = re.match(r"^([^:]+):(?:\s*(.*))$", line)
+        if match and match.group(1) in allowed:
+            occurrences.setdefault(match.group(1), []).append(line_number)
+    return [
+        {
+            "rule": f"{context}_field_duplicate",
+            "field": label,
+            "occurrences": len(positions),
+            "lines": positions,
+            "message": f"duplicate {context} field {label}",
+        }
+        for label in names
+        if len(positions := occurrences.get(label, [])) > 1
+    ]
+
+
+def _parse_exact_fields(
+    lines: Sequence[str],
+    names: Sequence[str],
+    *,
+    context: str,
+    line_numbers: Sequence[int] | None = None,
+) -> dict[str, str]:
+    exact_line_numbers = list(line_numbers or range(1, len(lines) + 1))
+    duplicate_errors = _duplicate_field_errors(
+        lines, names, context=context, line_numbers=exact_line_numbers
+    )
+    if duplicate_errors:
+        first = duplicate_errors[0]
+        raise DocumentParseError(
+            str(first["rule"]),
+            str(first["message"]),
+            details={
+                "field": first["field"],
+                "occurrences": first["occurrences"],
+                "lines": first["lines"],
+            },
+            errors=duplicate_errors,
+        )
+
     values: dict[str, str] = {}
     current: str | None = None
     for line in lines:
         match = re.match(r"^([^:]+):(?:\s*(.*))$", line)
         if match and match.group(1) in names:
             label, value = match.group(1), match.group(2)
-            if label in values:
-                raise DocumentParseError(f"{context}_field_duplicate", f"duplicate {label}")
             values[label] = value
             current = label
         elif current is not None and line.strip():
@@ -187,9 +248,18 @@ def _parse_exact_fields(lines: Sequence[str], names: Sequence[str], *, context: 
 
 def parse_planning_brief(text: str) -> PlanningBrief:
     lines = text.strip().splitlines()
+    line_numbers = list(range(1, len(lines) + 1))
     if lines and lines[0] == "### Planning brief":
         lines = lines[1:]
-    return PlanningBrief(_parse_exact_fields(lines, PLANNING_FIELDS, context="planning"))
+        line_numbers = line_numbers[1:]
+    return PlanningBrief(
+        _parse_exact_fields(
+            lines,
+            PLANNING_FIELDS,
+            context="planning",
+            line_numbers=line_numbers,
+        )
+    )
 
 
 def document_shape(notes: str) -> str:
@@ -207,6 +277,62 @@ def document_shape(notes: str) -> str:
     if "---" in lines or "## PROCESS RECORD" in lines:
         return "canonical"
     return "planning_brief"
+
+
+def _canonical_duplicate_errors(
+    lines: Sequence[str], separator: int
+) -> list[dict[str, object]]:
+    section_positions: dict[str, list[int]] = {}
+    for index in range(2, separator):
+        line = lines[index]
+        heading = None
+        if line == "WHY COOK IT":
+            heading = line
+        elif line.startswith("## "):
+            heading = line[3:]
+        if heading in ALLOWED_SECTIONS:
+            section_positions.setdefault(heading, []).append(index + 1)
+    errors: list[dict[str, object]] = [
+        {
+            "rule": "section_duplicate",
+            "heading": heading,
+            "occurrences": len(positions),
+            "lines": positions,
+            "message": f"duplicate section {heading}",
+        }
+        for heading in SECTION_ORDER
+        if len(positions := section_positions.get(heading, [])) > 1
+    ]
+
+    process_start = separator + 2
+    try:
+        planning_at = lines.index("### Planning brief", process_start)
+    except ValueError:
+        return errors
+    errors.extend(
+        _duplicate_field_errors(
+            lines[process_start:planning_at],
+            STATE_FIELDS,
+            context="state",
+            line_numbers=list(range(process_start + 1, planning_at + 1)),
+        )
+    )
+    planning_end = len(lines)
+    for heading in ("### Decisions", "### Research basis", "### Material changes"):
+        try:
+            candidate = lines.index(heading, planning_at + 1)
+        except ValueError:
+            continue
+        planning_end = min(planning_end, candidate)
+    errors.extend(
+        _duplicate_field_errors(
+            lines[planning_at + 1:planning_end],
+            PLANNING_FIELDS,
+            context="planning",
+            line_numbers=list(range(planning_at + 2, planning_end + 1)),
+        )
+    )
+    return errors
 
 
 def _split_process(lines: Sequence[str]) -> tuple[list[str], list[str], list[str], list[str]]:
@@ -238,6 +364,20 @@ def parse_task_document(text: str) -> CanonicalTaskDocument:
     separator = lines.index("---")
     if separator + 1 >= len(lines) or lines[separator + 1] != "## PROCESS RECORD":
         raise DocumentParseError("process_heading_missing", "separator must be followed by PROCESS RECORD")
+
+    duplicate_errors = _canonical_duplicate_errors(lines, separator)
+    if duplicate_errors:
+        first = duplicate_errors[0]
+        raise DocumentParseError(
+            str(first["rule"]),
+            str(first["message"]),
+            details={
+                key: value
+                for key, value in first.items()
+                if key not in {"rule", "message"}
+            },
+            errors=duplicate_errors,
+        )
 
     title, recognition = lines[0], lines[1]
     body_lines = lines[2:separator]

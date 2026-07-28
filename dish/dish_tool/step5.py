@@ -10,7 +10,7 @@ from .database import confirm_task_content, create_operation, content_identity, 
 from .errors import DishRuleError
 from .models import OperationActors, ResolvedRelease
 from .migrations import migrate_task_document
-from .task_document import DocumentParseError, document_shape, parse_planning_brief, parse_task_document, validate_task_document, finding_payload
+from .task_document import DocumentParseError, document_parse_error_payloads, document_shape, parse_planning_brief, parse_task_document, validate_task_document, finding_payload
 from .task_store import LiveTask, read_complete_task, write_exact_content
 
 _SCHEMA_VERSION_LINE = re.compile(r"^Schema version:\s*(.+)$", re.MULTILINE)
@@ -59,12 +59,12 @@ def diagnostics_for(live: LiveTask, release: ResolvedRelease) -> dict[str, Any]:
         try:
             parse_planning_brief(live.notes)
         except DocumentParseError as exc:
-            return {"parsed": None, "validation": [{"rule": exc.rule, "message": str(exc)}], "schema_version": None, "migration_required": False}
+            return {"parsed": None, "validation": document_parse_error_payloads(exc), "schema_version": None, "migration_required": False}
         return {"parsed": None, "validation": [], "schema_version": None, "migration_required": False}
     try:
         document = parse_live_document(live)
     except DocumentParseError as exc:
-        return {"parsed": None, "validation": [{"rule": exc.rule, "message": str(exc)}], "schema_version": None, "migration_required": _unparseable_migration_required(live, release)}
+        return {"parsed": None, "validation": document_parse_error_payloads(exc), "schema_version": None, "migration_required": _unparseable_migration_required(live, release)}
     validation = validate_task_document(document, expected_schema_version=release.schema_version, schema=release.schema)
     return {
         "parsed": {
@@ -230,7 +230,7 @@ def migrate_live_task(conn: sqlite3.Connection, backend, *, task_gid: str, relea
     try:
         document = parse_live_document(live)
     except DocumentParseError as exc:
-        raise DishRuleError("VALIDATION_FAILED", "older-schema task is not safely parseable", rule=exc.rule) from exc
+        raise DishRuleError("VALIDATION_FAILED", "older-schema task is not safely parseable", errors=document_parse_error_payloads(exc)) from exc
     if document.schema_version == release.schema_version:
         raise DishRuleError("CONFLICT", "task already uses the current schema", rule="migration_not_required")
     migration = next((m for m in release.migration_metadata.values() if m["from_schema_version"] == document.schema_version and m["to_schema_version"] == release.schema_version), None)
