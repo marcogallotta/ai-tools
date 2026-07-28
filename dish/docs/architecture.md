@@ -17,12 +17,15 @@ Three sources have distinct authority:
 1. **Honest assets** define the supported protocol release and canonical task schema.
 2. **The live Asana task** is authoritative for the current title, notes, and Cooking-project
    placement.
-3. **The Dish SQLite database** is authoritative for workflow intent, exact content bindings,
+3. **Dish durable state** is authoritative for workflow intent, exact content bindings,
    verification/signoff evidence, leases, external-effect attempts, recovery facts, and audit
-   history.
+   history. Almost all of that state lives in SQLite. The deliberately narrow exceptions are the
+   persistent service-ownership marker, restore request journal, and restore-fault marker beside the
+   database.
 
-The database never replaces the live task as the document. The live task never replaces durable
-operation evidence. A mutation is legal only when the exact live task and the durable evidence agree.
+Dish durable state never replaces the live task as the document. The live task never replaces
+durable operation evidence. A mutation is legal only when the exact live task and the durable
+evidence agree.
 
 ## System at a glance
 
@@ -32,7 +35,7 @@ private dish-admin ─────┼─ HTTP clients ──> private listener �
 GPT Action ─────────────┘                  action listener ────┤
                                                               v
                                                        DishService
-                                             auth / health / leases / backup
+                                                  health / leases / backup
                                                               |
                                       ┌───────────────────────┴───────────────────────┐
                                       v                                               v
@@ -46,7 +49,7 @@ GPT Action ─────────────┘                  action li
                                                               |
                             ┌─────────────────────────────────┴──────────────────────────────┐
                             v                                                                v
-                   SQLite evidence/recovery                                      ExactTaskGateway
+               Dish durable evidence/recovery                                    ExactTaskGateway
                                                                                           |
                                                                                 real Asana SDK
                                                                                           |
@@ -76,8 +79,9 @@ replacement exclusively.
 
 The service exposes two separate loopback listeners:
 
-- **private listener:** CLI, admin, health, recovery, and backup;
-- **Action listener:** only the bounded GPT Action commands and Action lease renewal.
+- **private listener:** CLI, admin, health, recovery, backup, and the generated Action schema;
+- **Action listener:** the bounded GPT Action commands, Action lease renewal, and the read-only
+  generated Action schema at `GET /openapi/action.json`.
 
 Tailscale Serve exposes the private listener to trusted tailnet clients. Tailscale Funnel exposes the
 Action listener. The Action token is not accepted for private or admin routes, and the Action schema
@@ -147,10 +151,12 @@ It does not decide workflow legality.
 
 `dish_service.application.DishService` is the shared-runtime façade. It:
 
-- opens a fresh validated SQLite connection per request;
+- opens a fresh validated SQLite connection per database-backed request; restore instead uses the
+  restore journal, fault marker, and backup manager around database replacement;
 - constructs the backend and current Honest release;
 - acquires/asserts/releases service leases;
-- takes a durable per-operation execution claim around each operation mutation so two requests cannot reach external effects concurrently;
+- takes a durable per-operation execution claim around workflow mutations routed through
+  `CurrentWorkflowService`, so two such requests cannot reach external effects concurrently;
 - delegates workflow work to `DishApplication` or `DishAdminApplication`;
 - preserves committed success if post-success lease or owned-resource cleanup fails;
 - records and replays every mutation request after a valid UUID establishes request identity;
@@ -182,11 +188,20 @@ fall back into old create/prepare/approve/reject/submit implementations.
 - held content and placement baselines.
 
 `dish_tool.workflow_policy.legal_actions` derives the executable action list from that snapshot.
-Mutation entry points call `assert_action` before executing a use case and return a fresh snapshot
-afterward. Transports and clients must follow `allowed_actions`; they must not reconstruct legal
-transitions independently. Agent-facing results expose only commands available on the bounded
-agent surface. When internal policy requires a Marco-admin continuation, `allowed_actions` is
-empty and `data.required_admin_action` names the private command for audit and handoff.
+Ordinary policy-governed mutation entry points call `assert_action` before executing a use case and
+return a fresh snapshot afterward. Recovery, cancellation, and authorization have specialized
+checks instead. Transports and clients must follow `allowed_actions`; they must not reconstruct
+legal transitions independently. Agent-facing results expose only commands available on the
+bounded agent surface. When internal policy requires a Marco-admin continuation, `allowed_actions`
+is empty and `data.required_admin_action` names the private command for audit and handoff.
+
+Most operation-scoped admin commands also enter `CurrentWorkflowService` and take its durable
+execution claim. Two current exceptions are `authorize-governed-change` and `discard`: their
+`DishAdminApplication` handlers apply their own state/evidence checks directly, without an
+`operation_execution_claims` row. On the shared service both retain request replay;
+`discard` also takes a request-scoped admin lease, while `authorize-governed-change` is deliberately
+lease-free. Direct local mode has only the handlers' checks and SQLite constraints. Do not extend
+this exception to new commands.
 
 ## Workflow use cases
 
@@ -211,23 +226,28 @@ create
 → submit after approval
 ```
 
-Reject may route to Small correction, Large correction, Evidence, Human Review, or two-pass hold.
-Marco-only admin commands resolve the protocol-specific hold and recovery paths.
+`approve --correction small` performs a Small same-pass correction and signoff. `reject` may route
+to Large correction, Evidence, or Human Review; a second Large rejection produces the two-pass
+hold. Marco-only admin commands resolve the protocol-specific hold and recovery paths.
 
 New workflow logic should live in a use-case/domain module and be entered through
 `CurrentWorkflowService`. Do not add a second mutation path in a CLI, HTTP handler, recovery helper,
 or compatibility adapter.
 
-
 ## Generic Asana tooling boundary
 
 `tools/asana` is not a supported mutation path for governed Cooking tasks. Its generic read
-commands remain useful, but every write passes through `dish_tool.generic_asana_guard`, which
-uses live read-only Asana membership lookups and fails closed for managed Cooking tasks, managed
-Cooking sections, raw task/project/section mutation paths, and unresolved classifications. The
-guard deliberately does not open or write the Dish database. Reference and Sourcing remain the
-only explicitly excluded Cooking sections. Do not weaken this to advisory logging or add a bypass
-flag; governed writes belong exclusively to the shared Dish service.
+commands remain useful, but every generic write command invokes `dish_tool.generic_asana_guard`.
+The guard uses live read-only Asana membership lookups and fails closed for managed-task updates,
+subtask creation, task creation in managed Cooking sections, moves to or from managed sections,
+the corresponding raw task paths, and unresolved classifications. It deliberately does not open or
+write the Dish database. Reference and Sourcing remain the only explicitly excluded Cooking
+sections.
+
+The raw guard is not a general Asana policy engine: arbitrary raw project or section metadata paths,
+such as direct project/section rename or deletion, are not classified. They must not be used against
+the Cooking project or its managed sections. Do not weaken covered paths to advisory logging or add
+a bypass flag; governed task writes belong exclusively to the shared Dish service.
 
 ## Canonical task and change authority
 
@@ -300,7 +320,7 @@ Conceptually important tables are:
 | verification/signoff | `verification_cycles`, `two_pass_resets` |
 | external effects | `write_attempts`, `movement_attempts` |
 | governed authority | `marco_authorizations` |
-| shared ownership | `service_leases` |
+| shared ownership and execution | `service_leases`, `operation_execution_claims` |
 | mutation request replay | `service_requests`; restore-safe sibling request journal for `backup-restore` |
 | audit and repair | `audit_events`, `command_audit_repairs` |
 | historical quarantine | `legacy_submission_quarantine` and retained read-only legacy records |
@@ -345,7 +365,9 @@ same declared workflow steps and idempotent executors as normal execution.
 There are three distinct concurrency/ownership mechanisms:
 
 - the database guarantees at most one active operation per task;
-- `operation_execution_claims` permits only one request at a time to execute an operation mutation and unresolved external attempts are unique per operation;
+- `operation_execution_claims` permits only one request at a time to execute a claimed workflow
+  mutation, and unresolved external attempts are unique per operation; the two direct admin
+  exceptions are documented above;
 - `service_leases` bind that operation to a client owner and run identity for a renewable period.
 
 A workflow handoff may release the actor lease while keeping the task operation active. `allowed_actions`
@@ -357,8 +379,9 @@ lineage proves it owns that workflow role. Protocol-specific admin continuations
 admin leases and release them before returning. A cleanup failure after the continuation committed is
 reported as cleanup/recovery metadata and never reverses the command success. Terminal lease release
 waits until workflow steps and ambiguous attempts have durable outcomes. Acquire, renew, release, and
-terminal checks are transactional; the configured TTL must exceed the maximum admitted request lifetime
-plus the recovery margin.
+terminal checks are transactional. Configuration requires the lease TTL to exceed one maximum-duration
+Asana SDK call plus the recovery margin; the default TTL is substantially longer. This validation is
+not a whole-command deadline: one Dish command may perform several sequential Asana calls.
 
 Workflow state changes and their governed audit facts commit in the same SQLite transaction. Audit-repair workers claim work transactionally, so concurrent workers cannot append duplicate repair events. Startup semantic validation rejects impossible combinations such as multiple unresolved attempts for one operation or an active lease on a terminal operation.
 
@@ -402,8 +425,10 @@ supported compatibility path needs a real producer or a real preserved database 
 
 ## Results, auditing, and success boundaries
 
-Every surface returns the canonical JSON envelope described in `runtime-contract.md`. HTTP status is
-transport information; the envelope code and `retryable` field carry workflow meaning.
+Every command, lease, and backup surface returns the canonical JSON envelope described in
+`runtime-contract.md`. HTTP status is transport information; the envelope code and `retryable` field
+carry workflow meaning. `GET /health` returns the health document, and
+`GET /openapi/action.json` returns the generated OpenAPI document rather than a result envelope.
 
 Invocation auditing is supplementary to the governed mutation. If a mutation commits and a later
 view refresh, lease finalization, or invocation-audit write fails, the result remains successful and
