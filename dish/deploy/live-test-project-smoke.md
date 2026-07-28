@@ -108,7 +108,7 @@ The following original gates now pass and remain normal regression coverage:
 - successful backup and governed-authorization mutations replay exactly and conflicting reuse fails;
 - semantic duplicate governed authorization returns the existing fully bound authorization.
 
-The post-fix run confirmed these remaining defects:
+The post-fix run confirmed these defects at that revision:
 
 1. Every generic admin command tested returns `INTERNAL_ERROR` for a present but empty
    `arguments` object instead of identifying its missing fields.
@@ -123,6 +123,33 @@ Repeat each original failing input twice after a fix, plus partial arguments, an
 operation, both restore retry orderings, and normal/migrated/reconciled restore permission checks.
 The interactive-shell `DISH_SERVICE_URL` still names the public listener without `:8444`; this pass
 used the documented private endpoint explicitly and did not change configuration.
+
+### Targeted DISH-002 diagnostic run 2026-07-28
+
+Tested checkout `361b857e17f23ac0129b3180a1d7d4c18bf9193f` with run ID
+`847d90c4-52b4-4f1e-b0f5-6a7cc791d9c4`.
+
+The original safe live probe, `POST /v1/admin/discard` with unknown canonical operation
+`55555555-5555-4555-8555-555555555555`, now returns replay-bound
+`NOT_FOUND / operation_not_found`. It no longer enters database initialization, so the exception
+lost during the earlier run cannot be recovered from that path.
+
+An isolated service then used a directory as its database target to exercise the updated
+initialization boundary without touching live state. Two fresh request IDs under the same run
+produced:
+
+- public `INTERNAL_ERROR / service_database_unavailable` with `retryable:true`;
+- `error_classification: sqlite_error`, `error_type: OperationalError`,
+  `sqlite_errorcode: 14`, and `sqlite_errorname: SQLITE_CANTOPEN`;
+- a complete logged traceback ending in `sqlite3.OperationalError: unable to open database file`;
+- allowlisted log context containing only surface, command, owner, run, request, and operation IDs.
+
+The log did not expose the admin token or supplied reason. This confirms the DISH-002 diagnostic
+boundary for a real SQLite initialization failure, but it does not identify the historical
+unknown-operation exception because that trigger was fixed before logging became available.
+The isolated listeners were stopped; live health remained HTTP 200 with schema 26,
+`write_ready:true`, and no restore fault. DISH-005 interrupted-restore recovery and DISH-014
+approval-attestation behavior still require their targeted post-fix smoke runs.
 
 ## Stage 3 — complete the live rehearsal
 
