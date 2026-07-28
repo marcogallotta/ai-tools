@@ -60,3 +60,48 @@ def test_case_variant_duplicate_fails_before_planning_write(tmp_path):
         "SELECT COUNT(*) FROM operation_steps WHERE operation_id=?",
         (started["submission_id"],),
     ).fetchone()[0] == 0
+
+
+def test_zero_width_space_planning_label_is_detected_as_duplicate():
+    candidate = _with_extra_label("Pur\u200bpose")
+    with pytest.raises(DocumentParseError) as exc:
+        parse_planning_brief(candidate)
+    assert exc.value.rule == "planning_field_duplicate"
+    assert exc.value.details == {
+        "field": "Purpose",
+        "occurrences": 2,
+        "lines": [3, 4],
+    }
+
+
+def test_lone_zero_width_space_planning_label_is_rejected_directly():
+    candidate = PLANNING.replace("Purpose: Compare texture", "Pur\u200bpose: Compare texture")
+    with pytest.raises(DocumentParseError) as exc:
+        parse_planning_brief(candidate)
+    assert exc.value.rule == "planning_field_label_format_character"
+    assert exc.value.details == {
+        "field": "Purpose",
+        "label": "Pur\u200bpose",
+        "canonical_label": "Purpose",
+        "line": 3,
+    }
+
+
+def test_zero_width_space_duplicate_fails_before_planning_write(tmp_path):
+    backend = Backend()
+    application = app(tmp_path, backend)
+    started = application.execute(
+        "start", agent="gpt", task_gid="t", kind="planning",
+        change_level=None, change_reason=None,
+    )
+    result = application.execute(
+        "prepare",
+        agent="gpt",
+        model="gpt-5.6-sol",
+        submission_id=started["submission_id"],
+        file_path=write(tmp_path, "zero-width-duplicate.txt", _with_extra_label("Pur\u200bpose")),
+    )
+    assert result["code"] == "VALIDATION_FAILED"
+    assert result["errors"][0]["rule"] == "planning_field_duplicate"
+    assert backend.writes == 0
+    assert backend.moves == 0

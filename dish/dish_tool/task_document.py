@@ -172,8 +172,17 @@ def document_parse_error_payloads(exc: DocumentParseError) -> list[dict[str, obj
     return [payload]
 
 
+def _authority_label_has_format_characters(label: str) -> bool:
+    return any(unicodedata.category(character) == "Cf" for character in label)
+
+
 def _normalized_authority_label(label: str) -> str:
-    normalized = unicodedata.normalize("NFKC", label)
+    without_format_characters = "".join(
+        character
+        for character in label
+        if unicodedata.category(character) != "Cf"
+    )
+    normalized = unicodedata.normalize("NFKC", without_format_characters)
     return " ".join(normalized.split()).casefold()
 
 
@@ -199,6 +208,21 @@ def _field_label_errors(
             continue
         label = match.group(1)
         canonical = _canonical_authority_label(label, names)
+        has_format_characters = _authority_label_has_format_characters(label)
+        if has_format_characters:
+            error: dict[str, object] = {
+                "rule": f"{context}_field_label_format_character",
+                "label": label,
+                "line": line_number,
+                "message": (
+                    f"{context} field labels must not contain Unicode format characters"
+                ),
+            }
+            if canonical is not None:
+                error["field"] = canonical
+                error["canonical_label"] = canonical
+            errors.append(error)
+            continue
         if canonical is None or label == canonical:
             continue
         errors.append(
