@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
 from .application_service import OperationApplicationService
+from .command_support import reject_undeclared_arguments
 from .database import process_command_audit_repairs, record_audit
 from .invocation_audit import record_invocation_audit
 from .errors import DishRuleError
@@ -69,6 +70,7 @@ class DishAdminApplication:
                     f"unknown dish-admin command: {command}",
                     rule="invalid_command",
                 )
+            reject_undeclared_arguments(handler, arguments)
             result = handler(self, trace=trace, **arguments)
         except DishRuleError as exc:
             if exc.code == "WRONG_STATE" and exc.details.get("actual"):

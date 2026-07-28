@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import inspect
 from typing import Any, Mapping, Protocol
 
 from .constants import COOKING_PROJECT_GID
@@ -34,6 +35,34 @@ class CommandTrace:
     known_submission: bool = False
     audit_details: dict[str, Any] = field(default_factory=dict)
     actor_agent: str | None = None
+
+
+def reject_undeclared_arguments(
+    handler: Any, arguments: Mapping[str, Any]
+) -> None:
+    """Reject dispatcher arguments that the selected handler did not declare."""
+    parameters = inspect.signature(handler).parameters.values()
+    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters):
+        return
+    declared = {
+        parameter.name
+        for parameter in parameters
+        if parameter.kind
+        in {
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        }
+    } - {"self", "trace"}
+    unexpected = sorted(set(arguments) - declared)
+    if not unexpected:
+        return
+    field = unexpected[0]
+    raise DishRuleError(
+        "INVALID_ARGUMENT",
+        f"{field} is not accepted by this command",
+        rule="argument_unexpected",
+        details={"field": field},
+    )
 
 
 def _clean_required(value: Any, *, rule: str, label: str) -> str:

@@ -616,3 +616,41 @@ def test_asana_auth_loader_and_timeout_configuration(tmp_path, monkeypatch):
         CONNECT_TIMEOUT_SECONDS,
         READ_TIMEOUT_SECONDS,
     )
+
+
+def test_agent_dispatcher_rejects_undeclared_argument_as_invalid_argument(tmp_path):
+    from dish_tool.commands import DishApplication
+    from dish_tool.models import ResolvedRelease
+
+    class Backend:
+        def list_sections(self, project_gid):
+            raise AssertionError("handler must not run")
+
+    release = ResolvedRelease(
+        version="1.0.10", commit="", root=tmp_path, protocols={}, manifests={},
+        manifest_texts={}, schema_version="2", schema={}, schema_text="{}",
+        migration_metadata={}, requested_protocol_role=None,
+    )
+    app = DishApplication(
+        initialize_database(tmp_path / "agent.db"),
+        Backend(),
+        release_loader=lambda role=None: release,
+    )
+    result = app.execute("sections", agent="gpt", undeclared=True)
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["retryable"] is False
+    assert result["errors"] == [
+        {"rule": "argument_unexpected", "field": "undeclared"}
+    ]
+
+
+def test_admin_dispatcher_rejects_undeclared_argument_as_invalid_argument(tmp_path):
+    from dish_tool.admin import DishAdminApplication
+
+    app = DishAdminApplication(initialize_database(tmp_path / "admin.db"))
+    result = app.execute("migrate", task_gid="123", undeclared=True)
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["retryable"] is False
+    assert result["errors"] == [
+        {"rule": "argument_unexpected", "field": "undeclared"}
+    ]

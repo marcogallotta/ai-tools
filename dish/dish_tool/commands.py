@@ -14,6 +14,7 @@ from .command_support import (
     _clean_required,
     _gid,
     _require_cooking_task,
+    reject_undeclared_arguments,
 )
 from .constants import AGENT_FAMILIES, CHANGE_LEVELS, COOKING_PROJECT_GID, SUBMISSION_KINDS
 from .database import process_command_audit_repairs
@@ -152,6 +153,7 @@ class DishApplication:
                     f"unknown dish command: {command}",
                     rule="invalid_command",
                 )
+            reject_undeclared_arguments(handler, arguments)
             result = handler(self, trace=trace, **arguments)
         except DishRuleError as exc:
             if trace.task_gid is None:
