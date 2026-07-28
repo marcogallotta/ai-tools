@@ -18,7 +18,7 @@ from dish_tool.commands import DishApplication
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
 from dish_tool.database import initialize_database, process_command_audit_repairs
 from dish_tool.errors import DishRuleError
-from dish_tool.models import SectionRegistry
+from dish_tool.models import SectionRegistry, validate_independence_attestation
 from dish_tool.operation_execution import (
     execution_claim_is_live,
     execution_recovery_state,
@@ -409,6 +409,10 @@ class DishService:
         run_id: str | None,
     ) -> dict[str, Any]:
         prepared = dict(arguments)
+        if prepared.get("independence_attestation") is not None:
+            prepared["independence_attestation"] = validate_independence_attestation(
+                prepared["independence_attestation"]
+            )
         if command not in _RUN_ID_AGENT_COMMANDS or run_id is None:
             return prepared
         supplied = str(prepared.get("run_id") or "").strip()

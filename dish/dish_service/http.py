@@ -411,6 +411,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 )
                 and principal is not None
                 and isinstance(request, dict)
+                and exc.rule != "independence_attestation_invalid_characters"
             ):
                 client_payload = request.get("client")
                 replay_arguments = _replay_arguments(surface, command, request, parts)

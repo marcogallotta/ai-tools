@@ -370,18 +370,19 @@ def validate_change_reason(reason: str) -> str:
 
 
 def validate_independence_attestation(attestation: str | None) -> str:
-    """Return the exact persisted verifier attestation or reject a blank claim."""
+    """Return a safe single-line verifier attestation for durable evidence."""
 
-    clean = str(attestation or "").strip()
-    if not clean:
-        raise DishRuleError(
-            "INVALID_ARGUMENT",
-            "a non-blank independence attestation is required",
-            rule="independence_attestation_required",
-            retryable=True,
-            details={"field": "independence_attestation"},
-        )
-    return clean
+    return _safe_audit_field(
+        attestation,
+        field="independence_attestation",
+        required_rule="independence_attestation_required",
+        invalid_rule="independence_attestation_invalid_characters",
+        required_message="a non-blank independence attestation is required",
+        invalid_message=(
+            "independence attestation contains control, format, line-separator, "
+            "surrogate, or paragraph-separator characters"
+        ),
+    )
 
 
 def self_reported_model(model: str) -> str:

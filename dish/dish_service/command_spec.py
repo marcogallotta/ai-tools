@@ -5,7 +5,7 @@ from copy import deepcopy
 from typing import Any, Mapping
 
 from dish_tool.errors import DishRuleError
-from dish_tool.models import validate_actor_model
+from dish_tool.models import validate_actor_model, validate_independence_attestation
 from .identifiers import (
     CANONICAL_DISH_UUID_SCHEMA,
     require_asana_gid,
@@ -303,6 +303,8 @@ def _validate_scalar(field: str, value: Any, schema: Mapping[str, Any]) -> None:
         )
     if field == "model" and isinstance(value, str):
         validate_actor_model(value)
+    if field == "independence_attestation" and isinstance(value, str):
+        validate_independence_attestation(value)
     if isinstance(value, str) and schema.get("format") == "uuid":
         require_dish_uuid(value, field=field)
     elif isinstance(value, str) and "pattern" in schema:
