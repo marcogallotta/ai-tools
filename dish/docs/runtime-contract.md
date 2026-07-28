@@ -131,6 +131,24 @@ HTTP bodies are executed only when exactly the declared `Content-Length` bytes w
 
 Every complete task reread reasserts Cooking-project membership, so a task removed between the initial scope check and the authoritative read cannot open or continue an operation with a null placement. Asana section enumeration follows all pages. Verification approval/rejection must repeat the exact verifier run and independence attestation recorded at Verification start; actor facts are scoped to an operation, allowing a run to participate legally in a later operation without rewriting earlier lineage.
 
+## Exact external-effect contract
+
+Every task write and movement follows one contract:
+
+1. reread the complete live task and reassert Cooking-project membership;
+2. compare exact content identity and expected Cooking-project section;
+3. persist the immutable intended effect;
+4. call the generated Asana SDK with automatic retries disabled;
+5. reread the complete live task;
+6. classify the effect as `confirmed`, `not_applied`, or `uncertain`;
+7. atomically finalize its durable evidence.
+
+An empty or incomplete SDK response never proves success; the live reread does. A confirmed
+unchanged reread proves only non-application, not that a non-retryable backend rejection has become
+retryable. Recovery may compare live state only with the exact persisted expected/intended evidence.
+It must not reconstruct intent from a later task state, repeat a confirmed effect, or invent
+Verification signoff.
+
 ## JSON response contract
 
 Every governed CLI or admin command writes exactly one compact canonical result envelope to stdout.

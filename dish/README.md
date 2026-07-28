@@ -82,6 +82,15 @@ The service binds two loopback listeners:
 - private CLI/admin listener on `127.0.0.1:8765`;
 - Action listener on `127.0.0.1:8766`, including the read-only generated Action schema.
 
+Keep `DISH_DB_PATH` in one stable host-state location independent of any checkout or worktree. The
+service derives its process lock and persistent ownership marker from the canonical database target,
+so pathname aliases do not create another authority. A service-owned database cannot later be
+opened through direct local mode.
+
+The two listeners are one supervised service. Failure to bind either listener stops startup and
+closes the other. On shutdown, the service stops accepting requests, closes both listeners, and
+waits for active handlers because they may own a transaction or an in-flight Asana effect.
+
 See `deploy/tailscale/README.md` before configuring Serve or Funnel.
 
 ## CLI client configuration
@@ -199,6 +208,10 @@ The private listener exposes `GET /health`. It reports:
 
 Mutation requests recheck compatibility and Asana access before entering workflow code. A failed health dependency blocks mutation before any task write, movement, or new operation is created.
 
+Valid service configuration is sufficient to start the listeners even when a recoverable database,
+compatibility, Asana, or restore-fault dependency is unhealthy. This keeps the private health and
+administrative restore surface available for diagnosis while normal mutations fail closed.
+
 ## GPT Action
 
 The Action uses only the dedicated Funnel URL and Action token. Its checked-in schema is:
@@ -234,7 +247,7 @@ Do not copy or package `.venv`; it is interpreter-local. The committed Step 11 t
 
 ## Documentation map
 
-- `docs/architecture.md` — current internals, authority boundaries, persistence, recovery, and extension rules.
+- `docs/architecture.md` — mandatory agent change map: authorities, invariants, owning layers, and routed reading.
 - `docs/runtime-contract.md` — JSON meanings, exit statuses, retry rules, and operational recovery.
 - `docs/dish-tool-future.md` — only work that is not already implemented.
 - `docs/dish-tool-update.md` and `docs/dish-tool-update-imp.md` — historical change analysis and implementation provenance, not current architecture authority.
