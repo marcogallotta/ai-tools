@@ -299,32 +299,51 @@ def test_non_material_checkins_preserve_signoff_lineage_across_multiple_heads(tm
         change_level="small", change_reason="clarify gentle handling", run_id="lineage-one",
     )
     first_candidate = tmp_path / "lineage-one.txt"
-    first_candidate.write_text(
-        f"{backend.title}\n{backend.notes}".replace("1. Cook it.", "1. Cook it gently.")
-    )
+    first_live = f"{backend.title}\n{backend.notes}"
+    first_text = first_live.replace("1. Cook it.", "1. Cook it gently.")
+    assert first_text != first_live
+    assert explicit_material_reasons(_doc(first_live), _doc(first_text)) == ()
+    first_candidate.write_text(first_text)
     first_result = app.execute(
         "prepare", agent="codex", model="gpt-5.6-sol",
         submission_id=first["submission_id"], file_path=str(first_candidate),
         material_classification="non-material",
     )
     assert first_result["ok"]
+    assert first_result["data"]["material_classification"] == {
+        "classified_subject": "canonical body diff from the signed baseline",
+        "requested": "non-material",
+        "effective": "non-material",
+        "forced_material_reasons": [],
+        "route": "signed-check-in",
+    }
 
     second = app.execute(
         "start", agent="gpt", task_gid="t", kind="change",
         change_level="small", change_reason="clarify brief handling", run_id="lineage-two",
     )
     second_candidate = tmp_path / "lineage-two.txt"
-    second_candidate.write_text(
-        f"{backend.title}\n{backend.notes}".replace(
-            "1. Cook it gently.", "1. Cook it gently.\n2. Finish freshly just before serving."
-        )
+    second_live = f"{backend.title}\n{backend.notes}"
+    second_text = second_live.replace(
+        "1. Cook it gently.",
+        "1. Cook it gently.\n2. Finish freshly just before serving.",
     )
+    assert second_text != second_live
+    assert explicit_material_reasons(_doc(second_live), _doc(second_text)) == ()
+    second_candidate.write_text(second_text)
     second_result = app.execute(
         "prepare", agent="gpt", model="gpt-5.6-sol",
         submission_id=second["submission_id"], file_path=str(second_candidate),
         material_classification="non-material",
     )
     assert second_result["ok"], second_result
+    assert second_result["data"]["material_classification"] == {
+        "classified_subject": "canonical body diff from the signed baseline",
+        "requested": "non-material",
+        "effective": "non-material",
+        "forced_material_reasons": [],
+        "route": "signed-check-in",
+    }
     rows = app.conn.execute(
         """SELECT operation_id,inherited_signoff_cycle_id
              FROM operations
