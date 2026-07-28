@@ -1,8 +1,38 @@
-# Optional live test-project smoke
+# Live test-project smoke
 
-Do not run this against production Cooking. Use a disposable task in the configured test project and preserve the complete JSON transcript.
+Do not run this against production Cooking. Use disposable tasks in the configured test project and
+preserve the complete JSON transcript.
 
-## Preconditions
+## Status
+
+Updated 2026-07-28. Stages 1 and 2 record completed work; Stage 3 is the remaining activation gate.
+The completed evidence spans several runs and run IDs, so it is not a substitute for the final
+single-run rehearsal.
+
+Saved reports:
+
+- `/tmp/dish-admin-smoke-c381280a.txt`
+- `/tmp/dish-backend-database-smoke-8b0f2b01.txt`
+- `/tmp/dish-broader-smoke-e9cad9e1.txt`
+
+These `/tmp` reports are working evidence, not permanent release records. Copy the final Stage 3
+transcript to the approved rollout record location before relying on it for activation.
+
+## Tracking discipline
+
+Use this file as the current smoke-test ledger. After every live or isolated service smoke pass:
+
+- update the applicable stage instead of maintaining a separate informal checklist;
+- record the date, tested revision, run ID, fixture task IDs, and durable report/transcript paths;
+- mark each gate done, partial, blocked, or requiring post-fix retest;
+- add confirmed defects only after safe reproduction and state the exact passing condition;
+- remove an open regression gate only after its original input and neighboring cases pass;
+- record disposable fixtures and cleanup state before handoff.
+
+Keep complete request and response bodies in the referenced transcript, with credentials redacted.
+Do not turn this ledger into an incident log or paste large responses into it.
+
+## Preconditions for every live stage
 
 - The complete unit and hermetic SDK suites pass.
 - Service host uses `DISH_HONEST_PATH=/home/marco/honest-pantry-dish-rollout`.
@@ -12,25 +42,124 @@ Do not run this against production Cooking. Use a disposable task in the configu
 - Private Serve and public Funnel endpoints match `deploy/tailscale/README.md`.
 - The service database and Asana test project have been backed up.
 - `DISH_LIVE_MODE=1` and `DISH_MODE=service` are set on CLI/admin clients.
+- Mint one canonical lowercase UUID `run_id` and reuse it throughout that stage.
 
-## Checks
+## Stage 1 — foundation smoke: done
 
-1. `GET /health` over the private endpoint is healthy.
-2. The public endpoint returns 404 for `/health`, `/v1/commands/sections`, `/v1/admin/recover`, and `/v1/admin/backups/create`.
-3. The Action token succeeds only on `/v1/action/sections`; CLI and admin tokens fail there.
-4. Create one disposable task through `dish create` and confirm Research Queue placement.
-5. Run Planning → Research Queue.
-6. Run Research → Verification Queue using an exact candidate file.
-7. Start a genuinely independent Verification run, approve, and submit to the configured non-queue destination.
-8. Confirm title/notes identities and section membership after every write or movement.
-9. Deliberately attempt a stale content baseline and stale placement baseline; assert zero mutation.
-10. Simulate an expired client lease and use `dish-admin recover-lease` before recovery.
-11. Through the private HTTP-backed `dish-admin` client, exercise one governed-change authorization and confirm its durable `marco_authorizations` evidence.
-12. Exercise `dish-admin recover` against a deliberately interrupted disposable operation and compare the CLI result with the private HTTP response and live reread.
-13. Exercise `dish-admin migrate` on a disposable previous-schema task; confirm the exact migrated content by live reread and verify an already-current task returns the canonical no-migration result.
-14. Create a managed backup, complete another harmless test operation, restore the backup, and confirm the prior operation/lease state returns exactly.
-15. Delete the disposable Asana tasks only through the approved test cleanup path.
+Completed against the live test project and isolated copies of its service database:
+
+- Private health reported healthy database, compatibility, Asana, audit, and maintenance state.
+- Credential scopes and private/Action listener separation failed closed.
+- A disposable task was created through `dish create`.
+- Planning completed through a real Asana write and movement to Research Queue.
+- The task was reread and its exact title, notes identity, placement, operation, request, run, and
+  lease evidence were confirmed.
+- Successful and failed-first request replay, conflicting request-ID reuse, and replay across
+  restart behaved correctly on the later backend run.
+- Lease renewal preserved the lease identity; expired-lease recovery returned the correct task,
+  operation, state, and released lease.
+- Cold start, one-process database ownership, idle `SIGTERM`, in-flight request drain, and restart
+  reconciliation behaved correctly.
+- Asana-unavailable and corrupt-database modes remained diagnosable and failed closed.
+- Managed restore recovered an isolated corrupt live database and restored usability.
+- SQLite lock contention, abrupt process loss, concurrent starts, malformed bodies, and final
+  listener/WAL/SHM settling were exercised.
+
+Disposable live task `1216941434175836` remains in Research Queue and requires Stage 3 cleanup.
+
+Before treating Stage 1 as an activation record, rerun and record the preconditions above. The saved
+smoke reports do not prove that the complete unit/hermetic suites, Asana-project backup, or every
+service-host environment value were checked in the same run.
+
+## Stage 2 — adversarial admin and resilience smoke: done, regression gates open
+
+Admin identifiers, authority, replay, leases, backups, restore interruption, filesystem failures,
+protocol input boundaries, and database recovery were probed. Reproduce a suspected defect twice
+where safe, apply no code fix during smoke testing, and rerun the affected gate after a fix is
+claimed.
+
+### Confirmed on the current broader-smoke revision
+
+These gates must pass after their fixes:
+
+1. An undeclared command argument must return a field-specific `INVALID_ARGUMENT`, not
+   `INTERNAL_ERROR`.
+2. Agent and admin bearer tokens with leading or trailing whitespace must be rejected as
+   noncanonical.
+3. A `SIGKILL`-interrupted backup restore must expose a documented, executable inspection or
+   reconciliation path; it must not strand a pending request behind an unusable `inspect`
+   instruction.
+4. An unwritable backup directory must identify the backup destination failure, not report the live
+   database as unavailable.
+5. Health must not report the writable service database healthy when permissions prevent durable
+   mutations.
+6. An invalid immutable backup must return accurate retry guidance; exact retry cannot repair a
+   truncated or schema-mismatched backup.
+
+For each fix, repeat the original failing input, its safe neighboring cases, exact request replay,
+and changed-payload request-ID reuse. Preserve the complete post-fix responses.
+
+### Earlier admin findings still requiring a current-build recheck
+
+The first admin smoke used an earlier service/database revision. Do not carry these findings forward
+as current defects without reproducing them, but do not drop their regression coverage:
+
+- whitespace-padded operation IDs caused a raw CLI `InvalidURL` traceback;
+- `migrate` was blocked by a protocol-version-mismatched asset and accepted a leading-zero task ID;
+- admin mutations ignored exact replay and conflicting request-ID reuse;
+- missing admin arguments returned `INTERNAL_ERROR`;
+- malformed or uppercase run IDs were accepted;
+- principal-filtered reads advertised another actor's continuation;
+- exact duplicate governed-change authorization created distinct authority records and did not
+  expose enough binding evidence.
+
+Later backend testing already rechecked successful/failed-first agent replay, corrupt-database
+diagnostics, process-lock startup, and expired `recover-lease` response identity successfully.
+Keep those as ordinary regression tests rather than open findings.
+
+## Stage 3 — complete the live rehearsal
+
+Use one new `run_id`, new disposable tasks, and one continuous transcript. Recheck Stage 2 gates
+whose fixes have been claimed before relying on the workflow result.
+
+1. Record all preconditions, revisions, endpoints, database/Asana backup IDs, and initial health.
+2. Confirm the public endpoint returns 404 for each exact path: `/health`,
+   `/v1/commands/sections`, `/v1/admin/recover`, and `/v1/admin/backups/create`.
+3. Confirm the Action token succeeds only on `/v1/action/sections`; CLI and admin tokens fail there.
+4. Create a disposable task and run Planning → Research Queue, confirming exact title, notes
+   identity, and section membership after every write and movement.
+5. Run Research → Verification Queue using one immutable exact candidate file.
+6. Start a genuinely independent Verification run, approve, and submit to the configured non-queue
+   destination. Confirm durable verifier lineage, signoff identity, final content, and placement.
+7. Attempt stale content and stale placement baselines separately and prove zero mutation.
+8. Expire a disposable client lease, run `dish-admin recover-lease`, and then complete the legal
+   recovery/continuation.
+9. Exercise one legitimate governed-change authorization through the private HTTP-backed
+   `dish-admin` client. Confirm its exact durable `marco_authorizations` binding and exact replay.
+10. Interrupt one disposable workflow operation at a documented recoverable boundary. Run
+    `dish-admin recover` only after a live reread, then compare CLI, private HTTP, live Asana, and
+    durable evidence.
+11. Run `dish-admin migrate` on a disposable previous-schema task, confirm the exact migrated live
+    content, and confirm the canonical no-migration response for an already-current task.
+12. Create a managed backup, complete another harmless workflow operation, restore the backup, and
+    prove the prior operation, request, and lease state returns exactly.
+13. Delete every disposable Asana task only through the approved test cleanup path and record the
+    final health and empty fixture inventory.
+
+Recommended additions before activation:
+
+- Exercise Small, Large, Evidence, Human Review, destination repair, and movement retry as required
+  by `docs/rollout.md`.
+- Exercise an operation-backed uncertain write or movement using a supported fault injector, then
+  follow only the returned recovery action.
+- Complete the GPT Action editor Preview gate and compare its result envelope with the private CLI.
+- Run a short idle/request soak after the functional gates and confirm thread, listener, SQLite
+  handle, WAL, and lease counts settle.
 
 ## Stop conditions
 
-Stop immediately on any raw exception, `BACKEND_UNCERTAIN`, credential appearing in output, public access to a private route, duplicate provenance, repeated movement, or mismatch between live Asana state and local durable evidence.
+Stop immediately on any raw exception, `BACKEND_UNCERTAIN`, credential appearing in output, public
+access to a private route, duplicate provenance, repeated movement, or mismatch between live Asana
+state and local durable evidence. Preserve the exact response and identifiers. Resume only after the
+failure is resolved, then repeat the affected gate with a fresh disposable fixture and request
+identity.
