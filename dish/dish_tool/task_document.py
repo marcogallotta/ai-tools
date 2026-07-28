@@ -205,6 +205,17 @@ def _canonical_authority_label(label: str, names: Sequence[str]) -> str | None:
     )
 
 
+def _authority_field_match(line: str) -> tuple[re.Match[str] | None, bool]:
+    """Return an ASCII-colon field match and whether compatibility folding was required."""
+    match = re.match(r"^([^:]+):(?:\s*(.*))$", line)
+    if match is not None:
+        return match, False
+    normalized = unicodedata.normalize("NFKC", line)
+    if normalized == line:
+        return None, False
+    return re.match(r"^([^:]+):(?:\s*(.*))$", normalized), True
+
+
 def _field_label_errors(
     lines: Sequence[str],
     names: Sequence[str],
@@ -214,11 +225,24 @@ def _field_label_errors(
 ) -> list[dict[str, object]]:
     errors: list[dict[str, object]] = []
     for line, line_number in zip(lines, line_numbers):
-        match = re.match(r"^([^:]+):(?:\s*(.*))$", line)
+        match, compatibility_folded = _authority_field_match(line)
         if match is None:
             continue
         label = match.group(1)
         canonical = _canonical_authority_label(label, names)
+        if compatibility_folded and canonical is not None:
+            errors.append(
+                {
+                    "rule": f"{context}_field_label_disguised",
+                    "field": canonical,
+                    "canonical_label": canonical,
+                    "line": line_number,
+                    "message": (
+                        f"{context} field {canonical} uses Unicode compatibility syntax"
+                    ),
+                }
+            )
+            continue
         has_format_characters = _authority_label_has_format_characters(label)
         if has_format_characters:
             error: dict[str, object] = {
@@ -344,7 +368,7 @@ def _duplicate_field_errors(
 ) -> list[dict[str, object]]:
     occurrences: dict[str, list[int]] = {}
     for line, line_number in zip(lines, line_numbers):
-        match = re.match(r"^([^:]+):(?:\s*(.*))$", line)
+        match, _compatibility_folded = _authority_field_match(line)
         if match:
             canonical = _canonical_authority_label(match.group(1), names)
             if canonical is not None:
