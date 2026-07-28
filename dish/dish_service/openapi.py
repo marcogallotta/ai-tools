@@ -15,16 +15,22 @@ from .command_spec import (
 )
 
 
+REPLAY_MUTATION_DESCRIPTION = (
+    "Replay-bound mutation. client.request_id is required and is durably bound to the exact "
+    "command, canonical arguments, authenticated owner, and client.run_id. Dish stores the "
+    "first authoritative result, including expected failures, and preserves it across service "
+    "restart. An exact replay with the same identity returns the stored result with "
+    "data.request_replayed=true and data.request_id. Reuse with changed arguments, a different "
+    "command, a different authenticated owner, or a different run returns non-retryable "
+    "service_request_identity_conflict. A matching pending or uncertain request is not executed "
+    "again and remains fail-closed until exact durable evidence supports reconstruction or "
+    "safe resolution."
+)
+
+
 def _action_operation_description(command: str) -> str:
     if command in REPLAY_SAFE_COMMANDS:
-        return (
-            "Replay-bound mutation. client.request_id is required and identifies the exact "
-            "command, canonical arguments, authenticated owner, and run. Dish stores the first "
-            "authoritative success or expected failure. An exact completed replay returns that "
-            "stored result with data.request_replayed=true and data.request_id; reuse for "
-            "different work conflicts, and matching pending or uncertain work is not executed "
-            "again."
-        )
+        return REPLAY_MUTATION_DESCRIPTION
     return (
         "Read-only Action. It does not accept client.request_id, create a replay record, or "
         "authorize a mutation."
@@ -200,10 +206,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
         "post": {
             "operationId": "dish_renew_lease",
             "summary": "Renew the current GPT Action operation lease",
-            "description": (
-                "Replay-bound mutation with the same request identity and completed, conflict, "
-                "pending, and uncertain semantics as workflow mutations."
-            ),
+            "description": REPLAY_MUTATION_DESCRIPTION,
             "security": [{"actionBearer": []}],
             "parameters": [
                 {

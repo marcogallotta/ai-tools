@@ -31,12 +31,15 @@ CLIENT_RUN_ID_SCHEMA = {
 CLIENT_REQUEST_ID_SCHEMA = {
     **DISH_UUID_SCHEMA,
     "description": (
-        "Canonical lowercase UUID for one logical mutation. Dish durably binds the "
-        "first authoritative success or expected failure to the exact command, canonical "
-        "arguments, authenticated owner, and run. Reuse it only for an exact replay after "
-        "a lost response: a completed replay returns the stored result with "
-        "data.request_replayed=true and data.request_id, different work conflicts, and a "
-        "matching pending or uncertain request is not executed again."
+        "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the "
+        "exact command, canonical arguments, authenticated owner, and client.run_id, stores "
+        "the first authoritative success or expected failure, and preserves that result "
+        "across service restart. Reuse it only for an exact replay after a lost response: the "
+        "same identity returns the stored result with data.request_replayed=true and "
+        "data.request_id. Changed arguments or reuse from a different command, owner, or run "
+        "returns service_request_identity_conflict. A matching pending or uncertain request "
+        "is not executed again and remains fail-closed until exact durable evidence supports "
+        "reconstruction or safe resolution."
     ),
 }
 

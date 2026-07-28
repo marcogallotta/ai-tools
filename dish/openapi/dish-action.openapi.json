@@ -14,7 +14,7 @@
       "post": {
         "operationId": "dish_create",
         "summary": "Run dish create",
-        "description": "Replay-bound mutation. client.request_id is required and identifies the exact command, canonical arguments, authenticated owner, and run. Dish stores the first authoritative success or expected failure. An exact completed replay returns that stored result with data.request_replayed=true and data.request_id; reuse for different work conflicts, and matching pending or uncertain work is not executed again.",
+        "description": "Replay-bound mutation. client.request_id is required and is durably bound to the exact command, canonical arguments, authenticated owner, and client.run_id. Dish stores the first authoritative result, including expected failures, and preserves it across service restart. An exact replay with the same identity returns the stored result with data.request_replayed=true and data.request_id. Reuse with changed arguments, a different command, a different authenticated owner, or a different run returns non-retryable service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
         "security": [
           {
             "actionBearer": []
@@ -50,7 +50,7 @@
                         "type": "string",
                         "format": "uuid",
                         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds the first authoritative success or expected failure to the exact command, canonical arguments, authenticated owner, and run. Reuse it only for an exact replay after a lost response: a completed replay returns the stored result with data.request_replayed=true and data.request_id, different work conflicts, and a matching pending or uncertain request is not executed again."
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
                       }
                     }
                   },
@@ -328,7 +328,7 @@
       "post": {
         "operationId": "dish_start",
         "summary": "Run dish start",
-        "description": "Replay-bound mutation. client.request_id is required and identifies the exact command, canonical arguments, authenticated owner, and run. Dish stores the first authoritative success or expected failure. An exact completed replay returns that stored result with data.request_replayed=true and data.request_id; reuse for different work conflicts, and matching pending or uncertain work is not executed again.",
+        "description": "Replay-bound mutation. client.request_id is required and is durably bound to the exact command, canonical arguments, authenticated owner, and client.run_id. Dish stores the first authoritative result, including expected failures, and preserves it across service restart. An exact replay with the same identity returns the stored result with data.request_replayed=true and data.request_id. Reuse with changed arguments, a different command, a different authenticated owner, or a different run returns non-retryable service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
         "security": [
           {
             "actionBearer": []
@@ -364,7 +364,7 @@
                         "type": "string",
                         "format": "uuid",
                         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds the first authoritative success or expected failure to the exact command, canonical arguments, authenticated owner, and run. Reuse it only for an exact replay after a lost response: a completed replay returns the stored result with data.request_replayed=true and data.request_id, different work conflicts, and a matching pending or uncertain request is not executed again."
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
                       }
                     }
                   },
@@ -524,7 +524,7 @@
       "post": {
         "operationId": "dish_prepare",
         "summary": "Run dish prepare",
-        "description": "Replay-bound mutation. client.request_id is required and identifies the exact command, canonical arguments, authenticated owner, and run. Dish stores the first authoritative success or expected failure. An exact completed replay returns that stored result with data.request_replayed=true and data.request_id; reuse for different work conflicts, and matching pending or uncertain work is not executed again.",
+        "description": "Replay-bound mutation. client.request_id is required and is durably bound to the exact command, canonical arguments, authenticated owner, and client.run_id. Dish stores the first authoritative result, including expected failures, and preserves it across service restart. An exact replay with the same identity returns the stored result with data.request_replayed=true and data.request_id. Reuse with changed arguments, a different command, a different authenticated owner, or a different run returns non-retryable service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
         "security": [
           {
             "actionBearer": []
@@ -560,7 +560,7 @@
                         "type": "string",
                         "format": "uuid",
                         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds the first authoritative success or expected failure to the exact command, canonical arguments, authenticated owner, and run. Reuse it only for an exact replay after a lost response: a completed replay returns the stored result with data.request_replayed=true and data.request_id, different work conflicts, and a matching pending or uncertain request is not executed again."
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
                       }
                     }
                   },
@@ -626,7 +626,7 @@
       "post": {
         "operationId": "dish_approve",
         "summary": "Run dish approve",
-        "description": "Replay-bound mutation. client.request_id is required and identifies the exact command, canonical arguments, authenticated owner, and run. Dish stores the first authoritative success or expected failure. An exact completed replay returns that stored result with data.request_replayed=true and data.request_id; reuse for different work conflicts, and matching pending or uncertain work is not executed again.",
+        "description": "Replay-bound mutation. client.request_id is required and is durably bound to the exact command, canonical arguments, authenticated owner, and client.run_id. Dish stores the first authoritative result, including expected failures, and preserves it across service restart. An exact replay with the same identity returns the stored result with data.request_replayed=true and data.request_id. Reuse with changed arguments, a different command, a different authenticated owner, or a different run returns non-retryable service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
         "security": [
           {
             "actionBearer": []
@@ -662,7 +662,7 @@
                         "type": "string",
                         "format": "uuid",
                         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds the first authoritative success or expected failure to the exact command, canonical arguments, authenticated owner, and run. Reuse it only for an exact replay after a lost response: a completed replay returns the stored result with data.request_replayed=true and data.request_id, different work conflicts, and a matching pending or uncertain request is not executed again."
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
                       }
                     }
                   },
@@ -739,7 +739,7 @@
       "post": {
         "operationId": "dish_reject",
         "summary": "Run dish reject",
-        "description": "Replay-bound mutation. client.request_id is required and identifies the exact command, canonical arguments, authenticated owner, and run. Dish stores the first authoritative success or expected failure. An exact completed replay returns that stored result with data.request_replayed=true and data.request_id; reuse for different work conflicts, and matching pending or uncertain work is not executed again.",
+        "description": "Replay-bound mutation. client.request_id is required and is durably bound to the exact command, canonical arguments, authenticated owner, and client.run_id. Dish stores the first authoritative result, including expected failures, and preserves it across service restart. An exact replay with the same identity returns the stored result with data.request_replayed=true and data.request_id. Reuse with changed arguments, a different command, a different authenticated owner, or a different run returns non-retryable service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
         "security": [
           {
             "actionBearer": []
@@ -775,7 +775,7 @@
                         "type": "string",
                         "format": "uuid",
                         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds the first authoritative success or expected failure to the exact command, canonical arguments, authenticated owner, and run. Reuse it only for an exact replay after a lost response: a completed replay returns the stored result with data.request_replayed=true and data.request_id, different work conflicts, and a matching pending or uncertain request is not executed again."
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
                       }
                     }
                   },
@@ -936,7 +936,7 @@
       "post": {
         "operationId": "dish_submit",
         "summary": "Run dish submit",
-        "description": "Replay-bound mutation. client.request_id is required and identifies the exact command, canonical arguments, authenticated owner, and run. Dish stores the first authoritative success or expected failure. An exact completed replay returns that stored result with data.request_replayed=true and data.request_id; reuse for different work conflicts, and matching pending or uncertain work is not executed again.",
+        "description": "Replay-bound mutation. client.request_id is required and is durably bound to the exact command, canonical arguments, authenticated owner, and client.run_id. Dish stores the first authoritative result, including expected failures, and preserves it across service restart. An exact replay with the same identity returns the stored result with data.request_replayed=true and data.request_id. Reuse with changed arguments, a different command, a different authenticated owner, or a different run returns non-retryable service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
         "security": [
           {
             "actionBearer": []
@@ -972,7 +972,7 @@
                         "type": "string",
                         "format": "uuid",
                         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds the first authoritative success or expected failure to the exact command, canonical arguments, authenticated owner, and run. Reuse it only for an exact replay after a lost response: a completed replay returns the stored result with data.request_replayed=true and data.request_id, different work conflicts, and a matching pending or uncertain request is not executed again."
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
                       }
                     }
                   },
@@ -1013,7 +1013,7 @@
       "post": {
         "operationId": "dish_renew_lease",
         "summary": "Renew the current GPT Action operation lease",
-        "description": "Replay-bound mutation with the same request identity and completed, conflict, pending, and uncertain semantics as workflow mutations.",
+        "description": "Replay-bound mutation. client.request_id is required and is durably bound to the exact command, canonical arguments, authenticated owner, and client.run_id. Dish stores the first authoritative result, including expected failures, and preserves it across service restart. An exact replay with the same identity returns the stored result with data.request_replayed=true and data.request_id. Reuse with changed arguments, a different command, a different authenticated owner, or a different run returns non-retryable service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
         "security": [
           {
             "actionBearer": []
@@ -1060,7 +1060,7 @@
                         "type": "string",
                         "format": "uuid",
                         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds the first authoritative success or expected failure to the exact command, canonical arguments, authenticated owner, and run. Reuse it only for an exact replay after a lost response: a completed replay returns the stored result with data.request_replayed=true and data.request_id, different work conflicts, and a matching pending or uncertain request is not executed again."
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
                       }
                     }
                   }
