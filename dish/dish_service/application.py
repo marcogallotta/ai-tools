@@ -138,6 +138,53 @@ def _semantic_evidence_error(
     )
 
 
+def _preserve_semantic_evidence_error(
+    exc: DishRuleError,
+    *,
+    execution_occurred: bool,
+    request_id_consumed: bool,
+) -> DishRuleError:
+    if exc.rule != "database_semantic_evidence_invalid":
+        return exc
+    return _semantic_evidence_error(
+        exc,
+        execution_occurred=execution_occurred,
+        request_id_consumed=request_id_consumed,
+    )
+
+
+def _preserve_semantic_evidence_result(
+    result: dict[str, Any],
+    *,
+    execution_occurred: bool,
+    request_id_consumed: bool,
+) -> dict[str, Any]:
+    errors = result.get("errors")
+    if not isinstance(errors, list) or not any(
+        isinstance(error, dict)
+        and error.get("rule") == "database_semantic_evidence_invalid"
+        for error in errors
+    ):
+        return result
+    retry_condition = (
+        "after_database_semantic_evidence_repair_with_fresh_request_id"
+        if request_id_consumed
+        else "after_database_semantic_evidence_repair"
+    )
+    for error in errors:
+        if (
+            isinstance(error, dict)
+            and error.get("rule") == "database_semantic_evidence_invalid"
+        ):
+            error.update({
+                "execution_occurred": execution_occurred,
+                "request_id_consumed": request_id_consumed,
+                "retry_condition": retry_condition,
+            })
+    result["retryable"] = True
+    return result
+
+
 def _database_initialization_error(exc: BaseException) -> DishRuleError:
     if (
         isinstance(exc, DishRuleError)
@@ -170,6 +217,15 @@ def _database_execution_unavailable_error(
     request_id_consumed: bool,
 ) -> DishRuleError:
     """Report post-start database failures without implying a safe blind retry."""
+
+    if isinstance(exc, DishRuleError):
+        preserved = _preserve_semantic_evidence_error(
+            exc,
+            execution_occurred=True,
+            request_id_consumed=request_id_consumed,
+        )
+        if preserved is not exc:
+            return preserved
 
     _classification, details = _classify_database_initialization_exception(exc)
     details.update({
@@ -1201,6 +1257,11 @@ class DishService:
                 else:
                     with self._candidate_file(prepared_arguments) as prepared:
                         result = app.execute(command, **prepared)
+                result = _preserve_semantic_evidence_result(
+                    result,
+                    execution_occurred=True,
+                    request_id_consumed=bool(request_id and replay_started),
+                )
 
                 if command == "start" and prepared_arguments.get("kind") != "verification" and result.get("ok"):
                     operation_id = result.get("submission_id")
@@ -1250,6 +1311,11 @@ class DishService:
                     complete_request(conn, request_id=request_id, result=result)
                 return result
             except DishRuleError as exc:
+                exc = _preserve_semantic_evidence_error(
+                    exc,
+                    execution_occurred=True,
+                    request_id_consumed=bool(request_id and replay_started),
+                )
                 if acquired_for_request and operation_id:
                     try:
                         leases.release(operation_id, principal, reason="service_command_rejected")
@@ -1414,6 +1480,11 @@ class DishService:
                     complete_request(conn, request_id=request_id, result=result)
                 return result
             except DishRuleError as exc:
+                exc = _preserve_semantic_evidence_error(
+                    exc,
+                    execution_occurred=True,
+                    request_id_consumed=bool(request_id and replay_started),
+                )
                 operation = conn.execute(
                     "SELECT task_gid, status FROM operations WHERE operation_id=?",
                     (operation_id,),
@@ -1525,6 +1596,11 @@ class DishService:
                     complete_request(conn, request_id=request_id, result=result)
                 return result
             except DishRuleError as exc:
+                exc = _preserve_semantic_evidence_error(
+                    exc,
+                    execution_occurred=True,
+                    request_id_consumed=bool(request_id and replay_started),
+                )
                 row = conn.execute(
                     "SELECT task_gid FROM operations WHERE operation_id=?",
                     (operation_id,),
@@ -1737,6 +1813,11 @@ class DishService:
                 )
                 with self._candidate_file(prepared_arguments) as prepared:
                     result = app.execute(command, **prepared)
+                result = _preserve_semantic_evidence_result(
+                    result,
+                    execution_occurred=True,
+                    request_id_consumed=bool(request_id and replay_started),
+                )
                 if result.get("ok") and operation_id:
                     result = self._finalize_successful_lease(
                         result=result,
@@ -1764,6 +1845,11 @@ class DishService:
                     complete_request(conn, request_id=request_id, result=result)
                 return result
             except DishRuleError as exc:
+                exc = _preserve_semantic_evidence_error(
+                    exc,
+                    execution_occurred=True,
+                    request_id_consumed=bool(request_id and replay_started),
+                )
                 if acquired_for_request and operation_id:
                     try:
                         leases.release(operation_id, principal, reason="admin_command_rejected")
@@ -1830,12 +1916,11 @@ class DishService:
                     complete_request(conn, request_id=request_id, result=result)
                 return result
             except DishRuleError as exc:
-                if exc.rule == "database_semantic_evidence_invalid":
-                    exc = _semantic_evidence_error(
-                        exc,
-                        execution_occurred=True,
-                        request_id_consumed=bool(request_id and replay_started),
-                    )
+                exc = _preserve_semantic_evidence_error(
+                    exc,
+                    execution_occurred=True,
+                    request_id_consumed=bool(request_id and replay_started),
+                )
                 result = error_envelope("backup-create", exc)
                 if request_id and replay_started:
                     result.setdefault("data", {})["request_id"] = request_id
@@ -1979,12 +2064,11 @@ class DishService:
                 }
             result = result_envelope(command="backup-restore", data=data)
         except DishRuleError as exc:
-            if exc.rule == "database_semantic_evidence_invalid":
-                exc = _semantic_evidence_error(
-                    exc,
-                    execution_occurred=True,
-                    request_id_consumed=bool(request_id),
-                )
+            exc = _preserve_semantic_evidence_error(
+                exc,
+                execution_occurred=True,
+                request_id_consumed=bool(request_id),
+            )
             result = error_envelope("backup-restore", exc)
         except Exception as exc:
             error = DishRuleError(
