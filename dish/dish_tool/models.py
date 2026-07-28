@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -277,39 +278,108 @@ class VerifierIdentity:
 FAMILY_DISPLAY_NAMES = {"claude": "Claude", "gpt": "Custom GPT", "codex": "Codex"}
 
 MAX_ACTOR_MODEL_LENGTH = 80
+SELF_REPORTED_MODEL_PREFIX = "self-reported model: "
 
 
-def validate_actor_model(model: str) -> str:
-    clean = str(model or "").strip()
+def _normalize_audit_text(value: str) -> str:
+    """NFC-normalize caller text without hiding structural characters."""
+
+    return unicodedata.normalize("NFC", str(value or ""))
+
+
+def _unsafe_audit_character(value: str) -> str | None:
+    """Return the first character that can corrupt or disguise line grammar."""
+
+    for character in value:
+        if unicodedata.category(character) in {"Cc", "Cf", "Cs", "Zl", "Zp"}:
+            return character
+    return None
+
+
+def _safe_audit_field(
+    value: str,
+    *,
+    field: str,
+    required_rule: str,
+    invalid_rule: str,
+    required_message: str,
+    invalid_message: str,
+    forbidden_literals: tuple[str, ...] = (),
+) -> str:
+    normalized = _normalize_audit_text(value)
+    if _unsafe_audit_character(normalized) is not None or any(
+        literal in normalized for literal in forbidden_literals
+    ):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            invalid_message,
+            rule=invalid_rule,
+            retryable=True,
+            details={"field": field},
+        )
+    clean = normalized.strip()
     if not clean:
         raise DishRuleError(
             "INVALID_ARGUMENT",
-            "a model is required to record actor provenance",
-            rule="model_required",
+            required_message,
+            rule=required_rule,
+            retryable=True,
+            details={"field": field},
         )
+    return clean
+
+
+def validate_actor_model(model: str) -> str:
+    clean = _safe_audit_field(
+        model,
+        field="model",
+        required_rule="model_required",
+        invalid_rule="model_invalid_characters",
+        required_message="a model is required to record actor provenance",
+        invalid_message=(
+            "model contains control, format, line-separator, surrogate, or "
+            "provenance-delimiter characters"
+        ),
+        forbidden_literals=("—", ","),
+    )
     if len(clean) > MAX_ACTOR_MODEL_LENGTH:
         raise DishRuleError(
             "INVALID_ARGUMENT",
             f"model exceeds the maximum length of {MAX_ACTOR_MODEL_LENGTH} characters",
             rule="model_too_long",
-        )
-    if "—" in clean or "," in clean:
-        raise DishRuleError(
-            "INVALID_ARGUMENT",
-            "model must not contain an em dash or comma",
-            rule="model_invalid_characters",
+            retryable=True,
+            details={"field": "model"},
         )
     return clean
 
 
+def validate_change_reason(reason: str) -> str:
+    return _safe_audit_field(
+        reason,
+        field="change_reason",
+        required_rule="change_reason_required",
+        invalid_rule="change_reason_invalid_characters",
+        required_message="change reason is required for change operations",
+        invalid_message=(
+            "change reason contains control, format, line-separator, surrogate, "
+            "or audit-delimiter characters"
+        ),
+        forbidden_literals=("—",),
+    )
+
+
+def self_reported_model(model: str) -> str:
+    return f"{SELF_REPORTED_MODEL_PREFIX}{validate_actor_model(model)}"
+
+
 def material_editor_line(agent: str, model: str, date: str) -> str:
     agent_family(agent)
-    clean_model = validate_actor_model(model)
+    clean_model = self_reported_model(model)
     return f"{FAMILY_DISPLAY_NAMES[agent]} — {clean_model}, {date}"
 
 def verification_actor_line(agent: str, model: str, date: str) -> str:
     agent_family(agent)
-    clean_model = validate_actor_model(model)
+    clean_model = self_reported_model(model)
     return f"{FAMILY_DISPLAY_NAMES[agent]} — {clean_model}, {date}"
 
 
@@ -324,7 +394,7 @@ def material_change_line(
     verified: bool = False,
 ) -> str:
     agent_family(agent)
-    clean_model = validate_actor_model(model)
+    clean_model = self_reported_model(model)
     if materiality not in {"Small", "Large"}:
         raise DishRuleError(
             "INVALID_ARGUMENT",

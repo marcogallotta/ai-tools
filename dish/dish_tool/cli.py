@@ -55,8 +55,8 @@ dish research -- stage walkthrough (not a governed operation; this command only 
   2. perform Research and self-review against the exact live task
   3. dish prepare SUBMISSION_ID --agent AGENT --model MODEL --file PATH
 
-`--model` names the exact model you are running as (e.g. `gpt-5.6-sol`) -- it is recorded
-verbatim in Researched by / Self-verified and must not contain an em dash or comma.
+`--model` is caller-supplied, self-reported display metadata (e.g. `gpt-5.6-sol`). It is
+labelled as self-reported in Researched by / Self-verified and is not authenticated runtime provenance.
 
 A successful `prepare` writes and confirms the complete `pending-verification` task before any
 Research Queue -> Verification Queue move -- the tool owns that move, not the agent.
@@ -84,9 +84,9 @@ dish verification -- stage walkthrough (not a governed operation; this command o
 
 `--reviewed-identity` is the `content_identity` returned by `read`/`start` for the exact task
 you reviewed; `approve` and `reject` both require the verifier identity recorded by `start`.
-`--model` names the exact model you are running as (e.g. `gpt-5.6-sol`); it is recorded
-verbatim in Verified by (and Self-verified for a Large correction or small correction) and
-must not contain an em dash or comma. `reject --route large` requires it; `approve` always
+`--model` is caller-supplied, self-reported display metadata (e.g. `gpt-5.6-sol`). It is
+labelled as self-reported in Verified by (and Self-verified for a Large or small correction),
+not authenticated runtime provenance. `reject --route large` requires it; `approve` always
 requires it.
 
 A successful `approve` returns `submit` as the next action -- run it in the same pass:
@@ -179,9 +179,9 @@ def build_parser() -> JsonArgumentParser:
             "SUBMISSION_ID is the operation identifier `start` returned -- it appears there "
             "as both `submission_id` and `data.operation_id`; the two are the same value. "
             "A Planning submission (--kind planning) needs only --agent, --model, and --file; "
-            "every other option below applies to a Research or change submission. --model names "
-            "the exact model you are running as (e.g. `gpt-5.6-sol`); it is recorded verbatim in "
-            "Researched by / Self-verified and must not contain an em dash or comma."
+            "every other option below applies to a Research or change submission. --model is "
+            "caller-supplied, self-reported display metadata; Dish labels it as self-reported "
+            "in Researched by / Self-verified and does not authenticate it as runtime provenance."
         ),
     )
     prepare.add_argument("submission_id")
@@ -202,9 +202,9 @@ def build_parser() -> JsonArgumentParser:
         "approve",
         help="sign or small-correct a Verification candidate",
         description=(
-            "Sign or small-correct a Verification candidate. --model names the exact model "
-            "you are running as (e.g. `gpt-5.6-sol`); it is recorded verbatim in Verified by "
-            "(and, for a small correction, Self-verified) and must not contain an em dash or comma."
+            "Sign or small-correct a Verification candidate. --model is caller-supplied, "
+            "self-reported display metadata; Dish labels it as self-reported in Verified by "
+            "(and, for a small correction, Self-verified)."
         ),
     )
     approve.add_argument("submission_id")
@@ -228,8 +228,8 @@ def build_parser() -> JsonArgumentParser:
         help="stop signoff: a Large correction, Evidence gap, or Human Review",
         description=(
             "Stop signoff: a Large correction, Evidence gap, or Human Review. --route large "
-            "requires --model naming the exact model you are running as (e.g. `gpt-5.6-sol`); "
-            "it is recorded verbatim in Self-verified and must not contain an em dash or comma."
+            "requires --model as caller-supplied, self-reported display metadata; Dish labels it "
+            "as self-reported in Self-verified."
         ),
     )
     reject.add_argument("submission_id")

@@ -28,7 +28,7 @@ def test_small_correction_is_written_rechecked_and_signed_same_pass(tmp_path):
     )
     assert result["ok"]
     assert "applied a small Verification correction" in backend.notes
-    assert "Small — verified — Codex, gpt-5.6-sol," in backend.notes
+    assert "Small — verified — Codex, self-reported model: gpt-5.6-sol," in backend.notes
     assert "Status: ready" in backend.notes
     cycle = app.conn.execute("SELECT correction_class, outcome FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()
     assert tuple(cycle) == ("small", "approved")

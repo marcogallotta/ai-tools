@@ -206,7 +206,15 @@ shape and do not accept candidate text, model, or independence-attestation field
 
 ## Material-change audit lifecycle
 
-Material changes use the documented seven-field order: date, agent, model, concrete change, reason, Small/Large materiality, and verification state. Dish owns existing canonical history after the first baseline: later candidates may preserve it exactly or omit it for normalization, but cannot rewrite it. The independent approval transition finalizes the latest pending entry, and `submit` fails closed while the latest relevant entry still claims `pending-verification`.
+Material changes use the documented seven-field order: date, agent, self-reported model metadata,
+concrete change, reason, Small/Large materiality, and verification state. `model` is caller-supplied
+display metadata, not authenticated runtime provenance; new lines render it as `self-reported model:
+<value>`. Dish NFC-normalizes audit-bearing caller text and rejects controls, format characters,
+surrogates, line/paragraph separators, and grammar delimiters before an operation or backend write.
+Existing unlabeled provenance remains parseable. Dish owns existing canonical history after the
+first baseline: later candidates may preserve it exactly or omit it for normalization, but cannot
+rewrite it. The independent approval transition finalizes the latest pending entry, and `submit`
+fails closed while the latest relevant entry still claims `pending-verification`.
 
 ## Pre-construction Research hold
 

@@ -19,7 +19,13 @@ from .constants import AGENT_FAMILIES, CHANGE_LEVELS, COOKING_PROJECT_GID, SUBMI
 from .database import process_command_audit_repairs
 from .invocation_audit import record_invocation_audit
 from .errors import BackendFailure, DishRuleError
-from .models import ResolvedRelease, SectionRegistry, agent_family, is_protocol_managed
+from .models import (
+    ResolvedRelease,
+    SectionRegistry,
+    agent_family,
+    is_protocol_managed,
+    validate_change_reason,
+)
 from .results import error_envelope, result_envelope
 from .validation_scope import scope_for_command
 
@@ -241,15 +247,19 @@ class DishApplication:
                 rule="invalid_submission_kind",
             )
         clean_level = str(change_level).strip() if change_level is not None else None
-        clean_reason = str(change_reason).strip() if change_reason is not None else None
         if kind != "change":
-            if clean_level is not None or clean_reason is not None:
+            if clean_level is not None or change_reason is not None:
                 raise DishRuleError(
                     "INVALID_ARGUMENT",
                     "change arguments are only valid for change operations",
                     rule="change_arguments_forbidden",
                 )
             return None, None
+        clean_reason = (
+            validate_change_reason(change_reason)
+            if change_reason is not None
+            else None
+        )
         if clean_level is None:
             raise DishRuleError(
                 "INVALID_ARGUMENT",

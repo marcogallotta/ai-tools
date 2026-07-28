@@ -918,7 +918,7 @@ def test_material_change_approval_finalizes_pending_entry_and_survives_restart(t
     )
     assert approved["ok"]
     document = parse_task_document(f"{backend.title}\n{backend.notes}")
-    assert "Small — verified — Codex, gpt-5.6-sol," in document.material_changes[-1]
+    assert "Small — verified — Codex, self-reported model: gpt-5.6-sol," in document.material_changes[-1]
     assert not document.material_changes[-1].endswith(" — pending-verification")
 
     submitted = application.execute("submit", submission_id=operation_id)
@@ -939,7 +939,7 @@ def test_material_change_approval_finalizes_pending_entry_and_survives_restart(t
             "SELECT notes FROM content_versions WHERE content_version_id=?",
             (cycle["signed_content_version_id"],),
         ).fetchone()
-        assert "Small — verified — Codex, gpt-5.6-sol," in version["notes"]
+        assert "Small — verified — Codex, self-reported model: gpt-5.6-sol," in version["notes"]
         assert "Small — pending-verification" not in version["notes"]
     finally:
         reopened.close()

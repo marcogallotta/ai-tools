@@ -130,7 +130,7 @@ def test_approval_signs_exact_reread_without_moving_and_requires_inputs(tmp_path
         reviewed_identity=review["data"]["reviewed_identity"], semantic_review_complete=True, provenance_complete=True, run_id="run-3")
     assert result["ok"]
     assert "Status: ready" in backend.notes
-    assert "Verified by: Codex — gpt-5.6-sol," in backend.notes
+    assert "Verified by: Codex — self-reported model: gpt-5.6-sol," in backend.notes
     assert backend.section == "vq" and backend.moves == 1
     assert result["allowed_actions"] == ["submit"]
     assert result["data"]["validation_scope"] == [

@@ -303,10 +303,10 @@ def test_unknown_agent_fails_closed():
 
 def test_task_provenance_uses_canonical_actor_names_and_separate_model_tokens():
     assert material_editor_line("gpt", "GPT-5.6 Thinking", "2026-07-27") == (
-        "Custom GPT — GPT-5.6 Thinking, 2026-07-27"
+        "Custom GPT — self-reported model: GPT-5.6 Thinking, 2026-07-27"
     )
     assert material_editor_line("codex", "GPT-5.6-Codex", "2026-07-27") == (
-        "Codex — GPT-5.6-Codex, 2026-07-27"
+        "Codex — self-reported model: GPT-5.6-Codex, 2026-07-27"
     )
     assert material_change_line(
         "gpt",
@@ -316,7 +316,7 @@ def test_task_provenance_uses_canonical_actor_names_and_separate_model_tokens():
         reason="the prior route was incomplete",
         materiality="Large",
     ) == (
-        "2026-07-27 — Custom GPT — GPT-5.6 Thinking — adjusted the route — "
+        "2026-07-27 — Custom GPT — self-reported model: GPT-5.6 Thinking — adjusted the route — "
         "the prior route was incomplete — Large — pending-verification"
     )
 

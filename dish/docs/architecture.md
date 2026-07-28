@@ -301,6 +301,12 @@ Verification is proven by the verifier's durable `client.run_id` differing from 
 constructed or last materially edited that candidate; operation IDs, Verification cycle IDs,
 actor/model labels, and attestations are not substitutes for run lineage.
 
+The `model` argument is caller-supplied display metadata. Dish NFC-normalizes it, rejects structural
+control/format characters before any mutation, and renders it with an explicit `self-reported model:`
+label. Authenticated integration/agent identity and durable run lineage remain separate authority;
+the model text is never presented as server-authenticated runtime provenance. Existing unlabeled
+legacy provenance remains parseable, but every newly rendered line uses the explicit label.
+
 ## Persistence model
 
 The local SQLite schema is versioned independently from the Honest task schema. Startup runs schema

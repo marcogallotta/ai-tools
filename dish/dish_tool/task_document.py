@@ -40,9 +40,11 @@ MATERIAL_CHANGE_RE = re.compile(
     rf"(?:pending-verification|verified — {ACTOR_NAME_PATTERN}, {MODEL_PATTERN}, {DATE_PATTERN})$"
 )
 MATERIAL_CHANGE_ACCEPTED_SYNTAX = (
-    "<YYYY-MM-DD> — <ChatGPT|Custom GPT|Claude|Codex> — <model> — "
+    "<YYYY-MM-DD> — <ChatGPT|Custom GPT|Claude|Codex> — "
+    "<self-reported model: model> — "
     "<change> — <reason> — <Small|Large> — "
-    "<pending-verification|verified — <agent>, <model>, <YYYY-MM-DD>>"
+    "<pending-verification|verified — <agent>, <self-reported model: model>, "
+    "<YYYY-MM-DD>>"
 )
 
 
@@ -346,7 +348,7 @@ def _material_change_findings(line: str, *, index: int) -> tuple[DocumentFinding
     if not model.strip() or re.fullmatch(MODEL_PATTERN, model) is None:
         findings.append(DocumentFinding(
             "material-changes.model", FindingKind.SYNTAX,
-            "model is required and must not contain a comma or em dash", f"{location}.model",
+            "model metadata is required and must not contain a comma or em dash", f"{location}.model",
         ))
     if not change.strip():
         findings.append(DocumentFinding(
@@ -372,7 +374,7 @@ def _material_change_findings(line: str, *, index: int) -> tuple[DocumentFinding
         if verified is None:
             findings.append(DocumentFinding(
                 "material-changes.verification", FindingKind.SYNTAX,
-                "verification must be pending-verification or verified — <agent>, <model>, <YYYY-MM-DD>",
+                "verification must be pending-verification or verified — <agent>, <model metadata>, <YYYY-MM-DD>",
                 f"{location}.verification",
             ))
 

@@ -197,7 +197,7 @@ def test_post_signoff_non_material_request_is_forced_material_for_dish_candidate
     assert intent["completed_at"] is not None
     assert intent["intended_json"] == '{"level":"small","reason":"rename candidate"}'
     assert (
-        "Codex — gpt-5.6-sol — updated the candidate — rename candidate — "
+        "Codex — self-reported model: gpt-5.6-sol — updated the candidate — rename candidate — "
         "Small — pending-verification"
     ) in backend.notes
 
