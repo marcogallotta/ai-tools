@@ -1,8 +1,8 @@
 # Dish known issues
 
-This file separates rollout blockers, post-rollout candidates, and limitations accepted for launch.
-An entry is not implementation authorization. Current authority boundaries and runtime behavior
-remain defined by [`architecture.md`](architecture.md) and
+This file separates post-rollout candidates, testing boundaries, and limitations accepted for
+launch. An entry is not implementation authorization. Current authority boundaries and runtime
+behavior remain defined by [`architecture.md`](architecture.md) and
 [`runtime-contract.md`](runtime-contract.md).
 
 ## Rollout and triage context
@@ -28,25 +28,6 @@ clear workaround and revisit trigger. For every new or reconsidered issue, recor
 - Marco's recovery effort and whether recovery requires private implementation knowledge;
 - whether the proper fix belongs to the planned database backend or another later architecture;
 - the concrete frequency, pain, or safety signal that should trigger reconsideration.
-
-## Rollout blockers
-
-### PR-1 — admin recovery blocked by a live Action lease — resolved
-
-Resolved by authorizing Marco's private `recover` only for the one unresolved uncertain execution
-that advertised `required_admin_action: recover`. The Action lease remains live and owned by the
-original actor/run; it is neither transferred nor released, and every ordinary mutation still uses
-the normal lease-owner check. Regression coverage proves immediate recovery after a confirmed
-partial write, one recovery effect, no duplicate backend mutation, and exact admin-request replay.
-
-### PR-2 — pre-construction Research hold and governed audit are not atomic — resolved
-
-Resolved by committing the hold transition, completed hold step, and
-`research.preconstruction_blocked` governed decision in one local savepoint. An audit failure rolls
-back the complete hold outcome and leaves the request/execution uncertain but exact-replayable. The
-same request UUID then applies the hold once, records exactly one governed audit, resolves the
-execution, and advances the request ledger to the actual held workflow result without a
-`verification_cycle_missing` detour.
 
 ## Post-rollout candidates
 
@@ -93,9 +74,10 @@ future occurrence violates the confirmed fail-before-execution and exact-retry b
 
 SQLite writer contention now reproduces the test-project failure at `non_material_terminal` after
 the candidate write and handoff validation commit. Dish preserves the confirmed write, prohibits
-normal retry, and does not duplicate content, but immediate private recovery is blocked by PR-1.
-After that rollout blocker is fixed, the remaining limitation is diagnostic: durable evidence keeps
-only `OperationalError` rather than the available `SQLITE_BUSY` or `SQLITE_LOCKED` category.
+normal retry, does not duplicate content, and permits immediate recovery through the prescribed
+private admin action even while the originating Action lease remains live. The remaining limitation
+is diagnostic: durable evidence keeps only `OperationalError` rather than the available
+`SQLITE_BUSY` or `SQLITE_LOCKED` category.
 
 Keep exact SQLite-category retention as post-rollout diagnostic work. Reconsider on another live
 occurrence or if the category is not a normalized writer-lock condition.
