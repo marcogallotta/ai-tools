@@ -1498,18 +1498,30 @@ class DishService:
                         rule="operation_not_open",
                         details={"actual": operation["status"]},
                     )
-                row = self._lease_manager(conn).renew(operation_id, principal)
-                result = result_envelope(
-                    command="renew-lease",
-                    task_gid=None if operation is None else operation["task_gid"],
-                    submission_id=operation_id,
-                    state=None if operation is None else operation["status"],
-                    data={"service_lease": self._lease_payload(row)},
-                )
+                leases = self._lease_manager(conn)
                 if request_id:
-                    result.setdefault("data", {})["request_id"] = request_id
-                    complete_request(conn, request_id=request_id, result=result)
-                return result
+                    conn.execute("BEGIN IMMEDIATE")
+                try:
+                    row = leases.renew(
+                        operation_id, principal,
+                        manage_transaction=not bool(request_id),
+                    )
+                    result = result_envelope(
+                        command="renew-lease",
+                        task_gid=None if operation is None else operation["task_gid"],
+                        submission_id=operation_id,
+                        state=None if operation is None else operation["status"],
+                        data={"service_lease": self._lease_payload(row)},
+                    )
+                    if request_id:
+                        result.setdefault("data", {})["request_id"] = request_id
+                        complete_request(conn, request_id=request_id, result=result)
+                        conn.execute("COMMIT")
+                    return result
+                except Exception:
+                    if request_id and conn.in_transaction:
+                        conn.execute("ROLLBACK")
+                    raise
             except DishRuleError as exc:
                 exc = _preserve_semantic_evidence_error(
                     exc,
@@ -1602,30 +1614,40 @@ class DishService:
                         rule="operation_not_open",
                         details={"actual": operation["status"]},
                     )
-                released = self._lease_manager(conn).admin_recover(
-                    operation_id, principal, reason=reason
-                )
-                if released is None:
-                    raise DishRuleError(
-                        "CONFLICT",
-                        "operation has no active service lease",
-                        rule="service_lease_missing",
-                    )
-                result = result_envelope(
-                    command="recover-lease",
-                    task_gid=operation["task_gid"],
-                    submission_id=operation_id,
-                    state=operation["status"],
-                    data={
-                        "service_lease": None,
-                        "released_lease_id": released["lease_id"],
-                        "ownership_transferred": False,
-                    },
-                )
+                leases = self._lease_manager(conn)
                 if request_id:
-                    result.setdefault("data", {})["request_id"] = request_id
-                    complete_request(conn, request_id=request_id, result=result)
-                return result
+                    conn.execute("BEGIN IMMEDIATE")
+                try:
+                    released = leases.admin_recover(
+                        operation_id, principal, reason=reason,
+                        manage_transaction=not bool(request_id),
+                    )
+                    if released is None:
+                        raise DishRuleError(
+                            "CONFLICT",
+                            "operation has no active service lease",
+                            rule="service_lease_missing",
+                        )
+                    result = result_envelope(
+                        command="recover-lease",
+                        task_gid=operation["task_gid"],
+                        submission_id=operation_id,
+                        state=operation["status"],
+                        data={
+                            "service_lease": None,
+                            "released_lease_id": released["lease_id"],
+                            "ownership_transferred": False,
+                        },
+                    )
+                    if request_id:
+                        result.setdefault("data", {})["request_id"] = request_id
+                        complete_request(conn, request_id=request_id, result=result)
+                        conn.execute("COMMIT")
+                    return result
+                except Exception:
+                    if request_id and conn.in_transaction:
+                        conn.execute("ROLLBACK")
+                    raise
             except DishRuleError as exc:
                 exc = _preserve_semantic_evidence_error(
                     exc,

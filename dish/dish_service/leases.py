@@ -235,10 +235,19 @@ class LeaseManager:
             self.active_for_operation(operation_id), principal, now=self.now()
         )
 
-    def renew(self, operation_id: str, principal: ServicePrincipal):
+    def renew(
+        self,
+        operation_id: str,
+        principal: ServicePrincipal,
+        *,
+        manage_transaction: bool = True,
+    ):
         now = self.now()
         expiry = now + timedelta(seconds=self.ttl_seconds)
-        self.conn.execute("BEGIN IMMEDIATE")
+        if manage_transaction:
+            self.conn.execute("BEGIN IMMEDIATE")
+        elif not self.conn.in_transaction:
+            raise RuntimeError("lease renewal requires an active caller transaction")
         try:
             op = self._operation(operation_id)
             if op["status"] != "open":
@@ -264,10 +273,11 @@ class LeaseManager:
                     rule="service_lease_conflict",
                 )
             renewed = self.active_for_operation(operation_id)
-            self.conn.execute("COMMIT")
+            if manage_transaction:
+                self.conn.execute("COMMIT")
             return renewed
         except Exception:
-            if self.conn.in_transaction:
+            if manage_transaction and self.conn.in_transaction:
                 self.conn.execute("ROLLBACK")
             raise
 
@@ -401,10 +411,14 @@ class LeaseManager:
         principal: ServicePrincipal,
         *,
         reason: str,
+        manage_transaction: bool = True,
     ):
         del principal
         now = self.now()
-        self.conn.execute("BEGIN IMMEDIATE")
+        if manage_transaction:
+            self.conn.execute("BEGIN IMMEDIATE")
+        elif not self.conn.in_transaction:
+            raise RuntimeError("lease recovery requires an active caller transaction")
         try:
             self._operation(operation_id)
             row = self.active_for_operation(operation_id)
@@ -420,9 +434,10 @@ class LeaseManager:
             released = self._release_row(
                 row, reason=f"admin recovery: {reason}", now=now
             )
-            self.conn.execute("COMMIT")
+            if manage_transaction:
+                self.conn.execute("COMMIT")
             return released
         except Exception:
-            if self.conn.in_transaction:
+            if manage_transaction and self.conn.in_transaction:
                 self.conn.execute("ROLLBACK")
             raise

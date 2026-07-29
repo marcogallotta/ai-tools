@@ -326,6 +326,9 @@ Concurrency uses separate mechanisms for separate facts:
 5. the in-process maintenance gate makes restore exclusive while ordinary requests may run
    concurrently.
 
+Request-scoped lease renewal and administrative recovery commit the lease effect and replayable
+service-request result in the same SQLite transaction; neither fact may become durable alone.
+
 None substitutes for another. In particular, a process lock is not an operation lock, and a run ID
 does not replace exact content/signoff bindings.
 
