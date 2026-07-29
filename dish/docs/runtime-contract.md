@@ -329,8 +329,8 @@ display metadata, not authenticated runtime provenance; new lines render it as `
 surrogates, line/paragraph separators, and grammar delimiters before an operation or backend write.
 Existing unlabeled provenance remains parseable. Dish owns existing canonical history after the
 first baseline: later candidates may preserve it exactly or omit it for normalization, but cannot
-rewrite it. The independent approval transition finalizes the latest pending entry, and `submit`
-fails closed while the latest relevant entry still claims `pending-verification`.
+rewrite it. The independent approval transition finalizes every pending entry in the reviewed
+correction chain, and `submit` fails closed while any entry remains `pending-verification`.
 
 ## Pre-construction Research hold
 
