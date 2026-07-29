@@ -1,9 +1,9 @@
 # Dish future work
 
 This file contains broader work that is **not already implemented** in the current Dish
-architecture. Tracked gaps, post-rollout issue candidates, and accepted launch limitations belong
-in [`known-issues.md`](known-issues.md). This is design triage, not implementation authorization.
-Any item still requires Marco's explicit approval and should be justified by real usage evidence.
+architecture. Tracked gaps, post-rollout issue candidates, and accepted launch limitations belong in
+[`known-issues.md`](known-issues.md). This is design triage, not implementation authorization. Any
+item still requires Marco's explicit approval and should be justified by real usage evidence.
 
 For the implemented system, read [`architecture.md`](architecture.md),
 [`../README.md`](../README.md), and [`runtime-contract.md`](runtime-contract.md).
@@ -61,9 +61,9 @@ if live use shows that it reduces missed follow-up without creating busywork.
 Add one approved canonical syntax for calories, protein, and fat per complete served portion,
 including stated sides. Enforce the protocol's main-dish limits and matching approved exemptions.
 
-Do not infer nutrition from prose, add carbohydrate parsing, or build a general nutrition engine. The
-field grammar belongs in the Honest task schema first; Dish should then parse and enforce that exact
-shape.
+Do not infer nutrition from prose, add carbohydrate parsing, or build a general nutrition engine.
+The field grammar belongs in the Honest task schema first; Dish should then parse and enforce that
+exact shape.
 
 ### `WHAT TO BUY` / `QUANTITIES` reconciliation
 
@@ -76,8 +76,8 @@ would distinguish:
 - trim or waste;
 - an explicit reason for any difference.
 
-Literal numeric equality is not the invariant. Do not add a simplistic line-number or number-matching
-rule.
+Literal numeric equality is not the invariant. Do not add a simplistic line-number or
+number-matching rule.
 
 ### Activation-derived observability
 
@@ -95,9 +95,9 @@ should remain the source rather than introducing a second event model.
 ### Public Action rate limiting
 
 The Funnel-exposed Action listener already has a dedicated credential, route allowlist, body limits,
-request timeouts, and no private or admin routes. Add application-level request rate limiting only if
-activation evidence shows abusive, accidental, or otherwise costly request volume. This is defense
-in depth, not a prerequisite for the current single-owner rollout.
+request timeouts, and no private or admin routes. Add application-level request rate limiting only
+if activation evidence shows abusive, accidental, or otherwise costly request volume. This is
+defense in depth, not a prerequisite for the current single-owner rollout.
 
 ### Explicit unchanged-content re-Verification
 
@@ -111,6 +111,23 @@ intent or durable cycle evidence and may be accidental. Material post-signoff ch
 a new Verification cycle through the normal Change workflow; this proposal covers only unchanged
 signed content.
 
+### Natural-language dish lookup and generalized task-authority
+
+Nothing here blocks rollout. The state-driven Custom GPT instructions (closing the "create" vs.
+"existing task" decision gap) are worth doing soon after rollout, but not scheduled. The tool-side
+`task_url`-to-`task_gid` extraction once bundled with that work is deferred as currently
+unnecessary: agents already resolve Asana task URLs correctly without dedicated `dish`-side parsing,
+revisit only if that stops holding up. The `create` collision check and the
+`dish_find`/`TaskWorkflowSnapshot` authority generalization have no near-term timeframe at all —
+worth having eventually, not a response to observed evidence, and meaningfully more work than the
+instructions rewrite (the authority generalization touches the core action-authority invariant every
+other command relies on).
+
+See [`gpt-natural-interaction-design.md`](gpt-natural-interaction-design.md) for the complete
+design, including the task-state/action precedence table, `dish_find`'s exact/fuzzy matching
+contract, and why duplicate prevention stays deliberately best-effort rather than adding reservation
+machinery. Implement any of this only if real recurring friction shows up, not on a schedule.
+
 ## Later architectural options
 
 ### Tool-mediated cooking and cook logs
@@ -122,7 +139,8 @@ operations.
 Design questions include:
 
 - the exact cook-log command and append-only record;
-- how comments or a future backend represent actual quantities, deviations, results, and next action;
+- how comments or a future backend represent actual quantities, deviations, results, and next
+  action;
 - how a Marco override names the exact waived gate without weakening task-body signoff;
 - whether cooking reads need anything beyond the current exact task read.
 
@@ -156,8 +174,8 @@ Do not reproduce Asana's general project-management model unless real use requir
 
 ### Deployment and resilience beyond personal use
 
-The current system is intentionally a single-owner personal service. Consider broader resilience only
-if the deployment model changes or live evidence justifies it:
+The current system is intentionally a single-owner personal service. Consider broader resilience
+only if the deployment model changes or live evidence justifies it:
 
 - sustained soak and load testing;
 - automated handling of Asana rate limits and extended outages;
