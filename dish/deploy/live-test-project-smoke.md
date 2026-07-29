@@ -5,9 +5,9 @@ preserve the complete JSON transcript.
 
 ## Status
 
-Updated 2026-07-29. Stages 1 and 2 record completed work; Stage 3 is the remaining activation gate.
-The completed evidence spans several runs and run IDs, so it is not a substitute for the final
-single-run rehearsal.
+Updated 2026-07-29. Stages 1 and 2 record completed work; Stage 3 is the bounded activation gate,
+and Stage 4 tracks post-activation breadth and hardening. The completed evidence spans several runs
+and run IDs, so it is not a substitute for the final single-run rehearsal.
 
 Saved reports:
 
@@ -227,11 +227,9 @@ the fixture prefix with the protocol-required `[non-main]` title. Retest only if
 the documented contract.
 
 The fixture remains completed in Reference and requires approved cleanup. Connected-only breadth
-not exercised in this pass was stale content, stale placement, Small, Large, Evidence, Human
-Review, lease-renewal replay/conflict, failed-first validation replay, safe movement retry, and the
-editor Preview gate.
+not exercised in this pass is tracked in Stage 4.
 
-### Gate ledger
+### Activation gate ledger
 
 1. **Outstanding:** record all preconditions, revisions, endpoints, database/Asana backup IDs, and
    initial health in one continuous private transcript.
@@ -245,8 +243,8 @@ editor Preview gate.
    exactly once.
 6. **Passed by connected GPT:** distinct-run Verification, inspection, approval, mandatory submit,
    durable signed identity, and final Reference placement completed.
-7. **Outstanding:** attempt stale content and stale placement baselines separately and prove zero
-   mutation.
+7. **Outstanding:** inspect representative live, terminal, wrong-state, and unknown operations
+   through `dish-admin`; confirm structured identity, recovery guidance, and private actions.
 8. **Outstanding:** expire a disposable client lease, run `dish-admin recover-lease`, and complete
    the legal recovery/continuation.
 9. **Outstanding:** exercise governed-change authorization through the private HTTP-backed
@@ -258,18 +256,57 @@ editor Preview gate.
     behavior for an already-current task.
 12. **Outstanding:** create a managed backup, perform a harmless operation, restore, and prove the
     previous operation, request, lease state, and owner-only database permissions return exactly.
-13. **Outstanding:** delete every disposable Asana task only through the approved cleanup path and
-    record final health and an empty fixture inventory.
+13. **Outstanding regression:** after its fix is claimed, prove `recover` validates missing
+    `outcome` and `reason` before operation lookup, including unknown and terminal operations,
+    exact replay, and changed-payload conflict.
+14. **Outstanding:** delete every disposable Asana task only through the approved cleanup path,
+    then record final health, listener/process state, settled WAL and leases, and an empty fixture
+    inventory.
 
-Recommended additions before activation:
+Stage 3 deliberately does not repeat every adversarial permutation already covered in Stage 2. It
+must prove that the private/admin capabilities required to diagnose and recover an activated
+service work at the tested revision.
 
-- Exercise Small, Large, Evidence, Human Review, destination repair, and movement retry as required
-  by `docs/rollout.md`.
-- Exercise an operation-backed uncertain write or movement using a supported fault injector, then
-  follow only the returned recovery action.
-- Complete the GPT Action editor Preview gate and compare its result envelope with the private CLI.
-- Run a short idle/request soak after the functional gates and confirm thread, listener, SQLite
-  handle, WAL, and lease counts settle.
+## Stage 4 — breadth and hardening
+
+Stage 4 is not part of the bounded activation gate. Run it after Stage 3, or earlier in parallel
+where a connected GPT can exercise Action-only cases safely.
+
+### Connected Action breadth
+
+- Attempt stale content and stale placement separately and prove zero mutation.
+- Run a second fresh Small-correction fixture and prove distinct reviewed, corrected, and signed
+  identities.
+- Exercise Large, Evidence, and Human Review paths.
+- Exercise lease-renewal exact replay and conflicting reuse.
+- Bind an expected validation failure, replay it exactly, then prove corrected reuse of the same
+  request ID conflicts without mutation.
+- Exercise a movement retry only after an explicitly retry-safe or replay-safe result.
+- Complete the GPT Action editor Preview gate and compare its envelope with the private CLI.
+- Preserve a physically separate second-GPT transcript for independent Verification.
+
+### Expanded admin matrix
+
+- Exercise every exposed admin operation with its valid path, wrong state, stale or unknown
+  operation, cross-run or cross-actor authority, and mismatched supplied identifiers where
+  applicable.
+- For every admin mutation, test exact replay, changed-payload conflict, and failed-first request
+  identity binding.
+- Repeat malformed and noncanonical task, operation, run, request, lease, destination, and supplied
+  identifier cases.
+- Cover discard, reopen variants, every private continuation, lease release or takeover, and
+  destination correction permutations.
+- Check durable audit persistence of task, submission, operation, run, actor, request, supplied,
+  lease, destination, and before/after state fields across successful and failed mutations.
+
+### Optional resilience
+
+- Create an operation-backed uncertain write or movement with a supported fault injector and follow
+  only the returned recovery action.
+- Exercise administrative destination repair.
+- Run a longer idle/request soak and confirm thread, listener, SQLite handle, WAL, and lease counts
+  settle.
+- Add shutdown and restart timing variants beyond the bounded Stage 3 final-state check.
 
 ## Stop conditions
 
