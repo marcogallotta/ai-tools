@@ -1,8 +1,9 @@
 # Database-backed task store: draft design
 
-Status: draft future design. This document is not implementation or cutover authorization. Its
-purpose is to define the smallest safe replacement for Asana as Dish's live task store and to name
-the decisions and proof required before implementation.
+Status: draft target architecture. This document is not implementation or cutover authorization.
+It describes two independently approvable projects: replacing Asana as Dish's live task authority,
+and later replacing document authority with structured dish authority. They may ship together only
+when both projects' evidence gates pass.
 
 Current behavior remains defined by [`architecture.md`](architecture.md),
 [`runtime-contract.md`](runtime-contract.md), and [`rollout.md`](rollout.md). Until an explicitly
@@ -10,25 +11,32 @@ authorized cutover completes, the live Asana task remains authoritative.
 
 ## Decision summary
 
-Replace Asana's remaining live authority with a domain-native task store in Dish's existing SQLite
-database. Keep `dish-service` as the only live mutation authority and keep the current command,
-workflow, Verification, lease, replay, audit, backup, and recovery boundaries. Add a separate
-private human frontend that reads through bounded query APIs and mutates only through Dish commands.
+Replace Asana's remaining live authority with a domain-native, versioned task store in Dish's
+existing SQLite database. The minimum safe authority migration stores immutable title/body
+documents. Independently, the target representation makes a dish typed data accepted and returned
+as versioned structured JSON, with documents and Asana notes as rendered views.
+
+Keep `dish-service` as the only live mutation authority and keep the current workflow,
+Verification, lease, replay, audit, backup, and recovery boundaries. Add a separate private human
+frontend that reads through bounded query APIs and mutates only through Dish commands.
 
 The replacement is not an Asana clone. It owns only:
 
-- the canonical task title and body;
+- immutable document and structured dish versions with representation-appropriate exact identities;
+- exact imported source documents and generated human-readable renderings;
 - one current Dish location and completion state;
-- immutable content versions, location history, and completion history;
+- location history and completion history;
 - the existing workflow and verification evidence;
 - task creation, browsing, search, history, and Marco's narrow interventions;
-- lifecycle-authorized Markdown editing without a generic content-save bypass;
+- lifecycle-authorized structured editing without a generic content-save bypass;
 - a bounded command for every current human Asana action that remains necessary;
 - future cook-log records when separately designed and approved.
 
-The cutover is one authority change. Production must never select Asana or the database per task,
-write both stores, or accept mutations through both paths. Asana may remain available read-only as a
-cutover snapshot, but it stops being live evidence once the database authority is activated.
+Migration may be staged, but authority is singular in every stage. Before cutover, Asana remains
+authoritative and Dish records a one-way shadow only after confirmed rereads. After cutover, the
+database is authoritative. An Asana projection is an optional, non-default compatibility measure,
+not part of the minimum cutover. Production must never accept peer writes or choose backend
+authority per task.
 
 ## Why consider this after activation
 
@@ -43,29 +51,59 @@ unit back; a response loss after commit is answered by exact request replay. Thi
 content writes, moves, completion changes, and task creation from the ambiguous external-effect
 model.
 
+Structured dish storage also removes repeated parse-and-reconstruct validation from the steady
+state. Dish validates typed fields and relationships directly, hashes one canonical JSON
+representation for exact version identity, and renders documents for humans or compatibility
+surfaces. Parsing remains an import concern, not the long-term authority boundary.
+
+These are different benefits with different risks. Moving task authority into SQLite removes
+cross-system uncertainty even if the authoritative content remains an immutable document. Moving
+from documents to structured dishes enables typed editing and queries, but also changes content
+identity, schema semantics, API payloads, and the object to which Verification binds.
+
 This safety gain does not by itself justify immediate implementation. Under the launch triage
 policy, activation evidence should determine priority. Reconsider this design when Asana ambiguity,
 rate limits, connectivity, manual recovery, or UI friction becomes recurring operator cost, or when
 cook-log and reading needs make a purpose-built store materially simpler than continued Asana use.
 
+## Independent project priority
+
+Treat the work as two projects with separate approval and readiness:
+
+1. **Authority migration:** move exact task content, placement, completion, and mutations from
+   Asana to SQLite. Its minimum production representation is an immutable title/body document.
+2. **Representation migration:** define, validate, store, edit, and verify structured Planning and
+   dish versions.
+
+Structured modeling must never become a prerequisite imposed on an otherwise justified Asana exit.
+Direct structured cutover is permitted only when structured parity, identity lineage, and
+Verification treatment are already proven by the time authority migration is ready. The two
+projects may collapse into one release when both gates pass; otherwise authority moves first and
+representation follows as a separately governed migration inside the DB-backed service.
+
 ## Goals
 
 1. Make one SQLite transaction authoritative for a task mutation and its durable workflow result.
-2. Preserve the canonical task document, exact identities, independent Verification, run lineage,
-   action authority, request replay, leases, audits, backup, and restore.
-3. Remove out-of-band live task edits and Asana network uncertainty from normal workflow.
-4. Preserve stable Dish commands and response meaning wherever the backend change does not require
-   a deliberate identifier or recovery-contract revision.
-5. Give Marco a practical private interface for reading, finding, and intervening in tasks.
-6. Import the live corpus deterministically, quarantine exceptions, and retain exact source
+2. Support immutable document versions as the minimum DB authority and immutable structured
+   versions as the separately gated target representation.
+3. Preserve exact imported source documents, independent Verification, run lineage, action
+   authority, request replay, leases, audits, backup, and restore.
+4. Remove out-of-band live task edits and Asana network uncertainty from normal workflow.
+5. Preserve stable Dish command lifecycle and response meaning wherever the backend change does not
+   require a deliberate identifier or recovery-contract revision.
+6. Give Marco a practical private interface for reading, finding, and intervening in tasks.
+7. Import the live corpus deterministically, quarantine exceptions, and retain exact source
    snapshots for acceptance.
-7. Delete the live Asana credential and executable Asana mutation path after acceptance.
-8. Replace Planning's read-only lookup of completed cooking history with a Dish query.
+8. Permit a long-running Asana-authoritative shadow and an optional DB-authoritative Asana
+   projection without introducing dual authority.
+9. Delete the executable Asana authority path after acceptance.
+10. Replace Planning's read-only lookup of completed cooking history with a Dish query.
 
 ## Non-goals
 
 - generic projects, memberships, teams, assignees, comments, notifications, or permissions;
-- task-body editing that bypasses a lifecycle-authorized, revision-checked Dish command;
+- a permanent title/body blob as the canonical dish model;
+- dish-field editing that bypasses a lifecycle-authorized, revision-checked Dish command;
 - browser or CLI access to raw SQL or generic row CRUD;
 - multi-user or hostile-tenant authorization;
 - PostgreSQL, replication, multi-host failover, or continuous point-in-time recovery as a cutover
@@ -73,6 +111,7 @@ cook-log and reading needs make a purpose-built store materially simpler than co
 - automatic semantic recipe judgment;
 - recursive dependency discovery;
 - simultaneous Asana and database authorities;
+- bidirectional synchronization or a writable Asana fallback after DB cutover;
 - a writable compatibility engine for historical Asana workflow states.
 
 ## Target authority model
@@ -80,8 +119,8 @@ cook-log and reading needs make a purpose-built store materially simpler than co
 After cutover, the three authorities become:
 
 1. **Current Honest assets** define the supported protocol release and canonical task schema.
-2. **Dish task storage** owns the current title, body, location, completion state, and immutable task
-   revisions.
+2. **Dish task storage** owns the current authoritative version—ultimately structured—plus location,
+   completion state, and immutable task revisions.
 3. **Dish workflow storage** owns operation intent, Verification evidence, actor/run lineage,
    leases, request replay, recovery facts, and audit history.
 
@@ -98,13 +137,23 @@ GPT Action ─────────────> bounded Action routes ──
                                                      CurrentWorkflowService
                                                        |          |
                                                        v          v
-                                               task repository  workflow evidence
+                                          versioned task store  workflow evidence
                                                        \          /
                                                         SQLite transaction
+                                                               |
+                                                               v
+                                                   projection outbox
+                                                               |
+                                                    optional read-only Asana
 ```
 
 The Action listener remains bounded. The human frontend exists only on the private surface. Neither
 surface receives the database path, and neither reconstructs legal actions independently.
+
+During shadow operation the top half remains Asana-backed: only a confirmed Asana reread is fed
+one-way into the candidate shadow store. During DB authority the Asana projector is downstream
+of the committed outbox. Shadow records never influence live decisions before cutover, and Asana
+projection state never influences workflow legality afterward.
 
 ## Stable interface and identifiers
 
@@ -122,10 +171,78 @@ rename. It becomes an opaque stable task identifier rather than an Asana claim:
 - a later API version may rename the field to `task_id`, but the backend migration does not require
   that cosmetic break.
 
-Section GIDs must not survive as invented database identifiers. Responses and newly produced
-documents use stable Dish location identifiers and current names. An imported Asana section GID may
-survive only as an immutable compatibility alias and provenance fact under the version-aware
-resolution rule below. It never becomes current location authority.
+Section GIDs must not survive as invented database identifiers. Structured responses and new dish
+versions use stable Dish location identifiers. An imported Asana section GID may survive only as
+an immutable compatibility alias and provenance fact under the version-aware resolution rule
+below. It never becomes current location authority.
+
+## Structured command and query contract
+
+The lifecycle command names may remain stable, but content-bearing commands move deliberately to a
+versioned structured payload. The exact schema belongs to Honest and the implementation plan. Its
+shape should resemble:
+
+```json
+{
+  "schema_version": "…",
+  "title": "…",
+  "portions": 4,
+  "destination_location_id": "…",
+  "ingredients": [
+    {
+      "name": "…",
+      "quantity": {
+        "kind": "exact",
+        "value": "200",
+        "unit_id": "gram"
+      },
+      "preparation": "…",
+      "purpose": "…"
+    }
+  ],
+  "steps": [
+    {
+      "position": 1,
+      "instruction": "…",
+      "timing": "…",
+      "temperature": "…"
+    }
+  ]
+}
+```
+
+This example is illustrative, not approval of the final field set. Nutrition, shopping,
+quantities, equipment, storage, source, and other current canonical facts should become typed
+objects or child collections only after their exact Honest grammar is approved.
+
+Planning briefs also receive a versioned structured payload matching their distinct Honest schema.
+They are not encoded as incomplete dishes. Bare creation remains title-only.
+
+Dish canonicalizes the structured value deterministically and hashes that representation for
+version identity. Object-key order, presentation whitespace, generated Markdown, and the current
+name of a referenced location do not change identity. Array order is significant only for fields
+whose domain semantics require order.
+
+Before a structured schema is approved, it must define exact domain representations for decimals,
+fractions, ranges, approximate and optional quantities, counted items, “to taste,” units,
+temperatures, times, and sensory stop conditions. Identity-bearing quantities must not use binary
+floating point. Use explicit typed objects containing exact decimal strings, rational components,
+ranges, or other approved lossless forms.
+
+The schema and canonicalizer must also define Unicode normalization, line endings, prose whitespace,
+null versus omitted fields, empty versus absent collections, enum casing, stable unit identifiers,
+ordered versus unordered collections, and any stable child identifiers. Every structured version
+stores its canonicalization version. A later canonicalizer may create a new version deliberately,
+but must never reinterpret or silently change an old identity.
+
+Simple invariants use SQLite types, foreign keys, uniqueness, and checks. Cross-field and
+release-specific rules remain centralized in Dish domain validation. Database constraints are not
+a second independently evolving recipe schema.
+
+During migration, compatibility adapters may translate current title/body commands to or from the
+candidate structured model. They are explicit API versions and temporary versioned boundaries, not
+a permanent alternate content API or a changed interpretation of existing content fields. New
+frontend editing should target the structured contract rather than a full-document Markdown save.
 
 ## Storage model
 
@@ -137,7 +254,7 @@ One current row per task:
 
 ```text
 task_id                      opaque stable identifier
-current_content_version_id  exact immutable version currently displayed
+current_version_id          exact immutable version currently authoritative
 current_location_id         controlled Dish location
 completed                   current lifecycle flag
 revision                    monotonically increasing optimistic revision
@@ -146,66 +263,205 @@ created_at
 modified_at
 ```
 
-`current_content_version_id`, `current_location_id`, `completed`, and `revision` change only in the
+`current_version_id`, `current_location_id`, `completed`, and `revision` change only in the
 same transaction as their workflow evidence and audit. `modified_at` is generated by Dish and is
 not mutation authority by itself.
 
 Tasks are never hard-deleted through an ordinary command. Completion, exclusion, or a future
 explicit archival state preserves their identifiers, versions, and audit relationships.
 
-The current content pointer replaces `task_content_state` as the authoritative current projection.
+The current version pointer replaces `task_content_state` as the authoritative current projection.
 There must not be two independently writable current-content tables. During database migration,
 `task_content_state` may be converted into a compatibility view or retired after every caller uses
 the task pointer and its version-specific schema and document-authority provenance has been
 migrated.
 
-### `content_versions`
+### Structured dish versions
 
-Keep immutable full-title/full-body versions and their cryptographic identity. Existing confirmed
-versions already contain title and notes; the migration should reuse them rather than introduce a
-second document-history table.
+Use a common immutable `task_versions` envelope so historical source-backed or explicitly approved
+intermediate document versions can be preserved without pretending they are structured dishes:
 
-Each version also carries orthogonal structure and validation facts required to interpret it
-without reparsing it against whatever Honest assets happen to be current later:
+```text
+version_id
+task_id
+representation_kind     bare | structured_planning_brief | structured_dish | legacy_document
+canonical_identity
+canonicalization_version nullable; required for structured representations
+title
+source_kind             creation | workflow | import | migration
+recorded_at
+became_current_at
+```
+
+A bare version has a title and no body graph. A structured Planning version has one
+`planning_brief_versions` row and typed version-owned planning fields defined by Honest. A
+structured dish version has one corresponding `dish_versions` row:
+
+```text
+dish_version_id
+version_id
+schema_version
+destination_location_id
+protocol_release        nullable; present only when a fact of this version
+```
+
+The structured root stores an immutable representation witness:
+
+```text
+canonical_json
+canonicalization_version
+canonical_identity
+```
+
+The remaining canonical fields also live in typed version-owned tables such as ingredients, steps,
+quantities, nutrition, equipment, storage, shopping items, and source references. The final tables
+follow the approved Honest schema rather than this document inventing a generic recipe ontology.
+Every child row is keyed to one version, has deterministic ordering where order matters, and is
+immutable after insertion. Candidate editing creates a complete replacement rather than mutating a
+recorded version.
+
+The canonical JSON and typed graph are one consistency-checked representation pair, not two
+authorities. Domain validation runs against one in-memory structured value before either is
+inserted. The stored canonical JSON is the immutable identity witness and API representation; the
+typed rows are query and constraint material belonging to that exact version. Semantic validation
+must reconstruct the value from the typed graph and prove byte equality with `canonical_json` and
+hash equality with `canonical_identity`. Disagreement is corruption and blocks readiness.
+
+A transaction that creates a structured version inserts the complete pair, validates it, advances
+`tasks.current_version_id`, and records workflow lineage atomically. Partial or inconsistent
+version graphs never become current.
+
+Content becoming current proves version authority only. It does not imply Verification signoff,
+which remains separate evidence bound to the exact version identity.
+
+Existing `content_versions` and `task_content_state` remain historical migration evidence. Their
+title, notes, identity, schema, and confirmation timestamps are preserved and mapped into the new
+version/import provenance model before either table is retired or projected as a compatibility
+view. They do not remain a second writable current-content authority.
+
+### Import snapshots, source documents, and destination evidence
+
+Import provenance separates task placement from document content. One task snapshot records the
+Asana task-level origin state:
+
+```text
+task_import_snapshots
+  source_snapshot_id
+  task_id
+  source_task_gid
+  source_project_gid
+  current_section_gid
+  current_section_name
+  completed
+  source_modified_at
+  imported_at
+```
+
+The snapshot establishes imported location and completion projections. It does not fabricate a Dish
+location or completion transition for state that predates DB authority.
+
+Preserve every imported source document exactly and link it to the task snapshot:
+
+```text
+source_document_id
+task_id
+source_snapshot_id
+source_title
+source_body
+source_identity
+imported_at
+```
+
+Parsing an embedded destination produces separate immutable evidence:
+
+```text
+source_document_destinations
+  source_document_id
+  embedded_identifier
+  embedded_name
+  resolved_location_id
+  resolved_legacy_asana_section_gid
+  parser_version
+  resolved_at
+```
+
+The embedded pair resolves against an appropriate immutable location alias. It is never compared
+to the task's current placement: a task may correctly be in Verification Queue while its document
+names a destination such as Main Dishes.
+
+A structured version derived from a source document records that relationship plus orthogonal
+classification facts:
 
 ```text
 document_kind              bare | planning_brief | canonical | unknown
 validation_status          unvalidated | valid | invalid | unsupported_schema
 declared_schema_version    nullable version claimed by the source document
 validated_schema_version   nullable schema against which validation actually succeeded
-source_kind                import | creation | workflow | migration
-recorded_at                durable local provenance time
-became_current_at          nullable time at which this version became current authority
-protocol_release           nullable; present only when the release is a fact of that version
 ```
 
-These fields absorb the version-specific `schema_version` and `confirmed_at` facts currently held
-only by `task_content_state`; `recorded_at` does not silently substitute for
-`became_current_at`. An operation or Verification cycle may still carry its own protocol release
-for operation semantics; that does not substitute for document-version provenance. Imported or
-human-created origin versions must not depend on an operation row to explain their kind, source,
-or schema claim.
+The source document remains immutable evidence even when parsing succeeds. Recognizably canonical
+but unsupported, malformed, partially structured, or unknown history can remain an exact snapshot
+without inventing structured fields or schema validity. Parsing and validation results are
+repeatable derived evidence; reparsing never silently replaces the imported source or a current
+structured version.
 
-Content becoming current proves document authority only. It does not imply Verification signoff,
-which remains separate evidence bound to the exact content version.
+### Document-compatible DB authority
 
-Every current task points to one authoritative version. Bare creation and corpus import create
-explicit origin versions with no fabricated workflow operation. A governed mutation appends a new
-version and advances the task pointer atomically. Authoritative versions remain append-only and
-retain their operation, boundary, schema-release, and lineage relationships.
+If shadow evidence does not justify a direct structured cutover, Dish may first make an immutable
+title/body document version authoritative in SQLite. This is the minimum independently deployable
+authority migration and a legitimate production state, though structured data remains the target
+representation.
 
-Imported versions additionally reference an immutable import-provenance record:
+Such a version uses a one-to-one `legacy_document_versions` row containing the exact body and
+applicable schema provenance. DB-native intermediate mutations create new immutable document
+versions; they do not overwrite imported source documents.
+
+The document-compatible store must still use the same task pointer, transaction, replay, workflow,
+location, completion, audit, and rollback contracts. It preserves source documents and may attach
+non-authoritative structured candidates. Its command API must not force the future frontend to
+depend on raw database rows or prevent later versioned structured payloads.
+
+Once structured parity is proven, a governed database migration creates complete structured
+versions, verifies their deterministic identities and renderings, and advances eligible task
+pointers. This is not a backend-authority cutover because both representations are inside the same
+service, but it is an authoritative content-representation migration with explicit identity,
+lineage, and Verification consequences.
+
+### Verification across representation migration
+
+Existing Verification signs the exact legacy document identity. Successful parsing or byte-equal
+compatibility rendering does not automatically sign a structured identity. Renderer equality is
+useful evidence, but may omit authoritative distinctions unless the approved migration contract
+proves otherwise.
+
+The default gradual route is:
+
+- import the signed legacy document version as current;
+- attach any structured conversion only as a non-authoritative candidate;
+- keep the legacy signoff bound to the legacy identity;
+- let the next governed workflow create a structured version and obtain whatever new Verification
+  that workflow requires.
+
+A direct structured cutover may instead use re-Verification or a separately approved privileged
+migration-equivalence attestation. Any attestation is append-only and records at least:
 
 ```text
-source_snapshot_id
-source_modified_at     nullable exact source timestamp
-source_location_name   nullable name captured in the source snapshot
-imported_at
+source_version_id
+structured_version_id
+parser_version
+renderer_version
+source_identity
+rendered_identity
+semantic_validation_result
+migration_run_id
+approved_by
+approved_at
 ```
 
-This permits completed historical content to remain an exact snapshot without inventing a schema
-claim. Recognizably canonical but unsupported, malformed, partially structured, or unknown content
-can be classified accurately and retained without becoming valid current-schema work.
+The attestation contract must name exactly which workflow and signoff facts transfer. It may not
+rewrite an old Verification cycle to point at a new identity. Every active signed or correction-
+lineage version must have an explicit disposition—remain current as a legacy document, be
+reverified, or use an approved attestation—before a structured pointer can become authoritative.
 
 ### `task_locations`
 
@@ -226,20 +482,21 @@ repurposing a referenced location is prohibited; retire it instead.
 
 The destination resolver is version-aware:
 
-- a newly produced document must contain the authoritative Dish `location_id` and the location's
-  `current_name`;
-- an imported pre-cutover version may instead contain the exact immutable
+- a structured dish version stores the authoritative Dish `destination_location_id`;
+- the renderer may show that location's `current_name`, but the display name is not part of
+  structured identity;
+- an imported pre-cutover source document may contain the exact immutable
   `legacy_asana_section_gid` mapped to that location;
-- for that imported version, the embedded name is a historical display snapshot and must match the
-  source name captured by its import provenance, not necessarily the location's current name;
-- the legacy alias resolves to the authoritative `location_id` but is never itself authority and
-  is never emitted into a new version;
-- the next governed rewrite emits the Dish identifier and current name naturally.
+- for that source document, the embedded name and identifier are historical evidence resolved
+  through `source_document_destinations`, independently of the task's imported placement;
+- the legacy alias resolves parsing and migration to the Dish `location_id` but is never itself
+  authority and is never emitted into structured JSON;
+- the next governed structured rewrite records only the Dish identifier.
 
-Location names may therefore change without invalidating immutable signed history. The identifier
-is authoritative; an older embedded name remains a display snapshot. Current validation still
-requires an exact current-name/Dish-identifier pair for every newly produced version. This rule
-preserves imported content identity and signoff without retaining a writable Asana namespace.
+Location names may therefore change without invalidating structured signoff or immutable source
+history. An exact historical rendering uses the preserved source document or a stored rendering
+artifact; a current human-readable rendering may show the current name. This preserves imported
+content identity and signoff without retaining a writable Asana namespace.
 
 ### Location history
 
@@ -278,24 +535,63 @@ task's completion history.
 
 ### Content transition evidence
 
-Historical Asana `write_attempts` also remain immutable. Database-native content changes append the
-new content version and all required lineage in one transaction. They do not insert
+Historical Asana `write_attempts` also remain immutable. Database-native content changes append a
+new immutable version graph and all required lineage in one transaction. They do not insert
 database-backed `write_attempts`.
 
 Do not discard the intent, purpose, and reviewed-to-corrected-to-signed relationships currently
 carried by historical write records. Give those facts domain-native columns or explicit lineage
-relationships on content versions and workflow evidence before migrating every semantic validator
+relationships on task/dish versions and workflow evidence before migrating every semantic validator
 and historical query that consumes them. Keep the external-effect attempt tables readable for
 pre-cutover history, but do not carry their recovery ontology into the local authority.
+
+### Rendered views and projection outbox
+
+For a structured version, Markdown, plain text, and Asana notes are deterministic renderings. They
+are not parsed back into authority after cutover. A document-compatible current version is read
+directly as its exact authoritative title/body rather than pretending that it is a structured
+rendering. Where exact historical reproduction matters, store the renderer version, rendering
+identity, and generated artifact or preserve the exact source document.
+
+If Asana remains as a read-only human view, each DB mutation that affects its display appends a
+projection-outbox item in the authoritative transaction. A separate worker renders the committed
+version and applies the projection. Projection state records pending, applied, failed, and
+reconciliation evidence plus the Asana task mapping.
+
+Projection failure never rolls back or reclassifies the DB mutation. It produces stale-view
+health and repair guidance, not `BACKEND_UNCERTAIN` for production work. Out-of-band Asana edits are
+detected and overwritten or flagged; they are never ingested as new authority. Asana task creation
+ambiguity may require projection repair, but any duplicate is explicitly a mirror artifact and
+must not appear as a second Dish task.
 
 ### Audit and read projections
 
 The existing `audit_events` table remains the append-only audit authority. Do not add a generic
-`task_events` stream unless a concrete query cannot be served from content versions, location
+`task_events` stream unless a concrete query cannot be served from task/dish versions, location
 transitions, operations, Verification records, and audit events.
 
 Search indexes, denormalized list views, or full-text indexes are disposable read projections. They
 may be rebuilt from authoritative rows and must never decide workflow legality.
+
+### Pointer, representation, and quarantine integrity
+
+The final schema and semantic validator must enforce:
+
+- `tasks.current_version_id` references a version for the same task;
+- every version has exactly one complete representation matching `representation_kind`;
+- every structured representation has exactly one root and only same-version child rows;
+- current versions are complete, valid for their claimed authority, and not shadow candidates;
+- quarantined imports cannot be promoted or resolved through ordinary task commands;
+- location and completion projections match the import origin plus latest post-import transitions;
+- one committed current-state mutation advances the task revision exactly once.
+
+Use composite foreign keys, uniqueness constraints, checks, and triggers where SQLite cannot
+express these invariants directly. Semantic startup validation covers cross-table rules that
+constraints cannot.
+
+Quarantine remains outside authoritative `tasks` and ordinary service reads. Promotion is a
+separately audited import action that inserts a proven task and its origin state; it is not a
+status flip on an otherwise authoritative task.
 
 ### Request execution ownership
 
@@ -309,6 +605,11 @@ claim_generation    monotonic recovery generation
 claimed_at
 expires_at
 reserved_task_id    nullable deterministic output identity
+request_contract_version
+payload_identity
+adapter_version     nullable
+structured_schema_version nullable
+canonicalization_version nullable
 ```
 
 Only an atomic compare-and-swap may acquire an unowned or expired claim. A live foreign claim
@@ -326,6 +627,14 @@ longer pass the ownership check inside its effect transaction. Completion of the
 of the canonical result retire the claim atomically. These semantics are required for
 request-scoped mutations and do not replace the existing operation claim for work that already has
 an operation.
+
+Request replay must never reinterpret a compatibility payload under newly deployed parsing or
+canonicalization code. Reservation persists the exact request contract and version pins. For an
+adapter-based request, the preferred contract also persists the already-derived canonical candidate
+or its immutable identity-bearing representation before execution ownership; otherwise recovery
+must retain the exact adapter and parser implementation named by the request. Deployment normally
+requires no pending requests, but quiescence is an operational gate rather than a substitute for a
+correct durable recovery contract.
 
 ## Transaction contract
 
@@ -361,9 +670,9 @@ After admission, every database-native task mutation has one effect transaction:
    content/location/version expectations;
 6. assert the action through `CurrentWorkflowService`, including lifecycle-specific content
    authority;
-7. append the new content version, location transition, or completion transition;
+7. append the complete new version graph, location transition, or completion transition;
 8. update the current task pointer/state and append workflow, Verification, lineage, and governed
-   transition-audit evidence;
+   transition-audit evidence plus any projection-outbox item;
 9. finalize operation execution claims, request claims, and service leases;
 10. build a fresh authoritative post-finalization snapshot;
 11. derive principal-filtered `allowed_actions` and ownership guidance from that snapshot;
@@ -379,9 +688,9 @@ expired request claim, or dead operation claim, but no task change. Recovery rea
 claim type under its durable token and expiry rules. It must reread the request and task after
 ownership is reacquired and must not infer a task effect from the pending admission record.
 
-Expected content identity and location remain the semantic concurrency check. The monotonic
-`revision` is an additional compare-and-swap guard and query aid, not a replacement for exact
-content, placement, signoff, or actor evidence.
+Expected current version identity and location remain the semantic concurrency check. The
+monotonic `revision` is an additional compare-and-swap guard and query aid, not a replacement for
+exact content, placement, signoff, or actor evidence.
 
 ### Audit boundaries
 
@@ -406,7 +715,7 @@ The guarded state machine and independent Verification do not change. In particu
 
 - one active operation per task remains enforced;
 - actor and verifier run lineage remains durable;
-- inspection and signoff remain bound to exact content versions;
+- inspection and signoff remain bound to exact current version identities;
 - Small-correction lineage remains reviewed → corrected → signed;
 - allowed actions remain derived once from the authoritative snapshot;
 - Marco-only holds and interventions remain private and narrow.
@@ -435,27 +744,66 @@ because that is a lifecycle authority decision, not because the update is techni
 
 ## Private frontend
 
-The frontend should be delivered incrementally. Its first useful version is deliberately narrow:
+The frontend should be delivered incrementally. The stages below are a product direction, not an
+approved interaction model or persistence schema. Each mutation stage needs separate design work
+before implementation, especially where a visual gesture could conceal a governed transition.
 
-- list and search tasks by title, location, completion, and active-operation status;
-- open the exact current canonical document;
+### Stage 1: reading and discovery
+
+- list tasks and open the exact current authoritative version and its rendered view;
+- show basic search and filters by title, location, completion, and active-operation status;
 - show content, location, operation, Verification, audit, and recovery history;
+- render structured dish fields and exact legacy source documents;
+- show allowed actions without making the read surface itself authoritative.
+
+Search and filtering belong in the first useful read-only product rather than requiring a later
+editor. They may start narrowly and expand as the structured schema establishes useful fields.
+
+### Stage 2: structured editing and human actions
+
 - create a bare task with a title-only form;
-- offer text editing only as the input control for a lifecycle-authorized command;
+- offer structured forms only inside lifecycle-authorized commands;
+- use text or Markdown editor components only for fields whose approved type is long prose;
 - expose Marco's existing private interventions with their exact preconditions;
 - show backup health and cutover/import quarantine status;
 - later append cook logs through a separately designed command.
 
-The initial editor may be an ordinary textarea with preview. A later release may replace that
-control with an established open-source Markdown or text editor for syntax highlighting,
-keyboard behavior, preview, or version comparison. The editor component is a presentation choice:
-adopting or replacing it must not change the canonical Markdown representation, database schema,
-or lifecycle command contract. Rich-text editor state and editor-specific document formats do not
-become authoritative task content.
+### Stage 3: cooking planner
+
+A later board may organize dishes into concepts such as Cook Now, Cook Soon, Cook Later, and
+Unscheduled, with ordering or priority where useful. These names and their storage are
+illustrative, not an approved enum or table design. Design work must decide whether planning is a
+single horizon, an ordered queue, dates, independent flags, or some combination, and how it
+interacts with completion, locations, workflow ownership, and multiple UI sessions.
+
+Planning buckets are not workflow sections or canonical destinations. Dragging within or between
+them may become a convenient way to invoke a named, revision-checked planning command. Dragging
+must not directly patch rows, move a task through Research or Verification, change a canonical
+destination, invalidate signoff, or infer that any section-like UI column is lifecycle authority.
+The service returns whether the exact planning action is allowed and records whatever audit or
+transition evidence the approved planner design requires.
+
+Before implementing this stage, separately approve the planning concepts, ordering semantics,
+command contract, concurrency behavior, history requirements, and which actions are reversible.
+Do not add generic task-section movement merely to support a board interaction.
+
+Across these stages, the frontend preserves the distinction between task organization, workflow
+state, canonical destination, and completion. It derives mutation controls from the service's
+exact authoritative snapshot.
+
+The reusable frontend shell—list, search, read, history, status, and narrow action controls—may be
+built while Asana remains authoritative. It calls `dish-service`, not either store directly. A
+shadow-backed read view must expose its source snapshot and freshness, and it never authorizes a
+mutation; the service rechecks the live Asana task until cutover.
+
+Defer the complete dish editor until the structured command schema is stable. The target editor is
+a structured form over typed fields and collections. Established text or Markdown components may
+improve long prose fields such as instructions, but editor-specific state and a whole-document
+Markdown blob do not become canonical dish data.
 
 There is no generic canonical-content save command. Revision and exact-version checks protect
-concurrency, but they do not confer authority to create a new current version. Content legality is
-state-based:
+concurrency, but they do not confer authority to create a new current structured version. Content
+legality is state-based:
 
 - a bare task is created title-only with empty body; a narrow command may change its title while it
   remains bare;
@@ -471,14 +819,15 @@ no active operation is not sufficient: an inactive task may still be signed, sub
 destination-placed, or completed. An edit control may therefore be read-only or absent even though
 the task has no current owner.
 
-When an authorized lifecycle command accepts edited text, the browser loads the task identifier,
-exact content version, monotonic revision, action identity, and any operation/run authority that
-command requires. It submits the complete proposed document with those expectations and a fresh
-request UUID. `dish-service` reasserts lifecycle legality, rejects stale state without overwriting
-either version, appends the new immutable content version, advances the task pointer, and records
-the required lineage, governed audit, and replay result in one transaction. The UI then renders
-the committed canonical result or presents the newer current version for explicit reconciliation.
-Silent last-write-wins and editor-level force-save behavior are prohibited.
+When an authorized lifecycle command accepts edited fields, the browser loads the task identifier,
+exact structured version, monotonic revision, action identity, and any operation/run authority that
+command requires. It submits a complete versioned JSON candidate with those expectations and a
+fresh request UUID. `dish-service` reasserts lifecycle legality, validates the structured graph,
+rejects stale state without overwriting either version, appends the new immutable version, advances
+the task pointer, and records the required lineage, governed audit, and replay result in one
+transaction. The UI then renders the committed canonical result or presents the newer current
+version for explicit reconciliation. Silent last-write-wins and editor-level force-save behavior
+are prohibited.
 
 The frontend must not impersonate an agent or invent run lineage. Agent workflow actions remain on
 the authenticated agent surfaces. If a future UI hosts an authenticated agent session, it may
@@ -487,10 +836,9 @@ render only the actions returned for that exact principal and run.
 Before cutover, inventory the human actions currently performed in Asana. At minimum, define how a
 bare task is created, how completed cooking history is searched, and how a cooked task is marked
 complete. Any required replacement is a narrow command with explicit preconditions and audit—not a
-generic row or content editor. Markdown editing may use a reusable editor component, but content is
-accepted only by the lifecycle command authorized for the current state. Completion needs its own
-lifecycle design because removing out-of-band Asana edits otherwise removes the only way to produce
-the completed state that Planning reopen consumes.
+generic row or content editor. Structured content is accepted only by the lifecycle command
+authorized for the current state. These commands, available through CLI/admin if necessary, are the
+frontend-independent prerequisite for DB authority.
 
 The browser never sends SQL, chooses arbitrary state transitions, patches task rows, or derives legal
 actions. State-changing UI controls call the same command applications as CLI/admin routes with
@@ -503,29 +851,79 @@ credential boundary and must not make admin routes reachable from the Funnel lis
 
 ## Import and cutover
 
-### Rehearsal
+### Phase 1: Asana-authoritative shadow
 
-1. Freeze the exact Dish and Honest revisions used for the rehearsal.
-2. Snapshot the complete Asana corpus and the complete Dish database.
-3. Require no executing claims, unresolved effects, or uncompleted service requests.
-4. For the first production cutover, finish, discard, or explicitly quarantine every open
-   operation rather than migrating live mutation authority mid-operation.
-5. Import every in-scope task, section, completion state, title, body, and source timestamp into a
-   copied database.
-6. Classify each imported record under the rules below and apply only that class's reconciliation
-   and validation requirements.
-7. Quarantine mismatches that affect live authority; do not infer content, readiness, provenance,
-   destination, or signoff.
-8. Validate database semantics, applicable task-schema conformance, queries, backup/restore, and the
-   full workflow suite against the imported copy.
-9. Exercise the private frontend against that copy without production mutation authority.
+Keep all live reads, writes, workflow decisions, and human actions Asana-authoritative. After each
+confirmed Asana reread, feed a one-way shadow pipeline with:
+
+- the exact title/body, content identity, section, completion state, and source timestamps;
+- the corresponding operation/request when the observation followed a Dish command;
+- when the representation project is active, an attempted structured parse and its
+  validation/classification evidence, normalized candidate rows, deterministic candidate JSON
+  identity, and compatibility-rendering comparison.
+
+A periodic corpus reconciliation captures out-of-band Asana changes and any shadow delivery gaps.
+Shadow persistence failure is visible but does not reinterpret a confirmed Asana mutation. Shadow
+rows are never read to authorize live work, written back to Asana, or treated as migration proof
+merely because they exist.
+
+The exact-document shadow battle-tests authority import and reconciliation. Optional structured
+candidate shadowing additionally tests schema coverage, deterministic identity, queries, and
+rendering. Neither proves DB-native execution ownership, crash atomicity, or recovery; those still
+require fault injection and rehearsal.
+
+### Phase 2: shadow execution
+
+For each governed production command, apply the command intent to a separate candidate database or
+reducer and compare its predicted version, workflow state, allowed actions, and location with the
+eventual confirmed Asana result. When testing structured representation, also compare structured
+identity and rendering. Candidate output remains non-authoritative and cannot affect the
+production response.
+
+Human out-of-band Asana changes are imported observations, not fabricated Dish commands. Repeated
+observations identify the narrow human commands that must exist before cutover.
+
+Exercise concurrency, request claims, transaction interruption, restart, and recovery directly
+against copied candidate databases. Long runtime supplies representative inputs, but elapsed shadow
+time alone is not proof of transactional safety.
+
+### Phase 3: reusable frontend
+
+The list, search, read, history, status, and narrow action shell may run before cutover through
+`dish-service`. Authoritative views and mutation preconditions still come from Asana. Candidate DB
+views may be exposed only with source/freshness labels and may not authorize actions.
+
+This phase is useful but optional. A polished frontend is not a cutover gate if equivalent narrow
+CLI/admin commands cover every required human mutation. Defer the full structured editor until the
+structured command schema is stable.
+
+### Cutover-target decision
+
+Use accumulated shadow and rehearsal evidence to choose one of two targets:
+
+1. **Direct structured cutover:** use when every active task converts deterministically, structured
+   and current validation agree, compatibility renderings reconcile where required, all workflow
+   commands pass against the structured repository, and every active signed or correction-lineage
+   version has been reverified or covered by an explicitly approved migration-equivalence
+   attestation.
+2. **Document-compatible DB cutover:** use when those gates are incomplete but the versioned
+   title/body DB authority is proven. Remove Asana uncertainty first, then migrate to structured
+   versions inside the DB-backed service later.
+
+The document-compatible path is the minimum DB-authority migration and must remain independently
+deployable. Structured readiness must not delay an operationally justified Asana exit. Conversely,
+do not build the intermediate solely for architectural symmetry when direct structured parity,
+lineage, and Verification treatment are already proven.
+
+### Import classes
 
 Import classes are:
 
 1. **Active or incomplete governed tasks:** reconcile exact current identity and location against
-   `task_content_state`, content versions, operation history, and applicable signoff; require
-   current structural validity before admitting live work. Preserve any signed legacy destination
-   pair through the immutable alias and source-name rule rather than rewriting the document.
+   `task_content_state`, content versions, operation history, and applicable signoff. For a direct
+   structured cutover, require a complete valid structured version and preserve the exact source
+   relationship. For an intermediate cutover, preserve the authoritative document without
+   inventing structured validity.
 2. **Tasks connected to unresolved or open evidence:** resolve the evidence or quarantine the task
    before cutover. No unresolved external effect becomes a local committed fact by inference.
 3. **Completed historical tasks:** import the exact source snapshot as read-only history with
@@ -540,6 +938,23 @@ Import classes are:
 The importer is one-purpose migration tooling, not a permanent alternate backend. It reads an exact
 snapshot and writes only the staged database.
 
+### Rehearsal
+
+1. Freeze the exact Dish and Honest revisions and chosen cutover target.
+2. Snapshot the complete Asana corpus, Dish database, shadow evidence, and configuration.
+3. Require no executing claims, unresolved effects, or uncompleted service requests.
+4. For the first production cutover, finish, discard, or explicitly quarantine every open
+   operation rather than migrating live mutation authority mid-operation.
+5. Import every in-scope task under its class into a copied database.
+6. Reconcile exact source documents, structured conversions where required, current pointers,
+   location/completion state, operation history, signoff, and provenance.
+7. Quarantine mismatches that affect live authority; do not infer content, readiness, destination,
+   validation, or signoff.
+8. Validate database semantics, queries, backup/restore, request ownership, and the full workflow
+   suite, plus structured JSON round trips and rendering only when rehearsing a structured target.
+9. Exercise the private frontend or equivalent CLI/admin commands against the imported copy.
+10. Rehearse both pre-mutation rollback and DB-backed rollback after a simulated first mutation.
+
 ### Production cutover
 
 After separate explicit authorization:
@@ -547,18 +962,41 @@ After separate explicit authorization:
 1. stop mutation admission and drain admitted requests;
 2. prove the same quiescence conditions used in rehearsal;
 3. take final Asana, database, configuration, and code snapshots;
-4. import into the production database and validate every task under its approved import class or
-   quarantine it;
-5. activate the matching Dish code, database schema, Honest revision, query surface, and frontend as
-   one compatible set;
-6. remove Asana from health readiness and from all live task reads and mutations;
-7. revoke or remove the service's Asana mutation credential;
-8. keep the source corpus snapshot and Asana project read-only during acceptance;
-9. admit DB-backed mutations only after read, search, identity, location, backup, restore, and
-   workflow gates pass.
+4. ingest the final confirmed Asana observations and prove the reconciliation required by the
+   chosen cutover target;
+5. import into the production database under the chosen target and quarantine any unapproved
+   mismatch;
+6. activate the matching Dish code, schema, Honest revision, query/command surface, and human
+   command coverage as one compatible set;
+7. remove Asana from live task reads, workflow decisions, and ordinary mutation credentials;
+8. if the read-only projection is enabled, grant only its dedicated worker credential and enqueue
+   projection from committed DB state;
+9. keep the final source snapshot immutable during acceptance;
+10. admit DB-backed mutations only after identity, location, completion, request ownership,
+    backup/restore, workflow, and human-command gates pass.
 
-There is no dual-write acceptance period. Shadow reads before cutover may compare stores, but only
-one store is writable and authoritative at a time.
+There is no dual-write acceptance period. Before cutover, DB writes are non-authoritative shadow
+observations or shadow execution. After cutover, Asana writes are downstream projection effects.
+Only one store is writable as production authority at a time.
+
+### DB-authoritative Asana projection
+
+The projector is not part of the default initial cutover. Enable it only when an observed frontend
+gap justifies retaining Asana mutation credentials and mirror recovery. If enabled, use a clearly
+separate Asana project with unmistakable read-only and possible-staleness labeling:
+
+- humans and agents do not edit the projected tasks directly;
+- projection freshness and last applied DB revision are visible;
+- projection failure never blocks or reverses a DB mutation;
+- out-of-band drift is flagged and overwritten from DB authority, never imported;
+- repair acts only on the projection mapping and exact committed version;
+- new-task ambiguity is reconciled as a mirror problem and cannot create another Dish task;
+- removal of the projector requires no authority migration.
+
+The projector uses a dedicated credential and code path that is not shared with historical Asana
+authority operations. It can be exercised against a test project before cutover. Production
+projection from the live DB begins only after DB authority activates; otherwise it would be a
+second Asana writer whose output could be mistaken for current authority.
 
 ### Rollback boundary
 
@@ -566,46 +1004,67 @@ Before the first DB-native production mutation, rollback may restore the complet
 code, database, configuration, and corpus authority.
 
 After the first DB-native mutation, Asana is stale. Ordinary rollback must restore a compatible
-DB-backed code, database, and frontend set from managed backup. Returning authority to Asana would
-require a separately designed, rehearsed reverse migration that preserves every intervening
-revision and audit fact; it is not part of this design.
+DB-backed code, database, command surface, and optional frontend/projector set from managed backup.
+An apparently current Asana projection is not rollback authority. Returning authority to Asana
+would require a separately designed, rehearsed reverse migration that preserves every intervening
+task version, transition, request result, and audit fact; it is not part of this design.
 
 This boundary must be explicit in the cutover approval. Acceptance gates should complete before
 opening mutations so rollback to Asana remains simple while it is still valid.
 
 ## Implementation sequence
 
-1. Inventory every Asana-owned fact, gateway call, identifier, health dependency, recovery branch,
-   semantic validator, generated schema field, test fixture, and required human action.
-2. Approve the exact schema, identifier compatibility, location registry, transaction owner, and
-   frontend trust model.
-3. Add version/import provenance, task/location storage, immutable legacy location aliases,
-   dedicated location/completion transition evidence, and semantic validation behind a test-only
-   database repository.
-4. Add request-scoped execution ownership, then convert operation- and task/request-scoped
-   mutations to the single effect-transaction contract with crash/concurrency tests.
-5. Add bounded list, search, history, title-only creation, lifecycle-authorized Markdown editing,
-   and private frontend surfaces; start with a textarea and keep command authority independent of
-   the editor component.
-6. Build and rehearse the one-purpose importer and both rollback modes.
-7. Perform the separately authorized production cutover.
-8. After acceptance, remove the Asana credential, SDK runtime dependency, generic governed-task
-   guard, external-effect branches that have no historical role, and any temporary compatibility
-   projections.
+1. Inventory every Asana-owned fact, canonical field, gateway call, identifier, health dependency,
+   recovery branch, validator, test fixture, and required human action.
+2. Build the representation-neutral authority foundation: task/version envelope, immutable document
+   versions, import snapshots, controlled locations, completion/location history, request-scoped
+   ownership, transactional repository path, quarantine, and narrow human commands.
+3. Rehearse a document-compatible DB authority cutover and keep it independently deployable.
+4. In the separate representation project, approve the structured Honest schema,
+   content-versus-workflow boundary, canonicalization and quantity rules, representation pair,
+   identifier compatibility, and migration-signoff policy.
+5. Implement exact source parsing, structured candidate storage, rendering, and one-way
+   Asana-authoritative shadow reconciliation.
+6. Add candidate shadow execution and run it against representative live inputs plus direct
+   crash/concurrency fault tests.
+7. Add the reusable frontend list/search/read/history/action shell; defer the complete structured
+   editor until its payload schema is stable and the cooking planner until its domain and command
+   contract are approved.
+8. Evaluate the two projects' documented gates and explicitly choose direct structured or
+   document-compatible DB cutover.
+9. Build the one-purpose importer, optional projection outbox/worker only if justified, and
+   rehearse production cutover and both rollback modes.
+10. Perform the separately authorized authority cutover.
+11. If the document-compatible target was used, perform the separately approved representation
+    migration after structured parity and identity/signoff lineage are proven.
+12. After acceptance, remove the Asana authority credential, SDK paths with no projection or
+    historical role, generic governed-task guard, and temporary compatibility adapters.
+13. Retire the optional Asana projector when the private frontend makes it unnecessary.
 
-During development, production remains entirely Asana-backed. A test configuration may select the
-database repository, but no production configuration may route different tasks to different live
-backends. After acceptance, do not retain an executable legacy mutation engine.
+During shadow development, production remains entirely Asana-authoritative. No production
+configuration may route different tasks to different authorities. After DB acceptance, do not
+retain an executable Asana authority or fallback mutation engine.
 
 ## Required proof
 
-At minimum, implementation must test:
+Each implemented project must test the applicable items below. Structured schema, canonical JSON,
+typed-graph, parser, renderer, structured-editor, and representation-migration items are additional
+gates for direct structured cutover or the later representation migration; they do not gate a
+document-compatible authority cutover.
 
 - fresh task creation and imported legacy identifiers;
 - audited human task completion and completed-history lookup;
 - exact reads and consistent list/search snapshots;
+- deterministic structured JSON reconstruction, canonicalization, hashing, and round trip;
+- byte equality between stored canonical JSON and typed-graph reconstruction, with readiness
+  blocked on disagreement;
+- exact decimal, fraction, range, approximate, optional, unit, Unicode, whitespace, null/omission,
+  collection-order, and canonicalizer-version fixtures;
+- complete immutable version graphs, ordered child collections, foreign keys, and rollback of
+  partial graphs;
+- structured domain validation for every approved Honest field and cross-field invariant;
 - title-only bare creation and rejection of a bare body;
-- lifecycle-authorized Markdown editing, stale-revision rejection, and preservation of both
+- lifecycle-authorized structured editing, stale-revision rejection, and preservation of both
   versions after an edit conflict;
 - rejection of ordinary edits to Planning briefs, governed canonical tasks, signed/destination
   tasks, completed tasks, and tasks owned by an operation;
@@ -614,17 +1073,29 @@ At minimum, implementation must test:
 - deterministic `create` identity across crash, recovery, and replay;
 - concurrent mutations against the same and different tasks;
 - request replay before, during, and after transaction commit;
+- recovery of old and adapter-based requests without reinterpretation across deployment;
 - replayed results whose leases, ownership guidance, and principal-filtered `allowed_actions`
   reflect the committed post-finalization snapshot;
 - content, location, completion, signoff, and actor drift;
 - every Planning, Research, Verification, correction, hold, reopen, and submit route;
-- version-specific document kind, schema, source, timestamp, and applicable release provenance;
+- structured-version schema, source, timestamp, renderer, and applicable release provenance;
 - unsupported, malformed, partially structured, and unknown historical snapshots without inferred
   validity, plus exact source snapshot/modification/import provenance;
 - imported signed destination pairs resolved through immutable legacy aliases without rewriting
-  content, and new versions emitting only Dish identifiers and current names;
-- location rename behavior that preserves old display snapshots while requiring the current pair
-  for newly produced versions;
+  source content, and new structured versions storing only Dish identifiers;
+- imported current placement independent of embedded destination, and imported completion/location
+  origin without fabricated local transitions;
+- signed legacy versions remaining current by default, plus separately tested re-Verification and
+  approved-attestation routes if either direct migration route is implemented;
+- location rename behavior that preserves source/rendering snapshots without changing structured
+  identity;
+- source-to-structured parsing and structured-to-compatibility-rendering reconciliation across the
+  active corpus;
+- one-way shadow gaps, replay, periodic reconciliation, and proof that shadow state cannot
+  authorize or alter Asana-backed production;
+- shadow execution divergence reporting without production response influence;
+- explicit direct-structured and document-compatible cutover rehearsals where each remains a
+  candidate;
 - historical terminal write/movement evidence, dedicated local transitions, and absence of
   fabricated database-backed attempt records;
 - atomic completion and reopen transitions, current completion projection, governed audit, and
@@ -636,9 +1107,14 @@ At minimum, implementation must test:
   live evidence;
 - database migration from every preserved schema version;
 - semantic validation of current pointers and append-only lineage;
+- composite task/version ownership, exactly-one representation, same-version child ownership,
+  single revision advancement, and quarantine promotion constraints;
 - service restart, writer contention, backup creation, restore, and restore rollback;
 - private frontend isolation from the Action listener and command-only mutation;
-- absence of Asana calls and credentials in DB-backed production mode;
+- stale shadow-backed frontend reads that cannot authorize pre-cutover mutations;
+- DB-backed production with no Asana authority calls or credentials;
+- projection outbox replay, lag, out-of-band drift, update failure, and ambiguous mirror creation
+  without changing DB workflow results;
 - exact corpus import counts, identities, locations, completion states, and quarantine reports.
 
 The complete automated suite, an imported-corpus rehearsal, live test-project workflow, backup and
@@ -650,20 +1126,33 @@ repository transactions rather than mocking the task repository at the workflow 
 | Risk | Control |
 | --- | --- |
 | Two current-content authorities inside SQLite | One task pointer; retire or project `task_content_state` |
-| Accidental Asana-shaped schema | Model only canonical documents, locations, workflow evidence, and required reads |
+| Structured schema merely copies Markdown headings | Derive typed fields and relationships from approved Honest domain semantics |
+| Canonical JSON identity varies by serializer or domain ambiguity | Versioned canonicalization, exact quantity semantics, round-trip fixtures, and stored identity verification |
+| Canonical JSON and normalized rows drift | One validated in-memory value, atomic insertion, byte-for-byte reconstruction checks, and readiness failure |
+| Partial normalized graph becomes current | Insert, validate, hash, point, and evidence the complete representation pair in one transaction |
+| Generated rendering becomes a second authority | Structured version is canonical; rendering is versioned output or preserved source evidence |
+| Shadow state influences production | One-way post-reread feed; no live authorization or write-back from shadow |
+| “Double write” recreates uncertainty | Asana-authoritative shadow before cutover; optional DB-authoritative outbox projection afterward |
 | Backend abstraction becomes a permanent second engine | Test-only selection before cutover; delete live Asana mutation after acceptance |
 | Frontend bypasses workflow legality | Query APIs for reads; existing command applications for every mutation |
 | Editor overwrites newer or governed content | State-specific lifecycle command plus exact version/revision; no generic save |
-| Editor library shapes stored content | Canonical Markdown only; editor-specific state remains disposable presentation data |
+| Frontend couples to intermediate blobs | Stable service views/actions; structured forms wait for the structured payload |
+| Drag-and-drop disguises an arbitrary state change | Approved planning model and named commands; never equate board columns with workflow sections |
+| Intermediate document store becomes permanent | Explicit parity gates and follow-on structured migration decision |
 | Concurrent replay executes a non-operation mutation twice | Durable request execution ownership; deterministic reserved IDs; transactional ownership recheck |
 | Stored replay result describes pre-finalization state | Finalize claims and leases, reread, filter actions, then persist the result |
 | Retiring `task_content_state` loses provenance | Move version-specific kind, schema, source, time, and release facts onto immutable versions |
-| Legacy destination rewrite invalidates signoff | Immutable version-scoped GID alias resolution; new versions emit only Dish IDs |
-| Location rename invalidates signed history | Identifier is authority; imported names are provenance-bound display snapshots |
+| Legacy destination rewrite invalidates signoff | Preserve exact source and immutable GID alias; structured versions use Dish IDs |
+| Imported queue placement is mistaken for embedded destination | Separate task snapshot, source document, and destination-resolution evidence |
+| Parsing silently transfers Verification | Keep the signed document current by default; require re-Verification or an approved append-only equivalence attestation |
+| Location rename invalidates identity | Stable ID is structured authority; names are rendered or historical display facts |
 | Historical import invents schema validity | Orthogonal kind/validation facts and immutable source snapshot provenance |
 | Local facts inherit Asana uncertainty semantics | Dedicated local transition evidence; historical attempt tables remain immutable and external-only |
 | Completion history is reduced to a mutable flag | Append-only completion transitions commit with the flag, audit, and result |
+| Stale Asana projection is mistaken for authority | Read-only labeling, revision freshness, no ingestion, and DB-only legality |
+| Ambiguous projection creation looks like duplicate work | Reconcile mirror mapping; never create another Dish task or authority record |
 | Live request claims produce inconsistent client behavior | One non-terminal code and replay contract across every route |
+| Pending request is reinterpreted after deployment | Persist contract, payload, adapter, schema, and canonicalization identity with the request |
 | Incidental audit failure reverses success | Governed evidence is transactional; invocation/transport audit remains success-preserving and repairable |
 | Identifier migration breaks agents | Preserve `task_gid` field initially; accept imported GIDs and new UUIDs explicitly |
 | Historical evidence becomes unreadable | Preserve terminal attempts and provenance; migrate consumers before cleanup |
@@ -671,6 +1160,7 @@ repository transactions rather than mocking the task repository at the workflow 
 | Cutover rollback loses DB-native work | Complete acceptance before mutation; use DB backup rollback after first DB write |
 | SQLite writer contention increases | Keep transactions local and bounded; measure real activation load before changing backend technology |
 | Import silently blesses drift | Exact snapshot reconciliation and quarantine; never infer missing facts |
+| Quarantine leaks into ordinary authority | Keep quarantine outside tasks; separately audited promotion only |
 
 ## Needs human review
 
@@ -678,21 +1168,40 @@ Before an implementation plan is approved, Marco should review these policy and 
 The technical mechanisms elsewhere in this draft support the recommended defaults but do not make
 these decisions on his behalf.
 
-1. **Destination identity and renaming.** Recommended: keep Dish-native location IDs authoritative,
-   preserve imported Asana GIDs as immutable compatibility aliases, treat imported names as
-   provenance-bound display snapshots, and require the current Dish ID/name pair in all new
-   versions. Confirm that the embedded destination text in old signed recipes should remain
-   historical rather than being rewritten when a location is renamed; the UI may show the current
-   location separately.
-2. **Human lifecycle actions.** Approve the exact private commands Marco needs: title-only bare
+1. **Structured dish boundary.** Review which current task facts are immutable dish data, workflow
+   state, location/completion state, or future cook-log data. Approve the structured JSON grammar
+   before normalized tables or a full editor are fixed. The recommended default is that stable
+   location IDs may be dish references, while current placement and completion remain task
+   lifecycle state.
+2. **Independent project priority.** Approve authority migration and representation migration as
+   separate projects that may share a release but cannot block one another. The recommended
+   default is to keep the document-compatible authority path independently deployable.
+3. **Verification migration.** Decide whether direct structured migration may ever transfer
+   workflow facts through a privileged equivalence attestation. The recommended default is no
+   automatic transfer: keep signed documents current until governed work naturally creates and
+   verifies a structured version; add attestation only if real migration cost justifies it.
+4. **Structured identity.** Approve canonical JSON as the immutable identity/API witness paired
+   atomically with consistency-checked typed rows, plus exact quantity and canonicalization rules.
+5. **Cutover target.** Decide whether the evidence gate, not a calendar commitment, may choose
+   direct structured or document-compatible DB authority. Direct cutover requires proven active-
+   corpus parity and an explicit disposition for every signed or correction-lineage version.
+6. **Asana projection lifetime.** Decide whether an observed frontend gap justifies a read-only
+   Asana mirror. The recommended default is disabled; if needed, use a separate labeled project,
+   dedicated credential, no edit ingestion, and retire it once the frontend is sufficient.
+7. **Frontend stages and cooking planner.** Approve the read/discovery, structured-editing, and
+   planner stages as product direction. Separately design what Cook Now, Cook Soon, Cook Later,
+   priority, and ordering mean; whether they are mutually exclusive; their history and concurrency
+   rules; and their relationship to completion. The recommended default is dedicated planning
+   metadata changed through named commands, never reuse of workflow sections or destinations.
+8. **Human lifecycle actions.** Approve the exact private commands Marco needs: title-only bare
    rename, mark cooked, reopen Planning, start Change, and clone historical content. Decide which
    require a reason and whether reopening or cloning is the normal way to reuse a completed task.
    None of these choices creates a generic content editor.
-3. **Historical corpus scope.** Decide whether completed Cooking history is imported in full and
+9. **Historical corpus scope.** Decide whether completed Cooking history is imported in full and
    whether Sourcing or Reference records are needed for search, reading, or provenance. The
    recommended default is exact read-only import of completed Cooking history and exclusion of
    Sourcing/Reference unless a concrete use requires them.
-4. **Cutover acceptance and rollback.** Approve the acceptance period and the point at which
+10. **Cutover acceptance and rollback.** Approve the acceptance period and the point at which
    DB-native mutations may begin. Before the first mutation, Asana rollback remains valid; after
    it, rollback restores the DB-backed system and returning to Asana requires a reverse migration.
 
@@ -702,25 +1211,37 @@ The recommended defaults in this draft are:
 
 1. keep SQLite and the existing service deployment;
 2. preserve `task_gid` as the first-version field while allowing UUIDs for new tasks;
-3. use controlled Dish locations rather than project/membership emulation;
-4. require no open operations at the first production cutover;
-5. make the private frontend command-driven, with title-only bare creation and Markdown editing only
-   inside a lifecycle-authorized action; begin with a textarea and optionally adopt an open-source
-   editor later;
-6. add request-scoped execution ownership for mutations that have no existing operation;
-7. store document kind, schema, source, timestamp, and applicable release provenance per immutable
-   content version;
-8. map imported Asana section GIDs as immutable aliases to Dish locations; preserve imported names
-   as display snapshots, and emit only the current Dish pair in new content;
-9. use dedicated local location and completion transition evidence and never manufacture
-   database-backed Asana attempts;
-10. approve narrow replacements for every required human Asana action, including completion;
-11. import completed history without current-schema or signoff claims until a named reopen or clone;
-12. define one non-terminal live-request-claim response in the implementation's runtime contract;
-13. keep invocation/transport auditing success-preserving and repairable;
-14. treat Asana rollback as valid only before the first DB-native production mutation;
-15. retain off-device backup as a sensible operational measure, not a replicated-database project.
+3. keep immutable document versions as the minimum DB-authority representation;
+4. make immutable structured dish versions, stored canonical JSON, and consistency-checked typed
+   rows the separately gated target representation;
+5. keep existing signoff on its exact document identity by default; require re-Verification or a
+   separately approved equivalence attestation before transferring workflow facts;
+6. use controlled Dish locations rather than project/membership emulation, with imported section
+   GIDs only as immutable migration aliases;
+7. separate imported task placement from source documents and embedded destination evidence;
+8. run one-way Asana-authoritative shadow ingestion and shadow execution before cutover;
+9. choose direct structured or document-compatible cutover from explicit parity and signoff
+   evidence without allowing structured work to delay a justified authority migration;
+10. stage the private frontend as read/discovery, structured editing/actions, then an explicitly
+   designed command-driven cooking planner, while allowing narrow CLI/admin commands to satisfy
+   the cutover gate;
+11. keep the DB-authoritative Asana projection disabled by default and allow it only through a
+    dedicated transactional outbox, credential, and labeled mirror project;
+12. require no open operations at the first production cutover;
+13. add request-scoped execution ownership and persisted request/adapter/schema/canonicalization
+    versions for mutations that have no existing operation;
+14. use dedicated local location and completion transition evidence and never manufacture
+    database-backed Asana attempts;
+15. approve narrow replacements for every required human Asana action, including completion;
+16. import completed history without structured-schema or signoff claims until a named reopen or
+    clone;
+17. keep quarantine outside authoritative tasks and require an audited promotion;
+18. define one non-terminal live-request-claim response in the implementation's runtime contract;
+19. keep invocation/transport auditing success-preserving and repairable;
+20. treat Asana rollback as valid only before the first DB-native production mutation;
+21. retain off-device backup as a sensible operational measure, not a replicated-database project.
 
-Implementation needs Marco's explicit approval of those decisions, the final schema, the frontend
-trust model, the corpus scope, the acceptance period, and the separately authorized rehearsal and
-production cutover.
+Implementation needs Marco's explicit approval of those decisions, the structured schema and
+content/workflow boundary, the frontend trust model, the corpus scope, the cutover-target gate, the
+projection policy, the acceptance period, and the separately authorized rehearsal and production
+cutover.
