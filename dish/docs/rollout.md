@@ -9,7 +9,30 @@ This runbook owns the separately authorized migration rehearsal, joint test-proj
 production cutover, and rollback. Passing the Dish automated suite, the Honest protocol tests, or
 the Preview connectivity gate alone does not authorize production Cooking-task mutation.
 
-## Pre-rollout review
+## Completed rollout evidence
+
+The detailed run IDs, fixture tasks, revisions, and transcript locations remain in
+[`../deploy/live-test-project-smoke.md`](../deploy/live-test-project-smoke.md). The following work is
+complete and need not be repeated wholesale:
+
+- Dish implementation, service connectivity, private/public listener separation, and credential
+  scopes have passed automated and live test-project coverage.
+- Codex automated smoke testing is complete for its tested revisions. If later code changes land,
+  select regression coverage in proportion to the affected authority and commits since the last
+  recorded pass; documentation-only changes require no test rerun.
+- A connected GPT completed create → Planning → Research → independent Verification → submit, with
+  exact content identities, placement, request replay, and final signoff confirmed.
+- A fresh Small-correction lifecycle, Action lease-renewal replay/conflict, and failed-first
+  validation replay/conflict passed.
+- Private lease recovery and governed-change authorization passed with durable binding, exact
+  replay, and changed-payload conflict.
+- Managed backup and restore passed with exact installed identity, restored durable state, healthy
+  readiness, and owner-only database permissions.
+
+This evidence does not replace the final Honest semantic rehearsal, release-specific regression
+selection, migration rehearsal, rollback proof, or production authorization.
+
+## Remaining pre-rollout review
 
 Resolve and record these review items before production activation. Until a decision changes the
 implementation or runtime documentation, the current code and contracts remain authoritative.
@@ -25,42 +48,42 @@ implementation or runtime documentation, the current code and contracts remain a
 3. **Public-endpoint abuse controls.** The Action listener has a dedicated credential, route
    allowlist, body limits, request timeouts, and no private or admin routes. Decide whether Funnel
    exposure also requires an application-level rate limiter.
-4. **Production authorization.** Implementation and connectivity gates are complete, but the full
-   test-project mutation smoke, migration rehearsal, backup/restore rehearsal, rollback
-   confirmation, production credential and section-registry verification, canary migration, and
-   production cutover still require explicit authorization. The rollout `TODO` lists a canary,
-   while `dish-docs-design.md` says corpus migration requires no canary or per-task semantic
-   attestation. Resolve whether the canary is an operational rehearsal or is removed; never use it
-   as semantic attestation or a claim of semantic equivalence.
+4. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
+   and section-registry verification, any retained operational canary, and production cutover still
+   require explicit authorization. Resolve whether the canary is an operational rehearsal or is
+   removed; never use it as semantic attestation or a claim of semantic equivalence.
 
-## Test-project rehearsal
+## Remaining test-project rehearsal
 
 Use the isolated rollout checkout, test project, database, and backup directory documented in
 [`../README.md`](../README.md). Never point this rehearsal at production Cooking.
 
-1. Configure and verify the private Serve and public Funnel paths using
-   [`../deploy/tailscale/README.md`](../deploy/tailscale/README.md).
-2. Complete the GPT editor Preview gate in
+1. Complete the exact GPT editor Preview gate in
    [`../deploy/gpt-action.md`](../deploy/gpt-action.md).
-3. Run the complete disposable-task procedure in
-   [`../deploy/live-test-project-smoke.md`](../deploy/live-test-project-smoke.md), preserving its JSON
-   transcript.
-4. Test the final Honest Planning, Research, and Verification protocols as one bundle through Dish.
-   Exercise Planning, Research, Small, Large, Evidence, Human Review, Verification signoff, and
-   final movement one agent at a time, checking both the protocol's semantic duties and Dish's
-   deterministic enforcement.
-5. Deliberately exercise a stale candidate, an out-of-band edit, an uncertain write, a migration
-   failure, and a movement retry. Verify that Cooking reads only exact live `ready` tasks through the
-   supported interface and that no command exposes another stage's protocol.
-6. Rehearse managed backup and restore, then confirm the rollback inputs below are complete and
-   usable.
+2. Complete the release-specific evidence record and final semantic rehearsal in the Honest rollout
+   checkout's [`rollout.md`](../../../honest-pantry-dish-rollout/rollout.md). Test the final Planning,
+   Research, and Verification protocols through Dish using its bounded regression set, including
+   sound positive controls and known material failure shapes.
+3. Review code commits since the last recorded automated pass and run proportionate regression
+   coverage against the frozen release revisions. Use the complete Dish suite only when the
+   intervening workflow, persistence, concurrency, recovery, migration, or service-boundary changes
+   warrant it.
+4. Close the activation record with one frozen Honest revision, one frozen Dish revision, verified
+   runtime configuration and health, and durable redacted transcript locations outside `/tmp`.
+   Reuse applicable recorded smoke evidence rather than rerunning every earlier adversarial case.
+5. Confirm stale-state, uncertain-effect, migration-failure, and movement-retry enforcement through
+   the existing authoritative automated or local fault-injection coverage. Do not require a
+   connected agent to manufacture an unsafe state that the Action surface cannot legally create.
+6. Confirm the rollback inputs below are complete and usable.
 
 Stop on any condition named in the smoke procedure. Resolve the failure and repeat the affected
-gate; do not reinterpret a failed gate as acceptable for production.
+gate, or document it under the established launch-triage policy when it is proven low-risk and
+fail-safe; do not silently reinterpret a failed gate as a pass.
 
 ## Corpus migration
 
-Follow the approved corpus-wide procedure in `~/honest-pantry/dish-docs-design.md`:
+Follow the approved corpus-wide procedure in the frozen Honest rollout revision's
+[`dish-docs-design.md`](../../../honest-pantry-dish-rollout/dish-docs-design.md):
 
 1. Snapshot the complete target corpus to a tarball.
 2. Give a fresh agent the snapshot and final protocol bundle. Produce the migrated corpus locally,
@@ -86,9 +109,10 @@ Production cutover requires a separate explicit authorization. After authorizati
    revision being released together.
 2. Confirm service compatibility with that Honest release, production credentials, the Cooking
    project and section registry, and the approved GPT Action exposure/authentication route.
-3. Run the complete bundled Honest protocol test and complete Dish suite, including service
-   concurrency and restart tests. Confirm the CLI and GPT Action use the same endpoint result
-   contract.
+3. Confirm the Honest-side completion gate passed. Review Dish commits since the last recorded
+   automated pass and run the proportionate final regression set, including service concurrency and
+   restart coverage when those boundaries changed. Confirm the CLI and GPT Action use the same
+   endpoint result contract.
 4. Confirm direct agent Asana write credentials and unsupported governed-task write paths are
    disabled. Keep Planning's deliberate read-only access to completed cooking history.
 5. Confirm the joint test-project, migration, backup/restore, and rollback rehearsals passed.
