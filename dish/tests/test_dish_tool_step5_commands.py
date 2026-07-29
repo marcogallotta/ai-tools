@@ -2,6 +2,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 BIN = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BIN))
 
@@ -51,11 +53,12 @@ Schema version: 2
 class Backend:
     def __init__(self, title="Bare", notes="", section="rq"):
         self.title, self.notes, self.section = title, notes, section
+        self.create_calls = 0
         self.sections = [{"gid":"rq","name":"Research Queue"},{"gid":"vq","name":"Verification Queue"},{"gid":"12345","name":"Sichuan"},{"gid":"ref","name":"Reference"},{"gid":"src","name":"Sourcing"}]
     def list_sections(self, project_gid): return self.sections
     def read_task(self, gid):
         return {"gid":gid,"name":self.title,"notes":self.notes,"completed":False,"modified_at":"now","projects":[{"gid":COOKING_PROJECT_GID}],"memberships":[{"project":{"gid":COOKING_PROJECT_GID},"section":{"gid":self.section}}]}
-    def create_bare_task(self, *, title, project_gid, section_gid): self.title=title; self.notes=""; self.section=section_gid; return {"gid":"new","name":title,"notes":""}
+    def create_bare_task(self, *, title, project_gid, section_gid): self.create_calls += 1; self.title=title; self.notes=""; self.section=section_gid; return {"gid":"new","name":title,"notes":""}
     def update_task_content(self, *, task_gid, title, notes): self.title, self.notes = title, notes
     def move_task_to_section(self, *, task_gid, section_gid): self.section=section_gid
 
@@ -69,7 +72,24 @@ def test_sections_and_create_are_scoped_and_bare(tmp_path):
     assert a.execute("sections",agent="claude")["data"]["project_gid"] == COOKING_PROJECT_GID
     made=a.execute("create",agent="claude",title="New dish")
     assert made["data"] == {"task_gid":"new","schema_version":"2","bare_task":True,"required_start_kind":"planning"}
-    assert b.notes == "" and b.section == "rq"
+    assert b.notes == "" and b.section == "rq" and b.create_calls == 1
+
+
+@pytest.mark.parametrize("unsafe", ["\n", "\t", "\u2028", "\u2029", "\x00"])
+def test_create_rejects_unsafe_title_characters_before_external_creation(
+    tmp_path, unsafe
+):
+    b = Backend()
+    result = app(tmp_path, b).execute(
+        "create", agent="gpt", title=f"Unsafe{unsafe}title"
+    )
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["retryable"] is True
+    assert result["errors"] == [
+        {"rule": "title_invalid_characters", "field": "title"}
+    ]
+    assert b.create_calls == 0
 
 def test_read_reports_exact_state_and_migration_required(tmp_path):
     lines=TASK.replace("Schema version: 2","Schema version: 1").splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n")
@@ -231,4 +251,3 @@ def test_read_exposes_active_operation_and_next_action(tmp_path):
     assert result["state"] == "open"
     assert result["allowed_actions"] == ["prepare"]
     assert result["data"]["active_operation"]["submission_id"] == started["submission_id"]
-

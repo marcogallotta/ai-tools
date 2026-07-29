@@ -27,6 +27,7 @@ from .models import (
     agent_family,
     is_protocol_managed,
     validate_change_reason,
+    validate_create_title,
     validate_independence_attestation,
     validate_rejection_reason,
 )
@@ -459,7 +460,7 @@ def _step5_sections(self, *, trace: CommandTrace, agent: str) -> dict[str, Any]:
 
 def _step5_create(self, *, trace: CommandTrace, agent: str, title: str) -> dict[str, Any]:
     agent_family(agent)
-    clean_title = _clean_required(title, rule="title_required", label="title")
+    clean_title = validate_create_title(title)
     release = self._load_release(None)
     registry = SectionRegistry.from_sections(self.backend.list_sections(COOKING_PROJECT_GID))
     task = self.operation_service.current.create_task(

@@ -330,6 +330,22 @@ def _safe_audit_field(
     return clean
 
 
+def validate_create_title(title: str) -> str:
+    """Return a bare-task title that is safe to persist externally."""
+
+    return _safe_audit_field(
+        title,
+        field="title",
+        required_rule="title_required",
+        invalid_rule="title_invalid_characters",
+        required_message="title is required",
+        invalid_message=(
+            "title contains control, format, line-separator, surrogate, or "
+            "paragraph-separator characters"
+        ),
+    )
+
+
 def validate_actor_model(model: str) -> str:
     clean = _safe_audit_field(
         model,
