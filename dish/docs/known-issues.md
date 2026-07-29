@@ -41,17 +41,6 @@ operation identifiers, whether exact replay is safe, and any required private or
 It should not expose full canonical arguments or stored results by default. This is non-blocking
 observability work; implement it only if post-launch response-loss investigations become frequent.
 
-### DISH-019 — admin recover required-field validation order
-
-The private `recover` command looks up the supplied operation before validating the required
-`outcome` and `reason` fields. A malformed request for an unknown or terminal operation therefore
-returns `NOT_FOUND` or `WRONG_STATE` instead of a field-specific `INVALID_ARGUMENT`.
-
-This is non-blocking diagnostic work. The command fails closed without executing a recovery,
-request replay remains bound to the original identity, conflicting reuse is rejected, and correctly
-formed recovery requests are unaffected. Reorder validation post-rollout unless malformed private
-admin calls cause meaningful operator confusion.
-
 ## Testing boundaries
 
 ### REPRO-001 / TEST-001 — connected reproduction and local fault injection
