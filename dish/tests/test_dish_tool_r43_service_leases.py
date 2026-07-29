@@ -46,6 +46,8 @@ def _principal(name, run):
 def test_two_clients_cannot_start_and_lease_same_task(tmp_path):
     backend = Backend()
     service = _service(tmp_path, backend)
+    # Production initializes and migrates the database before binding listeners.
+    initialize_database(service.config.db_path).close()
     barrier = threading.Barrier(2)
     results = []
 
