@@ -254,6 +254,14 @@ contract. The resulting late client feedback has low-to-moderate UX impact becau
 request before workflow or replay state is created. A future UUID representation redesign may be
 considered if stronger connected-side validation justifies changing the public contract.
 
+Known connected-reproduction limitation: the Action surface cannot safely inject pending or
+uncertain effects, inspect private journals, or invoke administrative recovery, so a GPT-only live
+test cannot exercise repair/replay consistency end to end. Local fault-injection tests and private
+admin tooling are the authoritative validation surfaces. This is a maintainer-confidence
+limitation, not a user-facing workflow defect; do not widen the public Action surface solely to make
+these states reproducible. Investigate further only when a concrete connected inconsistency is
+observed.
+
 The generic `tools/asana` interface is not a mutation path for governed Cooking tasks.
 `generic_asana_guard` fails closed for covered managed-task writes and moves. Its read commands
 remain available, including Planning's deliberate read-only lookup of completed cooking history.
