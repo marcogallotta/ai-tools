@@ -369,6 +369,23 @@ def validate_change_reason(reason: str) -> str:
     )
 
 
+def validate_rejection_reason(reason: str) -> str:
+    """Return reject evidence text that cannot alter line-oriented grammar."""
+
+    return _safe_audit_field(
+        reason,
+        field="reason",
+        required_rule="rejection_reason_required",
+        invalid_rule="rejection_reason_invalid_characters",
+        required_message="route reason is required",
+        invalid_message=(
+            "reason contains control, format, line-separator, surrogate, "
+            "or audit-delimiter characters"
+        ),
+        forbidden_literals=("—",),
+    )
+
+
 def validate_independence_attestation(attestation: str | None) -> str:
     """Return a safe single-line verifier attestation for durable evidence."""
 
@@ -419,11 +436,11 @@ def material_change_line(
             rule="material_change_materiality_invalid",
         )
     clean_change = str(change or "").strip()
-    clean_reason = str(reason or "").strip()
-    if not clean_change or not clean_reason:
+    clean_reason = validate_rejection_reason(reason)
+    if not clean_change:
         raise DishRuleError(
             "INVALID_ARGUMENT",
-            "material change and reason are required",
+            "material change is required",
             rule="material_change_detail_required",
         )
     verification_state = "pending-verification"

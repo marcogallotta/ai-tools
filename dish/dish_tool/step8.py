@@ -13,7 +13,12 @@ from typing import Any
 from .constants import COOKING_PROJECT_GID
 from .database import atomic_persistence, create_verification_cycle, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step, content_identity, release_marco_authorization_reservations
 from .errors import DishRuleError
-from .models import material_change_line, material_editor_line, utc_now
+from .models import (
+    material_change_line,
+    material_editor_line,
+    utc_now,
+    validate_rejection_reason,
+)
 from .lifecycle import assert_transition, hold, pending_verification, require_status, resumed
 from .task_document import DocumentParseError, TaskState, document_parse_error_payloads, parse_task_document, validate_task_document, finding_payload
 from .task_store import read_complete_task, write_exact_content
@@ -746,11 +751,9 @@ def _resume_rejected_cycle(
 def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, request_id: str | None = None, schema=None, honest_root=None):
 
     route = str(route or "").strip()
-    reason = str(reason or "").strip()
+    reason = validate_rejection_reason(reason)
     if route not in ROUTES:
         raise DishRuleError("INVALID_ARGUMENT", "route must be large, evidence, or human-review", rule="invalid_rejection_route")
-    if not reason:
-        raise DishRuleError("INVALID_ARGUMENT", "route reason is required", rule="rejection_reason_required")
     _validate_rejection_route_arguments(
         route=route,
         model=model,

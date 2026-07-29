@@ -267,6 +267,13 @@ class CurrentWorkflowService:
             recovery_reasons.append("unresolved_external_attempts")
         if migration_required:
             recovery_reasons.append(str(op["migration_reconciliation_reason"] or "migration_reconciliation_required"))
+        malformed_material_change_rules = sorted({
+            rule
+            for rule in validation_rules
+            if rule in {"material-changes.format", "material-changes.field-count"}
+        })
+        if malformed_material_change_rules:
+            recovery_reasons.append("historical_material_change_malformed")
         facts = {
             "status": op["status"],
             "phase": op["phase"],
@@ -294,6 +301,26 @@ class CurrentWorkflowService:
             "recovery_required": bool(recovery_reasons),
             "recovery_reasons": recovery_reasons,
         }
+        if malformed_material_change_rules:
+            facts.update({
+                "required_admin_action": "manual-reconciliation",
+                "resolver": (
+                    "Marco/admin must reconcile the malformed historical "
+                    "Material-change evidence and its durable exact-content binding"
+                ),
+                "continuation_surface": "manual-reconciliation",
+                "connected_action_available": False,
+                "admin_command": None,
+                "historical_evidence": {
+                    "kind": "malformed-material-change",
+                    "validation_rules": malformed_material_change_rules,
+                    "automatic_rewrite": False,
+                    "required_scope": [
+                        "live-task-evidence",
+                        "durable-exact-content-binding",
+                    ],
+                },
+            })
         return snapshot, facts
 
     def authoritative_view(self, operation_id: str, *, schema=None) -> dict[str, object]:
@@ -347,7 +374,11 @@ class CurrentWorkflowService:
                 message = "submission requires durable exact-content signoff"
             raise DishRuleError(
                 code, message, rule=rule,
-                details={"action": action, "authoritative_view": view},
+                details={
+                    "action": action,
+                    "operation_id": operation_id,
+                    "authoritative_view": view,
+                },
             )
         return view
 

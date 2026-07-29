@@ -25,7 +25,11 @@ from dish_tool.database import (
 )
 from dish_tool.errors import BackendFailure, DishRuleError
 from dish_tool.invocation_audit import record_invocation_audit
-from dish_tool.models import SectionRegistry, validate_independence_attestation
+from dish_tool.models import (
+    SectionRegistry,
+    validate_independence_attestation,
+    validate_rejection_reason,
+)
 from dish_tool.operation_execution import (
     execution_claim_is_live,
     execution_recovery_state,
@@ -1057,10 +1061,11 @@ class DishService:
 
         self._synchronize_exposed_actions(result, actions)
         data["service_access"] = access
+        workflow_required_admin_action = data.get("required_admin_action")
         required_admin_action = access.get("required_admin_action")
         if required_admin_action:
             data["required_admin_action"] = required_admin_action
-        else:
+        elif workflow_required_admin_action is None:
             data.pop("required_admin_action", None)
         if access.get("rule") == "service_lease_expired":
             return self._apply_expired_lease_guidance(
@@ -1450,6 +1455,15 @@ class DishService:
                         )
                         if reconciled is not None:
                             return reconciled
+
+                # Reject reasons become line-oriented Material-change evidence.
+                # Journal the request first so an invalid call replays exactly,
+                # then reject unsafe text before backend creation, lease changes,
+                # workflow execution claims, or task/evidence mutation.
+                if command == "reject":
+                    prepared_arguments["reason"] = validate_rejection_reason(
+                        prepared_arguments.get("reason")
+                    )
 
                 backend = self.backend_factory()
                 if command not in _READ_ONLY_AGENT_COMMANDS:

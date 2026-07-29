@@ -124,6 +124,7 @@ The connected `renew-lease` Action uses the common body shape: `arguments.operat
 alongside `client.run_id` and `client.request_id`; it is not supplied as a top-level or path parameter.
 
 - Missing or malformed request IDs are rejected before a request record exists. Once the UUID is accepted, expected argument, state, authorization, and workflow failures are stored just like successes.
+- `reject.reason` is validated after that request record begins but before backend construction, lease mutation, operation execution, evidence insertion, or task write. An unsafe reason therefore completes the request with a stored validation failure; exact replay returns that same failure, while a fresh request UUID with a valid reason may proceed.
 - A repeated completed request returns the original stored result with `data.request_replayed: true` and `data.request_id`; the first response is not labelled as a replay.
 - Reusing an ID for a different command, owner/run, or arguments returns non-retryable `CONFLICT` with `service_request_identity_conflict`.
 - A matching pending or uncertain request is never blindly executed again. Request completion is first-writer-wins: if an original executor and a recovery caller race to persist different envelopes, both callers return the one stored outcome, and the losing response is marked with `data.request_completion_race_resolved=true`. `start` may be reconciled only when exact durable operation and live-state evidence proves the original result. `reopen-planning` may resume the original external call only when persisted pre-effect identity, section, completion state, and `modified_at` still match exactly; otherwise it confirms an already-applied update without repeating it or remains uncertain. For multi-step workflow mutations routed through the current operation service, an active execution claim remains pending; a dead execution is reconstructed from its request-scoped durable baseline and exact changed attempts, content versions, Verification cycles, workflow steps, actor facts, and operation state. A claim-free unresolved uncertain execution still fences every fresh governed mutation on that operation.
@@ -175,6 +176,8 @@ There is intentionally no general-purpose `unblock` mutation.
 HTTP bodies are executed only when exactly the declared `Content-Length` bytes were received; a short body is rejected before JSON parsing. Tokens reject surrounding whitespace, numeric timeouts must be finite and positive, and private lease/backup routes reject undeclared fields just like Action/admin routes. The client closes failed HTTP response objects and maps abrupt disconnects into structured service-unavailable envelopes.
 
 Every complete task reread reasserts Cooking-project membership, so a task removed between the initial scope check and the authoritative read cannot open or continue an operation with a null placement. Asana section enumeration follows all pages. Verification start requires a non-blank, single-line independence attestation. CR, LF, tabs, ASCII controls, Unicode format characters, surrogates, line separators, and paragraph separators are rejected before request journaling, operation execution, Verification-cycle mutation, or attestation persistence; ordinary Unicode text remains valid. The same validator applies to every public route that accepts an attestation. Approval repeats only the exact verifier agent/run and inherits the exact persisted start attestation; its public shape does not accept the field. Large rejection repeats the exact verifier run and persisted attestation, while Evidence and Human Review rejection routes inherit that persisted attestation because their public route shapes do not accept the field. Actor facts are scoped to an operation, allowing a run to participate legally in a later operation without rewriting earlier lineage.
+
+Rejection reasons are NFC-normalized and must remain one safe Material-change field. The boundary rejects every Unicode control, format, surrogate, line-separator, or paragraph-separator character, including CR, LF, CRLF, NEL, vertical controls, zero-width format characters, U+2028, and U+2029. It also rejects the Material-change field delimiter (`—`). Valid long single-line Unicode text remains accepted. The same validator is applied again by Material-change rendering so caller text cannot alter the seven-field, one-record-per-line grammar even if an internal caller bypasses the public command path.
 
 ## Exact external-effect contract
 
@@ -246,6 +249,15 @@ For an Evidence hold specifically (`required_admin_action: supply-evidence`), `r
 preconstruction hold or the held Verification cycle), and `data.after_resolution.legal_actions`
 naming what becomes legal once Marco resolves the hold. `admin_command`/`connected_action_available`
 follow the same private-continuation convention already used for `recover-lease`.
+
+A historical task whose Material-change lines already fail `material-changes.format` or
+`material-changes.field-count` is never rewritten automatically. Ordinary connected actions remain
+blocked and return `workflow_recovery_required` with an empty `allowed_actions`, plus
+`data.required_admin_action: manual-reconciliation`,
+`data.continuation_surface: manual-reconciliation`,
+`data.connected_action_available: false`, `data.admin_command: null`, the exact deduplicated
+validation rules, and guidance that both the live evidence and its durable exact-content binding
+must be reconciled under explicit Marco/admin authority.
 
 Governed boundary responses include `data.validation_scope`, an ordered list drawn from:
 

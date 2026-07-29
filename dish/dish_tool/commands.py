@@ -28,6 +28,7 @@ from .models import (
     is_protocol_managed,
     validate_change_reason,
     validate_independence_attestation,
+    validate_rejection_reason,
 )
 from .results import error_envelope, result_envelope
 from .validation_scope import scope_for_command
@@ -94,9 +95,43 @@ def _exposed_result_contract(
     exposed_data = dict(data)
     if required_start_kind is not None:
         exposed_data["required_start_kind"] = required_start_kind
+    required_admin_action = (
+        required_admin_action or view.get("required_admin_action")
+    )
     if required_admin_action is not None:
         exposed_data["required_admin_action"] = required_admin_action
+    if view.get("recovery_required"):
+        for key in (
+            "recovery_required",
+            "recovery_reasons",
+            "resolver",
+            "continuation_surface",
+            "connected_action_available",
+            "admin_command",
+            "historical_evidence",
+        ):
+            if key in view:
+                exposed_data[key] = view[key]
     return actions, exposed_data
+
+
+def _copy_recovery_guidance(
+    view: Mapping[str, Any], data: dict[str, Any]
+) -> None:
+    if "required_admin_action" in view:
+        data["required_admin_action"] = view["required_admin_action"]
+    if view.get("recovery_required"):
+        for key in (
+            "recovery_required",
+            "recovery_reasons",
+            "resolver",
+            "continuation_surface",
+            "connected_action_available",
+            "admin_command",
+            "historical_evidence",
+        ):
+            if key in view:
+                data[key] = view[key]
 
 
 def _admin_resolver(action: str | None) -> str | None:
@@ -231,6 +266,8 @@ class DishApplication:
         except DishRuleError as exc:
             if trace.task_gid is None:
                 trace.task_gid = _gid(exc.details.get("task_gid"))
+            if trace.submission_id is None:
+                trace.submission_id = _gid(exc.details.get("operation_id"))
             if exc.code == "WRONG_STATE" and exc.details.get("actual"):
                 trace.state = str(exc.details["actual"])
             result = error_envelope(
@@ -470,8 +507,7 @@ def _step5_read(self, *, trace: CommandTrace, agent: str, task_gid: str) -> dict
     }
     if view.get("required_start_kind") is not None:
         data["required_start_kind"] = view["required_start_kind"]
-    if view.get("required_admin_action") is not None:
-        data["required_admin_action"] = view["required_admin_action"]
+    _copy_recovery_guidance(view, data)
     _apply_hold_continuation(self.conn, operation_id, view, data)
     trace.submission_id = operation_id
     trace.state = view["status"]
@@ -514,8 +550,7 @@ def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str)
         content["identity_matches"] = view.get("identity_matches")
     if view.get("required_start_kind") is not None:
         data["required_start_kind"] = view["required_start_kind"]
-    if view.get("required_admin_action") is not None:
-        data["required_admin_action"] = view["required_admin_action"]
+    _copy_recovery_guidance(view, data)
     _apply_hold_continuation(self.conn, operation_id, view, data)
     trace.submission_id = operation_id
     trace.task_gid = data["operation"]["task_gid"]
@@ -883,6 +918,7 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None =
 
 def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
+    reason = validate_rejection_reason(reason)
     route_release = self._load_release(None)
     routed = self.operation_service.route(operation_id, command="reject", protocol_version=route_release.protocol_version)
     exists = routed.row
