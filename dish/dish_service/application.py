@@ -1028,6 +1028,30 @@ class DishService:
                 or operation["phase"] != "prepare_required"
             ):
                 raise pending_error("start", request_id, operation_id=operation_id)
+            if kind == "change":
+                intent = conn.execute(
+                    """SELECT intended_json, completed_at FROM operation_steps
+                         WHERE operation_id=? AND step_name='change_intent'""",
+                    (operation_id,),
+                ).fetchone()
+                expected_intent = {
+                    "level": arguments.get("change_level"),
+                    "reason": arguments.get("change_reason"),
+                }
+                try:
+                    recorded_intent = (
+                        None if intent is None else json.loads(intent["intended_json"])
+                    )
+                except (TypeError, ValueError):
+                    recorded_intent = None
+                if (
+                    intent is None
+                    or not intent["completed_at"]
+                    or recorded_intent != expected_intent
+                ):
+                    raise pending_error(
+                        "start", request_id, operation_id=operation_id
+                    )
             live = read_complete_task(
                 backend, task_gid=task_gid, project_gid=COOKING_PROJECT_GID
             )

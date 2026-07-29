@@ -35,6 +35,12 @@ def _operation(tmp_path: Path):
         expected_section_gid="research",
         schema_version="2",
         actors=OperationActors(editor_agent="gpt", run_id="run-1"),
+        initial_steps={
+            "change_intent": {
+                "level": "small",
+                "reason": "Exercise persistence invariants",
+            }
+        },
     )
     return db_path, conn, op, head
 

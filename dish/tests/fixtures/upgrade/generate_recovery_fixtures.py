@@ -44,6 +44,23 @@ def add_operation(conn: sqlite3.Connection, *, op: str, task: str, expected: str
          None, NOW, NOW if completed else None, None, resolved_phase, terminal_outcome,
          expected_section_gid),
     )
+    conn.execute(
+        """INSERT INTO operation_steps(
+               operation_id, step_name, intended_json, completed_at
+           ) VALUES(?, 'change_intent', ?, ?)""",
+        (
+            op,
+            json.dumps(
+                {
+                    "level": "small",
+                    "reason": "Deterministic recovery fixture change",
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            NOW,
+        ),
+    )
 
 
 def add_version(conn: sqlite3.Connection, *, version: str, task: str, op: str,

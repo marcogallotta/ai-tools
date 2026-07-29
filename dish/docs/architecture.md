@@ -104,6 +104,8 @@ Dish persists the intended effect before calling Asana and durably finalizes the
 attempt after reread. Creation facts and intended effects become immutable when recorded, not only
 after success.
 
+A Change operation and its completed `change_intent` step are one local transaction; an open Change without that exact intent is invalid and cannot be reconstructed as a successful start.
+
 Every multi-step workflow mutation routed through the operation service has a request-scoped
 `operation_executions` baseline. Failure reconstruction may attribute only evidence created or
 changed by that execution; older operation history cannot be presented as the failed call's work.

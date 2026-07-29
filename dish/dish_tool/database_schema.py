@@ -1456,8 +1456,6 @@ BEFORE DELETE ON planning_reopen_attempts
 BEGIN SELECT RAISE(ABORT, 'planning reopen attempts are append-only'); END;
 """
 
-
-
 _MIGRATION_27 = """
 ALTER TABLE operation_executions ADD COLUMN resolution_evidence_json TEXT
     CHECK(resolution_evidence_json IS NULL OR json_valid(resolution_evidence_json));
@@ -1518,7 +1516,46 @@ WHEN NOT (
 )
 BEGIN SELECT RAISE(ABORT, 'service request completion or resolution is invalid'); END;
 """
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27}
+
+
+_MIGRATION_28 = """
+DROP TRIGGER operations_creation_facts_immutable_update;
+UPDATE operations
+   SET migration_reconciliation_required=1,
+       migration_reconciliation_reason=(
+           CASE
+             WHEN length(trim(COALESCE(migration_reconciliation_reason, ''))) > 0
+             THEN migration_reconciliation_reason
+             ELSE 'legacy change operation predates atomic change_intent evidence'
+           END
+       )
+ WHERE operation_kind='change'
+   AND migration_reconciliation_required != 1
+   AND NOT EXISTS (
+       SELECT 1
+         FROM operation_steps AS step
+        WHERE step.operation_id=operations.operation_id
+          AND step.step_name='change_intent'
+          AND step.completed_at IS NOT NULL
+          AND json_valid(step.intended_json)
+          AND json_extract(step.intended_json, '$.level') IN ('small','large')
+          AND length(trim(json_extract(step.intended_json, '$.reason'))) > 0
+   );
+CREATE TRIGGER operations_creation_facts_immutable_update
+BEFORE UPDATE ON operations
+WHEN NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.operation_kind IS NOT OLD.operation_kind
+  OR NEW.expected_identity IS NOT OLD.expected_identity
+  OR NEW.schema_version IS NOT OLD.schema_version
+  OR NEW.expected_section_gid IS NOT OLD.expected_section_gid
+  OR NEW.created_at IS NOT OLD.created_at
+  OR NEW.migration_reconciliation_required IS NOT OLD.migration_reconciliation_required
+  OR NEW.migration_reconciliation_reason IS NOT OLD.migration_reconciliation_reason
+BEGIN SELECT RAISE(ABORT, 'operation creation facts are immutable'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -1924,6 +1961,18 @@ def _semantic_relationship(
             "targets": [{**same_record, "fields": ["finished_at"]}],
             "required_predicate": "outcome=started implies finished_at is absent",
         },
+        "change_operation_intent_binding": {
+            "source_fields": ["operation_kind", "operation_id"],
+            "targets": [{
+                "record_type": "operation_steps",
+                "selector_fields": ["operation_id", "step_name=change_intent"],
+                "fields": ["intended_json", "completed_at"],
+            }],
+            "required_predicate": (
+                "every change operation has one completed change_intent step with level small or large "
+                "and a non-empty reason"
+            ),
+        },
         "completed_operation_state": {
             "source_fields": [
                 "status", "completed_at", "phase", "terminal_outcome", "schema_version", "expected_identity"
@@ -2259,7 +2308,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 ),
             ).fetchone()
         if signoff_attempt is None or corrected_version is None or correction_write is None:
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "small_correction_lineage", "verification_cycles", row["cycle_id"],
             ))
     for row in conn.execute("SELECT * FROM dish_inspect_facts"):
@@ -2308,6 +2357,36 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 "planning_reopen_pending", "planning_reopen_attempts", row["attempt_id"],
             ))
     for row in conn.execute("SELECT * FROM operations"):
+        if (
+            row["operation_kind"] == "change"
+            and row["migration_reconciliation_required"] != 1
+        ):
+            intent = conn.execute(
+                """SELECT intended_json, completed_at FROM operation_steps
+                     WHERE operation_id=? AND step_name='change_intent'""",
+                (row["operation_id"],),
+            ).fetchone()
+            try:
+                intended = None if intent is None else json.loads(intent["intended_json"])
+            except (TypeError, ValueError):
+                intended = None
+            valid_intent = bool(
+                intent is not None
+                and intent["completed_at"]
+                and isinstance(intended, dict)
+                and intended.get("level") in {"small", "large"}
+                and isinstance(intended.get("reason"), str)
+                and intended["reason"].strip()
+            )
+            if not valid_intent:
+                problems.append(_semantic_problem(
+                    conn,
+                    "change_operation_intent_binding",
+                    "operations",
+                    row["operation_id"],
+                    related_record_type="operation_steps",
+                    related_record_id=f"{row['operation_id']}:change_intent",
+                ))
         if row["status"] == "completed" and (row["completed_at"] is None or row["phase"] != "terminal" or not row["terminal_outcome"] or not row["schema_version"] or not row["expected_identity"]):
             problems.append(_semantic_problem(conn,
                 "completed_operation_state", "operations", row["operation_id"],

@@ -149,16 +149,17 @@ def claim_operation(
     if existing is None:
         confirm_task_content(conn, task_gid=live.gid, title=live.title, notes=live.notes, schema_version=release.schema_version, boundary="start_baseline")
     actors = OperationActors(editor_agent=agent if kind in {"planning", "change"} else None, researcher_agent=agent if kind == "initial" else None, run_id=str(run_id or "").strip() or None)
-    operation = create_operation(conn, task_gid=live.gid, operation_kind=kind, expected_identity=live.identity, schema_version=release.schema_version, expected_section_gid=live.section_gid, actors=actors)
-    if kind == "change":
-        declare_operation_step(
-            conn,
-            operation["operation_id"],
-            "change_intent",
-            {"level": change_level, "reason": change_reason},
-        )
-        complete_operation_step(conn, operation["operation_id"], "change_intent")
-    return operation
+    initial_steps = (
+        {"change_intent": {"level": change_level, "reason": change_reason}}
+        if kind == "change"
+        else None
+    )
+    return create_operation(
+        conn, task_gid=live.gid, operation_kind=kind,
+        expected_identity=live.identity, schema_version=release.schema_version,
+        expected_section_gid=live.section_gid, actors=actors,
+        initial_steps=initial_steps,
+    )
 
 
 def verification_lineage(

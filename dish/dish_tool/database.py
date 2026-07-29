@@ -667,6 +667,7 @@ def create_operation(
     schema_version: str,
     expected_section_gid: str | None = None,
     actors: OperationActors = OperationActors(),
+    initial_steps: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> sqlite3.Row:
     operation_id = str(uuid.uuid4())
     conn.execute("BEGIN IMMEDIATE")
@@ -712,6 +713,9 @@ def create_operation(
         row = conn.execute(
             "SELECT * FROM operations WHERE operation_id = ?", (operation_id,)
         ).fetchone()
+        for step_name, intended in dict(initial_steps or {}).items():
+            declare_operation_step(conn, operation_id, step_name, intended)
+            complete_operation_step(conn, operation_id, step_name)
         role = "planner" if operation_kind == "planning" else ("constructor" if operation_kind == "initial" else "material_editor")
         actor = actors.researcher_agent or actors.editor_agent
         if actor:
