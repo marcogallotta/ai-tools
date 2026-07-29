@@ -4,6 +4,30 @@ This file separates open post-rollout candidates from limitations accepted for l
 not implementation authorization. Current authority boundaries and runtime behavior remain defined
 by [`architecture.md`](architecture.md) and [`runtime-contract.md`](runtime-contract.md).
 
+## Rollout and triage context
+
+Marco is the sole human operator and the sole person responsible for implementation, with AI agents
+helping implement and use Dish concurrently. Concurrency safety and clear agent guidance are
+therefore real requirements, but they do not imply a multi-operator product or a need to expose
+every private administrative operation to agents.
+
+The current workflow is already causing enough friction to block effective use. Prefer rollout over
+pre-emptive completeness when a failure is unlikely, bounded, fail-closed, and recoverable by Marco
+without losing, corrupting, duplicating, or wrongly assigning live production work. A small manual
+step or delayed diagnosis is acceptable; recurring agent dead ends, substantial operator toil, or a
+credible threat to production state are not.
+
+Classify an issue for pre-rollout work only when its likely operational cost exceeds the cost of
+delaying migration. Otherwise place it under post-rollout candidates or accept it for launch with a
+clear workaround and revisit trigger. For every new or reconsidered issue, record:
+
+- observed or expected recurrence, distinguishing a demonstrated pattern from a hypothetical edge;
+- worst credible production effect, including any concurrency amplification;
+- whether agents receive enough guidance to stop safely or ask Marco for a specific action;
+- Marco's recovery effort and whether recovery requires private implementation knowledge;
+- whether the proper fix belongs to the planned database backend or another later architecture;
+- the concrete frequency, pain, or safety signal that should trigger reconsideration.
+
 ## Post-rollout candidates
 
 ### DESIGN-003 — connected request-status inspection
