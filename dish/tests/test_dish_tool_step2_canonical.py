@@ -81,6 +81,22 @@ def test_planning_brief_round_trip_has_exact_eight_fields():
     assert parse_planning_brief(brief.render()).values == brief.values
 
 
+def test_planning_brief_rejects_unsupported_field_instead_of_absorbing_it():
+    candidate = (
+        f"{PLANNING.rstrip()}\n"
+        "Serving note: hidden unsupported field\n"
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        parse_planning_brief(candidate)
+
+    assert getattr(exc_info.value, "rule") == "planning_field_unknown"
+    assert getattr(exc_info.value, "details") == {
+        "field": "Serving note",
+        "line": 9,
+    }
+
+
 @pytest.mark.parametrize("field_name", PLANNING_FIELDS)
 def test_planning_brief_rejects_empty_required_values(field_name):
     candidate = "\n".join(
@@ -210,6 +226,22 @@ def test_extra_top_level_section_fails_but_lower_heading_is_allowed():
         assert getattr(exc, "rule") == "top_level_section_unknown"
     else:
         raise AssertionError("extra top-level section accepted")
+
+
+def test_complete_task_rejects_unsupported_planning_field():
+    candidate = TASK.replace(
+        "Destination section: Sichuan — 12345",
+        (
+            "Destination section: Sichuan — 12345\n"
+            "Serving note: hidden unsupported field"
+        ),
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        parse_task_document(candidate)
+
+    assert getattr(exc_info.value, "rule") == "planning_field_unknown"
+    assert getattr(exc_info.value, "details")["field"] == "Serving note"
 
 
 def test_schema_migration_executes_declared_target_version_handler():

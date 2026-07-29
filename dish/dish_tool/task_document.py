@@ -488,12 +488,19 @@ def _parse_exact_fields(
 
     values: dict[str, str] = {}
     current: str | None = None
-    for line in lines:
-        match = re.match(r"^([^:]+):(?:\s*(.*))$", line)
+    for line, line_number in zip(lines, exact_line_numbers):
+        match, _compatibility_folded = _authority_field_match(line)
         if match and match.group(1) in names:
             label, value = match.group(1), match.group(2)
             values[label] = value
             current = label
+        elif match:
+            label = match.group(1)
+            raise DocumentParseError(
+                f"{context}_field_unknown",
+                f"unsupported {context} field: {label}",
+                details={"field": label, "line": line_number},
+            )
         elif current is not None and line.strip():
             values[current] = f"{values[current]}\n{line}"
         elif line.strip():

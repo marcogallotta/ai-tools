@@ -158,6 +158,36 @@ def test_planning_prepare_reports_every_missing_field_and_required_label(tmp_pat
     ]
 
 
+def test_planning_prepare_rejects_unsupported_field_before_write(tmp_path):
+    b = Backend("Planning task", "")
+    a = app(tmp_path, b)
+    started = a.execute(
+        "start", agent="gpt", task_gid="t", kind="planning",
+        change_level=None, change_reason=None,
+    )
+    candidate = (
+        f"{PLANNING.rstrip()}\n"
+        "Serving note: hidden unsupported field\n"
+    )
+
+    result = a.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"],
+        file_path=write(tmp_path, "unsupported-planning-field.txt", candidate),
+    )
+
+    assert result["code"] == "VALIDATION_FAILED"
+    assert result["errors"] == [
+        {
+            "rule": "planning_field_unknown",
+            "message": "unsupported planning field: Serving note",
+            "field": "Serving note",
+            "line": 10,
+        }
+    ]
+    assert b.writes == 0
+
+
 @pytest.mark.parametrize("field_name", ["Dish candidate", "Purpose", "Priors"])
 def test_planning_prepare_rejects_empty_required_values_before_write(
     tmp_path, field_name
@@ -256,6 +286,33 @@ def test_initial_start_rejects_unsupported_exemption_before_operation(tmp_path):
         and error.get("location") == "Exemptions"
         for error in result["errors"]
     )
+    assert result["submission_id"] is None
+    assert b.writes == 0
+    assert b.moves == 0
+
+
+def test_initial_start_rejects_unsupported_planning_field_before_operation(
+    tmp_path,
+):
+    candidate = TASK.replace(
+        "Destination section: Sichuan — 12345",
+        (
+            "Destination section: Sichuan — 12345\n"
+            "Serving note: hidden unsupported field"
+        ),
+    )
+    lines = candidate.splitlines()
+    b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
+    a = app(tmp_path, b)
+
+    result = a.execute(
+        "start", agent="gpt", task_gid="t", kind="initial",
+        change_level=None, change_reason=None,
+    )
+
+    assert result["code"] == "VALIDATION_FAILED"
+    assert result["errors"][0]["rule"] == "planning_field_unknown"
+    assert result["errors"][0]["field"] == "Serving note"
     assert result["submission_id"] is None
     assert b.writes == 0
     assert b.moves == 0
