@@ -257,9 +257,16 @@ class DishApplication:
                 or exc.rule == "planning_reopen_reconciliation_required"
             ):
                 result.setdefault("data", {}).update(exc.details)
-            for key in ("required_admin_action", "resolver", "legal_next_step"):
+            for key in (
+                "required_admin_action",
+                "required_start_kind",
+                "resolver",
+                "legal_next_step",
+            ):
                 if exc.details.get(key):
                     result.setdefault("data", {})[key] = exc.details[key]
+            if exc.rule == "planning_handoff_requires_initial":
+                result["allowed_actions"] = ["start"]
             if trace.submission_id:
                 try:
                     release = self._load_release(None)
@@ -561,6 +568,29 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
                 },
             )
         if live.notes:
+            from .task_document import (
+                DocumentParseError,
+                parse_planning_brief,
+                validate_planning_brief,
+            )
+            try:
+                planning_brief = parse_planning_brief(live.notes)
+                planning_findings = validate_planning_brief(planning_brief).findings
+            except DocumentParseError:
+                planning_findings = (object(),)
+            if not planning_findings:
+                raise DishRuleError(
+                    "VALIDATION_FAILED",
+                    "Planning is complete; continue with initial Research",
+                    rule="planning_handoff_requires_initial",
+                    details={
+                        "required_start_kind": "initial",
+                        "legal_next_step": (
+                            "start with kind=initial using a fresh client.request_id; "
+                            "do not start Planning again"
+                        ),
+                    },
+                )
             raise DishRuleError("VALIDATION_FAILED", "planning must start from a bare task", rule="planning_notes_not_empty")
     else:
         if diag["parsed"] is None:

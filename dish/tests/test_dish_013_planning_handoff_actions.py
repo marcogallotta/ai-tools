@@ -56,3 +56,29 @@ def test_service_preserves_planning_handoff_start_contract(tmp_path):
     assert prepared["allowed_actions"] == ["start"]
     assert prepared["data"]["required_start_kind"] == "initial"
     assert prepared["data"]["service_access"] == {"state": "handoff"}
+
+    repeated_planning = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": "123456789", "kind": "planning"},
+        principal=principal,
+        request_id="44444444-4444-4444-8444-444444444444",
+    )
+
+    assert repeated_planning["code"] == "VALIDATION_FAILED"
+    assert repeated_planning["retryable"] is True
+    assert repeated_planning["allowed_actions"] == ["start"]
+    assert repeated_planning["errors"] == [
+        {
+            "rule": "planning_handoff_requires_initial",
+            "required_start_kind": "initial",
+            "legal_next_step": (
+                "start with kind=initial using a fresh client.request_id; "
+                "do not start Planning again"
+            ),
+        }
+    ]
+    assert repeated_planning["data"]["required_start_kind"] == "initial"
+    assert repeated_planning["data"]["legal_next_step"] == (
+        "start with kind=initial using a fresh client.request_id; "
+        "do not start Planning again"
+    )

@@ -72,7 +72,11 @@ run that audited command with a reason and, only after success, directing the ag
 command is the only route that clears the completion flag; it preserves exact
 content and placement, persists a completion-state attempt, and records both domain and invocation
 audits before exposing `start` again. A completed cross-stage handoff reports `start` and the required
-start kind even though the old operation itself is terminal. Verification `start` exposes only `inspect` after the review binding is complete. The exact
+start kind even though the old operation itself is terminal. If a caller nevertheless requests
+Planning again against the valid Planning brief, Dish returns
+`planning_handoff_requires_initial`, keeps `start` exposed, and repeats
+`data.required_start_kind: initial`; this is not a completed-task reopen state. Verification
+`start` exposes only `inspect` after the review binding is complete. The exact
 verifier run must then inspect the still-current candidate in Verification Queue; that reread appends
 a cycle-bound `dish_inspect` fact and only then exposes `approve` and `reject`. Task-level `read` responses expose any active operation, its submission
 ID, workflow state, and principal-filtered next actions. Successful operation-scoped lease renewal
