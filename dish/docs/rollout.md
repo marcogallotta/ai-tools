@@ -24,6 +24,8 @@ complete and need not be repeated wholesale:
   exact content identities, placement, request replay, and final signoff confirmed.
 - A fresh Small-correction lifecycle, Action lease-renewal replay/conflict, and failed-first
   validation replay/conflict passed.
+- The exact GPT editor Preview gate in [`../deploy/gpt-action.md`](../deploy/gpt-action.md) is
+  complete.
 - Private lease recovery and governed-change authorization passed with durable binding, exact
   replay, and changed-payload conflict.
 - Managed backup and restore passed with exact installed identity, restored durable state, healthy
@@ -59,23 +61,21 @@ implementation or runtime documentation, the current code and contracts remain a
 Use the isolated rollout checkout, test project, database, and backup directory documented in
 [`../README.md`](../README.md). Never point this rehearsal at production Cooking.
 
-1. Complete the exact GPT editor Preview gate in
-   [`../deploy/gpt-action.md`](../deploy/gpt-action.md).
-2. Complete the release-specific evidence record and final semantic rehearsal in the Honest rollout
+1. Complete the release-specific evidence record and final semantic rehearsal in the Honest rollout
    checkout's [`rollout.md`](../../../honest-pantry-dish-rollout/rollout.md). Test the final Planning,
    Research, and Verification protocols through Dish using its bounded regression set, including
    sound positive controls and known material failure shapes.
-3. Review code commits since the last recorded automated pass and run proportionate regression
+2. Review code commits since the last recorded automated pass and run proportionate regression
    coverage against the frozen release revisions. Use the complete Dish suite only when the
    intervening workflow, persistence, concurrency, recovery, migration, or service-boundary changes
    warrant it.
-4. Close the activation record with one frozen Honest revision, one frozen Dish revision, verified
+3. Close the activation record with one frozen Honest revision, one frozen Dish revision, verified
    runtime configuration and health, and durable redacted transcript locations outside `/tmp`.
    Reuse applicable recorded smoke evidence rather than rerunning every earlier adversarial case.
-5. Confirm stale-state, uncertain-effect, migration-failure, and movement-retry enforcement through
+4. Confirm stale-state, uncertain-effect, migration-failure, and movement-retry enforcement through
    the existing authoritative automated or local fault-injection coverage. Do not require a
    connected agent to manufacture an unsafe state that the Action surface cannot legally create.
-6. Confirm the rollback inputs below are complete and usable.
+5. Confirm the rollback inputs below are complete and usable.
 
 Stop on any condition named in the smoke procedure. Resolve the failure and repeat the affected
 gate, or document it under the established launch-triage policy when it is proven low-risk and
