@@ -894,6 +894,17 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
     for section in required_sections:
         if not document.sections.get(section):
             findings.append(DocumentFinding("document.required-section", FindingKind.SYNTAX, f"missing required section {section}", section))
+    quantities = document.sections.get("QUANTITIES")
+    if quantities and not any(
+        re.fullmatch(r"Portions:\s*\S.*", line)
+        for line in quantities.splitlines()
+    ):
+        findings.append(DocumentFinding(
+            "quantities.portions-required",
+            FindingKind.SYNTAX,
+            "QUANTITIES requires a non-empty Portions: line",
+            "QUANTITIES",
+        ))
     if not document.recognition.strip():
         findings.append(DocumentFinding(
             "document.recognition-empty",

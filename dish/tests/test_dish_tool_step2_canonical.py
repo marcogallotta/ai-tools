@@ -190,6 +190,31 @@ def test_complete_task_rejects_empty_recognition_line():
     ]
 
 
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "",
+        "Portions:",
+    ],
+)
+def test_complete_task_requires_nonempty_portions_line(replacement):
+    candidate = TASK.replace("Portions: one sitting", replacement, 1)
+
+    validation = validate_task_document(parse_task_document(candidate))
+
+    assert [
+        (finding.rule, finding.kind, finding.message, finding.location)
+        for finding in validation.findings
+    ] == [
+        (
+            "quantities.portions-required",
+            FindingKind.SYNTAX,
+            "QUANTITIES requires a non-empty Portions: line",
+            "QUANTITIES",
+        )
+    ]
+
+
 def test_all_canonical_actor_names_and_verified_material_change_are_valid():
     for actor in ("ChatGPT", "Custom GPT", "Claude", "Codex"):
         candidate = TASK.replace(

@@ -158,6 +158,35 @@ def test_research_prepare_rejects_empty_recognition_before_write(tmp_path):
     assert b.moves == 0
 
 
+def test_research_prepare_rejects_missing_portions_before_write(tmp_path):
+    candidate = TASK.replace("Portions: one sitting\n", "", 1)
+    lines = TASK.splitlines()
+    b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
+    a = app(tmp_path, b)
+    started = a.execute(
+        "start", agent="gpt", task_gid="t", kind="initial",
+        change_level=None, change_reason=None,
+    )
+
+    result = a.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"],
+        file_path=write(tmp_path, "missing-portions.txt", candidate),
+    )
+
+    assert result["code"] == "VALIDATION_FAILED"
+    assert result["errors"] == [
+        {
+            "rule": "quantities.portions-required",
+            "kind": "syntax",
+            "message": "QUANTITIES requires a non-empty Portions: line",
+            "location": "QUANTITIES",
+        }
+    ]
+    assert b.writes == 0
+    assert b.moves == 0
+
+
 def test_planning_prepare_reports_every_missing_field_and_required_label(tmp_path):
     b = Backend("Planning task", "")
     a = app(tmp_path, b)
