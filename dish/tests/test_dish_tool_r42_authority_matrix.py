@@ -30,7 +30,12 @@ def _review(app, *, run="review", agent="codex"):
 
 def test_editorial_recognition_punctuation_remains_non_material():
     before = _doc()
-    after = _doc(TASK.replace(before.recognition, before.recognition + ","))
+    after = _doc(
+        TASK.replace(
+            before.recognition,
+            before.recognition.replace("compact side", "compact, side"),
+        )
+    )
     assert explicit_material_reasons(before, after) == ()
     require_small_scope(before, after)
 
@@ -44,12 +49,24 @@ def test_terminal_title_punctuation_and_outer_space_preserve_identity():
     require_small_scope(before, after)
 
 
-def test_internal_title_punctuation_remains_material():
+def test_internal_title_punctuation_remains_non_material():
     before = _doc()
     lines = TASK.splitlines()
     lines[0] = lines[0].replace("Test dish", "Test, dish")
     after = _doc("\n".join(lines))
-    assert "title_identity" in explicit_material_reasons(before, after)
+    assert explicit_material_reasons(before, after) == ()
+    require_small_scope(before, after)
+
+
+def test_substantive_recognition_change_remains_material():
+    before = _doc()
+    after = _doc(
+        TASK.replace(
+            before.recognition,
+            "A durable three-sitting meal for testing texture.",
+        )
+    )
+    assert "title_or_identity" in explicit_material_reasons(before, after)
 
 
 def _authorize_dish_candidate(app, backend, operation_id, *, before="Test dish", after="Different dish"):
@@ -259,6 +276,42 @@ def test_post_signoff_non_material_request_is_forced_material_for_dish_candidate
         "Codex — self-reported model: gpt-5.6-sol — updated the candidate — rename candidate — "
         "Small — pending-verification"
     ) in backend.notes
+
+
+def test_post_signoff_internal_comma_remains_non_material(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    _approve_and_submit(app, operation_id)
+    started = app.execute(
+        "start", agent="gpt", task_gid="t", kind="change",
+        change_level="small", change_reason="editorial comma", run_id="comma-editor",
+    )
+    candidate = tmp_path / "comma-change.txt"
+    candidate.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "A compact side dish for testing texture.",
+            "A compact, side dish for testing texture.",
+        )
+    )
+
+    prepared = app.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"], file_path=str(candidate),
+        material_classification="non-material",
+    )
+
+    assert prepared["ok"]
+    assert prepared["state"] == "completed"
+    assert prepared["data"]["handoff"] == "checked-in"
+    assert prepared["data"]["verification_cycle"] is None
+    assert prepared["data"]["material_classification"] == {
+        "classified_subject": "canonical body diff from the signed baseline",
+        "requested": "non-material",
+        "effective": "non-material",
+        "forced_material_reasons": [],
+        "route": "signed-check-in",
+    }
+    assert "Status: ready" in backend.notes
+    assert "Verified by: Codex" in backend.notes
 
 
 def test_evidence_hold_blocks_content_drift_before_resolution(tmp_path):

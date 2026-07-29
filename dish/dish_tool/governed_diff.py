@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import dataclasses
 import re
+import unicodedata
 from dataclasses import dataclass
 
 from .database import reserve_marco_authorizations
@@ -237,8 +238,13 @@ def _handling_only_change(old: str, new: str) -> bool:
 
 
 def _canonical_title_identity(value: str) -> str:
-    """Compare title identity while ignoring outer space and terminal punctuation."""
-    return re.sub(r"[\s\.!?;:,]+$", "", value.strip())
+    """Compare title/recognition identity without editorial punctuation or space."""
+    return "".join(
+        character
+        for character in value
+        if not character.isspace()
+        and not unicodedata.category(character).startswith("P")
+    )
 
 
 def explicit_material_reasons(before, after) -> tuple[str, ...]:
