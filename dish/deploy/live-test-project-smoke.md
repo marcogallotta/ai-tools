@@ -190,34 +190,76 @@ Disposable task `1216978477285994`, operation
 `6a279005-07e9-44ab-8d03-6ddcf12fc3f0`, remains completed and `ready` in Reference and requires
 approved test-project cleanup.
 
-## Stage 3 — complete the live rehearsal
+## Stage 3 — complete the live rehearsal: in progress
 
 Use one new `run_id`, new disposable tasks, and one continuous transcript. Recheck Stage 2 gates
 whose fixes have been claimed before relying on the workflow result.
 
-1. Record all preconditions, revisions, endpoints, database/Asana backup IDs, and initial health.
-2. Confirm the public endpoint returns 404 for each exact path: `/health`,
+### Connected GPT pass 2026-07-29
+
+One disposable end-to-end Action lifecycle passed against protocol 1.0.10, task schema 2, and test
+project `1216693403164366`. The checkout revision and a durable complete transcript were not
+reported, so this is gate evidence rather than the final activation record.
+
+- Primary run ID: `25dfc6b1-2f8d-4fa8-a13f-67e1b060a1b2`.
+- Independent verifier run ID: `2e5ac3fe-15fa-4d22-9c77-a0a8e1f3689d`.
+- Fixture task: `1216980073160976`; terminal Research operation:
+  `294e046c-6167-4648-b97a-280317b15a63`.
+- Read-only `sections` succeeded without a request ID and returned the complete configured
+  destination set.
+- Planning operation `56e44db3-18be-4375-9aae-feae139b7c94` completed and handed off to Research.
+  Research then wrote one canonical candidate and moved the task once to Verification Queue.
+- The independent verifier inspected exact candidate identity
+  `4aaa42f240a636bafae6f7b1e9fc137e373503cd9d1fcf9e31f3f98782725809`, approved with no
+  correction, signed identity
+  `0401369187dc41df393c19ffb9d7d3b9f1be3e09c634e6bb80fff3b2696d18de`, and submitted once.
+- Final reread showed `ready`, Reference placement `1216891250621322`, the exact signed identity,
+  no drift, no migration requirement, no open operation, and no active lease.
+- Exact replay of create request `0c3af1c3-3d07-4bc7-b0f8-4ace0e3d7d5c` returned the same task
+  with `request_replayed:true`. Changed-title reuse returned non-retryable
+  `CONFLICT / service_request_identity_conflict` and caused no second mutation.
+- No connected-tool transport failure, raw exception, uncertain result, repeated movement, or
+  contradictory terminal state occurred.
+
+No defect was established by two observations: post-approval inspection reported consumed
+inspection flags while coherently exposing only `submit`, and Research canonicalization replaced
+the fixture prefix with the protocol-required `[non-main]` title. Retest only if either contradicts
+the documented contract.
+
+The fixture remains completed in Reference and requires approved cleanup. Connected-only breadth
+not exercised in this pass was stale content, stale placement, Small, Large, Evidence, Human
+Review, lease-renewal replay/conflict, failed-first validation replay, safe movement retry, and the
+editor Preview gate.
+
+### Gate ledger
+
+1. **Outstanding:** record all preconditions, revisions, endpoints, database/Asana backup IDs, and
+   initial health in one continuous private transcript.
+2. **Outstanding:** confirm the public endpoint returns 404 for `/health`,
    `/v1/commands/sections`, `/v1/admin/recover`, and `/v1/admin/backups/create`.
-3. Confirm the Action token succeeds only on `/v1/action/sections`; CLI and admin tokens fail there.
-4. Create a disposable task and run Planning → Research Queue, confirming exact title, notes
-   identity, and section membership after every write and movement.
-5. Run Research → Verification Queue using one immutable exact candidate file.
-6. Start a genuinely independent Verification run, approve, and submit to the configured non-queue
-   destination. Confirm durable verifier lineage, signoff identity, final content, and placement.
-7. Attempt stale content and stale placement baselines separately and prove zero mutation.
-8. Expire a disposable client lease, run `dish-admin recover-lease`, and then complete the legal
-   recovery/continuation.
-9. Exercise one legitimate governed-change authorization through the private HTTP-backed
-   `dish-admin` client. Confirm its exact durable `marco_authorizations` binding and exact replay.
-10. Interrupt one disposable workflow operation at a documented recoverable boundary. Run
-    `dish-admin recover` only after a live reread, then compare CLI, private HTTP, live Asana, and
-    durable evidence.
-11. Run `dish-admin migrate` on a disposable previous-schema task, confirm the exact migrated live
-    content, and confirm the canonical no-migration response for an already-current task.
-12. Create a managed backup, complete another harmless workflow operation, restore the backup, and
-    prove the prior operation, request, and lease state returns exactly.
-13. Delete every disposable Asana task only through the approved test cleanup path and record the
-    final health and empty fixture inventory.
+3. **Partial:** the Action token succeeded on `/v1/action/sections`; CLI/admin-token rejection and
+   private-route scope checks remain.
+4. **Passed by connected GPT:** task creation and Planning → Research completed with exact
+   identities and placement checks.
+5. **Passed by connected GPT:** Research → Verification used one canonical candidate and moved
+   exactly once.
+6. **Passed by connected GPT:** distinct-run Verification, inspection, approval, mandatory submit,
+   durable signed identity, and final Reference placement completed.
+7. **Outstanding:** attempt stale content and stale placement baselines separately and prove zero
+   mutation.
+8. **Outstanding:** expire a disposable client lease, run `dish-admin recover-lease`, and complete
+   the legal recovery/continuation.
+9. **Outstanding:** exercise governed-change authorization through the private HTTP-backed
+   `dish-admin` client, including durable binding, exact replay, and conflicting reuse.
+10. **Outstanding:** interrupt one disposable workflow operation at a documented recoverable
+    boundary; reread before `dish-admin recover`, then compare CLI, HTTP, live Asana, and durable
+    evidence.
+11. **Outstanding:** migrate a disposable previous-schema task and confirm canonical no-migration
+    behavior for an already-current task.
+12. **Outstanding:** create a managed backup, perform a harmless operation, restore, and prove the
+    previous operation, request, lease state, and owner-only database permissions return exactly.
+13. **Outstanding:** delete every disposable Asana task only through the approved cleanup path and
+    record final health and an empty fixture inventory.
 
 Recommended additions before activation:
 
