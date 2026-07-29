@@ -427,9 +427,38 @@ def _reject_field_label_errors(
 
 
 def preflight_planning_authority_labels(text: str) -> None:
-    """Reject duplicate or non-canonical Planning labels without mutating workflow state."""
+    """Reject non-canonical Planning authority syntax before workflow mutation."""
     lines = text.strip().splitlines()
     line_numbers = list(range(1, len(lines) + 1))
+    heading_errors = [
+        {
+            "rule": "process_subheading_noncanonical",
+            "heading": line,
+            "canonical_heading": canonical,
+            "line": line_number,
+            "message": (
+                f"non-canonical process subheading {line}; use {canonical}"
+            ),
+        }
+        for line, line_number in zip(lines, line_numbers)
+        if (
+            (canonical := _canonical_authority_heading(line, PROCESS_SUBHEADINGS))
+            is not None
+            and line != canonical
+        )
+    ]
+    if heading_errors:
+        first = heading_errors[0]
+        raise DocumentParseError(
+            str(first["rule"]),
+            str(first["message"]),
+            details={
+                key: value
+                for key, value in first.items()
+                if key not in {"rule", "message"}
+            },
+            errors=heading_errors,
+        )
     if lines and lines[0] == "### Planning brief":
         lines = lines[1:]
         line_numbers = line_numbers[1:]
@@ -479,6 +508,7 @@ def _parse_exact_fields(
 
 
 def parse_planning_brief(text: str) -> PlanningBrief:
+    preflight_planning_authority_labels(text)
     lines = text.strip().splitlines()
     line_numbers = list(range(1, len(lines) + 1))
     if lines and lines[0] == "### Planning brief":

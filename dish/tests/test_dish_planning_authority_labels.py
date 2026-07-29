@@ -122,6 +122,62 @@ def test_case_variant_process_subheading_reports_direct_canonical_diagnostic():
     }
 
 
+@pytest.mark.parametrize("heading", ["### planning brief", "### PLANNING BRIEF"])
+def test_case_variant_heading_in_planning_candidate_reports_direct_diagnostic(
+    heading,
+):
+    candidate = f"{PLANNING.rstrip()}\n{heading}\nHidden continuation text.\n"
+
+    with pytest.raises(DocumentParseError) as exc:
+        parse_planning_brief(candidate)
+
+    assert exc.value.rule == "process_subheading_noncanonical"
+    assert exc.value.details == {
+        "heading": heading,
+        "canonical_heading": "### Planning brief",
+        "line": 10,
+    }
+
+
+@pytest.mark.parametrize("heading", ["### planning brief", "### PLANNING BRIEF"])
+def test_case_variant_heading_in_planning_prepare_fails_before_write(
+    tmp_path, heading,
+):
+    backend = Backend()
+    application = app(tmp_path, backend)
+    started = application.execute(
+        "start", agent="gpt", task_gid="t", kind="planning",
+        change_level=None, change_reason=None,
+    )
+    candidate = f"{PLANNING.rstrip()}\n{heading}\nHidden continuation text.\n"
+
+    result = application.execute(
+        "prepare",
+        agent="gpt",
+        model="gpt-5.6-sol",
+        submission_id=started["submission_id"],
+        file_path=write(tmp_path, "case-heading.txt", candidate),
+    )
+
+    assert result["code"] == "VALIDATION_FAILED"
+    assert result["retryable"] is True
+    assert result["allowed_actions"] == ["prepare"]
+    assert result["errors"] == [
+        {
+            "rule": "process_subheading_noncanonical",
+            "heading": heading,
+            "canonical_heading": "### Planning brief",
+            "line": 10,
+            "message": (
+                f"non-canonical process subheading {heading}; "
+                "use ### Planning brief"
+            ),
+        }
+    ]
+    assert backend.writes == 0
+    assert backend.moves == 0
+
+
 def test_case_variant_process_subheading_is_detected_as_duplicate():
     from tests.test_dish_tool_step2_canonical import TASK
     from dish_tool.task_document import parse_task_document
