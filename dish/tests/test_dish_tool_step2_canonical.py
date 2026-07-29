@@ -2,14 +2,18 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 BIN_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BIN_DIR))
 
 from dish_tool.migrations import migrate_task_document
 from dish_tool.task_document import (
     FindingKind,
+    PLANNING_FIELDS,
     parse_planning_brief,
     parse_task_document,
+    validate_planning_brief,
     validate_task_document,
 )
 
@@ -75,6 +79,27 @@ def test_planning_brief_round_trip_has_exact_eight_fields():
         "Research emphasis", "Destination section",
     ]
     assert parse_planning_brief(brief.render()).values == brief.values
+
+
+@pytest.mark.parametrize("field_name", PLANNING_FIELDS)
+def test_planning_brief_rejects_empty_required_values(field_name):
+    candidate = "\n".join(
+        f"{field_name}:" if line.startswith(f"{field_name}:") else line
+        for line in PLANNING.splitlines()
+    )
+
+    validation = validate_planning_brief(parse_planning_brief(candidate))
+
+    assert [
+        (finding.rule, finding.location, finding.message)
+        for finding in validation.findings
+    ] == [
+        (
+            "planning.field-empty",
+            field_name,
+            f"{field_name} requires a non-empty value",
+        )
+    ]
 
 
 def test_complete_task_round_trip_and_lower_heading():
