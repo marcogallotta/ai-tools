@@ -110,6 +110,10 @@ Asana could eventually be replaced by a database-backed document store and a pur
 frontend. The stable Dish command/service contract should remain the agent interface so the backend
 change does not alter workflow semantics.
 
+See [`database-backend-design.md`](database-backend-design.md) for the current draft authority,
+storage, transaction, frontend, migration, and rollback design. It remains future design rather than
+implementation or cutover authorization.
+
 Any replacement must preserve:
 
 - the canonical task document and exact identities;
