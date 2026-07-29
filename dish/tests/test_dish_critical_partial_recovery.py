@@ -1071,3 +1071,124 @@ def test_audit_only_local_effect_requires_recovery(tmp_path):
     assert state["required_admin_action"] == "recover"
     assert state["required_admin_outcome"] == "applied"
     assert state["safe_to_retry"] is False
+
+
+def test_admin_recover_executes_immediately_under_exact_live_action_lease(
+    tmp_path, monkeypatch
+):
+    service, backend = _service(tmp_path)
+    action = ServicePrincipal(
+        owner_id="action", run_id="abababab-abab-4bab-8bab-abababababab"
+    )
+    started = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": "t", "kind": "initial"},
+        principal=action,
+        request_id="71000000-0000-4000-8000-000000000001",
+    )
+    operation_id = started["submission_id"]
+
+    import dish_tool.step6 as step6
+    from dish_tool.errors import DishRuleError
+
+    real_record_actor_fact = step6.record_actor_fact
+    failed_once = False
+
+    def fail_after_confirmed_write(*args, **kwargs):
+        nonlocal failed_once
+        if not failed_once:
+            failed_once = True
+            raise DishRuleError(
+                "CONFLICT",
+                "fault after confirmed write",
+                rule="injected_confirmed_write_failure",
+            )
+        return real_record_actor_fact(*args, **kwargs)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(step6, "record_actor_fact", fail_after_confirmed_write)
+        uncertain = service.execute_agent(
+            "prepare",
+            {
+                "agent": "gpt",
+                "model": "gpt-5.6-sol",
+                "submission_id": operation_id,
+                "file_text": backend.title + "\n" + backend.notes,
+            },
+            principal=action,
+            request_id="71000000-0000-4000-8000-000000000002",
+        )
+
+    assert uncertain["code"] == "BACKEND_UNCERTAIN"
+    assert uncertain["data"]["required_admin_action"] == "recover"
+    assert uncertain["data"]["admin_recovery_lease_scope"] == (
+        "exact_uncertain_execution"
+    )
+    assert uncertain["data"]["admin_recovery_immediately_executable"] is True
+    assert backend.writes == 1
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        actor_lease = conn.execute(
+            "SELECT * FROM service_leases WHERE operation_id=? AND released_at IS NULL",
+            (operation_id,),
+        ).fetchone()
+        assert actor_lease["owner_id"] == action.owner_id
+        assert actor_lease["run_id"] == action.run_id
+        lease_id = actor_lease["lease_id"]
+    finally:
+        conn.close()
+
+    admin = ServicePrincipal(
+        owner_id="admin", run_id="cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"
+    )
+    recovery_request = "71000000-0000-4000-8000-000000000003"
+    recovered = service.execute_admin(
+        "recover",
+        {
+            "submission_id": operation_id,
+            "outcome": "applied",
+            "reason": "reconcile confirmed Action write",
+        },
+        principal=admin,
+        request_id=recovery_request,
+    )
+    assert recovered["ok"]
+    assert backend.writes == 1
+
+    replayed = service.execute_admin(
+        "recover",
+        {
+            "submission_id": operation_id,
+            "outcome": "applied",
+            "reason": "reconcile confirmed Action write",
+        },
+        principal=admin,
+        request_id=recovery_request,
+    )
+    assert replayed["ok"]
+    assert replayed["data"]["request_replayed"] is True
+    assert backend.writes == 1
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        surviving_lease = conn.execute(
+            "SELECT * FROM service_leases WHERE operation_id=? AND released_at IS NULL",
+            (operation_id,),
+        ).fetchone()
+        assert surviving_lease["lease_id"] == lease_id
+        assert surviving_lease["owner_id"] == action.owner_id
+        assert surviving_lease["run_id"] == action.run_id
+        assert conn.execute(
+            "SELECT COUNT(*) FROM audit_events "
+            "WHERE operation_id=? AND event_type='operation.recovery'",
+            (operation_id,),
+        ).fetchone()[0] == 1
+        execution = conn.execute(
+            "SELECT * FROM operation_executions WHERE execution_id=?",
+            (uncertain["data"]["execution_id"],),
+        ).fetchone()
+        assert execution["status"] == "completed"
+        assert execution["resolution_evidence_json"] is not None
+    finally:
+        conn.close()

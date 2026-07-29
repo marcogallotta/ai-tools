@@ -339,8 +339,13 @@ Concurrency uses separate mechanisms for separate facts:
 5. the in-process maintenance gate makes restore exclusive while ordinary requests may run
    concurrently.
 
-Request-scoped lease renewal and administrative recovery commit the lease effect and replayable
-service-request result in the same SQLite transaction; neither fact may become durable alone.
+Request-scoped lease renewal and administrative lease recovery commit the lease effect and
+replayable service-request result in the same SQLite transaction; neither fact may become durable
+alone. Protocol recovery of an unresolved uncertain execution is narrower: when that exact durable
+execution advertises `required_admin_action: recover`, Marco may run only that recovery while the
+original actor lease is still live. The lease remains bound to its owner/run and is not transferred
+or released; every other admin or agent mutation still requires ordinary lease ownership or the
+existing expired-lease recovery path.
 
 None substitutes for another. In particular, a process lock is not an operation lock, and a run ID
 does not replace exact content/signoff bindings.

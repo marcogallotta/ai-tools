@@ -97,6 +97,70 @@ def _lease_recovery_details(
     }
 
 
+def _exact_uncertain_admin_recovery(
+    conn: sqlite3.Connection, operation_id: str
+) -> dict[str, Any] | None:
+    """Return the one fenced execution whose recovery may use a live lease."""
+
+    rows = conn.execute(
+        """SELECT execution_id FROM operation_executions
+             WHERE operation_id=? AND status='uncertain' AND resolved_at IS NULL
+             ORDER BY created_at, rowid""",
+        (operation_id,),
+    ).fetchall()
+    if len(rows) != 1:
+        return None
+    execution_id = rows[0]["execution_id"]
+    if execution_claim_is_live(conn, execution_id=execution_id):
+        return None
+    recovery = execution_recovery_state(
+        conn, execution_id=execution_id, refresh=True
+    )
+    if not recovery:
+        return None
+    if (
+        not recovery.get("recovery_required")
+        or recovery.get("required_admin_action") != "recover"
+        or recovery.get("admin_recovery_lease_scope")
+        != "exact_uncertain_execution"
+    ):
+        return None
+    return recovery
+
+
+def _assert_existing_admin_lease_access(
+    conn: sqlite3.Connection,
+    leases: LeaseManager,
+    *,
+    command: str,
+    operation_id: str,
+    principal: ServicePrincipal,
+    existing,
+) -> None:
+    """Enforce a live existing lease without acquiring or transferring it."""
+
+    recovery = (
+        _exact_uncertain_admin_recovery(conn, operation_id)
+        if command == "recover"
+        else None
+    )
+    if recovery is not None:
+        leases.assert_exact_uncertain_recovery(
+            operation_id,
+            principal,
+            execution_id=str(recovery["execution_id"]),
+        )
+        return
+    if leases.is_expired(existing):
+        raise DishRuleError(
+            "CONFLICT",
+            "expired actor lease requires recover-lease first",
+            rule="service_lease_expired",
+            details={"expires_at": existing["expires_at"]},
+        )
+    leases.assert_owned(operation_id, principal)
+
+
 def _now_stamp() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
@@ -2109,6 +2173,23 @@ class DishService:
                             "command_run_id": supplied_run_id,
                         },
                     )
+                if (
+                    command in _OPERATION_ADMIN_COMMANDS
+                    and command not in _LEASE_FREE_ADMIN_COMMANDS
+                    and operation_id
+                ):
+                    existing = leases.active_for_operation(operation_id)
+                    if existing is not None and not leases.is_owned_by(
+                        existing, principal
+                    ):
+                        _assert_existing_admin_lease_access(
+                            conn,
+                            leases,
+                            command=command,
+                            operation_id=operation_id,
+                            principal=principal,
+                            existing=existing,
+                        )
                 argument_app = DishAdminApplication(
                     conn,
                     invocation_request_id=request_id,
@@ -2156,17 +2237,17 @@ class DishService:
                         leases.acquire(operation_id, principal)
                         acquired_for_request = True
                     else:
-                        # Admin continuations never steal a live actor lease.  An
-                        # expired lease must be released explicitly through
-                        # recover-lease before the protocol-specific admin action.
-                        if leases.is_expired(existing):
-                            raise DishRuleError(
-                                "CONFLICT",
-                                "expired actor lease requires recover-lease first",
-                                rule="service_lease_expired",
-                                details={"expires_at": existing["expires_at"]},
-                            )
-                        leases.assert_owned(operation_id, principal)
+                        # Ordinary admin continuations never steal a live actor
+                        # lease. The only exception is the exact unresolved
+                        # execution that itself advertised Marco/admin recover.
+                        _assert_existing_admin_lease_access(
+                            conn,
+                            leases,
+                            command=command,
+                            operation_id=operation_id,
+                            principal=principal,
+                            existing=existing,
+                        )
                 app = DishAdminApplication(
                     conn,
                     backend=backend,

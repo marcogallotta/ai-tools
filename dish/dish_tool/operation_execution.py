@@ -804,6 +804,10 @@ def execution_recovery_state(
         "movement_attempt_ids": [attempt["attempt_id"] for attempt in movements],
         "required_admin_action": "recover" if recovery_required else None,
         "required_admin_outcome": required_outcome,
+        "admin_recovery_lease_scope": (
+            "exact_uncertain_execution" if recovery_required else None
+        ),
+        "admin_recovery_immediately_executable": recovery_required,
         "safe_to_retry": not recovery_required,
         "effects_observed": effects_observed,
         "committed_effects": committed_effects,

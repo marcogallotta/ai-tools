@@ -31,18 +31,13 @@ clear workaround and revisit trigger. For every new or reconsidered issue, recor
 
 ## Rollout blockers
 
-### PR-1 — admin recovery blocked by a live Action lease
+### PR-1 — admin recovery blocked by a live Action lease — resolved
 
-After a partial mutation, Dish can return `BACKEND_UNCERTAIN`, `safe_to_retry: false`, and
-`required_admin_action: recover`. If the Action actor still owns a live operation lease, Marco's
-immediate private `recover` call fails with `AGENT_MISMATCH / service_lease_owner_mismatch`.
-Recovery works only after lease expiry, `recover-lease`, and then `recover`; the advertised command
-is therefore not immediately executable and the workflow can remain blocked for the lease TTL.
-
-Fix before rollout so an authorized admin can perform the prescribed narrow recovery immediately,
-without weakening ordinary agent lease ownership or requiring undocumented sequencing. Add one
-regression covering an Action-owned operation, a confirmed partial write, and immediate
-Marco-admin recovery.
+Resolved by authorizing Marco's private `recover` only for the one unresolved uncertain execution
+that advertised `required_admin_action: recover`. The Action lease remains live and owned by the
+original actor/run; it is neither transferred nor released, and every ordinary mutation still uses
+the normal lease-owner check. Regression coverage proves immediate recovery after a confirmed
+partial write, one recovery effect, no duplicate backend mutation, and exact admin-request replay.
 
 ### PR-2 — pre-construction Research hold and governed audit are not atomic
 

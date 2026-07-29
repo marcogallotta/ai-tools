@@ -235,6 +235,44 @@ class LeaseManager:
             self.active_for_operation(operation_id), principal, now=self.now()
         )
 
+    def assert_exact_uncertain_recovery(
+        self,
+        operation_id: str,
+        principal: ServicePrincipal,
+        *,
+        execution_id: str,
+    ):
+        """Authorize only recovery of one unresolved uncertain execution.
+
+        A live actor lease remains owned by that actor.  Marco may execute the
+        protocol recovery for the exact fenced execution, but this does not
+        authorize any other admin mutation and does not transfer or release the
+        lease.
+        """
+
+        now = self.now()
+        row = self.active_for_operation(operation_id)
+        if row is None:
+            return None
+        if _parse(row["expires_at"]) <= now:
+            raise DishRuleError(
+                "CONFLICT",
+                "expired actor lease requires recover-lease first",
+                rule="service_lease_expired",
+                details={"expires_at": row["expires_at"]},
+            )
+        if self.is_owned_by(row, principal):
+            return row
+        execution = self.conn.execute(
+            """SELECT 1 FROM operation_executions
+                 WHERE execution_id=? AND operation_id=?
+                   AND status='uncertain' AND resolved_at IS NULL""",
+            (execution_id, operation_id),
+        ).fetchone()
+        if execution is None:
+            return self._assert_owned_row(row, principal, now=now)
+        return row
+
     def renew(
         self,
         operation_id: str,
