@@ -238,6 +238,14 @@ mutation: `POST /v1/action/renew-lease` carries `arguments.operation_id` plus `c
 path parameter. The private CLI lease endpoint retains its transport-specific path because it is not
 part of the connected Action schema.
 
+Known connected-schema limitation: the generated and served OpenAPI marks UUID fields with
+`format: uuid`, canonical lowercase/non-nil `pattern`, and exact length bounds, but the GPT Action
+importer may expose only the length bounds to its connected client. Backend UUID validation must
+therefore remain authoritative even when the published OpenAPI is stronger than the imported
+contract. The resulting late client feedback has low-to-moderate UX impact because Dish rejects the
+request before workflow or replay state is created. A future UUID representation redesign may be
+considered if stronger connected-side validation justifies changing the public contract.
+
 The generic `tools/asana` interface is not a mutation path for governed Cooking tasks.
 `generic_asana_guard` fails closed for covered managed-task writes and moves. Its read commands
 remain available, including Planning's deliberate read-only lookup of completed cooking history.
