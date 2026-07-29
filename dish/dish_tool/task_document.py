@@ -611,6 +611,22 @@ def _canonical_duplicate_errors(
         for heading in PROCESS_SUBHEADINGS
         if len(positions := subheading_positions.get(heading, [])) > 1
     )
+    schema_positions = [
+        line_number
+        for line_number, line in enumerate(
+            lines[process_start:], start=process_start + 1
+        )
+        if line.startswith("Schema version:")
+    ]
+    if len(schema_positions) > 1:
+        errors.append(
+            {
+                "rule": "schema_version_duplicate",
+                "occurrences": len(schema_positions),
+                "lines": schema_positions,
+                "message": "duplicate closing Schema version",
+            }
+        )
     try:
         planning_at = lines.index("### Planning brief", process_start)
     except ValueError:

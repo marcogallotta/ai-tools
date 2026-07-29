@@ -187,6 +187,44 @@ def test_research_prepare_rejects_missing_portions_before_write(tmp_path):
     assert b.moves == 0
 
 
+def test_research_prepare_rejects_duplicate_schema_version_before_write(tmp_path):
+    candidate = TASK.replace(
+        "Schema version: 2\n",
+        "Schema version: 2\nSchema version: 2\n",
+        1,
+    )
+    schema_lines = [
+        index
+        for index, line in enumerate(candidate.splitlines(), start=1)
+        if line == "Schema version: 2"
+    ]
+    lines = TASK.splitlines()
+    b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
+    a = app(tmp_path, b)
+    started = a.execute(
+        "start", agent="gpt", task_gid="t", kind="initial",
+        change_level=None, change_reason=None,
+    )
+
+    result = a.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"],
+        file_path=write(tmp_path, "duplicate-schema-version.txt", candidate),
+    )
+
+    assert result["code"] == "VALIDATION_FAILED"
+    assert result["errors"] == [
+        {
+            "rule": "schema_version_duplicate",
+            "message": "duplicate closing Schema version",
+            "occurrences": 2,
+            "lines": schema_lines,
+        }
+    ]
+    assert b.writes == 0
+    assert b.moves == 0
+
+
 def test_planning_prepare_reports_every_missing_field_and_required_label(tmp_path):
     b = Backend("Planning task", "")
     a = app(tmp_path, b)

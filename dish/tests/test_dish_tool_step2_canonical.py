@@ -215,6 +215,28 @@ def test_complete_task_requires_nonempty_portions_line(replacement):
     ]
 
 
+def test_complete_task_rejects_duplicate_closing_schema_version():
+    candidate = TASK.replace(
+        "Schema version: 2\n",
+        "Schema version: 2\nSchema version: 2\n",
+        1,
+    )
+    schema_lines = [
+        index
+        for index, line in enumerate(candidate.splitlines(), start=1)
+        if line == "Schema version: 2"
+    ]
+
+    with pytest.raises(ValueError) as exc_info:
+        parse_task_document(candidate)
+
+    assert getattr(exc_info.value, "rule") == "schema_version_duplicate"
+    assert getattr(exc_info.value, "details") == {
+        "occurrences": 2,
+        "lines": schema_lines,
+    }
+
+
 def test_all_canonical_actor_names_and_verified_material_change_are_valid():
     for actor in ("ChatGPT", "Custom GPT", "Claude", "Codex"):
         candidate = TASK.replace(
