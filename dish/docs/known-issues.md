@@ -17,6 +17,22 @@ operation identifiers, whether exact replay is safe, and any required private or
 It should not expose full canonical arguments or stored results by default. This is non-blocking
 observability work; implement it only if post-launch response-loss investigations become frequent.
 
+## Testing boundaries
+
+### REPRO-001 / TEST-001 — connected reproduction and local fault injection
+
+The Action surface cannot safely inject pending or uncertain effects, inspect private journals, or
+invoke administrative recovery, so a GPT-only live test cannot exercise repair/replay consistency
+end to end. Local fake backends, targeted failure injection, restart fixtures, and private admin
+tooling are the authoritative validation surfaces for pending requests, uncertain outcomes,
+failed-first mutations, replay, recovery, and audit repair.
+
+This coverage satisfies TEST-001 without adding a runtime fault-injection mechanism. The remaining
+connected-reproduction gap is a maintainer-confidence limitation, not a user-facing workflow
+defect. Do not expose a production Action that deliberately fails or corrupts mutations. Add a new
+test mechanism only when a concrete recovery scenario cannot be exercised safely by the existing
+local harness.
+
 ## Accepted for launch
 
 ### DESIGN-004 — private Planning reopen
@@ -74,14 +90,3 @@ task plus a blocked request requiring manual inspection.
 This is accepted as low likelihood and low impact while Asana creation remains a multi-call
 external effect. It disappears when task creation and request completion move to the transactional
 database backend.
-
-### REPRO-001 — connected recovery reproduction
-
-The Action surface cannot safely inject pending or uncertain effects, inspect private journals, or
-invoke administrative recovery, so a GPT-only live test cannot exercise repair/replay consistency
-end to end. Local fault-injection tests and private admin tooling are the authoritative validation
-surfaces.
-
-This is a maintainer-confidence limitation, not a user-facing workflow defect. Do not widen the
-public Action surface solely to reproduce these states. Investigate further only if a concrete
-connected inconsistency is observed.
