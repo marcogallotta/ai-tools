@@ -28,6 +28,9 @@ complete and need not be repeated wholesale:
   replay, and changed-payload conflict.
 - Managed backup and restore passed with exact installed identity, restored durable state, healthy
   readiness, and owner-only database permissions.
+- The broad final code audit is complete. It confirmed the earlier concurrency, recovery,
+  authorization, submission, backup, and replay fixes and identified the two remaining code
+  blockers tracked below.
 
 This evidence does not replace the final Honest semantic rehearsal, release-specific regression
 selection, migration rehearsal, rollback proof, or production authorization.
@@ -37,15 +40,18 @@ selection, migration rehearsal, rollback proof, or production authorization.
 Resolve and record these review items before production activation. Until a decision changes the
 implementation or runtime documentation, the current code and contracts remain authoritative.
 
-1. **Service-mode defaults.** Local direct mode remains available for controlled single-agent
+1. **Code blockers.** Fix PR-1 and PR-2 under
+   [`known-issues.md`](known-issues.md#rollout-blockers), add their deterministic regressions, and
+   pass the focused concurrency/recovery coverage and complete suite on the final code.
+2. **Service-mode defaults.** Local direct mode remains available for controlled single-agent
    testing, while live clients currently fail closed unless both `DISH_LIVE_MODE=1` and
    `DISH_MODE=service` are set. Decide whether production should keep both explicit gates or make
    service mode the operational default.
-2. **Real-schema SDK lifecycle coverage.** The generated Asana SDK lifecycle test traverses
+3. **Real-schema SDK lifecycle coverage.** The generated Asana SDK lifecycle test traverses
    `DishApplication` → `AsanaBackend` → generated SDK → stateful fake HTTP transport, but its release
    fixture uses `schema={}`. Decide whether activation requires the same boundary test to load the
    complete current Honest schema fixture.
-3. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
+4. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
    and section-registry verification, and production cutover still require explicit authorization.
 
 ## Remaining test-project rehearsal
