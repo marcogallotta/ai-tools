@@ -312,20 +312,56 @@ Stage 3 deliberately does not repeat every adversarial permutation already cover
 must prove that the private/admin capabilities required to diagnose and recover an activated
 service work at the tested revision.
 
-## Stage 4 — focused post-rollout confidence
+## Stage 4 — focused post-rollout confidence: partial
 
 Stage 4 is not part of the bounded activation gate. Run it after Stage 3, or earlier in parallel
 where a connected GPT can exercise Action-only cases safely. It covers the remaining cases with
 meaningful value under normal concurrent use.
 
-### Connected Action priorities
+### Connected Action run 2026-07-29
 
-- Attempt stale content and stale placement separately and prove zero mutation.
-- Run a second fresh Small-correction fixture and prove distinct reviewed, corrected, and signed
-  identities.
-- Exercise lease-renewal exact replay and conflicting reuse.
-- Bind an expected validation failure, replay it exactly, then prove corrected reuse of the same
-  request ID conflicts without mutation.
+Run ID `eeb53d49-29d0-4742-afe8-5586cdc524ec` and independent verifier run ID
+`4ea1826e-4997-4a71-bf6d-07a48672dc73` were used against protocol 1.0.10, task schema 2, database
+schema 30, and the configured test project. Git HEAD was
+`74bebfcda19158a64f1b869276ad4b135056f381`; unrelated externally owned working-tree changes were
+present, so this is live gate evidence rather than an exact-revision record. Complete credential-free
+requests and responses are in
+`/tmp/dish-stage4-eeb53d49-29d0-4742-afe8-5586cdc524ec.jsonl`.
+
+Passed:
+
+- A fresh Small-correction fixture completed Planning, Research, independent Verification, Small
+  approval, mandatory submit, and final reread. Reviewed identity
+  `f6066bd02288c7a9cfcc7e73dd01d8196d880970cf221311aefedd1720922860`, corrected candidate
+  identity `26bd04fa1e34b4d473fab74e92e5a2f7d660a37e0aa96b3349d292cc571df708`, and signed identity
+  `70640144b0679fe0b571c8f71df87a2964e28a4697a93d383dbd125c944a2950` were distinct.
+- Final read showed `ready`, Reference placement `1216891250621322`, the exact signed identity, no
+  open operation, no service lease, and no legal next action. No
+  `database_semantic_evidence_invalid` or other backend error occurred.
+- Action lease renewal preserved lease ID `685ee355-edfc-47b6-bfff-a0ff7817cbf7`, task, operation,
+  owner, run, acquisition time, renewal time, and expiry on exact replay. The replay was marked
+  `request_replayed:true`; changed-operation reuse returned non-retryable
+  `CONFLICT / service_request_identity_conflict`. Inspection showed the original operation still
+  open and unchanged with only `prepare` legal.
+- An empty Planning candidate returned retryable `VALIDATION_FAILED` with every missing field
+  identified. Exact replay returned the stored failure, while corrected content under the same
+  request ID returned non-retryable `CONFLICT`. Inspection proved unchanged content identity,
+  placement, operation phase, lease, and legal action before a fresh request completed Planning.
+- Final private health was HTTP 200 with database write readiness, Honest compatibility, Asana
+  readiness, and maintenance readiness all healthy. The transcript contains no credential.
+
+Blocked by the connected-Action boundary:
+
+- Stale content and stale placement could not be manufactured safely. The Action exposes no legal
+  independent mutation that introduces either drift while preserving the original bound
+  continuation. Direct Asana or private/admin mutation would invalidate this connected-surface gate.
+  Retain both cases for a future supported drift fixture or fault injector rather than inferring
+  behavior from wrong-state transitions.
+
+Disposable fixture task `1216981521707211`, Planning operation
+`fa195d69-b76b-4256-a25a-5f10de634ee1`, and terminal Research operation
+`db5fda40-b0d0-4501-9550-acbd777d4b34` remain in the test project. The task is `ready` in Reference
+and requires approved cleanup.
 
 ## Stage 5 — low-priority breadth and resilience
 
