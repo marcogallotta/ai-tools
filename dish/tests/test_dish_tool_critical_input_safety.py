@@ -10,6 +10,7 @@ from dish_tool.models import (
     material_change_line,
     material_editor_line,
     validate_actor_model,
+    validate_candidate_text,
     validate_change_reason,
 )
 from dish_tool.task_document import parse_task_document, validate_task_document
@@ -50,6 +51,25 @@ def test_change_reason_rejects_structural_unicode_before_trimming(value):
     assert error.rule == "change_reason_invalid_characters"
     assert error.retryable is True
     assert error.details == {"field": "change_reason"}
+
+
+@pytest.mark.parametrize(
+    "character",
+    ["\x00", "\t", "\u200b", "\u2028", "\u2029", "\u202e"],
+)
+def test_candidate_text_rejects_unsafe_structural_characters(character):
+    with pytest.raises(Exception) as caught:
+        validate_candidate_text(f"safe\ntext{character}hidden")
+    error = caught.value
+    assert error.code == "INVALID_ARGUMENT"
+    assert error.rule == "candidate_text_invalid_characters"
+    assert error.retryable is True
+    assert error.details == {"field": "file_text"}
+
+
+def test_candidate_text_preserves_canonical_newlines():
+    text = "title\nbody\n"
+    assert validate_candidate_text(text) == text
 
 
 def test_audit_text_is_nfc_normalized_consistently():

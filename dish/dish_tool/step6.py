@@ -20,6 +20,7 @@ from .models import (
     material_editor_line,
     resolve_destination,
     utc_now,
+    validate_candidate_text,
 )
 from .lifecycle import assert_transition, pending_verification
 from .releases import current_verification_protocol_release
@@ -51,7 +52,7 @@ def _candidate(path: str) -> str:
     if not clean:
         raise DishRuleError("INVALID_ARGUMENT", "candidate file is required", rule="candidate_file_required")
     try:
-        return Path(clean).read_text(encoding="utf-8")
+        return validate_candidate_text(Path(clean).read_text(encoding="utf-8"))
     except FileNotFoundError as exc:
         raise DishRuleError("INVALID_ARGUMENT", f"candidate file not found: {clean}", rule="candidate_file_not_found") from exc
     except (OSError, UnicodeError) as exc:

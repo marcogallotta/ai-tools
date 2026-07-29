@@ -94,6 +94,55 @@ def test_planning_prepare_writes_live_and_preserves_research_queue(tmp_path):
         "structural-only", "transition-state", "exact-content-identity",
     ]
 
+
+@pytest.mark.parametrize("kind", ["planning", "initial"])
+@pytest.mark.parametrize("character", ["\x00", "\u200b", "\u202e"])
+def test_prepare_rejects_unsafe_candidate_text_before_mutation(
+    tmp_path, kind, character
+):
+    if kind == "planning":
+        b = Backend()
+        candidate = PLANNING.replace(
+            "Purpose: Compare texture",
+            f"Purpose: Compare{character} texture",
+        )
+    else:
+        lines = TASK.splitlines()
+        b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
+        candidate = TASK.replace(
+            "Compare hydration routes.",
+            f"Compare{character} hydration routes.",
+        )
+    a = app(tmp_path, b)
+    started = a.execute(
+        "start",
+        agent="gpt",
+        task_gid="t",
+        kind=kind,
+        change_level=None,
+        change_reason=None,
+    )
+
+    result = a.execute(
+        "prepare",
+        agent="gpt",
+        model="gpt-5.6-sol",
+        submission_id=started["submission_id"],
+        file_path=write(tmp_path, "candidate.txt", candidate),
+    )
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"] == [
+        {"rule": "candidate_text_invalid_characters", "field": "file_text"}
+    ]
+    assert result["retryable"] is True
+    assert b.writes == 0
+    assert b.moves == 0
+    assert (
+        a.conn.execute("SELECT COUNT(*) FROM write_attempts").fetchone()[0] == 0
+    )
+
+
 def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
     started=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)

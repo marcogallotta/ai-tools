@@ -346,6 +346,30 @@ def validate_create_title(title: str) -> str:
     )
 
 
+def validate_candidate_text(text: str) -> str:
+    """Return canonical candidate text that is safe to parse and persist."""
+
+    for character in text:
+        if character != "\n" and unicodedata.category(character) in {
+            "Cc",
+            "Cf",
+            "Cs",
+            "Zl",
+            "Zp",
+        }:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                (
+                    "file_text contains control, format, line-separator, "
+                    "surrogate, or paragraph-separator characters"
+                ),
+                rule="candidate_text_invalid_characters",
+                retryable=True,
+                details={"field": "file_text"},
+            )
+    return text
+
+
 def validate_actor_model(model: str) -> str:
     clean = _safe_audit_field(
         model,
