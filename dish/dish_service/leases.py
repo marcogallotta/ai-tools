@@ -393,6 +393,147 @@ class LeaseManager:
                 self.conn.execute("ROLLBACK")
             raise
 
+    def release_after_exact_recovery_handoff(
+        self,
+        operation_id: str,
+        *,
+        execution_id: str,
+        lease_id: str,
+        reason: str,
+    ):
+        """Release only the actor lease that fenced one recovered handoff.
+
+        The caller captures both identifiers while authorizing Marco's exact
+        uncertain-execution recovery. This writer transaction then proves the
+        same execution is durably resolved, no mutation claim or incomplete
+        workflow evidence remains, and the operation is at a role handoff before
+        releasing that exact pre-existing lease row. A replacement lease is
+        never touched.
+        """
+
+        now = self.now()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            operation = self._operation(operation_id)
+            execution = self.conn.execute(
+                """SELECT * FROM operation_executions
+                     WHERE execution_id=? AND operation_id=?""",
+                (execution_id, operation_id),
+            ).fetchone()
+            if (
+                execution is None
+                or execution["status"] != "completed"
+                or execution["resolved_at"] is None
+                or execution["resolution_evidence_json"] is None
+            ):
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "actor lease cannot be released before exact recovery is durably resolved",
+                    rule="service_exact_recovery_incomplete",
+                    details={"operation_id": operation_id, "execution_id": execution_id},
+                )
+            if execution["command"] not in {"prepare", "reject"}:
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "exact recovery did not originate a supported role handoff",
+                    rule="service_exact_recovery_handoff_invalid",
+                    details={"command": execution["command"]},
+                )
+            if operation["status"] != "open" or operation["phase"] not in {
+                "await_verification",
+                "held_evidence",
+                "held_human",
+            }:
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "exact recovery did not finish at a role handoff",
+                    rule="service_exact_recovery_handoff_invalid",
+                    details={
+                        "status": operation["status"],
+                        "phase": operation["phase"],
+                    },
+                )
+            active_claim = self.conn.execute(
+                "SELECT 1 FROM operation_execution_claims WHERE operation_id=? LIMIT 1",
+                (operation_id,),
+            ).fetchone()
+            unresolved_execution = self.conn.execute(
+                """SELECT 1 FROM operation_executions
+                     WHERE operation_id=? AND status='uncertain'
+                       AND resolved_at IS NULL LIMIT 1""",
+                (operation_id,),
+            ).fetchone()
+            unresolved_attempt = self.conn.execute(
+                """SELECT 1 FROM write_attempts
+                     WHERE operation_id=? AND outcome IN ('started','uncertain')
+                   UNION ALL
+                   SELECT 1 FROM movement_attempts
+                     WHERE operation_id=? AND outcome IN ('started','uncertain')
+                   LIMIT 1""",
+                (operation_id, operation_id),
+            ).fetchone()
+            pending_step = self.conn.execute(
+                """SELECT 1 FROM operation_steps
+                     WHERE operation_id=? AND completed_at IS NULL LIMIT 1""",
+                (operation_id,),
+            ).fetchone()
+            if active_claim or unresolved_execution or unresolved_attempt or pending_step:
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "actor lease cannot be released before recovered workflow evidence is coherent",
+                    rule="service_lease_completion_pending",
+                    details={"operation_id": operation_id, "execution_id": execution_id},
+                )
+
+            lease = self.conn.execute(
+                "SELECT * FROM service_leases WHERE lease_id=? AND operation_id=?",
+                (lease_id, operation_id),
+            ).fetchone()
+            if lease is None:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "exact recovery lease evidence is missing",
+                    rule="service_lease_conflict",
+                    details={"operation_id": operation_id, "lease_id": lease_id},
+                )
+            if _parse(lease["acquired_at"]) > _parse(execution["created_at"]):
+                raise DishRuleError(
+                    "CONFLICT",
+                    "active lease was not the lease that fenced the uncertain execution",
+                    rule="service_lease_conflict",
+                    details={"operation_id": operation_id, "lease_id": lease_id},
+                )
+            if lease["released_at"] is not None:
+                active = self.active_for_operation(operation_id)
+                if active is not None and active["lease_id"] != lease_id:
+                    raise DishRuleError(
+                        "CONFLICT",
+                        "a replacement lease became active after exact recovery",
+                        rule="service_lease_conflict",
+                        details={
+                            "operation_id": operation_id,
+                            "expected_lease_id": lease_id,
+                            "active_lease_id": active["lease_id"],
+                        },
+                    )
+                self.conn.execute("COMMIT")
+                return None
+            active = self.active_for_operation(operation_id)
+            if active is None or active["lease_id"] != lease_id:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "active lease changed after exact recovery authorization",
+                    rule="service_lease_conflict",
+                    details={"operation_id": operation_id, "lease_id": lease_id},
+                )
+            released = self._release_row(lease, reason=reason, now=now)
+            self.conn.execute("COMMIT")
+            return released
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
+            raise
+
     def release_terminal(
         self,
         operation_id: str,

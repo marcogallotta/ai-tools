@@ -164,7 +164,12 @@ At startup the service validates the database, including semantic impossibilitie
 Admin recovery remains specific rather than generic:
 
 - `recover-lease` releases only an expired actor lease; it never assigns workflow ownership to the admin caller;
-- `recover` reconciles ambiguous backend evidence by live reread;
+- `recover` reconciles ambiguous backend evidence by live reread. It may execute under the
+  originating live actor lease only for the exact uncertain execution that advertised recovery. If
+  successful recovery durably reaches `await_verification`, `held_evidence`, or `held_human`, Dish
+  releases only that exact pre-existing lease after rechecking the resolved execution and complete
+  local evidence, so the returned handoff action is immediately executable. It never transfers the
+  lease or releases a replacement lease;
 - `repair-destination` changes only the canonical Planning destination after an unrecoverable final movement failure, preserving the original approval and creating linked repair evidence for a later movement-only `submit`;
 - `discard` cancels only a provably unapplied operation;
 - `supply-evidence`, `record-human-decision`, and `reopen` retain their existing protocol meanings.

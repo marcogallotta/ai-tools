@@ -136,7 +136,7 @@ def _assert_existing_admin_lease_access(
     operation_id: str,
     principal: ServicePrincipal,
     existing,
-) -> None:
+) -> dict[str, Any] | None:
     """Enforce a live existing lease without acquiring or transferring it."""
 
     recovery = (
@@ -150,7 +150,7 @@ def _assert_existing_admin_lease_access(
             principal,
             execution_id=str(recovery["execution_id"]),
         )
-        return
+        return recovery
     if leases.is_expired(existing):
         raise DishRuleError(
             "CONFLICT",
@@ -159,6 +159,7 @@ def _assert_existing_admin_lease_access(
             details={"expires_at": existing["expires_at"]},
         )
     leases.assert_owned(operation_id, principal)
+    return None
 
 
 def _now_stamp() -> str:
@@ -1163,6 +1164,8 @@ class DishService:
         principal: ServicePrincipal,
         command: str,
         admin: bool = False,
+        exact_recovery_execution_id: str | None = None,
+        exact_recovery_lease_id: str | None = None,
     ) -> dict[str, Any]:
         """Apply post-success lease bookkeeping without reversing success.
 
@@ -1176,7 +1179,24 @@ class DishService:
                 "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
             ).fetchone()
             if op is not None:
-                if op["status"] in {"completed", "cancelled"}:
+                if (
+                    admin
+                    and command == "recover"
+                    and exact_recovery_execution_id is not None
+                    and exact_recovery_lease_id is not None
+                    and op["status"] == "open"
+                    and op["phase"] in _HANDOFF_PHASES
+                ):
+                    leases.release_after_exact_recovery_handoff(
+                        operation_id,
+                        execution_id=exact_recovery_execution_id,
+                        lease_id=exact_recovery_lease_id,
+                        reason=(
+                            "exact_recovery_handoff:"
+                            f"{exact_recovery_execution_id}:{op['phase']}"
+                        ),
+                    )
+                elif op["status"] in {"completed", "cancelled"}:
                     leases.release_terminal(
                         operation_id,
                         principal,
@@ -1192,6 +1212,35 @@ class DishService:
             result.setdefault("data", {})["service_lease"] = self._lease_payload(active)
         except Exception as exc:
             data = result.setdefault("data", {})
+            exact_handoff_release = bool(
+                admin
+                and command == "recover"
+                and exact_recovery_execution_id is not None
+                and exact_recovery_lease_id is not None
+            )
+            if exact_handoff_release:
+                data["service_recovery_required"] = True
+                data["service_recovery"] = {
+                    "kind": "exact_recovery_handoff_lease_release",
+                    "operation_id": operation_id,
+                    "execution_id": exact_recovery_execution_id,
+                    "lease_id": exact_recovery_lease_id,
+                    "command": command,
+                    "error_type": type(exc).__name__,
+                    "do_not_retry_command": True,
+                }
+                try:
+                    data["service_lease"] = self._lease_payload(
+                        leases.active_for_operation(operation_id)
+                    )
+                except Exception as lease_read_exc:
+                    data["service_lease"] = None
+                    data["service_recovery"]["lease_read_error_type"] = type(
+                        lease_read_exc
+                    ).__name__
+                self._synchronize_exposed_actions(result, [])
+                result["retryable"] = False
+                return result
             fallback_error = None
             try:
                 op = conn.execute(
@@ -2131,6 +2180,8 @@ class DishService:
                 prepared_arguments["run_id"] = principal.run_id
             operation_id = str(prepared_arguments.get("submission_id") or "").strip() or None
             acquired_for_request = False
+            exact_recovery_execution_id: str | None = None
+            exact_recovery_lease_id: str | None = None
             leases = self._lease_manager(conn)
             replay_started = False
             try:
@@ -2182,7 +2233,7 @@ class DishService:
                     if existing is not None and not leases.is_owned_by(
                         existing, principal
                     ):
-                        _assert_existing_admin_lease_access(
+                        recovery = _assert_existing_admin_lease_access(
                             conn,
                             leases,
                             command=command,
@@ -2190,6 +2241,11 @@ class DishService:
                             principal=principal,
                             existing=existing,
                         )
+                        if recovery is not None:
+                            exact_recovery_execution_id = str(
+                                recovery["execution_id"]
+                            )
+                            exact_recovery_lease_id = str(existing["lease_id"])
                 argument_app = DishAdminApplication(
                     conn,
                     invocation_request_id=request_id,
@@ -2240,7 +2296,7 @@ class DishService:
                         # Ordinary admin continuations never steal a live actor
                         # lease. The only exception is the exact unresolved
                         # execution that itself advertised Marco/admin recover.
-                        _assert_existing_admin_lease_access(
+                        recovery = _assert_existing_admin_lease_access(
                             conn,
                             leases,
                             command=command,
@@ -2248,6 +2304,25 @@ class DishService:
                             principal=principal,
                             existing=existing,
                         )
+                        if recovery is not None:
+                            current_execution_id = str(recovery["execution_id"])
+                            current_lease_id = str(existing["lease_id"])
+                            if (
+                                exact_recovery_execution_id is not None
+                                and exact_recovery_execution_id
+                                != current_execution_id
+                            ) or (
+                                exact_recovery_lease_id is not None
+                                and exact_recovery_lease_id != current_lease_id
+                            ):
+                                raise DishRuleError(
+                                    "CONFLICT",
+                                    "exact recovery lease authority changed before execution",
+                                    rule="service_lease_conflict",
+                                    details={"operation_id": operation_id},
+                                )
+                            exact_recovery_execution_id = current_execution_id
+                            exact_recovery_lease_id = current_lease_id
                 app = DishAdminApplication(
                     conn,
                     backend=backend,
@@ -2271,6 +2346,8 @@ class DishService:
                         principal=principal,
                         command=command,
                         admin=True,
+                        exact_recovery_execution_id=exact_recovery_execution_id,
+                        exact_recovery_lease_id=exact_recovery_lease_id,
                     )
                     # Admin ownership is request-scoped. Cleanup failure after
                     # a committed continuation must not reverse the success.

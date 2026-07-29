@@ -348,9 +348,13 @@ Request-scoped lease renewal and administrative lease recovery commit the lease 
 replayable service-request result in the same SQLite transaction; neither fact may become durable
 alone. Protocol recovery of an unresolved uncertain execution is narrower: when that exact durable
 execution advertises `required_admin_action: recover`, Marco may run only that recovery while the
-original actor lease is still live. The lease remains bound to its owner/run and is not transferred
-or released; every other admin or agent mutation still requires ordinary lease ownership or the
-existing expired-lease recovery path.
+original actor lease is still live. The lease remains bound to its owner/run and is never
+transferred. If that exact recovery durably resolves the execution into a role-handoff phase, the
+service may release only the exact lease row that predated and fenced that execution. Release is
+revalidated under one SQLite writer transaction against the resolved execution, handoff phase,
+absence of mutation claims, pending steps, and unresolved attempts; a replacement or unrelated
+lease is never touched. Every other admin or agent mutation still requires ordinary lease ownership
+or the existing expired-lease recovery path.
 
 None substitutes for another. In particular, a process lock is not an operation lock, and a run ID
 does not replace exact content/signoff bindings.
