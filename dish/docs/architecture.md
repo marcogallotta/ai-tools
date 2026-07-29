@@ -13,6 +13,7 @@ loading every Dish document.
 |---|---|
 | installation, deployment, service operation, or an operator command | [`../README.md`](../README.md) and the linked deployment guide |
 | response fields, exit status, retry, leases, recovery, or client-visible behavior | [`runtime-contract.md`](runtime-contract.md) |
+| accepted limitations and their revisit triggers | [`known-issues.md`](known-issues.md) |
 | GPT Action exposure or editor configuration | [`../deploy/gpt-action.md`](../deploy/gpt-action.md) |
 | Tailscale Serve or Funnel | [`../deploy/tailscale/README.md`](../deploy/tailscale/README.md) |
 | test-project rehearsal, corpus migration, production cutover, or rollback | [`rollout.md`](rollout.md) |
@@ -103,14 +104,6 @@ Uncertain effects are reconciled against recorded intent; they are never blindly
 Dish persists the intended effect before calling Asana and durably finalizes the corresponding
 attempt after reread. Creation facts and intended effects become immutable when recorded, not only
 after success.
-
-Known creation-recovery limitation: if the service loses the authoritative result between Asana
-task creation, Research Queue placement, and request completion, the connected caller cannot prove
-whether that pending create applied. Dish fails closed rather than risk a duplicate; the low-impact
-failure mode is one bare or misplaced task plus a blocked request requiring manual inspection. This
-is accepted as low likelihood and low impact while Asana creation remains a multi-call external
-effect. It disappears when task creation and request completion move to the transactional database
-backend.
 
 A Change operation and its completed `change_intent` step are one local transaction; an open Change without that exact intent is invalid and cannot be reconstructed as a successful start.
 
@@ -245,22 +238,6 @@ mutation: `POST /v1/action/renew-lease` carries `arguments.operation_id` plus `c
 `client.request_id`. The operation identifier is part of canonical replay arguments, not a separate
 path parameter. The private CLI lease endpoint retains its transport-specific path because it is not
 part of the connected Action schema.
-
-Known connected-schema limitation: the generated and served OpenAPI marks UUID fields with
-`format: uuid`, canonical lowercase/non-nil `pattern`, and exact length bounds, but the GPT Action
-importer may expose only the length bounds to its connected client. Backend UUID validation must
-therefore remain authoritative even when the published OpenAPI is stronger than the imported
-contract. The resulting late client feedback has low-to-moderate UX impact because Dish rejects the
-request before workflow or replay state is created. A future UUID representation redesign may be
-considered if stronger connected-side validation justifies changing the public contract.
-
-Known connected-reproduction limitation: the Action surface cannot safely inject pending or
-uncertain effects, inspect private journals, or invoke administrative recovery, so a GPT-only live
-test cannot exercise repair/replay consistency end to end. Local fault-injection tests and private
-admin tooling are the authoritative validation surfaces. This is a maintainer-confidence
-limitation, not a user-facing workflow defect; do not widen the public Action surface solely to make
-these states reproducible. Investigate further only when a concrete connected inconsistency is
-observed.
 
 The generic `tools/asana` interface is not a mutation path for governed Cooking tasks.
 `generic_asana_guard` fails closed for covered managed-task writes and moves. Its read commands

@@ -12,6 +12,7 @@ documentation roles are:
 - `dish/README.md` — installation, deployment, and operator entry points;
 - `dish/docs/architecture.md` — current code structure, authority boundaries,
   invariants, persistence, recovery, and extension rules;
+- `dish/docs/known-issues.md` — accepted limitations, safe handling, and revisit triggers;
 - `dish/docs/runtime-contract.md` — response, exit-status, retry, and
   troubleshooting contract;
 - `dish/docs/rollout.md` — separately authorized test-project rehearsal,
