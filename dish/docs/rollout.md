@@ -45,11 +45,7 @@ implementation or runtime documentation, the current code and contracts remain a
 
 1. **Final regression gate.** Preserve the deterministic recovery and governed-audit regressions,
    then pass focused concurrency/recovery coverage plus the complete suite on the final code.
-2. **Service-mode defaults.** Local direct mode remains available for controlled single-agent
-   testing, while live clients currently fail closed unless both `DISH_LIVE_MODE=1` and
-   `DISH_MODE=service` are set. Decide whether production should keep both explicit gates or make
-   service mode the operational default.
-3. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
+2. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
    and section-registry verification, and production cutover still require explicit authorization.
 
 ## Remaining test-project rehearsal
