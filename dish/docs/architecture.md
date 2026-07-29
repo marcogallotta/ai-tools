@@ -104,6 +104,14 @@ Dish persists the intended effect before calling Asana and durably finalizes the
 attempt after reread. Creation facts and intended effects become immutable when recorded, not only
 after success.
 
+Known creation-recovery limitation: if the service loses the authoritative result between Asana
+task creation, Research Queue placement, and request completion, the connected caller cannot prove
+whether that pending create applied. Dish fails closed rather than risk a duplicate; the low-impact
+failure mode is one bare or misplaced task plus a blocked request requiring manual inspection. This
+is accepted as low likelihood and low impact while Asana creation remains a multi-call external
+effect. It disappears when task creation and request completion move to the transactional database
+backend.
+
 A Change operation and its completed `change_intent` step are one local transaction; an open Change without that exact intent is invalid and cannot be reconstructed as a successful start.
 
 Every multi-step workflow mutation routed through the operation service has a request-scoped
