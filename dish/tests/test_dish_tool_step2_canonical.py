@@ -168,6 +168,28 @@ def test_complete_task_round_trip_and_lower_heading():
     assert validate_task_document(document, expected_schema_version="2").ok
 
 
+def test_complete_task_rejects_empty_recognition_line():
+    candidate = TASK.replace(
+        "A compact side dish for testing texture.",
+        "",
+        1,
+    )
+
+    validation = validate_task_document(parse_task_document(candidate))
+
+    assert [
+        (finding.rule, finding.kind, finding.message, finding.location)
+        for finding in validation.findings
+    ] == [
+        (
+            "document.recognition-empty",
+            FindingKind.SYNTAX,
+            "recognition line requires non-empty text",
+            "recognition",
+        )
+    ]
+
+
 def test_all_canonical_actor_names_and_verified_material_change_are_valid():
     for actor in ("ChatGPT", "Custom GPT", "Claude", "Codex"):
         candidate = TASK.replace(

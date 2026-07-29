@@ -124,6 +124,40 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
     assert verification["ok"]
     assert verification["allowed_actions"] == ["inspect"]
 
+
+def test_research_prepare_rejects_empty_recognition_before_write(tmp_path):
+    candidate = TASK.replace(
+        "A compact side dish for testing texture.",
+        "",
+        1,
+    )
+    lines = TASK.splitlines()
+    b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
+    a = app(tmp_path, b)
+    started = a.execute(
+        "start", agent="gpt", task_gid="t", kind="initial",
+        change_level=None, change_reason=None,
+    )
+
+    result = a.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"],
+        file_path=write(tmp_path, "empty-recognition.txt", candidate),
+    )
+
+    assert result["code"] == "VALIDATION_FAILED"
+    assert result["errors"] == [
+        {
+            "rule": "document.recognition-empty",
+            "kind": "syntax",
+            "message": "recognition line requires non-empty text",
+            "location": "recognition",
+        }
+    ]
+    assert b.writes == 0
+    assert b.moves == 0
+
+
 def test_planning_prepare_reports_every_missing_field_and_required_label(tmp_path):
     b = Backend("Planning task", "")
     a = app(tmp_path, b)

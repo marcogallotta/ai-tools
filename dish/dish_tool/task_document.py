@@ -894,6 +894,13 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
     for section in required_sections:
         if not document.sections.get(section):
             findings.append(DocumentFinding("document.required-section", FindingKind.SYNTAX, f"missing required section {section}", section))
+    if not document.recognition.strip():
+        findings.append(DocumentFinding(
+            "document.recognition-empty",
+            FindingKind.SYNTAX,
+            "recognition line requires non-empty text",
+            "recognition",
+        ))
     if document.is_non_main:
         if not document.title.startswith("[non-main] "):
             findings.append(DocumentFinding("title.non-main-spacing", FindingKind.AGENT_CORRECTABLE, "[non-main] must be the leading role tag", "title"))
