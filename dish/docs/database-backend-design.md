@@ -151,7 +151,7 @@ The Action listener remains bounded. The human frontend exists only on the priva
 surface receives the database path, and neither reconstructs legal actions independently.
 
 During shadow operation the top half remains Asana-backed: only a confirmed Asana reread is fed
-one-way into the candidate shadow store. During DB authority the Asana projector is downstream
+one-way into the separate shadow database. During DB authority the Asana projector is downstream
 of the committed outbox. Shadow records never influence live decisions before cutover, and Asana
 projection state never influences workflow legality afterward.
 
@@ -359,7 +359,12 @@ view. They do not remain a second writable current-content authority.
 ### Asana observations, import origins, source documents, and destination evidence
 
 Shadow observations, reconciliation evidence, and authoritative cutover origins have distinct
-meanings. Record each coordinated Asana enumeration as a batch:
+meanings. Before cutover these observation tables live only in the separate shadow database. The
+cutover importer copies the two frozen, closed cutover batches and their witnesses into isolated
+import staging, then preserves the approved batch as provenance while creating fresh authoritative
+rows. Observation and source-document tables have no foreign-key path into workflow authority;
+`task_import_origins` is the only audited bridge from an approved cutover observation to a new
+authoritative task. Record each coordinated Asana enumeration as a batch:
 
 ```text
 asana_observation_batches
@@ -370,15 +375,13 @@ asana_observation_batches
   completed_at
   corpus_manifest_identity
   complete
-  validated_against_batch_id     nullable
-  approved_for_import_by         nullable
-  approved_for_import_at         nullable
 
 asana_task_observations
   observation_id
   batch_id
   source_task_gid
   source_project_gid
+  content_identity_scheme
   content_identity
   current_section_gid
   current_section_name
@@ -396,18 +399,40 @@ asana_section_observations
 
 A batch has a durable monotonic sequence assigned at creation; UUID equality or ordering is never
 used to interpret historical validity. A batch is complete only when its task set, exact content
-identities, placements, completion states, and section registry are captured and its corpus
-manifest is deterministically hashed. Completion additionally requires exactly one source-document
-byte witness for every in-scope task observation, matching observation/document linkage and
-identity, every expected section observation, and no duplicate task or section GIDs. A source
-document linked into the batch manifest for an observation outside that batch also invalidates
-completeness. Database constraints enforce the local cardinality and linkage rules, while the
-semantic validator computes corpus closure before the monotonic `complete` state may be recorded.
-Repeated shadow and reconciliation rows remain comparison evidence. They cannot become task origin
-authority merely because they are newest or individually complete.
+identity pairs, placements, completion states, and section registry are captured and its corpus
+manifest is deterministically hashed. The manifest hashes each
+`(content_identity_scheme, content_identity)` pair, never an unqualified digest. It hashes corpus
+facts only; batch-local identifiers and observation timestamps do not prevent two
+independent frozen enumerations of the same corpus from producing the same manifest identity.
+Batch completion additionally requires exactly one source-document witness for every in-scope task
+observation, matching observation/document linkage, scheme, and identity, every expected section
+observation, and no duplicate task or section GIDs. A source document linked into the batch
+manifest for an observation outside that batch also invalidates completeness. Database constraints
+enforce the local cardinality and linkage rules, while the semantic validator computes corpus
+closure before the monotonic `complete` state may be recorded.
+
+Batch completion is irreversible lifecycle evidence. Before the one permitted transition from
+incomplete to complete, the validator proves closure and fixes `completed_at` and the manifest
+identity. A completed batch cannot be reopened, have observations or witnesses added or changed,
+or have its manifest replaced. Approval is separate append-only evidence:
+
+```text
+cutover_batch_approvals
+  batch_id                    unique
+  matching_batch_id
+  manifest_identity
+  approved_by
+  approved_at
+```
+
+Only a complete `cutover` batch may be approved. Its matching batch must be an earlier complete
+`cutover` batch with the same manifest identity and exact closed corpus facts. The approval repeats
+the immutable manifest identity, cannot be changed or cleared, and is rejected if either batch or
+manifest does not match. Repeated shadow and reconciliation rows remain comparison evidence. They
+cannot become task origin authority merely because they are newest or individually complete.
 
 Only a complete `cutover` batch that records exact agreement with an earlier complete cutover batch
-and receives explicit import approval may establish imported task origins:
+through this approval record may establish imported task origins:
 
 ```text
 task_import_origins
@@ -434,13 +459,18 @@ source_observation_id          unique
 source_task_gid
 source_title
 source_body
+source_identity_scheme
 source_identity
 recorded_at
 ```
 
 The source task GID must equal its observation's task GID, and the source-document identity must
-equal that observation's `content_identity`. The document is the immutable byte witness, while the
-observation carries the identity into its corpus manifest.
+equal that observation's identity under the same scheme. `source_title` and `source_body` are the
+exact logical Unicode-string witness returned by Asana. The named identity scheme defines their
+UTF-8 encoding, field framing, normalization policy, and digest algorithm; implementations may
+additionally retain the exact framed preimage as a BLOB, but must not call two unspecified SQLite
+text values a byte witness. The observation carries the qualified identity into its corpus
+manifest.
 
 Parsing an embedded destination produces append-only resolution evidence:
 
@@ -505,7 +535,7 @@ lineage, and Verification consequences.
 
 ### Verification across representation migration
 
-Verification binds an authority occurrence as well as its bytes. Every inspection, review,
+Verification follows the workflow-wide version-occurrence binding below. Every inspection, review,
 correction, and signoff subject records the exact `task_id`, `version_id`, `identity_scheme`, and
 `canonical_identity`. Fields such as `inspection_subject_version_id`, `reviewed_version_id`,
 `corrected_version_id`, and `signed_version_id` reference same-task `task_versions` rows. Semantic
@@ -534,7 +564,9 @@ source_version_id
 structured_version_id
 parser_version
 renderer_version
+source_identity_scheme
 source_identity
+rendered_identity_scheme
 rendered_identity
 semantic_validation_result
 migration_run_id
@@ -660,11 +692,85 @@ Historical Asana `write_attempts` also remain immutable. Database-native content
 new immutable version graph and all required lineage in one transaction. They do not insert
 database-backed `write_attempts`.
 
+Every version ancestry edge uses one common append-only relation:
+
+```text
+task_version_lineage
+  predecessor_version_id
+  successor_version_id
+  relationship
+  operation_id             nullable
+  migration_run_id         nullable
+  recorded_at
+```
+
+Allowed relationships include `workflow_revision`, `small_correction`,
+`non_material_checkin`, `revert`, `clone`, `representation_migration`, and
+`canonicalizer_migration`. Both versions must belong to the same task except for an explicit
+`clone` edge, whose source and new task ownership are recorded and validated. A successor version
+has the lineage required by its creation purpose before it can become current. This relation proves
+ancestry only; specialized Verification, non-material approval, or migration-attestation evidence
+still grants the applicable authority.
+
 Do not discard the intent, purpose, and reviewed-to-corrected-to-signed relationships currently
 carried by historical write records. Give those facts domain-native columns or explicit lineage
 relationships on task/dish versions and workflow evidence before migrating every semantic validator
 and historical query that consumes them. Keep the external-effect attempt tables readable for
 pre-cutover history, but do not carry their recovery ontology into the local authority.
+
+### Workflow-wide version-occurrence binding
+
+Every durable workflow fact that names task content binds one exact same-task `task_versions`
+occurrence. The version ID identifies the authority occurrence; its repeated identity scheme and
+canonical identity prove the exact bytes. Scheme and digest never substitute for the occurrence,
+and equality with another version's identity never permits an operation to continue against that
+other row.
+
+The exact schema plan must apply this rule to every content-bearing relation, including:
+
+- an operation's expected starting version, scheme, and identity;
+- operation steps and actor facts that name a subject or candidate;
+- holds, resumes, pending content intent, and recovery baselines;
+- material-classification subjects and candidate lineage;
+- Small-correction reviewed, corrected, and signed occurrences;
+- non-material check-in predecessors, candidates, and inherited cycle;
+- submission baselines and destination-ready versions;
+- migration, reopen, revert, restoration, and clone evidence.
+
+Representative fields include:
+
+```text
+operations.expected_version_id
+operations.expected_identity_scheme
+operations.expected_identity
+operation_steps.subject_version_id
+operation_actor_facts.candidate_version_id
+holds.held_version_id
+```
+
+Each content-bearing record repeats the referenced version's identity scheme and identity where
+the evidence must remain independently explainable. Composite foreign keys or semantic validation
+enforce same-task ownership and exact agreement. A missing version occurrence is not treated as a
+wildcard, including for migrated historical work; it is reconciled, preserved as explicitly
+limited history, or quarantined.
+
+An accepted non-material change does not independently sign its candidate version. It preserves
+the original approved cycle only through explicit append-only occurrence lineage:
+
+```text
+non_material_signoff_lineage
+  operation_id
+  predecessor_version_id
+  candidate_version_id
+  source_cycle_id
+  recorded_at
+```
+
+The predecessor and candidate are distinct successive same-task occurrences, the operation names
+the exact approved cycle it inherited, and the candidate's general ancestry also contains the
+matching `non_material_checkin` edge. Each later check-in links its exact predecessor occurrence to
+its exact candidate occurrence. Transitive resolution follows version IDs through these rows and
+never searches for another version with the same candidate identity.
 
 ### Rendered views and projection outbox
 
@@ -703,11 +809,15 @@ The final schema and semantic validator must enforce:
 - every version has an allowed immutable identity scheme matching its representation, and its
   canonical identity validates under that scheme;
 - every structured representation has exactly one root and only same-version child rows;
-- every Verification subject references a version owned by the same task and repeats that version's
-  exact scheme and canonical identity;
+- every workflow content subject, including Verification, references an exact version occurrence
+  owned by the same task and repeats that version's exact scheme and canonical identity where
+  required;
+- every successor version has purpose-appropriate append-only ancestry, and non-material signoff
+  inheritance resolves only through exact predecessor/candidate occurrences;
 - current versions are complete, valid for their claimed authority, and not shadow candidates;
 - completed observation batches satisfy source-document and section closure with no duplicate
-  external task or section identifiers;
+  external task or section identifiers, matching qualified identities, and monotonic completion;
+- cutover approval is append-only and names one matching earlier complete cutover batch;
 - quarantined imports cannot be promoted or resolved through ordinary task commands;
 - location and completion projections match the import origin plus latest post-import transitions;
 - one committed current-state mutation advances the task revision exactly once.
@@ -834,8 +944,10 @@ claim type under its durable token and expiry rules. It must reread the request 
 ownership is reacquired and must not infer a task effect from the pending admission record.
 
 Expected current version occurrence, identity scheme, canonical identity, and location remain the
-semantic concurrency check. The monotonic `revision` is an additional compare-and-swap guard and
-query aid, not a replacement for exact content, placement, signoff, or actor evidence.
+semantic concurrency check. Every workflow continuation also revalidates the exact version
+occurrences recorded by its operation, steps, actors, holds, classification, signoff lineage, and
+submission baseline. The monotonic `revision` is an additional compare-and-swap guard and query
+aid, not a replacement for exact content, placement, signoff, or actor evidence.
 
 ### Audit boundaries
 
@@ -860,9 +972,12 @@ The guarded state machine and independent Verification do not change. In particu
 
 - one active operation per task remains enforced;
 - actor and verifier run lineage remains durable;
-- inspection, review, correction, and signoff remain bound to exact current version occurrences
-  and their identities;
+- every content-bearing workflow fact remains bound to an exact same-task version occurrence and
+  its identity, including operation baselines, steps, actors, holds, classification, correction,
+  non-material check-in, migration, reopen, submission, inspection, review, and signoff;
 - Small-correction lineage remains reviewed → corrected → signed;
+- non-material signoff inheritance follows explicit predecessor/candidate version occurrences back
+  to the source approved cycle and never follows identity equality;
 - allowed actions remain derived once from the authoritative snapshot;
 - Marco-only holds and interventions remain private and narrow.
 
@@ -1000,11 +1115,15 @@ credential boundary and must not make admin routes reachable from the Funnel lis
 ### Phase 1: Asana-authoritative shadow
 
 Keep all live reads, writes, workflow decisions, and human actions Asana-authoritative. After each
-confirmed Asana reread, feed a one-way shadow pipeline. Store periodic and command-triggered reads
-as `asana_observation_batches` and `asana_task_observations` with purpose `shadow` or
+confirmed Asana reread, feed a one-way shadow pipeline into a dedicated shadow SQLite database.
+That database contains periodic and command-triggered `asana_observation_batches`,
+`asana_task_observations`, source witnesses, and any `shadow_*` candidate graph. It has no
+foreign-key path into authoritative tasks, operations, or Verification, and the live repository
+does not open it or resolve its candidate identifiers. Store observations with purpose `shadow` or
 `reconciliation`, including:
 
-- the exact title/body, content identity, section, completion state, and source timestamps;
+- the exact title/body, qualified content identity, section, completion state, and source
+  timestamps;
 - the corresponding operation/request when the observation followed a Dish command;
 - when the representation project is active, an attempted structured parse and its
   validation/classification evidence, normalized candidate rows, deterministic candidate JSON
@@ -1021,13 +1140,19 @@ candidate shadowing additionally tests schema coverage, deterministic identity, 
 rendering. Neither proves DB-native execution ownership, crash atomicity, or recovery; those still
 require fault injection and rehearsal.
 
+The cutover importer never promotes an ordinary shadow candidate row. Under the writer freeze it
+copies only the two closed cutover batches and their exact witnesses into isolated import staging,
+validates and approves the selected batch, then creates fresh authoritative task, version, and
+workflow records from that evidence. Candidate IDs from the shadow database are never valid
+authoritative IDs.
+
 ### Phase 2: shadow execution
 
-For each governed production command, apply the command intent to a separate candidate database or
-reducer and compare its predicted version, workflow state, allowed actions, and location with the
-eventual confirmed Asana result. When testing structured representation, also compare structured
-identity and rendering. Candidate output remains non-authoritative and cannot affect the
-production response.
+For each governed production command, apply the command intent to the separate shadow candidate
+database or reducer and compare its predicted version, workflow state, allowed actions, and
+location with the eventual confirmed Asana result. When testing structured representation, also
+compare structured identity and rendering. Candidate output remains non-authoritative and cannot
+affect the production response.
 
 Human out-of-band Asana changes are imported observations, not fabricated Dish commands. Repeated
 observations identify the narrow human commands that must exist before cutover.
@@ -1078,7 +1203,8 @@ Import classes are:
 3. **Completed historical tasks:** import the exact source document and selected cutover
    observation as read-only history with explicit provenance. Do not assert current-schema
    conformance, complete workflow evidence, signoff, document kind, or validation success that the
-   source does not prove. Preserve source identity, source modification time, and import time.
+   source does not prove. Preserve the qualified source identity, source modification time, and
+   import time.
    Apply migration and current validation only if a later named command reopens or clones the task.
 4. **Excluded Sourcing and Reference records:** import only when an approved reading, search, or
    provenance requirement includes them; otherwise retain them in the source snapshot without
@@ -1096,7 +1222,8 @@ snapshot and writes only the staged database.
    operation rather than migrating live mutation authority mid-operation.
 5. Import every in-scope task under its class into a copied database.
 6. Prove observation-batch closure, including one exact source-document witness per task,
-   complete section coverage, matching linkage and identities, and no duplicate external IDs;
+   complete section coverage, matching linkage and qualified identities, and no duplicate external
+   IDs;
    then reconcile structured conversions where required, current pointers, location/completion
    state, operation history, signoff, and provenance.
 7. Quarantine mismatches that affect live authority; do not infer content, readiness, destination,
@@ -1118,15 +1245,16 @@ After separate explicit authorization:
 4. revoke or temporarily disable every credential capable of writing the authoritative Asana
    project where practical, retaining only the minimum read access needed for observation;
 5. enumerate the complete frozen corpus into a first `cutover` observation batch, including the
-   task set and count, section registry, exact title/body byte witnesses and identities, placements,
-   and completion states; reject duplicate task or section GIDs and compute its corpus-manifest
-   identity only after source-document and section closure passes;
+   task set and count, section registry, exact title/body logical-string witnesses and qualified
+   identities, placements, and completion states; reject duplicate task or section GIDs and compute
+   its corpus-manifest identity only after source-document and section closure passes;
 6. repeat the complete enumeration under the same freeze into a second `cutover` batch and require
    its independent closure plus exact agreement of task set, count, section registry, source
-   document identities, placements, and completion states; `modified_at` agreement alone is never
-   closure proof;
-7. name and approve the second matching complete manifest as the sole cutover import batch, and
-   take final database, configuration, code, and source-export snapshots bound to it;
+   document identity schemes and identities, placements, and completion states; `modified_at`
+   agreement alone is never closure proof;
+7. append one immutable approval for the second matching complete manifest as the sole cutover
+   import batch, and take final database, configuration, code, and source-export snapshots bound to
+   it;
 8. import only observations from that approved batch into the production database under the
    chosen target and quarantine any unapproved mismatch;
 9. activate the matching Dish code, schema, Honest revision, query/command surface, and human
@@ -1188,14 +1316,15 @@ opening mutations so rollback to Asana remains simple while it is still valid.
    recovery branch, validator, test fixture, and required human action.
 2. Build the representation-neutral authority foundation: task/version envelope, immutable document
    versions, observation batches and import origins, controlled locations and aliases,
-   completion/location history, immutable request envelopes, request-scoped claims, transactional
-   repository path, quarantine, and narrow human commands.
+   common version ancestry, workflow-wide exact-occurrence bindings, completion/location history,
+   immutable request envelopes, request-scoped claims, transactional repository path, quarantine,
+   and narrow human commands.
 3. Rehearse a document-compatible DB authority cutover and keep it independently deployable.
 4. In the separate representation project, approve the structured Honest schema,
    content-versus-workflow boundary, canonicalization and quantity rules, representation pair,
    identifier compatibility, and migration-signoff policy.
-5. Implement exact source parsing, structured candidate storage, rendering, and one-way
-   Asana-authoritative shadow reconciliation.
+5. Implement exact source parsing, structurally separate shadow candidate storage, rendering, and
+   one-way Asana-authoritative shadow reconciliation.
 6. Add candidate shadow execution and run it against representative live inputs plus direct
    crash/concurrency fault tests.
 7. Add the reusable frontend list/search/read/history/action shell; defer the complete structured
@@ -1252,8 +1381,12 @@ document-compatible authority cutover.
 - replayed results whose leases, ownership guidance, and principal-filtered `allowed_actions`
   reflect the committed post-finalization snapshot;
 - content, location, completion, signoff, and actor drift;
-- inspection, review, correction, and signoff references to exact same-task version occurrences,
-  including two same-task versions with the same identity where only one is verified;
+- operation baselines, steps, actor candidates, holds, material classifications, non-material
+  check-ins, submissions, migrations, reopens, inspection, review, correction, and signoff
+  references to exact same-task version occurrences, including two same-task versions with the same
+  identity where only one is authorized;
+- transitive non-material signoff inheritance through exact predecessor/candidate version
+  occurrences, including rejection of a same-identity occurrence outside that lineage;
 - imported signoff bound only to the exact imported title/body version occurrence, never a future
   same-identity version;
 - every Planning, Research, Verification, correction, hold, reopen, and submit route;
@@ -1277,12 +1410,14 @@ document-compatible authority cutover.
   identity;
 - source-to-structured parsing and structured-to-compatibility-rendering reconciliation across the
   active corpus;
-- one-way shadow gaps, replay, periodic reconciliation, and proof that shadow state cannot
-  authorize or alter Asana-backed production;
+- one-way shadow gaps, replay, periodic reconciliation, and proof that the separate shadow database
+  cannot authorize or alter Asana-backed production or resolve candidate IDs in the live repository;
 - separate shadow/reconciliation observations and approved cutover origins, with no path that
-  promotes the newest ordinary observation implicitly;
+  promotes the newest ordinary observation or shadow candidate implicitly;
 - observation-batch closure requiring one exact source-document witness per task, full section
-  coverage, matching identities and linkage, and rejection of duplicate task or section GIDs;
+  coverage, matching qualified identities and linkage, and rejection of duplicate task or section
+  GIDs;
+- irreversible batch completion and append-only approval of only a matching later cutover batch;
 - immutable many-to-one location aliases, append-only retirement evidence, and interval resolution
   by durable batch sequence rather than batch UUID ordering;
 - shadow execution divergence reporting without production response influence;
@@ -1298,7 +1433,8 @@ document-compatible authority cutover.
 - class-specific import validation, including read-only historical imports and rejected unresolved
   live evidence;
 - database migration from every preserved schema version;
-- semantic validation of current pointers and append-only lineage;
+- semantic validation of current pointers, common version ancestry, workflow-wide exact-occurrence
+  bindings, and specialized non-material signoff lineage;
 - composite task/version ownership, exactly-one representation, same-version child ownership,
   single revision advancement, and quarantine promotion constraints;
 - service restart, writer contention, backup creation, restore, and restore rollback;
@@ -1309,8 +1445,8 @@ document-compatible authority cutover.
   without changing DB workflow results;
 - exact corpus import counts, identities, locations, completion states, and quarantine reports;
 - a frozen-authority cutover with two complete enumerations agreeing on task set/count, section
-  registry, exact source-document witnesses and identities, placements, and completion states
-  before import from the named manifest.
+  registry, exact source-document witnesses and qualified identities, placements, and completion
+  states before import from the named manifest.
 
 The complete automated suite, an imported-corpus rehearsal, live test-project workflow, backup and
 restore rehearsal, and cutover/rollback rehearsal are handoff gates. Testing must exercise real
@@ -1328,7 +1464,7 @@ repository transactions rather than mocking the task repository at the workflow 
 | Partial normalized graph becomes current | Insert, validate, hash, point, and evidence the complete representation pair in one transaction |
 | Envelope and structured metadata drift | Envelope owns title/identity; structured row owns JSON/canonicalizer/schema; validate equality atomically |
 | Generated rendering becomes a second authority | Structured version is canonical; rendering is versioned output or preserved source evidence |
-| Shadow state influences production | One-way post-reread feed; no live authorization or write-back from shadow |
+| Shadow state influences production | Separate shadow database, one-way post-reread feed, and no live authorization or write-back |
 | Ordinary shadow row becomes import authority | Batch observations by purpose; only one approved complete cutover manifest may establish origins |
 | “Double write” recreates uncertainty | Asana-authoritative shadow before cutover; optional DB-authoritative outbox projection afterward |
 | Backend abstraction becomes a permanent second engine | Test-only selection before cutover; delete live Asana mutation after acceptance |
@@ -1343,10 +1479,12 @@ repository transactions rather than mocking the task repository at the workflow 
 | Legacy destination rewrite invalidates signoff | Preserve exact source and immutable location aliases; structured versions use Dish IDs |
 | Imported queue placement is mistaken for embedded destination | Separate task observation/origin, source document, and destination-resolution evidence |
 | Repeated parsing overwrites migration evidence | Append-only resolution attempts and an explicit selected resolution |
-| An incomplete manifest lacks importable source bytes | Batch closure requires one matching source-document witness per task and complete section coverage |
+| An incomplete manifest lacks importable source content | Batch closure requires one matching qualified source-document witness per task and complete section coverage |
 | Alias history is mutated or ordered by opaque IDs | Immutable aliases, append-only retirement, and durable batch sequence |
 | Parsing silently transfers Verification | Keep the signed document current by default; require re-Verification or an approved append-only equivalence attestation |
 | Same-content version inherits an earlier signoff | Bind every Verification subject to task, version occurrence, identity scheme, and identity |
+| Same-content version satisfies another workflow binding | Bind every content-bearing workflow fact to its exact same-task version occurrence |
+| Non-material approval is lost or inherited by hash | Append exact predecessor/candidate occurrence lineage back to the source approved cycle |
 | Canonicalizer upgrade silently transfers Verification | Create a new single-use version and apply the same re-Verification or attestation rule |
 | Old version is reactivated with stale workflow authority | Versions become current once; revert or restoration creates a new explicitly linked version |
 | Location rename invalidates identity | Stable ID is structured authority; names are rendered or historical display facts |
@@ -1366,6 +1504,9 @@ repository transactions rather than mocking the task repository at the workflow 
 | SQLite writer contention increases | Keep transactions local and bounded; measure real activation load before changing backend technology |
 | Import silently blesses drift | Exact snapshot reconciliation and quarantine; never infer missing facts |
 | Final Asana edit is omitted during cutover | Freeze every writer, compare two complete manifests, and import only the named matching batch |
+| Shadow candidate IDs leak into production | Separate shadow database; import creates fresh authoritative records from approved cutover evidence |
+| Source digest becomes ambiguous | Store and manifest the identity scheme with every observation and source witness |
+| Cutover batch is reopened or reapproved | Irreversible completion plus one append-only approval tied to an earlier matching complete batch |
 | Quarantine leaks into ordinary authority | Keep quarantine outside tasks; separately audited promotion only |
 
 ## Needs human review
@@ -1386,8 +1527,8 @@ these decisions on his behalf.
    workflow facts through a privileged equivalence attestation. The recommended default is no
    automatic transfer: keep signed documents current until governed work naturally creates and
    verifies a structured version; add attestation only if real migration cost justifies it.
-   Regardless of that policy choice, evidence always binds to one exact task/version occurrence
-   and identity rather than every version that happens to share its digest.
+   Regardless of that policy choice, every content-bearing workflow fact binds to one exact
+   task/version occurrence and identity rather than every version that happens to share its digest.
 4. **Structured identity.** Approve canonical JSON as the immutable identity/API witness paired
    atomically with consistency-checked typed rows, plus exact quantity, canonicalization, and
    representation-specific identity-scheme rules.
@@ -1425,16 +1566,18 @@ The recommended defaults in this draft are:
 3. keep immutable document versions as the minimum DB-authority representation;
 4. make immutable structured dish versions, stored canonical JSON, and consistency-checked typed
    rows the separately gated target representation;
-5. bind every Verification subject to its exact task/version occurrence, identity scheme, and
-   identity; keep imported signoff on the exact imported title/body version by default, and require
-   re-Verification or a separately approved equivalence attestation before transferring workflow
-   facts;
+5. bind every content-bearing workflow fact to its exact task/version occurrence, identity scheme,
+   and identity; model non-material signoff inheritance through explicit predecessor/candidate
+   occurrence lineage; keep imported signoff on the exact imported title/body version by default,
+   and require re-Verification or a separately approved equivalence attestation before transferring
+   workflow facts;
 6. use controlled Dish locations rather than project/membership emulation, with imported section
    GIDs represented by immutable many-to-one location-alias rows;
-7. separate batched shadow/reconciliation observations, the approved cutover origin, mandatory
-   source-document witnesses, current placement resolution, append-only embedded-destination
-   attempts, and the selected migration resolution;
-8. run one-way Asana-authoritative shadow ingestion and shadow execution before cutover;
+7. separate batched shadow/reconciliation observations, the append-only approved cutover origin,
+   mandatory qualified source-document witnesses, current placement resolution, append-only
+   embedded-destination attempts, and the selected migration resolution;
+8. run one-way Asana-authoritative shadow ingestion and shadow execution in a structurally separate
+   database before cutover; create fresh authoritative records rather than promoting shadow rows;
 9. choose direct structured or document-compatible cutover from explicit parity and signoff
    evidence without allowing structured work to delay a justified authority migration;
 10. stage the private frontend as read/discovery, structured editing/actions, then an explicitly
@@ -1456,8 +1599,8 @@ The recommended defaults in this draft are:
 20. make each version current at most once; revert, restoration, clone, and canonicalizer migration
     create a new explicitly linked version;
 21. freeze Asana writers and require two matching complete corpus manifests, each closed over exact
-    source-document witnesses and section observations without duplicate external IDs, before
-    importing only the named approved cutover batch;
+    qualified source-document witnesses and section observations without duplicate external IDs,
+    before importing only the named approved cutover batch;
 22. treat Asana rollback as valid only before the first DB-native production mutation;
 23. retain off-device backup as a sensible operational measure, not a replicated-database project.
 
