@@ -30,7 +30,12 @@ from dish_tool.releases import resolve_release
 from dish_tool.results import error_envelope, result_envelope
 from dish_tool.validation_scope import scope_for_command
 
-from .backup import BackupManager
+from .backup import BackupManager, BackupRecord
+from .backup_creation_journal import (
+    complete_backup_creation,
+    creation_for_request,
+    reserve_backup_creation,
+)
 from .config import ServiceConfig
 from .leases import LeaseManager, ServicePrincipal
 from .maintenance import MaintenanceGate
@@ -1929,6 +1934,47 @@ class DishService:
                 self._close_backend(backend)
                 conn.close()
 
+    @staticmethod
+    def _backup_result_matches_record(
+        result: Mapping[str, Any], record: BackupRecord
+    ) -> bool:
+        data = result.get("data")
+        backup = data.get("backup") if isinstance(data, Mapping) else None
+        return bool(
+            result.get("ok")
+            and isinstance(backup, Mapping)
+            and backup.get("backup_id") == record.backup_id
+            and backup.get("sha256") == record.sha256
+            and backup.get("size_bytes") == record.size_bytes
+        )
+
+    def _commit_backup_creation_result(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        request_id: str,
+        record: BackupRecord,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Commit backup metadata and the replay result as one SQLite unit."""
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            complete_backup_creation(
+                conn, request_id=request_id, record=record
+            )
+            authoritative = complete_request(
+                conn, request_id=request_id, result=result
+            )
+            if not self._backup_result_matches_record(authoritative, record):
+                conn.execute("ROLLBACK")
+                return authoritative
+            conn.execute("COMMIT")
+            return authoritative
+        except Exception:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+
     def create_backup(
         self,
         *,
@@ -1951,6 +1997,8 @@ class DishService:
                     "backup-create", _database_initialization_error(exc)
                 )
             try:
+                manager = self.backup_manager
+                creation = None
                 if request_id:
                     row, replay_started = begin_request(
                         conn,
@@ -1963,13 +2011,52 @@ class DishService:
                     prior = stored_result(row)
                     if prior is not None:
                         return prior
+                    creation = creation_for_request(conn, request_id)
                     if not replay_started:
-                        raise pending_error("backup-create", request_id)
-                record = self.backup_manager.create(label=label)
-                result = result_envelope(command="backup-create", data={"backup": record.as_dict()})
+                        if creation is None:
+                            raise pending_error("backup-create", request_id)
+                        recovered = manager.existing_record(creation["backup_id"])
+                        if recovered is None:
+                            exc = pending_error("backup-create", request_id)
+                            exc.details.update({
+                                "backup_id": creation["backup_id"],
+                                "backup_identity_reserved": True,
+                            })
+                            raise exc
+                        result = result_envelope(
+                            command="backup-create",
+                            data={
+                                "backup": recovered.as_dict(),
+                                "request_id": request_id,
+                                "request_replayed": True,
+                                "backup_recovered_from_interruption": True,
+                            },
+                        )
+                        return self._commit_backup_creation_result(
+                            conn,
+                            request_id=request_id,
+                            record=recovered,
+                            result=result,
+                        )
+
+                    creation = reserve_backup_creation(
+                        conn,
+                        request_id=request_id,
+                        backup_id=manager.new_backup_id(label=label),
+                    )
+
+                record = manager.create(
+                    label=label,
+                    backup_id=None if creation is None else creation["backup_id"],
+                )
+                result = result_envelope(
+                    command="backup-create", data={"backup": record.as_dict()}
+                )
                 if request_id:
                     result.setdefault("data", {})["request_id"] = request_id
-                    complete_request(conn, request_id=request_id, result=result)
+                    return self._commit_backup_creation_result(
+                        conn, request_id=request_id, record=record, result=result
+                    )
                 return result
             except DishRuleError as exc:
                 exc = _preserve_semantic_evidence_error(

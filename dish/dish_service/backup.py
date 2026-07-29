@@ -273,11 +273,42 @@ class BackupManager:
                 except OSError:
                     pass
 
-    def create(self, *, label: str = "manual") -> BackupRecord:
+    @staticmethod
+    def new_backup_id(*, label: str = "manual") -> str:
         safe_label = re.sub(r"[^A-Za-z0-9_-]+", "-", str(label or "manual").strip()).strip("-") or "manual"
         safe_label = safe_label[:32]
-        backup_id = f"dish-{_stamp()}-{safe_label}-{uuid.uuid4().hex[:8]}.sqlite3"
-        return self._snapshot_to(self._managed_path(backup_id))
+        return f"dish-{_stamp()}-{safe_label}-{uuid.uuid4().hex[:8]}.sqlite3"
+
+    def existing_record(self, backup_id: str) -> BackupRecord | None:
+        """Return a validated record for an already-durable managed snapshot."""
+        path = self._managed_path(backup_id)
+        if not path.exists():
+            return None
+        try:
+            self._validate_snapshot(path)
+        except DishRuleError as exc:
+            if exc.code == "VALIDATION_FAILED":
+                raise _immutable_backup_validation_error(exc, backup_id=path.name) from exc
+            raise
+        return self._record(path)
+
+    def create(
+        self,
+        *,
+        label: str = "manual",
+        backup_id: str | None = None,
+    ) -> BackupRecord:
+        selected = backup_id or self.new_backup_id(label=label)
+        destination = self._managed_path(selected)
+        if destination.exists():
+            raise DishRuleError(
+                "CONFLICT",
+                "reserved backup destination already exists",
+                rule="backup_destination_exists",
+                retryable=False,
+                details={"backup_id": selected},
+            )
+        return self._snapshot_to(destination)
 
     @staticmethod
     def _file_fingerprint(path: Path) -> dict[str, Any] | None:

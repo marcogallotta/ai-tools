@@ -341,7 +341,9 @@ same task reaps only that safe stale row.
 
 Every externally callable service mutation has a client request UUID whose first authoritative
 outcome is replay-bound. Pending or uncertain work is inspected or reconstructed, not reissued.
-`backup-restore` uses a sibling journal because replacing SQLite would replace an ordinary
+Request-scoped backup creation reserves its exact output identifier before the filesystem effect,
+then commits validated backup metadata with the service-request result; replay reconciles only that
+reserved path. `backup-restore` uses a sibling journal because replacing SQLite would replace an ordinary
 in-database request record. Its append-only checkpoints bind the accepted request to the source
 backup, prepared candidate, pre-restore snapshot attempt, atomic replacement, validation, and any
 rollback. Restart recovery advances only from an exact durable checkpoint and matching file

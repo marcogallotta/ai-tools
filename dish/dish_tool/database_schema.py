@@ -1555,7 +1555,64 @@ WHEN NEW.operation_id IS NOT OLD.operation_id
 BEGIN SELECT RAISE(ABORT, 'operation creation facts are immutable'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28}
+
+_MIGRATION_29 = """
+CREATE TABLE IF NOT EXISTS backup_creations (
+    request_id TEXT PRIMARY KEY REFERENCES service_requests(request_id),
+    backup_id TEXT NOT NULL UNIQUE CHECK(length(trim(backup_id)) > 0),
+    status TEXT NOT NULL CHECK(status IN ('reserved','completed')),
+    sha256 TEXT,
+    size_bytes INTEGER,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    CHECK ((status='reserved' AND sha256 IS NULL AND size_bytes IS NULL AND completed_at IS NULL)
+        OR (status='completed' AND length(trim(sha256)) > 0 AND size_bytes >= 0 AND completed_at IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS backup_creations_status_idx
+    ON backup_creations(status, created_at);
+
+CREATE TRIGGER IF NOT EXISTS backup_creations_identity_immutable_update
+BEFORE UPDATE ON backup_creations
+WHEN NEW.request_id IS NOT OLD.request_id
+  OR NEW.backup_id IS NOT OLD.backup_id
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'backup creation identity is immutable'); END;
+
+CREATE TRIGGER IF NOT EXISTS backup_creations_status_monotonic_update
+BEFORE UPDATE OF status, sha256, size_bytes, completed_at ON backup_creations
+WHEN OLD.status <> 'reserved'
+  OR NEW.status <> 'completed'
+  OR NEW.sha256 IS NULL
+  OR length(trim(NEW.sha256)) = 0
+  OR NEW.size_bytes IS NULL
+  OR NEW.size_bytes < 0
+  OR NEW.completed_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'backup creation completion is one-way'); END;
+
+CREATE TRIGGER IF NOT EXISTS backup_creations_append_only_delete
+BEFORE DELETE ON backup_creations
+BEGIN SELECT RAISE(ABORT, 'backup creations are append-only'); END;
+
+INSERT OR IGNORE INTO backup_creations(
+    request_id, backup_id, status, sha256, size_bytes, created_at, completed_at
+)
+SELECT request_id,
+       json_extract(result_json, '$.data.backup.backup_id'),
+       'completed',
+       json_extract(result_json, '$.data.backup.sha256'),
+       json_extract(result_json, '$.data.backup.size_bytes'),
+       created_at,
+       completed_at
+  FROM service_requests
+ WHERE command='backup-create'
+   AND status='completed'
+   AND json_extract(result_json, '$.ok')=1
+   AND length(trim(json_extract(result_json, '$.data.backup.backup_id'))) > 0
+   AND length(trim(json_extract(result_json, '$.data.backup.sha256'))) > 0
+   AND json_type(result_json, '$.data.backup.size_bytes')='integer';
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -1745,6 +1802,8 @@ _SEMANTIC_RECORD_SELECTORS = {
     "marco_authorizations": "authorization_id",
     "dish_inspect_facts": "fact_id",
     "planning_reopen_attempts": "attempt_id",
+    "backup_creations": "request_id",
+    "service_requests": "request_id",
     "operations": "operation_id",
     "service_leases": "lease_id",
     "operation_execution_claims": "claim_id",
@@ -1960,6 +2019,32 @@ def _semantic_relationship(
             "source_fields": ["outcome", "finished_at"],
             "targets": [{**same_record, "fields": ["finished_at"]}],
             "required_predicate": "outcome=started implies finished_at is absent",
+        },
+        "backup_creation_request_binding": {
+            "source_fields": [
+                "request_id", "backup_id", "status", "sha256", "size_bytes"
+            ],
+            "targets": [{
+                "record_type": "service_requests",
+                "selector": _semantic_selector(row, "request_id"),
+                "fields": ["command", "status", "result_json", "completed_at"],
+            }],
+            "required_predicate": (
+                "completed backup creation metadata exactly matches a completed successful "
+                "backup-create service result for the same request"
+            ),
+        },
+        "backup_creation_result_missing": {
+            "source_fields": ["request_id", "command", "status", "result_json"],
+            "targets": [{
+                "record_type": "backup_creations",
+                "selector": _semantic_selector(row, "request_id"),
+                "fields": ["backup_id", "status", "sha256", "size_bytes"],
+            }],
+            "required_predicate": (
+                "every completed successful backup-create request has one completed "
+                "backup_creations row with the same backup identity and metadata"
+            ),
         },
         "change_operation_intent_binding": {
             "source_fields": ["operation_kind", "operation_id"],
@@ -2573,6 +2658,48 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                     "operation_executions",
                     row["execution_id"],
                 ))
+    for row in conn.execute("SELECT * FROM backup_creations WHERE status='completed'"):
+        request = conn.execute(
+            "SELECT * FROM service_requests WHERE request_id=?", (row["request_id"],)
+        ).fetchone()
+        valid = False
+        if request is not None and request["command"] == "backup-create" and request["status"] == "completed":
+            try:
+                result = json.loads(request["result_json"] or "null")
+            except (TypeError, ValueError):
+                result = None
+            backup = (result.get("data") or {}).get("backup") if isinstance(result, dict) else None
+            valid = bool(
+                isinstance(result, dict)
+                and result.get("ok")
+                and isinstance(backup, dict)
+                and backup.get("backup_id") == row["backup_id"]
+                and backup.get("sha256") == row["sha256"]
+                and backup.get("size_bytes") == row["size_bytes"]
+            )
+        if not valid:
+            problems.append(_semantic_problem(
+                conn,
+                "backup_creation_request_binding",
+                "backup_creations",
+                row["request_id"],
+            ))
+    for request in conn.execute(
+        """SELECT * FROM service_requests
+             WHERE command='backup-create' AND status='completed'
+               AND json_extract(result_json, '$.ok')=1"""
+    ):
+        creation = conn.execute(
+            "SELECT status FROM backup_creations WHERE request_id=?",
+            (request["request_id"],),
+        ).fetchone()
+        if creation is None or creation["status"] != "completed":
+            problems.append(_semantic_problem(
+                conn,
+                "backup_creation_result_missing",
+                "service_requests",
+                request["request_id"],
+            ))
     for row in conn.execute("SELECT * FROM two_pass_resets"):
         version = conn.execute(
             """SELECT 1 FROM content_versions
@@ -2613,7 +2740,7 @@ def _validate_current_database(conn: sqlite3.Connection) -> None:
     user_version, ledger_version = _schema_version_state(conn)
     if user_version != current or ledger_version != current:
         raise DishRuleError("VALIDATION_FAILED", "database did not converge to the current schema", rule="database_schema_not_current", details={"user_version": user_version, "ledger_version": ledger_version, "current": current})
-    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims", "operation_executions", "dish_inspect_facts", "planning_reopen_attempts"}
+    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims", "operation_executions", "dish_inspect_facts", "planning_reopen_attempts", "backup_creations"}
     actual = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     missing = sorted(required - actual)
     if missing:

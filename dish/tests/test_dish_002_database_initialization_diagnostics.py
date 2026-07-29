@@ -257,10 +257,16 @@ def test_semantic_failure_after_request_start_requires_fresh_request_id(
     calls = 0
 
     class SemanticFailureBackupManager:
-        def create(self, *, label):
+        @staticmethod
+        def new_backup_id(*, label):
+            assert label == "semantic-check"
+            return "dish-semantic-check.sqlite3"
+
+        def create(self, *, label, backup_id=None):
             nonlocal calls
             calls += 1
             assert label == "semantic-check"
+            assert backup_id == "dish-semantic-check.sqlite3"
             raise DishRuleError(
                 "VALIDATION_FAILED",
                 "database durable evidence is semantically inconsistent",
