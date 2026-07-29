@@ -191,6 +191,30 @@ def test_planning_prepare_rejects_empty_required_values_before_write(
     assert b.writes == 0
 
 
+def test_planning_prepare_rejects_unsupported_exemption_before_write(tmp_path):
+    b = Backend("Planning task", "")
+    a = app(tmp_path, b)
+    started = a.execute(
+        "start", agent="gpt", task_gid="t", kind="planning",
+        change_level=None, change_reason=None,
+    )
+    candidate = PLANNING.replace(
+        "Exemptions: None",
+        "Exemptions: [nutrition-sodium] — Marco approved for this dish",
+    )
+
+    result = a.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"],
+        file_path=write(tmp_path, "unsupported-exemption.txt", candidate),
+    )
+
+    assert result["code"] == "VALIDATION_FAILED"
+    assert result["errors"][0]["rule"] == "planning.exemption-tag-unsupported"
+    assert result["errors"][0]["location"] == "Exemptions"
+    assert b.writes == 0
+
+
 def test_initial_start_rejects_empty_planning_purpose_before_operation(tmp_path):
     candidate = TASK.replace("Purpose: Compare texture", "Purpose:")
     lines = candidate.splitlines()
@@ -205,6 +229,31 @@ def test_initial_start_rejects_empty_planning_purpose_before_operation(tmp_path)
     assert any(
         error.get("rule") == "planning.field-empty"
         and error.get("location") == "Purpose"
+        for error in result["errors"]
+    )
+    assert result["submission_id"] is None
+    assert b.writes == 0
+    assert b.moves == 0
+
+
+def test_initial_start_rejects_unsupported_exemption_before_operation(tmp_path):
+    candidate = TASK.replace(
+        "Exemptions: None",
+        "Exemptions: [nutrition-sodium] — Marco approved for this dish",
+    )
+    lines = candidate.splitlines()
+    b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
+    a = app(tmp_path, b)
+
+    result = a.execute(
+        "start", agent="gpt", task_gid="t", kind="initial",
+        change_level=None, change_reason=None,
+    )
+
+    assert result["code"] == "VALIDATION_FAILED"
+    assert any(
+        error.get("rule") == "planning.exemption-tag-unsupported"
+        and error.get("location") == "Exemptions"
         for error in result["errors"]
     )
     assert result["submission_id"] is None

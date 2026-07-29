@@ -102,6 +102,48 @@ def test_planning_brief_rejects_empty_required_values(field_name):
     ]
 
 
+def test_planning_brief_rejects_unsupported_exemption_tags():
+    candidate = PLANNING.replace(
+        "Exemptions: None",
+        "Exemptions: [nutrition-sodium] — Marco approved for this dish",
+    )
+
+    validation = validate_planning_brief(parse_planning_brief(candidate))
+
+    assert [
+        (finding.rule, finding.location, finding.message)
+        for finding in validation.findings
+    ] == [
+        (
+            "planning.exemption-tag-unsupported",
+            "Exemptions",
+            (
+                "Unsupported exemption tags: [nutrition-sodium]; allowed tags are "
+                "[nutrition-kcal], [nutrition-protein], [nutrition-fat]"
+            ),
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "None",
+        "[nutrition-kcal] — Marco approved for this dish",
+        "[nutrition-protein] [nutrition-fat] — Marco approved for this dish",
+    ],
+)
+def test_planning_brief_accepts_supported_exemption_tags(value):
+    candidate = PLANNING.replace("Exemptions: None", f"Exemptions: {value}")
+
+    validation = validate_planning_brief(parse_planning_brief(candidate))
+
+    assert not [
+        finding for finding in validation.findings
+        if finding.location == "Exemptions"
+    ]
+
+
 def test_complete_task_round_trip_and_lower_heading():
     document = parse_task_document(TASK)
     assert document.nutrition_scope == "out-of-scope"

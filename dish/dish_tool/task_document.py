@@ -40,6 +40,10 @@ RESEARCH_BASIS_PREFIXES = (
     "Source-backed dish", "Halal port of ", "Intentional test dish, human-approved",
 )
 DESTINATION_RE = re.compile(r"^(?P<name>.+?)\s+—\s+(?P<gid>[0-9]+)$")
+EXEMPTION_TAG_AT_START_RE = re.compile(r"\A\s*\[([^\]]+)\]")
+ALLOWED_EXEMPTION_TAGS = frozenset(
+    {"nutrition-kcal", "nutrition-protein", "nutrition-fat"}
+)
 ACTOR_NAME_PATTERN = r"(?:ChatGPT|Custom GPT|Claude|Codex)"
 MODEL_PATTERN = r"[^,—]+"
 DATE_PATTERN = r"\d{4}-\d{2}-\d{2}"
@@ -767,6 +771,27 @@ def validate_planning_brief(brief: PlanningBrief) -> DocumentValidation:
     role = brief.values["Role"]
     if role and role != "main" and not role.startswith("non-main — "):
         findings.append(DocumentFinding("planning.role", FindingKind.SYNTAX, "Role must be exactly `main` with no trailing text, or `non-main — <kind and why>`", "Role"))
+    exemptions = brief.values["Exemptions"]
+    remainder = exemptions
+    exemption_tags: list[str] = []
+    while match := EXEMPTION_TAG_AT_START_RE.match(remainder):
+        exemption_tags.append(match.group(1).strip())
+        remainder = remainder[match.end():]
+    unsupported_tags = sorted(set(exemption_tags) - ALLOWED_EXEMPTION_TAGS)
+    if unsupported_tags:
+        findings.append(
+            DocumentFinding(
+                "planning.exemption-tag-unsupported",
+                FindingKind.SYNTAX,
+                (
+                    "Unsupported exemption tags: "
+                    + ", ".join(f"[{tag}]" for tag in unsupported_tags)
+                    + "; allowed tags are [nutrition-kcal], [nutrition-protein], "
+                    "[nutrition-fat]"
+                ),
+                "Exemptions",
+            )
+        )
     destination = brief.values["Destination section"]
     if destination and destination not in {"[destination missing]", "[destination invalid]"} and not DESTINATION_RE.match(destination):
         findings.append(DocumentFinding("planning.destination", FindingKind.AGENT_CORRECTABLE, "Destination section must be name — gid or a canonical defect marker", "Destination section"))
