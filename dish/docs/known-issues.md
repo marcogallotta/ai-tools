@@ -1,8 +1,9 @@
 # Dish known issues
 
-This file separates open post-rollout candidates from limitations accepted for launch. An entry is
-not implementation authorization. Current authority boundaries and runtime behavior remain defined
-by [`architecture.md`](architecture.md) and [`runtime-contract.md`](runtime-contract.md).
+This file separates rollout blockers, post-rollout candidates, and limitations accepted for launch.
+An entry is not implementation authorization. Current authority boundaries and runtime behavior
+remain defined by [`architecture.md`](architecture.md) and
+[`runtime-contract.md`](runtime-contract.md).
 
 ## Rollout and triage context
 
@@ -27,6 +28,34 @@ clear workaround and revisit trigger. For every new or reconsidered issue, recor
 - Marco's recovery effort and whether recovery requires private implementation knowledge;
 - whether the proper fix belongs to the planned database backend or another later architecture;
 - the concrete frequency, pain, or safety signal that should trigger reconsideration.
+
+## Rollout blockers
+
+### PR-1 — admin recovery blocked by a live Action lease
+
+After a partial mutation, Dish can return `BACKEND_UNCERTAIN`, `safe_to_retry: false`, and
+`required_admin_action: recover`. If the Action actor still owns a live operation lease, Marco's
+immediate private `recover` call fails with `AGENT_MISMATCH / service_lease_owner_mismatch`.
+Recovery works only after lease expiry, `recover-lease`, and then `recover`; the advertised command
+is therefore not immediately executable and the workflow can remain blocked for the lease TTL.
+
+Fix before rollout so an authorized admin can perform the prescribed narrow recovery immediately,
+without weakening ordinary agent lease ownership or requiring undocumented sequencing. Add one
+regression covering an Action-owned operation, a confirmed partial write, and immediate
+Marco-admin recovery.
+
+### PR-2 — pre-construction Research hold and governed audit are not atomic
+
+The initial pre-construction Research-hold path commits the hold transition and completed step
+before recording `research.preconstruction_blocked`. If that audit insert fails, the hold remains
+applied without its governed decision event. Exact replay then follows the Verification-rejection
+path, can resolve the original uncertain request as `WRONG_STATE / verification_cycle_missing`, and
+never recreates the missing hold audit.
+
+Fix before rollout by making the hold transition, completed step, and governed audit one atomic
+decision, with exact replay resolving to the effect that actually occurred. Regression coverage
+must fault the audit insertion and prove that completion is impossible without exactly one governed
+hold event and an accurate final request result.
 
 ## Post-rollout candidates
 
@@ -57,31 +86,28 @@ defect. Do not expose a production Action that deliberately fails or corrupts mu
 test mechanism only when a concrete recovery scenario cannot be exercised safely by the existing
 local harness.
 
-### VERIFY-001 — transient `service_database_unavailable` retry behavior
+### VERIFY-001 — transient `service_database_unavailable` attribution
 
-This condition has been observed spuriously but has not been reproduced under controlled
-conditions, so it is unknown whether the underlying problem is resolved. It is parked as a
-verification target rather than treated as a currently reproducible defect. If it recurs, verify
-that it fails safely, preserves request identity and replay guarantees, and permits retry without
-duplicate mutation or corrupted workflow state.
+Controlled SQLite writer contention now reproduces `service_database_unavailable` safely before
+execution or request consumption. After the writer releases, exact same-UUID retry succeeds with
+one request record, one operation, and no duplicate mutation. Planning-reopen reconciliation is one
+credible internal source because it deliberately holds a writer transaction across an Asana
+network sequence, but it has not been proven to have caused the earlier spurious observation.
 
-Do not prioritize speculative implementation work. Reconsider only after a controlled reproduction
-or a production observation, using that evidence to assess recurrence, agent guidance, recovery
-effort, and any concurrency or production-state impact.
+The retry-safety question is resolved for writer contention. Keep only the historical attribution
+parked; reconsider implementation work if ordinary live use makes the condition frequent or a
+future occurrence violates the confirmed fail-before-execution and exact-retry behavior.
 
 ### VERIFY-002 — transient non-material terminalization failure
 
-One test-project non-material Change returned `BACKEND_UNCERTAIN` after its candidate write and
-handoff validation had committed. The submitted forged `Verified by` value was correctly replaced
-with the signed baseline, so provenance was not altered. The remaining `non_material_terminal`
-transition failed with only the broad diagnostic `OperationalError`; applying that exact transition
-to a database snapshot later succeeded.
+SQLite writer contention now reproduces the test-project failure at `non_material_terminal` after
+the candidate write and handoff validation commit. Dish preserves the confirmed write, prohibits
+normal retry, and does not duplicate content, but immediate private recovery is blocked by PR-1.
+After that rollout blocker is fixed, the remaining limitation is diagnostic: durable evidence keeps
+only `OperationalError` rather than the available `SQLITE_BUSY` or `SQLITE_LOCKED` category.
 
-Dish failed safely: it preserved the confirmed write, prohibited retry, and required private
-recovery without duplicating the mutation. Park this as a verification target rather than a
-reproducible defect. Reconsider if it recurs in a controlled test or production, especially if
-terminal recovery becomes recurring operator friction; retain the exact database error category in
-future evidence so concurrency, storage, and code faults can be distinguished.
+Keep exact SQLite-category retention as post-rollout diagnostic work. Reconsider on another live
+occurrence or if the category is not a normalized writer-lock condition.
 
 ## Accepted for launch
 
