@@ -9,6 +9,7 @@ import sqlite3
 import uuid
 from typing import Any, Iterable, Mapping, Sequence
 
+from .audit_repair_sidecar import fsync_parent, locked_audit_repair_sidecar
 from .constants import SUBMISSION_STATES
 from .database_schema import MIGRATIONS, initialize_database, migrate_database
 from .errors import DishRuleError
@@ -1428,38 +1429,47 @@ def consume_reserved_marco_authorizations(
 
 
 def _import_command_audit_repair_fallback(conn: sqlite3.Connection) -> int:
-    """Import emergency JSONL repairs written when SQLite repair insertion failed."""
-    from pathlib import Path
-    db_path = str(conn.execute("PRAGMA database_list").fetchone()[2] or "")
-    if not db_path or db_path == ":memory:":
-        return 0
-    path = Path(db_path + ".audit-repair.jsonl")
-    if not path.exists():
-        return 0
+    """Claim and import emergency JSONL repairs without deleting concurrent appends."""
     imported = 0
     remaining: list[str] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            item = json.loads(line)
-            conn.execute(
-                """INSERT OR IGNORE INTO command_audit_repairs(
-                       repair_id,command,operation_id,submission_id,task_gid,actor_agent,
-                       result_json,audit_error,created_at
-                   ) VALUES(?,?,?,?,?,?,?,?,?)""",
-                (item["repair_id"], item["command"], item.get("operation_id"),
-                 item.get("submission_id"), item.get("task_gid"), item.get("actor_agent"),
-                 json.dumps(item["result"], sort_keys=True, separators=(",", ":")),
-                 item.get("audit_error", "emergency audit repair"), utc_now()),
-            )
-            imported += 1
-        except Exception:
-            remaining.append(line)
-    if remaining:
-        path.write_text("\n".join(remaining) + "\n", encoding="utf-8")
-    else:
-        path.unlink(missing_ok=True)
+    with locked_audit_repair_sidecar(conn) as paths:
+        if paths is None:
+            return 0
+
+        while paths.claim.exists() or paths.main.exists():
+            if not paths.claim.exists():
+                paths.main.replace(paths.claim)
+                fsync_parent(paths.main)
+
+            lines = paths.claim.read_text(encoding="utf-8").splitlines()
+            for line in lines:
+                if not line.strip():
+                    continue
+                try:
+                    item = json.loads(line)
+                    cursor = conn.execute(
+                        """INSERT OR IGNORE INTO command_audit_repairs(
+                               repair_id,command,operation_id,submission_id,task_gid,actor_agent,
+                               result_json,audit_error,created_at
+                           ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                        (item["repair_id"], item["command"], item.get("operation_id"),
+                         item.get("submission_id"), item.get("task_gid"), item.get("actor_agent"),
+                         json.dumps(item["result"], sort_keys=True, separators=(",", ":")),
+                         item.get("audit_error", "emergency audit repair"), utc_now()),
+                    )
+                    imported += int(cursor.rowcount > 0)
+                except Exception:
+                    remaining.append(line)
+            paths.claim.unlink()
+            fsync_parent(paths.claim)
+
+        if remaining:
+            with paths.main.open("a", encoding="utf-8") as handle:
+                handle.write("\n".join(remaining) + "\n")
+                handle.flush()
+                import os
+                os.fsync(handle.fileno())
+            fsync_parent(paths.main)
     return imported
 
 

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import pathlib
 import sqlite3
 import uuid
 from typing import Any, Mapping, MutableMapping
 
+from .audit_repair_sidecar import append_audit_repair
 from .constants import AGENT_FAMILIES
 from .database import record_audit, record_command_audit_repair
 
@@ -32,16 +32,8 @@ def _operation_id(
 
 
 def _write_emergency_repair(conn: sqlite3.Connection, payload: Mapping[str, Any]) -> bool:
-    """Persist a JSONL repair when the database repair table is unavailable."""
-    db_row = conn.execute("PRAGMA database_list").fetchone()
-    db_path = "" if db_row is None else str(db_row[2] or "")
-    if not db_path or db_path == ":memory:":
-        return False
-    fallback = pathlib.Path(db_path + ".audit-repair.jsonl")
-    fallback.parent.mkdir(parents=True, exist_ok=True)
-    with fallback.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(dict(payload), sort_keys=True) + "\n")
-    return True
+    """Persist a crash-safe JSONL repair when the database table is unavailable."""
+    return append_audit_repair(conn, payload)
 
 
 def record_invocation_audit(
