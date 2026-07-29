@@ -418,9 +418,43 @@ def _step9_admin_repair_destination(
 
 
 # Step 9 live-evidence recovery inspection for operation-backed work.
-def _step9_admin_recover(self, *, trace: AdminTrace, submission_id: str, outcome: str = "inspect", reason: str = "live inspection") -> dict[str, Any]:
-    operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
-    exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
+def _step9_admin_recover(
+    self,
+    *,
+    trace: AdminTrace,
+    submission_id: str,
+    outcome: str,
+    reason: str,
+) -> dict[str, Any]:
+    operation_id = _clean_required(
+        submission_id, rule="operation_id_required", label="operation ID"
+    )
+    clean_outcome = str(outcome or "").strip()
+    if not clean_outcome:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "recovery outcome is required",
+            rule="recovery_outcome_required",
+            details={"field": "outcome"},
+        )
+    clean_reason = str(reason or "").strip()
+    if not clean_reason:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "recovery reason is required",
+            rule="recovery_reason_required",
+            details={"field": "reason"},
+        )
+    if clean_outcome not in {"inspect", "not-applied", "applied"}:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "recovery outcome must be inspect, not-applied, or applied",
+            rule="recovery_outcome_invalid",
+            details={"field": "outcome"},
+        )
+    exists = self.conn.execute(
+        "SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)
+    ).fetchone()
     if exists is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     if self.backend is None:
@@ -430,7 +464,13 @@ def _step9_admin_recover(self, *, trace: AdminTrace, submission_id: str, outcome
     trace.task_gid = exists["task_gid"]
     data, view = self.operation_service.current.recover(
         operation_id,
-        lambda: recover_operation(self.conn, self.backend, operation_id=operation_id, requested_outcome=outcome, reason=reason),
+        lambda: recover_operation(
+            self.conn,
+            self.backend,
+            operation_id=operation_id,
+            requested_outcome=clean_outcome,
+            reason=clean_reason,
+        ),
     )
     trace.state = view["status"]
     return result_envelope(command="recover", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)

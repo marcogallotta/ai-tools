@@ -24,7 +24,13 @@ UNKNOWN_OPERATION = "99999999-9999-4999-8999-999999999999"
         (
             "/v1/admin/recover",
             "admin-secret",
-            {"arguments": {"submission_id": UNKNOWN_OPERATION}},
+            {
+                "arguments": {
+                    "submission_id": UNKNOWN_OPERATION,
+                    "outcome": "applied",
+                    "reason": "unknown-operation replay probe",
+                }
+            },
             "recover",
         ),
         (
