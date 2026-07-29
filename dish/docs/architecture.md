@@ -13,7 +13,7 @@ loading every Dish document.
 |---|---|
 | installation, deployment, service operation, or an operator command | [`../README.md`](../README.md) and the linked deployment guide |
 | response fields, exit status, retry, leases, recovery, or client-visible behavior | [`runtime-contract.md`](runtime-contract.md) |
-| accepted limitations and their revisit triggers | [`known-issues.md`](known-issues.md) |
+| post-rollout candidates and accepted launch limitations | [`known-issues.md`](known-issues.md) |
 | GPT Action exposure or editor configuration | [`../deploy/gpt-action.md`](../deploy/gpt-action.md) |
 | Tailscale Serve or Funnel | [`../deploy/tailscale/README.md`](../deploy/tailscale/README.md) |
 | test-project rehearsal, corpus migration, production cutover, or rollback | [`rollout.md`](rollout.md) |
@@ -445,5 +445,5 @@ clear home.
 Dish is not a general multi-user platform, raw Asana proxy, generic task editor, automatic semantic
 recipe judge, or writable legacy workflow. It has no arbitrary admin unblock.
 
-Potential post-activation work belongs in [`future.md`](future.md), not in a
-description of current architecture.
+Tracked gaps and accepted limitations belong in [`known-issues.md`](known-issues.md). Broader
+post-activation proposals belong in [`future.md`](future.md), not in current architecture.

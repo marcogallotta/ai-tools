@@ -1,8 +1,9 @@
 # Dish future work
 
-This file contains only work that is **not already implemented** in the current Dish architecture.
-It is design triage, not implementation authorization. Any item still requires Marco's explicit
-approval and should be justified by real usage evidence.
+This file contains broader work that is **not already implemented** in the current Dish
+architecture. Tracked gaps, post-rollout issue candidates, and accepted launch limitations belong
+in [`known-issues.md`](known-issues.md). This is design triage, not implementation authorization.
+Any item still requires Marco's explicit approval and should be justified by real usage evidence.
 
 For the implemented system, read [`architecture.md`](architecture.md),
 [`../README.md`](../README.md), and [`runtime-contract.md`](runtime-contract.md).

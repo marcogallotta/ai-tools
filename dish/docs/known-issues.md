@@ -1,11 +1,25 @@
-# Dish accepted limitations
+# Dish known issues
 
-These are understood limitations of the current Dish deployment, not active implementation
-commitments. Each entry records the practical effect, the safe handling, and the evidence that
-would justify revisiting it. Current authority boundaries and runtime behavior remain defined by
-[`architecture.md`](architecture.md) and [`runtime-contract.md`](runtime-contract.md).
+This file separates open post-rollout candidates from limitations accepted for launch. An entry is
+not implementation authorization. Current authority boundaries and runtime behavior remain defined
+by [`architecture.md`](architecture.md) and [`runtime-contract.md`](runtime-contract.md).
 
-## DISH-003 — connected UUID schema visibility
+## Post-rollout candidates
+
+### DESIGN-003 — connected request-status inspection
+
+A connected agent with a `request_id` has no read-only lookup for the request's authoritative
+state. Exact replay remains the recovery contract, while investigation otherwise depends on private
+tooling, logs, or inference from linked workflow records.
+
+A future bounded lookup could report request status, command name, owner/run match, linked task and
+operation identifiers, whether exact replay is safe, and any required private or human recovery.
+It should not expose full canonical arguments or stored results by default. This is non-blocking
+observability work; implement it only if post-launch response-loss investigations become frequent.
+
+## Accepted for launch
+
+### DISH-003 — connected UUID schema visibility
 
 The generated and served OpenAPI marks UUID fields with `format: uuid`, a canonical
 lowercase/non-nil `pattern`, and exact length bounds. The GPT Action importer may expose only the
@@ -16,7 +30,7 @@ Backend UUID validation remains authoritative. The late feedback has low-to-mode
 creates no workflow or replay state. Consider a future UUID representation redesign only if live
 usage shows that connected-side validation would materially improve the experience.
 
-## DISH-014 — private expired-lease recovery
+### DISH-014 — private expired-lease recovery
 
 Expired operation leases have no connected recovery Action. Dish fails closed and gives the agent
 an empty action list, `required_admin_action: recover-lease`, the Marco/admin resolver, the exact
@@ -27,7 +41,7 @@ This is accepted as won't-fix for launch. The interruption requires a small manu
 lose task content or duplicate work, and the agent can tell Marco exactly how to resolve it. Revisit
 only if post-launch lease expiries create meaningful recurring operator friction.
 
-## DISH-015 — private Evidence and Human Review resolution
+### DISH-015 — private Evidence and Human Review resolution
 
 Evidence and Human Review holds deliberately have no connected recovery Actions. The connected
 agent stops and identifies the required Marco/admin continuation. Marco resolves the hold through
@@ -39,7 +53,7 @@ This is accepted as won't-fix for launch: the human checkpoint is intentional, t
 is simple, and the expected operational impact is low. Revisit only if real post-launch holds create
 meaningful recurring operator friction.
 
-## DISH-018 — pending task creation recovery
+### DISH-018 — pending task creation recovery
 
 If the service loses the authoritative result between Asana task creation, Research Queue
 placement, and request completion, the connected caller cannot prove whether that pending create
@@ -50,7 +64,7 @@ This is accepted as low likelihood and low impact while Asana creation remains a
 external effect. It disappears when task creation and request completion move to the transactional
 database backend.
 
-## REPRO-001 — connected recovery reproduction
+### REPRO-001 — connected recovery reproduction
 
 The Action surface cannot safely inject pending or uncertain effects, inspect private journals, or
 invoke administrative recovery, so a GPT-only live test cannot exercise repair/replay consistency

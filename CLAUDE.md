@@ -12,12 +12,12 @@ documentation roles are:
 - `dish/README.md` — installation, deployment, and operator entry points;
 - `dish/docs/architecture.md` — current code structure, authority boundaries,
   invariants, persistence, recovery, and extension rules;
-- `dish/docs/known-issues.md` — accepted limitations, safe handling, and revisit triggers;
+- `dish/docs/known-issues.md` — post-rollout candidates and accepted launch limitations;
 - `dish/docs/runtime-contract.md` — response, exit-status, retry, and
   troubleshooting contract;
 - `dish/docs/rollout.md` — separately authorized test-project rehearsal,
   migration, production cutover, and rollback;
-- `dish/docs/future.md` — only work not already implemented.
+- `dish/docs/future.md` — broader future proposals not tracked as known issues.
 
 Older design and implementation plans were removed; use Git history when their exact text is
 needed.
