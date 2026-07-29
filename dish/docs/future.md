@@ -106,17 +106,22 @@ This should not permit cooking agents to mutate the signed task body.
 
 ### Database-backed task store and separate frontend
 
-Asana could eventually be replaced by a database-backed document store and a purpose-built human
-frontend. The stable Dish command/service contract should remain the agent interface so the backend
-change does not alter workflow semantics.
+Asana could eventually be replaced by a database-backed structured-dish store and a purpose-built
+human frontend. Structured versioned data would become canonical, while Markdown or Asana notes
+would be rendered views. The stable Dish command lifecycle and service boundary should remain the
+agent interface so the backend change does not alter workflow semantics.
 
 See [`database-backend-design.md`](database-backend-design.md) for the current draft authority,
 storage, transaction, frontend, migration, and rollback design. It remains future design rather than
 implementation or cutover authorization.
 
+The draft permits an Asana-authoritative one-way shadow before cutover and an optional
+DB-authoritative read-only Asana projection afterward. Neither stage permits peer writes or dual
+authority.
+
 Any replacement must preserve:
 
-- the canonical task document and exact identities;
+- exact structured dish identities plus imported source-document evidence;
 - the guarded state machine and independent Verification;
 - append-only evidence and recovery;
 - audit history and safely classified external effects;
