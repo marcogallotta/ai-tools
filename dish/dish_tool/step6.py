@@ -47,28 +47,39 @@ from .governed_diff import (
 )
 
 
-def _candidate(path: str) -> str:
+def _read_candidate_text(path: str) -> str:
     clean = str(path or "").strip()
     if not clean:
         raise DishRuleError("INVALID_ARGUMENT", "candidate file is required", rule="candidate_file_required")
     try:
-        return validate_candidate_text(Path(clean).read_text(encoding="utf-8"))
+        return Path(clean).read_text(encoding="utf-8")
     except FileNotFoundError as exc:
         raise DishRuleError("INVALID_ARGUMENT", f"candidate file not found: {clean}", rule="candidate_file_not_found") from exc
     except (OSError, UnicodeError) as exc:
         raise DishRuleError("INVALID_ARGUMENT", f"candidate file could not be read: {clean}", rule="candidate_file_unreadable") from exc
 
 
+def _candidate(path: str) -> str:
+    return validate_candidate_text(_read_candidate_text(path))
+
+
 def preflight_planning_candidate_labels(file_path: str) -> None:
-    """Validate Planning label authority before an execution claim is persisted."""
+    """Validate Planning label authority before an execution claim is persisted.
+
+    Runs on the raw candidate text so a disguised duplicate label (e.g. hidden
+    behind a zero-width space) is still caught as VALIDATION_FAILED, rather than
+    being pre-empted by the unrelated candidate-text safety check below.
+    """
+    text = _read_candidate_text(file_path)
     try:
-        preflight_planning_authority_labels(_candidate(file_path))
+        preflight_planning_authority_labels(text)
     except DocumentParseError as exc:
         raise DishRuleError(
             "VALIDATION_FAILED",
             "Planning candidate is malformed",
             errors=document_parse_error_payloads(exc),
         ) from exc
+    validate_candidate_text(text)
 
 
 def _operation(conn: sqlite3.Connection, operation_id: str):
