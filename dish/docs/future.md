@@ -99,6 +99,18 @@ request timeouts, and no private or admin routes. Add application-level request 
 activation evidence shows abusive, accidental, or otherwise costly request volume. This is defense
 in depth, not a prerequisite for the current single-owner rollout.
 
+### Explicit unchanged-content re-Verification
+
+If live use requires a fresh Verification of an unchanged, already signed task, add a guarded
+`dish-admin reverify TASK_GID --reason ...` route. It should bind the exact current signed identity,
+create a new operation and Verification cycle, set the task to `pending-verification`, move it to
+Verification Queue, and then use the ordinary independent agent Verification flow.
+
+Do not make a manual section move trigger re-Verification: placement alone carries no authenticated
+intent or durable cycle evidence and may be accidental. Material post-signoff changes already enter
+a new Verification cycle through the normal Change workflow; this proposal covers only unchanged
+signed content.
+
 ## Later architectural options
 
 ### Tool-mediated cooking and cook logs
