@@ -699,11 +699,18 @@ def execution_recovery_state(
     audits = _rows_after(
         conn, "audit_events", operation_id, int(baseline["audit_rowid"])
     )
+    # Operation recovery is execution-scoped, not merely operation-scoped.
+    # The operation execution claim serializes workflow mutations, but read-only
+    # commands such as ``inspect`` may still append their invocation audit while
+    # a failing mutation is rolling back.  Those transport-level audit records
+    # describe another request; they are not durable workflow effects of this
+    # execution and must never turn an exact-replayable no-effect failure into
+    # an admin-recovery incident.
     workflow_audits = [
         audit
         for audit in audits
         if not str(audit["event_type"]).startswith(
-            ("write_attempt.", "movement_attempt.")
+            ("write_attempt.", "movement_attempt.", "dish.", "dish-admin.")
         )
     ]
     operation = conn.execute(
@@ -738,7 +745,7 @@ def execution_recovery_state(
         or changed_steps
         or versions
         or actors
-        or audits
+        or workflow_audits
         or operation_changed
     )
     workflow_evidence_committed = bool(

@@ -1073,6 +1073,56 @@ def test_audit_only_local_effect_requires_recovery(tmp_path):
     assert state["safe_to_retry"] is False
 
 
+def test_unrelated_invocation_audit_is_not_request_execution_evidence(tmp_path):
+    application, _backend, operation_id = _started_application(tmp_path)
+    from dish_tool.invocation_audit import record_invocation_audit
+    from dish_tool.operation_execution import execution_recovery_state
+
+    claim = claim_operation_execution(
+        application.conn,
+        operation_id=operation_id,
+        command="reject",
+        request_id="91000000-0000-4000-8000-000000000901",
+    )
+    record_invocation_audit(
+        application.conn,
+        surface="dish",
+        command="inspect",
+        result={
+            "ok": True,
+            "code": "OK",
+            "state": "open",
+            "retryable": False,
+            "errors": [],
+            "data": {"operation_id": operation_id},
+        },
+        task_gid="t",
+        submission_id=operation_id,
+        actor="gpt",
+        actor_run_id="91919191-9191-4191-8191-919191919191",
+    )
+
+    state = execution_recovery_state(
+        application.conn,
+        execution_id=claim.execution_id,
+        failure_rule="injected_no_effect_failure",
+    )
+    assert application.conn.execute(
+        "SELECT COUNT(*) FROM audit_events "
+        "WHERE operation_id=? AND event_type='dish.inspect'",
+        (operation_id,),
+    ).fetchone()[0] == 1
+    assert state["effects_observed"] is False
+    assert state["workflow_evidence_committed"] is False
+    assert state["committed_effects"] is False
+    assert state["recovery_required"] is False
+    assert state["required_admin_action"] is None
+    assert state["required_admin_outcome"] is None
+    assert state["admin_recovery_lease_scope"] is None
+    assert state["admin_recovery_immediately_executable"] is False
+    assert state["safe_to_retry"] is True
+
+
 def test_admin_recover_executes_immediately_under_exact_live_action_lease(
     tmp_path, monkeypatch
 ):
@@ -1358,10 +1408,14 @@ def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_
         "resume_status": "pending-research",
     }
 
+    import dish_tool.application_service as application_service
     import dish_tool.step8 as step8
+    from dish_tool.invocation_audit import record_invocation_audit
 
     real_record_audit = step8.record_audit
+    real_recovery_state = application_service.execution_recovery_state
     failed_once = False
+    inspect_interleaved = False
 
     def fail_governed_hold_audit(*args, **kwargs):
         nonlocal failed_once
@@ -1373,8 +1427,40 @@ def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_
             raise RuntimeError("injected governed hold audit failure")
         return real_record_audit(*args, **kwargs)
 
+    def recover_after_interleaved_inspect(conn, *args, **kwargs):
+        nonlocal inspect_interleaved
+        if not inspect_interleaved and kwargs.get("failure_rule") == "RuntimeError":
+            inspect_interleaved = True
+            concurrent = initialize_database(service.config.db_path)
+            try:
+                record_invocation_audit(
+                    concurrent,
+                    surface="dish",
+                    command="inspect",
+                    result={
+                        "ok": True,
+                        "code": "OK",
+                        "state": "open",
+                        "retryable": False,
+                        "errors": [],
+                        "data": {"operation_id": operation_id},
+                    },
+                    task_gid="t",
+                    submission_id=operation_id,
+                    actor="gpt",
+                    actor_run_id="abababab-abab-4bab-8bab-abababababab",
+                )
+            finally:
+                concurrent.close()
+        return real_recovery_state(conn, *args, **kwargs)
+
     with monkeypatch.context() as fault:
         fault.setattr(step8, "record_audit", fail_governed_hold_audit)
+        fault.setattr(
+            application_service,
+            "execution_recovery_state",
+            recover_after_interleaved_inspect,
+        )
         failed = service.execute_agent(
             "reject",
             arguments,
@@ -1389,6 +1475,11 @@ def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_
     assert failed["data"]["required_next_action"] == "retry_exact_request"
     assert failed["errors"][0]["recovery_required"] is False
     assert failed["data"]["effects_observed"] is False
+    assert failed["data"].get("required_admin_action") is None
+    assert failed["data"].get("required_admin_outcome") is None
+    assert failed["data"].get("admin_recovery_lease_scope") is None
+    assert failed["data"]["admin_recovery_immediately_executable"] is False
+    assert inspect_interleaved is True
 
     conn = initialize_database(service.config.db_path)
     try:
@@ -1408,6 +1499,11 @@ def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_
             "WHERE operation_id=? AND event_type='research.preconstruction_blocked'",
             (operation_id,),
         ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM audit_events "
+            "WHERE operation_id=? AND event_type='dish.inspect'",
+            (operation_id,),
+        ).fetchone()[0] == 1
         request = conn.execute(
             "SELECT * FROM service_requests WHERE request_id=?", (hold_request,)
         ).fetchone()
