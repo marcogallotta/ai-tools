@@ -19,6 +19,17 @@ observability work; implement it only if post-launch response-loss investigation
 
 ## Accepted for launch
 
+### DESIGN-004 — private Planning reopen
+
+Reopening a completed bare task for Planning has no connected Action. Dish identifies the required
+private continuation and Marco runs `dish-admin reopen-planning`; the agent can then start Planning.
+
+This is accepted as won't-fix for launch. Reopening a completed task is an explicit Marco lifecycle
+decision, while a connected admin surface would add authentication and approval complexity for
+little operational benefit. Revisit only if manual Planning reopens become frequent; a future human
+frontend could expose the existing private operation without granting ordinary agents that
+authority.
+
 ### DISH-003 — connected UUID schema visibility
 
 The generated and served OpenAPI marks UUID fields with `format: uuid`, a canonical
