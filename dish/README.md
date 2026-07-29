@@ -167,7 +167,8 @@ evidence is fabricated.
 `dish-admin` is Marco-only. In service mode it exposes:
 
 - `recover-lease` to release an expired client/run lease without transferring workflow ownership to Marco;
-- `recover` for ambiguous write or movement evidence;
+- `recover` for ambiguous operation-backed write or movement evidence;
+- `reopen-planning` to reopen a completed bare task and, after interruption, replay the exact original request UUID without blindly repeating the Asana update;
 - `repair-destination` to replace only an approved Planning destination after an unrecoverable final movement failure, while preserving the original Verification evidence;
 - `discard` for a provably unapplied stale operation;
 - `reopen`, `supply-evidence`, and `record-human-decision` for the existing protocol-specific hold routes;
@@ -188,6 +189,14 @@ does not replace or rewrite the approved Verification cycle, and returns `submit
 movement.
 
 There is intentionally no generic `unblock` mutation. Existing protocol-specific recovery routes remain authoritative.
+
+An interrupted Planning reopen blocks only that task from another reopen or Planning start. Check
+`GET /health` at `startup.planning_reopen_recovery`: `resume_safe` means exact replay may perform the
+original update because the completion timestamp is unchanged; `applied_pending_replay` means the
+live task is already incomplete and exact replay will confirm it without another update. Use the
+returned command verbatim, including the original reason and request UUID. Contradictory live
+evidence remains uncertain and requires explicit Marco-authorized reconciliation rather than a new
+request UUID.
 
 ## Backup and restore
 

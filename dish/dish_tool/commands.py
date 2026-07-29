@@ -252,7 +252,10 @@ class DishApplication:
                     )
                     if key in exc.details
                 })
-            if exc.code == "BACKEND_UNCERTAIN" and exc.details.get("execution_id"):
+            if exc.code == "BACKEND_UNCERTAIN" and (
+                exc.details.get("execution_id")
+                or exc.rule == "planning_reopen_reconciliation_required"
+            ):
                 result.setdefault("data", {}).update(exc.details)
             for key in ("required_admin_action", "resolver", "legal_next_step"):
                 if exc.details.get(key):
@@ -522,6 +525,20 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
     change_level, change_reason = self._validate_start_arguments(kind=kind, change_level=change_level, change_reason=change_reason)
     role = "planning" if kind == "planning" else "research"
     release = self._load_release(role)
+    if kind == "planning":
+        from .database import planning_reopen_blocker_for_task
+        from .task_store import planning_reopen_recovery_details
+        blocker = planning_reopen_blocker_for_task(self.conn, task_gid=task_gid)
+        if blocker is not None:
+            details = planning_reopen_recovery_details(blocker)
+            details["request_status"] = blocker["request_status"]
+            raise DishRuleError(
+                "BACKEND_UNCERTAIN",
+                "Planning cannot start until the interrupted task reopen is reconciled",
+                rule="planning_reopen_reconciliation_required",
+                retryable=False,
+                details=details,
+            )
     _require_cooking_task(self._read_live_task(task_gid), task_gid)
     live = read_complete_task(self.backend, task_gid=task_gid, project_gid=COOKING_PROJECT_GID)
     registry = SectionRegistry.from_sections(self.backend.list_sections(COOKING_PROJECT_GID))
@@ -576,6 +593,23 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
             )
         )
     except DishRuleError as exc:
+        if exc.rule == "planning_reopen_reconciliation_required":
+            from .database import planning_reopen_blocker_for_task
+            from .task_store import planning_reopen_recovery_details
+            blocker = planning_reopen_blocker_for_task(
+                self.conn, task_gid=task_gid
+            )
+            if blocker is not None:
+                details = planning_reopen_recovery_details(blocker)
+                details["request_status"] = blocker["request_status"]
+                raise DishRuleError(
+                    "BACKEND_UNCERTAIN",
+                    "Planning cannot start until the interrupted task reopen is reconciled",
+                    rule="planning_reopen_reconciliation_required",
+                    retryable=False,
+                    details=details,
+                ) from exc
+            raise
         if exc.rule != "open_operation_exists":
             raise
         existing = self.conn.execute(

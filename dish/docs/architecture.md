@@ -310,7 +310,19 @@ preserved, while separate resolution evidence and a resolution result complete t
 request once the missing governed proof is durable. Fresh request UUIDs cannot bypass that fence.
 
 External-effect intent and confirmation are intentionally visible between transactions because they
-are the recovery authority around Asana calls. Local terminalization is different: after exact
+are the recovery authority around Asana calls. Planning reopen uses the same rule: a `started` or
+`uncertain` attempt is valid durable evidence, not whole-database corruption, but it is a task-level
+admission lock until live evidence and the original request converge. When exact replay is allowed
+to resume a proven-not-applied reopen, the authoritative reread, external update, confirmation
+reread, and terminal evidence run under one `BEGIN IMMEDIATE` writer boundary. Concurrent exact
+replays therefore cannot both issue the Asana update; after a crash, rollback leaves the persisted
+attempt available for live-state reconciliation. Known trade-off: because the writer boundary spans
+the external Asana call, it holds the database's single writer lock for that call's full duration,
+blocking every other write in the service, not only this task's. A slow or hung call can stall
+concurrent agent writes until it returns or the runtime busy-timeout elapses; blocked callers see a
+retryable `database_writer_lock` failure rather than an incorrect result. Acceptable while reopen is
+an infrequent, Marco-issued admin action; the risk shrinks once the backend is no longer an external
+network call. Local terminalization is different: after exact
 movement confirmation, submit persists a `submission_terminal_intent`; the terminal step, operation
 transition, transition audit, and `operation.submitted` audit then commit as one SQLite unit. A
 failed terminal audit therefore leaves an open, explicitly recoverable operation whose movement is
@@ -340,7 +352,12 @@ validation still fails closed. Terminal cleanup is idempotent, and a later lease
 same task reaps only that safe stale row.
 
 Every externally callable service mutation has a client request UUID whose first authoritative
-outcome is replay-bound. Pending or uncertain work is inspected or reconstructed, not reissued.
+outcome is replay-bound. Pending or uncertain work is inspected or reconstructed, not reissued. An
+interrupted `reopen-planning` request remains pending while its attempt is unresolved: startup may
+complete a terminal attempt/request pair, while only exact owner/run/argument replay may reissue a
+reopen that unchanged live `modified_at` proves did not apply. Historical attempts without a usable
+original request identity remain task-blocking and require explicit Marco authority rather than an
+invented repair.
 Request-scoped backup creation reserves its exact output identifier before the filesystem effect,
 then commits validated backup metadata with the service-request result; replay reconciles only that
 reserved path. `backup-restore` uses a sibling journal because replacing SQLite would replace an ordinary

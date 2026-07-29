@@ -8,7 +8,14 @@ from typing import Any, Callable, Mapping
 
 from .application_service import OperationApplicationService
 from .command_support import reject_undeclared_arguments
-from .database import atomic_persistence, complete_operation_step, declare_operation_step, process_command_audit_repairs, record_audit
+from .database import (
+    atomic_persistence,
+    complete_operation_step,
+    declare_operation_step,
+    immediate_persistence,
+    process_command_audit_repairs,
+    record_audit,
+)
 from .invocation_audit import record_invocation_audit
 from .errors import DishRuleError
 from .results import error_envelope, result_envelope
@@ -79,7 +86,13 @@ class DishAdminApplication:
                 submission_id=trace.submission_id,
                 state=trace.state,
             )
-            if exc.code == "BACKEND_UNCERTAIN" and exc.details.get("execution_id"):
+            if exc.code == "BACKEND_UNCERTAIN" and (
+                exc.details.get("execution_id")
+                or exc.rule in {
+                    "planning_reopen_outcome_uncertain",
+                    "planning_reopen_reconciliation_required",
+                }
+            ):
                 result.setdefault("data", {}).update(exc.details)
         except Exception:
             error = DishRuleError(
@@ -139,6 +152,27 @@ class DishAdminApplication:
         trace: AdminTrace,
         result: Mapping[str, Any],
     ) -> None:
+        request_id = (
+            str(trace.audit_details.get("request_id") or "").strip() or None
+        )
+        if command == "reopen-planning" and request_id is not None:
+            with immediate_persistence(self.conn, "planning_reopen_invocation"):
+                existing = self.conn.execute(
+                    """SELECT 1 FROM audit_events
+                         WHERE event_type='dish-admin.reopen-planning'
+                           AND json_extract(details, '$.request_id')=?
+                         LIMIT 1""",
+                    (request_id,),
+                ).fetchone()
+                if existing is not None:
+                    return
+                self._write_invocation(command, trace, result)
+            return
+        self._write_invocation(command, trace, result)
+
+    def _write_invocation(
+        self, command: str, trace: AdminTrace, result: Mapping[str, Any]
+    ) -> None:
         record_invocation_audit(
             self.conn,
             surface="dish-admin",
@@ -147,6 +181,7 @@ class DishAdminApplication:
             task_gid=trace.task_gid,
             submission_id=trace.submission_id,
             actor_role="marco",
+            actor_run_id=self.invocation_run_id,
             audit_details=trace.audit_details,
         )
 
@@ -186,6 +221,19 @@ def _step5_admin_reopen_planning(
             "INTERNAL_ERROR", "planning reopen backend is unavailable",
             rule="planning_reopen_backend_unavailable",
         )
+    from .database import planning_reopen_blocker_for_task
+    from .task_store import planning_reopen_recovery_details
+    blocker = planning_reopen_blocker_for_task(self.conn, task_gid=clean)
+    if blocker is not None:
+        details = planning_reopen_recovery_details(blocker)
+        details["request_status"] = blocker["request_status"]
+        raise DishRuleError(
+            "BACKEND_UNCERTAIN",
+            "an interrupted Planning reopen must be reconciled before another reopen",
+            rule="planning_reopen_reconciliation_required",
+            retryable=False,
+            details=details,
+        )
     active = self.conn.execute(
         """SELECT operation_id FROM operations
              WHERE task_gid=? AND status IN ('open','uncertain') LIMIT 1""",
@@ -217,17 +265,49 @@ def _step5_admin_reopen_planning(
             rule="planning_reopen_notes_not_empty",
             errors=diagnostics["validation"],
         )
-    reopened, attempt_id = reopen_completed_task_for_planning(
-        self.conn,
-        self.backend,
-        task_gid=clean,
-        project_gid=COOKING_PROJECT_GID,
-        reason=clean_reason,
-        actor_run_id=self.invocation_run_id,
-        request_id=self.invocation_request_id,
-    )
+    trace.audit_details.update({
+        "request_id": self.invocation_request_id,
+        "reason": clean_reason,
+    })
+    try:
+        reopened, attempt_id = reopen_completed_task_for_planning(
+            self.conn,
+            self.backend,
+            task_gid=clean,
+            project_gid=COOKING_PROJECT_GID,
+            reason=clean_reason,
+            actor_run_id=self.invocation_run_id,
+            request_id=self.invocation_request_id,
+        )
+    except sqlite3.IntegrityError:
+        blocker = planning_reopen_blocker_for_task(self.conn, task_gid=clean)
+        if blocker is None:
+            raise
+        details = planning_reopen_recovery_details(blocker)
+        details["request_status"] = blocker["request_status"]
+        raise DishRuleError(
+            "BACKEND_UNCERTAIN",
+            "an interrupted Planning reopen must be reconciled before another reopen",
+            rule="planning_reopen_reconciliation_required",
+            retryable=False,
+            details=details,
+        )
+    except DishRuleError:
+        if self.invocation_request_id:
+            from .database import planning_reopen_attempt_by_request
+            attempt = planning_reopen_attempt_by_request(
+                self.conn, request_id=self.invocation_request_id
+            )
+            if attempt is not None:
+                trace.audit_details.update({
+                    "attempt_id": attempt["attempt_id"],
+                    "expected_identity": attempt["expected_identity"],
+                    "section_gid": attempt["expected_section_gid"],
+                })
+        raise
     trace.audit_details.update({
         "attempt_id": attempt_id,
+        "request_id": self.invocation_request_id,
         "reason": clean_reason,
         "completed_before": True,
         "completed_after": False,

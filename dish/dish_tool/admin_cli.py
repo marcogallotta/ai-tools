@@ -98,6 +98,10 @@ def build_parser() -> JsonArgumentParser:
     )
     reopen_planning.add_argument("task_gid")
     reopen_planning.add_argument("--reason", required=True)
+    reopen_planning.add_argument(
+        "--request-id",
+        help="replay the exact interrupted service request UUID",
+    )
 
     recover_lease = subparsers.add_parser(
         "recover-lease", help="reclaim an expired service lease before an admin operation"
@@ -283,7 +287,24 @@ def main(
                 else:
                     result = method(parsed["backup_id"])
             else:
-                result = app.execute(command, **parsed)
+                request_id = parsed.pop("request_id", None)
+                if request_id is not None:
+                    if not isinstance(app, DishAdminServiceClient):
+                        result = error_envelope(
+                            command,
+                            DishRuleError(
+                                "PROTOCOL_INCOMPATIBLE",
+                                "exact request replay requires shared-service mode",
+                                rule="shared_service_required",
+                            ),
+                            task_gid=parsed.get("task_gid"),
+                        )
+                    else:
+                        result = app.execute(
+                            command, parsed, request_id=request_id
+                        )
+                else:
+                    result = app.execute(command, **parsed)
     except DishRuleError as exc:
         result = error_envelope(
             context["command"] or "unknown",

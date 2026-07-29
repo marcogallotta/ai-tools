@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
@@ -15,7 +16,7 @@ from .database import (
     begin_planning_reopen_attempt,
     finish_planning_reopen_attempt,
     record_audit,
-    atomic_persistence,
+    immediate_persistence,
 )
 from .errors import BackendFailure, DishRuleError
 from .recovery import (
@@ -131,6 +132,399 @@ def assert_live_matches_confirmed(
     return live
 
 
+def _attempt_value(attempt: Mapping[str, Any], key: str) -> Any:
+    try:
+        return attempt[key]
+    except (KeyError, IndexError):
+        return None
+
+def _planning_reopen_attempt(
+    conn: sqlite3.Connection, *, attempt_id: str
+) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM planning_reopen_attempts WHERE attempt_id=?", (attempt_id,)
+    ).fetchone()
+    if row is None:
+        raise DishRuleError(
+            "NOT_FOUND", "planning reopen attempt was not found",
+            rule="planning_reopen_attempt_not_found",
+            details={"attempt_id": attempt_id},
+        )
+    return row
+
+
+def planning_reopen_recovery_details(
+    attempt: Mapping[str, Any], *, safe_to_resume: bool = False
+) -> dict[str, Any]:
+    request_id = str(_attempt_value(attempt, "request_id") or "").strip() or None
+    task_gid = str(attempt["task_gid"])
+    reason = str(attempt["reason"])
+    request_status = (
+        str(_attempt_value(attempt, "request_status") or "").strip() or None
+    )
+    replay_available = request_id is not None and request_status in {None, "pending"}
+    details = {
+        "attempt_id": attempt["attempt_id"],
+        "task_gid": task_gid,
+        "original_request_id": request_id,
+        "original_request_status": request_status,
+        "reopen_reason": reason,
+        "attempt_outcome": attempt["outcome"],
+        "safe_to_resume": bool(safe_to_resume),
+        "replay_original_request": replay_available,
+    }
+    if not replay_available:
+        if request_id is None:
+            conflict = "original service request identity is unavailable"
+        else:
+            conflict = (
+                "original service request journal is already terminal while the "
+                "Planning reopen attempt remains unresolved"
+            )
+        details.update({
+            "required_admin_action": "manual-reconciliation",
+            "resolver": (
+                "Marco must authorize recovery of the Planning reopen attempt; "
+                "exact request replay is unavailable"
+            ),
+            "admin_command": None,
+            "authority_conflict": conflict,
+        })
+        return details
+    details.update({
+        "required_admin_action": "reopen-planning",
+        "resolver": "Marco/admin replay the original reopen-planning request",
+        "admin_command": (
+            "dish-admin reopen-planning "
+            f"{shlex.quote(task_gid)} --reason {shlex.quote(reason)} "
+            f"--request-id {shlex.quote(request_id)}"
+        ),
+    })
+    return details
+
+
+def planning_reopen_success_data(
+    attempt: Mapping[str, Any], *, live: LiveTask | None = None
+) -> dict[str, Any]:
+    return {
+        "attempt_id": attempt["attempt_id"],
+        "reason": attempt["reason"],
+        "task": {
+            "gid": attempt["task_gid"],
+            "completed": False,
+            "identity": live.identity if live is not None else attempt["expected_identity"],
+            "section_gid": (
+                live.section_gid if live is not None else attempt["expected_section_gid"]
+            ),
+        },
+        "required_start_kind": "planning",
+    }
+
+
+def _planning_reopen_live_matches(
+    attempt: Mapping[str, Any], live: LiveTask
+) -> bool:
+    return (
+        live.identity == attempt["expected_identity"]
+        and live.section_gid == attempt["expected_section_gid"]
+    )
+
+
+def _planning_reopen_not_applied_is_proven(
+    attempt: Mapping[str, Any], live: LiveTask
+) -> bool:
+    expected_modified_at = str(
+        _attempt_value(attempt, "expected_modified_at") or ""
+    ).strip()
+    return bool(
+        live.completed
+        and _planning_reopen_live_matches(attempt, live)
+        and expected_modified_at
+        and live.modified_at == expected_modified_at
+    )
+
+
+def _mark_planning_reopen_uncertain(
+    conn: sqlite3.Connection, *, attempt: Mapping[str, Any], live: LiveTask | None = None
+) -> sqlite3.Row:
+    if attempt["outcome"] == "uncertain":
+        return _planning_reopen_attempt(conn, attempt_id=attempt["attempt_id"])
+    return finish_planning_reopen_attempt(
+        conn,
+        attempt_id=attempt["attempt_id"],
+        outcome="uncertain",
+        confirmed_modified_at=None if live is None else live.modified_at,
+    )
+
+
+def _confirm_planning_reopen(
+    conn: sqlite3.Connection,
+    *,
+    attempt: Mapping[str, Any],
+    live: LiveTask | None,
+    recovered_by: str | None = None,
+) -> sqlite3.Row:
+    with immediate_persistence(conn, "planning_reopen_confirmed"):
+        finished = finish_planning_reopen_attempt(
+            conn,
+            attempt_id=attempt["attempt_id"],
+            outcome="confirmed",
+            confirmed_modified_at=(
+                live.modified_at if live is not None else _attempt_value(attempt, "confirmed_modified_at")
+            ),
+        )
+        existing = conn.execute(
+            """SELECT event_id FROM audit_events
+                 WHERE event_type='planning.task_reopened'
+                   AND json_extract(details, '$.attempt_id')=?
+                 LIMIT 1""",
+            (attempt["attempt_id"],),
+        ).fetchone()
+        if existing is None:
+            details = {
+                "attempt_id": attempt["attempt_id"],
+                "reason": attempt["reason"],
+                "expected_identity": attempt["expected_identity"],
+                "section_gid": attempt["expected_section_gid"],
+                "completed_before": True,
+                "completed_after": False,
+            }
+            if recovered_by:
+                details["recovered_by"] = recovered_by
+            record_audit(
+                conn, submission_id=None, task_gid=attempt["task_gid"],
+                operation_id=None, event_type="planning.task_reopened",
+                actor_agent=None, actor_run_id=attempt["actor_run_id"],
+                actor_source="marco-admin", details=details,
+                result_code="OK", result_ok=True,
+            )
+    return finished
+
+
+def _planning_reopen_uncertain_error(
+    attempt: Mapping[str, Any],
+    message: str,
+    *,
+    live: LiveTask | None = None,
+) -> BackendFailure:
+    details = planning_reopen_recovery_details(attempt)
+    details.update({
+        "expected_identity": attempt["expected_identity"],
+        "expected_section_gid": attempt["expected_section_gid"],
+        "expected_modified_at": attempt["expected_modified_at"],
+    })
+    if live is not None:
+        details.update({
+            "actual_identity": live.identity,
+            "actual_section_gid": live.section_gid,
+            "actual_completed": live.completed,
+            "actual_modified_at": live.modified_at,
+        })
+    return BackendFailure(
+        "BACKEND_UNCERTAIN", message,
+        rule="planning_reopen_outcome_uncertain", retryable=False, details=details,
+    )
+
+
+def _finish_planning_reopen_after_effect(
+    conn: sqlite3.Connection,
+    *,
+    attempt: Mapping[str, Any],
+    after: LiveTask,
+    backend_error: BackendFailure | None,
+    recovered_by: str | None = None,
+) -> tuple[LiveTask, sqlite3.Row]:
+    if not _planning_reopen_live_matches(attempt, after):
+        uncertain = _mark_planning_reopen_uncertain(
+            conn, attempt=attempt, live=after
+        )
+        raise _planning_reopen_uncertain_error(
+            uncertain,
+            "planning reopen coincided with unexpected task content or placement drift",
+            live=after,
+        )
+    if not after.completed:
+        finished = _confirm_planning_reopen(
+            conn, attempt=attempt, live=after, recovered_by=recovered_by
+        )
+        return after, finished
+
+    finished = finish_planning_reopen_attempt(
+        conn, attempt_id=attempt["attempt_id"], outcome="not_applied",
+        confirmed_modified_at=after.modified_at,
+    )
+    if backend_error is not None:
+        raise BackendFailure(
+            "BACKEND_REJECTED", str(backend_error), rule=backend_error.rule,
+            status=backend_error.status, phase=backend_error.phase,
+            retryable=backend_error.retryable,
+            details={
+                "attempt_id": finished["attempt_id"],
+                "task_gid": finished["task_gid"],
+            },
+        )
+    raise BackendFailure(
+        "BACKEND_REJECTED", "task completion state was not reopened",
+        rule="planning_reopen_not_applied", retryable=True,
+        details={
+            "attempt_id": finished["attempt_id"],
+            "task_gid": finished["task_gid"],
+        },
+    )
+
+
+def _apply_planning_reopen_effect(
+    conn: sqlite3.Connection,
+    backend: TaskBackend,
+    *,
+    attempt: Mapping[str, Any],
+    project_gid: str,
+    recovered_by: str | None = None,
+) -> tuple[LiveTask, sqlite3.Row]:
+    backend_error: BackendFailure | None = None
+    try:
+        backend.update_task_completed(task_gid=attempt["task_gid"], completed=False)
+    except BackendFailure as exc:
+        backend_error = exc
+
+    try:
+        after = read_complete_task(
+            backend, task_gid=attempt["task_gid"], project_gid=project_gid
+        )
+    except Exception as exc:
+        uncertain = _mark_planning_reopen_uncertain(conn, attempt=attempt)
+        raise _planning_reopen_uncertain_error(
+            uncertain, "planning reopen outcome could not be confirmed by reread"
+        ) from exc
+    return _finish_planning_reopen_after_effect(
+        conn, attempt=attempt, after=after, backend_error=backend_error,
+        recovered_by=recovered_by,
+    )
+
+
+def _reconcile_planning_reopen_attempt(
+    conn: sqlite3.Connection,
+    backend: TaskBackend,
+    *,
+    attempt_id: str,
+    project_gid: str,
+    allow_external_retry: bool,
+    recovered_by: str,
+    finalize_observed_applied: bool,
+) -> dict[str, Any]:
+    attempt = _planning_reopen_attempt(conn, attempt_id=attempt_id)
+    if attempt["outcome"] == "confirmed":
+        finished = _confirm_planning_reopen(
+            conn, attempt=attempt, live=None, recovered_by=recovered_by
+        )
+        return {
+            "state": "confirmed", "attempt": finished, "live": None,
+            "external_update_attempted": False,
+        }
+    if attempt["outcome"] == "not_applied":
+        return {
+            "state": "not_applied", "attempt": attempt, "live": None,
+            "external_update_attempted": False,
+        }
+
+    try:
+        live = read_complete_task(
+            backend, task_gid=attempt["task_gid"], project_gid=project_gid
+        )
+    except Exception as exc:
+        uncertain = _mark_planning_reopen_uncertain(conn, attempt=attempt)
+        raise _planning_reopen_uncertain_error(
+            uncertain, "planning reopen outcome could not be reconciled by reread"
+        ) from exc
+
+    if not _planning_reopen_live_matches(attempt, live):
+        uncertain = _mark_planning_reopen_uncertain(
+            conn, attempt=attempt, live=live
+        )
+        raise _planning_reopen_uncertain_error(
+            uncertain,
+            "live task identity or placement no longer proves the Planning reopen outcome",
+            live=live,
+        )
+    if not live.completed:
+        if not finalize_observed_applied:
+            return {
+                "state": "applied_pending_replay",
+                "attempt": attempt,
+                "live": live,
+                "external_update_attempted": False,
+            }
+        finished = _confirm_planning_reopen(
+            conn, attempt=attempt, live=live, recovered_by=recovered_by
+        )
+        return {
+            "state": "confirmed", "attempt": finished, "live": live,
+            "external_update_attempted": False,
+        }
+    if not _planning_reopen_not_applied_is_proven(attempt, live):
+        uncertain = _mark_planning_reopen_uncertain(
+            conn, attempt=attempt, live=live
+        )
+        raise _planning_reopen_uncertain_error(
+            uncertain,
+            "live completion state does not prove whether the Planning reopen applied",
+            live=live,
+        )
+    if not allow_external_retry:
+        return {
+            "state": "resume_safe", "attempt": attempt, "live": live,
+            "external_update_attempted": False,
+        }
+    after, finished = _apply_planning_reopen_effect(
+        conn, backend, attempt=attempt, project_gid=project_gid,
+        recovered_by=recovered_by,
+    )
+    return {
+        "state": "confirmed", "attempt": finished, "live": after,
+        "external_update_attempted": True,
+    }
+
+
+def reconcile_planning_reopen_attempt(
+    conn: sqlite3.Connection,
+    backend: TaskBackend,
+    *,
+    attempt_id: str,
+    project_gid: str,
+    allow_external_retry: bool,
+    recovered_by: str,
+    finalize_observed_applied: bool = True,
+) -> dict[str, Any]:
+    """Reconcile one exact reopen attempt without blindly repeating its effect.
+
+    Exact replay holds the SQLite writer boundary from the authoritative reread
+    through any external reopen and terminal evidence. Concurrent replays
+    therefore re-read the attempt only after the winner has committed, rather
+    than both issuing the same external update. A process death rolls back the
+    local transaction; the next replay reconciles the live task before acting.
+    """
+    if allow_external_retry:
+        with immediate_persistence(conn, "planning_reopen_reconciliation"):
+            return _reconcile_planning_reopen_attempt(
+                conn,
+                backend,
+                attempt_id=attempt_id,
+                project_gid=project_gid,
+                allow_external_retry=True,
+                recovered_by=recovered_by,
+                finalize_observed_applied=finalize_observed_applied,
+            )
+    return _reconcile_planning_reopen_attempt(
+        conn,
+        backend,
+        attempt_id=attempt_id,
+        project_gid=project_gid,
+        allow_external_retry=False,
+        recovered_by=recovered_by,
+        finalize_observed_applied=finalize_observed_applied,
+    )
+
+
 def reopen_completed_task_for_planning(
     conn: sqlite3.Connection,
     backend: TaskBackend,
@@ -157,81 +551,10 @@ def reopen_completed_task_for_planning(
         actor_run_id=actor_run_id,
         request_id=request_id,
     )
-    backend_error: BackendFailure | None = None
-    try:
-        backend.update_task_completed(task_gid=task_gid, completed=False)
-    except BackendFailure as exc:
-        backend_error = exc
-
-    try:
-        after = read_complete_task(backend, task_gid=task_gid, project_gid=project_gid)
-    except Exception as exc:
-        finish_planning_reopen_attempt(
-            conn, attempt_id=attempt["attempt_id"], outcome="uncertain"
-        )
-        raise BackendFailure(
-            "BACKEND_UNCERTAIN",
-            "planning reopen outcome could not be confirmed by reread",
-            retryable=False,
-            details={"attempt_id": attempt["attempt_id"], "task_gid": task_gid},
-        ) from exc
-
-    if after.identity != before.identity or after.section_gid != before.section_gid:
-        finish_planning_reopen_attempt(
-            conn, attempt_id=attempt["attempt_id"], outcome="uncertain",
-            confirmed_modified_at=after.modified_at,
-        )
-        raise BackendFailure(
-            "BACKEND_UNCERTAIN",
-            "planning reopen coincided with unexpected task content or placement drift",
-            retryable=False,
-            details={
-                "attempt_id": attempt["attempt_id"],
-                "task_gid": task_gid,
-                "expected_identity": before.identity,
-                "actual_identity": after.identity,
-                "expected_section_gid": before.section_gid,
-                "actual_section_gid": after.section_gid,
-            },
-        )
-    if not after.completed:
-        with atomic_persistence(conn, "planning_reopen_confirmed"):
-            finish_planning_reopen_attempt(
-                conn, attempt_id=attempt["attempt_id"], outcome="confirmed",
-                confirmed_modified_at=after.modified_at,
-            )
-            record_audit(
-                conn, submission_id=None, task_gid=task_gid, operation_id=None,
-                event_type="planning.task_reopened", actor_agent=None,
-                actor_run_id=actor_run_id, actor_source="marco-admin",
-                details={
-                    "attempt_id": attempt["attempt_id"],
-                    "reason": reason,
-                    "expected_identity": before.identity,
-                    "section_gid": before.section_gid,
-                    "completed_before": True,
-                    "completed_after": False,
-                },
-                result_code="OK", result_ok=True,
-            )
-        return after, attempt["attempt_id"]
-
-    finish_planning_reopen_attempt(
-        conn, attempt_id=attempt["attempt_id"], outcome="not_applied",
-        confirmed_modified_at=after.modified_at,
+    after, _finished = _apply_planning_reopen_effect(
+        conn, backend, attempt=attempt, project_gid=project_gid
     )
-    if backend_error is not None:
-        raise BackendFailure(
-            "BACKEND_REJECTED", str(backend_error), rule=backend_error.rule,
-            status=backend_error.status, phase=backend_error.phase,
-            retryable=backend_error.retryable,
-            details={"attempt_id": attempt["attempt_id"], "task_gid": task_gid},
-        )
-    raise BackendFailure(
-        "BACKEND_REJECTED", "task completion state was not reopened",
-        retryable=True,
-        details={"attempt_id": attempt["attempt_id"], "task_gid": task_gid},
-    )
+    return after, attempt["attempt_id"]
 
 
 def write_exact_content(

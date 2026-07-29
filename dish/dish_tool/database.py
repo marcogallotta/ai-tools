@@ -30,6 +30,23 @@ def atomic_persistence(conn: sqlite3.Connection, label: str):
     else:
         conn.execute(f"RELEASE {savepoint}")
 
+@contextlib.contextmanager
+def immediate_persistence(conn: sqlite3.Connection, label: str):
+    """Serialize an idempotency check and its write across connections."""
+    if conn.in_transaction:
+        with atomic_persistence(conn, label):
+            yield
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")
+
 def record_audit(
     conn: sqlite3.Connection,
     *,
@@ -691,6 +708,20 @@ def create_operation(
                 rule="stale_content_identity",
                 details={"expected_identity": expected_identity, "actual_identity": actual},
             )
+        if operation_kind == "planning":
+            blocker = planning_reopen_blocker_for_task(conn, task_gid=task_gid)
+            if blocker is not None:
+                raise DishRuleError(
+                    "BACKEND_UNCERTAIN",
+                    "Planning cannot start until the interrupted task reopen is reconciled",
+                    rule="planning_reopen_reconciliation_required",
+                    retryable=False,
+                    details={
+                        "attempt_id": blocker["attempt_id"],
+                        "task_gid": task_gid,
+                        "request_id": blocker["request_id"],
+                    },
+                )
         try:
             conn.execute(
                 """
@@ -842,19 +873,76 @@ def begin_planning_reopen_attempt(
     request_id: str | None,
 ) -> sqlite3.Row:
     attempt_id = str(uuid.uuid4())
-    conn.execute(
-        """INSERT INTO planning_reopen_attempts(
-               attempt_id,task_gid,request_id,expected_identity,expected_section_gid,
-               expected_modified_at,reason,actor_run_id,outcome,created_at
-           ) VALUES (?,?,?,?,?,?,?,?, 'started', ?)""",
-        (
-            attempt_id, task_gid, request_id, expected_identity, expected_section_gid,
-            expected_modified_at, reason, actor_run_id, utc_now(),
-        ),
-    )
+    with immediate_persistence(conn, "planning_reopen_attempt"):
+        active = conn.execute(
+            """SELECT operation_id FROM operations
+                 WHERE task_gid=? AND status IN ('open','uncertain')
+                 LIMIT 1""",
+            (task_gid,),
+        ).fetchone()
+        if active is not None:
+            raise DishRuleError(
+                "CONFLICT",
+                "task already has an active operation",
+                rule="active_operation_exists",
+                details={"operation_id": active["operation_id"]},
+            )
+        conn.execute(
+            """INSERT INTO planning_reopen_attempts(
+                   attempt_id,task_gid,request_id,expected_identity,expected_section_gid,
+                   expected_modified_at,reason,actor_run_id,outcome,created_at
+               ) VALUES (?,?,?,?,?,?,?,?, 'started', ?)""",
+            (
+                attempt_id, task_gid, request_id, expected_identity,
+                expected_section_gid, expected_modified_at, reason,
+                actor_run_id, utc_now(),
+            ),
+        )
+        return conn.execute(
+            "SELECT * FROM planning_reopen_attempts WHERE attempt_id=?",
+            (attempt_id,),
+        ).fetchone()
+
+
+def planning_reopen_attempt_by_request(
+    conn: sqlite3.Connection, *, request_id: str
+) -> sqlite3.Row | None:
     return conn.execute(
-        "SELECT * FROM planning_reopen_attempts WHERE attempt_id=?", (attempt_id,)
+        "SELECT * FROM planning_reopen_attempts WHERE request_id=?", (request_id,)
     ).fetchone()
+
+
+def planning_reopen_blocker_for_task(
+    conn: sqlite3.Connection, *, task_gid: str
+) -> sqlite3.Row | None:
+    """Return reopen evidence that must converge before a Planning start."""
+    return conn.execute(
+        """SELECT attempt.*, request.status AS request_status
+             FROM planning_reopen_attempts AS attempt
+             LEFT JOIN service_requests AS request
+               ON request.request_id=attempt.request_id
+            WHERE attempt.task_gid=?
+              AND (attempt.outcome IN ('started','uncertain')
+                   OR request.status='pending')
+            ORDER BY attempt.created_at DESC, attempt.rowid DESC
+            LIMIT 1""",
+        (task_gid,),
+    ).fetchone()
+
+
+def unresolved_planning_reopen_attempts(
+    conn: sqlite3.Connection,
+) -> list[sqlite3.Row]:
+    """Return attempts or request journals requiring startup reconciliation."""
+    return conn.execute(
+        """SELECT attempt.*, request.status AS request_status
+             FROM planning_reopen_attempts AS attempt
+             LEFT JOIN service_requests AS request
+               ON request.request_id=attempt.request_id
+            WHERE attempt.outcome IN ('started','uncertain')
+               OR request.status='pending'
+            ORDER BY attempt.created_at, attempt.rowid"""
+    ).fetchall()
 
 
 def finish_planning_reopen_attempt(
@@ -866,19 +954,37 @@ def finish_planning_reopen_attempt(
 ) -> sqlite3.Row:
     if outcome not in {"confirmed", "not_applied", "uncertain"}:
         raise ValueError(f"invalid planning reopen outcome: {outcome}")
+    current = conn.execute(
+        "SELECT * FROM planning_reopen_attempts WHERE attempt_id=?", (attempt_id,)
+    ).fetchone()
+    if current is None:
+        raise DishRuleError(
+            "NOT_FOUND", "planning reopen attempt was not found",
+            rule="planning_reopen_attempt_not_found",
+        )
+    if current["outcome"] == outcome:
+        return current
+    if outcome == "uncertain":
+        allowed = ("started",)
+    elif outcome == "confirmed":
+        allowed = ("started", "uncertain")
+    else:
+        allowed = ("started",)
+    placeholders = ",".join("?" for _ in allowed)
     conn.execute(
-        """UPDATE planning_reopen_attempts
-              SET outcome=?, finished_at=?, confirmed_modified_at=?
-            WHERE attempt_id=? AND outcome='started'""",
-        (outcome, utc_now(), confirmed_modified_at, attempt_id),
+        f"""UPDATE planning_reopen_attempts
+               SET outcome=?, finished_at=?, confirmed_modified_at=?
+             WHERE attempt_id=? AND outcome IN ({placeholders})""",
+        (outcome, utc_now(), confirmed_modified_at, attempt_id, *allowed),
     )
     row = conn.execute(
         "SELECT * FROM planning_reopen_attempts WHERE attempt_id=?", (attempt_id,)
     ).fetchone()
     if row is None or row["outcome"] != outcome:
         raise DishRuleError(
-            "CONFLICT", "planning reopen attempt is not pending",
+            "CONFLICT", "planning reopen attempt is not recoverable",
             rule="planning_reopen_attempt_not_pending",
+            details={"attempt_id": attempt_id, "outcome": row["outcome"] if row else None},
         )
     return row
 
