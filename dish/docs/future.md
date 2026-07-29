@@ -26,6 +26,18 @@ Future proposals should build on those mechanisms rather than reintroduce parall
 
 ## Near-term candidates after activation evidence
 
+### Paginated section task listing
+
+Add a private, read-only `dish list SECTION_GID` command so agents can fetch all incomplete tasks
+waiting in Research Queue, Verification Queue, or any other Cooking section. It should validate the
+section against the Cooking project, paginate to completion, fail rather than return a partial list,
+and require an exact `dish read` before governed work begins.
+
+See [`section-task-listing-design.md`](section-task-listing-design.md) for the proposed CLI,
+completion filters, result contract, pagination behavior, private-surface boundary, and test scope.
+This is intentionally smaller than natural-language `dish_find` and should be useful soon after
+rollout without expanding workflow authority.
+
 ### Serve the Honest repository to agents
 
 Expose the current `DISH_HONEST_PATH` checkout read-only through the Dish Action surface. Agents
