@@ -30,12 +30,12 @@ assume an uploaded or host-global environment is runnable on the current Python 
 cd ai-tools/dish
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pytest --fast
+.venv/bin/python -m pytest --smoke
 ```
 
-Use `pytest --fast` while iterating. Before handing back code or staged archives, run the complete
-`.venv/bin/python -m pytest` suite, including the two tests skipped by `--fast`. Never package
-`.venv` in a patch or archive.
+Use `pytest --smoke` for rapid confidence while iterating. Before handing back code or staged
+archives, run the complete `.venv/bin/python -m pytest` suite. Never package `.venv` in a patch or
+archive.
 
 ## Live Dish smoke-test credentials
 

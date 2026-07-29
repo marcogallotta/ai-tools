@@ -260,10 +260,11 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 ```
 
-Use the fast suite during normal iteration, then run the complete suite before handing work back:
+Use the curated smoke suite for rapid confidence during normal iteration, then run the complete
+suite before handing work back:
 
 ```sh
-.venv/bin/python -m pytest --fast
+.venv/bin/python -m pytest --smoke
 .venv/bin/python -m pytest
 ```
 

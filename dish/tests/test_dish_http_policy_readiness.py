@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from dish_service import application as application_module
+from dish_tool import database_schema as database_schema_module
 from dish_tool.database import initialize_database
 from tests.test_dish_tool_r54_hard_request_identity import (
     REQUEST_ID,
@@ -231,9 +232,12 @@ def test_health_rejects_read_only_database_as_not_mutation_ready(monkeypatch, tm
     }
 
 
-def test_health_reports_transient_writer_lock_without_calling_it_corruption(tmp_path):
+def test_health_reports_transient_writer_lock_without_calling_it_corruption(
+    monkeypatch, tmp_path
+):
     service, _backend, server, thread, _url = _running(tmp_path)
     server.shutdown(); server.server_close(); thread.join(timeout=2)
+    monkeypatch.setattr(database_schema_module, "MIGRATION_BUSY_TIMEOUT_MS", 25)
     locker = initialize_database(service.config.db_path)
     locker.execute("BEGIN IMMEDIATE")
     try:

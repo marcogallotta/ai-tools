@@ -422,9 +422,18 @@ path:
 When testing the generated Asana SDK contract, call its real generated methods and fake the
 low-level `ApiClient.call_api` transport. Handwritten method mocks do not prove the integration.
 
-Use `.venv/bin/python -m pytest --fast` while iterating and run the complete
+Use `.venv/bin/python -m pytest --smoke` for rapid confidence while iterating and run the complete
 `.venv/bin/python -m pytest` suite before handoff. When persistence changes, test upgrade and
 recovery immediately after upgrade.
+
+Keep the smoke selection broad, representative, and normally bounded to ten seconds; it is a
+curated confidence gate, not a bucket for every quick test. `tests/conftest.py` lists whole
+high-signal test files, while the `smoke` and `full_suite_only` markers add or remove deliberate
+exceptions. When adding or moving a test, decide whether it materially improves smoke confidence
+and whether the resulting bundle still meets its budget. Do not automatically include every new
+test or exclude all integration cost: smoke must retain representative workflow, persistence,
+restore, concurrency, subprocess, HTTP, and production-topology coverage. The default suite remains
+the complete handoff authority.
 
 After editing, reread this entire document and every changed documentation file for conceptual
 overlap and stale claims. Architecture is converged only when each durable fact and decision has one

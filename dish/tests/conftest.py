@@ -16,24 +16,53 @@ import pytest
 
 CLI_PATH = pathlib.Path(__file__).resolve().parent.parent.parent / "tools" / "asana"
 
+SMOKE_TEST_FILES = {
+    # Release, schema, database, and command foundations.
+    "test_dish_tool_step1.py",
+    "test_dish_tool_foundation.py",
+    "test_dish_tool_step5_commands.py",
+    "test_dish_002_database_initialization_diagnostics.py",
+    # Representative workflow behavior from construction through submission.
+    "test_dish_tool_step6_prepare.py",
+    "test_dish_tool_step7_verification.py",
+    "test_dish_tool_step8_routes.py",
+    "test_dish_tool_step9_submit.py",
+    # Service, HTTP, Action, credential, and generated-contract boundaries.
+    "test_dish_service_entrypoint.py",
+    "test_dish_http_policy_readiness.py",
+    "test_dish_transport_contract_hardening.py",
+    "test_dish_tool_r45_action_surface.py",
+    "test_dish_tool_r50_generic_asana_guard.py",
+    "test_dish_tool_r53_vertical_action_lifecycle.py",
+    # Persistence recovery, request replay, restore, and concurrency.
+    "test_dish_001_unknown_operation_request_replay.py",
+    "test_dish_006_restore_database_mode.py",
+    "test_dish_tool_r10_concurrency_constraints.py",
+}
+
 
 def pytest_addoption(parser):
     parser.addoption(
-        "--fast",
+        "--smoke",
         action="store_true",
         default=False,
-        help="skip expensive external process, launcher, and git boundary tests",
+        help="run only the curated smoke tests",
     )
 
 
 def pytest_collection_modifyitems(config, items):
-    if not config.getoption("--fast"):
+    if not config.getoption("--smoke"):
         return
 
     selected = []
     deselected = []
     for item in items:
-        if item.get_closest_marker("boundary") is None:
+        explicitly_full_only = item.get_closest_marker("full_suite_only") is not None
+        selected_for_smoke = (
+            item.path.name in SMOKE_TEST_FILES
+            or item.get_closest_marker("smoke") is not None
+        )
+        if selected_for_smoke and not explicitly_full_only:
             selected.append(item)
         else:
             deselected.append(item)
