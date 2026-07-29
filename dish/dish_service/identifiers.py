@@ -16,8 +16,10 @@ _DISH_UUID_FIELDS = {
     "cycle_id",
     "verification_cycle_id",
 }
+NIL_DISH_UUID = "00000000-0000-0000-0000-000000000000"
 CANONICAL_DISH_UUID_PATTERN = (
-    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    rf"^(?!{NIL_DISH_UUID}$)"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
 )
 CANONICAL_DISH_UUID_LENGTH = 36
 CANONICAL_DISH_UUID_SCHEMA = {
@@ -58,12 +60,12 @@ def require_asana_gid(value: Any, *, field: str) -> str:
 
 
 def require_dish_uuid(value: Any, *, field: str) -> str:
-    """Return a canonical Dish UUID or reject it without database access."""
+    """Return a non-nil canonical Dish UUID or reject it without database access."""
     if not isinstance(value, str) or _CANONICAL_DISH_UUID_RE.fullmatch(value) is None:
         raise _invalid_identifier(
             field,
             "uuid_identifier_required",
-            f"{field} must be a canonical lowercase UUID in 8-4-4-4-12 form",
+            f"{field} must be a non-nil canonical lowercase UUID in 8-4-4-4-12 form",
             expected_format="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
         )
     try:
@@ -72,14 +74,14 @@ def require_dish_uuid(value: Any, *, field: str) -> str:
         raise _invalid_identifier(
             field,
             "uuid_identifier_required",
-            f"{field} must be a canonical lowercase UUID in 8-4-4-4-12 form",
+            f"{field} must be a non-nil canonical lowercase UUID in 8-4-4-4-12 form",
             expected_format="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
         ) from None
-    if str(parsed) != value:
+    if parsed.int == 0 or str(parsed) != value:
         raise _invalid_identifier(
             field,
             "uuid_identifier_required",
-            f"{field} must be a canonical lowercase UUID in 8-4-4-4-12 form",
+            f"{field} must be a non-nil canonical lowercase UUID in 8-4-4-4-12 form",
             expected_format="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
         )
     return value

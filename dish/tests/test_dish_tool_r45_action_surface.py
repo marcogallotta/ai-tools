@@ -399,7 +399,10 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
 def test_every_openapi_uuid_schema_requires_canonical_lowercase_pattern():
     from jsonschema import Draft202012Validator
 
-    from dish_service.identifiers import CANONICAL_DISH_UUID_PATTERN
+    from dish_service.identifiers import (
+        CANONICAL_DISH_UUID_PATTERN,
+        NIL_DISH_UUID,
+    )
 
     spec = action_openapi()
     uuid_schemas = []
@@ -426,6 +429,7 @@ def test_every_openapi_uuid_schema_requires_canonical_lowercase_pattern():
         validator = Draft202012Validator(schema)
         assert validator.is_valid(canonical)
         assert not validator.is_valid(uppercase)
+        assert not validator.is_valid(NIL_DISH_UUID)
 
 
 def test_uuid_validation_message_names_field_and_expected_format(tmp_path):
@@ -440,7 +444,10 @@ def test_uuid_validation_message_names_field_and_expected_format(tmp_path):
         "field": "client.run_id",
         "rule": "uuid_identifier_required",
     }
-    assert "canonical lowercase UUID in 8-4-4-4-12 form" in result["data"]["message"]
+    assert (
+        "non-nil canonical lowercase UUID in 8-4-4-4-12 form"
+        in result["data"]["message"]
+    )
 
 
 def test_checked_in_openapi_matches_generator():

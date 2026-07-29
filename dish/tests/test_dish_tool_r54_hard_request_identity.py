@@ -190,6 +190,56 @@ def test_malformed_request_id_is_not_recorded_and_identifies_field(tmp_path):
         conn.close()
 
 
+@pytest.mark.parametrize(
+    ("field", "client"),
+    [
+        (
+            "client.run_id",
+            {"run_id": "00000000-0000-0000-0000-000000000000", "request_id": REQUEST_ID},
+        ),
+        (
+            "client.request_id",
+            {"run_id": RUN_ID, "request_id": "00000000-0000-0000-0000-000000000000"},
+        ),
+    ],
+)
+def test_nil_client_identities_are_rejected_before_request_journaling(
+    tmp_path, field, client
+):
+    service, backend, server, thread, url = _running(tmp_path)
+    try:
+        status, result = _post(
+            url,
+            "/v1/action/create",
+            token="action-secret",
+            payload={
+                "client": client,
+                "arguments": AGENT_ARGUMENTS["create"],
+            },
+        )
+    finally:
+        server.shutdown(); server.server_close(); thread.join(timeout=2)
+
+    assert status == 200
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"] == [
+        {
+            "field": field,
+            "rule": "uuid_identifier_required",
+            "expected_format": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        }
+    ]
+    assert backend.writes == 0
+
+    from dish_tool.database import initialize_database
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        assert conn.execute("SELECT COUNT(*) FROM service_requests").fetchone()[0] == 0
+    finally:
+        conn.close()
+
+
 def test_first_validation_failure_is_replayed_and_changed_reuse_conflicts(tmp_path):
     _service_obj, backend, server, thread, url = _running(tmp_path)
     payload = {

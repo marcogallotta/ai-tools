@@ -105,7 +105,7 @@ export DISH_LIVE_MODE=1
 export DISH_MODE=service
 export DISH_SERVICE_URL=https://<laptop-tailnet-name>:8444
 export DISH_SERVICE_TOKEN=<private CLI token>
-export DISH_CLIENT_RUN_ID=<canonical lowercase UUID for this run>
+export DISH_CLIENT_RUN_ID=<non-nil canonical lowercase UUID for this run>
 ```
 
 Marco's admin shell uses the same private tailnet URL but a separate token:
@@ -115,7 +115,7 @@ export DISH_LIVE_MODE=1
 export DISH_MODE=service
 export DISH_SERVICE_URL=https://<laptop-tailnet-name>:8444
 export DISH_ADMIN_TOKEN=<Marco-admin token>
-export DISH_CLIENT_RUN_ID=<canonical lowercase UUID for this admin run>
+export DISH_CLIENT_RUN_ID=<non-nil canonical lowercase UUID for this admin run>
 ```
 
 Never place the CLI/admin token in the GPT Action configuration.
@@ -246,7 +246,7 @@ openapi/dish-action.openapi.json
 
 The checked-in schema intentionally uses the placeholder server `https://dish.example.invalid`. Before importing it, replace that server with the exact Funnel URL, or import the runtime schema from the public listener at `GET /openapi/action.json` so the server URL is generated from the request host. Validate the final URL and HTTPS port in the GPT Action editor before activation.
 
-The Action listener serves the bounded `/v1/action/*` workflow and lease-renewal routes plus the read-only generated schema at `GET /openapi/action.json`. Admin, recovery, migration, backup, private CLI, and generic Asana routes are not present on that listener or in the Action OpenAPI document. The OpenAPI generator and HTTP request validator share one command specification; missing, extra, wrongly typed, or invalid-enum Action arguments are rejected before backend or workflow code. Every Action mutation requires `client.request_id`; reads neither advertise nor accept one. `client.run_id` is the single run identity. A non-blank `independence_attestation` is required on Verification start and Large rejection. Approval inherits the exact attestation persisted at Verification start and accepts only the same verifier agent/run; Evidence and Human Review rejection routes also inherit the persisted start attestation and do not accept the field. The GPT must reuse the same canonical lowercase request UUID only when replaying the exact call after a lost response. Both UUID fields use canonical lowercase form.
+The Action listener serves the bounded `/v1/action/*` workflow and lease-renewal routes plus the read-only generated schema at `GET /openapi/action.json`. Admin, recovery, migration, backup, private CLI, and generic Asana routes are not present on that listener or in the Action OpenAPI document. The OpenAPI generator and HTTP request validator share one command specification; missing, extra, wrongly typed, or invalid-enum Action arguments are rejected before backend or workflow code. Every Action mutation requires `client.request_id`; reads neither advertise nor accept one. `client.run_id` is the single run identity. A non-blank `independence_attestation` is required on Verification start and Large rejection. Approval inherits the exact attestation persisted at Verification start and accepts only the same verifier agent/run; Evidence and Human Review rejection routes also inherit the persisted start attestation and do not accept the field. The GPT must reuse the same non-nil canonical lowercase request UUID only when replaying the exact call after a lost response. Both UUID fields use non-nil canonical lowercase form.
 
 Follow `deploy/gpt-action.md` for the exact editor configuration, run-identity rules, Preview gate,
 lease handling, and token rotation.

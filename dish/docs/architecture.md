@@ -351,7 +351,7 @@ tail only when every workflow step and external-effect attempt is resolved; othe
 validation still fails closed. Terminal cleanup is idempotent, and a later lease acquisition for the
 same task reaps only that safe stale row.
 
-Every externally callable service mutation has a client request UUID whose first authoritative
+Every externally callable service mutation has a non-nil client request UUID whose first authoritative
 outcome is replay-bound. Pending or uncertain work is inspected or reconstructed, not reissued. An
 interrupted `reopen-planning` request remains pending while its attempt is unresolved: startup may
 complete a terminal attempt/request pair, while only exact owner/run/argument replay may reissue a

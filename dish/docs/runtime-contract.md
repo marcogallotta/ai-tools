@@ -29,7 +29,7 @@ Live client environments set all of:
 DISH_LIVE_MODE=1
 DISH_MODE=service
 DISH_SERVICE_URL=<private service URL>
-DISH_CLIENT_RUN_ID=<canonical lowercase UUID for this run>
+DISH_CLIENT_RUN_ID=<non-nil canonical lowercase UUID for this run>
 ```
 
 The CLI adds `DISH_SERVICE_TOKEN`; Marco's admin shell adds `DISH_ADMIN_TOKEN`. The GPT Action stores only `DISH_SERVICE_ACTION_TOKEN` in its Action authentication configuration. No client receives the service database path or Asana credential.
@@ -97,7 +97,7 @@ lease and report `service_cleanup_warning`; otherwise `service_recovery_required
 follow-on actions and explicitly tells the client not to retry the mutation. Ordinary full-state
 write and approval retries remain naturally idempotent by exact live-state comparison. In service
 mode, all agent mutations are replay-bound, and every externally callable agent, administrative,
-lease, and backup mutation requires a client-generated UUID `client.request_id`; reads (`sections`,
+lease, and backup mutation requires a client-generated non-nil UUID `client.request_id`; reads (`sections`,
 `read`, `inspect`, and `health`) do not. This includes `create`, `start`, `prepare`, `approve`,
 `reject`, and `submit`. Reuse that UUID only when retrying the exact same logical call after a lost
 response.
@@ -134,7 +134,7 @@ transport failure. A CLI caller therefore cannot perform an exact request replay
 loss and must inspect live and durable state instead of blindly rerunning the mutation. A
 programmatic HTTP client may supply and retain an explicit request ID. GPT Action calls must supply
 it explicitly through the imported schema. The public schema marks both `client.request_id` and
-`client.run_id` as canonical lowercase UUIDs; `run_id` remains stable for the whole agent run.
+`client.run_id` as non-nil canonical lowercase UUIDs; `run_id` remains stable for the whole agent run.
 
 ## Health, backup, and startup
 
