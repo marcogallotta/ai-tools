@@ -31,6 +31,8 @@ CANONICAL_DISH_UUID_SCHEMA = {
 }
 _NUMERIC_GID_RE = re.compile(r"[1-9][0-9]*")
 _CANONICAL_DISH_UUID_RE = re.compile(CANONICAL_DISH_UUID_PATTERN)
+MAX_ASANA_GID = (1 << 63) - 1
+MAX_ASANA_GID_LENGTH = len(str(MAX_ASANA_GID))
 
 
 def _invalid_identifier(
@@ -55,6 +57,13 @@ def require_asana_gid(value: Any, *, field: str) -> str:
             field,
             "numeric_identifier_required",
             f"{field} must be a numeric identifier",
+        )
+    if len(value) > MAX_ASANA_GID_LENGTH or int(value) > MAX_ASANA_GID:
+        raise _invalid_identifier(
+            field,
+            "numeric_identifier_out_of_range",
+            f"{field} exceeds the supported Asana identifier range",
+            expected_format=f"decimal integer from 1 to {MAX_ASANA_GID}",
         )
     return value
 

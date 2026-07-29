@@ -8,6 +8,7 @@ from dish_tool.errors import DishRuleError
 from dish_tool.models import validate_actor_model, validate_independence_attestation
 from .identifiers import (
     CANONICAL_DISH_UUID_SCHEMA,
+    MAX_ASANA_GID_LENGTH,
     require_asana_gid,
     require_dish_uuid,
 )
@@ -18,6 +19,11 @@ REPLAY_SAFE_COMMANDS = AGENT_MUTATION_COMMANDS | {ACTION_LEASE_COMMAND}
 REPLAY_CAPABLE_COMMANDS = REPLAY_SAFE_COMMANDS
 
 DISH_UUID_SCHEMA = dict(CANONICAL_DISH_UUID_SCHEMA)
+ASANA_GID_SCHEMA = {
+    "type": "string",
+    "pattern": "^[1-9][0-9]*$",
+    "maxLength": MAX_ASANA_GID_LENGTH,
+}
 CLIENT_RUN_ID_SCHEMA = {
     **DISH_UUID_SCHEMA,
     "description": (
@@ -70,7 +76,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     "read": {
         "required": ["task_gid", "agent"],
         "properties": {
-            "task_gid": {"type": "string", "pattern": "^[0-9]+$"},
+            "task_gid": dict(ASANA_GID_SCHEMA),
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
         },
     },
@@ -84,7 +90,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
     "start": {
         "required": ["task_gid", "agent", "kind"],
         "properties": {
-            "task_gid": {"type": "string", "pattern": "^[0-9]+$"},
+            "task_gid": dict(ASANA_GID_SCHEMA),
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "kind": {
                 "type": "string",

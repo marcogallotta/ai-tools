@@ -213,6 +213,81 @@ def test_valid_numeric_gid_reaches_action_backend_path(tmp_path):
     assert calls == 2
 
 
+@pytest.mark.parametrize("command", ["read", "start"])
+@pytest.mark.parametrize(
+    "task_gid",
+    ["9223372036854775808", "99999999999999999999"],
+)
+def test_action_rejects_out_of_range_task_gid_before_backend_call(
+    tmp_path, command, task_gid
+):
+    backend, server, thread, url = _running(tmp_path)
+    calls = 0
+    original = backend.read_task
+
+    def counted_read(gid):
+        nonlocal calls
+        calls += 1
+        return original(gid)
+
+    backend.read_task = counted_read
+    arguments = {"agent": "gpt", "task_gid": task_gid}
+    if command == "start":
+        arguments["kind"] = "planning"
+    try:
+        action = DishActionClient(
+            url,
+            token="action-secret",
+            run_id="f946b9ec-2b97-5b20-9831-e749d02e9883",
+        )
+        result = action.execute(command, **arguments)
+    finally:
+        _stop(server, thread)
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["retryable"] is False
+    assert result["errors"] == [
+        {
+            "expected_format": "decimal integer from 1 to 9223372036854775807",
+            "field": "task_gid",
+            "rule": "numeric_identifier_out_of_range",
+        }
+    ]
+    assert calls == 0
+
+
+def test_action_accepts_maximum_supported_task_gid(tmp_path):
+    backend, server, thread, url = _running(tmp_path)
+    calls = 0
+
+    def missing(gid):
+        nonlocal calls
+        calls += 1
+        assert gid == "9223372036854775807"
+        raise BackendFailure(
+            "BACKEND_REJECTED",
+            "private Asana 404 response body",
+            status=404,
+            retryable=True,
+        )
+
+    backend.read_task = missing
+    try:
+        action = DishActionClient(
+            url,
+            token="action-secret",
+            run_id="f946b9ec-2b97-5b20-9831-e749d02e9883",
+        )
+        result = action.execute(
+            "read", agent="gpt", task_gid="9223372036854775807"
+        )
+    finally:
+        _stop(server, thread)
+
+    assert result["code"] == "NOT_FOUND"
+    assert calls == 1
+
+
 @pytest.mark.parametrize("submission_id", ["not-an-operation", "", " "])
 def test_action_rejects_malformed_submission_id_before_database_routing(
     tmp_path, submission_id
