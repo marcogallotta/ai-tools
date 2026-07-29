@@ -157,6 +157,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
         paths[f"/v1/action/{command}"] = {
             "post": {
                 "operationId": f"dish_{command.replace('-', '_')}",
+                "x-openai-isConsequential": command in REPLAY_SAFE_COMMANDS,
                 "summary": (
                     "Renew the current GPT Action operation lease"
                     if command == "renew-lease"

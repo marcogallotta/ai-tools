@@ -13,6 +13,7 @@
     "/v1/action/create": {
       "post": {
         "operationId": "dish_create",
+        "x-openai-isConsequential": true,
         "summary": "Run dish create",
         "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
@@ -101,6 +102,7 @@
     "/v1/action/sections": {
       "post": {
         "operationId": "dish_sections",
+        "x-openai-isConsequential": false,
         "summary": "Run dish sections",
         "description": "Read-only Action. It does not accept client.request_id, create a replay record, or authorize a mutation.",
         "security": [
@@ -176,6 +178,7 @@
     "/v1/action/read": {
       "post": {
         "operationId": "dish_read",
+        "x-openai-isConsequential": false,
         "summary": "Run dish read",
         "description": "Read-only Action. It does not accept client.request_id, create a replay record, or authorize a mutation.",
         "security": [
@@ -257,6 +260,7 @@
     "/v1/action/inspect": {
       "post": {
         "operationId": "dish_inspect",
+        "x-openai-isConsequential": false,
         "summary": "Run dish inspect",
         "description": "Read-only Action. It does not accept client.request_id, create a replay record, or authorize a mutation.",
         "security": [
@@ -340,6 +344,7 @@
     "/v1/action/start": {
       "post": {
         "operationId": "dish_start",
+        "x-openai-isConsequential": true,
         "summary": "Run dish start",
         "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
@@ -544,6 +549,7 @@
     "/v1/action/prepare": {
       "post": {
         "operationId": "dish_prepare",
+        "x-openai-isConsequential": true,
         "summary": "Run dish prepare",
         "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
@@ -652,6 +658,7 @@
     "/v1/action/approve": {
       "post": {
         "operationId": "dish_approve",
+        "x-openai-isConsequential": true,
         "summary": "Run dish approve",
         "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
@@ -771,6 +778,7 @@
     "/v1/action/reject": {
       "post": {
         "operationId": "dish_reject",
+        "x-openai-isConsequential": true,
         "summary": "Run dish reject",
         "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
@@ -978,6 +986,7 @@
     "/v1/action/submit": {
       "post": {
         "operationId": "dish_submit",
+        "x-openai-isConsequential": true,
         "summary": "Run dish submit",
         "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [
@@ -1061,6 +1070,7 @@
     "/v1/action/renew-lease": {
       "post": {
         "operationId": "dish_renew_lease",
+        "x-openai-isConsequential": true,
         "summary": "Renew the current GPT Action operation lease",
         "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
         "security": [

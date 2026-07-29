@@ -398,6 +398,24 @@ def test_trimmed_openapi_contains_only_action_workflow_and_renewal_paths():
     paths = set(spec["paths"])
     expected = {f"/v1/action/{command}" for command in ACTION_COMMANDS}
     assert paths == expected
+    consequential = {
+        command: spec["paths"][f"/v1/action/{command}"]["post"][
+            "x-openai-isConsequential"
+        ]
+        for command in ACTION_COMMANDS
+    }
+    assert consequential == {
+        "create": True,
+        "sections": False,
+        "read": False,
+        "inspect": False,
+        "start": True,
+        "prepare": True,
+        "approve": True,
+        "reject": True,
+        "submit": True,
+        "renew-lease": True,
+    }
     assert "/v1/action/leases/{operation_id}/renew" not in paths
     rendered = json.dumps(spec).lower()
     assert "/admin" not in rendered
