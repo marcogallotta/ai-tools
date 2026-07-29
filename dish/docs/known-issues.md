@@ -31,6 +31,29 @@ clear workaround and revisit trigger. For every new or reconsidered issue, recor
 
 ## Post-rollout candidates
 
+### DESIGN-005 — explicit Planning-intent confirmation
+
+**Priority: highest post-rollout candidate; not launch-blocking.**
+
+An agent has started Planning for a task when Marco had not asked it to plan that task. The current
+state-driven continuation contract can tell an agent that Planning is legal, but legality does not
+establish user intent. This is a demonstrated failure with credible recurrence: it can open an
+unwanted operation and lease, and a continuing agent can prepare and write an unwanted Planning
+brief. Dish still governs the mutations, so this is not launch-blocking corruption, but it creates
+avoidable cleanup and makes ordinary use feel unreliable.
+
+Add a shared service-side, guaranteed two-call gate for `start` with `kind=planning`. The first call
+must return `CONFIRMATION_REQUIRED` without opening an operation, acquiring a lease, or changing the
+task. A fresh call may proceed only by referencing that durable challenge and supplying either
+`intent_basis: user_requested`, or `intent_basis: agent_override` with a non-blank
+`override_reason`. Enforce the same contract for the CLI and Custom Action. A lone optional
+attestation field is insufficient because an agent could populate it on the first call and never
+receive the intended challenge.
+
+Implement this before lower-priority post-rollout candidates unless rollout evidence changes its
+priority. Reconsider launch blocking only if another pre-rollout occurrence causes unwanted live
+content or repeated operator cleanup.
+
 ### DESIGN-003 — connected request-status inspection
 
 A connected agent with a `request_id` has no read-only lookup for the request's authoritative
