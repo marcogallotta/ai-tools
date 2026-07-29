@@ -5,7 +5,7 @@ preserve the complete JSON transcript.
 
 ## Status
 
-Updated 2026-07-28. Stages 1 and 2 record completed work; Stage 3 is the remaining activation gate.
+Updated 2026-07-29. Stages 1 and 2 record completed work; Stage 3 is the remaining activation gate.
 The completed evidence spans several runs and run IDs, so it is not a substitute for the final
 single-run rehearsal.
 
@@ -148,8 +148,47 @@ The log did not expose the admin token or supplied reason. This confirms the DIS
 boundary for a real SQLite initialization failure, but it does not identify the historical
 unknown-operation exception because that trigger was fixed before logging became available.
 The isolated listeners were stopped; live health remained HTTP 200 with schema 26,
-`write_ready:true`, and no restore fault. DISH-005 interrupted-restore recovery and DISH-014
-approval-attestation behavior still require their targeted post-fix smoke runs.
+`write_ready:true`, and no restore fault. Later DISH-005 and DISH-014 results are recorded below.
+
+### Targeted closeout run 2026-07-29
+
+The checkout advanced from `29db8cf` to `b4407e6` while testing was in progress; the final live
+service ran from the clean `b4407e6` checkout. Admin run ID
+`42eea002-a91d-4a30-9486-f41d42852938` was used throughout. The required independent verifier used
+run ID `9380fd35-353a-45e5-bdb1-6906eb6fe352`.
+
+No standalone complete transcript was saved, so this pass is regression evidence but not an
+activation record. Temporary isolated evidence remains under
+`/tmp/dish-restore-interrupt2-42eea002/`; credentials were not recorded.
+
+The following gates pass:
+
+- all nine generic admin routes return field-specific diagnostics for empty `arguments`, with exact
+  replay;
+- unknown-operation `recover` and `discard` return stable replay-bound `NOT_FOUND` twice, while
+  changed request-ID reuse returns `CONFLICT`;
+- DISH-005 passed two real `SIGKILL` interruptions after `replacement_committed`, in both
+  original/fresh request retry orderings, without a second restore or extra pre-restore snapshot;
+- normal and interrupted/reconciled restores install the database as owner-only `0600`;
+- DISH-014 persisted the Verification-start attestation, rejected a different verifier run, approved
+  without accepting a new attestation, replayed exactly, and rejected conflicting reuse;
+- a live Small correction retained distinct reviewed, corrected, and signed identities. After a
+  service restart, `sections`, `inspect`, `submit`, and final `read` remained healthy with no
+  `database_semantic_evidence_invalid`;
+- isolated shutdown drained an admitted request, refused a later request after `SIGTERM`, and exited
+  without a stray listener or process.
+
+One defect remains confirmed: `recover` does not validate required `outcome` and `reason` before
+operation lookup. With either field absent, an unknown operation returns `NOT_FOUND` and a terminal
+operation returns `WRONG_STATE`; both should return field-specific `INVALID_ARGUMENT`. This was
+reproduced with separate request IDs, including stable replay on the unknown-operation cases.
+
+Strict closeout still requires one second fresh live Small-correction fixture and the migrated-backup
+restore permission check. The normal and reconciled permission cases already pass.
+
+Disposable task `1216978477285994`, operation
+`6a279005-07e9-44ab-8d03-6ddcf12fc3f0`, remains completed and `ready` in Reference and requires
+approved test-project cleanup.
 
 ## Stage 3 — complete the live rehearsal
 
