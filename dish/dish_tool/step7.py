@@ -588,15 +588,21 @@ def approve_live(
         ),
     )
     if signed.material_changes:
-        latest = signed.material_changes[-1]
-        if latest.endswith(" — pending-verification"):
-            verified_state = (
-                f"verified — {verification_actor_line(agent, model, date).replace(' — ', ', ', 1)}"
+        verified_state = (
+            f"verified — {verification_actor_line(agent, model, date).replace(' — ', ', ', 1)}"
+        )
+        finalized_changes = tuple(
+            (
+                line.removesuffix("pending-verification") + verified_state
+                if line.endswith(" — pending-verification")
+                else line
             )
+            for line in signed.material_changes
+        )
+        if finalized_changes != signed.material_changes:
             signed = dataclasses.replace(
                 signed,
-                material_changes=signed.material_changes[:-1]
-                + (latest.removesuffix("pending-verification") + verified_state,),
+                material_changes=finalized_changes,
             )
     signed_lines = signed.render().splitlines()
     intended_title = signed_lines[0]

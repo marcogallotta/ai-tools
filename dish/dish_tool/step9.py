@@ -530,16 +530,19 @@ def submit_live(conn: sqlite3.Connection, backend: Any, *, operation_id: str, sc
     if not check.ok or document.state.values["Verified by"] == "None":
         raise DishRuleError("VALIDATION_FAILED", "live task is not a valid signed ready task", rule="signed_ready_required")
     require_status(document.state, {"ready"}, action="submit")
-    if document.material_changes and document.material_changes[-1].endswith(
-        " — pending-verification"
-    ):
+    pending_material_changes = [
+        line
+        for line in document.material_changes
+        if line.endswith(" — pending-verification")
+    ]
+    if pending_material_changes:
         raise DishRuleError(
             "VALIDATION_FAILED",
-            "the latest Material changes entry still claims verification is pending",
+            "a Material changes entry still claims verification is pending",
             rule="material_change_verification_pending",
             retryable=False,
             details={
-                "latest_material_change": document.material_changes[-1],
+                "pending_material_changes": pending_material_changes,
                 "required_state": "verified",
             },
         )

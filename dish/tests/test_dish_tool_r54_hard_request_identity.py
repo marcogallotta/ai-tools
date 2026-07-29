@@ -1008,7 +1008,93 @@ def test_material_change_approval_finalizes_pending_entry_and_survives_restart(t
         reopened.close()
 
 
-def test_submit_refuses_ready_task_with_latest_material_change_pending(tmp_path, monkeypatch):
+def test_approval_finalizes_rejected_change_and_corrective_change(tmp_path):
+    from dish_tool.task_document import parse_task_document
+    from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit, _review
+    from tests.test_dish_tool_step7_verification import make_app
+
+    application, backend, initial_operation, _ = make_app(tmp_path)
+    _approve_and_submit(application, initial_operation, run="initial-review")
+
+    started = application.execute(
+        "start",
+        agent="gpt",
+        task_gid="t",
+        kind="change",
+        change_level="large",
+        change_reason="adjust the cooking method",
+        run_id="change-editor",
+    )
+    operation_id = started["submission_id"]
+    candidate = tmp_path / "first-material-edit.txt"
+    candidate.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "1. Cook it.", "1. Cook it quickly."
+        )
+    )
+    assert application.execute(
+        "prepare",
+        agent="gpt",
+        model="gpt-5.6-sol",
+        submission_id=operation_id,
+        file_path=str(candidate),
+        material_classification="material",
+        run_id="change-editor",
+    )["ok"]
+
+    first_review = _review(application, "first-change-review")
+    corrected = tmp_path / "corrective-material-edit.txt"
+    corrected.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "1. Cook it quickly.", "1. Cook it gently."
+        )
+    )
+    rejected = application.execute(
+        "reject",
+        agent="codex",
+        model="gpt-5.6-sol",
+        submission_id=operation_id,
+        route="large",
+        reason="the quick method would produce the wrong texture",
+        file_path=str(corrected),
+        run_id="first-change-review",
+        independence_attestation="independent",
+    )
+    assert rejected["ok"]
+    rejected_document = parse_task_document(f"{backend.title}\n{backend.notes}")
+    assert len(rejected_document.material_changes) == 2
+    assert all(
+        line.endswith(" — pending-verification")
+        for line in rejected_document.material_changes
+    )
+
+    final_review = _review(application, "corrective-review", agent="gpt")
+    approved = application.execute(
+        "approve",
+        agent="gpt",
+        model="gpt-5.6-sol",
+        submission_id=operation_id,
+        correction="none",
+        reviewed_identity=final_review["data"]["reviewed_identity"],
+        semantic_review_complete=True,
+        provenance_complete=True,
+        run_id="corrective-review",
+    )
+    assert approved["ok"]
+
+    signed = parse_task_document(f"{backend.title}\n{backend.notes}")
+    assert len(signed.material_changes) == 2
+    assert all(
+        " — verified — Custom GPT, self-reported model: gpt-5.6-sol, " in line
+        for line in signed.material_changes
+    )
+    assert not any(
+        line.endswith(" — pending-verification")
+        for line in signed.material_changes
+    )
+
+
+def test_submit_refuses_ready_task_with_any_material_change_pending(tmp_path, monkeypatch):
     import dataclasses
 
     from dish_tool.database import content_identity
@@ -1065,7 +1151,7 @@ def test_submit_refuses_ready_task_with_latest_material_change_pending(tmp_path,
     pending = latest.split(" — verified — ", 1)[0] + " — pending-verification"
     corrupted = dataclasses.replace(
         signed,
-        material_changes=signed.material_changes[:-1] + (pending,),
+        material_changes=signed.material_changes[:-1] + (pending, latest),
     )
     lines = corrupted.render().splitlines()
     backend.title = lines[0]
