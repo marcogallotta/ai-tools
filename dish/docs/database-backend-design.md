@@ -22,6 +22,7 @@ The replacement is not an Asana clone. It owns only:
 - immutable content versions and location history;
 - the existing workflow and verification evidence;
 - task creation, browsing, search, history, and Marco's narrow interventions;
+- lifecycle-authorized Markdown editing without a generic content-save bypass;
 - a bounded command for every current human Asana action that remains necessary;
 - future cook-log records when separately designed and approved.
 
@@ -64,7 +65,7 @@ cook-log and reading needs make a purpose-built store materially simpler than co
 ## Non-goals
 
 - generic projects, memberships, teams, assignees, comments, notifications, or permissions;
-- task-body editing that bypasses a governed, revision-checked Dish save command;
+- task-body editing that bypasses a lifecycle-authorized, revision-checked Dish command;
 - browser or CLI access to raw SQL or generic row CRUD;
 - multi-user or hostile-tenant authorization;
 - PostgreSQL, replication, multi-host failover, or continuous point-in-time recovery as a cutover
@@ -155,13 +156,31 @@ explicit archival state preserves their identifiers, versions, and audit relatio
 The current content pointer replaces `task_content_state` as the authoritative current projection.
 There must not be two independently writable current-content tables. During database migration,
 `task_content_state` may be converted into a compatibility view or retired after every caller uses
-the task pointer.
+the task pointer and its version-specific schema and confirmation provenance has been migrated.
 
 ### `content_versions`
 
 Keep immutable full-title/full-body versions and their cryptographic identity. Existing confirmed
 versions already contain title and notes; the migration should reuse them rather than introduce a
 second document-history table.
+
+Each version also carries the provenance required to interpret it without reparsing it against
+whatever Honest assets happen to be current later:
+
+```text
+document_kind      bare | planning_brief | canonical
+schema_version     nullable only where the document kind has no applicable schema
+source_kind        import | creation | workflow | migration
+recorded_at        durable provenance time
+confirmed_at       nullable time at which this version became confirmed authority
+protocol_release   nullable; present only when the release is a fact of that version
+```
+
+These fields absorb the version-specific `schema_version` and `confirmed_at` facts currently held
+only by `task_content_state`; `recorded_at` does not silently substitute for `confirmed_at`. An
+operation or Verification cycle may still carry its own protocol release for operation semantics;
+that does not substitute for document-version provenance. Imported or human-created origin versions
+must not depend on an operation row to explain their kind, source, or schema claim.
 
 Every current task points to one confirmed version. Bare creation and corpus import create explicit
 origin versions with no fabricated workflow operation. A governed mutation appends a new version
@@ -190,27 +209,27 @@ record. The current deterministic destination checks remain; only their registry
 
 ### Location history
 
-Add append-only task-location transitions, or evolve `movement_attempts` into that role. Each
-committed transition records task, operation when applicable, old and new locations, purpose,
-request/execution provenance, and timestamp.
+Add a dedicated append-only `task_location_transitions` table. Each committed transition records
+task, operation when applicable, old and new locations, purpose, request/execution provenance, and
+timestamp.
 
-Historical Asana `movement_attempts` remain immutable evidence. For database-native transitions,
-there is no `started`, `not_applied`, or `uncertain` network outcome. During a compatibility phase,
-an atomic committed transition may retain a terminal `confirmed` movement record with an explicit
-`backend_kind=database`; rolled-back transactions leave no transition. Long term, names and
-constraints should describe committed task transitions rather than pretend a local commit was an
-external call.
+Historical Asana `movement_attempts` remain immutable evidence and are never reused for local
+transitions. For database-native transitions, there is no `started`, `not_applied`, or `uncertain`
+network outcome: a committed transaction contains one transition and a rolled-back transaction
+contains none. Local transitions must not manufacture terminal “confirmed attempts” for work that
+never crossed an external-effect boundary.
 
 ### Content transition evidence
 
 Historical Asana `write_attempts` also remain immutable. Database-native content changes append the
-new content version and all required lineage in one transaction. If existing Verification and
-recovery joins temporarily require a write record, it is inserted terminally as
-`backend_kind=database` in that same transaction. It must never enter an uncertain state.
+new content version and all required lineage in one transaction. They do not insert
+database-backed `write_attempts`.
 
 Do not discard the intent, purpose, and reviewed-to-corrected-to-signed relationships currently
-carried by write records. Before retiring or reshaping those tables, map every semantic validator,
-recovery path, and historical query that consumes them.
+carried by historical write records. Give those facts domain-native columns or explicit lineage
+relationships on content versions and workflow evidence before migrating every semantic validator
+and historical query that consumes them. Keep the external-effect attempt tables readable for
+pre-cutover history, but do not carry their recovery ontology into the local authority.
 
 ### Audit and read projections
 
@@ -221,36 +240,92 @@ transitions, operations, Verification records, and audit events.
 Search indexes, denormalized list views, or full-text indexes are disposable read projections. They
 may be rebuilt from authoritative rows and must never decide workflow legality.
 
+### Request execution ownership
+
+Extend request persistence with a request-scoped execution claim, either on `service_requests` or in
+a one-to-one claim table:
+
+```text
+request_id          replay-bound request identity
+owner_token         unique executor ownership token
+claim_generation    monotonic recovery generation
+claimed_at
+expires_at
+reserved_task_id    nullable deterministic output identity
+```
+
+Only an atomic compare-and-swap may acquire an unowned or expired claim. A live foreign claim
+returns in-progress guidance rather than executing. Recovery increments the generation and issues a
+new owner token; the displaced executor can no longer pass the ownership check inside its effect
+transaction. Completion of the effect and storage of the canonical result retire the claim
+atomically. These semantics are required for request-scoped mutations and do not replace the
+existing operation claim for work that already has an operation.
+
 ## Transaction contract
 
-Request reservation and execution-claim acquisition remain durable admission steps because they
-must survive a dead executor. They may commit before the task mutation, but they grant no document
-effect. After admission, every database-native task mutation has one effect transaction:
+Request reservation and execution ownership remain durable admission steps because they must
+survive a dead executor. They may commit before the task mutation, but they grant no document
+effect. Request identity and execution ownership are separate facts: a pending `service_requests`
+row does not by itself authorize an executor to run the request.
+
+Mutations use one of two ownership scopes:
+
+**Operation-scoped mutations** already have an operation. They use the existing operation execution
+claim and required service lease.
+
+**Task/request-scoped mutations** have no claimable operation at admission. These include `create`,
+`start`, Marco's completion command, permitted bare-task title changes, and comparable lifecycle
+interventions. They use a durable request-level execution claim, or an equivalent unique
+ownership record, with an owner token and expiry/recovery rules. Task-scoped mutations additionally
+serialize on and reread the task inside the SQLite writer transaction.
+
+Where useful, reservation stores deterministic output identity before execution. In particular,
+`create` reserves its new task UUID on the replay-bound request. After acquiring request ownership,
+its effect transaction proves that the request is still pending, the executor still owns the
+request claim, and no task already has that reserved identifier. Exact concurrent replays can
+observe or recover the same request, but cannot both execute it.
+
+After admission, every database-native task mutation has one effect transaction:
 
 1. authenticate and validate the request envelope;
-2. reserve or match the replay-bound service request;
-3. acquire the operation execution claim and required lease;
+2. reserve or match the replay-bound service request and any deterministic output identifiers;
+3. acquire the applicable operation-scoped or request-scoped execution ownership;
 4. begin the SQLite writer transaction;
-5. reread the current task row and exact content/location/version expectations;
-6. assert the action through `CurrentWorkflowService`;
+5. reread the pending request, ownership token, current task when one exists, and exact
+   content/location/version expectations;
+6. assert the action through `CurrentWorkflowService`, including lifecycle-specific content
+   authority;
 7. append the new content version or location transition;
-8. update the current task pointer/state;
-9. append workflow steps, Verification facts, operation transition, and audits;
-10. construct and persist the canonical request result;
-11. release or update transactional claims and leases as appropriate;
-12. commit once.
+8. update the current task pointer/state and append workflow, Verification, lineage, and governed
+   transition-audit evidence;
+9. finalize operation execution claims, request claims, and service leases;
+10. build a fresh authoritative post-finalization snapshot;
+11. derive principal-filtered `allowed_actions` and ownership guidance from that snapshot;
+12. construct and persist the canonical request result;
+13. commit once.
 
-A crash before step 12 leaves none of steps 7–11 committed. A crash or response loss afterward
-returns the stored result on exact replay. A fresh conflicting request sees the committed task
-revision and fails closed.
+A crash before step 13 leaves none of steps 7–12 committed. A crash or response loss afterward
+returns the stored post-finalization result on exact replay. A fresh conflicting request sees the
+committed task revision and fails closed.
 
-An interruption after admission but before the effect transaction may leave a pending request or
-dead claim, but no task change. Existing request/claim recovery may reacquire that exact work. It
-must not infer a task effect from the pending admission record.
+An interruption after admission but before the effect transaction may leave a pending request,
+expired request claim, or dead operation claim, but no task change. Recovery reacquires the exact
+claim type under its durable token and expiry rules. It must reread the request and task after
+ownership is reacquired and must not infer a task effect from the pending admission record.
 
 Expected content identity and location remain the semantic concurrency check. The monotonic
 `revision` is an additional compare-and-swap guard and query aid, not a replacement for exact
 content, placement, signoff, or actor evidence.
+
+### Audit boundaries
+
+Governed audit facts and transition evidence required to prove the mutation are written inside the
+effect transaction. The canonical request result is also atomic with that mutation.
+
+Invocation and transport audit remains a success-preserving, repairable boundary after the
+canonical result. Its failure must not roll back or turn a committed workflow success into a retry
+signal. Moving that audit into the effect transaction would be a separate contract change and is
+not part of this design.
 
 Read commands use one consistent SQLite snapshot to build the authoritative task and workflow view.
 They never update leases or read projections as a side effect.
@@ -299,8 +374,8 @@ The frontend should be delivered incrementally. Its first useful version is deli
 - list and search tasks by title, location, completion, and active-operation status;
 - open the exact current canonical document;
 - show content, location, operation, Verification, audit, and recovery history;
-- create a bare task with a plain Markdown title/body form;
-- edit a task's canonical Markdown title/body through a revision-checked save command;
+- create a bare task with a title-only form;
+- offer text editing only as the input control for a lifecycle-authorized command;
 - expose Marco's existing private interventions with their exact preconditions;
 - show backup health and cutover/import quarantine status;
 - later append cook logs through a separately designed command.
@@ -309,22 +384,35 @@ The initial editor may be an ordinary textarea with preview. A later release may
 control with an established open-source Markdown or text editor for syntax highlighting,
 keyboard behavior, preview, or version comparison. The editor component is a presentation choice:
 adopting or replacing it must not change the canonical Markdown representation, database schema,
-or save-command contract. Rich-text editor state and editor-specific document formats do not
+or lifecycle command contract. Rich-text editor state and editor-specific document formats do not
 become authoritative task content.
 
-Editing is intentionally simpler than workflow mutation, but it is not direct CRUD. The browser
-loads the current task identifier, exact content version, and monotonic revision, then submits the
-complete proposed title/body with that expected state and a fresh request UUID. `dish-service`
-validates the document, rejects a stale revision without overwriting either version, appends the
-new immutable content version, advances the task pointer, and records the audit and replay result
-in one transaction. The UI then either renders the committed canonical result or presents the
-newer current version for explicit reconciliation. Silent last-write-wins behavior is prohibited.
+There is no generic canonical-content save command. Revision and exact-version checks protect
+concurrency, but they do not confer authority to create a new current version. Content legality is
+state-based:
 
-The save command must define when editing is legal relative to an active operation. The safe
-default is to reject an ordinary human edit while an operation owns the task, because changing
-canonical content could invalidate inspection, signoff, and expected-version evidence. Any future
-exception must be a named workflow action with the corresponding lineage and invalidation rules,
-not a force-save option in the editor.
+- a bare task is created title-only with empty body; a narrow command may change its title while it
+  remains bare;
+- a Planning brief is authored or changed only through the Planning workflow;
+- a governed canonical task is authored or changed only through the applicable Research, Change,
+  correction, or explicitly designed Marco lifecycle operation;
+- a signed or destination task has no ordinary save action; changing it starts Change or another
+  named lifecycle operation that invalidates or supersedes evidence explicitly;
+- a completed task must be reopened or cloned through a named command before content changes.
+
+The service derives these actions from the authoritative task and workflow snapshot. Merely having
+no active operation is not sufficient: an inactive task may still be signed, submitted,
+destination-placed, or completed. An edit control may therefore be read-only or absent even though
+the task has no current owner.
+
+When an authorized lifecycle command accepts edited text, the browser loads the task identifier,
+exact content version, monotonic revision, action identity, and any operation/run authority that
+command requires. It submits the complete proposed document with those expectations and a fresh
+request UUID. `dish-service` reasserts lifecycle legality, rejects stale state without overwriting
+either version, appends the new immutable content version, advances the task pointer, and records
+the required lineage, governed audit, and replay result in one transaction. The UI then renders
+the committed canonical result or presents the newer current version for explicit reconciliation.
+Silent last-write-wins and editor-level force-save behavior are prohibited.
 
 The frontend must not impersonate an agent or invent run lineage. Agent workflow actions remain on
 the authenticated agent surfaces. If a future UI hosts an authenticated agent session, it may
@@ -333,10 +421,10 @@ render only the actions returned for that exact principal and run.
 Before cutover, inventory the human actions currently performed in Asana. At minimum, define how a
 bare task is created, how completed cooking history is searched, and how a cooked task is marked
 complete. Any required replacement is a narrow command with explicit preconditions and audit—not a
-generic row editor. Canonical Markdown editing may use a reusable editor component, but its save
-operation remains the bounded command described above. Completion needs its own lifecycle design
-because removing out-of-band Asana edits otherwise removes the only way to produce the completed
-state that Planning reopen consumes.
+generic row or content editor. Markdown editing may use a reusable editor component, but content is
+accepted only by the lifecycle command authorized for the current state. Completion needs its own
+lifecycle design because removing out-of-band Asana edits otherwise removes the only way to produce
+the completed state that Planning reopen consumes.
 
 The browser never sends SQL, chooses arbitrary state transitions, patches task rows, or derives legal
 actions. State-changing UI controls call the same command applications as CLI/admin routes with
@@ -358,12 +446,28 @@ credential boundary and must not make admin routes reachable from the Funnel lis
    operation rather than migrating live mutation authority mid-operation.
 5. Import every in-scope task, section, completion state, title, body, and source timestamp into a
    copied database.
-6. Reconcile each imported current version against `task_content_state`, confirmed versions,
-   operation history, signoff, and placement evidence.
-7. Quarantine any mismatch; do not infer content, readiness, provenance, destination, or signoff.
-8. Validate database semantics, deterministic task-schema conformance, queries, backup/restore, and
-   the full workflow suite against the imported copy.
+6. Classify each imported record under the rules below and apply only that class's reconciliation
+   and validation requirements.
+7. Quarantine mismatches that affect live authority; do not infer content, readiness, provenance,
+   destination, or signoff.
+8. Validate database semantics, applicable task-schema conformance, queries, backup/restore, and the
+   full workflow suite against the imported copy.
 9. Exercise the private frontend against that copy without production mutation authority.
+
+Import classes are:
+
+1. **Active or incomplete governed tasks:** reconcile exact current identity and location against
+   `task_content_state`, content versions, operation history, and applicable signoff; require
+   current structural validity before admitting live work.
+2. **Tasks connected to unresolved or open evidence:** resolve the evidence or quarantine the task
+   before cutover. No unresolved external effect becomes a local committed fact by inference.
+3. **Completed historical tasks:** import the exact source snapshot as read-only history with
+   explicit historical provenance. Do not assert current-schema conformance, complete workflow
+   evidence, or signoff that the source does not prove. Apply migration and current validation only
+   if a later named command reopens or clones the task.
+4. **Excluded Sourcing and Reference records:** import only when an approved reading, search, or
+   provenance requirement includes them; otherwise retain them in the source snapshot without
+   making them governed Dish tasks.
 
 The importer is one-purpose migration tooling, not a permanent alternate backend. It reads an exact
 snapshot and writes only the staged database.
@@ -406,10 +510,13 @@ opening mutations so rollback to Asana remains simple while it is still valid.
    semantic validator, generated schema field, test fixture, and required human action.
 2. Approve the exact schema, identifier compatibility, location registry, transaction owner, and
    frontend trust model.
-3. Add task/location storage and semantic validation behind a test-only database repository.
-4. Convert workflow mutations to the single transaction contract and add crash/concurrency tests.
-5. Add bounded list, search, history, creation, Markdown editing, and private frontend surfaces;
-   start with a textarea and keep the save contract independent of the editor component.
+3. Add version provenance, task/location storage, dedicated local transition evidence, and semantic
+   validation behind a test-only database repository.
+4. Add request-scoped execution ownership, then convert operation- and task/request-scoped
+   mutations to the single effect-transaction contract with crash/concurrency tests.
+5. Add bounded list, search, history, title-only creation, lifecycle-authorized Markdown editing,
+   and private frontend surfaces; start with a textarea and keep command authority independent of
+   the editor component.
 6. Build and rehearse the one-purpose importer and both rollback modes.
 7. Perform the separately authorized production cutover.
 8. After acceptance, remove the Asana credential, SDK runtime dependency, generic governed-task
@@ -427,14 +534,26 @@ At minimum, implementation must test:
 - fresh task creation and imported legacy identifiers;
 - audited human task completion and completed-history lookup;
 - exact reads and consistent list/search snapshots;
-- Markdown creation and editing, stale-revision rejection, exact replay, and preservation of both
+- title-only bare creation and rejection of a bare body;
+- lifecycle-authorized Markdown editing, stale-revision rejection, and preservation of both
   versions after an edit conflict;
-- rejection of ordinary human edits while an operation owns the task;
+- rejection of ordinary edits to Planning briefs, governed canonical tasks, signed/destination
+  tasks, completed tasks, and tasks owned by an operation;
+- request-scoped ownership for concurrent exact replays of `create`, `start`, completion, bare-title
+  change, and other non-operation admission paths;
+- deterministic `create` identity across crash, recovery, and replay;
 - concurrent mutations against the same and different tasks;
 - request replay before, during, and after transaction commit;
+- replayed results whose leases, ownership guidance, and principal-filtered `allowed_actions`
+  reflect the committed post-finalization snapshot;
 - content, location, completion, signoff, and actor drift;
 - every Planning, Research, Verification, correction, hold, reopen, and submit route;
-- historical terminal write/movement evidence and rejected unresolved imports;
+- version-specific document kind, schema, source, timestamp, and applicable release provenance;
+- historical terminal write/movement evidence, dedicated local transitions, and absence of
+  fabricated database-backed attempt records;
+- governed audit rollback on failure and success-preserving invocation-audit repair;
+- class-specific import validation, including read-only historical imports and rejected unresolved
+  live evidence;
 - database migration from every preserved schema version;
 - semantic validation of current pointers and append-only lineage;
 - service restart, writer contention, backup creation, restore, and restore rollback;
@@ -454,8 +573,13 @@ repository transactions rather than mocking the task repository at the workflow 
 | Accidental Asana-shaped schema | Model only canonical documents, locations, workflow evidence, and required reads |
 | Backend abstraction becomes a permanent second engine | Test-only selection before cutover; delete live Asana mutation after acceptance |
 | Frontend bypasses workflow legality | Query APIs for reads; existing command applications for every mutation |
-| Editor overwrites newer or governed content | Complete-document save with expected revision/version; reject stale or operation-owned edits |
+| Editor overwrites newer or governed content | State-specific lifecycle command plus exact version/revision; no generic save |
 | Editor library shapes stored content | Canonical Markdown only; editor-specific state remains disposable presentation data |
+| Concurrent replay executes a non-operation mutation twice | Durable request execution ownership; deterministic reserved IDs; transactional ownership recheck |
+| Stored replay result describes pre-finalization state | Finalize claims and leases, reread, filter actions, then persist the result |
+| Retiring `task_content_state` loses provenance | Move version-specific kind, schema, source, time, and release facts onto immutable versions |
+| Local facts inherit Asana uncertainty semantics | Dedicated local transition evidence; historical attempt tables remain immutable and external-only |
+| Incidental audit failure reverses success | Governed evidence is transactional; invocation/transport audit remains success-preserving and repairable |
 | Identifier migration breaks agents | Preserve `task_gid` field initially; accept imported GIDs and new UUIDs explicitly |
 | Historical evidence becomes unreadable | Preserve terminal attempts and provenance; migrate consumers before cleanup |
 | Single database loss | Managed validated backups, rehearsed restore, source snapshot, and sensible off-device copies |
@@ -471,12 +595,18 @@ The recommended defaults in this draft are:
 2. preserve `task_gid` as the first-version field while allowing UUIDs for new tasks;
 3. use controlled Dish locations rather than project/membership emulation;
 4. require no open operations at the first production cutover;
-5. make the private frontend command-driven; allow canonical Markdown editing through a
-   revision-checked save command, beginning with a textarea and optionally adopting an open-source
+5. make the private frontend command-driven, with title-only bare creation and Markdown editing only
+   inside a lifecycle-authorized action; begin with a textarea and optionally adopt an open-source
    editor later;
-6. approve narrow replacements for every required human Asana action, including completion;
-7. treat Asana rollback as valid only before the first DB-native production mutation;
-8. retain off-device backup as a sensible operational measure, not a replicated-database project.
+6. add request-scoped execution ownership for mutations that have no existing operation;
+7. store document kind, schema, source, timestamp, and applicable release provenance per immutable
+   content version;
+8. use dedicated local transition evidence and never manufacture database-backed Asana attempts;
+9. approve narrow replacements for every required human Asana action, including completion;
+10. import completed history without current-schema or signoff claims until a named reopen or clone;
+11. keep invocation/transport auditing success-preserving and repairable;
+12. treat Asana rollback as valid only before the first DB-native production mutation;
+13. retain off-device backup as a sensible operational measure, not a replicated-database project.
 
 Implementation needs Marco's explicit approval of those decisions, the final schema, the frontend
 trust model, the corpus scope, the acceptance period, and the separately authorized rehearsal and
