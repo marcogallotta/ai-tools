@@ -16,6 +16,18 @@ Backend UUID validation remains authoritative. The late feedback has low-to-mode
 creates no workflow or replay state. Consider a future UUID representation redesign only if live
 usage shows that connected-side validation would materially improve the experience.
 
+## DISH-015 — private Evidence and Human Review resolution
+
+Evidence and Human Review holds deliberately have no connected recovery Actions. The connected
+agent stops and identifies the required Marco/admin continuation. Marco resolves the hold through
+the narrow private `supply-evidence` or `record-human-decision` command, after which an eligible
+agent continues the operation. Editing the Asana task directly is not authoritative because it
+bypasses Dish's durable hold and audit state.
+
+This is accepted as won't-fix for launch: the human checkpoint is intentional, the private recovery
+is simple, and the expected operational impact is low. Revisit only if real post-launch holds create
+meaningful recurring operator friction.
+
 ## DISH-018 — pending task creation recovery
 
 If the service loses the authoritative result between Asana task creation, Research Queue
