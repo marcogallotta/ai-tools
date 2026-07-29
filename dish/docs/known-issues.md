@@ -68,6 +68,18 @@ defect. Do not expose a production Action that deliberately fails or corrupts mu
 test mechanism only when a concrete recovery scenario cannot be exercised safely by the existing
 local harness.
 
+### VERIFY-001 — transient `service_database_unavailable` retry behavior
+
+This condition has been observed spuriously but has not been reproduced under controlled
+conditions, so it is unknown whether the underlying problem is resolved. It is parked as a
+verification target rather than treated as a currently reproducible defect. If it recurs, verify
+that it fails safely, preserves request identity and replay guarantees, and permits retry without
+duplicate mutation or corrupted workflow state.
+
+Do not prioritize speculative implementation work. Reconsider only after a controlled reproduction
+or a production observation, using that evidence to assess recurrence, agent guidance, recovery
+effort, and any concurrency or production-state impact.
+
 ## Accepted for launch
 
 ### DESIGN-004 — private Planning reopen
