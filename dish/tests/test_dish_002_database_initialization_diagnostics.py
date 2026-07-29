@@ -210,11 +210,25 @@ def test_semantic_initialization_failure_keeps_classification_and_preexecution_r
     assert error["execution_occurred"] is False
     assert error["request_id_consumed"] is False
     assert error["retry_condition"] == "after_database_semantic_evidence_repair"
-    assert {
-        "invariant": "content_identity_mismatch",
-        "record_type": "content_versions",
-        "record_id": "content-version-semantic-failure",
-    } in error["problems"]
+    problem = next(
+        problem
+        for problem in error["problems"]
+        if problem["invariant"] == "content_identity_mismatch"
+    )
+    assert problem["record_type"] == "content_versions"
+    assert problem["record_id"] == "content-version-semantic-failure"
+    assert problem["mutation_provenance"] == {
+        "task_gid": "task-semantic-failure",
+    }
+    assert problem["timestamps"] == {"created_at": "2026-07-28T00:00:00Z"}
+    assert problem["broken_relationship"]["required_predicate"] == (
+        "content_digest(title, notes) == identity"
+    )
+    assert error["transaction_state"] == {
+        "connection_in_transaction": False,
+        "evidence_visibility": "committed_database",
+    }
+    assert error["diagnostic_timestamp"].endswith("Z")
     assert backend_factory_called is False
 
     raw = sqlite3.connect(service.config.db_path)

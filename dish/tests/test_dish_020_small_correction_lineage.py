@@ -393,16 +393,44 @@ def test_existing_bad_inspect_binding_is_diagnosed_precisely_without_repair(tmp_
     with pytest.raises(DishRuleError) as raised:
         _validate_semantic_evidence(app.conn)
     assert raised.value.rule == "database_semantic_evidence_invalid"
-    assert raised.value.details == {
-        "problems": [
-            {
-                "invariant": "dish_inspect_fact_binding",
-                "record_type": "dish_inspect_facts",
-                "record_id": fact["fact_id"],
-            }
-        ],
-        "problem_count": 1,
+    details = raised.value.details
+    assert details["problem_count"] == 1
+    assert details["diagnostic_timestamp"].endswith("Z")
+    assert details["transaction_state"] == {
+        "connection_in_transaction": False,
+        "evidence_visibility": "committed_database",
     }
+    problem = details["problems"][0]
+    assert problem["invariant"] == "dish_inspect_fact_binding"
+    assert problem["record_type"] == "dish_inspect_facts"
+    assert problem["record_id"] == fact["fact_id"]
+    assert problem["mutation_provenance"] == {
+        "task_gid": "t",
+        "operation_id": operation_id,
+        "run_id": "forensic-copy",
+        "cycle_id": cycle["cycle_id"],
+    }
+    assert problem["timestamps"] == {"created_at": fact["created_at"]}
+    relationship = problem["broken_relationship"]
+    assert relationship["source_fields"] == [
+        "cycle_id",
+        "operation_id",
+        "task_gid",
+        "reviewed_content_version_id",
+        "reviewed_identity",
+        "verifier_agent",
+        "run_id",
+        "independence_attestation",
+    ]
+    assert [target["record_type"] for target in relationship["targets"]] == [
+        "verification_cycles",
+        "content_versions",
+        "operation_actor_facts",
+    ]
+    assert relationship["required_predicate"] == (
+        "inspect fact exactly matches its cycle, confirmed reviewed content version, "
+        "and verifier actor fact"
+    )
     still_displaced = app.conn.execute(
         "SELECT reviewed_content_version_id,reviewed_identity FROM verification_cycles WHERE cycle_id=?",
         (cycle["cycle_id"],),

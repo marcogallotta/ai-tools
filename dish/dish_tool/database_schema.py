@@ -1700,7 +1700,378 @@ def _content_digest(title: str, notes: str) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+_SEMANTIC_RECORD_SELECTORS = {
+    "content_versions": "content_version_id",
+    "task_content_state": "task_gid",
+    "write_attempts": "attempt_id",
+    "verification_cycles": "cycle_id",
+    "marco_authorizations": "authorization_id",
+    "dish_inspect_facts": "fact_id",
+    "planning_reopen_attempts": "attempt_id",
+    "operations": "operation_id",
+    "service_leases": "lease_id",
+    "operation_execution_claims": "claim_id",
+    "operation_executions": "execution_id",
+    "two_pass_resets": "reset_id",
+}
+_SEMANTIC_PROVENANCE_FIELDS = (
+    "task_gid", "operation_id", "request_id", "execution_id", "command",
+    "run_id", "actor_run_id", "owner_id", "cycle_id", "source_cycle_id",
+)
+_SEMANTIC_TIMESTAMP_FIELDS = (
+    "created_at", "confirmed_at", "started_at", "finished_at", "completed_at",
+    "acquired_at", "renewed_at", "expires_at", "released_at", "reserved_at",
+    "consumed_at", "resolved_at", "process_start", "expected_modified_at",
+    "confirmed_modified_at", "content_write_completed_at",
+    "signoff_completed_at", "movement_completed_at",
+)
+
+
+def _semantic_record_row(
+    conn: sqlite3.Connection, record_type: str, record_id: Any
+) -> sqlite3.Row | None:
+    selector = _SEMANTIC_RECORD_SELECTORS.get(record_type)
+    if selector is None:
+        return None
+    return conn.execute(
+        f"SELECT * FROM {record_type} WHERE {selector}=? LIMIT 1", (record_id,)
+    ).fetchone()
+
+
+def _semantic_selector(
+    row: sqlite3.Row | None, field: str
+) -> dict[str, str] | None:
+    if row is None or field not in row.keys() or row[field] in {None, ""}:
+        return None
+    return {field: str(row[field])}
+
+
+def _semantic_relationship(
+    invariant: str,
+    record_type: str,
+    record_id: Any,
+    row: sqlite3.Row | None,
+) -> dict[str, Any]:
+    """Describe the exact failed predicate without exposing governed payloads."""
+
+    same_record = {"record_type": record_type, "record_id": str(record_id)}
+    relationships: dict[str, dict[str, Any]] = {
+        "content_identity_mismatch": {
+            "source_fields": ["title", "notes"],
+            "targets": [{**same_record, "fields": ["identity"]}],
+            "required_predicate": "content_digest(title, notes) == identity",
+        },
+        "task_content_head_binding": {
+            "source_fields": [
+                "last_confirmed_content_version_id", "task_gid",
+                "last_confirmed_identity", "last_confirmed_title", "last_confirmed_notes",
+            ],
+            "targets": [{
+                "record_type": "content_versions",
+                "selector": _semantic_selector(row, "last_confirmed_content_version_id"),
+                "fields": ["task_gid", "identity", "title", "notes", "confirmed"],
+            }],
+            "required_predicate": (
+                "selected content_versions row exists, is confirmed, and exactly matches "
+                "the task_content_state head"
+            ),
+        },
+        "confirmed_write_binding": {
+            "source_fields": [
+                "confirmed_content_version_id", "operation_id", "intended_identity", "outcome"
+            ],
+            "targets": [{
+                "record_type": "content_versions",
+                "selector": _semantic_selector(row, "confirmed_content_version_id"),
+                "fields": ["operation_id", "identity", "confirmed"],
+            }],
+            "required_predicate": (
+                "confirmed_content_version_id selects a confirmed version for the same operation "
+                "whose identity equals intended_identity"
+            ),
+        },
+        "verification_protocol_identity": {
+            "source_fields": ["protocol_text", "protocol_release"],
+            "targets": [{**same_record, "fields": ["protocol_release"]}],
+            "required_predicate": "sha256(protocol_text) == digest encoded by protocol_release",
+        },
+        "verification_cycle_sequence": {
+            "source_fields": ["task_gid"],
+            "targets": [{
+                "record_type": "verification_cycles",
+                "selector": {"task_gid": str(record_id)},
+                "fields": ["cycle_number"],
+            }],
+            "required_predicate": "cycle_number values are the contiguous sequence 1..max(cycle_number)",
+        },
+        "consumed_authorization_binding": {
+            "source_fields": [
+                "consumed_at", "consumed_identity", "reserved_by_operation_id", "reserved_at"
+            ],
+            "targets": [{**same_record, "fields": [
+                "consumed_identity", "reserved_by_operation_id", "reserved_at"
+            ]}],
+            "required_predicate": (
+                "consumed_at implies non-empty consumed_identity, reserved_by_operation_id, and reserved_at"
+            ),
+        },
+        "hold_baseline_binding": {
+            "source_fields": [
+                "hold_content_version_id", "hold_identity", "hold_section_gid", "operation_id", "task_gid"
+            ],
+            "targets": [{
+                "record_type": "content_versions",
+                "selector": _semantic_selector(row, "hold_content_version_id"),
+                "fields": ["operation_id", "task_gid", "identity", "confirmed"],
+            }],
+            "required_predicate": (
+                "hold content exists, is confirmed, and matches the cycle operation, task, and hold identity "
+                "unless migration reconciliation is explicitly required"
+            ),
+        },
+        "approved_cycle_binding": {
+            "source_fields": [
+                "completed_at", "signed_content_version_id", "signed_identity", "operation_id", "task_gid"
+            ],
+            "targets": [{
+                "record_type": "content_versions",
+                "selector": _semantic_selector(row, "signed_content_version_id"),
+                "fields": ["operation_id", "task_gid", "identity", "confirmed"],
+            }],
+            "required_predicate": (
+                "approved cycle is completed and its signed version is confirmed for the same operation and task "
+                "with identity equal to signed_identity"
+            ),
+        },
+        "small_correction_lineage": {
+            "source_fields": [
+                "operation_id", "task_gid", "cycle_id", "correction_class",
+                "reviewed_identity", "signed_content_version_id", "signed_identity",
+            ],
+            "targets": [
+                {
+                    "record_type": "write_attempts",
+                    "selector_fields": [
+                        "operation_id", "purpose=signoff", "outcome=confirmed",
+                        "confirmed_content_version_id=signed_content_version_id",
+                        "intended_identity=signed_identity", "context_json.cycle_id=cycle_id",
+                        "context_json.correction_class=small",
+                    ],
+                    "fields": ["expected_identity"],
+                },
+                {
+                    "record_type": "content_versions",
+                    "selector_fields": [
+                        "operation_id", "task_gid", "identity=signoff.expected_identity",
+                        "confirmed=1",
+                    ],
+                    "fields": ["content_version_id", "identity"],
+                },
+                {
+                    "record_type": "write_attempts",
+                    "selector_fields": [
+                        "operation_id", "purpose=content_write", "outcome=confirmed",
+                        "expected_identity=reviewed_identity",
+                        "intended_identity=corrected_content.identity",
+                        "confirmed_content_version_id=corrected_content.content_version_id",
+                    ],
+                },
+            ],
+            "required_predicate": (
+                "an approved small correction whose reviewed and signed identities differ has a matching "
+                "confirmed signoff attempt, a confirmed corrected content version, and the confirmed "
+                "content-write attempt that produced that version from reviewed_identity"
+            ),
+        },
+        "dish_inspect_fact_binding": {
+            "source_fields": [
+                "cycle_id", "operation_id", "task_gid", "reviewed_content_version_id",
+                "reviewed_identity", "verifier_agent", "run_id", "independence_attestation",
+            ],
+            "targets": [
+                {
+                    "record_type": "verification_cycles",
+                    "selector": _semantic_selector(row, "cycle_id"),
+                    "fields": [
+                        "operation_id", "task_gid", "reviewed_content_version_id", "reviewed_identity",
+                        "verifier_agent", "run_id", "independence_attestation",
+                    ],
+                },
+                {
+                    "record_type": "content_versions",
+                    "selector": _semantic_selector(row, "reviewed_content_version_id"),
+                    "fields": ["operation_id", "task_gid", "identity", "confirmed"],
+                },
+                {
+                    "record_type": "operation_actor_facts",
+                    "selector_fields": [
+                        "operation_id", "task_gid", "role=verifier", "verifier_agent", "run_id",
+                        "independence_attestation", "reviewed_identity", "cycle_id",
+                    ],
+                },
+            ],
+            "required_predicate": (
+                "inspect fact exactly matches its cycle, confirmed reviewed content version, and verifier actor fact"
+            ),
+        },
+        "planning_reopen_completion": {
+            "source_fields": ["outcome", "finished_at"],
+            "targets": [{**same_record, "fields": ["finished_at"]}],
+            "required_predicate": "outcome=confirmed implies finished_at is present",
+        },
+        "planning_reopen_pending": {
+            "source_fields": ["outcome", "finished_at"],
+            "targets": [{**same_record, "fields": ["finished_at"]}],
+            "required_predicate": "outcome=started implies finished_at is absent",
+        },
+        "completed_operation_state": {
+            "source_fields": [
+                "status", "completed_at", "phase", "terminal_outcome", "schema_version", "expected_identity"
+            ],
+            "targets": [{**same_record, "fields": [
+                "completed_at", "phase", "terminal_outcome", "schema_version", "expected_identity"
+            ]}],
+            "required_predicate": (
+                "status=completed implies completed_at, terminal phase, terminal_outcome, schema_version, "
+                "and expected_identity are present"
+            ),
+        },
+        "active_operation_placement_unbound": {
+            "source_fields": ["status", "expected_section_gid", "migration_reconciliation_required"],
+            "targets": [{**same_record, "fields": ["expected_section_gid"]}],
+            "required_predicate": (
+                "open or uncertain operation has expected_section_gid unless migration reconciliation is required"
+            ),
+        },
+        "migration_reconciliation_reason_missing": {
+            "source_fields": ["migration_reconciliation_required", "migration_reconciliation_reason"],
+            "targets": [{**same_record, "fields": ["migration_reconciliation_reason"]}],
+            "required_predicate": (
+                "migration_reconciliation_required=1 implies a non-empty migration_reconciliation_reason"
+            ),
+        },
+        "non_material_signoff_binding": {
+            "source_fields": [
+                "terminal_outcome", "inherited_signoff_cycle_id", "expected_identity", "task_gid"
+            ],
+            "targets": [{
+                "record_type": "verification_cycles",
+                "selector": _semantic_selector(row, "inherited_signoff_cycle_id"),
+                "fields": ["signed_content_version_id", "signed_identity", "outcome", "completed_at"],
+            }],
+            "required_predicate": (
+                "non-material completion inherits a completed approved cycle with confirmed signed content for "
+                "the same task, directly or through confirmed non-material lineage to expected_identity"
+            ),
+        },
+        "operation_signoff_binding": {
+            "source_fields": ["operation_id", "signoff_completed_at"],
+            "targets": [{
+                "record_type": "verification_cycles",
+                "selector": _semantic_selector(row, "operation_id"),
+                "selector_field": "operation_id",
+                "fields": ["outcome", "signed_identity", "signed_content_version_id"],
+            }],
+            "required_predicate": (
+                "signoff_completed_at implies an approved verification cycle with signed identity and version"
+            ),
+        },
+        "active_lease_on_incomplete_terminal_operation": {
+            "source_fields": ["operation_id", "released_at"],
+            "targets": [{
+                "record_type": "operations",
+                "selector": _semantic_selector(row, "operation_id"),
+                "fields": ["status", "phase", "completed_at", "terminal_outcome"],
+            }, {
+                "record_type": "operation_steps/write_attempts/movement_attempts",
+                "selector": _semantic_selector(row, "operation_id"),
+                "fields": ["completed_at", "outcome"],
+            }],
+            "required_predicate": (
+                "active cleanup-tail lease on a terminal operation requires complete terminal state, all steps "
+                "completed, and no started or uncertain external-effect attempts"
+            ),
+        },
+        "operation_execution_claim_binding": {
+            "source_fields": ["operation_id", "execution_id"],
+            "targets": [{
+                "record_type": "operation_executions",
+                "selector": _semantic_selector(row, "execution_id"),
+                "fields": ["operation_id", "status", "resolved_at"],
+            }],
+            "required_predicate": (
+                "claim execution exists, belongs to the same operation, and is started or unresolved uncertain"
+            ),
+        },
+        "started_operation_execution_unclaimed": {
+            "source_fields": ["execution_id", "status"],
+            "targets": [{
+                "record_type": "operation_execution_claims",
+                "selector": _semantic_selector(row, "execution_id"),
+                "selector_field": "execution_id",
+            }],
+            "required_predicate": "status=started implies exactly one execution claim exists",
+        },
+        "completed_operation_execution_claimed": {
+            "source_fields": ["execution_id", "status", "resolved_at"],
+            "targets": [{
+                "record_type": "operation_execution_claims",
+                "selector": _semantic_selector(row, "execution_id"),
+                "selector_field": "execution_id",
+            }],
+            "required_predicate": (
+                "only started or unresolved uncertain executions may retain an execution claim"
+            ),
+        },
+        "operation_execution_evidence_document": {
+            "source_fields": ["evidence_json"],
+            "targets": [{**same_record, "fields": ["evidence_json"]}],
+            "required_predicate": "evidence_json is a JSON object",
+        },
+        "operation_execution_evidence_binding": {
+            "source_fields": ["execution_id", "operation_id", "evidence_json"],
+            "targets": [{**same_record, "fields": ["execution_id", "operation_id"]}],
+            "required_predicate": (
+                "evidence_json.execution_id and evidence_json.operation_id equal the owning row identifiers"
+            ),
+        },
+        "two_pass_reset_binding": {
+            "source_fields": ["operation_id", "source_cycle_id", "candidate_identity"],
+            "targets": [{
+                "record_type": "content_versions",
+                "selector_fields": ["operation_id", "candidate_identity"],
+                "fields": ["confirmed"],
+            }, {
+                "record_type": "verification_cycles",
+                "selector": _semantic_selector(row, "source_cycle_id"),
+                "fields": ["operation_id", "outcome"],
+            }],
+            "required_predicate": (
+                "confirmed candidate content exists for the operation and source cycle belongs to the same "
+                "operation with outcome=two-pass-hold"
+            ),
+        },
+    }
+    if invariant.startswith("multiple_unresolved_"):
+        target = invariant.removeprefix("multiple_unresolved_")
+        return {
+            "source_fields": ["operation_id"],
+            "targets": [{
+                "record_type": target,
+                "selector": {"operation_id": str(record_id)},
+                "fields": ["outcome"],
+            }],
+            "required_predicate": "at most one row per operation has outcome started or uncertain",
+        }
+    return relationships.get(invariant, {
+        "source_fields": [],
+        "targets": [same_record],
+        "required_predicate": invariant,
+    })
+
+
 def _semantic_problem(
+    conn: sqlite3.Connection,
     invariant: str,
     record_type: str,
     record_id: Any,
@@ -1709,13 +2080,34 @@ def _semantic_problem(
     related_record_id: Any | None = None,
     observed_count: int | None = None,
 ) -> dict[str, Any]:
-    """Build a payload-safe semantic diagnostic from stable identifiers only."""
+    """Build a payload-safe diagnostic with exact relationship and provenance."""
 
+    row = _semantic_record_row(conn, record_type, record_id)
     problem: dict[str, Any] = {
         "invariant": invariant,
         "record_type": record_type,
         "record_id": str(record_id),
+        "broken_relationship": _semantic_relationship(
+            invariant, record_type, record_id, row
+        ),
     }
+    if row is None and record_type == "task_verification_cycles":
+        problem["mutation_provenance"] = {"task_gid": str(record_id)}
+    if row is not None:
+        provenance = {
+            field: row[field]
+            for field in _SEMANTIC_PROVENANCE_FIELDS
+            if field in row.keys() and row[field] not in {None, ""}
+        }
+        timestamps = {
+            field: row[field]
+            for field in _SEMANTIC_TIMESTAMP_FIELDS
+            if field in row.keys() and row[field] not in {None, ""}
+        }
+        if provenance:
+            problem["mutation_provenance"] = provenance
+        if timestamps:
+            problem["timestamps"] = timestamps
     if related_record_type is not None:
         problem["related_record_type"] = related_record_type
         problem["related_record_id"] = str(related_record_id)
@@ -1728,7 +2120,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
     problems: list[dict[str, Any]] = []
     for row in conn.execute("SELECT * FROM content_versions WHERE confirmed=1"):
         if _content_digest(row["title"], row["notes"]) != row["identity"]:
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "content_identity_mismatch", "content_versions", row["content_version_id"],
             ))
     for row in conn.execute("SELECT * FROM task_content_state"):
@@ -1745,7 +2137,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             or bound["title"] != row["last_confirmed_title"]
             or bound["notes"] != row["last_confirmed_notes"]
         ):
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "task_content_head_binding", "task_content_state", row["task_gid"],
             ))
     for row in conn.execute("SELECT * FROM write_attempts WHERE outcome='confirmed'"):
@@ -1754,25 +2146,25 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             (row["confirmed_content_version_id"],),
         ).fetchone()
         if bound is None or bound["confirmed"] != 1 or bound["operation_id"] != row["operation_id"] or bound["identity"] != row["intended_identity"]:
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "confirmed_write_binding", "write_attempts", row["attempt_id"],
             ))
     for row in conn.execute("SELECT * FROM verification_cycles"):
         release = str(row["protocol_release"] or "")
         text = str(row["protocol_text"] or "")
         if release.startswith("sha256:") and hashlib.sha256(text.encode("utf-8")).hexdigest() != release.split(":", 1)[1].split(";", 1)[0].strip():
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "verification_protocol_identity", "verification_cycles", row["cycle_id"],
             ))
     for task in conn.execute("SELECT DISTINCT task_gid FROM verification_cycles"):
         numbers = [r[0] for r in conn.execute("SELECT cycle_number FROM verification_cycles WHERE task_gid=? ORDER BY cycle_number", (task[0],))]
         if numbers and numbers != list(range(1, max(numbers) + 1)):
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "verification_cycle_sequence", "task_verification_cycles", task[0],
             ))
     for row in conn.execute("SELECT * FROM marco_authorizations WHERE consumed_at IS NOT NULL"):
         if not row["consumed_identity"] or not row["reserved_by_operation_id"] or not row["reserved_at"]:
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "consumed_authorization_binding", "marco_authorizations", row["authorization_id"],
             ))
     for row in conn.execute(
@@ -1793,7 +2185,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             and held["identity"] == row["hold_identity"]
         )
         if not valid and row["migration_reconciliation_required"] != 1:
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "hold_baseline_binding", "verification_cycles", row["cycle_id"],
             ))
     for row in conn.execute("SELECT * FROM verification_cycles WHERE outcome='approved'"):
@@ -1804,7 +2196,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
         if (row["completed_at"] is None or row["signed_identity"] is None or signed is None
                 or signed["confirmed"] != 1 or signed["operation_id"] != row["operation_id"]
                 or signed["task_gid"] != row["task_gid"] or signed["identity"] != row["signed_identity"]):
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "approved_cycle_binding", "verification_cycles", row["cycle_id"],
             ))
     for row in conn.execute(
@@ -1903,30 +2295,30 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             or version["task_gid"] != row["task_gid"]
             or version["identity"] != row["reviewed_identity"] or version["confirmed"] != 1
         ):
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "dish_inspect_fact_binding", "dish_inspect_facts", row["fact_id"],
             ))
     for row in conn.execute("SELECT * FROM planning_reopen_attempts"):
         if row["outcome"] == "confirmed" and not row["finished_at"]:
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "planning_reopen_completion", "planning_reopen_attempts", row["attempt_id"],
             ))
         if row["outcome"] == "started" and row["finished_at"] is not None:
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "planning_reopen_pending", "planning_reopen_attempts", row["attempt_id"],
             ))
     for row in conn.execute("SELECT * FROM operations"):
         if row["status"] == "completed" and (row["completed_at"] is None or row["phase"] != "terminal" or not row["terminal_outcome"] or not row["schema_version"] or not row["expected_identity"]):
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "completed_operation_state", "operations", row["operation_id"],
             ))
         if row["status"] in {"open", "uncertain"}:
             if row["expected_section_gid"] is None and row["migration_reconciliation_required"] != 1:
-                problems.append(_semantic_problem(
+                problems.append(_semantic_problem(conn,
                     "active_operation_placement_unbound", "operations", row["operation_id"],
                 ))
             if row["migration_reconciliation_required"] == 1 and not str(row["migration_reconciliation_reason"] or "").strip():
-                problems.append(_semantic_problem(
+                problems.append(_semantic_problem(conn,
                     "migration_reconciliation_reason_missing", "operations", row["operation_id"],
                 ))
         if row["terminal_outcome"] == "non_material_checkin":
@@ -1969,7 +2361,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 or inherited["confirmed"] != 1 or inherited["task_gid"] != row["task_gid"]
                 or (inherited["signed_identity"] != row["expected_identity"] and lineage is None)
             ):
-                problems.append(_semantic_problem(
+                problems.append(_semantic_problem(conn,
                     "non_material_signoff_binding", "operations", row["operation_id"],
                 ))
         if row["signoff_completed_at"] is not None:
@@ -1978,7 +2370,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 (row["operation_id"],),
             ).fetchone()
             if approved is None:
-                problems.append(_semantic_problem(
+                problems.append(_semantic_problem(conn,
                     "operation_signoff_binding", "operations", row["operation_id"],
                 ))
     for table in ("write_attempts", "movement_attempts"):
@@ -1989,7 +2381,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                  GROUP BY operation_id
                 HAVING COUNT(*) > 1"""
         ):
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 f"multiple_unresolved_{table}",
                 "operations",
                 row["operation_id"],
@@ -2029,7 +2421,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             or not row["terminal_outcome"]
         )
         if terminal_incomplete or pending is not None or unresolved is not None:
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "active_lease_on_incomplete_terminal_operation",
                 "service_leases",
                 row["lease_id"],
@@ -2051,7 +2443,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 or (execution["status"] == "uncertain" and execution["resolved_at"] is None)
             )
         ):
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "operation_execution_claim_binding",
                 "operation_execution_claims",
                 row["claim_id"],
@@ -2062,7 +2454,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             (row["execution_id"],),
         ).fetchone()
         if row["status"] == "started" and claim is None:
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "started_operation_execution_unclaimed",
                 "operation_executions",
                 row["execution_id"],
@@ -2071,7 +2463,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             row["status"] not in {"started", "uncertain"}
             or (row["status"] == "uncertain" and row["resolved_at"] is not None)
         ) and claim is not None:
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "completed_operation_execution_claimed",
                 "operation_executions",
                 row["execution_id"],
@@ -2080,14 +2472,14 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             try:
                 recovery = json.loads(row["evidence_json"])
             except (TypeError, ValueError):
-                problems.append(_semantic_problem(
+                problems.append(_semantic_problem(conn,
                     "operation_execution_evidence_document",
                     "operation_executions",
                     row["execution_id"],
                 ))
                 continue
             if not isinstance(recovery, dict):
-                problems.append(_semantic_problem(
+                problems.append(_semantic_problem(conn,
                     "operation_execution_evidence_document",
                     "operation_executions",
                     row["execution_id"],
@@ -2097,7 +2489,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 recovery.get("execution_id") != row["execution_id"]
                 or recovery.get("operation_id") != row["operation_id"]
             ):
-                problems.append(_semantic_problem(
+                problems.append(_semantic_problem(conn,
                     "operation_execution_evidence_binding",
                     "operation_executions",
                     row["execution_id"],
@@ -2113,14 +2505,26 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             (row["source_cycle_id"], row["operation_id"]),
         ).fetchone()
         if version is None or cycle is None:
-            problems.append(_semantic_problem(
+            problems.append(_semantic_problem(conn,
                 "two_pass_reset_binding", "two_pass_resets", row["reset_id"],
             ))
     if problems:
         raise DishRuleError(
             "VALIDATION_FAILED", "database durable evidence is semantically inconsistent",
             rule="database_semantic_evidence_invalid",
-            details={"problems": problems[:50], "problem_count": len(problems)},
+            details={
+                "problems": problems[:50],
+                "problem_count": len(problems),
+                "diagnostic_timestamp": utc_now(),
+                "transaction_state": {
+                    "connection_in_transaction": bool(conn.in_transaction),
+                    "evidence_visibility": (
+                        "connection_local_uncommitted"
+                        if conn.in_transaction
+                        else "committed_database"
+                    ),
+                },
+            },
         )
 
 
