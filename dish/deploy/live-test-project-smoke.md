@@ -6,8 +6,9 @@ preserve the complete JSON transcript.
 ## Status
 
 Updated 2026-07-29. Stages 1 and 2 record completed work; Stage 3 is the bounded activation gate,
-and Stage 4 tracks post-activation breadth and hardening. The completed evidence spans several runs
-and run IDs, so it is not a substitute for the final single-run rehearsal.
+Stage 4 tracks focused post-activation confidence, and Stage 5 holds low-priority breadth and
+hardening. The completed evidence spans several runs and run IDs, so it is not a substitute for the
+final single-run rehearsal.
 
 Saved reports:
 
@@ -15,6 +16,7 @@ Saved reports:
 - `/tmp/dish-backend-database-smoke-8b0f2b01.txt`
 - `/tmp/dish-broader-smoke-e9cad9e1.txt`
 - `/tmp/dish-postfix-smoke-7ab6dc94.txt`
+- `/tmp/dish-stage3-135d1db2.txt`
 
 These `/tmp` reports are working evidence, not permanent release records. Copy the final Stage 3
 transcript to the approved rollout record location before relying on it for activation.
@@ -227,60 +229,113 @@ the fixture prefix with the protocol-required `[non-main]` title. Retest only if
 the documented contract.
 
 The fixture remains completed in Reference and requires approved cleanup. Connected-only breadth
-not exercised in this pass is tracked in Stage 4.
+not exercised in this pass is tracked in Stages 4 and 5.
+
+### Private/admin pass 2026-07-29
+
+Run ID `135d1db2-5f6c-4ebb-b760-42bf20c907c7` was used throughout. The checkout advanced from
+`e2772d6` to `238a564` and an external service restart replaced PID `1123801` with PID `1182314`
+during the pass, so this is useful gate evidence but not the required single-revision activation
+record. The complete redacted final capture is `/tmp/dish-stage3-135d1db2.txt`.
+
+Passed:
+
+- test-project, isolated-state, Honest-path, listener, credential-scope, and private-health
+  configuration checks; all four public private/admin paths returned 404;
+- Action, agent, and admin tokens were accepted only on their intended surfaces;
+- an expired disposable Planning lease was recovered with exact replay and changed-payload conflict,
+  then the original GPT run completed Planning and produced an exact Research handoff;
+- one governed `Priors` authorization persisted the operation, task, run, before/after values, and
+  audit identity; exact replay passed and changed reuse conflicted;
+- managed backup `dish-20260729T102249.101731Z-stage3-135d1db2-33aeffab.sqlite3` restored with the
+  exact source/installed hash, schema 30, healthy readiness, no restore fault, and database mode
+  `0600`; pre-backup operation, lease, and authorization facts returned while the harmless
+  post-backup request disappeared;
+- migration of an already-current task failed closed with `migration_not_required`;
+- final private health was HTTP 200, both loopback listeners belonged to one service process, and
+  no WAL or SHM file remained.
+
+Activation blockers:
+
+- `recover` still looks up the operation before validating required `outcome` and `reason`. Fresh
+  post-restart requests returned `NOT_FOUND` and `WRONG_STATE` instead of field-specific
+  `INVALID_ARGUMENT`; older requests replayed those same failures.
+- The complete hermetic suite reported 904 passed and one failure. The concurrent-start lease test
+  intermittently returned `INTERNAL_ERROR / legacy backup schema version mismatch` instead of
+  `CONFLICT`; two focused reruns produced one pass and one reproduction.
+- No disposable previous-schema task or unresolved write, movement, or execution existed. The old
+  migration and interrupted-recovery paths were not fabricated through direct Asana or database
+  writes and remain outstanding.
+- The test-project Asana backup identifier and approved cleanup path were unavailable. Existing
+  fixtures therefore remain.
+
+Fixture `1216977588837281`, Planning operation `51acea16-fa70-4011-a45f-b34e7a8ab3b8`, is now
+completed in Research Queue and requires cleanup. Existing disposable change operation
+`51fa4606-5972-443e-a72e-079469b12b63` on task `1216967695177035` remains open and unleased; its
+pre-existing applied workflow effects correctly prevented discard.
 
 ### Activation gate ledger
 
-1. **Outstanding:** record all preconditions, revisions, endpoints, database/Asana backup IDs, and
-   initial health in one continuous private transcript.
-2. **Outstanding:** confirm the public endpoint returns 404 for `/health`,
+1. **Partial:** runtime configuration, endpoints, database backup, revisions, and health were
+   recorded, but the checkout/service changed mid-run and no Asana backup ID was available.
+2. **Passed:** the public endpoint returned 404 for `/health`,
    `/v1/commands/sections`, `/v1/admin/recover`, and `/v1/admin/backups/create`.
-3. **Partial:** the Action token succeeded on `/v1/action/sections`; CLI/admin-token rejection and
-   private-route scope checks remain.
+3. **Passed:** Action, CLI, and admin token scopes failed closed across the private and public
+   listeners.
 4. **Passed by connected GPT:** task creation and Planning → Research completed with exact
    identities and placement checks.
 5. **Passed by connected GPT:** Research → Verification used one canonical candidate and moved
    exactly once.
 6. **Passed by connected GPT:** distinct-run Verification, inspection, approval, mandatory submit,
    durable signed identity, and final Reference placement completed.
-7. **Outstanding:** inspect representative live, terminal, wrong-state, and unknown operations
-   through `dish-admin`; confirm structured identity, recovery guidance, and private actions.
-8. **Outstanding:** expire a disposable client lease, run `dish-admin recover-lease`, and complete
-   the legal recovery/continuation.
-9. **Outstanding:** exercise governed-change authorization through the private HTTP-backed
-   `dish-admin` client, including durable binding, exact replay, and conflicting reuse.
+7. **Partial:** private `dish inspect` covered live, terminal, and unknown operations with structured
+   identities and recovery guidance; `dish-admin` exposes no inspection verb. Wrong-state admin
+   recovery returned structured task/operation identity but is affected by gate 13.
+8. **Passed:** an expired disposable client lease was recovered, replayed, conflicted on changed
+   reuse, and the original run completed the legal Planning continuation.
+9. **Passed:** private governed-change authorization persisted exact durable binding, replayed
+   exactly, and rejected conflicting reuse.
 10. **Outstanding:** interrupt one disposable workflow operation at a documented recoverable
     boundary; reread before `dish-admin recover`, then compare CLI, HTTP, live Asana, and durable
-    evidence.
-11. **Outstanding:** migrate a disposable previous-schema task and confirm canonical no-migration
-    behavior for an already-current task.
-12. **Outstanding:** create a managed backup, perform a harmless operation, restore, and prove the
-    previous operation, request, lease state, and owner-only database permissions return exactly.
-13. **Outstanding regression:** after its fix is claimed, prove `recover` validates missing
-    `outcome` and `reason` before operation lookup, including unknown and terminal operations,
-    exact replay, and changed-payload conflict.
-14. **Outstanding:** delete every disposable Asana task only through the approved cleanup path,
-    then record final health, listener/process state, settled WAL and leases, and an empty fixture
-    inventory.
+    evidence. No supported live fault injector or pre-existing unresolved effect was available.
+11. **Partial:** canonical no-migration behavior passed; no disposable previous-schema task existed.
+12. **Passed:** a managed backup, harmless operation, restore, durable-state comparison, health,
+    exact installed hash, and owner-only database permissions passed.
+13. **Confirmed defect:** `recover` does not validate missing `outcome` and `reason` before
+    operation lookup. Unknown and terminal operations, fresh post-restart requests, exact replay,
+    and changed-payload conflict were covered.
+14. **Partial:** final health, listener/process ownership, database mode, WAL/SHM settling, and
+    fixture state were recorded. Approved deletion was unavailable and the fixture inventory is not
+    empty.
 
 Stage 3 deliberately does not repeat every adversarial permutation already covered in Stage 2. It
 must prove that the private/admin capabilities required to diagnose and recover an activated
 service work at the tested revision.
 
-## Stage 4 — breadth and hardening
+## Stage 4 — focused post-rollout confidence
 
 Stage 4 is not part of the bounded activation gate. Run it after Stage 3, or earlier in parallel
-where a connected GPT can exercise Action-only cases safely.
+where a connected GPT can exercise Action-only cases safely. It covers the remaining cases with
+meaningful value under normal concurrent use.
 
-### Connected Action breadth
+### Connected Action priorities
 
 - Attempt stale content and stale placement separately and prove zero mutation.
 - Run a second fresh Small-correction fixture and prove distinct reviewed, corrected, and signed
   identities.
-- Exercise Large, Evidence, and Human Review paths.
 - Exercise lease-renewal exact replay and conflicting reuse.
 - Bind an expected validation failure, replay it exactly, then prove corrected reuse of the same
   request ID conflicts without mutation.
+
+## Stage 5 — low-priority breadth and resilience
+
+Stage 5 is optional post-rollout hardening. Run individual cases when real usage supplies a safe
+fixture, an observed failure raises their value, or broader regression confidence is worth the
+operator time. Do not delay activation for this stage.
+
+### Connected Action breadth
+
+- Exercise Large, Evidence, and Human Review paths.
 - Exercise a movement retry only after an explicitly retry-safe or replay-safe result.
 - Complete the GPT Action editor Preview gate and compare its envelope with the private CLI.
 - Preserve a physically separate second-GPT transcript for independent Verification.
