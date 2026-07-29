@@ -69,6 +69,20 @@ Do not prioritize speculative implementation work. Reconsider only after a contr
 or a production observation, using that evidence to assess recurrence, agent guidance, recovery
 effort, and any concurrency or production-state impact.
 
+### VERIFY-002 — transient non-material terminalization failure
+
+One test-project non-material Change returned `BACKEND_UNCERTAIN` after its candidate write and
+handoff validation had committed. The submitted forged `Verified by` value was correctly replaced
+with the signed baseline, so provenance was not altered. The remaining `non_material_terminal`
+transition failed with only the broad diagnostic `OperationalError`; applying that exact transition
+to a database snapshot later succeeded.
+
+Dish failed safely: it preserved the confirmed write, prohibited retry, and required private
+recovery without duplicating the mutation. Park this as a verification target rather than a
+reproducible defect. Reconsider if it recurs in a controlled test or production, especially if
+terminal recovery becomes recurring operator friction; retain the exact database error category in
+future evidence so concurrency, storage, and code faults can be distinguished.
+
 ## Accepted for launch
 
 ### DESIGN-004 — private Planning reopen
