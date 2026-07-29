@@ -16,6 +16,17 @@ Backend UUID validation remains authoritative. The late feedback has low-to-mode
 creates no workflow or replay state. Consider a future UUID representation redesign only if live
 usage shows that connected-side validation would materially improve the experience.
 
+## DISH-014 — private expired-lease recovery
+
+Expired operation leases have no connected recovery Action. Dish fails closed and gives the agent
+an empty action list, `required_admin_action: recover-lease`, the Marco/admin resolver, the exact
+private admin command, and the actions available after recovery. Marco runs `dish-admin
+recover-lease`; an eligible agent can then reclaim the operation and continue.
+
+This is accepted as won't-fix for launch. The interruption requires a small manual step but does not
+lose task content or duplicate work, and the agent can tell Marco exactly how to resolve it. Revisit
+only if post-launch lease expiries create meaningful recurring operator friction.
+
 ## DISH-015 — private Evidence and Human Review resolution
 
 Evidence and Human Review holds deliberately have no connected recovery Actions. The connected
