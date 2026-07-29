@@ -99,26 +99,37 @@ def _preconstruction_research_hold(
         "resume_status": "pending-research",
         "candidate_content_existed": False,
     }
-    declare_operation_step(conn, op["operation_id"], "research_preconstruction_hold", intended)
     target_phase = "held_evidence" if route == "evidence" else "held_human"
-    transition_operation(conn, op["operation_id"], phase=target_phase)
-    complete_operation_step(conn, op["operation_id"], "research_preconstruction_hold")
-    record_audit(
-        conn,
-        submission_id=None,
-        task_gid=op["task_gid"],
-        operation_id=op["operation_id"],
-        event_type="research.preconstruction_blocked",
-        actor_agent=agent,
-        actor_run_id=run_id,
-        details=intended,
-        result_code="OK",
-        result_ok=True,
-        governed_kind="decision",
-        before_state={"phase": "prepare_required", "candidate_content_existed": False},
-        after_state={"phase": target_phase, "resume_status": "pending-research"},
-        actor_source="research-command",
-    )
+    with atomic_persistence(conn, "research_preconstruction_hold"):
+        declare_operation_step(
+            conn, op["operation_id"], "research_preconstruction_hold", intended
+        )
+        transition_operation(conn, op["operation_id"], phase=target_phase)
+        complete_operation_step(
+            conn, op["operation_id"], "research_preconstruction_hold"
+        )
+        record_audit(
+            conn,
+            submission_id=None,
+            task_gid=op["task_gid"],
+            operation_id=op["operation_id"],
+            event_type="research.preconstruction_blocked",
+            actor_agent=agent,
+            actor_run_id=run_id,
+            details=intended,
+            result_code="OK",
+            result_ok=True,
+            governed_kind="decision",
+            before_state={
+                "phase": "prepare_required",
+                "candidate_content_existed": False,
+            },
+            after_state={
+                "phase": target_phase,
+                "resume_status": "pending-research",
+            },
+            actor_source="research-command",
+        )
     return {"operation_id": op["operation_id"], **intended, "phase": target_phase}
 
 

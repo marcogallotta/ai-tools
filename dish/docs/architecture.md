@@ -298,8 +298,13 @@ cannot silently create separate live authorities.
 | historical quarantine | `legacy_submission_quarantine` and read-only legacy records |
 
 Triggers enforce append-only or monotonic evidence where recovery depends on history. Workflow state
-and its governed audit facts commit in one transaction. Workflow and transport code must use
-repository primitives rather than bypassing those invariants with ad hoc SQL. A Marco authorization
+and its governed audit facts commit in one transaction. The pre-construction Research hold is one
+explicit example: its phase transition, completed hold step, and
+`research.preconstruction_blocked` decision audit either all commit or all roll back. If that local
+unit fails before any workflow effect commits, the operation execution remains uncertain only to
+bind exact request replay; replay of that request UUID reconstructs the same hold outcome and
+resolves the request ledger after the hold and audit are durable. Workflow and transport code must
+use repository primitives rather than bypassing those invariants with ad hoc SQL. A Marco authorization
 grant is one `BEGIN IMMEDIATE` unit: the operation-open check, exact semantic deduplication,
 authorization row, and `marco.authorization` audit either all commit or all roll back. Reservation
 never treats an unaudited historical row as a usable capability.

@@ -1192,3 +1192,145 @@ def test_admin_recover_executes_immediately_under_exact_live_action_lease(
         assert execution["resolution_evidence_json"] is not None
     finally:
         conn.close()
+
+
+def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_once(
+    tmp_path, monkeypatch
+):
+    service, _backend = _service(tmp_path)
+    principal = ServicePrincipal(
+        owner_id="action", run_id="efefefef-efef-4fef-8fef-efefefefefef"
+    )
+    started = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": "t", "kind": "initial"},
+        principal=principal,
+        request_id="72000000-0000-4000-8000-000000000001",
+    )
+    operation_id = started["submission_id"]
+    hold_request = "72000000-0000-4000-8000-000000000002"
+    arguments = {
+        "agent": "gpt",
+        "submission_id": operation_id,
+        "route": "evidence",
+        "reason": "Need authoritative evidence before construction",
+        "resume_status": "pending-research",
+    }
+
+    import dish_tool.step8 as step8
+
+    real_record_audit = step8.record_audit
+    failed_once = False
+
+    def fail_governed_hold_audit(*args, **kwargs):
+        nonlocal failed_once
+        if (
+            not failed_once
+            and kwargs.get("event_type") == "research.preconstruction_blocked"
+        ):
+            failed_once = True
+            raise RuntimeError("injected governed hold audit failure")
+        return real_record_audit(*args, **kwargs)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(step8, "record_audit", fail_governed_hold_audit)
+        failed = service.execute_agent(
+            "reject",
+            arguments,
+            principal=principal,
+            request_id=hold_request,
+        )
+
+    assert failed["code"] == "BACKEND_UNCERTAIN"
+    assert failed["errors"][0]["rule"] == "operation_exact_replay_required"
+    assert failed["retryable"] is True
+    assert failed["data"]["request_replay_required"] is True
+    assert failed["data"]["required_next_action"] == "retry_exact_request"
+    assert failed["errors"][0]["recovery_required"] is False
+    assert failed["data"]["effects_observed"] is False
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        operation = conn.execute(
+            "SELECT phase,status FROM operations WHERE operation_id=?",
+            (operation_id,),
+        ).fetchone()
+        assert operation["phase"] == "prepare_required"
+        assert operation["status"] == "open"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM operation_steps "
+            "WHERE operation_id=? AND step_name='research_preconstruction_hold'",
+            (operation_id,),
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM audit_events "
+            "WHERE operation_id=? AND event_type='research.preconstruction_blocked'",
+            (operation_id,),
+        ).fetchone()[0] == 0
+        request = conn.execute(
+            "SELECT * FROM service_requests WHERE request_id=?", (hold_request,)
+        ).fetchone()
+        assert request["status"] == "uncertain"
+        execution = conn.execute(
+            "SELECT * FROM operation_executions WHERE request_id=?", (hold_request,)
+        ).fetchone()
+        assert execution["status"] == "uncertain"
+        assert execution["resolved_at"] is None
+    finally:
+        conn.close()
+
+    applied = service.execute_agent(
+        "reject",
+        arguments,
+        principal=principal,
+        request_id=hold_request,
+    )
+    assert applied["ok"]
+    assert applied["data"]["route"] == "evidence"
+    assert applied["data"]["phase"] == "held_evidence"
+
+    replayed = service.execute_agent(
+        "reject",
+        arguments,
+        principal=principal,
+        request_id=hold_request,
+    )
+    assert replayed["ok"]
+    assert replayed["data"]["request_replayed"] is True
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        operation = conn.execute(
+            "SELECT phase,status FROM operations WHERE operation_id=?",
+            (operation_id,),
+        ).fetchone()
+        assert operation["phase"] == "held_evidence"
+        assert operation["status"] == "open"
+        hold_step = conn.execute(
+            "SELECT * FROM operation_steps "
+            "WHERE operation_id=? AND step_name='research_preconstruction_hold'",
+            (operation_id,),
+        ).fetchone()
+        assert hold_step is not None
+        assert hold_step["completed_at"] is not None
+        assert conn.execute(
+            "SELECT COUNT(*) FROM audit_events "
+            "WHERE operation_id=? AND event_type='research.preconstruction_blocked' "
+            "AND governed_kind='decision' AND result_ok=1",
+            (operation_id,),
+        ).fetchone()[0] == 1
+        request = conn.execute(
+            "SELECT * FROM service_requests WHERE request_id=?", (hold_request,)
+        ).fetchone()
+        assert request["status"] == "completed"
+        assert request["resolution_result_json"] is not None
+        resolved = json.loads(request["resolution_result_json"])
+        assert resolved["ok"] is True
+        assert resolved["data"]["phase"] == "held_evidence"
+        execution = conn.execute(
+            "SELECT * FROM operation_executions WHERE request_id=?", (hold_request,)
+        ).fetchone()
+        assert execution["status"] == "completed"
+        assert execution["resolution_evidence_json"] is not None
+    finally:
+        conn.close()

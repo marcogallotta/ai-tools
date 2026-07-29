@@ -489,17 +489,38 @@ class CurrentWorkflowService:
                     )
                 )
             )
+            replayable_no_effect_failure = bool(
+                command == "reject"
+                and claim.request_id
+                and recovery is not None
+                and not recovery["recovery_required"]
+                and not recovery["effects_observed"]
+                and not controlled_failure
+            )
+            if replayable_no_effect_failure:
+                recovery = dict(recovery)
+                recovery.update({
+                    "request_replay_required": True,
+                    "required_next_action": "retry_exact_request",
+                    "safe_to_retry": True,
+                })
             partial_failure = bool(
                 recovery is not None
-                and recovery["recovery_required"]
                 and not replayed_authoritative_failure
                 and (
-                    not controlled_failure
-                    or recovery["write_state"] in {"confirmed", "uncertain"}
-                    or recovery["movement_state"] in {"confirmed", "uncertain"}
+                    replayable_no_effect_failure
                     or (
-                        isinstance(exc, DishRuleError)
-                        and exc.code == "BACKEND_UNCERTAIN"
+                        recovery["recovery_required"]
+                        and (
+                            not controlled_failure
+                            or recovery["write_state"] in {"confirmed", "uncertain"}
+                            or recovery["movement_state"]
+                            in {"confirmed", "uncertain"}
+                            or (
+                                isinstance(exc, DishRuleError)
+                                and exc.code == "BACKEND_UNCERTAIN"
+                            )
+                        )
                     )
                 )
             )

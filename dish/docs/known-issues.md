@@ -39,18 +39,14 @@ original actor/run; it is neither transferred nor released, and every ordinary m
 the normal lease-owner check. Regression coverage proves immediate recovery after a confirmed
 partial write, one recovery effect, no duplicate backend mutation, and exact admin-request replay.
 
-### PR-2 — pre-construction Research hold and governed audit are not atomic
+### PR-2 — pre-construction Research hold and governed audit are not atomic — resolved
 
-The initial pre-construction Research-hold path commits the hold transition and completed step
-before recording `research.preconstruction_blocked`. If that audit insert fails, the hold remains
-applied without its governed decision event. Exact replay then follows the Verification-rejection
-path, can resolve the original uncertain request as `WRONG_STATE / verification_cycle_missing`, and
-never recreates the missing hold audit.
-
-Fix before rollout by making the hold transition, completed step, and governed audit one atomic
-decision, with exact replay resolving to the effect that actually occurred. Regression coverage
-must fault the audit insertion and prove that completion is impossible without exactly one governed
-hold event and an accurate final request result.
+Resolved by committing the hold transition, completed hold step, and
+`research.preconstruction_blocked` governed decision in one local savepoint. An audit failure rolls
+back the complete hold outcome and leaves the request/execution uncertain but exact-replayable. The
+same request UUID then applies the hold once, records exactly one governed audit, resolves the
+execution, and advances the request ledger to the actual held workflow result without a
+`verification_cycle_missing` detour.
 
 ## Post-rollout candidates
 

@@ -29,8 +29,8 @@ complete and need not be repeated wholesale:
 - Managed backup and restore passed with exact installed identity, restored durable state, healthy
   readiness, and owner-only database permissions.
 - The broad final code audit is complete. It confirmed the earlier concurrency, recovery,
-  authorization, submission, backup, and replay fixes. PR-1 is resolved; PR-2 remains the sole code
-  blocker tracked below.
+  authorization, submission, backup, and replay fixes. PR-1 and PR-2 are resolved with deterministic
+  regressions.
 
 This evidence does not replace the final Honest semantic rehearsal, release-specific regression
 selection, migration rehearsal, rollback proof, or production authorization.
@@ -40,9 +40,10 @@ selection, migration rehearsal, rollback proof, or production authorization.
 Resolve and record these review items before production activation. Until a decision changes the
 implementation or runtime documentation, the current code and contracts remain authoritative.
 
-1. **Code blocker.** PR-1 is resolved. Fix PR-2 under
-   [`known-issues.md`](known-issues.md#rollout-blockers), add its deterministic regression, and pass
-   the focused concurrency/recovery coverage and complete suite on the final code.
+1. **Code blockers.** PR-1 and PR-2 under
+   [`known-issues.md`](known-issues.md#rollout-blockers) are resolved. Preserve their deterministic
+   regressions and pass focused concurrency/recovery coverage plus the complete suite on the final
+   code.
 2. **Service-mode defaults.** Local direct mode remains available for controlled single-agent
    testing, while live clients currently fail closed unless both `DISH_LIVE_MODE=1` and
    `DISH_MODE=service` are set. Decide whether production should keep both explicit gates or make

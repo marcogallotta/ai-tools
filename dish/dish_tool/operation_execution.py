@@ -966,15 +966,26 @@ def partial_write_error(
     error: Exception, recovery: Mapping[str, Any]
 ) -> DishRuleError:
     original_rule = error.rule if isinstance(error, DishRuleError) else None
+    committed_effects = bool(recovery.get("recovery_required"))
     rule = (
         original_rule
         if isinstance(error, DishRuleError) and error.code == "BACKEND_UNCERTAIN"
-        else "operation_partial_write_failure"
+        else (
+            "operation_partial_write_failure"
+            if committed_effects
+            else "operation_exact_replay_required"
+        )
+    )
+    message = (
+        "operation effects were durably observed but command completion was not confirmed"
+        if committed_effects
+        else "operation committed no workflow effect but command completion was not confirmed; "
+        "replay the exact request UUID"
     )
     return DishRuleError(
         "BACKEND_UNCERTAIN",
-        "operation effects were durably observed but command completion was not confirmed",
+        message,
         rule=rule,
-        retryable=False,
+        retryable=not committed_effects,
         details=dict(recovery),
     )
