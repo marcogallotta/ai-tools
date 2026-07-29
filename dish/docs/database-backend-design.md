@@ -19,7 +19,7 @@ The replacement is not an Asana clone. It owns only:
 
 - the canonical task title and body;
 - one current Dish location and completion state;
-- immutable content versions and location history;
+- immutable content versions, location history, and completion history;
 - the existing workflow and verification evidence;
 - task creation, browsing, search, history, and Marco's narrow interventions;
 - lifecycle-authorized Markdown editing without a generic content-save bypass;
@@ -122,10 +122,10 @@ rename. It becomes an opaque stable task identifier rather than an Asana claim:
 - a later API version may rename the field to `task_id`, but the backend migration does not require
   that cosmetic break.
 
-Section GIDs must not survive as invented database identifiers. Responses should introduce stable
-Dish location identifiers and names. Asana section GIDs remain only in import provenance and
-historical attempt evidence. Any temporary compatibility projection must be explicit and must not
-become a second location authority.
+Section GIDs must not survive as invented database identifiers. Responses and newly produced
+documents use stable Dish location identifiers and current names. An imported Asana section GID may
+survive only as an immutable compatibility alias and provenance fact under the version-aware
+resolution rule below. It never becomes current location authority.
 
 ## Storage model
 
@@ -156,7 +156,8 @@ explicit archival state preserves their identifiers, versions, and audit relatio
 The current content pointer replaces `task_content_state` as the authoritative current projection.
 There must not be two independently writable current-content tables. During database migration,
 `task_content_state` may be converted into a compatibility view or retired after every caller uses
-the task pointer and its version-specific schema and confirmation provenance has been migrated.
+the task pointer and its version-specific schema and document-authority provenance has been
+migrated.
 
 ### `content_versions`
 
@@ -164,48 +165,81 @@ Keep immutable full-title/full-body versions and their cryptographic identity. E
 versions already contain title and notes; the migration should reuse them rather than introduce a
 second document-history table.
 
-Each version also carries the provenance required to interpret it without reparsing it against
-whatever Honest assets happen to be current later:
+Each version also carries orthogonal structure and validation facts required to interpret it
+without reparsing it against whatever Honest assets happen to be current later:
 
 ```text
-document_kind      bare | planning_brief | canonical
-schema_version     nullable only where the document kind has no applicable schema
-source_kind        import | creation | workflow | migration
-recorded_at        durable provenance time
-confirmed_at       nullable time at which this version became confirmed authority
-protocol_release   nullable; present only when the release is a fact of that version
+document_kind              bare | planning_brief | canonical | unknown
+validation_status          unvalidated | valid | invalid | unsupported_schema
+declared_schema_version    nullable version claimed by the source document
+validated_schema_version   nullable schema against which validation actually succeeded
+source_kind                import | creation | workflow | migration
+recorded_at                durable local provenance time
+became_current_at          nullable time at which this version became current authority
+protocol_release           nullable; present only when the release is a fact of that version
 ```
 
 These fields absorb the version-specific `schema_version` and `confirmed_at` facts currently held
-only by `task_content_state`; `recorded_at` does not silently substitute for `confirmed_at`. An
-operation or Verification cycle may still carry its own protocol release for operation semantics;
-that does not substitute for document-version provenance. Imported or human-created origin versions
-must not depend on an operation row to explain their kind, source, or schema claim.
+only by `task_content_state`; `recorded_at` does not silently substitute for
+`became_current_at`. An operation or Verification cycle may still carry its own protocol release
+for operation semantics; that does not substitute for document-version provenance. Imported or
+human-created origin versions must not depend on an operation row to explain their kind, source,
+or schema claim.
 
-Every current task points to one confirmed version. Bare creation and corpus import create explicit
-origin versions with no fabricated workflow operation. A governed mutation appends a new version
-and advances the task pointer atomically. Confirmed versions remain append-only and retain their
-operation, boundary, schema-release, and lineage relationships.
+Content becoming current proves document authority only. It does not imply Verification signoff,
+which remains separate evidence bound to the exact content version.
+
+Every current task points to one authoritative version. Bare creation and corpus import create
+explicit origin versions with no fabricated workflow operation. A governed mutation appends a new
+version and advances the task pointer atomically. Authoritative versions remain append-only and
+retain their operation, boundary, schema-release, and lineage relationships.
+
+Imported versions additionally reference an immutable import-provenance record:
+
+```text
+source_snapshot_id
+source_modified_at     nullable exact source timestamp
+source_location_name   nullable name captured in the source snapshot
+imported_at
+```
+
+This permits completed historical content to remain an exact snapshot without inventing a schema
+claim. Recognizably canonical but unsupported, malformed, partially structured, or unknown content
+can be classified accurately and retained without becoming valid current-schema work.
 
 ### `task_locations`
 
 Replace the Asana section registry with controlled Dish locations:
 
 ```text
-location_id       stable Dish identifier
-name              unique display name
-role              research_queue | verification_queue | destination | excluded
-active            whether new routing may target it
+location_id                 stable Dish identifier
+current_name                unique current display name
+legacy_asana_section_gid    nullable unique immutable compatibility alias
+role                        research_queue | verification_queue | destination | excluded
+active                      whether new routing may target it
 display_order
 ```
 
-Exactly one active Research Queue and Verification Queue are required. Sourcing and Reference import
-as excluded locations. Other approved Cooking sections import as destinations. Location names may
-change without changing identity. Removing or repurposing a referenced location is prohibited;
-retire it instead.
+Exactly one active Research Queue and Verification Queue are required. Sourcing and Reference
+import as excluded locations. Other approved Cooking sections import as destinations. Removing or
+repurposing a referenced location is prohibited; retire it instead.
 
-The Honest task's destination name and identifier must resolve to the same active destination
-record. The current deterministic destination checks remain; only their registry source changes.
+The destination resolver is version-aware:
+
+- a newly produced document must contain the authoritative Dish `location_id` and the location's
+  `current_name`;
+- an imported pre-cutover version may instead contain the exact immutable
+  `legacy_asana_section_gid` mapped to that location;
+- for that imported version, the embedded name is a historical display snapshot and must match the
+  source name captured by its import provenance, not necessarily the location's current name;
+- the legacy alias resolves to the authoritative `location_id` but is never itself authority and
+  is never emitted into a new version;
+- the next governed rewrite emits the Dish identifier and current name naturally.
+
+Location names may therefore change without invalidating immutable signed history. The identifier
+is authoritative; an older embedded name remains a display snapshot. Current validation still
+requires an exact current-name/Dish-identifier pair for every newly produced version. This rule
+preserves imported content identity and signoff without retaining a writable Asana namespace.
 
 ### Location history
 
@@ -218,6 +252,29 @@ transitions. For database-native transitions, there is no `started`, `not_applie
 network outcome: a committed transaction contains one transition and a rolled-back transaction
 contains none. Local transitions must not manufacture terminal “confirmed attempts” for work that
 never crossed an external-effect boundary.
+
+### Completion history
+
+Add a dedicated append-only `task_completion_transitions` table:
+
+```text
+transition_id
+task_id
+old_completed
+new_completed
+purpose
+actor
+request_id
+reason
+occurred_at
+```
+
+The mutable `tasks.completed` flag is the current projection, not historical proof. Marking a task
+cooked, reopening it, or applying another approved completion-state change appends one transition
+and commits it with the flag, governed audit, lifecycle evidence, and canonical request result.
+Completed-history lookup reads the current flag for membership and the transition history for
+provenance. A clone is a new task with explicit source lineage; it does not rewrite the original
+task's completion history.
 
 ### Content transition evidence
 
@@ -255,11 +312,20 @@ reserved_task_id    nullable deterministic output identity
 ```
 
 Only an atomic compare-and-swap may acquire an unowned or expired claim. A live foreign claim
-returns in-progress guidance rather than executing. Recovery increments the generation and issues a
-new owner token; the displaced executor can no longer pass the ownership check inside its effect
-transaction. Completion of the effect and storage of the canonical result retire the claim
-atomically. These semantics are required for request-scoped mutations and do not replace the
-existing operation claim for work that already has an operation.
+returns one stable non-terminal `REQUEST_IN_PROGRESS` response rather than executing. That response
+is not the canonical request result, does not complete or consume the request, requires the same
+`request_id` for replay, and reports whether retry may occur now or must wait for expiry or named
+recovery. It never exposes the foreign owner token. Its `retryable` meaning and retry guidance are
+identical across command routes: `retryable` is true only for replay of the same request identity,
+`safe_to_retry_now` is false while the foreign claim is live, and `retry_condition` names claim
+completion, expiry, or named recovery. The exact envelope and timing field must be added to
+`runtime-contract.md` with implementation.
+
+Recovery increments the generation and issues a new owner token; the displaced executor can no
+longer pass the ownership check inside its effect transaction. Completion of the effect and storage
+of the canonical result retire the claim atomically. These semantics are required for
+request-scoped mutations and do not replace the existing operation claim for work that already has
+an operation.
 
 ## Transaction contract
 
@@ -295,7 +361,7 @@ After admission, every database-native task mutation has one effect transaction:
    content/location/version expectations;
 6. assert the action through `CurrentWorkflowService`, including lifecycle-specific content
    authority;
-7. append the new content version or location transition;
+7. append the new content version, location transition, or completion transition;
 8. update the current task pointer/state and append workflow, Verification, lineage, and governed
    transition-audit evidence;
 9. finalize operation execution claims, request claims, and service leases;
@@ -458,13 +524,15 @@ Import classes are:
 
 1. **Active or incomplete governed tasks:** reconcile exact current identity and location against
    `task_content_state`, content versions, operation history, and applicable signoff; require
-   current structural validity before admitting live work.
+   current structural validity before admitting live work. Preserve any signed legacy destination
+   pair through the immutable alias and source-name rule rather than rewriting the document.
 2. **Tasks connected to unresolved or open evidence:** resolve the evidence or quarantine the task
    before cutover. No unresolved external effect becomes a local committed fact by inference.
 3. **Completed historical tasks:** import the exact source snapshot as read-only history with
    explicit historical provenance. Do not assert current-schema conformance, complete workflow
-   evidence, or signoff that the source does not prove. Apply migration and current validation only
-   if a later named command reopens or clones the task.
+   evidence, signoff, document kind, or validation success that the source does not prove. Preserve
+   source snapshot identity, source modification time, and import time. Apply migration and current
+   validation only if a later named command reopens or clones the task.
 4. **Excluded Sourcing and Reference records:** import only when an approved reading, search, or
    provenance requirement includes them; otherwise retain them in the source snapshot without
    making them governed Dish tasks.
@@ -479,7 +547,8 @@ After separate explicit authorization:
 1. stop mutation admission and drain admitted requests;
 2. prove the same quiescence conditions used in rehearsal;
 3. take final Asana, database, configuration, and code snapshots;
-4. import into the production database and validate every task or approved quarantine;
+4. import into the production database and validate every task under its approved import class or
+   quarantine it;
 5. activate the matching Dish code, database schema, Honest revision, query surface, and frontend as
    one compatible set;
 6. remove Asana from health readiness and from all live task reads and mutations;
@@ -510,8 +579,9 @@ opening mutations so rollback to Asana remains simple while it is still valid.
    semantic validator, generated schema field, test fixture, and required human action.
 2. Approve the exact schema, identifier compatibility, location registry, transaction owner, and
    frontend trust model.
-3. Add version provenance, task/location storage, dedicated local transition evidence, and semantic
-   validation behind a test-only database repository.
+3. Add version/import provenance, task/location storage, immutable legacy location aliases,
+   dedicated location/completion transition evidence, and semantic validation behind a test-only
+   database repository.
 4. Add request-scoped execution ownership, then convert operation- and task/request-scoped
    mutations to the single effect-transaction contract with crash/concurrency tests.
 5. Add bounded list, search, history, title-only creation, lifecycle-authorized Markdown editing,
@@ -549,8 +619,18 @@ At minimum, implementation must test:
 - content, location, completion, signoff, and actor drift;
 - every Planning, Research, Verification, correction, hold, reopen, and submit route;
 - version-specific document kind, schema, source, timestamp, and applicable release provenance;
+- unsupported, malformed, partially structured, and unknown historical snapshots without inferred
+  validity, plus exact source snapshot/modification/import provenance;
+- imported signed destination pairs resolved through immutable legacy aliases without rewriting
+  content, and new versions emitting only Dish identifiers and current names;
+- location rename behavior that preserves old display snapshots while requiring the current pair
+  for newly produced versions;
 - historical terminal write/movement evidence, dedicated local transitions, and absence of
   fabricated database-backed attempt records;
+- atomic completion and reopen transitions, current completion projection, governed audit, and
+  request replay;
+- uniform non-terminal `REQUEST_IN_PROGRESS` responses that preserve the pending request and never
+  expose execution tokens;
 - governed audit rollback on failure and success-preserving invocation-audit repair;
 - class-specific import validation, including read-only historical imports and rejected unresolved
   live evidence;
@@ -578,7 +658,12 @@ repository transactions rather than mocking the task repository at the workflow 
 | Concurrent replay executes a non-operation mutation twice | Durable request execution ownership; deterministic reserved IDs; transactional ownership recheck |
 | Stored replay result describes pre-finalization state | Finalize claims and leases, reread, filter actions, then persist the result |
 | Retiring `task_content_state` loses provenance | Move version-specific kind, schema, source, time, and release facts onto immutable versions |
+| Legacy destination rewrite invalidates signoff | Immutable version-scoped GID alias resolution; new versions emit only Dish IDs |
+| Location rename invalidates signed history | Identifier is authority; imported names are provenance-bound display snapshots |
+| Historical import invents schema validity | Orthogonal kind/validation facts and immutable source snapshot provenance |
 | Local facts inherit Asana uncertainty semantics | Dedicated local transition evidence; historical attempt tables remain immutable and external-only |
+| Completion history is reduced to a mutable flag | Append-only completion transitions commit with the flag, audit, and result |
+| Live request claims produce inconsistent client behavior | One non-terminal code and replay contract across every route |
 | Incidental audit failure reverses success | Governed evidence is transactional; invocation/transport audit remains success-preserving and repairable |
 | Identifier migration breaks agents | Preserve `task_gid` field initially; accept imported GIDs and new UUIDs explicitly |
 | Historical evidence becomes unreadable | Preserve terminal attempts and provenance; migrate consumers before cleanup |
@@ -586,6 +671,30 @@ repository transactions rather than mocking the task repository at the workflow 
 | Cutover rollback loses DB-native work | Complete acceptance before mutation; use DB backup rollback after first DB write |
 | SQLite writer contention increases | Keep transactions local and bounded; measure real activation load before changing backend technology |
 | Import silently blesses drift | Exact snapshot reconciliation and quarantine; never infer missing facts |
+
+## Needs human review
+
+Before an implementation plan is approved, Marco should review these policy and workflow choices.
+The technical mechanisms elsewhere in this draft support the recommended defaults but do not make
+these decisions on his behalf.
+
+1. **Destination identity and renaming.** Recommended: keep Dish-native location IDs authoritative,
+   preserve imported Asana GIDs as immutable compatibility aliases, treat imported names as
+   provenance-bound display snapshots, and require the current Dish ID/name pair in all new
+   versions. Confirm that the embedded destination text in old signed recipes should remain
+   historical rather than being rewritten when a location is renamed; the UI may show the current
+   location separately.
+2. **Human lifecycle actions.** Approve the exact private commands Marco needs: title-only bare
+   rename, mark cooked, reopen Planning, start Change, and clone historical content. Decide which
+   require a reason and whether reopening or cloning is the normal way to reuse a completed task.
+   None of these choices creates a generic content editor.
+3. **Historical corpus scope.** Decide whether completed Cooking history is imported in full and
+   whether Sourcing or Reference records are needed for search, reading, or provenance. The
+   recommended default is exact read-only import of completed Cooking history and exclusion of
+   Sourcing/Reference unless a concrete use requires them.
+4. **Cutover acceptance and rollback.** Approve the acceptance period and the point at which
+   DB-native mutations may begin. Before the first mutation, Asana rollback remains valid; after
+   it, rollback restores the DB-backed system and returning to Asana requires a reverse migration.
 
 ## Decisions requiring approval before implementation
 
@@ -601,12 +710,16 @@ The recommended defaults in this draft are:
 6. add request-scoped execution ownership for mutations that have no existing operation;
 7. store document kind, schema, source, timestamp, and applicable release provenance per immutable
    content version;
-8. use dedicated local transition evidence and never manufacture database-backed Asana attempts;
-9. approve narrow replacements for every required human Asana action, including completion;
-10. import completed history without current-schema or signoff claims until a named reopen or clone;
-11. keep invocation/transport auditing success-preserving and repairable;
-12. treat Asana rollback as valid only before the first DB-native production mutation;
-13. retain off-device backup as a sensible operational measure, not a replicated-database project.
+8. map imported Asana section GIDs as immutable aliases to Dish locations; preserve imported names
+   as display snapshots, and emit only the current Dish pair in new content;
+9. use dedicated local location and completion transition evidence and never manufacture
+   database-backed Asana attempts;
+10. approve narrow replacements for every required human Asana action, including completion;
+11. import completed history without current-schema or signoff claims until a named reopen or clone;
+12. define one non-terminal live-request-claim response in the implementation's runtime contract;
+13. keep invocation/transport auditing success-preserving and repairable;
+14. treat Asana rollback as valid only before the first DB-native production mutation;
+15. retain off-device backup as a sensible operational measure, not a replicated-database project.
 
 Implementation needs Marco's explicit approval of those decisions, the final schema, the frontend
 trust model, the corpus scope, the acceptance period, and the separately authorized rehearsal and
