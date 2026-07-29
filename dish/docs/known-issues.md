@@ -58,6 +58,17 @@ defect. Do not expose a production Action that deliberately fails or corrupts mu
 test mechanism only when a concrete recovery scenario cannot be exercised safely by the existing
 local harness.
 
+### TEST-002 — real-schema generated-SDK lifecycle coverage
+
+The generated Asana SDK lifecycle test exercises `DishApplication` → `AsanaBackend` → generated SDK
+→ stateful fake HTTP transport, while its release fixture uses `schema={}`. Real Honest schema
+validation and the generated-SDK boundary are covered separately, not together in one lifecycle
+test.
+
+This is a low-risk test-composition gap, not evidence of a runtime defect or a rollout blocker.
+Revisit if the SDK/schema boundary changes, a failure implicates their integration, or maintaining
+the separate coverage becomes unreliable.
+
 ### VERIFY-001 — transient `service_database_unavailable` attribution
 
 Controlled SQLite writer contention now reproduces `service_database_unavailable` safely before

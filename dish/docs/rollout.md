@@ -49,11 +49,7 @@ implementation or runtime documentation, the current code and contracts remain a
    testing, while live clients currently fail closed unless both `DISH_LIVE_MODE=1` and
    `DISH_MODE=service` are set. Decide whether production should keep both explicit gates or make
    service mode the operational default.
-3. **Real-schema SDK lifecycle coverage.** The generated Asana SDK lifecycle test traverses
-   `DishApplication` → `AsanaBackend` → generated SDK → stateful fake HTTP transport, but its release
-   fixture uses `schema={}`. Decide whether activation requires the same boundary test to load the
-   complete current Honest schema fixture.
-4. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
+3. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
    and section-registry verification, and production cutover still require explicit authorization.
 
 ## Remaining test-project rehearsal
