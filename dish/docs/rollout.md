@@ -45,13 +45,8 @@ implementation or runtime documentation, the current code and contracts remain a
    `DishApplication` → `AsanaBackend` → generated SDK → stateful fake HTTP transport, but its release
    fixture uses `schema={}`. Decide whether activation requires the same boundary test to load the
    complete current Honest schema fixture.
-3. **Public-endpoint abuse controls.** The Action listener has a dedicated credential, route
-   allowlist, body limits, request timeouts, and no private or admin routes. Decide whether Funnel
-   exposure also requires an application-level rate limiter.
-4. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
-   and section-registry verification, any retained operational canary, and production cutover still
-   require explicit authorization. Resolve whether the canary is an operational rehearsal or is
-   removed; never use it as semantic attestation or a claim of semantic equivalence.
+3. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
+   and section-registry verification, and production cutover still require explicit authorization.
 
 ## Remaining test-project rehearsal
 
@@ -107,20 +102,25 @@ Production cutover requires a separate explicit authorization. After authorizati
 
 1. Freeze and record the exact compatible Honest protocol/schema revision and Dish code/tool
    revision being released together.
-2. Confirm service compatibility with that Honest release, production credentials, the Cooking
-   project and section registry, and the approved GPT Action exposure/authentication route.
-3. Confirm the Honest-side completion gate passed. Review Dish commits since the last recorded
+2. Stop the test-configured service. Replace its rollout values with the frozen production Honest
+   checkout, production `DISH_COOKING_PROJECT_GID`, a fresh production `DISH_DB_PATH`, and a
+   production `DISH_SERVICE_BACKUP_DIR`. Do not copy or reuse the test service database as
+   production state.
+3. Restart the service and confirm its configured database path, owner-only state and backup
+   directory, production Cooking project and section registry, production Asana credential,
+   compatibility with the frozen Honest release, and GPT Action exposure/authentication route.
+   Do not admit production mutations while any test checkout, database, backup directory, project,
+   or section GID remains configured.
+4. Confirm the Honest-side completion gate passed. Review Dish commits since the last recorded
    automated pass and run the proportionate final regression set, including service concurrency and
    restart coverage when those boundaries changed. Confirm the CLI and GPT Action use the same
    endpoint result contract.
-4. Confirm direct agent Asana write credentials and unsupported governed-task write paths are
+5. Confirm direct agent Asana write credentials and unsupported governed-task write paths are
    disabled. Keep Planning's deliberate read-only access to completed cooking history.
-5. Confirm the joint test-project, migration, backup/restore, and rollback rehearsals passed.
-6. Apply the resolved migration sequence. If an operational canary is retained, migrate one
-   reviewed task and run one complete live lifecycle, checking exact content, placement, recovery,
-   leases, and audit evidence without treating it as semantic attestation.
-7. Migrate only the approved target corpus, then activate the matching Honest protocol authority,
-   repository routing, and Dish production service in the same deliberate cutover.
+6. Confirm the joint test-project, migration, backup/restore, and rollback rehearsals passed.
+7. Apply the resolved migration sequence only to the approved target corpus, then activate the
+   matching Honest protocol authority, repository routing, and Dish production service in the same
+   deliberate cutover.
 8. Open broader use only after the final protocol, lock, drift, recovery, and audit checks pass.
 
 ## Rollback
@@ -140,5 +140,4 @@ compatible set.
 
 Dish is live only after explicit authorization and successful exercise of compatibility, shared
 coordination, the complete Honest protocol bundle, Dish enforcement, exact-content handling, stage
-isolation, migration, backup/restore, recovery, the resolved canary decision, joint cutover, and
-rollback gates.
+isolation, migration, backup/restore, recovery, joint cutover, and rollback gates.

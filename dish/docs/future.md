@@ -80,6 +80,13 @@ After real usage, decide whether operators need additional summaries for:
 Add only summaries that lead to a concrete operational decision. The existing audit and attempt data
 should remain the source rather than introducing a second event model.
 
+### Public Action rate limiting
+
+The Funnel-exposed Action listener already has a dedicated credential, route allowlist, body limits,
+request timeouts, and no private or admin routes. Add application-level request rate limiting only if
+activation evidence shows abusive, accidental, or otherwise costly request volume. This is defense
+in depth, not a prerequisite for the current single-owner rollout.
+
 ## Later architectural options
 
 ### Tool-mediated cooking and cook logs
