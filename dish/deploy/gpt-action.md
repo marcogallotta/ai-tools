@@ -53,6 +53,10 @@ Add an operating instruction with all of these requirements:
   the same UUID; a completed replay returns the stored result with `data.request_replayed: true`.
   Reusing the UUID for different work conflicts. A matching pending or uncertain request is not
   executed again, so never generate a new UUID merely to bypass that outcome.
+- If read-only `sections`, `read`, or `inspect` returns no Dish JSON envelope because of a
+  transport-level client error, retry the exact same read up to two times. If it still fails, stop
+  and report the error. This bounded read retry does not apply to mutations; after a lost mutation
+  response, replay only the exact call with its original `client.request_id`.
 - The authenticated `client.run_id` is both lease ownership and the durable agent-run identity. The
   service applies it to `start`, `prepare`, `approve`, and `reject`; do not invent a separate
   workflow run ID. A redundant `arguments.run_id`, when supplied, must match it exactly.
