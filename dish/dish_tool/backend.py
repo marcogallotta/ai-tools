@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -113,6 +114,9 @@ def map_backend_exception(
     )
 
 
+POOL_SHUTDOWN_JOIN_SECONDS = 10.0
+
+
 def close_asana_sdk_client(api_client: Any) -> None:
     """Deterministically release a python-asana client's worker pool.
 
@@ -121,13 +125,33 @@ def close_asana_sdk_client(api_client: Any) -> None:
     retained finalizer can stall an otherwise completed process.  Cancel the
     now-redundant finalizer after the graceful join so shutdown has no stale pool
     callback to execute.
+
+    ``ThreadPool.join`` blocks forever if a worker is stuck, which would hang
+    the whole shutdown path. Bound the wait and forcibly terminate the pool if
+    a worker hasn't finished within it.
+
+    Dish uses the Asana SDK synchronously and never passes ``async_req=True``.
+    Therefore this pool contains only idle SDK workers; bounding shutdown cannot
+    abandon an in-flight Asana mutation. Reassess this logic before adding async
+    calls.
     """
 
     pool = getattr(api_client, "pool", None)
     if pool is None:
         return
     pool.close()
-    pool.join()
+    joined = threading.Event()
+
+    def _join() -> None:
+        pool.join()
+        joined.set()
+
+    joiner = threading.Thread(target=_join, daemon=True)
+    joiner.start()
+    joiner.join(timeout=POOL_SHUTDOWN_JOIN_SECONDS)
+    if not joined.is_set():
+        LOG.warning("Asana SDK worker pool did not join within %.0fs; terminating", POOL_SHUTDOWN_JOIN_SECONDS)
+        pool.terminate()
     finalizer = getattr(pool, "_terminate", None)
     if finalizer is not None and finalizer.still_active():
         finalizer.cancel()

@@ -24,7 +24,7 @@ class ServiceConfig:
     action_bind_host: str = "127.0.0.1"
     action_port: int = 8766
     max_body_bytes: int = 2 * 1024 * 1024
-    request_timeout_seconds: float = 60.0
+    request_timeout_seconds: float = 30.0
     lease_ttl_seconds: int = 1800
     agent_token: str | None = None
     admin_token: str | None = None
@@ -139,7 +139,7 @@ class ServiceConfig:
             action_bind_host=os.environ.get("DISH_ACTION_BIND", "127.0.0.1").strip() or "127.0.0.1",
             action_port=int(os.environ.get("DISH_ACTION_PORT", "8766")),
             max_body_bytes=int(os.environ.get("DISH_SERVICE_MAX_BODY_BYTES", str(2 * 1024 * 1024))),
-            request_timeout_seconds=float(os.environ.get("DISH_SERVICE_REQUEST_TIMEOUT", "60")),
+            request_timeout_seconds=float(os.environ.get("DISH_SERVICE_REQUEST_TIMEOUT", "30")),
             lease_ttl_seconds=int(os.environ.get("DISH_SERVICE_LEASE_TTL_SECONDS", "1800")),
             agent_token=os.environ.get("DISH_SERVICE_AGENT_TOKEN") or None,
             admin_token=os.environ.get("DISH_SERVICE_ADMIN_TOKEN") or None,

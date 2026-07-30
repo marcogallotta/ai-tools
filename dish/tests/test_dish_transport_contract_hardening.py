@@ -1,13 +1,11 @@
 from __future__ import annotations
 
 import http.client
-import io
 import json
 import math
 import socket
 import uuid
 from dataclasses import replace
-from urllib.error import HTTPError
 from urllib.parse import urlsplit
 
 import pytest
@@ -117,38 +115,79 @@ def test_runtime_rejects_lease_ttl_shorter_than_legitimate_request(tmp_path):
     assert exc.value.details["minimum_exclusive"] == minimum
 
 
+@pytest.mark.parametrize("field", ["connect_timeout", "response_timeout"])
 @pytest.mark.parametrize("timeout", [math.nan, math.inf, -math.inf, 0.0])
-def test_client_rejects_invalid_timeout(timeout):
+def test_client_rejects_invalid_timeout(field, timeout):
     with pytest.raises(DishRuleError) as exc:
         DishServiceClient(
-            "http://127.0.0.1:1", token="token-secret", run_id=RUN_ID, timeout=timeout
+            "http://127.0.0.1:1", token="token-secret", run_id=RUN_ID, **{field: timeout}
         )
     assert exc.value.rule == "service_timeout_invalid"
 
 
+class _FakeSocket:
+    def settimeout(self, value):
+        self.timeout = value
+
+
+class _FakeConnection:
+    def __init__(self, host, port, timeout=None):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.sock = _FakeSocket()
+        self.closed = False
+
+    def connect(self):
+        pass
+
+    def request(self, method, target, body=None, headers=None):
+        pass
+
+    def getresponse(self):
+        raise NotImplementedError
+
+    def close(self):
+        self.closed = True
+
+
+class _FakeResponse:
+    def __init__(self, status, payload):
+        self.status = status
+        self._payload = payload
+
+    def read(self):
+        return self._payload
+
+
 def test_client_closes_failed_http_response(monkeypatch):
-    body = io.BytesIO(b'{"ok":false,"code":"INVALID_ARGUMENT"}')
-    response_error = HTTPError(
-        "http://dish.invalid/health", 400, "bad", {}, body
-    )
+    payload = b'{"ok":false,"code":"INVALID_ARGUMENT"}'
+    made = {}
 
-    def fail(*args, **kwargs):
-        raise response_error
+    class FailingConnection(_FakeConnection):
+        def getresponse(self):
+            return _FakeResponse(400, payload)
 
-    monkeypatch.setattr(client_module, "urlopen", fail)
+    def fake_connection_cls(host, port, timeout=None):
+        connection = FailingConnection(host, port, timeout=timeout)
+        made["connection"] = connection
+        return connection
+
+    monkeypatch.setattr(client_module.http.client, "HTTPConnection", fake_connection_cls)
     client = DishServiceClient(
         "http://dish.invalid", token="token-secret", run_id=RUN_ID
     )
     result = client.health()
     assert result["code"] == "INVALID_ARGUMENT"
-    assert body.closed
+    assert made["connection"].closed is True
 
 
 def test_client_maps_abrupt_disconnect_to_service_error(monkeypatch):
-    def disconnect(*args, **kwargs):
-        raise http.client.RemoteDisconnected("peer closed")
+    class DisconnectingConnection(_FakeConnection):
+        def getresponse(self):
+            raise http.client.RemoteDisconnected("peer closed")
 
-    monkeypatch.setattr(client_module, "urlopen", disconnect)
+    monkeypatch.setattr(client_module.http.client, "HTTPConnection", DisconnectingConnection)
     client = DishServiceClient(
         "http://dish.invalid", token="token-secret", run_id=RUN_ID
     )

@@ -6,13 +6,19 @@ import subprocess
 import sys
 import shutil
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 BIN_DIR = Path(__file__).resolve().parent.parent
 FIXTURE_RELEASE_DIR = Path(__file__).resolve().parent / "fixtures" / "dish-version-current"
 sys.path.insert(0, str(BIN_DIR))
-from dish_tool.backend import AsanaBackend, load_asana_pat, map_backend_exception  # noqa: E402
+from dish_tool.backend import (  # noqa: E402
+    AsanaBackend,
+    close_asana_sdk_client,
+    load_asana_pat,
+    map_backend_exception,
+)
 from dish_tool.constants import (  # noqa: E402
     ASANA_REQUEST_TIMEOUT,
     CONNECT_TIMEOUT_SECONDS,
@@ -564,6 +570,22 @@ def test_backend_call_without_explicit_tracker_marks_request_as_sent():
     assert exc.value.phase == RequestPhase.POSSIBLY_SENT.value
 
 
+def test_backend_call_never_requests_async_execution():
+    """close_asana_sdk_client's bounded pool shutdown is only safe because the
+    Asana SDK's worker pool never carries a live request; it stays safe only
+    as long as nothing here passes ``async_req=True``."""
+    backend = AsanaBackend(api_client=object())
+    recorded_kwargs: dict[str, Any] = {}
+
+    def record(*args, **kwargs):
+        recorded_kwargs.update(kwargs)
+        return {"data": {}}
+
+    backend.call(record)
+
+    assert "async_req" not in recorded_kwargs or not recorded_kwargs["async_req"]
+
+
 def test_asana_backend_reuses_client_and_disables_sdk_retries(monkeypatch):
     monkeypatch.setenv("ASANA_PAT", "test-token")
     backend = AsanaBackend()
@@ -601,6 +623,42 @@ def test_asana_backend_closes_only_the_client_it_created(monkeypatch):
     backend = AsanaBackend(api_client=injected)
     backend.close()
     assert injected.pool is not None
+
+
+def test_close_asana_sdk_client_terminates_a_pool_that_will_not_join(monkeypatch):
+    from dish_tool import backend as backend_module
+
+    monkeypatch.setattr(backend_module, "POOL_SHUTDOWN_JOIN_SECONDS", 0.05)
+
+    class StuckPool:
+        def __init__(self):
+            self.closed = False
+            self.terminated = False
+            self._terminate = type("Finalizer", (), {"still_active": lambda self: False})()
+
+        def close(self):
+            self.closed = True
+
+        def join(self):
+            import time
+
+            time.sleep(10)
+
+        def terminate(self):
+            self.terminated = True
+
+    pool = StuckPool()
+
+    class Client:
+        def __init__(self):
+            self.pool = pool
+
+    api_client = Client()
+
+    close_asana_sdk_client(api_client)
+
+    assert pool.closed is True
+    assert pool.terminated is True
 
 
 def test_asana_auth_loader_and_timeout_configuration(tmp_path, monkeypatch):

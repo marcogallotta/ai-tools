@@ -4,12 +4,10 @@ from __future__ import annotations
 import http.client
 import json
 import math
-import socket
 import uuid
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
 
 from dish_tool.errors import DishRuleError
 from .identifiers import require_dish_uuid
@@ -38,16 +36,22 @@ class DishServiceClient:
         *,
         token: str,
         run_id: str,
-        timeout: float = 65.0,
+        connect_timeout: float = 10.0,
+        response_timeout: float = 600.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        if not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
-            raise DishRuleError(
-                "INVALID_ARGUMENT",
-                "service request timeout must be a finite positive number",
-                rule="service_timeout_invalid",
-            )
-        self.timeout = float(timeout)
+        for label, value in (
+            ("connect", connect_timeout),
+            ("response", response_timeout),
+        ):
+            if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    f"service {label} timeout must be a finite positive number",
+                    rule="service_timeout_invalid",
+                )
+        self.connect_timeout = float(connect_timeout)
+        self.response_timeout = float(response_timeout)
         self.token = str(token or "").strip()
         self.run_id = str(run_id or "").strip()
         if not self.token:
@@ -63,42 +67,51 @@ class DishServiceClient:
         payload: Mapping[str, Any] | None = None,
     ):
         body = None if payload is None else json.dumps(dict(payload), separators=(",", ":")).encode("utf-8")
-        request = Request(
-            f"{self.base_url}{path}",
-            data=body,
-            method=method,
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "Authorization": f"Bearer {self.token}",
-            },
-        )
+        url = urlsplit(f"{self.base_url}{path}")
+        target = url.path or "/"
+        if url.query:
+            target = f"{target}?{url.query}"
+        connection_cls = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
+        # The connect phase and the response wait need independent bounds: a
+        # command may legitimately perform several sequential upstream calls
+        # before responding, so the response wait must be long, but a dead or
+        # unreachable service should fail fast on connect.
+        connection = connection_cls(url.hostname, url.port, timeout=self.connect_timeout)
         try:
-            with urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            with exc:
-                try:
-                    return json.loads(exc.read().decode("utf-8"))
-                except Exception as parse_exc:
-                    raise DishRuleError(
-                        "INTERNAL_ERROR",
-                        "dish service returned an unreadable error",
-                        rule="service_response_invalid",
-                    ) from parse_exc
-        except (
-            URLError,
-            http.client.RemoteDisconnected,
-            ConnectionResetError,
-            TimeoutError,
-            socket.timeout,
-        ) as exc:
+            connection.connect()
+            connection.sock.settimeout(self.response_timeout)
+            connection.request(
+                method,
+                target,
+                body=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Authorization": f"Bearer {self.token}",
+                },
+            )
+            response = connection.getresponse()
+            status = response.status
+            raw = response.read()
+        except (OSError, http.client.HTTPException) as exc:
             raise DishRuleError(
                 "BACKEND_REJECTED",
                 "dish service is unavailable",
                 rule="service_unavailable",
                 retryable=True,
             ) from exc
+        finally:
+            connection.close()
+        if status >= 400:
+            try:
+                return json.loads(raw.decode("utf-8"))
+            except Exception as parse_exc:
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "dish service returned an unreadable error",
+                    rule="service_response_invalid",
+                ) from parse_exc
+        return json.loads(raw.decode("utf-8"))
 
     def _client(self, *, request_id: str | None = None) -> dict[str, str]:
         client = {"run_id": self.run_id}

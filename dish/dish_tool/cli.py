@@ -284,7 +284,8 @@ def build_application():
             service_url,
             token=os.environ.get("DISH_SERVICE_TOKEN", ""),
             run_id=os.environ.get("DISH_CLIENT_RUN_ID", ""),
-            timeout=float(os.environ.get("DISH_SERVICE_CLIENT_TIMEOUT", "65")),
+            connect_timeout=float(os.environ.get("DISH_SERVICE_CLIENT_CONNECT_TIMEOUT", "10")),
+            response_timeout=float(os.environ.get("DISH_SERVICE_CLIENT_RESPONSE_TIMEOUT", "600")),
         )
     if live_mode:
         raise DishRuleError(

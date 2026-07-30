@@ -11,6 +11,7 @@ EnvironmentFile=/home/marco/.config/dish-service/service.env
 ExecStart=/home/marco/ai-tools/dish/dish-service
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=10min
 NoNewPrivileges=true
 UMask=0077
 PrivateDevices=true
