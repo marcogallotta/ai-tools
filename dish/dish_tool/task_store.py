@@ -191,13 +191,19 @@ def planning_reopen_recovery_details(
             "authority_conflict": conflict,
         })
         return details
+    replay_command = (
+        "dish-admin reopen-planning "
+        f"{shlex.quote(task_gid)} --reason {shlex.quote(reason)} "
+        f"--request-id {shlex.quote(request_id)}"
+    )
     details.update({
         "required_admin_action": "reopen-planning",
         "resolver": "Marco/admin replay the original reopen-planning request",
-        "admin_command": (
-            "dish-admin reopen-planning "
-            f"{shlex.quote(task_gid)} --reason {shlex.quote(reason)} "
-            f"--request-id {shlex.quote(request_id)}"
+        "admin_command": replay_command,
+        "directive": (
+            f"Tell the human to run: {replay_command}\n"
+            "Then wait for confirmation it succeeded before continuing — do not create a "
+            "replacement operation; retry the original request once it succeeds."
         ),
     })
     return details

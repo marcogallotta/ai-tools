@@ -59,7 +59,18 @@ def _assert_expired_guidance(result, operation_id, *, view_path):
     assert data["required_admin_action"] == "recover-lease"
     assert data["resolver"] == "Marco/admin recover-lease"
     assert data["admin_command"] == (
-        f"dish-admin recover-lease {operation_id} --reason TEXT"
+        f'dish-admin recover-lease {operation_id} '
+        '--reason "<summarize why the lease is being recovered>"'
+    )
+    assert data["directive"] == (
+        f"Tell the human to run: {data['admin_command']}\n"
+        "Then wait for confirmation it succeeded before continuing — do not start a new "
+        "operation; resume this same submission"
+        + (
+            f" with `{data['after_recovery']['legal_actions'][0]}`."
+            if data["after_recovery"]["legal_actions"]
+            else "."
+        )
     )
     assert data["after_recovery"] == {"legal_actions": ["approve", "reject"]}
     assert data["service_access"]["state"] == "expired"

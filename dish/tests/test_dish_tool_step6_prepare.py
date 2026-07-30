@@ -572,9 +572,18 @@ def test_completed_task_requires_audited_marco_reopen_before_planning(tmp_path):
     assert blocked["errors"][0]["rule"] == "planning_completed_task_reopen_required"
     assert blocked["data"]["required_admin_action"] == "reopen-planning"
     assert blocked["data"]["resolver"] == "Marco/admin reopen-planning"
+    assert blocked["data"]["admin_command"] == (
+        'dish-admin reopen-planning t --reason "<summarize why the task must be reopened>"'
+    )
     assert blocked["data"]["legal_next_step"] == (
         "Marco/admin runs reopen-planning with a reason; after it succeeds, "
         "retry start with kind=planning using a fresh client.request_id"
+    )
+    assert blocked["data"]["directive"] == (
+        f"Tell the human to run: {blocked['data']['admin_command']}\n"
+        "Then wait for confirmation it succeeded before continuing — retry "
+        "start with kind=planning using a fresh client.request_id; do not "
+        "create a replacement operation."
     )
     assert a.conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 0
 

@@ -22,6 +22,20 @@ class OperationExecutionClaim:
     resuming_uncertain: bool = False
 
 
+def _recover_command_guidance(operation_id: str) -> dict[str, str]:
+    command = (
+        f"dish-admin recover {operation_id} --outcome <inspect|not-applied|applied> "
+        '--reason "<summarize what the live reread showed>"'
+    )
+    directive = (
+        f"Tell the human to run: {command}\n"
+        "Start with --outcome inspect if the live state is not yet confirmed. Then wait "
+        "for confirmation it succeeded before continuing — do not create a replacement "
+        "operation, change run identity, or use any other private admin route."
+    )
+    return {"admin_command": command, "directive": directive}
+
+
 _OPERATION_FIELDS = (
     "status",
     "phase",
@@ -286,6 +300,7 @@ def claim_operation_execution(
                         "command": existing["command"],
                         "execution_id": existing["execution_id"],
                         "required_admin_action": "recover",
+                        **_recover_command_guidance(operation_id),
                     })
                     raise DishRuleError(
                         "CONFLICT",
@@ -364,6 +379,7 @@ def claim_operation_execution(
                         "operation_id": operation_id,
                         "execution_ids": [row["execution_id"] for row in unresolved],
                         "required_admin_action": "recover",
+                        **_recover_command_guidance(operation_id),
                     },
                 )
             prior = unresolved[0]

@@ -597,6 +597,11 @@ def test_dead_claim_with_local_state_change_requires_recover_without_pending_ste
             )
         assert blocked.value.rule == "operation_mutation_recovery_required"
         assert blocked.value.details["required_admin_action"] == "recover"
+        assert blocked.value.details["admin_command"] == (
+            f"dish-admin recover {operation_id} --outcome <inspect|not-applied|applied> "
+            '--reason "<summarize what the live reread showed>"'
+        )
+        assert "Tell the human to run:" in blocked.value.details["directive"]
 
         recovery_claim = claim_operation_execution(
             application.conn,

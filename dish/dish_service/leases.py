@@ -604,6 +604,13 @@ class LeaseManager:
         manage_transaction: bool = True,
     ):
         del principal
+        clean_reason = str(reason or "").strip()
+        if clean_reason.startswith("<") and clean_reason.endswith(">"):
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "lease recovery reason still contains the unfilled command placeholder",
+                rule="lease_recovery_reason_placeholder",
+            )
         now = self.now()
         if manage_transaction:
             self.conn.execute("BEGIN IMMEDIATE")

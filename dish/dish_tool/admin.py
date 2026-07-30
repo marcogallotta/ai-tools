@@ -215,6 +215,12 @@ def _step5_admin_reopen_planning(
     clean_reason = _clean_required(
         reason, rule="planning_reopen_reason_required", label="reopen reason"
     )
+    if clean_reason.startswith("<") and clean_reason.endswith(">"):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "reopen reason still contains the unfilled command placeholder",
+            rule="planning_reopen_reason_placeholder",
+        )
     trace.task_gid = clean
     if self.backend is None or self.release_loader is None:
         raise DishRuleError(
@@ -443,6 +449,13 @@ def _step9_admin_recover(
             "INVALID_ARGUMENT",
             "recovery reason is required",
             rule="recovery_reason_required",
+            details={"field": "reason"},
+        )
+    if clean_reason.startswith("<") and clean_reason.endswith(">"):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "recovery reason still contains the unfilled command placeholder",
+            rule="recovery_reason_placeholder",
             details={"field": "reason"},
         )
     if clean_outcome not in {"inspect", "not-applied", "applied"}:

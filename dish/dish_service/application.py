@@ -84,16 +84,26 @@ LOG = logging.getLogger("dish.service.application")
 def _lease_recovery_details(
     operation_id: str, after_recovery_actions: list[str]
 ) -> dict[str, Any]:
+    command = (
+        f'dish-admin recover-lease {operation_id} '
+        '--reason "<summarize why the lease is being recovered>"'
+    )
+    next_action = after_recovery_actions[0] if after_recovery_actions else None
+    directive = (
+        f"Tell the human to run: {command}\n"
+        "Then wait for confirmation it succeeded before continuing — do not start a new "
+        "operation; resume this same submission"
+        + (f" with `{next_action}`." if next_action else ".")
+    )
     return {
         "recovery_required": True,
         "required_admin_action": "recover-lease",
         "resolver": "Marco/admin recover-lease",
         "continuation_surface": "private-admin",
         "connected_action_available": False,
-        "admin_command": (
-            f"dish-admin recover-lease {operation_id} --reason TEXT"
-        ),
+        "admin_command": command,
         "admin_route": f"POST /v1/admin/leases/{operation_id}/recover",
+        "directive": directive,
         "legal_next_actions": [],
         "after_recovery": {"legal_actions": list(after_recovery_actions)},
     }

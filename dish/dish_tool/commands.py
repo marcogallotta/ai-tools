@@ -328,6 +328,10 @@ class DishApplication:
             ):
                 if exc.details.get(key):
                     result.setdefault("data", {})[key] = exc.details[key]
+            if exc.rule != "open_operation_exists":
+                for key in ("admin_command", "directive"):
+                    if exc.details.get(key):
+                        result.setdefault("data", {})[key] = exc.details[key]
             if exc.rule == "planning_handoff_requires_initial":
                 result["allowed_actions"] = ["start"]
             if trace.submission_id:
@@ -615,6 +619,10 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
     diag = diagnostics_for(live, release)
     if kind == "planning":
         if live.completed:
+            reopen_command = (
+                f'dish-admin reopen-planning {task_gid} '
+                '--reason "<summarize why the task must be reopened>"'
+            )
             raise DishRuleError(
                 "WRONG_STATE",
                 "completed tasks require Marco to reopen them before Planning",
@@ -622,9 +630,16 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
                 details={
                     "required_admin_action": "reopen-planning",
                     "resolver": _admin_resolver("reopen-planning"),
+                    "admin_command": reopen_command,
                     "legal_next_step": (
                         "Marco/admin runs reopen-planning with a reason; after it succeeds, "
                         "retry start with kind=planning using a fresh client.request_id"
+                    ),
+                    "directive": (
+                        f"Tell the human to run: {reopen_command}\n"
+                        "Then wait for confirmation it succeeded before continuing — retry "
+                        "start with kind=planning using a fresh client.request_id; do not "
+                        "create a replacement operation."
                     ),
                 },
             )
