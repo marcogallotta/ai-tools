@@ -321,6 +321,17 @@ Both are genuinely future and unformed: no schema, workflow, or authority shape 
 Revisit only alongside the structured-representation and fast-filtering work above, once it's clear
 what data a cross-dish planning agent would actually query.
 
+Rough idea, needs fleshing out: a middle tier between a bare idea-dump and an actively progressing
+task. Some planned dishes (e.g. a batch of Korean dishes penciled in months before Marco expects to
+cook them) already carry real Planning detail — more than a skeleton — but should not sit in Research
+or Verification Queue in the meantime, where agents scanning those queues would burn attention/cache
+on them every pass. This wants some kind of per-category "held" location (e.g. a Korean-ideas line)
+excluded from ordinary queue scanning while still letting the dish carry more structure than a bare
+title. It overlaps but isn't fully solved by the availability-blocker tag above, since the concern
+here is being physically out of the queues agents iterate over, not just a filterable flag on a
+queued item. No location model, exclusion mechanism, or promotion-back-to-active-queue path is
+decided yet.
+
 ### Deployment and resilience beyond personal use
 
 The current system is intentionally a single-owner personal service. Consider broader resilience
