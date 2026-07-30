@@ -705,56 +705,109 @@
                     }
                   },
                   "arguments": {
-                    "required": [
-                      "submission_id",
-                      "agent",
-                      "model",
-                      "correction",
-                      "reviewed_identity",
-                      "semantic_review_complete",
-                      "provenance_complete"
-                    ],
-                    "properties": {
-                      "submission_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "submission_id",
+                          "agent",
+                          "model",
+                          "correction",
+                          "reviewed_identity",
+                          "semantic_review_complete",
+                          "provenance_complete"
+                        ],
+                        "properties": {
+                          "submission_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "minLength": 36,
+                            "maxLength": 36
+                          },
+                          "agent": {
+                            "type": "string",
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ]
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "reviewed_identity": {
+                            "type": "string"
+                          },
+                          "semantic_review_complete": {
+                            "type": "boolean"
+                          },
+                          "provenance_complete": {
+                            "type": "boolean"
+                          },
+                          "correction": {
+                            "type": "string",
+                            "const": "none",
+                            "description": "Approve the exact inspected candidate without supplying file_text."
+                          }
+                        }
                       },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      },
-                      "model": {
-                        "type": "string"
-                      },
-                      "correction": {
-                        "type": "string",
-                        "enum": [
-                          "none",
-                          "small"
-                        ]
-                      },
-                      "file_text": {
-                        "type": "string"
-                      },
-                      "reviewed_identity": {
-                        "type": "string"
-                      },
-                      "semantic_review_complete": {
-                        "type": "boolean"
-                      },
-                      "provenance_complete": {
-                        "type": "boolean"
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "submission_id",
+                          "agent",
+                          "model",
+                          "correction",
+                          "file_text",
+                          "reviewed_identity",
+                          "semantic_review_complete",
+                          "provenance_complete"
+                        ],
+                        "properties": {
+                          "submission_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "minLength": 36,
+                            "maxLength": 36
+                          },
+                          "agent": {
+                            "type": "string",
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ]
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "reviewed_identity": {
+                            "type": "string"
+                          },
+                          "semantic_review_complete": {
+                            "type": "boolean"
+                          },
+                          "provenance_complete": {
+                            "type": "boolean"
+                          },
+                          "correction": {
+                            "type": "string",
+                            "const": "small",
+                            "description": "Apply and approve a complete Small corrected candidate supplied as file_text."
+                          },
+                          "file_text": {
+                            "type": "string"
+                          }
+                        }
                       }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
+                    ],
+                    "discriminator": {
+                      "propertyName": "correction"
+                    }
                   }
                 }
               }

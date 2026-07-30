@@ -219,6 +219,56 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
             ],
             "discriminator": {"propertyName": "kind"},
         }
+    if command == "approve":
+        base = ARGUMENT_SCHEMAS["approve"]["properties"]
+        common_names = (
+            "submission_id",
+            "agent",
+            "model",
+            "reviewed_identity",
+            "semantic_review_complete",
+            "provenance_complete",
+        )
+        common = {name: deepcopy(base[name]) for name in common_names}
+
+        def approve_variant(correction: str, *, with_file_text: bool) -> dict[str, Any]:
+            properties = deepcopy(common)
+            properties["correction"] = {
+                "type": "string",
+                "const": correction,
+                "description": (
+                    "Approve the exact inspected candidate without supplying file_text."
+                    if correction == "none"
+                    else "Apply and approve a complete Small corrected candidate supplied as file_text."
+                ),
+            }
+            if with_file_text:
+                properties["file_text"] = deepcopy(base["file_text"])
+            required = [
+                "submission_id",
+                "agent",
+                "model",
+                "correction",
+                "reviewed_identity",
+                "semantic_review_complete",
+                "provenance_complete",
+            ]
+            if with_file_text:
+                required.insert(4, "file_text")
+            return {
+                "type": "object",
+                "additionalProperties": False,
+                "required": required,
+                "properties": properties,
+            }
+
+        return {
+            "oneOf": [
+                approve_variant("none", with_file_text=False),
+                approve_variant("small", with_file_text=True),
+            ],
+            "discriminator": {"propertyName": "correction"},
+        }
     if command != "reject":
         return action_argument_schema(command)
 

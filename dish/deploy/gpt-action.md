@@ -69,7 +69,9 @@ Add an operating instruction with all of these requirements:
   After Verification `start`, call `inspect` before making an approval or rejection decision. Do not
   reconstruct workflow transitions from conversation history.
 - Treat `file_text` as the complete candidate. Never send a partial patch or assume that the service
-  can read a local file.
+  can read a local file. For approval with `correction: none`, omit `file_text`: Dish signs the exact
+  inspected candidate. For `correction: small`, supply the complete corrected candidate as
+  `file_text`.
 - A tool pass proves deterministic conformance only; complete the semantic work required by the
   stage protocol returned by Dish.
 - After successful Verification approval returns `submit`, call `submit` in the same pass.

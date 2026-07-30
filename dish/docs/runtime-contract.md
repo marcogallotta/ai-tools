@@ -242,7 +242,9 @@ disqualifying role/rule when it is not. A qualifying verifier inspection appends
 bound to the exact open cycle, reviewed content version and identity, verifier run/attestation, and
 Verification Queue placement. `approve` and `reject` require that current fact; a later cycle or live
 content/placement change cannot reuse it. Agents must inspect before deciding; an approval call is
-not the discovery mechanism for lineage conflicts.
+not the discovery mechanism for lineage conflicts. Approval with `correction: none` signs that exact
+inspected candidate and does not accept `file_text`; `correction: small` requires the complete
+corrected candidate as `file_text`.
 
 Marco-only continuations such as `supply-evidence`, `record-human-decision`, and `reopen` never
 appear in an agent response's `allowed_actions`. When one is required, agent responses return an
