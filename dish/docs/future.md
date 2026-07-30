@@ -130,6 +130,16 @@ design, including the task-state/action precedence table, `dish_find`'s exact/fu
 contract, and why duplicate prevention stays deliberately best-effort rather than adding reservation
 machinery. Implement any of this only if real recurring friction shows up, not on a schedule.
 
+## In progress: abandoned-run recovery and long-term ownership
+
+Part I of [`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) — an explicit
+`abandon-operation`/`reconcile-abandonment` path for a permanently lost chat run stranding
+Planning, Research, or Verification — is a pre-rollout implementation candidate being built now,
+not a deferred future item. Part II of that same document, a long-term attempt/session ownership
+redesign that would let a replacement session (potentially a different agent) continue an
+in-progress attempt instead of always forcing a fresh operation, is intentionally parked as a
+post-rollout draft: re-open only after Part I ships and production evidence is available.
+
 ## Later architectural options
 
 ### Tool-mediated cooking and cook logs
