@@ -14,6 +14,7 @@ from dish_service.config import ServiceConfig
 from dish_service.http import build_action_server, build_private_server
 from dish_service.process_lock import ServiceProcessLock
 from dish_tool import admin_cli
+from dish_tool.errors import DishRuleError
 from tests.test_dish_tool_r42_service_foundation import _release_loader
 from tests.test_dish_tool_step7_verification import Backend
 
@@ -63,7 +64,7 @@ def _stop(server, thread):
     thread.join(timeout=2)
 
 
-def test_private_and_public_listeners_have_disjoint_route_surfaces(tmp_path):
+def test_private_and_public_listeners_have_disjoint_route_surfaces(tmp_path, capsys):
     backend, private, action, private_thread, action_thread, private_url, action_url = _split_servers(tmp_path)
     try:
         cli = DishServiceClient(private_url, token="cli-secret", run_id="9940d276-a582-5787-b6d9-b4fba846e271")
@@ -73,8 +74,18 @@ def test_private_and_public_listeners_have_disjoint_route_surfaces(tmp_path):
 
         private_result = cli.execute("sections", agent="gpt")
         public_result = action_client.execute("sections", agent="gpt")
-        hidden_action = wrong_action.execute("sections", agent="gpt")
-        hidden_admin = wrong_admin.execute("recover", submission_id="x", outcome="inspect", reason="x")
+        with pytest.raises(DishRuleError) as hidden_action:
+            wrong_action.execute("sections", agent="gpt")
+        admin_status = admin_cli.main(
+            [
+                "recover-lease",
+                "eff7ba74-c32d-4635-b072-d94f13034cc2",
+                "--reason",
+                "wrong listener regression",
+            ],
+            application=wrong_admin,
+        )
+        hidden_admin = json.loads(capsys.readouterr().out)
         public_health = action_client.health()
     finally:
         _stop(private, private_thread)
@@ -82,8 +93,13 @@ def test_private_and_public_listeners_have_disjoint_route_surfaces(tmp_path):
 
     assert private_result == public_result
     assert private_result["ok"]
-    assert hidden_action == {"error": "not_found", "ok": False}
-    assert hidden_admin == {"error": "not_found", "ok": False}
+    assert getattr(hidden_action.value, "rule", None) == "service_response_invalid"
+    assert admin_status != 0
+    assert hidden_admin["code"] == "INTERNAL_ERROR"
+    assert hidden_admin["submission_id"] == "eff7ba74-c32d-4635-b072-d94f13034cc2"
+    assert "DISH_SERVICE_URL" in hidden_admin["data"]["message"]
+    assert hidden_admin["errors"][0]["rule"] == "service_response_invalid"
+    assert "code" in hidden_admin["errors"][0]["missing_fields"]
     assert public_health == {"error": "not_found", "ok": False}
     assert backend.writes == 0
     assert backend.moves == 0

@@ -12,8 +12,23 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from dish_tool.errors import DishRuleError
-from dish_tool.results import error_envelope
 from .identifiers import require_dish_uuid
+
+
+_RESULT_ENVELOPE_FIELDS = frozenset(
+    {
+        "ok",
+        "command",
+        "code",
+        "task_gid",
+        "submission_id",
+        "state",
+        "retryable",
+        "allowed_actions",
+        "data",
+        "errors",
+    }
+)
 
 
 class DishServiceClient:
@@ -91,6 +106,28 @@ class DishServiceClient:
             client["request_id"] = request_id
         return client
 
+    def _result_request(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        payload: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        result = self._json_request(path, method=method, payload=payload)
+        present = set(result) if isinstance(result, dict) else set()
+        missing = sorted(_RESULT_ENVELOPE_FIELDS - present)
+        if missing:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                (
+                    "dish service returned a noncanonical command result; "
+                    "verify DISH_SERVICE_URL points to the correct listener"
+                ),
+                rule="service_response_invalid",
+                details={"missing_fields": missing},
+            )
+        return result
+
     def health(self) -> dict[str, Any]:
         return self._json_request("/health")
 
@@ -115,7 +152,7 @@ class DishServiceClient:
         prepared = dict(arguments or keyword_arguments)
         if command in {"create", "start", "prepare", "approve", "reject", "submit"} and request_id is None:
             request_id = str(uuid.uuid4())
-        return self._json_request(
+        return self._result_request(
             f"/v1/commands/{command}",
             method="POST",
             payload={
@@ -133,7 +170,7 @@ class DishServiceClient:
         task_gid: str | None = None,
         submission_id: str | None = None,
     ) -> dict[str, Any]:
-        return self._json_request(
+        return self._result_request(
             f"/v1/argument-failures/{command}",
             method="POST",
             payload={
@@ -159,7 +196,7 @@ class DishServiceClient:
     ) -> dict[str, Any]:
         if request_id is None:
             request_id = str(uuid.uuid4())
-        return self._json_request(
+        return self._result_request(
             f"/v1/leases/{operation_id}/renew",
             method="POST",
             payload={"client": self._client(request_id=request_id)},
@@ -176,7 +213,7 @@ class DishAdminServiceClient(DishServiceClient):
         task_gid: str | None = None,
         submission_id: str | None = None,
     ) -> dict[str, Any]:
-        return self._json_request(
+        return self._result_request(
             f"/v1/admin/argument-failures/{command}",
             method="POST",
             payload={
@@ -206,7 +243,7 @@ class DishAdminServiceClient(DishServiceClient):
         prepared = dict(arguments or keyword_arguments)
         if request_id is None:
             request_id = str(uuid.uuid4())
-        return self._json_request(
+        return self._result_request(
             f"/v1/admin/{command}",
             method="POST",
             payload={
@@ -225,7 +262,7 @@ class DishAdminServiceClient(DishServiceClient):
         operation_id = require_dish_uuid(operation_id, field="operation_id")
         if request_id is None:
             request_id = str(uuid.uuid4())
-        return self._json_request(
+        return self._result_request(
             f"/v1/admin/leases/{operation_id}/recover",
             method="POST",
             payload={
@@ -239,7 +276,7 @@ class DishAdminServiceClient(DishServiceClient):
     ) -> dict[str, Any]:
         if request_id is None:
             request_id = str(uuid.uuid4())
-        return self._json_request(
+        return self._result_request(
             "/v1/admin/backups/create",
             method="POST",
             payload={"label": label, "client": self._client(request_id=request_id)},
@@ -250,7 +287,7 @@ class DishAdminServiceClient(DishServiceClient):
     ) -> dict[str, Any]:
         if request_id is None:
             request_id = str(uuid.uuid4())
-        return self._json_request(
+        return self._result_request(
             "/v1/admin/backups/restore",
             method="POST",
             payload={"backup_id": backup_id, "client": self._client(request_id=request_id)},
@@ -271,7 +308,7 @@ class DishActionClient(DishServiceClient):
         prepared = dict(arguments or keyword_arguments)
         if command in {"create", "start", "prepare", "approve", "reject", "submit", "renew-lease"} and request_id is None:
             request_id = str(uuid.uuid4())
-        return self._json_request(
+        return self._result_request(
             f"/v1/action/{command}",
             method="POST",
             payload={
@@ -285,7 +322,7 @@ class DishActionClient(DishServiceClient):
     ) -> dict[str, Any]:
         if request_id is None:
             request_id = str(uuid.uuid4())
-        return self._json_request(
+        return self._result_request(
             "/v1/action/renew-lease",
             method="POST",
             payload={
