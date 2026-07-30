@@ -364,6 +364,19 @@ cycle abandonment, successor operation/cycle creation, baseline transfer, lineag
 state together. No CLI, HTTP route, or workflow policy may call this foundation until the later
 stage-specific classification and CurrentWorkflowService authority work is implemented.
 
+The internal abandonment frontier policy now lives in `dish_tool.abandonment` and is routed only
+through `CurrentWorkflowService`; it is still not a command surface. The policy rereads the exact
+live task and revalidates the persisted latest actor attempt before selecting one of four bounded
+results: clean restart preparation, preservation of a pre-construction Research hold, completion of
+an already-applied recovery suffix, or manual reconciliation. It never initiates compensation. A
+clean restart requires exact baseline and placement plus no pending steps or unresolved effects.
+Committed finalization is limited to existing `step9.recover_operation(..., applied)` suffixes whose
+external write or movement is already proved by the live task; the classifier verifies that recovery
+will not issue a new external effect. If that existing recovery commits before abandonment result
+bookkeeping, a subsequent reconciliation recognizes the already-terminal or independently
+continuable route and completes the abandonment without repeating recovery. Successor construction
+remains deferred to the role-specific stages, and no CLI or HTTP route exposes this policy yet.
+
 Request-scoped lease renewal, expired-lease recovery, and explicit administrative lease expiry
 commit the lease effect and replayable service-request result in the same SQLite transaction; neither
 fact may become durable alone. `expire-lease` resolves an exact lease ID or the one active lease for a

@@ -634,6 +634,30 @@ class CurrentWorkflowService:
             operation_id, "recover", executor, schema=schema, assert_action=False
         )
 
+    def classify_abandonment(self, abandonment_id: str):
+        """Return the internal clean/committed abandonment frontier."""
+        from .abandonment import classify_abandonment_frontier
+
+        return classify_abandonment_frontier(
+            self.conn, self.backend, abandonment_id=abandonment_id
+        )
+
+    def settle_abandonment_frontier(
+        self, abandonment_id: str, *, reason: str
+    ):
+        """Persist only blocked/hold or already-committed abandonment state.
+
+        Clean successor creation is intentionally not part of this stage.
+        """
+        from .abandonment import settle_abandonment_frontier
+
+        return settle_abandonment_frontier(
+            self.conn,
+            self.backend,
+            abandonment_id=abandonment_id,
+            reason=reason,
+        )
+
     def cancel(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         def checked() -> T:
             op = self.operation(operation_id)
