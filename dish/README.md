@@ -169,6 +169,7 @@ evidence is fabricated.
 `dish-admin` is Marco-only. In service mode it exposes:
 
 - `recover-lease` to release an expired client/run lease without transferring workflow ownership to Marco;
+- `expire-lease` to release the active lease selected by exact lease ID, task GID, or a supported Asana task URL;
 - `recover` for ambiguous operation-backed write or movement evidence;
 - `reopen-planning` to reopen a completed bare task and, after interruption, replay the exact original request UUID without blindly repeating the Asana update;
 - `repair-destination` to replace only an approved Planning destination after an unrecoverable final movement failure, while preserving the original Verification evidence;
@@ -190,7 +191,18 @@ The replacement must be a current legal Cooking destination. The command changes
 does not replace or rewrite the approved Verification cycle, and returns `submit` for the pending
 movement.
 
-There is intentionally no generic `unblock` mutation. Existing protocol-specific recovery routes remain authoritative.
+There is intentionally no generic workflow-state `unblock` mutation. `expire-lease` is narrower: it releases one lease row without changing workflow state, actor lineage, execution claims, or unresolved external-effect evidence. It is a point-in-time release, not durable run revocation; the previous run may acquire a new lease if it remains lineage-eligible and no replacement lease exists.
+
+Use it only in shared-service mode:
+
+```sh
+dish-admin expire-lease LEASE_ID_OR_TASK_GID_OR_TASK_URL \
+  --reason "agent process died"
+```
+
+The task-URL target accepts only `https://app.asana.com/0/PROJECT_GID/TASK_GID` and `https://app.asana.com/1/WORKSPACE_GID/project/PROJECT_GID/task/TASK_GID`. This operator-only parser is intentionally narrower than the deferred agent-surface URL design.
+
+Before dispatch, `dish-admin` prints the request UUID and `DISH_CLIENT_RUN_ID` to stderr. If stdout returns `BACKEND_UNCERTAIN / service_response_ambiguous`, retain the same admin principal and `DISH_CLIENT_RUN_ID`, then retry the identical normalized target and trimmed reason with `--request-id` set to that UUID. A fresh task-target request is new work and may release a replacement lease.
 
 An interrupted Planning reopen blocks only that task from another reopen or Planning start. Check
 `GET /health` at `startup.planning_reopen_recovery`: `resume_safe` means exact replay may perform the

@@ -13,6 +13,7 @@ _ASANA_GID_FIELDS = {"task_gid", "project_gid", "section_gid"}
 _DISH_UUID_FIELDS = {
     "submission_id",
     "operation_id",
+    "lease_id",
     "cycle_id",
     "verification_cycle_id",
 }

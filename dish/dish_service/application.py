@@ -33,6 +33,7 @@ from dish_tool.models import (
 from dish_tool.operation_execution import (
     execution_claim_is_live,
     execution_recovery_state,
+    live_operation_execution_claim,
 )
 from dish_tool.step5 import diagnostics_for, start_result_data
 from dish_tool.step7 import replay_verification_read
@@ -53,6 +54,7 @@ from .backup_creation_journal import (
     reserve_backup_creation,
 )
 from .config import ServiceConfig
+from .identifiers import require_asana_gid, require_dish_uuid
 from .leases import LeaseManager, ServicePrincipal
 from .maintenance import MaintenanceGate
 from .request_replay import begin_request, complete_request, pending_error, stored_result
@@ -598,6 +600,23 @@ class DishService:
             "acquired_at": row["acquired_at"],
             "renewed_at": row["renewed_at"],
             "expires_at": row["expires_at"],
+        }
+
+    @staticmethod
+    def _lease_expiry_payload(row) -> dict[str, Any] | None:
+        if row is None:
+            return None
+        return {
+            "lease_id": row["lease_id"],
+            "operation_id": row["operation_id"],
+            "task_gid": row["task_gid"],
+            "owner_id": row["owner_id"],
+            "run_id": row["run_id"],
+            "acquired_at": row["acquired_at"],
+            "renewed_at": row["renewed_at"],
+            "expires_at": row["expires_at"],
+            "released_at": row["released_at"],
+            "release_reason": row["release_reason"],
         }
 
     @staticmethod
@@ -2064,6 +2083,217 @@ class DishService:
                     result.setdefault("data", {})["request_id"] = request_id
                     complete_request(conn, request_id=request_id, result=result)
                 return result
+            finally:
+                conn.close()
+
+    def expire_lease(
+        self,
+        principal: ServicePrincipal,
+        *,
+        lease_id: str | None = None,
+        task_gid: str | None = None,
+        reason: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Release one exact or task-selected lease without changing workflow state."""
+
+        command = "expire-lease"
+        if (lease_id is None) == (task_gid is None):
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "exactly one of lease_id and task_gid is required",
+                rule="lease_expiry_target_invalid",
+                details={"fields": ["lease_id", "task_gid"]},
+            )
+        request_id = require_dish_uuid(request_id, field="client.request_id")
+        if lease_id is not None:
+            lease_id = require_dish_uuid(lease_id, field="lease_id")
+        if task_gid is not None:
+            task_gid = require_asana_gid(task_gid, field="task_gid")
+        if not isinstance(reason, str):
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "reason must be a JSON string",
+                rule="lease_expiry_reason_invalid",
+                details={"field": "reason"},
+            )
+        reason = reason.strip()
+        if not reason:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "lease expiry reason is required",
+                rule="lease_expiry_reason_required",
+                details={"field": "reason"},
+            )
+        arguments = {
+            **({"lease_id": lease_id} if lease_id is not None else {}),
+            **({"task_gid": task_gid} if task_gid is not None else {}),
+            "reason": reason,
+        }
+        with self._maintenance_gate.request():
+            try:
+                conn = self._initialize_database(
+                    surface="admin-lease-expiry",
+                    command=command,
+                    request_id=request_id,
+                    principal=principal,
+                    task_gid=task_gid,
+                )
+            except Exception as exc:
+                result = error_envelope(
+                    command,
+                    _database_initialization_error(exc),
+                    task_gid=task_gid,
+                )
+                result["allowed_actions"] = []
+                result.setdefault("data", {})["request_id"] = request_id
+                return result
+
+            try:
+                try:
+                    request_row, _started = begin_request(
+                        conn,
+                        request_id=request_id,
+                        owner_id=principal.owner_id,
+                        run_id=principal.run_id,
+                        command=command,
+                        arguments=arguments,
+                    )
+                except DishRuleError as exc:
+                    result = error_envelope(command, exc, task_gid=task_gid)
+                    result["allowed_actions"] = []
+                    result.setdefault("data", {})["request_id"] = request_id
+                    return result
+
+                prior = stored_result(request_row)
+                if prior is not None:
+                    prior["allowed_actions"] = []
+                    return prior
+
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    current_request = conn.execute(
+                        "SELECT * FROM service_requests WHERE request_id=?",
+                        (request_id,),
+                    ).fetchone()
+                    prior = stored_result(current_request)
+                    if prior is not None:
+                        prior["allowed_actions"] = []
+                        conn.execute("COMMIT")
+                        return prior
+
+                    leases = self._lease_manager(conn)
+                    selected = (
+                        leases.by_id(lease_id)
+                        if lease_id is not None
+                        else leases.active_for_task(str(task_gid))
+                    )
+
+                    operation = None
+                    if selected is not None:
+                        operation = conn.execute(
+                            "SELECT task_gid,status FROM operations WHERE operation_id=?",
+                            (selected["operation_id"],),
+                        ).fetchone()
+                        if operation is None:
+                            raise DishRuleError(
+                                "INTERNAL_ERROR",
+                                "service lease lost its operation",
+                                rule="service_lease_operation_missing",
+                                details={"lease_id": selected["lease_id"]},
+                            )
+
+                    if selected is None and lease_id is not None:
+                        error = DishRuleError(
+                            "NOT_FOUND",
+                            "service lease not found",
+                            rule="service_lease_not_found",
+                            details={"lease_id": lease_id},
+                        )
+                        result = error_envelope(command, error)
+                    elif selected is None:
+                        result = result_envelope(
+                            command=command,
+                            task_gid=task_gid,
+                            allowed_actions=[],
+                            data={
+                                "outcome": "no_active_lease",
+                                "released": False,
+                                "lease": None,
+                                "ownership_transferred": False,
+                                "request_id": request_id,
+                            },
+                        )
+                    elif selected["released_at"] is not None:
+                        result = result_envelope(
+                            command=command,
+                            task_gid=selected["task_gid"],
+                            submission_id=selected["operation_id"],
+                            state=operation["status"],
+                            allowed_actions=[],
+                            data={
+                                "outcome": "already_released",
+                                "released": False,
+                                "lease": self._lease_expiry_payload(selected),
+                                "ownership_transferred": False,
+                                "request_id": request_id,
+                            },
+                        )
+                    else:
+                        claim = live_operation_execution_claim(
+                            conn, operation_id=selected["operation_id"]
+                        )
+                        if claim is not None:
+                            error = DishRuleError(
+                                "CONFLICT",
+                                "another mutation is already executing for this operation",
+                                rule="operation_mutation_in_progress",
+                                retryable=True,
+                                details={
+                                    "operation_id": selected["operation_id"],
+                                    "command": claim["command"],
+                                    "acquired_at": claim["acquired_at"],
+                                },
+                            )
+                            result = error_envelope(
+                                command,
+                                error,
+                                task_gid=selected["task_gid"],
+                                submission_id=selected["operation_id"],
+                                state=operation["status"],
+                            )
+                        else:
+                            released, changed = leases.admin_expire_selected(
+                                selected["lease_id"],
+                                reason=f"admin expiry: {reason}",
+                                manage_transaction=False,
+                            )
+                            result = result_envelope(
+                                command=command,
+                                task_gid=released["task_gid"],
+                                submission_id=released["operation_id"],
+                                state=operation["status"],
+                                allowed_actions=[],
+                                data={
+                                    "outcome": (
+                                        "released" if changed else "already_released"
+                                    ),
+                                    "released": changed,
+                                    "lease": self._lease_expiry_payload(released),
+                                    "ownership_transferred": False,
+                                    "request_id": request_id,
+                                },
+                            )
+
+                    result["allowed_actions"] = []
+                    result.setdefault("data", {})["request_id"] = request_id
+                    complete_request(conn, request_id=request_id, result=result)
+                    conn.execute("COMMIT")
+                    return result
+                except Exception:
+                    if conn.in_transaction:
+                        conn.execute("ROLLBACK")
+                    raise
             finally:
                 conn.close()
 

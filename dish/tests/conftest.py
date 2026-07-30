@@ -38,6 +38,7 @@ SMOKE_TEST_FILES = {
     "test_dish_001_unknown_operation_request_replay.py",
     "test_dish_006_restore_database_mode.py",
     "test_dish_tool_r10_concurrency_constraints.py",
+    "test_dish_admin_expire_lease.py",
 }
 
 

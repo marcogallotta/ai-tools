@@ -344,9 +344,17 @@ Concurrency uses separate mechanisms for separate facts:
 5. the in-process maintenance gate makes restore exclusive while ordinary requests may run
    concurrently.
 
-Request-scoped lease renewal and administrative lease recovery commit the lease effect and
-replayable service-request result in the same SQLite transaction; neither fact may become durable
-alone. Protocol recovery of an unresolved uncertain execution is narrower: when that exact durable
+Request-scoped lease renewal, expired-lease recovery, and explicit administrative lease expiry
+commit the lease effect and replayable service-request result in the same SQLite transaction; neither
+fact may become durable alone. `expire-lease` resolves an exact lease ID or the one active lease for a
+task inside that writer transaction and releases it only when the existing process-identity helper
+reports no live operation execution claim. The claim row and all workflow/recovery evidence remain
+untouched. Exact request replay returns the stored outcome without resolving the target again, so a
+replacement lease is never affected by replay. This is a point-in-time lease release, not durable
+owner/run revocation: the previous run may automatically reacquire if durable actor lineage still
+permits it and no other active lease exists.
+
+Protocol recovery of an unresolved uncertain execution is narrower: when that exact durable
 execution advertises `required_admin_action: recover`, Marco may run only that recovery while the
 original actor lease is still live. The lease remains bound to its owner/run and is never
 transferred. If that exact recovery durably resolves the execution into a role-handoff phase, the
@@ -457,7 +465,7 @@ clear home.
 ## Deliberately absent
 
 Dish is not a general multi-user platform, raw Asana proxy, generic task editor, automatic semantic
-recipe judge, or writable legacy workflow. It has no arbitrary admin unblock.
+recipe judge, or writable legacy workflow. It has no arbitrary workflow-state admin unblock; the private `expire-lease` authority is limited to releasing a service lease and cannot alter workflow facts.
 
 Tracked gaps and accepted limitations belong in [`known-issues.md`](known-issues.md). Broader
 post-activation proposals belong in [`future.md`](future.md), not in current architecture.

@@ -9,8 +9,11 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from dish_tool.constants import EXIT_STATUS_BY_CODE
 from dish_tool.errors import DishRuleError
-from .identifiers import require_dish_uuid
+from dish_tool.results import result_envelope
+
+from .identifiers import require_asana_gid, require_dish_uuid
 
 
 _RESULT_ENVELOPE_FIELDS = frozenset(
@@ -140,6 +143,128 @@ class DishServiceClient:
                 details={"missing_fields": missing},
             )
         return result
+
+    @staticmethod
+    def _validate_canonical_result(
+        result: Any, *, expected_command: str
+    ) -> dict[str, Any]:
+        if not isinstance(result, dict):
+            raise ValueError("command result is not a JSON object")
+        present = set(result)
+        missing = sorted(_RESULT_ENVELOPE_FIELDS - present)
+        extras = sorted(present - _RESULT_ENVELOPE_FIELDS)
+        if missing or extras:
+            raise ValueError(
+                f"command result fields are invalid: missing={missing}, extras={extras}"
+            )
+        if not isinstance(result["ok"], bool):
+            raise ValueError("ok must be boolean")
+        if result["command"] != expected_command:
+            raise ValueError("command does not match the request")
+        if result["code"] not in EXIT_STATUS_BY_CODE:
+            raise ValueError("code is not recognized")
+        if result["ok"] != (result["code"] == "OK"):
+            raise ValueError("ok and code are inconsistent")
+        for field in ("task_gid", "submission_id", "state"):
+            if result[field] is not None and not isinstance(result[field], str):
+                raise ValueError(f"{field} must be a string or null")
+        if not isinstance(result["retryable"], bool):
+            raise ValueError("retryable must be boolean")
+        if not isinstance(result["allowed_actions"], list) or not all(
+            isinstance(item, str) for item in result["allowed_actions"]
+        ):
+            raise ValueError("allowed_actions must be a string array")
+        if not isinstance(result["data"], dict):
+            raise ValueError("data must be an object")
+        if not isinstance(result["errors"], list) or not all(
+            isinstance(item, dict) for item in result["errors"]
+        ):
+            raise ValueError("errors must be an object array")
+        return result
+
+    def _ambiguous_expire_lease_result(
+        self, *, request_id: str, task_gid: str | None
+    ) -> dict[str, Any]:
+        return result_envelope(
+            command="expire-lease",
+            ok=False,
+            code="BACKEND_UNCERTAIN",
+            task_gid=task_gid,
+            retryable=False,
+            allowed_actions=[],
+            data={
+                "message": "the service may have processed the lease-expiry request",
+                "request_id": request_id,
+                "run_id": self.run_id,
+                "request_replay_required": True,
+                "required_next_action": "retry_exact_request",
+            },
+            errors=[{"rule": "service_response_ambiguous"}],
+        )
+
+    def _expire_lease_request(
+        self,
+        *,
+        payload: Mapping[str, Any],
+        request_id: str,
+        task_gid: str | None,
+    ) -> dict[str, Any]:
+        body = json.dumps(dict(payload), separators=(",", ":")).encode("utf-8")
+        url = urlsplit(f"{self.base_url}/v1/admin/leases/expire")
+        target = url.path or "/"
+        if url.query:
+            target = f"{target}?{url.query}"
+        connection_cls = (
+            http.client.HTTPSConnection
+            if url.scheme == "https"
+            else http.client.HTTPConnection
+        )
+        connection = connection_cls(
+            url.hostname, url.port, timeout=self.connect_timeout
+        )
+        try:
+            try:
+                connection.connect()
+                connection.sock.settimeout(self.response_timeout)
+            except (OSError, http.client.HTTPException) as exc:
+                raise DishRuleError(
+                    "BACKEND_REJECTED",
+                    "dish service is unavailable",
+                    rule="service_unavailable",
+                    retryable=True,
+                ) from exc
+
+            try:
+                # From this point onward, request bytes may have reached the
+                # service. Every failure therefore requires exact replay.
+                connection.request(
+                    "POST",
+                    target,
+                    body=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                        "Authorization": f"Bearer {self.token}",
+                    },
+                )
+                response = connection.getresponse()
+                raw = response.read()
+            except (OSError, http.client.HTTPException):
+                return self._ambiguous_expire_lease_result(
+                    request_id=request_id, task_gid=task_gid
+                )
+        finally:
+            connection.close()
+
+        try:
+            decoded = json.loads(raw.decode("utf-8"))
+            return self._validate_canonical_result(
+                decoded, expected_command="expire-lease"
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError):
+            return self._ambiguous_expire_lease_result(
+                request_id=request_id, task_gid=task_gid
+            )
 
     def health(self) -> dict[str, Any]:
         return self._json_request("/health")
@@ -282,6 +407,52 @@ class DishAdminServiceClient(DishServiceClient):
                 "reason": reason,
                 "client": self._client(request_id=request_id),
             },
+        )
+
+    def expire_lease(
+        self,
+        *,
+        lease_id: str | None = None,
+        task_gid: str | None = None,
+        reason: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        if (lease_id is None) == (task_gid is None):
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "exactly one of lease_id and task_gid is required",
+                rule="lease_expiry_target_invalid",
+            )
+        if lease_id is not None:
+            lease_id = require_dish_uuid(lease_id, field="lease_id")
+        if task_gid is not None:
+            task_gid = require_asana_gid(task_gid, field="task_gid")
+        request_id = require_dish_uuid(request_id, field="client.request_id")
+        if not isinstance(reason, str):
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "reason must be a string",
+                rule="lease_expiry_reason_invalid",
+                details={"field": "reason"},
+            )
+        clean_reason = reason.strip()
+        if not clean_reason:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "lease expiry reason is required",
+                rule="lease_expiry_reason_required",
+                details={"field": "reason"},
+            )
+        payload = {
+            **({"lease_id": lease_id} if lease_id is not None else {}),
+            **({"task_gid": task_gid} if task_gid is not None else {}),
+            "reason": clean_reason,
+            "client": self._client(request_id=request_id),
+        }
+        return self._expire_lease_request(
+            payload=payload,
+            request_id=request_id,
+            task_gid=task_gid,
         )
 
     def create_backup(

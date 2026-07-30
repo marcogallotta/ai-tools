@@ -114,10 +114,12 @@ signed content.
 ### Natural-language dish lookup and generalized task-authority
 
 Nothing here blocks rollout. The state-driven Custom GPT instructions (closing the "create" vs.
-"existing task" decision gap) are worth doing soon after rollout, but not scheduled. The tool-side
-`task_url`-to-`task_gid` extraction once bundled with that work is deferred as currently
+"existing task" decision gap) are worth doing soon after rollout, but not scheduled. The general
+agent-surface `task_url`-to-`task_gid` extraction once bundled with that work is deferred as currently
 unnecessary: agents already resolve Asana task URLs correctly without dedicated `dish`-side parsing,
-revisit only if that stops holding up. The `create` collision check and the
+revisit only if that stops holding up. The implemented `dish-admin expire-lease` parser does not
+change this status: it is an operator-only, intentionally narrower two-form parser and rejects the
+old optional `/f` suffix retained in the deferred agent design. The `create` collision check and the
 `dish_find`/`TaskWorkflowSnapshot` authority generalization have no near-term timeframe at all —
 worth having eventually, not a response to observed evidence, and meaningfully more work than the
 instructions rewrite (the authority generalization touches the core action-authority invariant every

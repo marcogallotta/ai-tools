@@ -195,6 +195,20 @@ def execution_claim_is_live(
     return bool(row is not None and process_identity_is_live(_identity(row)))
 
 
+def live_operation_execution_claim(
+    conn: sqlite3.Connection, *, operation_id: str
+):
+    """Return the operation claim only when its recorded process is still live."""
+
+    row = conn.execute(
+        "SELECT * FROM operation_execution_claims WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()
+    if row is None or not process_identity_is_live(_identity(row)):
+        return None
+    return row
+
+
 def claim_operation_execution(
     conn: sqlite3.Connection,
     *,

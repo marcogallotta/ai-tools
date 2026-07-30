@@ -58,6 +58,17 @@ class LeaseManager:
             (operation_id,),
         ).fetchone()
 
+    def by_id(self, lease_id: str):
+        return self.conn.execute(
+            "SELECT * FROM service_leases WHERE lease_id=?", (lease_id,)
+        ).fetchone()
+
+    def active_for_task(self, task_gid: str):
+        return self.conn.execute(
+            "SELECT * FROM service_leases WHERE task_gid=? AND released_at IS NULL",
+            (task_gid,),
+        ).fetchone()
+
     def is_expired(self, row) -> bool:
         return _parse(row["expires_at"]) <= self.now()
 
@@ -616,6 +627,42 @@ class LeaseManager:
             if manage_transaction:
                 self.conn.execute("COMMIT")
             return released
+        except Exception:
+            if manage_transaction and self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
+            raise
+
+    def admin_expire_selected(
+        self,
+        lease_id: str,
+        *,
+        reason: str,
+        manage_transaction: bool = True,
+    ):
+        """Release one exact active lease without changing any workflow authority."""
+
+        now = self.now()
+        if manage_transaction:
+            self.conn.execute("BEGIN IMMEDIATE")
+        elif not self.conn.in_transaction:
+            raise RuntimeError("lease expiry requires an active caller transaction")
+        try:
+            row = self.by_id(lease_id)
+            if row is None:
+                raise DishRuleError(
+                    "NOT_FOUND",
+                    "service lease not found",
+                    rule="service_lease_not_found",
+                    details={"lease_id": lease_id},
+                )
+            if row["released_at"] is not None:
+                if manage_transaction:
+                    self.conn.execute("COMMIT")
+                return row, False
+            released = self._release_row(row, reason=reason, now=now)
+            if manage_transaction:
+                self.conn.execute("COMMIT")
+            return released, True
         except Exception:
             if manage_transaction and self.conn.in_transaction:
                 self.conn.execute("ROLLBACK")

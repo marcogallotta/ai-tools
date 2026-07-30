@@ -74,7 +74,12 @@ deferred (see status above) and kept here only as reference design.
    uses, this exception can be removed.
 
 1. **`task_url` resolved by `dish` itself, not parsed by the GPT — deferred, not currently planned;
-   see status above.** Deliberately not GPT-side text parsing: extracting the right ID out of a real
+   see status above.** The implemented `dish-admin expire-lease` target parser is a separate
+   operator-only surface, not this deferred agent feature. It deliberately accepts only
+   `/0/<project_gid>/<task_gid>` and
+   `/1/<workspace_gid>/project/<project_gid>/task/<task_gid>` and rejects the optional old `/f`
+   suffix described below. Do not infer that `read` or `start` now accepts task URLs, or reuse the
+   narrower expiry grammar as the future agent-surface contract. Deliberately not GPT-side text parsing: extracting the right ID out of a real
    Asana URL is exactly the kind of thing that should be guaranteed-correct code, not an LLM
    applying a grammar from prose and being merely *usually* right — the same principle already
    governing `dish_find`'s deterministic exact tier elsewhere in this design. `read` and `start`

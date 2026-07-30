@@ -17,7 +17,7 @@ from dish_tool.results import error_envelope
 
 from .application import DishService
 from .auth import authenticate_bearer
-from .identifiers import require_dish_uuid, validate_identifier_fields
+from .identifiers import require_asana_gid, require_dish_uuid, validate_identifier_fields
 from .leases import ServicePrincipal
 from .command_spec import ACTION_COMMANDS, REPLAY_CAPABLE_COMMANDS, REPLAY_SAFE_COMMANDS, validate_action_request
 from .openapi import action_openapi
@@ -43,7 +43,14 @@ def _object_without_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, An
 def _requires_request_id(surface: str, command: str) -> bool:
     if surface in {"agent", "action"}:
         return command in REPLAY_SAFE_COMMANDS
-    return surface in {"lease", "action-lease", "admin", "admin-lease", "admin-backup"}
+    return surface in {
+        "lease",
+        "action-lease",
+        "admin",
+        "admin-lease",
+        "admin-lease-expiry",
+        "admin-backup",
+    }
 
 
 def _replay_arguments(
@@ -59,6 +66,12 @@ def _replay_arguments(
         return {"operation_id": parts[2]}
     if surface == "admin-lease":
         return {"operation_id": parts[3], "reason": str(request.get("reason") or "").strip()}
+    if surface == "admin-lease-expiry":
+        return {
+            key: request[key]
+            for key in ("lease_id", "task_gid", "reason")
+            if key in request
+        }
     if surface == "admin-backup" and command == "backup-create":
         return {"label": str(request.get("label") or "manual")}
     if surface == "admin-backup" and command == "backup-restore":
@@ -260,6 +273,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             allowed = {"client"}
         elif surface == "admin-lease":
             allowed = {"client", "reason"}
+        elif surface == "admin-lease-expiry":
+            allowed = {"client", "lease_id", "task_gid", "reason"}
         elif surface == "admin-backup":
             allowed = (
                 {"client", "label"}
@@ -335,6 +350,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             surface, command = "admin", parts[2]
         elif len(parts) == 5 and parts[:3] == ["v1", "admin", "leases"] and parts[4] == "recover":
             surface, command = "admin-lease", "recover-lease"
+        elif parts == ["v1", "admin", "leases", "expire"]:
+            surface, command = "admin-lease-expiry", "expire-lease"
         elif parts == ["v1", "admin", "backups", "create"]:
             surface, command = "admin-backup", "backup-create"
         elif parts == ["v1", "admin", "backups", "restore"]:
@@ -412,6 +429,45 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 if not reason:
                     raise DishRuleError("INVALID_ARGUMENT", "recovery reason is required", rule="recovery_reason_required")
                 payload = self.server.service.recover_lease(parts[3], principal, reason=reason, request_id=request_id)
+            elif surface == "admin-lease-expiry":
+                has_lease_id = "lease_id" in request
+                has_task_gid = "task_gid" in request
+                if has_lease_id == has_task_gid:
+                    raise DishRuleError(
+                        "INVALID_ARGUMENT",
+                        "exactly one of lease_id and task_gid is required",
+                        rule="lease_expiry_target_invalid",
+                        details={"fields": ["lease_id", "task_gid"]},
+                    )
+                raw_reason = request.get("reason")
+                if not isinstance(raw_reason, str):
+                    raise DishRuleError(
+                        "INVALID_ARGUMENT",
+                        "reason must be a JSON string",
+                        rule="lease_expiry_reason_invalid",
+                        details={"field": "reason"},
+                    )
+                reason = raw_reason.strip()
+                if not reason:
+                    raise DishRuleError(
+                        "INVALID_ARGUMENT",
+                        "lease expiry reason is required",
+                        rule="lease_expiry_reason_required",
+                        details={"field": "reason"},
+                    )
+                lease_id = None
+                task_gid = None
+                if has_lease_id:
+                    lease_id = require_dish_uuid(request["lease_id"], field="lease_id")
+                else:
+                    task_gid = require_asana_gid(request["task_gid"], field="task_gid")
+                payload = self.server.service.expire_lease(
+                    principal,
+                    lease_id=lease_id,
+                    task_gid=task_gid,
+                    reason=reason,
+                    request_id=request_id,
+                )
             elif surface == "action" and command == "renew-lease":
                 arguments = request["arguments"]
                 payload = self.server.service.renew_lease(
@@ -472,7 +528,13 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             if (
                 (
                     (surface in {"action", "agent"} and command in REPLAY_CAPABLE_COMMANDS)
-                    or surface in {"lease", "admin", "admin-lease", "admin-backup"}
+                    or surface in {
+                        "lease",
+                        "admin",
+                        "admin-lease",
+                        "admin-lease-expiry",
+                        "admin-backup",
+                    }
                 )
                 and principal is not None
                 and isinstance(request, dict)

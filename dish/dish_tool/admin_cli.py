@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+import uuid
 from typing import Sequence
 
 from .admin import DishAdminApplication
@@ -15,10 +16,12 @@ from .backend import AsanaBackend
 from .releases import configured_honest_path, resolve_release
 from dish_service.client import DishAdminServiceClient
 from dish_service.database_ownership import ServiceDatabaseOwnership
+from dish_service.identifiers import require_asana_gid, require_dish_uuid
+from dish_service.task_urls import task_gid_from_url
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
-_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease", "backup-create", "backup-restore"}
+_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease", "expire-lease", "backup-create", "backup-restore"}
 _OPERATION_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease"}
 
 
@@ -109,6 +112,17 @@ def build_parser() -> JsonArgumentParser:
     recover_lease.add_argument("submission_id")
     recover_lease.add_argument("--reason", required=True)
 
+    expire_lease = subparsers.add_parser(
+        "expire-lease",
+        help="release an active service lease by lease ID, task GID, or supported Asana task URL",
+    )
+    expire_lease.add_argument("target")
+    expire_lease.add_argument("--reason", required=True)
+    expire_lease.add_argument(
+        "--request-id",
+        help="replay the exact lease-expiry request UUID after an ambiguous response",
+    )
+
     backup_create = subparsers.add_parser(
         "backup-create", help="create a validated online snapshot of the shared database"
     )
@@ -187,6 +201,131 @@ def build_application():
     return DishAdminApplication(initialize_database(DB_PATH), backend=AsanaBackend(), release_loader=lambda: resolve_release(honest_root, include_migrations=True))
 
 
+def _build_expire_lease_client() -> DishAdminServiceClient:
+    mode = os.environ.get("DISH_MODE", "").strip().lower()
+    service_url = os.environ.get("DISH_SERVICE_URL", "").strip()
+    if mode not in {"", "local", "service"}:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "DISH_MODE must be local or service",
+            rule="dish_mode_invalid",
+        )
+    live_mode = os.environ.get("DISH_LIVE_MODE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    if not mode:
+        if service_url:
+            mode = "service"
+        elif live_mode:
+            raise DishRuleError(
+                "PROTOCOL_INCOMPATIBLE",
+                "live mode requires the shared dish service",
+                rule="shared_service_required",
+            )
+        else:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "DISH_MODE is required; expire-lease requires service mode",
+                rule="dish_mode_required",
+            )
+    if mode != "service":
+        raise DishRuleError(
+            "PROTOCOL_INCOMPATIBLE",
+            "lease expiry requires shared-service mode",
+            rule="shared_service_required",
+        )
+    if not service_url:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "DISH_SERVICE_URL is required in service mode",
+            rule="service_url_required",
+        )
+    run_id = require_dish_uuid(
+        os.environ.get("DISH_CLIENT_RUN_ID", ""), field="DISH_CLIENT_RUN_ID"
+    )
+    return DishAdminServiceClient(
+        service_url,
+        token=os.environ.get("DISH_ADMIN_TOKEN", ""),
+        run_id=run_id,
+        connect_timeout=float(
+            os.environ.get("DISH_SERVICE_CLIENT_CONNECT_TIMEOUT", "10")
+        ),
+        response_timeout=float(
+            os.environ.get("DISH_SERVICE_CLIENT_RESPONSE_TIMEOUT", "600")
+        ),
+    )
+
+
+def _normalize_expire_target(target: str) -> tuple[str | None, str | None]:
+    clean = str(target or "").strip()
+    if clean.isdecimal():
+        return None, require_asana_gid(clean, field="task_gid")
+    if "://" in clean:
+        return None, task_gid_from_url(clean)
+    return require_dish_uuid(clean, field="lease_id"), None
+
+
+def _run_expire_lease(
+    arguments: Sequence[str], *, application: object | None
+) -> int:
+    try:
+        parsed = vars(build_parser().parse_args(list(arguments)))
+        lease_id, task_gid = _normalize_expire_target(parsed["target"])
+        reason = parsed["reason"].strip()
+        if not reason:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "lease expiry reason is required",
+                rule="lease_expiry_reason_required",
+                details={"field": "reason"},
+            )
+        request_id = parsed.get("request_id") or str(uuid.uuid4())
+        request_id = require_dish_uuid(request_id, field="request_id")
+        app = application or _build_expire_lease_client()
+        method = getattr(app, "expire_lease", None)
+        if method is None:
+            raise DishRuleError(
+                "PROTOCOL_INCOMPATIBLE",
+                "lease expiry requires shared-service mode",
+                rule="shared_service_required",
+            )
+        run_id = require_dish_uuid(
+            getattr(app, "run_id", None), field="DISH_CLIENT_RUN_ID"
+        )
+        print(
+            f"expire-lease request_id={request_id} run_id={run_id}",
+            file=sys.stderr,
+            flush=True,
+        )
+        result = method(
+            lease_id=lease_id,
+            task_gid=task_gid,
+            reason=reason,
+            request_id=request_id,
+        )
+    except DishRuleError as exc:
+        result = error_envelope(
+            "expire-lease",
+            exc,
+            task_gid=locals().get("task_gid"),
+        )
+    except Exception as exc:
+        result = error_envelope(
+            "expire-lease",
+            DishRuleError(
+                "INTERNAL_ERROR",
+                "dish-admin command failed",
+                rule="command_failure",
+                details={"error_type": type(exc).__name__},
+            ),
+            task_gid=locals().get("task_gid"),
+        )
+    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    return exit_status(result["code"])
+
+
 def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
     command = argv[0] if argv and not argv[0].startswith("-") else "unknown"
     submission_id = None
@@ -211,6 +350,9 @@ def main(
 
     if "-h" in arguments or "--help" in arguments:
         build_parser().parse_args(arguments)  # prints help and raises SystemExit(0)
+
+    if arguments and arguments[0] == "expire-lease":
+        return _run_expire_lease(arguments, application=application)
 
     context = _argument_context(arguments)
     owned_application = application is None

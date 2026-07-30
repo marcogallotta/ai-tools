@@ -21,7 +21,7 @@ Candidate files are ephemeral complete-text inputs. In service mode the client r
 | Caller | Network path | Credential | Permitted surface |
 |---|---|---|---|
 | `dish` CLI | private Tailscale Serve/tailnet endpoint | agent CLI bearer token | bounded agent commands and lease renewal |
-| `dish-admin` | private Tailscale Serve/tailnet endpoint | separate Marco-admin bearer token | admin workflow, stale-lease recovery, backup/restore |
+| `dish-admin` | private Tailscale Serve/tailnet endpoint | separate Marco-admin bearer token | admin workflow, stale-lease recovery, point-in-time lease release, backup/restore |
 | GPT Action | public Tailscale Funnel endpoint on its own HTTPS port | dedicated Action bearer token | `/v1/action/*` commands and Action lease renewal only |
 | local tests | direct local application mode | local Asana test credential when required | controlled single-agent development only |
 
@@ -89,6 +89,10 @@ includes both `task_gid` and `submission_id`; renewal of a terminal operation re
 
 The durable `operations` constraint is the one-active-operation-per-task lock. A separate durable `operation_execution_claims` row serializes mutation execution for that operation, and partial unique indexes prohibit multiple unresolved writes or movements for it. The service also writes a persistent ownership sidecar and process lock derived from the canonical database target rather than the caller-supplied pathname; direct local CLI/admin mode will not open the same database through a symlink alias, including while the service process is stopped. `service_leases` bind the current actor to an owner identity and run identity with a renewable expiry. Workflow handoff may release the actor lease, but it does not release the task operation lock. `allowed_actions` is principal-aware: a different or expired run receives no ordinary mutation actions even when the underlying workflow phase has one. Every exposed current-action projection is filtered together: top-level `allowed_actions`, `data.legal_next_actions`, and any nested `authoritative_view.legal_actions` all agree. Read-only inspection never mutates lease state. Expired leases fail closed and return no current agent mutation. They set `data.recovery_required: true`, `data.required_admin_action: recover-lease`, `data.resolver: Marco/admin recover-lease`, and an exact private `data.admin_command`; actions that may become legal only afterward are separated under `data.after_recovery.legal_actions`. `recover-lease` is never advertised as a connected Action. Marco runs `dish-admin recover-lease`; recovery releases stale ownership but does not transfer the workflow to Marco. Only a run whose durable actor lineage matches the required workflow role may reclaim a missing lease. The same guidance is preserved by `inspect`, task `read`, expired command failures, lease-renewal failures, exact request replay, and service restart. Admin hold/recovery continuations use temporary request-scoped leases and return the operation unleased for the next valid actor.
 
+`dish-admin expire-lease TARGET --reason TEXT [--request-id UUID]` is a separate private, database-only lease authority. `TARGET` is a canonical lease UUID, an Asana task GID, or one of the two operator URL forms `https://app.asana.com/0/PROJECT_GID/TASK_GID` and `https://app.asana.com/1/WORKSPACE_GID/project/PROJECT_GID/task/TASK_GID`. It releases the selected active row even before natural expiry, but never changes workflow state, actor lineage, execution claims, or external-attempt evidence. A live execution claim, as determined by the existing process-identity helper, returns replay-bound `CONFLICT / operation_mutation_in_progress`; a dead claim remains stored and does not block release. An already-released exact lease and a task with no active lease are successful no-ops; an unknown exact lease UUID is `NOT_FOUND`. The operation may be terminal.
+
+Lease expiry is not durable owner/run revocation. Agents authenticate mutations by owner/run identity and may automatically acquire a missing lease, so the previous run may reacquire if lineage still permits it and no replacement lease exists.
+
 A terminal lease is released only after the operation is terminal and every declared step and
 ambiguous write/movement attempt has a durable completion outcome. Between workflow commit and that
 response cleanup, or after a crash in that window, a complete terminal operation may retain a
@@ -118,7 +122,7 @@ includes the command, canonical arguments, authenticated owner identity, and run
 |---|---|
 | Agent Action/private CLI | `create`, `start`, `prepare`, `approve`, `reject`, `submit` |
 | Marco admin workflow | `migrate`, `reopen`, `recover`, `repair-destination`, `supply-evidence`, `record-human-decision`, `authorize-governed-change`, `discard` |
-| Lease lifecycle | private agent lease renewal; Action `renew-lease`; Marco-admin `recover-lease` |
+| Lease lifecycle | private agent lease renewal; Action `renew-lease`; Marco-admin `recover-lease` and `expire-lease` |
 | Backup lifecycle | `backup-create`, `backup-restore` |
 
 No mutation endpoint is exempt from request identity. Read-only `sections`, `read`, `inspect`, and `health` do not create replay records and do not accept a request ID as mutation authority.
@@ -127,6 +131,7 @@ alongside `client.run_id` and `client.request_id`; it is not supplied as a top-l
 
 - Missing or malformed request IDs are rejected before a request record exists. Once the UUID is accepted, expected argument, state, authorization, and workflow failures are stored just like successes.
 - `reject.reason` is validated after that request record begins but before backend construction, lease mutation, operation execution, evidence insertion, or task write. An unsafe reason therefore completes the request with a stored validation failure; exact replay returns that same failure, while a fresh request UUID with a valid reason may proceed.
+- For `expire-lease`, malformed JSON/body shape, unexpected top-level fields, and invalid client identity fail before journaling. Once principal, run ID, and request ID are valid, exactly-one-target, target-identifier, and reason validation failures are journaled against the raw supplied target/reason. The valid mutation path trims the reason once before hashing and stores that same normalized value as `admin expiry: <reason>`. Correcting a stored validation failure requires a fresh request ID.
 - A repeated completed request returns the original stored result with `data.request_replayed: true` and `data.request_id`; the first response is not labelled as a replay.
 - Reusing an ID for a different command, owner/run, or arguments returns non-retryable `CONFLICT` with `service_request_identity_conflict`.
 - A matching pending or uncertain request is never blindly executed again. Request completion is first-writer-wins: if an original executor and a recovery caller race to persist different envelopes, both callers return the one stored outcome, and the losing response is marked with `data.request_completion_race_resolved=true`. `start` may be reconciled only when exact durable operation and live-state evidence proves the original result. `reopen-planning` may resume the original external call only when persisted pre-effect identity, section, completion state, and `modified_at` still match exactly; otherwise it confirms an already-applied update without repeating it or remains uncertain. For multi-step workflow mutations routed through the current operation service, an active execution claim remains pending; a dead execution is reconstructed from its request-scoped durable baseline and exact changed attempts, content versions, Verification cycles, workflow steps, actor facts, and operation state. A claim-free unresolved uncertain execution still fences every fresh governed mutation on that operation.
@@ -135,12 +140,14 @@ alongside `client.run_id` and `client.request_id`; it is not supplied as a top-l
 - A completed `submit` is replayed from the request ledger. A fresh request ID for the same already-completed logical submission is also satisfied from exact signed-content and destination-movement evidence, without reacquiring a lease or repeating the external movement.
 - Ordinary request records live in `service_requests` and survive service restart. `backup-restore` uses an atomic sibling sidecar journal because the restore replaces the database that contains ordinary request records. The sidecar binds the request to the selected backup, monotonic exact-effect checkpoints, and terminal result across replacement and restart. Checkpoints identify the source bytes, prepared candidate, exact pre-restore destination, pre-replacement live files, installed bytes, validation, and rollback when applicable. A restarted restore resumes or reconstructs only when those durable identities match; a legacy pending row without a checkpoint remains non-retryable and is never inferred or blindly repeated.
 
-The bundled CLI and admin clients generate an ID internally for each first mutation call, but their
-command-line interfaces neither accept a request ID nor expose the generated value after a
-transport failure. A CLI caller therefore cannot perform an exact request replay after response
-loss and must inspect live and durable state instead of blindly rerunning the mutation. A
-programmatic HTTP client may supply and retain an explicit request ID. GPT Action calls must supply
-it explicitly through the imported schema. The public schema marks both `client.request_id` and
+The bundled CLI and admin clients generate an ID internally for most first mutation calls, but most
+command-line interfaces neither accept a request ID nor expose the generated value after a transport
+failure. Those callers must inspect live and durable state instead of blindly rerunning the mutation.
+`dish-admin expire-lease` is the explicit exception: it accepts `--request-id`, prints both request ID
+and `DISH_CLIENT_RUN_ID` to flushed stderr before dispatch, and requires the same authenticated admin
+principal, run ID, request ID, normalized target, and trimmed reason for exact replay. Marco must
+retain that run ID until an ambiguous call is resolved. GPT Action calls supply request identity
+explicitly through the imported schema. The public schema marks both `client.request_id` and
 `client.run_id` as non-nil canonical lowercase UUIDs; `run_id` remains stable for the whole agent run.
 
 ## Health, backup, and startup
@@ -166,6 +173,7 @@ At startup the service validates the database, including semantic impossibilitie
 Admin recovery remains specific rather than generic:
 
 - `recover-lease` releases only an expired actor lease; it never assigns workflow ownership to the admin caller;
+- `expire-lease` releases the exact selected lease or the active lease for a task without changing workflow state. It is not durable run revocation, preserves execution claims, and blocks while `process_identity_is_live` returns true;
 - `recover` reconciles ambiguous backend evidence by live reread. It may execute under the
   originating live actor lease only for the exact uncertain execution that advertised recovery. If
   successful recovery durably reaches `await_verification`, `held_evidence`, or `held_human`, Dish
@@ -176,11 +184,11 @@ Admin recovery remains specific rather than generic:
 - `discard` cancels only a provably unapplied operation;
 - `supply-evidence`, `record-human-decision`, and `reopen` retain their existing protocol meanings.
 
-There is intentionally no general-purpose `unblock` mutation.
+There is intentionally no general-purpose `unblock` mutation for workflow state.
 
 ## Transport and external scope boundary
 
-HTTP bodies are executed only when exactly the declared `Content-Length` bytes were received; a short body is rejected before JSON parsing. Tokens reject surrounding whitespace, numeric timeouts must be finite and positive, and private lease/backup routes reject undeclared fields just like Action/admin routes. The CLI/admin client bounds connect and response waits independently (`connect_timeout`, default 10s; `response_timeout`, default 600s, since one command can legitimately span several sequential 40s Asana calls), always closes its connection after the response, maps abrupt disconnects and connect failures into structured service-unavailable envelopes, and converts a noncanonical command response into `INTERNAL_ERROR / service_response_invalid` instead of exposing it to a CLI renderer.
+HTTP bodies are executed only when exactly the declared `Content-Length` bytes were received; a short body is rejected before JSON parsing. Tokens reject surrounding whitespace, numeric timeouts must be finite and positive, and private lease/backup routes reject undeclared fields just like Action/admin routes. The CLI/admin client bounds connect and response waits independently (`connect_timeout`, default 10s; `response_timeout`, default 600s, since one command can legitimately span several sequential 40s Asana calls) and closes its connection after the response. Ordinary client calls map transport failures to structured service-unavailable results and reject noncanonical responses. `expire-lease` uses stricter phase-aware transport handling: DNS/TCP/TLS or socket-setup failure before dispatch is ordinary `BACKEND_REJECTED / service_unavailable`; timeout, disconnect, truncated body, invalid JSON, or noncanonical output after dispatch may have begun returns local non-retryable `BACKEND_UNCERTAIN / service_response_ambiguous` with the original request and run IDs and `required_next_action: retry_exact_request`. That local envelope is not journaled; exact replay obtains the authoritative stored service result.
 
 Every complete task reread reasserts Cooking-project membership, so a task removed between the initial scope check and the authoritative read cannot open or continue an operation with a null placement. Asana section enumeration follows all pages. Verification start requires a non-blank, single-line independence attestation. CR, LF, tabs, ASCII controls, Unicode format characters, surrogates, line separators, and paragraph separators are rejected before request journaling, operation execution, Verification-cycle mutation, or attestation persistence; ordinary Unicode text remains valid. The same validator applies to every public route that accepts an attestation. Approval repeats only the exact verifier agent/run and inherits the exact persisted start attestation; its public shape does not accept the field. Large rejection repeats the exact verifier run and persisted attestation, while Evidence and Human Review rejection routes inherit that persisted attestation because their public route shapes do not accept the field. Actor facts are scoped to an operation, allowing a run to participate legally in a later operation without rewriting earlier lineage.
 
