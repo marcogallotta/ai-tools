@@ -338,3 +338,7 @@ def main(
             conn = getattr(app, "conn", None)
             if conn is not None:
                 conn.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

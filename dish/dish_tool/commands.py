@@ -141,12 +141,20 @@ def _admin_resolver(action: str | None) -> str | None:
     return f"Marco/admin {action}"
 
 
+_HOLD_ADMIN_ACTIONS = {
+    "supply-evidence": {"cycle_route": "evidence", "preconstruction_route": "evidence"},
+    "record-human-decision": {"cycle_route": "human_review", "preconstruction_route": "human-review"},
+}
+
+
 def _evidence_hold_continuation(
     conn: sqlite3.Connection, operation_id: str, view: Mapping[str, Any]
 ) -> dict[str, Any]:
-    """Describe the reachable private continuation for an Evidence hold."""
+    """Describe the reachable private continuation for an Evidence or Human Review hold."""
 
-    if view.get("required_admin_action") != "supply-evidence":
+    admin_action = view.get("required_admin_action")
+    routes = _HOLD_ADMIN_ACTIONS.get(admin_action)
+    if routes is None:
         return {}
     phase = str(view.get("phase") or "")
     resume_status = None
@@ -165,9 +173,9 @@ def _evidence_hold_continuation(
     if resume_status is None:
         cycle = conn.execute(
             """SELECT resume_state FROM verification_cycles
-                 WHERE operation_id=? AND route='evidence'
+                 WHERE operation_id=? AND route=?
                  ORDER BY cycle_number DESC LIMIT 1""",
-            (operation_id,),
+            (operation_id, routes["cycle_route"]),
         ).fetchone()
         if cycle is not None:
             resume_status = cycle["resume_state"]
@@ -185,14 +193,15 @@ def _evidence_hold_continuation(
             "phase": "await_verification",
         }
 
-    command = f"dish-admin supply-evidence {operation_id} --detail TEXT"
+    command = f"dish-admin {admin_action} {operation_id} --detail TEXT"
     if resume_status:
         command += f" --resume-status {resume_status}"
     return {
         "phase": phase,
+        "submission_id": operation_id,
         "existing_submission_id": operation_id,
-        "required_admin_action": "supply-evidence",
-        "resolver": "Marco/admin supply-evidence",
+        "required_admin_action": admin_action,
+        "resolver": f"Marco/admin {admin_action}",
         "continuation_surface": "private-admin",
         "connected_action_available": False,
         "admin_command": command,
