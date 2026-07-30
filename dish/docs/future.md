@@ -26,6 +26,26 @@ Future proposals should build on those mechanisms rather than reintroduce parall
 
 ## Near-term candidates after activation evidence
 
+### Sequencing relative to a database-backend move
+
+Most items below are built on the current Asana section/content-identity model that
+[`database-backend-design.md`](database-backend-design.md)'s authority migration replaces (Dish
+locations instead of section GIDs, `task_versions` instead of `content_versions`, restructured
+operation/lease facts). If that migration becomes a near-term priority, treat these as parked until
+its scope is decided rather than building against a model about to change:
+
+- paginated section task listing;
+- archive route for unapproved/redundant composite dishes;
+- unchanged-content re-Verification admin route;
+- activation-derived observability (its Asana-latency/rate-limit signals disappear post-cutover);
+- bounded direct-dependency surfacing (partly keyed to Asana links as the reference identity);
+- three-value nutrition grammar (lower urgency regardless, and possibly superseded by any later
+  structured-representation migration).
+
+Serving the Honest repository to agents is orthogonal to task storage and can proceed independently
+at any time. Public Action rate limiting has no activation evidence justifying it regardless of
+sequencing.
+
 ### Paginated section task listing
 
 Add a private, read-only `dish list SECTION_GID` command so agents can fetch all incomplete tasks
