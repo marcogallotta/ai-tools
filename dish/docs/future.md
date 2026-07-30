@@ -101,11 +101,33 @@ rollout without expanding workflow authority.
 ### Serve the Honest repository to agents
 
 Expose the current `DISH_HONEST_PATH` checkout read-only through the Dish Action surface. Agents
-should be able to list directories and request one file at a time with full repository read access.
+should be able to list directories and request one or more files by exact relative path, with full
+repository read access.
 
 This replaces packaging, versioning, and repeatedly uploading a `.tgz` copy to the Custom GPT
 configuration. Repository changes become available immediately, with Dish preventing writes and
 paths outside the configured checkout.
+
+Confirmed worth trying and not architecturally hard: this is a stateless read-only addition
+alongside the existing `sections`/`read` Action routes, using the same command-registry and
+generated-schema pattern, and it touches no workflow or mutation invariant. A GPT Action response is
+capped at 100,000 characters per call with a 45-second timeout, so any call's total returned text
+must stay well inside that cap; every current repo doc fits well inside it individually (the largest
+is currently ~90KB). Today's `.tgz` upload only works because Code Interpreter unzips it in a sandbox
+and the model navigates it through a multi-step generate/execute/observe loop, including a
+per-session sandbox cold start — this is the concretely observed source of "surprisingly slow"
+lookups, not just staleness. A direct list/read Action route collapses that into one deterministic
+call and is expected to be both fresher and faster, not merely equally capable.
+
+Support a bounded multi-file read (a handful of paths per call, response still bounded by the
+100,000-character cap) alongside single-file read, not only "one file at a time." The typical agent
+need is 3-10 known docs; one call per file would trade the round-trip cost of Code Interpreter's
+multi-step navigation for a different multi-step cost — repeated model/tool cycles — instead of
+actually collapsing it. Path validation must resolve the real filesystem path and reject anything
+whose resolved target falls outside the checkout root; rejecting literal `..` in the requested path
+is not sufficient, since a symlink inside the checkout can point outside it. Returning a content hash
+alongside each file's path and text lets an agent state exactly which repository version it read,
+without needing a database-backed snapshot mechanism.
 
 ### Bounded direct-dependency surfacing
 
