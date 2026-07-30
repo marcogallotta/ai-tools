@@ -193,7 +193,7 @@ def _evidence_hold_continuation(
             "phase": "await_verification",
         }
 
-    command = f"dish-admin {admin_action} {operation_id} --detail TEXT"
+    command = f'dish-admin {admin_action} {operation_id} --detail "<summarize the human\'s decision and reasoning>"'
     if resume_status:
         command += f" --resume-status {resume_status}"
     next_action = after_resolution["legal_actions"][0] if after_resolution["legal_actions"] else None
