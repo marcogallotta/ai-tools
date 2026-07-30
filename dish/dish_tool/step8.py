@@ -1226,6 +1226,12 @@ def resolve_hold(
     clean_detail = str(detail or "").strip()
     if not clean_detail:
         raise DishRuleError("INVALID_ARGUMENT", "resolution detail is required", rule="resolution_detail_required")
+    if clean_detail.startswith("<") and clean_detail.endswith(">"):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "resolution detail still contains the unfilled command placeholder",
+            rule="resolution_detail_placeholder",
+        )
     op = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
     if op is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
