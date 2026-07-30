@@ -142,8 +142,16 @@ def _admin_resolver(action: str | None) -> str | None:
 
 
 _HOLD_ADMIN_ACTIONS = {
-    "supply-evidence": {"cycle_route": "evidence", "preconstruction_route": "evidence"},
-    "record-human-decision": {"cycle_route": "human_review", "preconstruction_route": "human-review"},
+    "supply-evidence": {
+        "cycle_route": "evidence",
+        "preconstruction_route": "evidence",
+        "detail_placeholder": "<summarize the supplied evidence>",
+    },
+    "record-human-decision": {
+        "cycle_route": "human_review",
+        "preconstruction_route": "human-review",
+        "detail_placeholder": "<summarize the human's decision and reasoning>",
+    },
 }
 
 
@@ -193,7 +201,7 @@ def _evidence_hold_continuation(
             "phase": "await_verification",
         }
 
-    command = f'dish-admin {admin_action} {operation_id} --detail "<summarize the human\'s decision and reasoning>"'
+    command = f'dish-admin {admin_action} {operation_id} --detail "{routes["detail_placeholder"]}"'
     if resume_status:
         command += f" --resume-status {resume_status}"
     next_action = after_resolution["legal_actions"][0] if after_resolution["legal_actions"] else None

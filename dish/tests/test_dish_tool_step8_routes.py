@@ -74,7 +74,7 @@ def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path)
     assert good["data"]["continuation_surface"] == "private-admin"
     assert good["data"]["connected_action_available"] is False
     assert good["data"]["admin_command"] == (
-        f'dish-admin supply-evidence {operation_id} --detail "<summarize the human\'s decision and reasoning>" '
+        f'dish-admin supply-evidence {operation_id} --detail "<summarize the supplied evidence>" '
         "--resume-status pending-verification"
     )
     assert good["data"]["after_resolution"] == {
