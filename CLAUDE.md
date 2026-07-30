@@ -23,6 +23,13 @@ documentation roles are:
 Older design and implementation plans were removed; use Git history when their exact text is
 needed.
 
+Marco regularly tests the live GPT Action outside this session. When a pasted transcript
+references an existing Cooking task/submission ID or an already-open operation, assume it came
+from the deployed GPT Action, not this repo's local `dish`/`dish-admin` CLI, unless Marco says
+otherwise. Verify current state read-only (`dish read`/`dish inspect`) before acting on it; never
+run `dish-admin` write/recovery commands yourself — only Marco can, regardless of which surface
+got stuck.
+
 `dish/deploy/gpt-action.md`'s "Instructions for the GPT" section is a template only. The custom
 GPT actually runs on `~/honest-pantry-dish-rollout/dish-custom-gpt-instructions.md`, outside this
 repo. Any edit to that template must be merged into the live file, in the same pass, as its own
