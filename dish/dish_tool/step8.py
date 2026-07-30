@@ -1281,6 +1281,18 @@ def resolve_hold(
             "resume_status": "pending-research",
             "candidate_content_existed": False,
         }
+        from .abandonment import resolve_preconstruction_hold_to_successor
+
+        abandoned_result = resolve_preconstruction_hold_to_successor(
+            conn,
+            operation_id=operation_id,
+            resolution=resolution,
+            live_identity=live.identity,
+            live_section_gid=live.section_gid,
+        )
+        if abandoned_result is not None:
+            abandoned_result["task"] = dataclasses.asdict(live)
+            return abandoned_result
         declare_operation_step(
             conn, operation_id, "research_preconstruction_hold_resolution", resolution
         )

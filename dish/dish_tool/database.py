@@ -1075,6 +1075,7 @@ def apply_operation_abandonment_succession_in_transaction(
     successor_run_id: str | None = None,
     successor_independence_attestation: str | None = None,
     successor_actor_facts: Sequence[Mapping[str, Any]] = (),
+    successor_completed_steps: Mapping[str, Mapping[str, Any]] | None = None,
     result: Mapping[str, Any] | None = None,
     created_at: str | None = None,
 ) -> tuple[sqlite3.Row, sqlite3.Row, sqlite3.Row]:
@@ -1215,6 +1216,10 @@ def apply_operation_abandonment_succession_in_transaction(
             stamp,
         ),
     )
+    for step_name, intended in dict(successor_completed_steps or {}).items():
+        declare_operation_step(conn, successor_operation_id, step_name, intended)
+        complete_operation_step(conn, successor_operation_id, step_name)
+
     for fact in successor_actor_facts:
         record_actor_fact(
             conn,
@@ -1332,6 +1337,207 @@ def apply_operation_abandonment_succession_in_transaction(
             (succession_id,),
         ).fetchone(),
     )
+
+
+def claim_prepared_stage_successor_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    prepared_operation_id: str,
+    task_gid: str,
+    operation_kind: str,
+    agent: str,
+    run_id: str,
+    live_identity: str,
+    live_section_gid: str,
+    schema_version: str,
+    expected_change_intent: Mapping[str, Any] | None,
+    result: Mapping[str, Any],
+    claimed_at: str | None = None,
+) -> sqlite3.Row:
+    """Claim one exact Planning/Research successor inside the caller transaction."""
+
+    _require_writer_transaction(conn, operation="prepared stage successor claim")
+    row = conn.execute(
+        """SELECT successor.*, succession.abandonment_id,
+                  abandonment.abandoned_run_id, abandonment.status AS abandonment_status
+             FROM operations AS successor
+             JOIN operation_successions AS succession
+               ON succession.successor_operation_id=successor.operation_id
+             JOIN abandonment_attempts AS abandonment
+               ON abandonment.abandonment_id=succession.abandonment_id
+            WHERE successor.operation_id=?""",
+        (prepared_operation_id,),
+    ).fetchone()
+    if row is None:
+        raise DishRuleError(
+            "NOT_FOUND",
+            "prepared successor not found",
+            rule="prepared_successor_not_found",
+            details={"prepared_operation_id": prepared_operation_id},
+        )
+    if (
+        row["task_gid"] != task_gid
+        or row["operation_kind"] != operation_kind
+        or row["status"] != "open"
+        or row["phase"] != "prepare_required"
+        or row["successor_claim_mode"] != "stage_actor"
+        or row["abandonment_status"] != "awaiting_successor_claim"
+    ):
+        raise DishRuleError(
+            "WRONG_STATE",
+            "prepared successor no longer matches the requested stage action",
+            rule="prepared_successor_mismatch",
+            details={"prepared_operation_id": prepared_operation_id},
+        )
+    clean_run = str(run_id or "").strip()
+    if not clean_run:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "a connected run ID is required to claim a prepared successor",
+            rule="service_run_required",
+        )
+    if clean_run == str(row["abandoned_run_id"] or "").strip():
+        raise DishRuleError(
+            "AGENT_MISMATCH",
+            "the abandoned run cannot claim its replacement attempt",
+            rule="abandoned_run_claim_forbidden",
+        )
+    if row["expected_identity"] != live_identity or row["expected_section_gid"] != live_section_gid:
+        raise DishRuleError(
+            "CONFLICT",
+            "prepared successor baseline or placement changed",
+            rule="prepared_successor_drift",
+            details={
+                "expected_identity": row["expected_identity"],
+                "actual_identity": live_identity,
+                "expected_section_gid": row["expected_section_gid"],
+                "actual_section_gid": live_section_gid,
+            },
+        )
+    if row["schema_version"] != schema_version:
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "prepared successor no longer matches the deployment-current schema",
+            rule="prepared_successor_schema_mismatch",
+            details={
+                "operation_schema_version": row["schema_version"],
+                "current_schema_version": schema_version,
+            },
+        )
+    if operation_kind == "change":
+        intent = conn.execute(
+            """SELECT intended_json, completed_at FROM operation_steps
+                 WHERE operation_id=? AND step_name='change_intent'""",
+            (prepared_operation_id,),
+        ).fetchone()
+        try:
+            recorded_intent = None if intent is None else json.loads(intent["intended_json"])
+        except (TypeError, ValueError):
+            recorded_intent = None
+        if (
+            intent is None
+            or intent["completed_at"] is None
+            or recorded_intent != dict(expected_change_intent or {})
+        ):
+            raise DishRuleError(
+                "CONFLICT",
+                "prepared Change successor intent does not match the request",
+                rule="prepared_successor_change_intent_mismatch",
+            )
+    elif expected_change_intent:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "change intent is valid only for a Change successor",
+            rule="change_arguments_forbidden",
+        )
+    if conn.execute(
+        "SELECT 1 FROM service_leases WHERE operation_id=? AND released_at IS NULL",
+        (prepared_operation_id,),
+    ).fetchone() is not None:
+        raise DishRuleError(
+            "CONFLICT",
+            "prepared successor is already leased",
+            rule="prepared_successor_claimed",
+        )
+
+    if operation_kind == "planning":
+        updates = (agent, clean_run, prepared_operation_id)
+        cursor = conn.execute(
+            """UPDATE operations
+                  SET editor_agent=?, run_id=?, successor_claim_mode='none'
+                WHERE operation_id=? AND editor_agent IS NULL AND run_id IS NULL
+                  AND successor_claim_mode='stage_actor'""",
+            updates,
+        )
+        role = "planner"
+    elif operation_kind == "initial":
+        cursor = conn.execute(
+            """UPDATE operations
+                  SET researcher_agent=?, run_id=?, successor_claim_mode='none'
+                WHERE operation_id=? AND researcher_agent IS NULL AND run_id IS NULL
+                  AND successor_claim_mode='stage_actor'""",
+            (agent, clean_run, prepared_operation_id),
+        )
+        role = "constructor"
+    elif operation_kind == "change":
+        cursor = conn.execute(
+            """UPDATE operations
+                  SET editor_agent=?, run_id=?, successor_claim_mode='none'
+                WHERE operation_id=? AND editor_agent IS NULL AND run_id IS NULL
+                  AND successor_claim_mode='stage_actor'""",
+            (agent, clean_run, prepared_operation_id),
+        )
+        role = "material_editor"
+    else:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "prepared stage successor must be Planning or Research",
+            rule="prepared_successor_kind_invalid",
+        )
+    if cursor.rowcount != 1:
+        raise DishRuleError(
+            "CONFLICT",
+            "prepared successor was claimed concurrently",
+            rule="prepared_successor_claimed",
+        )
+    record_actor_fact(
+        conn,
+        operation_id=prepared_operation_id,
+        task_gid=task_gid,
+        role=role,
+        agent=agent,
+        run_id=clean_run,
+        candidate_identity=None,
+    )
+    stamp = claimed_at or utc_now()
+    claimed = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?",
+        (prepared_operation_id,),
+    ).fetchone()
+    complete_abandonment_in_transaction(
+        conn,
+        abandonment_id=row["abandonment_id"],
+        outcome="restarted",
+        result=result,
+        continuation_operation_id=prepared_operation_id,
+        completed_at=stamp,
+    )
+    record_audit(
+        conn,
+        submission_id=None,
+        task_gid=task_gid,
+        operation_id=prepared_operation_id,
+        event_type="operation.successor_claimed",
+        actor_agent=agent,
+        actor_run_id=clean_run,
+        details={
+            "abandonment_id": row["abandonment_id"],
+            "operation_kind": operation_kind,
+        },
+        result_code="OK",
+        result_ok=True,
+    )
+    return claimed
 
 
 def complete_abandonment_in_transaction(

@@ -99,6 +99,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "independence_attestation": {"type": "string"},
             "change_level": {"type": "string", "enum": ["small", "large"]},
             "change_reason": {"type": "string"},
+            "prepared_operation_id": dict(DISH_UUID_SCHEMA),
         },
     },
     "prepare": {
@@ -207,9 +208,12 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
 
         return {
             "oneOf": [
-                start_variant("planning"),
-                start_variant("initial"),
-                start_variant("change", "change_level", "change_reason"),
+                start_variant("planning", "prepared_operation_id"),
+                start_variant("initial", "prepared_operation_id"),
+                start_variant(
+                    "change", "change_level", "change_reason",
+                    "prepared_operation_id"
+                ),
                 start_variant(
                     "verification",
                     "independence_attestation",
@@ -452,5 +456,15 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
             "independence_attestation is accepted only for verification starts",
             "argument_unexpected",
             field="independence_attestation",
+        )
+    if (
+        command == "start"
+        and arguments.get("kind") == "verification"
+        and "prepared_operation_id" in arguments
+    ):
+        raise _argument_error(
+            "prepared_operation_id is accepted only for Planning or Research successors",
+            "argument_unexpected",
+            field="prepared_operation_id",
         )
     return dict(client), dict(arguments)

@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
 from .constants import COOKING_PROJECT_GID
 from .database import (
+    apply_operation_abandonment_succession_in_transaction,
     complete_abandonment_in_transaction,
     get_abandonment_attempt,
     mark_abandonment_awaiting_hold_in_transaction,
@@ -575,6 +577,229 @@ def classify_abandonment_frontier(
     )
 
 
+def _completed_change_intent(
+    conn: sqlite3.Connection, operation_id: str
+) -> dict[str, Mapping[str, Any]]:
+    row = conn.execute(
+        """SELECT intended_json FROM operation_steps
+             WHERE operation_id=? AND step_name='change_intent'
+               AND completed_at IS NOT NULL""",
+        (operation_id,),
+    ).fetchone()
+    if row is None:
+        return {}
+    try:
+        intended = json.loads(row["intended_json"])
+    except (TypeError, ValueError) as exc:
+        raise DishRuleError(
+            "CONFLICT",
+            "completed Change intent is not reconstructable",
+            rule="change_intent_invalid",
+        ) from exc
+    return {"change_intent": intended}
+
+
+def _prepare_stage_successor(
+    conn: sqlite3.Connection,
+    *,
+    abandonment_id: str,
+    frontier: AbandonmentFrontier,
+) -> dict[str, Any]:
+    if frontier.stage not in {"planning", "research"}:
+        raise DishRuleError(
+            "WRONG_STATE",
+            "this implementation stage prepares only Planning and Research successors",
+            rule="abandonment_stage_not_implemented",
+        )
+    source = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?",
+        (frontier.source_operation_id,),
+    ).fetchone()
+    if source is None or frontier.source_content_version_id is None:
+        raise DishRuleError(
+            "CONFLICT",
+            "clean abandonment frontier lacks exact source evidence",
+            rule="abandonment_source_baseline_invalid",
+        )
+    successor_operation_id = str(uuid.uuid4())
+    successor_content_version_id = str(uuid.uuid4())
+    succession_id = str(uuid.uuid4())
+    start_kind = source["operation_kind"]
+    action = {
+        "surface": "connected-agent",
+        "command": "start",
+        "arguments": {
+            "task_gid": source["task_gid"],
+            "kind": start_kind,
+            "prepared_operation_id": successor_operation_id,
+        },
+    }
+    result = {
+        "abandonment_id": abandonment_id,
+        "classification": frontier.to_dict(),
+        "succession_id": succession_id,
+        "successor_operation_id": successor_operation_id,
+        "successor_cycle_id": None,
+        "required_action": action,
+    }
+    completed_steps = (
+        _completed_change_intent(conn, source["operation_id"])
+        if source["operation_kind"] == "change"
+        else {}
+    )
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        abandonment, successor, succession = (
+            apply_operation_abandonment_succession_in_transaction(
+                conn,
+                abandonment_id=abandonment_id,
+                succession_id=succession_id,
+                successor_operation_id=successor_operation_id,
+                source_content_version_id=frontier.source_content_version_id,
+                successor_content_version_id=successor_content_version_id,
+                successor_operation_kind=source["operation_kind"],
+                successor_phase="prepare_required",
+                successor_expected_section_gid=source["expected_section_gid"],
+                successor_schema_version=source["schema_version"],
+                successor_claim_mode="stage_actor",
+                transition_reason="permanent_agent_run_abandonment",
+                candidate_transfer_kind="restored_stage_baseline",
+                successor_completed_steps=completed_steps,
+                result=result,
+            )
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    result["abandonment"] = {key: abandonment[key] for key in abandonment.keys()}
+    result["successor"] = {key: successor[key] for key in successor.keys()}
+    result["succession"] = {key: succession[key] for key in succession.keys()}
+    return result
+
+
+def resolve_preconstruction_hold_to_successor(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    resolution: Mapping[str, Any],
+    live_identity: str,
+    live_section_gid: str,
+) -> dict[str, Any] | None:
+    """Resolve an abandoned pre-construction hold into a fresh Research attempt."""
+
+    abandonment = conn.execute(
+        """SELECT * FROM abandonment_attempts
+             WHERE source_operation_id=? AND status='awaiting_hold_resolution'
+             ORDER BY created_at DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    if abandonment is None:
+        return None
+    source = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if source is None or source["operation_kind"] != "initial":
+        raise DishRuleError(
+            "CONFLICT",
+            "abandonment hold source is not an initial Research attempt",
+            rule="abandonment_hold_source_invalid",
+        )
+    if (
+        live_identity != source["expected_identity"]
+        or live_section_gid != source["expected_section_gid"]
+    ):
+        raise DishRuleError(
+            "CONFLICT",
+            "live task changed while the abandoned Research hold was pending",
+            rule="preconstruction_hold_baseline_drift",
+        )
+    source_version = _confirmed_version_for_identity(
+        conn, task_gid=source["task_gid"], identity=live_identity
+    )
+    if source_version is None:
+        raise DishRuleError(
+            "CONFLICT",
+            "abandoned Research hold lacks a confirmed baseline",
+            rule="abandonment_source_baseline_invalid",
+        )
+    successor_operation_id = str(uuid.uuid4())
+    successor_content_version_id = str(uuid.uuid4())
+    succession_id = str(uuid.uuid4())
+    action = {
+        "surface": "connected-agent",
+        "command": "start",
+        "arguments": {
+            "task_gid": source["task_gid"],
+            "kind": "initial",
+            "prepared_operation_id": successor_operation_id,
+        },
+    }
+    result = {
+        "operation_id": successor_operation_id,
+        "source_operation_id": operation_id,
+        **dict(resolution),
+        "phase": "prepare_required",
+        "abandonment_id": abandonment["abandonment_id"],
+        "succession_id": succession_id,
+        "required_action": action,
+    }
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        from .database import complete_operation_step, declare_operation_step
+
+        declare_operation_step(
+            conn, operation_id, "research_preconstruction_hold_resolution", resolution
+        )
+        complete_operation_step(
+            conn, operation_id, "research_preconstruction_hold_resolution"
+        )
+        from .database import record_audit
+
+        record_audit(
+            conn,
+            submission_id=None,
+            task_gid=source["task_gid"],
+            operation_id=operation_id,
+            event_type="research.preconstruction_resolved",
+            actor_agent=None,
+            details={**dict(resolution), "abandonment_id": abandonment["abandonment_id"]},
+            result_code="OK",
+            result_ok=True,
+            governed_kind="decision",
+            before_state={"phase": source["phase"], "candidate_content_existed": False},
+            after_state={
+                "phase": "terminal",
+                "resume_status": "pending-research",
+                "successor_operation_id": successor_operation_id,
+            },
+            actor_source="marco-hold-resolution",
+        )
+        apply_operation_abandonment_succession_in_transaction(
+            conn,
+            abandonment_id=abandonment["abandonment_id"],
+            succession_id=succession_id,
+            successor_operation_id=successor_operation_id,
+            source_content_version_id=source_version["content_version_id"],
+            successor_content_version_id=successor_content_version_id,
+            successor_operation_kind="initial",
+            successor_phase="prepare_required",
+            successor_expected_section_gid=source["expected_section_gid"],
+            successor_schema_version=source["schema_version"],
+            successor_claim_mode="stage_actor",
+            transition_reason="resolved_abandoned_preconstruction_hold",
+            candidate_transfer_kind="restored_stage_baseline",
+            result=result,
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    return result
+
+
 def settle_abandonment_frontier(
     conn: sqlite3.Connection,
     backend: Any,
@@ -582,11 +807,10 @@ def settle_abandonment_frontier(
     abandonment_id: str,
     reason: str,
 ) -> dict[str, Any]:
-    """Persist a blocked/hold result or settle an already-committed route.
+    """Persist a safe frontier and create clean Planning/Research successors.
 
-    ``restart_prepared`` is returned without mutation; stage-specific successor
-    construction is intentionally deferred.  This function performs no
-    compensating external write or movement.
+    Verification successor construction remains deferred to the next stage.
+    This function performs no compensating external write or movement.
     """
 
     frontier = classify_abandonment_frontier(
@@ -595,6 +819,10 @@ def settle_abandonment_frontier(
     result = {"abandonment_id": abandonment_id, "classification": frontier.to_dict()}
 
     if frontier.outcome == "restart_prepared":
+        if frontier.stage in {"planning", "research"}:
+            return _prepare_stage_successor(
+                conn, abandonment_id=abandonment_id, frontier=frontier
+            )
         return result
     if frontier.outcome == "blocked_manual_reconciliation":
         conn.execute("BEGIN IMMEDIATE")

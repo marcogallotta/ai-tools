@@ -1,714 +1,235 @@
 {
-  "openapi": "3.1.0",
+  "components": {
+    "schemas": {
+      "ResultEnvelope": {
+        "properties": {
+          "allowed_actions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "code": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": true,
+            "properties": {
+              "legal_next_step": {
+                "description": "Exact legal continuation after a blocked agent mutation, including the private resolver and the fresh follow-up Action when applicable.",
+                "type": "string"
+              },
+              "material_classification": {
+                "additionalProperties": false,
+                "description": "Prepare classification for a changed post-signoff canonical body. When Dish overrides a requested non-material classification, forced_material_reasons names every detected protocol reason.",
+                "properties": {
+                  "classified_subject": {
+                    "type": "string"
+                  },
+                  "effective": {
+                    "enum": [
+                      "material",
+                      "non-material"
+                    ],
+                    "type": "string"
+                  },
+                  "forced_material_reasons": {
+                    "description": "Exact protocol classifier reasons that forced the effective classification to material; empty when no override occurred.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "requested": {
+                    "enum": [
+                      "material",
+                      "non-material"
+                    ],
+                    "type": "string"
+                  },
+                  "route": {
+                    "enum": [
+                      "verification",
+                      "signed-check-in"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "classified_subject",
+                  "requested",
+                  "effective",
+                  "forced_material_reasons",
+                  "route"
+                ],
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "request_id": {
+                "description": "The accepted mutation request UUID. Present on a replayed stored result.",
+                "format": "uuid",
+                "maxLength": 36,
+                "minLength": 36,
+                "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              "request_replayed": {
+                "description": "True only when this response was reconstructed from the durable result of the exact same completed request.",
+                "type": "boolean"
+              },
+              "required_admin_action": {
+                "description": "Exact private administrative Action required before the agent workflow may continue. It is not exposed in allowed_actions.",
+                "type": "string"
+              },
+              "required_start_kind": {
+                "description": "Exact arguments.kind for the returned start action: planning starts Planning from a bare task; initial starts the first Research construction after Planning; verification starts independent Verification after Research. A planning-to-research handoff always requires kind=initial.",
+                "enum": [
+                  "planning",
+                  "initial",
+                  "verification"
+                ],
+                "type": "string"
+              },
+              "resolver": {
+                "description": "Required private Marco resolver for an administrative continuation.",
+                "type": "string"
+              },
+              "validation_scope": {
+                "items": {
+                  "enum": [
+                    "structural-only",
+                    "transition-state",
+                    "exact-content-identity",
+                    "agent-semantic-review",
+                    "provenance-signoff",
+                    "movement-confirmation"
+                  ],
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              }
+            },
+            "type": "object"
+          },
+          "errors": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "retryable": {
+            "description": "Mechanical advice for a corrected or fresh call. It does not override exact request replay: reuse the same request_id only after response loss, and never retry BACKEND_UNCERTAIN as new work.",
+            "type": "boolean"
+          },
+          "state": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "submission_id": {
+            "format": "uuid",
+            "maxLength": 36,
+            "minLength": 36,
+            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "task_gid": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "ok",
+          "command",
+          "code",
+          "retryable",
+          "allowed_actions",
+          "data",
+          "errors"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "actionBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
   "info": {
     "title": "Dish GPT Action",
     "version": "1.0.0"
   },
-  "servers": [
-    {
-      "url": "https://dish.example.invalid"
-    }
-  ],
+  "openapi": "3.1.0",
   "paths": {
-    "/v1/action/create": {
-      "post": {
-        "operationId": "dish_create",
-        "x-openai-isConsequential": true,
-        "summary": "Run dish create",
-        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id",
-                      "request_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "agent",
-                      "title"
-                    ],
-                    "properties": {
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      },
-                      "title": {
-                        "type": "string"
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/sections": {
-      "post": {
-        "operationId": "dish_sections",
-        "x-openai-isConsequential": false,
-        "summary": "Run dish sections",
-        "description": "Read-only Action. It does not accept client.request_id, create a replay record, or authorize a mutation.",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "agent"
-                    ],
-                    "properties": {
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/read": {
-      "post": {
-        "operationId": "dish_read",
-        "x-openai-isConsequential": false,
-        "summary": "Run dish read",
-        "description": "Read-only Action. It does not accept client.request_id, create a replay record, or authorize a mutation.",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "task_gid",
-                      "agent"
-                    ],
-                    "properties": {
-                      "task_gid": {
-                        "type": "string",
-                        "pattern": "^[1-9][0-9]*$",
-                        "maxLength": 19
-                      },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/inspect": {
-      "post": {
-        "operationId": "dish_inspect",
-        "x-openai-isConsequential": false,
-        "summary": "Run dish inspect",
-        "description": "Read-only Action. It does not accept client.request_id, create a replay record, or authorize a mutation.",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "submission_id",
-                      "agent"
-                    ],
-                    "properties": {
-                      "submission_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36
-                      },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/start": {
-      "post": {
-        "operationId": "dish_start",
-        "x-openai-isConsequential": true,
-        "summary": "Run dish start",
-        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id",
-                      "request_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "oneOf": [
-                      {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "task_gid",
-                          "agent",
-                          "kind"
-                        ],
-                        "properties": {
-                          "task_gid": {
-                            "type": "string",
-                            "pattern": "^[1-9][0-9]*$",
-                            "maxLength": 19
-                          },
-                          "agent": {
-                            "type": "string",
-                            "enum": [
-                              "claude",
-                              "gpt",
-                              "codex"
-                            ]
-                          },
-                          "kind": {
-                            "type": "string",
-                            "const": "planning",
-                            "description": "Start Planning from a bare Cooking task."
-                          }
-                        }
-                      },
-                      {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "task_gid",
-                          "agent",
-                          "kind"
-                        ],
-                        "properties": {
-                          "task_gid": {
-                            "type": "string",
-                            "pattern": "^[1-9][0-9]*$",
-                            "maxLength": 19
-                          },
-                          "agent": {
-                            "type": "string",
-                            "enum": [
-                              "claude",
-                              "gpt",
-                              "codex"
-                            ]
-                          },
-                          "kind": {
-                            "type": "string",
-                            "const": "initial",
-                            "description": "Start the first Research construction after Planning. For a planning-to-research handoff, use kind=initial; do not start Planning again."
-                          }
-                        }
-                      },
-                      {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "task_gid",
-                          "agent",
-                          "kind"
-                        ],
-                        "properties": {
-                          "task_gid": {
-                            "type": "string",
-                            "pattern": "^[1-9][0-9]*$",
-                            "maxLength": 19
-                          },
-                          "agent": {
-                            "type": "string",
-                            "enum": [
-                              "claude",
-                              "gpt",
-                              "codex"
-                            ]
-                          },
-                          "kind": {
-                            "type": "string",
-                            "const": "change",
-                            "description": "Start a post-signoff change operation."
-                          },
-                          "change_level": {
-                            "type": "string",
-                            "enum": [
-                              "small",
-                              "large"
-                            ]
-                          },
-                          "change_reason": {
-                            "type": "string"
-                          }
-                        }
-                      },
-                      {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "task_gid",
-                          "agent",
-                          "kind",
-                          "independence_attestation"
-                        ],
-                        "properties": {
-                          "task_gid": {
-                            "type": "string",
-                            "pattern": "^[1-9][0-9]*$",
-                            "maxLength": 19
-                          },
-                          "agent": {
-                            "type": "string",
-                            "enum": [
-                              "claude",
-                              "gpt",
-                              "codex"
-                            ]
-                          },
-                          "kind": {
-                            "type": "string",
-                            "const": "verification",
-                            "description": "Start independent Verification after Research."
-                          },
-                          "independence_attestation": {
-                            "type": "string"
-                          }
-                        }
-                      }
-                    ],
-                    "discriminator": {
-                      "propertyName": "kind"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/v1/action/prepare": {
-      "post": {
-        "operationId": "dish_prepare",
-        "x-openai-isConsequential": true,
-        "summary": "Run dish prepare",
-        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id",
-                      "request_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "submission_id",
-                      "agent",
-                      "model",
-                      "file_text"
-                    ],
-                    "properties": {
-                      "submission_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36
-                      },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
-                      },
-                      "model": {
-                        "type": "string"
-                      },
-                      "file_text": {
-                        "type": "string"
-                      },
-                      "material_classification": {
-                        "type": "string",
-                        "enum": [
-                          "material",
-                          "non-material"
-                        ],
-                        "description": "Required only when a post-signoff change candidate changes the canonical body. It classifies that exact body diff from the signed baseline. The caller may propose non-material, but Dish forces material when a protocol-defined material path changed; material opens Verification, while an accepted non-material diff preserves the exact prior signoff."
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v1/action/approve": {
       "post": {
-        "operationId": "dish_approve",
-        "x-openai-isConsequential": true,
-        "summary": "Run dish approve",
         "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
+        "operationId": "dish_approve",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
                 "additionalProperties": false,
                 "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id",
-                      "request_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
-                      }
-                    }
-                  },
                   "arguments": {
+                    "discriminator": {
+                      "propertyName": "correction"
+                    },
                     "oneOf": [
                       {
-                        "type": "object",
                         "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "correction": {
+                            "const": "none",
+                            "description": "Approve the exact inspected candidate without supplying file_text.",
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "provenance_complete": {
+                            "type": "boolean"
+                          },
+                          "reviewed_identity": {
+                            "type": "string"
+                          },
+                          "semantic_review_complete": {
+                            "type": "boolean"
+                          },
+                          "submission_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          }
+                        },
                         "required": [
                           "submission_id",
                           "agent",
@@ -718,24 +239,32 @@
                           "semantic_review_complete",
                           "provenance_complete"
                         ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
                         "properties": {
-                          "submission_id": {
-                            "type": "string",
-                            "format": "uuid",
-                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                            "minLength": 36,
-                            "maxLength": 36
-                          },
                           "agent": {
-                            "type": "string",
                             "enum": [
                               "claude",
                               "gpt",
                               "codex"
-                            ]
+                            ],
+                            "type": "string"
+                          },
+                          "correction": {
+                            "const": "small",
+                            "description": "Apply and approve a complete Small corrected candidate supplied as file_text.",
+                            "type": "string"
+                          },
+                          "file_text": {
+                            "type": "string"
                           },
                           "model": {
                             "type": "string"
+                          },
+                          "provenance_complete": {
+                            "type": "boolean"
                           },
                           "reviewed_identity": {
                             "type": "string"
@@ -743,19 +272,14 @@
                           "semantic_review_complete": {
                             "type": "boolean"
                           },
-                          "provenance_complete": {
-                            "type": "boolean"
-                          },
-                          "correction": {
-                            "type": "string",
-                            "const": "none",
-                            "description": "Approve the exact inspected candidate without supplying file_text."
+                          "submission_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
                           }
-                        }
-                      },
-                      {
-                        "type": "object",
-                        "additionalProperties": false,
+                        },
                         "required": [
                           "submission_id",
                           "agent",
@@ -766,122 +290,480 @@
                           "semantic_review_complete",
                           "provenance_complete"
                         ],
-                        "properties": {
-                          "submission_id": {
-                            "type": "string",
-                            "format": "uuid",
-                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                            "minLength": 36,
-                            "maxLength": 36
-                          },
-                          "agent": {
-                            "type": "string",
-                            "enum": [
-                              "claude",
-                              "gpt",
-                              "codex"
-                            ]
-                          },
-                          "model": {
-                            "type": "string"
-                          },
-                          "reviewed_identity": {
-                            "type": "string"
-                          },
-                          "semantic_review_complete": {
-                            "type": "boolean"
-                          },
-                          "provenance_complete": {
-                            "type": "boolean"
-                          },
-                          "correction": {
-                            "type": "string",
-                            "const": "small",
-                            "description": "Apply and approve a complete Small corrected candidate supplied as file_text."
-                          },
-                          "file_text": {
-                            "type": "string"
-                          }
-                        }
+                        "type": "object"
                       }
+                    ]
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
                     ],
-                    "discriminator": {
-                      "propertyName": "correction"
-                    }
+                    "type": "object"
                   }
-                }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Canonical dish workflow result",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResultEnvelope"
                 }
               }
-            }
+            },
+            "description": "Canonical dish workflow result"
           }
-        }
-      }
-    },
-    "/v1/action/reject": {
-      "post": {
-        "operationId": "dish_reject",
-        "x-openai-isConsequential": true,
-        "summary": "Run dish reject",
-        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
+        },
         "security": [
           {
             "actionBearer": []
           }
         ],
+        "summary": "Run dish approve",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/create": {
+      "post": {
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
+        "operationId": "dish_create",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
                 "additionalProperties": false,
                 "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "agent",
+                      "title"
+                    ],
+                    "type": "object"
+                  },
                   "client": {
-                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
                     "required": [
                       "run_id",
                       "request_id"
                     ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish create",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/inspect": {
+      "post": {
+        "description": "Read-only Action. It does not accept client.request_id, create a replay record, or authorize a mutation.",
+        "operationId": "dish_inspect",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "submission_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id",
+                      "agent"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
                     "additionalProperties": false,
                     "properties": {
                       "run_id": {
-                        "type": "string",
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
                         "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
                         "maxLength": 36,
-                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
                       }
-                    }
-                  },
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish inspect",
+        "x-openai-isConsequential": false
+      }
+    },
+    "/v1/action/prepare": {
+      "post": {
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
+        "operationId": "dish_prepare",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
                   "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "file_text": {
+                        "type": "string"
+                      },
+                      "material_classification": {
+                        "description": "Required only when a post-signoff change candidate changes the canonical body. It classifies that exact body diff from the signed baseline. The caller may propose non-material, but Dish forces material when a protocol-defined material path changed; material opens Verification, while an accepted non-material diff preserves the exact prior signoff.",
+                        "enum": [
+                          "material",
+                          "non-material"
+                        ],
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "submission_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id",
+                      "agent",
+                      "model",
+                      "file_text"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish prepare",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/read": {
+      "post": {
+        "description": "Read-only Action. It does not accept client.request_id, create a replay record, or authorize a mutation.",
+        "operationId": "dish_read",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "task_gid": {
+                        "maxLength": 19,
+                        "pattern": "^[1-9][0-9]*$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "task_gid",
+                      "agent"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish read",
+        "x-openai-isConsequential": false
+      }
+    },
+    "/v1/action/reject": {
+      "post": {
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
+        "operationId": "dish_reject",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "discriminator": {
+                      "propertyName": "route"
+                    },
                     "oneOf": [
                       {
-                        "type": "object",
                         "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "file_text": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "route": {
+                            "const": "large",
+                            "description": "Select the large rejection route.",
+                            "type": "string"
+                          },
+                          "submission_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          }
+                        },
                         "required": [
                           "submission_id",
                           "agent",
@@ -890,84 +772,42 @@
                           "model",
                           "file_text"
                         ],
-                        "properties": {
-                          "submission_id": {
-                            "type": "string",
-                            "format": "uuid",
-                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                            "minLength": 36,
-                            "maxLength": 36
-                          },
-                          "agent": {
-                            "type": "string",
-                            "enum": [
-                              "claude",
-                              "gpt",
-                              "codex"
-                            ]
-                          },
-                          "reason": {
-                            "type": "string"
-                          },
-                          "route": {
-                            "type": "string",
-                            "const": "large",
-                            "description": "Select the large rejection route."
-                          },
-                          "model": {
-                            "type": "string"
-                          },
-                          "file_text": {
-                            "type": "string"
-                          }
-                        }
+                        "type": "object"
                       },
                       {
-                        "type": "object",
                         "additionalProperties": false,
-                        "required": [
-                          "submission_id",
-                          "agent",
-                          "reason",
-                          "route",
-                          "resume_status"
-                        ],
                         "properties": {
-                          "submission_id": {
-                            "type": "string",
-                            "format": "uuid",
-                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                            "minLength": 36,
-                            "maxLength": 36
-                          },
                           "agent": {
-                            "type": "string",
                             "enum": [
                               "claude",
                               "gpt",
                               "codex"
-                            ]
+                            ],
+                            "type": "string"
                           },
                           "reason": {
                             "type": "string"
                           },
+                          "resume_status": {
+                            "enum": [
+                              "pending-research",
+                              "pending-verification"
+                            ],
+                            "type": "string"
+                          },
                           "route": {
-                            "type": "string",
                             "const": "evidence",
-                            "description": "Select the evidence rejection route."
+                            "description": "Select the evidence rejection route.",
+                            "type": "string"
                           },
-                          "resume_status": {
-                            "type": "string",
-                            "enum": [
-                              "pending-research",
-                              "pending-verification"
-                            ]
+                          "submission_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
                           }
-                        }
-                      },
-                      {
-                        "type": "object",
-                        "additionalProperties": false,
+                        },
                         "required": [
                           "submission_id",
                           "agent",
@@ -975,404 +815,585 @@
                           "route",
                           "resume_status"
                         ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
                         "properties": {
-                          "submission_id": {
-                            "type": "string",
-                            "format": "uuid",
-                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                            "minLength": 36,
-                            "maxLength": 36
-                          },
                           "agent": {
-                            "type": "string",
                             "enum": [
                               "claude",
                               "gpt",
                               "codex"
-                            ]
+                            ],
+                            "type": "string"
                           },
                           "reason": {
                             "type": "string"
                           },
-                          "route": {
-                            "type": "string",
-                            "const": "human-review",
-                            "description": "Select the human-review rejection route."
-                          },
                           "resume_status": {
-                            "type": "string",
                             "enum": [
                               "pending-research",
                               "pending-verification"
-                            ]
+                            ],
+                            "type": "string"
+                          },
+                          "route": {
+                            "const": "human-review",
+                            "description": "Select the human-review rejection route.",
+                            "type": "string"
+                          },
+                          "submission_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
                           }
-                        }
+                        },
+                        "required": [
+                          "submission_id",
+                          "agent",
+                          "reason",
+                          "route",
+                          "resume_status"
+                        ],
+                        "type": "object"
                       }
+                    ]
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
                     ],
-                    "discriminator": {
-                      "propertyName": "route"
-                    }
+                    "type": "object"
                   }
-                }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Canonical dish workflow result",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResultEnvelope"
                 }
               }
-            }
+            },
+            "description": "Canonical dish workflow result"
           }
-        }
-      }
-    },
-    "/v1/action/submit": {
-      "post": {
-        "operationId": "dish_submit",
-        "x-openai-isConsequential": true,
-        "summary": "Run dish submit",
-        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
+        },
         "security": [
           {
             "actionBearer": []
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
-                "additionalProperties": false,
-                "properties": {
-                  "client": {
-                    "type": "object",
-                    "required": [
-                      "run_id",
-                      "request_id"
-                    ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "submission_id"
-                    ],
-                    "properties": {
-                      "submission_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Canonical dish workflow result",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
-                }
-              }
-            }
-          }
-        }
+        "summary": "Run dish reject",
+        "x-openai-isConsequential": true
       }
     },
     "/v1/action/renew-lease": {
       "post": {
-        "operationId": "dish_renew_lease",
-        "x-openai-isConsequential": true,
-        "summary": "Renew the current GPT Action operation lease",
         "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
-        "security": [
-          {
-            "actionBearer": []
-          }
-        ],
+        "operationId": "dish_renew_lease",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "required": [
-                  "client",
-                  "arguments"
-                ],
                 "additionalProperties": false,
                 "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "operation_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "operation_id"
+                    ],
+                    "type": "object"
+                  },
                   "client": {
-                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
                     "required": [
                       "run_id",
                       "request_id"
                     ],
-                    "additionalProperties": false,
-                    "properties": {
-                      "run_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
-                      },
-                      "request_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36,
-                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
-                      }
-                    }
-                  },
-                  "arguments": {
-                    "required": [
-                      "operation_id"
-                    ],
-                    "properties": {
-                      "operation_id": {
-                        "type": "string",
-                        "format": "uuid",
-                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                        "minLength": 36,
-                        "maxLength": 36
-                      }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   }
-                }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
-            "description": "Canonical lease result",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ResultEnvelope"
                 }
               }
-            }
+            },
+            "description": "Canonical lease result"
           }
-        }
-      }
-    }
-  },
-  "components": {
-    "securitySchemes": {
-      "actionBearer": {
-        "type": "http",
-        "scheme": "bearer"
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Renew the current GPT Action operation lease",
+        "x-openai-isConsequential": true
       }
     },
-    "schemas": {
-      "ResultEnvelope": {
-        "type": "object",
-        "required": [
-          "ok",
-          "command",
-          "code",
-          "retryable",
-          "allowed_actions",
-          "data",
-          "errors"
-        ],
-        "properties": {
-          "ok": {
-            "type": "boolean"
-          },
-          "command": {
-            "type": "string"
-          },
-          "code": {
-            "type": "string"
-          },
-          "task_gid": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "submission_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "uuid",
-            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-            "minLength": 36,
-            "maxLength": 36
-          },
-          "state": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "retryable": {
-            "type": "boolean",
-            "description": "Mechanical advice for a corrected or fresh call. It does not override exact request replay: reuse the same request_id only after response loss, and never retry BACKEND_UNCERTAIN as new work."
-          },
-          "allowed_actions": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "data": {
-            "type": "object",
-            "additionalProperties": true,
-            "properties": {
-              "request_id": {
-                "type": "string",
-                "format": "uuid",
-                "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-                "minLength": 36,
-                "maxLength": 36,
-                "description": "The accepted mutation request UUID. Present on a replayed stored result."
-              },
-              "request_replayed": {
-                "type": "boolean",
-                "description": "True only when this response was reconstructed from the durable result of the exact same completed request."
-              },
-              "validation_scope": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "enum": [
-                    "structural-only",
-                    "transition-state",
-                    "exact-content-identity",
-                    "agent-semantic-review",
-                    "provenance-signoff",
-                    "movement-confirmation"
-                  ]
-                },
-                "uniqueItems": true
-              },
-              "required_start_kind": {
-                "type": "string",
-                "enum": [
-                  "planning",
-                  "initial",
-                  "verification"
-                ],
-                "description": "Exact arguments.kind for the returned start action: planning starts Planning from a bare task; initial starts the first Research construction after Planning; verification starts independent Verification after Research. A planning-to-research handoff always requires kind=initial."
-              },
-              "required_admin_action": {
-                "type": "string",
-                "description": "Exact private administrative Action required before the agent workflow may continue. It is not exposed in allowed_actions."
-              },
-              "resolver": {
-                "type": "string",
-                "description": "Required private Marco resolver for an administrative continuation."
-              },
-              "legal_next_step": {
-                "type": "string",
-                "description": "Exact legal continuation after a blocked agent mutation, including the private resolver and the fresh follow-up Action when applicable."
-              },
-              "material_classification": {
-                "type": [
-                  "object",
-                  "null"
-                ],
-                "description": "Prepare classification for a changed post-signoff canonical body. When Dish overrides a requested non-material classification, forced_material_reasons names every detected protocol reason.",
-                "required": [
-                  "classified_subject",
-                  "requested",
-                  "effective",
-                  "forced_material_reasons",
-                  "route"
-                ],
+    "/v1/action/sections": {
+      "post": {
+        "description": "Read-only Action. It does not accept client.request_id, create a replay record, or authorize a mutation.",
+        "operationId": "dish_sections",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
                 "additionalProperties": false,
                 "properties": {
-                  "classified_subject": {
-                    "type": "string"
-                  },
-                  "requested": {
-                    "type": "string",
-                    "enum": [
-                      "material",
-                      "non-material"
-                    ]
-                  },
-                  "effective": {
-                    "type": "string",
-                    "enum": [
-                      "material",
-                      "non-material"
-                    ]
-                  },
-                  "forced_material_reasons": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      }
                     },
-                    "description": "Exact protocol classifier reasons that forced the effective classification to material; empty when no override occurred."
+                    "required": [
+                      "agent"
+                    ],
+                    "type": "object"
                   },
-                  "route": {
-                    "type": "string",
-                    "enum": [
-                      "verification",
-                      "signed-check-in"
-                    ]
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
                   }
-                }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
               }
             }
           },
-          "errors": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": true
-            }
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
           }
-        }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish sections",
+        "x-openai-isConsequential": false
+      }
+    },
+    "/v1/action/start": {
+      "post": {
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
+        "operationId": "dish_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "discriminator": {
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "kind": {
+                            "const": "planning",
+                            "description": "Start Planning from a bare Cooking task.",
+                            "type": "string"
+                          },
+                          "prepared_operation_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "task_gid": {
+                            "maxLength": 19,
+                            "pattern": "^[1-9][0-9]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "task_gid",
+                          "agent",
+                          "kind"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "kind": {
+                            "const": "initial",
+                            "description": "Start the first Research construction after Planning. For a planning-to-research handoff, use kind=initial; do not start Planning again.",
+                            "type": "string"
+                          },
+                          "prepared_operation_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "task_gid": {
+                            "maxLength": 19,
+                            "pattern": "^[1-9][0-9]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "task_gid",
+                          "agent",
+                          "kind"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "change_level": {
+                            "enum": [
+                              "small",
+                              "large"
+                            ],
+                            "type": "string"
+                          },
+                          "change_reason": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "const": "change",
+                            "description": "Start a post-signoff change operation.",
+                            "type": "string"
+                          },
+                          "prepared_operation_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "task_gid": {
+                            "maxLength": 19,
+                            "pattern": "^[1-9][0-9]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "task_gid",
+                          "agent",
+                          "kind"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "independence_attestation": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "const": "verification",
+                            "description": "Start independent Verification after Research.",
+                            "type": "string"
+                          },
+                          "task_gid": {
+                            "maxLength": 19,
+                            "pattern": "^[1-9][0-9]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "task_gid",
+                          "agent",
+                          "kind",
+                          "independence_attestation"
+                        ],
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish start",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/submit": {
+      "post": {
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
+        "operationId": "dish_submit",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "submission_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical dish workflow result"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run dish submit",
+        "x-openai-isConsequential": true
       }
     }
-  }
+  },
+  "servers": [
+    {
+      "url": "https://dish.example.invalid"
+    }
+  ]
 }

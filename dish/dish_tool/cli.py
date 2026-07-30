@@ -170,6 +170,10 @@ def build_parser() -> JsonArgumentParser:
         help="required with --kind change: small preserves settled construction, large materially changes it",
     )
     start.add_argument("--change-reason")
+    start.add_argument(
+        "--prepared-operation-id",
+        help="exact abandonment-created Planning/Research successor to claim",
+    )
 
     prepare = subparsers.add_parser(
         "prepare",

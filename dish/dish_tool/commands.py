@@ -588,8 +588,13 @@ def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str)
     return result_envelope(command="inspect", task_gid=trace.task_gid, submission_id=operation_id, state=trace.state, allowed_actions=view["legal_actions"], data=data)
 
 
-def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: str, change_level: str | None = None, change_reason: str | None = None, run_id: str | None = None) -> dict[str, Any]:
-    from .step5 import claim_operation, diagnostics_for, start_result_data
+def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: str, change_level: str | None = None, change_reason: str | None = None, prepared_operation_id: str | None = None, run_id: str | None = None) -> dict[str, Any]:
+    from .step5 import (
+        claim_operation,
+        claim_prepared_stage_successor,
+        diagnostics_for,
+        start_result_data,
+    )
     from .task_store import read_complete_task
     agent_family(agent)
     task_gid = _clean_required(task_gid, rule="task_gid_required", label="task GID")
@@ -686,18 +691,33 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
         if diag["parsed"] is not None and diag["validation"]:
             raise DishRuleError("VALIDATION_FAILED", "task failed current structural validation", errors=diag["validation"])
     try:
-        op = self.operation_service.current.start_operation(
-            lambda: claim_operation(
-                self.conn,
-                live=live,
-                release=release,
-                kind=kind,
-                agent=agent,
-                run_id=run_id,
-                change_level=change_level,
-                change_reason=change_reason,
+        if prepared_operation_id is not None:
+            op = self.operation_service.current.start_operation(
+                lambda: claim_prepared_stage_successor(
+                    self.conn,
+                    live=live,
+                    release=release,
+                    kind=kind,
+                    agent=agent,
+                    run_id=run_id,
+                    prepared_operation_id=prepared_operation_id,
+                    change_level=change_level,
+                    change_reason=change_reason,
+                )
             )
-        )
+        else:
+            op = self.operation_service.current.start_operation(
+                lambda: claim_operation(
+                    self.conn,
+                    live=live,
+                    release=release,
+                    kind=kind,
+                    agent=agent,
+                    run_id=run_id,
+                    change_level=change_level,
+                    change_reason=change_reason,
+                )
+            )
     except DishRuleError as exc:
         if exc.rule == "planning_reopen_reconciliation_required":
             from .database import planning_reopen_blocker_for_task
@@ -716,7 +736,7 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
                     details=details,
                 ) from exc
             raise
-        if exc.rule != "open_operation_exists":
+        if exc.rule != "open_operation_exists" or prepared_operation_id is not None:
             raise
         existing = self.conn.execute(
             """SELECT operation_id FROM operations
@@ -821,13 +841,21 @@ def _step7_start(
     kind: str,
     change_level: str | None = None,
     change_reason: str | None = None,
+    prepared_operation_id: str | None = None,
     run_id: str | None = None,
     independence_attestation: str | None = None,
 ) -> dict[str, Any]:
     if kind != "verification":
         return _step6_command_start(
             self, trace=trace, agent=agent, task_gid=task_gid, kind=kind,
-            change_level=change_level, change_reason=change_reason, run_id=run_id,
+            change_level=change_level, change_reason=change_reason,
+            prepared_operation_id=prepared_operation_id, run_id=run_id,
+        )
+    if prepared_operation_id is not None:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "prepared_operation_id is accepted only for Planning or Research successors",
+            rule="prepared_operation_id_forbidden",
         )
     from .step7 import verification_read
     clean_attestation = validate_independence_attestation(

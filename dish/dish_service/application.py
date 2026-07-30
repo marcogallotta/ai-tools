@@ -564,6 +564,8 @@ class DishService:
         operation_id = str(arguments.get("submission_id") or "").strip()
         if operation_id:
             return operation_id
+        if command == "start" and arguments.get("prepared_operation_id"):
+            return str(arguments.get("prepared_operation_id") or "").strip() or None
         if command == "start" and arguments.get("kind") == "verification":
             task_gid = str(arguments.get("task_gid") or "").strip()
             row = conn.execute(
@@ -1463,6 +1465,9 @@ class DishService:
             raise pending_error("start", request_id)
         operation = rows[0]
         operation_id = operation["operation_id"]
+        prepared_operation_id = str(arguments.get("prepared_operation_id") or "").strip()
+        if prepared_operation_id and operation_id != prepared_operation_id:
+            raise pending_error("start", request_id, operation_id=prepared_operation_id)
 
         if kind == "verification":
             data = replay_verification_read(
@@ -1674,6 +1679,25 @@ class DishService:
                 operation_id = self._operation_for_request(
                     conn, command, prepared_arguments,
                 )
+                if command == "start" and prepared_arguments.get("prepared_operation_id"):
+                    authority = conn.execute(
+                        """SELECT abandonment.abandoned_owner_id, abandonment.abandoned_run_id
+                             FROM operation_successions AS succession
+                             JOIN abandonment_attempts AS abandonment
+                               ON abandonment.abandonment_id=succession.abandonment_id
+                            WHERE succession.successor_operation_id=?""",
+                        (operation_id,),
+                    ).fetchone()
+                    if (
+                        authority is not None
+                        and authority["abandoned_owner_id"] == principal.owner_id
+                        and authority["abandoned_run_id"] == principal.run_id
+                    ):
+                        raise DishRuleError(
+                            "AGENT_MISMATCH",
+                            "the abandoned client run cannot claim its replacement attempt",
+                            rule="abandoned_run_claim_forbidden",
+                        )
                 if command in _LEASED_AGENT_COMMANDS:
                     if not operation_id:
                         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")

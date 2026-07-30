@@ -364,18 +364,29 @@ cycle abandonment, successor operation/cycle creation, baseline transfer, lineag
 state together. No CLI, HTTP route, or workflow policy may call this foundation until the later
 stage-specific classification and CurrentWorkflowService authority work is implemented.
 
-The internal abandonment frontier policy now lives in `dish_tool.abandonment` and is routed only
-through `CurrentWorkflowService`; it is still not a command surface. The policy rereads the exact
-live task and revalidates the persisted latest actor attempt before selecting one of four bounded
-results: clean restart preparation, preservation of a pre-construction Research hold, completion of
-an already-applied recovery suffix, or manual reconciliation. It never initiates compensation. A
-clean restart requires exact baseline and placement plus no pending steps or unresolved effects.
-Committed finalization is limited to existing `step9.recover_operation(..., applied)` suffixes whose
-external write or movement is already proved by the live task; the classifier verifies that recovery
-will not issue a new external effect. If that existing recovery commits before abandonment result
-bookkeeping, a subsequent reconciliation recognizes the already-terminal or independently
-continuable route and completes the abandonment without repeating recovery. Successor construction
-remains deferred to the role-specific stages, and no CLI or HTTP route exposes this policy yet.
+The internal abandonment frontier policy lives in `dish_tool.abandonment` and is routed only
+through `CurrentWorkflowService`; the abandonment command itself is still not a CLI or HTTP surface.
+The policy rereads the exact live task and revalidates the persisted latest actor attempt before
+selecting one of four bounded results: clean restart preparation, preservation of a pre-construction
+Research hold, completion of an already-applied recovery suffix, or manual reconciliation. It never
+initiates compensation. A clean restart requires exact baseline and placement plus no pending steps
+or unresolved effects. Committed finalization is limited to existing
+`step9.recover_operation(..., applied)` suffixes whose external write or movement is already proved
+by the live task; the classifier verifies that recovery will not issue a new external effect. If that
+existing recovery commits before abandonment result bookkeeping, a subsequent reconciliation
+recognizes the already-terminal or independently continuable route and completes the abandonment
+without repeating recovery.
+
+Clean Planning and Research frontiers now publish the immutable successor, successor-owned baseline,
+and exact `prepared_operation_id` start action. The successor remains unowned with
+`successor_claim_mode=stage_actor` until that exact target is claimed. Claiming binds the fresh
+planner, constructor, or material editor run, records its actor fact, clears the claim mode, and
+completes the abandonment; the abandoned run is ineligible. Change successors retain the exact
+completed `change_intent`. A preserved pre-construction Research hold keeps the dead-run source fenced
+until its existing hold-resolution command succeeds; that resolution atomically terminalizes the
+source and publishes the fresh Research successor instead of returning the source to
+`prepare_required`. Ordinary Planning/Research starts still omit `prepared_operation_id`. Verification
+successor construction and exact Verification targeting remain owned by the next role-specific stage.
 
 Request-scoped lease renewal, expired-lease recovery, and explicit administrative lease expiry
 commit the lease effect and replayable service-request result in the same SQLite transaction; neither

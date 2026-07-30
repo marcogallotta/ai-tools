@@ -162,6 +162,59 @@ def claim_operation(
     )
 
 
+def claim_prepared_stage_successor(
+    conn: sqlite3.Connection,
+    *,
+    live: LiveTask,
+    release: ResolvedRelease,
+    kind: str,
+    agent: str,
+    run_id: str | None,
+    prepared_operation_id: str,
+    change_level: str | None = None,
+    change_reason: str | None = None,
+):
+    from .database import claim_prepared_stage_successor_in_transaction
+
+    clean_id = str(prepared_operation_id or "").strip()
+    if not clean_id:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "prepared operation ID is required",
+            rule="prepared_operation_id_required",
+        )
+    result = {
+        "prepared_operation_id": clean_id,
+        "task_gid": live.gid,
+        "kind": kind,
+    }
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = claim_prepared_stage_successor_in_transaction(
+            conn,
+            prepared_operation_id=clean_id,
+            task_gid=live.gid,
+            operation_kind=kind,
+            agent=agent,
+            run_id=str(run_id or "").strip(),
+            live_identity=live.identity,
+            live_section_gid=live.section_gid,
+            schema_version=release.schema_version,
+            expected_change_intent=(
+                {"level": change_level, "reason": change_reason}
+                if kind == "change"
+                else None
+            ),
+            result=result,
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    return row
+
+
 def verification_lineage(
     conn: sqlite3.Connection,
     operation_id: str,
