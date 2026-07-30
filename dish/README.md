@@ -72,6 +72,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now dish-service
 ```
 
+View service logs with `journalctl -u dish-service.service`.
+
 Dish reads the current protocol and task-schema assets from `DISH_HONEST_PATH` when it handles
 workflow commands, so edits to those assets do not require a service restart. Restart
 `dish-service` after changing its environment or Python code. Verification cycles already in

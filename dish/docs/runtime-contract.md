@@ -357,13 +357,14 @@ During a fresh initial Research operation, `reject --route evidence|human-review
 ## Troubleshooting checklist
 
 1. Save the complete JSON result and process exit status.
-2. Run `dish read TASK_GID --agent AGENT` and, when an operation exists, `dish inspect OPERATION_ID --agent AGENT`.
-3. Compare the reported live identity, reviewed/signed identity, placement, schema version, and legal actions.
-4. For compatibility failure, confirm `DISH_HONEST_PATH`, `DISH_VERSION`, schema assets, and the exact supported protocol/schema pair.
-5. For migration required, stop normal commands and ask Marco to run `dish-admin migrate`.
-6. For a `started` or `uncertain` write/movement, do not retry the backend mutation. Use `dish-admin recover` after a live reread; recovery must match persisted expected/intended evidence and records the reconciliation outcome durably. This includes an interrupted destination-repair content write.
-7. For an unrecoverable destination failure, use only the returned `repair-destination` admin action; do not reopen Verification or edit the task directly.
-8. For tool/protocol disagreement, preserve the task unchanged and report both the protocol clause and tool rule.
+2. Cross-check `journalctl -u dish-service.service` for the corresponding request.
+3. Run `dish read TASK_GID --agent AGENT` and, when an operation exists, `dish inspect OPERATION_ID --agent AGENT`.
+4. Compare the reported live identity, reviewed/signed identity, placement, schema version, and legal actions.
+5. For compatibility failure, confirm `DISH_HONEST_PATH`, `DISH_VERSION`, schema assets, and the exact supported protocol/schema pair.
+6. For migration required, stop normal commands and ask Marco to run `dish-admin migrate`.
+7. For a `started` or `uncertain` write/movement, do not retry the backend mutation. Use `dish-admin recover` after a live reread; recovery must match persisted expected/intended evidence and records the reconciliation outcome durably. This includes an interrupted destination-repair content write.
+8. For an unrecoverable destination failure, use only the returned `repair-destination` admin action; do not reopen Verification or edit the task directly.
+9. For tool/protocol disagreement, preserve the task unchanged and report both the protocol clause and tool rule.
 
 The corpus migration rehearsal and live cutover remain separately authorized work. Passing this
 runtime contract does not itself authorize production Cooking-task activation; follow
