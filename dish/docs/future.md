@@ -42,9 +42,49 @@ its scope is decided rather than building against a model about to change:
 - three-value nutrition grammar (lower urgency regardless, and possibly superseded by any later
   structured-representation migration).
 
+A third category needs no such wait: new Dish-owned facts with no existing Asana-side representation
+— lightweight dish tags and availability blockers, the Sourcing/Reference catalog, pending-order
+tracking, and cook-log entries below. None of these migrate an existing external fact, so none of
+them get thrown away by the authority migration; they can be built on whatever timeline makes sense
+on their own.
+
 Serving the Honest repository to agents is orthogonal to task storage and can proceed independently
 at any time. Public Action rate limiting has no activation evidence justifying it regardless of
 sequencing.
+
+### Lightweight dish metadata and fast filtering
+
+Independent of the backend-authority decision: add a small Dish-owned metadata layer (destination
+category/region tags, protein type, tier, and an explicit availability blocker) directly in Dish's
+own database, not Asana. None of this needs to wait on `database-backend-design.md`'s authority
+migration, because it is new data with no existing Asana-side representation to migrate away from —
+unlike section placement or content identity, there is nothing here to throw away later.
+
+The availability blocker (e.g. "needs cilantro," "needs fig season") is a concrete, non-fuzzy fact:
+someone already decided a dish can't be made right now and can clear that decision explicitly later.
+It is not automatic proxying of real-world stock or harvest state, which stays out of scope pending
+its own design pass. An earlier version of this idea shipped briefly as title-embedded `--blocker`
+markers in `bin/dish-tool-imp.md` (see commit `481160a`, later removed with that file); a structured
+field is a real improvement over baking it into rendered title text, since it needs no title
+grammar, parsing, or re-rendering on every correction.
+
+Fast category/region/tier/ingredient filtering solves the current problem where asking an agent to
+search matches against the live Asana corpus is slow because it has to fetch everything first. A
+lightweight tag layer gives agents a fast, structured, filterable answer instead.
+
+### Structured Sourcing/Reference catalog
+
+Import or maintain Sourcing/Reference documents (e.g. halal seafood and meat sourcing docs) as a
+small structured catalog — item, category, source, price estimate, availability note — instead of
+free prose agents have to read in full. This is a concrete answer to the open historical-corpus-scope
+question in `database-backend-design.md` ("Needs human review" item 9): a real use for importing
+these records is fast agent lookup, not just search/provenance completeness.
+
+### Pending-order / expected-delivery tracking
+
+Track a concrete, non-fuzzy blocker on an external order: item, source, expected date, status
+(ordered/arrived/resolved). Lets an agent or Marco record "blocked until the Sichuan store order
+arrives" and later re-check what's missing, without inventing a fuzzy stock-estimation feature.
 
 ### Paginated section task listing
 
@@ -214,13 +254,29 @@ post-rollout draft: re-open only after Part I ships and production evidence is a
 
 ### Tool-mediated cooking and cook logs
 
-Cooking agents currently read the signed task and write cook-log information outside the task body.
-A future Dish surface could own cook-log entries and Marco-granted cooking overrides as first-class
-operations.
+Cooking agents currently read the signed task and write cook-log information outside the task body,
+in a separate repository. There is also no governed way today to record that a dish was actually
+cooked or to move it out of its Destination section: Marco does that manually by moving the task into
+a separate Cooking History project himself, entirely outside Dish. That gap is accepted as fine for
+the initial rollout, not launch-blocking — Dish's guarded lifecycle was always meant to stop at
+submission for v1.
+
+Post-rollout, expose a `log-cook` Action so the cooking agent logs how a cook went through Dish rather
+than an external file, with the resulting placement move (to a Cooked section, or into Cooking
+History) happening as a consequence of that log rather than a separate `mark-cooked` command.
+Cook-log data is new Dish-owned data with no existing Asana-side representation, so building it does
+not need to wait on the database-backend authority-migration decision (see the sequencing note
+above).
+
+However this is built, cooking or logging a cook must never require the task to be unblocked or past
+any particular workflow state first. Keeping cooking agents outside governed workflow state today
+means Marco can still cook a dish that is stuck in Verification or otherwise hitting rough edges; any
+future `log-cook` action must preserve that same decoupling rather than gating on task state.
 
 Design questions include:
 
-- the exact cook-log command and append-only record;
+- the exact cook-log command and append-only record, starting minimally (timestamp, agent, free-text
+  outcome) and expanding only if needed;
 - how comments or a future backend represent actual quantities, deviations, results, and next
   action;
 - how a Marco override names the exact waived gate without weakening task-body signoff;
@@ -250,9 +306,20 @@ Any replacement must preserve:
 - append-only evidence and recovery;
 - audit history and safely classified external effects;
 - a migration and cutover plan for the live corpus;
-- Marco's reading, intervention, and cook-log needs.
+- Marco's reading, intervention, and cook-log needs;
+- category/destination browsing that is not blocked by a dish's current Research/Verification Queue
+  placement.
 
 Do not reproduce Asana's general project-management model unless real use requires it.
+
+### Idea-dish intake and cross-dish planning (speculative)
+
+Marco sometimes wants to dump a loosely-defined idea dish that isn't yet a real planned candidate,
+and separately wants a higher-level planning agent that reasons across several dishes at once (e.g.
+"define a themed block around rice pudding") rather than Dish's current one-task-at-a-time model.
+Both are genuinely future and unformed: no schema, workflow, or authority shape has been decided.
+Revisit only alongside the structured-representation and fast-filtering work above, once it's clear
+what data a cross-dish planning agent would actually query.
 
 ### Deployment and resilience beyond personal use
 

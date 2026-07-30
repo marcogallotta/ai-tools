@@ -98,6 +98,8 @@ representation follows as a separately governed migration inside the DB-backed s
    projection without introducing dual authority.
 9. Delete the executable Asana authority path after acceptance.
 10. Replace Planning's read-only lookup of completed cooking history with a Dish query.
+11. Let a dish be found by its destination category independent of its current Research/Verification
+    Queue placement.
 
 ## Non-goals
 
@@ -526,6 +528,12 @@ The document-compatible store must still use the same task pointer, transaction,
 location, completion, audit, and rollback contracts. It preserves source documents and may attach
 non-authoritative structured candidates. Its command API must not force the future frontend to
 depend on raw database rows or prevent later versioned structured payloads.
+
+A lightweight categorical metadata layer — destination category, region, protein type, tier, and an
+explicit availability blocker — may be added directly at this document-compatible stage as simple
+indexed columns or a side table, independent of structured dish versions. These are low-identity-risk
+tags, not lossless quantity or nutrition data, so they do not need to wait for the separately gated
+representation migration below.
 
 Once structured parity is proven, a governed database migration creates complete structured
 versions, verifies their deterministic identities and renderings, and advances eligible task
@@ -1013,6 +1021,8 @@ before implementation, especially where a visual gesture could conceal a governe
 
 - list tasks and open the exact current authoritative version and its rendered view;
 - show basic search and filters by title, location, completion, and active-operation status;
+- filter by a dish's destination category independent of its current queue placement, so a dish in
+  Research or Verification Queue remains findable by where it's headed;
 - show content, location, operation, Verification, audit, and recovery history;
 - render structured dish fields and exact legacy source documents;
 - show allowed actions without making the read surface itself authoritative.
@@ -1556,6 +1566,12 @@ these decisions on his behalf.
    named final batch. Also approve the acceptance period and the point at which DB-native mutations
    may begin. Before the first mutation, Asana rollback remains valid; after it, rollback restores
    the DB-backed system and returning to Asana requires a reverse migration.
+11. **Recipe scaling.** Decide whether crude linear scaling of ingredient quantities (never steps,
+   timing, or non-linear items such as leavening, spice, or pan-surface-area-dependent behavior) is
+   worth adding once typed quantities exist, and how non-linear items are flagged for human judgment
+   rather than silently scaled. The recommended default is no scaling until typed quantities are
+   proven, added as a separately reviewed feature rather than bundled into the base structured
+   schema.
 
 ## Decisions requiring approval before implementation
 
