@@ -288,6 +288,7 @@ cannot silently create separate live authorities.
 | Durable concern | Tables or storage |
 |---|---|
 | operation lifecycle | `operations`, `operation_steps`, `operation_actor_facts` |
+| abandoned-attempt lineage | `abandonment_attempts`, `operation_successions` |
 | exact task state | `task_content_state`, `content_versions` |
 | Verification/signoff | `verification_cycles`, `two_pass_resets` |
 | external effects | `write_attempts`, `movement_attempts` |
@@ -350,6 +351,18 @@ operation-scoped admin leases use `lease_kind=admin_request` and do not consume 
 sequence numbers or carry cycle context. These creation facts are immutable. Legacy rows may remain
 unclassified until drained, but new code must never infer attempt order or Verification-cycle identity
 from timestamps or from admin lease history.
+
+The abandoned-attempt persistence foundation is intentionally not an operator surface yet.
+`abandonment_attempts` binds one exact classified actor lease, owner, run, and optional Verification
+cycle; a partial unique index permits only one non-completed abandonment per task. A clean restart
+may publish one immutable `operation_successions` edge from an `agent_abandoned` terminal source to
+an exact prepared successor. The successor owns a confirmed `successor_baseline`, begins with
+`successor_claim_mode=stage_actor` or `verifier`, and has no active service lease. The transaction-
+scoped persistence primitive refuses incomplete workflow steps or unresolved external-effect
+attempts, retires the exact source lease, and commits source terminalization, optional incomplete-
+cycle abandonment, successor operation/cycle creation, baseline transfer, lineage, and abandonment
+state together. No CLI, HTTP route, or workflow policy may call this foundation until the later
+stage-specific classification and CurrentWorkflowService authority work is implemented.
 
 Request-scoped lease renewal, expired-lease recovery, and explicit administrative lease expiry
 commit the lease effect and replayable service-request result in the same SQLite transaction; neither

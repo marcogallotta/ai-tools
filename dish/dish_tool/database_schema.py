@@ -1724,7 +1724,438 @@ WHEN NEW.lease_kind IS NOT OLD.lease_kind
 BEGIN SELECT RAISE(ABORT, 'service lease attempt context is immutable'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31}
+
+_MIGRATION_32 = """
+ALTER TABLE operations ADD COLUMN successor_claim_mode TEXT NOT NULL DEFAULT 'none'
+    CHECK(successor_claim_mode IN ('none','stage_actor','verifier'));
+
+CREATE TABLE abandonment_attempts (
+    abandonment_id TEXT PRIMARY KEY,
+    task_gid TEXT NOT NULL,
+    source_operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    source_lease_id TEXT NOT NULL REFERENCES service_leases(lease_id),
+    abandoned_owner_id TEXT NOT NULL CHECK(length(trim(abandoned_owner_id)) > 0),
+    abandoned_run_id TEXT NOT NULL CHECK(length(trim(abandoned_run_id)) > 0),
+    attempt_cycle_id TEXT REFERENCES verification_cycles(cycle_id),
+    status TEXT NOT NULL CHECK(status IN (
+        'started','awaiting_hold_resolution','blocked_manual_reconciliation',
+        'awaiting_successor_claim','completed'
+    )),
+    outcome TEXT CHECK(outcome IS NULL OR outcome IN (
+        'restart_prepared','hold_preserved','restarted',
+        'committed_finalized','route_preserved','blocked_manual_reconciliation'
+    )),
+    successor_operation_id TEXT REFERENCES operations(operation_id),
+    successor_cycle_id TEXT REFERENCES verification_cycles(cycle_id),
+    continuation_operation_id TEXT REFERENCES operations(operation_id),
+    continuation_cycle_id TEXT REFERENCES verification_cycles(cycle_id),
+    current_execution_id TEXT REFERENCES operation_executions(execution_id),
+    reason TEXT NOT NULL CHECK(length(trim(reason)) > 0),
+    latest_result_json TEXT CHECK(latest_result_json IS NULL OR json_valid(latest_result_json)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT
+);
+CREATE UNIQUE INDEX abandonment_attempts_one_active_per_task
+    ON abandonment_attempts(task_gid)
+    WHERE status != 'completed';
+CREATE UNIQUE INDEX abandonment_attempts_exact_attempt_unique
+    ON abandonment_attempts(
+        source_operation_id, source_lease_id, abandoned_owner_id,
+        abandoned_run_id, COALESCE(attempt_cycle_id, '')
+    );
+CREATE INDEX abandonment_attempts_source_idx
+    ON abandonment_attempts(source_operation_id, created_at);
+CREATE INDEX abandonment_attempts_status_idx
+    ON abandonment_attempts(status, updated_at);
+
+CREATE TABLE operation_successions (
+    succession_id TEXT PRIMARY KEY,
+    task_gid TEXT NOT NULL,
+    source_operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    successor_operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    transition_type TEXT NOT NULL CHECK(transition_type='agent_abandonment'),
+    transition_reason TEXT NOT NULL CHECK(length(trim(transition_reason)) > 0),
+    source_cycle_id TEXT REFERENCES verification_cycles(cycle_id),
+    successor_cycle_id TEXT REFERENCES verification_cycles(cycle_id),
+    source_content_version_id TEXT NOT NULL REFERENCES content_versions(content_version_id),
+    successor_content_version_id TEXT NOT NULL REFERENCES content_versions(content_version_id),
+    candidate_transfer_kind TEXT NOT NULL CHECK(candidate_transfer_kind IN (
+        'restored_stage_baseline','inherited_confirmed_candidate',
+        'recovered_pre_signoff_candidate','confirmed_small_correction'
+    )),
+    abandonment_id TEXT NOT NULL UNIQUE REFERENCES abandonment_attempts(abandonment_id),
+    created_at TEXT NOT NULL,
+    UNIQUE(source_operation_id),
+    UNIQUE(successor_operation_id),
+    CHECK(source_operation_id != successor_operation_id)
+);
+CREATE INDEX operation_successions_task_idx
+    ON operation_successions(task_gid, created_at);
+
+CREATE TRIGGER operations_successor_claim_mode_transition
+BEFORE UPDATE OF successor_claim_mode ON operations
+WHEN NEW.successor_claim_mode IS NOT OLD.successor_claim_mode
+ AND NOT (
+     OLD.status='open'
+     AND NEW.status='open'
+     AND OLD.successor_claim_mode IN ('stage_actor','verifier')
+     AND NEW.successor_claim_mode='none'
+ )
+BEGIN SELECT RAISE(ABORT, 'operation successor claim mode transition is invalid'); END;
+
+CREATE TRIGGER abandonment_attempts_authority_insert
+BEFORE INSERT ON abandonment_attempts
+WHEN NOT EXISTS (
+        SELECT 1
+          FROM operations AS operation
+         WHERE operation.operation_id=NEW.source_operation_id
+           AND operation.task_gid=NEW.task_gid
+           AND operation.status IN ('open','uncertain')
+           AND operation.phase != 'terminal'
+     )
+  OR NOT EXISTS (
+        SELECT 1
+          FROM service_leases AS lease
+         WHERE lease.lease_id=NEW.source_lease_id
+           AND lease.operation_id=NEW.source_operation_id
+           AND lease.task_gid=NEW.task_gid
+           AND lease.owner_id=NEW.abandoned_owner_id
+           AND lease.run_id=NEW.abandoned_run_id
+           AND lease.lease_kind='actor'
+           AND lease.actor_attempt_seq IS NOT NULL
+           AND lease.context_cycle_id IS NEW.attempt_cycle_id
+           AND (
+               lease.released_at IS NOT NULL
+               OR julianday(lease.expires_at) <= julianday(NEW.created_at)
+           )
+     )
+  OR EXISTS (
+        SELECT 1
+          FROM service_leases AS selected
+          JOIN service_leases AS later
+            ON later.task_gid=selected.task_gid
+           AND later.lease_kind='actor'
+           AND later.actor_attempt_seq > selected.actor_attempt_seq
+         WHERE selected.lease_id=NEW.source_lease_id
+     )
+  OR EXISTS (
+        SELECT 1 FROM operation_successions
+         WHERE source_operation_id=NEW.source_operation_id
+     )
+  OR (
+        NEW.attempt_cycle_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM verification_cycles AS cycle
+             WHERE cycle.cycle_id=NEW.attempt_cycle_id
+               AND cycle.operation_id=NEW.source_operation_id
+               AND cycle.task_gid=NEW.task_gid
+               AND cycle.run_id=NEW.abandoned_run_id
+        )
+     )
+  OR (
+        NEW.current_execution_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM operation_executions AS execution
+             WHERE execution.execution_id=NEW.current_execution_id
+               AND execution.operation_id=NEW.source_operation_id
+        )
+     )
+BEGIN SELECT RAISE(ABORT, 'abandonment attempt authority binding is invalid'); END;
+
+CREATE TRIGGER abandonment_attempts_initial_state_insert
+BEFORE INSERT ON abandonment_attempts
+WHEN NEW.status != 'started'
+  OR NEW.outcome IS NOT NULL
+  OR NEW.successor_operation_id IS NOT NULL
+  OR NEW.successor_cycle_id IS NOT NULL
+  OR NEW.continuation_operation_id IS NOT NULL
+  OR NEW.continuation_cycle_id IS NOT NULL
+  OR NEW.completed_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'abandonment attempt initial state is invalid'); END;
+
+CREATE TRIGGER abandonment_attempts_identity_immutable_update
+BEFORE UPDATE ON abandonment_attempts
+WHEN NEW.abandonment_id IS NOT OLD.abandonment_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.source_operation_id IS NOT OLD.source_operation_id
+  OR NEW.source_lease_id IS NOT OLD.source_lease_id
+  OR NEW.abandoned_owner_id IS NOT OLD.abandoned_owner_id
+  OR NEW.abandoned_run_id IS NOT OLD.abandoned_run_id
+  OR NEW.attempt_cycle_id IS NOT OLD.attempt_cycle_id
+  OR NEW.reason IS NOT OLD.reason
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'abandonment attempt identity is immutable'); END;
+
+CREATE TRIGGER abandonment_attempts_status_transition_update
+BEFORE UPDATE OF status ON abandonment_attempts
+WHEN NEW.status IS NOT OLD.status
+ AND NOT (
+     (OLD.status='started' AND NEW.status IN (
+         'awaiting_hold_resolution','blocked_manual_reconciliation',
+         'awaiting_successor_claim','completed'
+     ))
+     OR (OLD.status='awaiting_hold_resolution' AND NEW.status IN (
+         'blocked_manual_reconciliation','awaiting_successor_claim','completed'
+     ))
+     OR (OLD.status='blocked_manual_reconciliation' AND NEW.status IN (
+         'started','awaiting_hold_resolution','awaiting_successor_claim','completed'
+     ))
+     OR (OLD.status='awaiting_successor_claim' AND NEW.status IN (
+         'blocked_manual_reconciliation','completed'
+     ))
+ )
+BEGIN SELECT RAISE(ABORT, 'abandonment attempt status transition is invalid'); END;
+
+CREATE TRIGGER abandonment_attempts_state_update
+BEFORE UPDATE ON abandonment_attempts
+WHEN NEW.updated_at < OLD.updated_at
+  OR (OLD.completed_at IS NOT NULL AND NEW.completed_at IS NOT OLD.completed_at)
+  OR (NEW.status='completed' AND (NEW.completed_at IS NULL OR NEW.outcome IS NULL))
+  OR (NEW.status!='completed' AND NEW.completed_at IS NOT NULL)
+  OR (NEW.status='awaiting_successor_claim' AND NEW.successor_operation_id IS NULL)
+  OR (NEW.successor_cycle_id IS NOT NULL AND NEW.successor_operation_id IS NULL)
+  OR (NEW.continuation_cycle_id IS NOT NULL AND NEW.continuation_operation_id IS NULL)
+  OR (
+        NEW.successor_operation_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM operations AS successor
+             WHERE successor.operation_id=NEW.successor_operation_id
+               AND successor.task_gid=NEW.task_gid
+               AND successor.operation_id != NEW.source_operation_id
+        )
+     )
+  OR (
+        NEW.successor_cycle_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM verification_cycles AS cycle
+             WHERE cycle.cycle_id=NEW.successor_cycle_id
+               AND cycle.operation_id=NEW.successor_operation_id
+               AND cycle.task_gid=NEW.task_gid
+        )
+     )
+  OR (
+        NEW.continuation_operation_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM operations AS continuation
+             WHERE continuation.operation_id=NEW.continuation_operation_id
+               AND continuation.task_gid=NEW.task_gid
+        )
+     )
+  OR (
+        NEW.continuation_cycle_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM verification_cycles AS cycle
+             WHERE cycle.cycle_id=NEW.continuation_cycle_id
+               AND cycle.operation_id=NEW.continuation_operation_id
+               AND cycle.task_gid=NEW.task_gid
+        )
+     )
+  OR (
+        NEW.current_execution_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM operation_executions AS execution
+             WHERE execution.execution_id=NEW.current_execution_id
+               AND execution.operation_id=NEW.source_operation_id
+        )
+     )
+BEGIN SELECT RAISE(ABORT, 'abandonment attempt state is invalid'); END;
+
+CREATE TRIGGER abandonment_attempts_completed_immutable_update
+BEFORE UPDATE ON abandonment_attempts
+WHEN OLD.status='completed'
+BEGIN SELECT RAISE(ABORT, 'completed abandonment attempt is immutable'); END;
+CREATE TRIGGER abandonment_attempts_append_only_delete
+BEFORE DELETE ON abandonment_attempts
+BEGIN SELECT RAISE(ABORT, 'abandonment attempts are append-only'); END;
+
+CREATE TRIGGER operation_successions_binding_insert
+BEFORE INSERT ON operation_successions
+WHEN NOT EXISTS (
+        SELECT 1 FROM operations AS source
+         WHERE source.operation_id=NEW.source_operation_id
+           AND source.task_gid=NEW.task_gid
+           AND source.status='cancelled'
+           AND source.phase='terminal'
+           AND source.terminal_outcome='agent_abandoned'
+     )
+  OR NOT EXISTS (
+        SELECT 1 FROM operations AS successor
+         WHERE successor.operation_id=NEW.successor_operation_id
+           AND successor.task_gid=NEW.task_gid
+           AND successor.status='open'
+           AND successor.phase != 'terminal'
+           AND successor.successor_claim_mode IN ('stage_actor','verifier')
+           AND successor.content_write_completed_at IS NULL
+     )
+  OR NOT EXISTS (
+        SELECT 1 FROM abandonment_attempts AS abandonment
+         WHERE abandonment.abandonment_id=NEW.abandonment_id
+           AND abandonment.task_gid=NEW.task_gid
+           AND abandonment.source_operation_id=NEW.source_operation_id
+           AND abandonment.successor_operation_id=NEW.successor_operation_id
+           AND abandonment.successor_cycle_id IS NEW.successor_cycle_id
+           AND abandonment.status='awaiting_successor_claim'
+     )
+  OR NOT EXISTS (
+        SELECT 1 FROM content_versions AS source_version
+         WHERE source_version.content_version_id=NEW.source_content_version_id
+           AND source_version.task_gid=NEW.task_gid
+           AND source_version.confirmed=1
+     )
+  OR NOT EXISTS (
+        SELECT 1
+          FROM content_versions AS source_version
+          JOIN content_versions AS successor_version
+            ON successor_version.content_version_id=NEW.successor_content_version_id
+          JOIN operations AS successor
+            ON successor.operation_id=NEW.successor_operation_id
+         WHERE source_version.content_version_id=NEW.source_content_version_id
+           AND source_version.task_gid=NEW.task_gid
+           AND source_version.confirmed=1
+           AND successor_version.task_gid=NEW.task_gid
+           AND successor_version.operation_id=NEW.successor_operation_id
+           AND successor_version.boundary='successor_baseline'
+           AND successor_version.confirmed=1
+           AND successor_version.identity=source_version.identity
+           AND successor_version.title=source_version.title
+           AND successor_version.notes=source_version.notes
+           AND successor.expected_identity=successor_version.identity
+     )
+  OR (
+        NEW.source_cycle_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM verification_cycles AS cycle
+             WHERE cycle.cycle_id=NEW.source_cycle_id
+               AND cycle.operation_id=NEW.source_operation_id
+               AND cycle.task_gid=NEW.task_gid
+        )
+     )
+  OR (
+        NEW.successor_cycle_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM verification_cycles AS cycle
+             WHERE cycle.cycle_id=NEW.successor_cycle_id
+               AND cycle.operation_id=NEW.successor_operation_id
+               AND cycle.task_gid=NEW.task_gid
+        )
+     )
+BEGIN SELECT RAISE(ABORT, 'operation succession binding is invalid'); END;
+
+CREATE TRIGGER operation_successions_acyclic_insert
+BEFORE INSERT ON operation_successions
+BEGIN
+    WITH RECURSIVE ancestors(operation_id) AS (
+        SELECT NEW.source_operation_id
+        UNION ALL
+        SELECT succession.source_operation_id
+          FROM operation_successions AS succession
+          JOIN ancestors
+            ON succession.successor_operation_id=ancestors.operation_id
+    )
+    SELECT RAISE(ABORT, 'operation succession graph must be acyclic')
+     WHERE EXISTS (
+         SELECT 1 FROM ancestors
+          WHERE operation_id=NEW.successor_operation_id
+     );
+END;
+
+CREATE TRIGGER operation_successions_append_only_update
+BEFORE UPDATE ON operation_successions
+BEGIN SELECT RAISE(ABORT, 'operation successions are append-only'); END;
+CREATE TRIGGER operation_successions_append_only_delete
+BEFORE DELETE ON operation_successions
+BEGIN SELECT RAISE(ABORT, 'operation successions are append-only'); END;
+
+CREATE TRIGGER verification_cycles_abandoned_insert
+BEFORE INSERT ON verification_cycles
+WHEN NEW.outcome='abandoned'
+BEGIN SELECT RAISE(ABORT, 'abandoned Verification outcome must close an existing incomplete cycle'); END;
+
+CREATE TRIGGER verification_cycles_abandoned_update
+BEFORE UPDATE OF outcome, completed_at, signed_content_version_id, signed_identity
+ON verification_cycles
+WHEN NEW.outcome='abandoned'
+ AND (
+     OLD.completed_at IS NOT NULL
+     OR OLD.outcome IS NOT NULL
+     OR NEW.completed_at IS NULL
+     OR NEW.signed_content_version_id IS NOT NULL
+     OR NEW.signed_identity IS NOT NULL
+     OR NOT EXISTS (
+         SELECT 1 FROM operations AS operation
+          WHERE operation.operation_id=NEW.operation_id
+            AND operation.status='cancelled'
+            AND operation.terminal_outcome='agent_abandoned'
+     )
+ )
+BEGIN SELECT RAISE(ABORT, 'abandoned Verification cycle binding is invalid'); END;
+
+CREATE TRIGGER operations_agent_abandoned_immutable_update
+BEFORE UPDATE ON operations
+WHEN OLD.status='cancelled' AND OLD.terminal_outcome='agent_abandoned'
+BEGIN SELECT RAISE(ABORT, 'agent-abandoned operation is immutable'); END;
+
+CREATE TRIGGER agent_abandoned_operation_steps_insert
+BEFORE INSERT ON operation_steps
+WHEN EXISTS (
+    SELECT 1 FROM operations
+     WHERE operation_id=NEW.operation_id
+       AND status='cancelled' AND terminal_outcome='agent_abandoned'
+)
+BEGIN SELECT RAISE(ABORT, 'agent-abandoned operation cannot receive workflow steps'); END;
+CREATE TRIGGER agent_abandoned_actor_facts_insert
+BEFORE INSERT ON operation_actor_facts
+WHEN EXISTS (
+    SELECT 1 FROM operations
+     WHERE operation_id=NEW.operation_id
+       AND status='cancelled' AND terminal_outcome='agent_abandoned'
+)
+BEGIN SELECT RAISE(ABORT, 'agent-abandoned operation cannot receive actor facts'); END;
+CREATE TRIGGER agent_abandoned_write_attempts_insert
+BEFORE INSERT ON write_attempts
+WHEN EXISTS (
+    SELECT 1 FROM operations
+     WHERE operation_id=NEW.operation_id
+       AND status='cancelled' AND terminal_outcome='agent_abandoned'
+)
+BEGIN SELECT RAISE(ABORT, 'agent-abandoned operation cannot receive write attempts'); END;
+CREATE TRIGGER agent_abandoned_write_attempts_update
+BEFORE UPDATE ON write_attempts
+WHEN EXISTS (
+    SELECT 1 FROM operations
+     WHERE operation_id=OLD.operation_id
+       AND status='cancelled' AND terminal_outcome='agent_abandoned'
+)
+BEGIN SELECT RAISE(ABORT, 'agent-abandoned operation write evidence is immutable'); END;
+CREATE TRIGGER agent_abandoned_movement_attempts_insert
+BEFORE INSERT ON movement_attempts
+WHEN EXISTS (
+    SELECT 1 FROM operations
+     WHERE operation_id=NEW.operation_id
+       AND status='cancelled' AND terminal_outcome='agent_abandoned'
+)
+BEGIN SELECT RAISE(ABORT, 'agent-abandoned operation cannot receive movement attempts'); END;
+CREATE TRIGGER agent_abandoned_movement_attempts_update
+BEFORE UPDATE ON movement_attempts
+WHEN EXISTS (
+    SELECT 1 FROM operations
+     WHERE operation_id=OLD.operation_id
+       AND status='cancelled' AND terminal_outcome='agent_abandoned'
+)
+BEGIN SELECT RAISE(ABORT, 'agent-abandoned operation movement evidence is immutable'); END;
+CREATE TRIGGER agent_abandoned_content_versions_insert
+BEFORE INSERT ON content_versions
+WHEN NEW.operation_id IS NOT NULL
+ AND EXISTS (
+    SELECT 1 FROM operations
+     WHERE operation_id=NEW.operation_id
+       AND status='cancelled' AND terminal_outcome='agent_abandoned'
+ )
+BEGIN SELECT RAISE(ABORT, 'agent-abandoned operation cannot receive content versions'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -1920,6 +2351,8 @@ _SEMANTIC_RECORD_SELECTORS = {
     "service_leases": "lease_id",
     "operation_execution_claims": "claim_id",
     "operation_executions": "execution_id",
+    "abandonment_attempts": "abandonment_id",
+    "operation_successions": "succession_id",
     "two_pass_resets": "reset_id",
 }
 _SEMANTIC_PROVENANCE_FIELDS = (
@@ -2826,6 +3259,219 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             problems.append(_semantic_problem(conn,
                 "two_pass_reset_binding", "two_pass_resets", row["reset_id"],
             ))
+    for row in conn.execute("SELECT * FROM abandonment_attempts"):
+        lease = conn.execute(
+            "SELECT * FROM service_leases WHERE lease_id=?", (row["source_lease_id"],)
+        ).fetchone()
+        source = conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?", (row["source_operation_id"],)
+        ).fetchone()
+        if (
+            lease is None
+            or source is None
+            or source["task_gid"] != row["task_gid"]
+            or lease["operation_id"] != row["source_operation_id"]
+            or lease["task_gid"] != row["task_gid"]
+            or lease["owner_id"] != row["abandoned_owner_id"]
+            or lease["run_id"] != row["abandoned_run_id"]
+            or lease["lease_kind"] != "actor"
+            or lease["actor_attempt_seq"] is None
+            or lease["context_cycle_id"] != row["attempt_cycle_id"]
+        ):
+            problems.append(_semantic_problem(
+                conn,
+                "abandonment_attempt_authority_binding",
+                "abandonment_attempts",
+                row["abandonment_id"],
+                related_record_type="service_leases",
+                related_record_id=row["source_lease_id"],
+            ))
+        if row["attempt_cycle_id"] is not None:
+            cycle = conn.execute(
+                "SELECT operation_id,task_gid,run_id FROM verification_cycles WHERE cycle_id=?",
+                (row["attempt_cycle_id"],),
+            ).fetchone()
+            if (
+                cycle is None
+                or cycle["operation_id"] != row["source_operation_id"]
+                or cycle["task_gid"] != row["task_gid"]
+                or cycle["run_id"] != row["abandoned_run_id"]
+            ):
+                problems.append(_semantic_problem(
+                    conn,
+                    "abandonment_attempt_cycle_binding",
+                    "abandonment_attempts",
+                    row["abandonment_id"],
+                    related_record_type="verification_cycles",
+                    related_record_id=row["attempt_cycle_id"],
+                ))
+        succession = conn.execute(
+            "SELECT * FROM operation_successions WHERE abandonment_id=?",
+            (row["abandonment_id"],),
+        ).fetchone()
+        if row["successor_operation_id"] is not None:
+            if (
+                succession is None
+                or succession["source_operation_id"] != row["source_operation_id"]
+                or succession["successor_operation_id"] != row["successor_operation_id"]
+                or succession["successor_cycle_id"] != row["successor_cycle_id"]
+            ):
+                problems.append(_semantic_problem(
+                    conn,
+                    "abandonment_succession_binding",
+                    "abandonment_attempts",
+                    row["abandonment_id"],
+                    related_record_type="operation_successions",
+                    related_record_id=None if succession is None else succession["succession_id"],
+                ))
+        elif succession is not None:
+            problems.append(_semantic_problem(
+                conn,
+                "abandonment_unexpected_succession",
+                "abandonment_attempts",
+                row["abandonment_id"],
+                related_record_type="operation_successions",
+                related_record_id=succession["succession_id"],
+            ))
+        if row["status"] == "awaiting_successor_claim" and succession is None:
+            problems.append(_semantic_problem(
+                conn,
+                "abandonment_prepared_successor_missing",
+                "abandonment_attempts",
+                row["abandonment_id"],
+            ))
+        if row["current_execution_id"] is not None:
+            execution = conn.execute(
+                "SELECT operation_id FROM operation_executions WHERE execution_id=?",
+                (row["current_execution_id"],),
+            ).fetchone()
+            if execution is None or execution["operation_id"] != row["source_operation_id"]:
+                problems.append(_semantic_problem(
+                    conn,
+                    "abandonment_execution_binding",
+                    "abandonment_attempts",
+                    row["abandonment_id"],
+                    related_record_type="operation_executions",
+                    related_record_id=row["current_execution_id"],
+                ))
+
+    for row in conn.execute("SELECT * FROM operation_successions"):
+        source = conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?", (row["source_operation_id"],)
+        ).fetchone()
+        successor = conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?", (row["successor_operation_id"],)
+        ).fetchone()
+        abandonment = conn.execute(
+            "SELECT * FROM abandonment_attempts WHERE abandonment_id=?", (row["abandonment_id"],)
+        ).fetchone()
+        source_version = conn.execute(
+            "SELECT * FROM content_versions WHERE content_version_id=?",
+            (row["source_content_version_id"],),
+        ).fetchone()
+        successor_version = conn.execute(
+            "SELECT * FROM content_versions WHERE content_version_id=?",
+            (row["successor_content_version_id"],),
+        ).fetchone()
+        if (
+            source is None
+            or successor is None
+            or abandonment is None
+            or source_version is None
+            or successor_version is None
+            or source["task_gid"] != row["task_gid"]
+            or source["status"] != "cancelled"
+            or source["terminal_outcome"] != "agent_abandoned"
+            or successor["task_gid"] != row["task_gid"]
+            or successor_version["operation_id"] != successor["operation_id"]
+            or successor_version["boundary"] != "successor_baseline"
+            or successor_version["confirmed"] != 1
+            or source_version["confirmed"] != 1
+            or source_version["task_gid"] != row["task_gid"]
+            or successor_version["task_gid"] != row["task_gid"]
+            or successor_version["identity"] != source_version["identity"]
+            or successor_version["title"] != source_version["title"]
+            or successor_version["notes"] != source_version["notes"]
+            or successor["expected_identity"] != successor_version["identity"]
+            or abandonment["source_operation_id"] != source["operation_id"]
+            or abandonment["successor_operation_id"] != successor["operation_id"]
+        ):
+            problems.append(_semantic_problem(
+                conn,
+                "operation_succession_binding",
+                "operation_successions",
+                row["succession_id"],
+            ))
+
+    for row in conn.execute(
+        "SELECT operation_id FROM operations WHERE status='cancelled' AND terminal_outcome='agent_abandoned'"
+    ):
+        succession = conn.execute(
+            "SELECT 1 FROM operation_successions WHERE source_operation_id=?",
+            (row["operation_id"],),
+        ).fetchone()
+        pending = conn.execute(
+            "SELECT 1 FROM operation_steps WHERE operation_id=? AND completed_at IS NULL LIMIT 1",
+            (row["operation_id"],),
+        ).fetchone()
+        unresolved = conn.execute(
+            """SELECT 1 FROM write_attempts
+                 WHERE operation_id=? AND outcome IN ('started','uncertain')
+               UNION ALL
+               SELECT 1 FROM movement_attempts
+                 WHERE operation_id=? AND outcome IN ('started','uncertain')
+               LIMIT 1""",
+            (row["operation_id"], row["operation_id"]),
+        ).fetchone()
+        if succession is None or pending is not None or unresolved is not None:
+            problems.append(_semantic_problem(
+                conn,
+                "agent_abandoned_source_terminal_binding",
+                "operations",
+                row["operation_id"],
+            ))
+
+    for row in conn.execute(
+        "SELECT * FROM operations WHERE successor_claim_mode IN ('stage_actor','verifier')"
+    ):
+        succession = conn.execute(
+            "SELECT * FROM operation_successions WHERE successor_operation_id=?",
+            (row["operation_id"],),
+        ).fetchone()
+        active_lease = conn.execute(
+            "SELECT 1 FROM service_leases WHERE operation_id=? AND released_at IS NULL",
+            (row["operation_id"],),
+        ).fetchone()
+        if succession is None or row["status"] != "open" or active_lease is not None:
+            problems.append(_semantic_problem(
+                conn,
+                "prepared_successor_authority_binding",
+                "operations",
+                row["operation_id"],
+                related_record_type="operation_successions",
+                related_record_id=None if succession is None else succession["succession_id"],
+            ))
+
+    for row in conn.execute("SELECT * FROM verification_cycles WHERE outcome='abandoned'"):
+        operation = conn.execute(
+            "SELECT status,terminal_outcome FROM operations WHERE operation_id=?",
+            (row["operation_id"],),
+        ).fetchone()
+        if (
+            row["completed_at"] is None
+            or row["signed_content_version_id"] is not None
+            or row["signed_identity"] is not None
+            or operation is None
+            or operation["status"] != "cancelled"
+            or operation["terminal_outcome"] != "agent_abandoned"
+        ):
+            problems.append(_semantic_problem(
+                conn,
+                "abandoned_verification_cycle_binding",
+                "verification_cycles",
+                row["cycle_id"],
+            ))
+
     if problems:
         raise DishRuleError(
             "VALIDATION_FAILED", "database durable evidence is semantically inconsistent",
@@ -2852,7 +3498,7 @@ def _validate_current_database(conn: sqlite3.Connection) -> None:
     user_version, ledger_version = _schema_version_state(conn)
     if user_version != current or ledger_version != current:
         raise DishRuleError("VALIDATION_FAILED", "database did not converge to the current schema", rule="database_schema_not_current", details={"user_version": user_version, "ledger_version": ledger_version, "current": current})
-    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims", "operation_executions", "dish_inspect_facts", "planning_reopen_attempts", "backup_creations"}
+    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims", "operation_executions", "dish_inspect_facts", "planning_reopen_attempts", "backup_creations", "abandonment_attempts", "operation_successions"}
     actual = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     missing = sorted(required - actual)
     if missing:

@@ -774,6 +774,613 @@ def create_operation(
         raise
 
 
+
+def _require_writer_transaction(conn: sqlite3.Connection, *, operation: str) -> None:
+    if not conn.in_transaction:
+        raise RuntimeError(f"{operation} requires an existing SQLite writer transaction")
+
+
+def get_abandonment_attempt(
+    conn: sqlite3.Connection, abandonment_id: str
+) -> sqlite3.Row:
+    row = conn.execute(
+        "SELECT * FROM abandonment_attempts WHERE abandonment_id=?",
+        (abandonment_id,),
+    ).fetchone()
+    if row is None:
+        raise DishRuleError(
+            "NOT_FOUND",
+            "abandonment attempt not found",
+            rule="abandonment_not_found",
+            details={"abandonment_id": abandonment_id},
+        )
+    return row
+
+
+def create_abandonment_attempt_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    abandonment_id: str,
+    task_gid: str,
+    source_operation_id: str,
+    source_lease_id: str,
+    abandoned_owner_id: str,
+    abandoned_run_id: str,
+    reason: str,
+    attempt_cycle_id: str | None = None,
+    current_execution_id: str | None = None,
+    created_at: str | None = None,
+) -> sqlite3.Row:
+    """Persist one exact abandoned actor attempt inside the caller's transaction.
+
+    This is deliberately not an operator command.  The future admin use case
+    must validate liveness and claim execution authority before calling it.
+    Database triggers enforce the exact actor lease, latest-attempt, active-task,
+    and one-active-abandonment boundaries.
+    """
+
+    _require_writer_transaction(conn, operation="abandonment creation")
+    stamp = created_at or utc_now()
+    try:
+        conn.execute(
+            """INSERT INTO abandonment_attempts(
+                   abandonment_id,task_gid,source_operation_id,source_lease_id,
+                   abandoned_owner_id,abandoned_run_id,attempt_cycle_id,status,
+                   current_execution_id,reason,created_at,updated_at
+               ) VALUES(?,?,?,?,?,?,?,'started',?,?,?,?)""",
+            (
+                abandonment_id,
+                task_gid,
+                source_operation_id,
+                source_lease_id,
+                abandoned_owner_id,
+                abandoned_run_id,
+                attempt_cycle_id,
+                current_execution_id,
+                str(reason).strip(),
+                stamp,
+                stamp,
+            ),
+        )
+    except sqlite3.IntegrityError as exc:
+        message = str(exc)
+        if "abandonment_attempts.task_gid" in message:
+            rule = "abandonment_task_in_progress"
+            text = "task already has a non-completed abandonment"
+        elif "abandonment_attempts.source_operation_id" in message:
+            rule = "abandonment_attempt_exists"
+            text = "the exact actor attempt already has an abandonment record"
+        else:
+            rule = "abandonment_authority_invalid"
+            text = "abandonment authority does not match the exact latest actor attempt"
+        raise DishRuleError("CONFLICT", text, rule=rule) from exc
+    record_audit(
+        conn,
+        submission_id=None,
+        task_gid=task_gid,
+        operation_id=source_operation_id,
+        event_type="operation.abandonment_started",
+        actor_agent=None,
+        details={
+            "abandonment_id": abandonment_id,
+            "source_lease_id": source_lease_id,
+            "abandoned_owner_id": abandoned_owner_id,
+            "abandoned_run_id": abandoned_run_id,
+            "attempt_cycle_id": attempt_cycle_id,
+            "reason": str(reason).strip(),
+        },
+        result_code="OK",
+        result_ok=True,
+    )
+    return get_abandonment_attempt(conn, abandonment_id)
+
+
+def assert_clean_abandonment_restart_source(
+    conn: sqlite3.Connection, *, source_operation_id: str
+) -> sqlite3.Row:
+    """Require the narrow launch frontier used by restart succession.
+
+    Stage policy still owns live baseline and placement classification.  This
+    persistence guard prevents a caller from terminalizing an operation with
+    incomplete workflow intent or unresolved external-effect evidence.
+    """
+
+    operation = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (source_operation_id,)
+    ).fetchone()
+    if operation is None:
+        raise DishRuleError(
+            "NOT_FOUND", "source operation not found", rule="operation_not_found"
+        )
+    if operation["status"] not in {"open", "uncertain"}:
+        raise DishRuleError(
+            "WRONG_STATE",
+            "only an active operation can be abandoned",
+            rule="abandonment_source_not_active",
+            details={"status": operation["status"]},
+        )
+    pending = conn.execute(
+        """SELECT step_name FROM operation_steps
+             WHERE operation_id=? AND completed_at IS NULL
+             ORDER BY rowid""",
+        (source_operation_id,),
+    ).fetchall()
+    if pending:
+        raise DishRuleError(
+            "CONFLICT",
+            "clean abandonment restart requires zero incomplete operation steps",
+            rule="abandonment_pending_steps",
+            details={"steps": [row["step_name"] for row in pending]},
+        )
+    unresolved = conn.execute(
+        """SELECT 'write' AS effect_kind, attempt_id
+             FROM write_attempts
+            WHERE operation_id=? AND outcome IN ('started','uncertain')
+           UNION ALL
+           SELECT 'movement' AS effect_kind, attempt_id
+             FROM movement_attempts
+            WHERE operation_id=? AND outcome IN ('started','uncertain')
+           ORDER BY effect_kind, attempt_id""",
+        (source_operation_id, source_operation_id),
+    ).fetchall()
+    if unresolved:
+        raise DishRuleError(
+            "BACKEND_UNCERTAIN",
+            "abandonment restart cannot cross unresolved external effects",
+            rule="abandonment_unresolved_effects",
+            retryable=False,
+            details={
+                "effects": [
+                    {"kind": row["effect_kind"], "attempt_id": row["attempt_id"]}
+                    for row in unresolved
+                ]
+            },
+        )
+    return operation
+
+
+def _release_abandonment_source_lease_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    abandonment: Mapping[str, Any],
+    released_at: str,
+) -> None:
+    lease = conn.execute(
+        "SELECT * FROM service_leases WHERE lease_id=?",
+        (abandonment["source_lease_id"],),
+    ).fetchone()
+    if lease is None or (
+        lease["operation_id"] != abandonment["source_operation_id"]
+        or lease["task_gid"] != abandonment["task_gid"]
+        or lease["owner_id"] != abandonment["abandoned_owner_id"]
+        or lease["run_id"] != abandonment["abandoned_run_id"]
+        or lease["lease_kind"] != "actor"
+        or lease["context_cycle_id"] != abandonment["attempt_cycle_id"]
+    ):
+        raise DishRuleError(
+            "CONFLICT",
+            "abandonment source lease no longer matches its durable authority",
+            rule="abandonment_source_lease_mismatch",
+        )
+    if lease["released_at"] is None:
+        cursor = conn.execute(
+            """UPDATE service_leases
+                  SET released_at=?, release_reason='agent_abandoned'
+                WHERE lease_id=? AND released_at IS NULL""",
+            (released_at, lease["lease_id"]),
+        )
+        if cursor.rowcount != 1:
+            raise DishRuleError(
+                "CONFLICT",
+                "abandonment source lease changed before terminalization",
+                rule="abandonment_source_lease_conflict",
+            )
+
+
+def mark_abandonment_blocked_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    abandonment_id: str,
+    result: Mapping[str, Any],
+    updated_at: str | None = None,
+) -> sqlite3.Row:
+    _require_writer_transaction(conn, operation="abandonment block")
+    row = get_abandonment_attempt(conn, abandonment_id)
+    stamp = updated_at or utc_now()
+    conn.execute(
+        """UPDATE abandonment_attempts
+              SET status='blocked_manual_reconciliation',
+                  outcome='blocked_manual_reconciliation',
+                  current_execution_id=NULL, latest_result_json=?, updated_at=?
+            WHERE abandonment_id=?""",
+        (
+            json.dumps(dict(result), sort_keys=True, separators=(",", ":")),
+            stamp,
+            abandonment_id,
+        ),
+    )
+    record_audit(
+        conn,
+        submission_id=None,
+        task_gid=row["task_gid"],
+        operation_id=row["source_operation_id"],
+        event_type="operation.abandonment_blocked",
+        actor_agent=None,
+        details={"abandonment_id": abandonment_id},
+        result_code="BACKEND_UNCERTAIN",
+        result_ok=False,
+    )
+    return get_abandonment_attempt(conn, abandonment_id)
+
+
+def mark_abandonment_awaiting_hold_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    abandonment_id: str,
+    result: Mapping[str, Any],
+    updated_at: str | None = None,
+) -> sqlite3.Row:
+    _require_writer_transaction(conn, operation="abandonment hold")
+    row = get_abandonment_attempt(conn, abandonment_id)
+    stamp = updated_at or utc_now()
+    conn.execute(
+        """UPDATE abandonment_attempts
+              SET status='awaiting_hold_resolution', outcome='hold_preserved',
+                  current_execution_id=NULL, latest_result_json=?, updated_at=?
+            WHERE abandonment_id=?""",
+        (
+            json.dumps(dict(result), sort_keys=True, separators=(",", ":")),
+            stamp,
+            abandonment_id,
+        ),
+    )
+    record_audit(
+        conn,
+        submission_id=None,
+        task_gid=row["task_gid"],
+        operation_id=row["source_operation_id"],
+        event_type="operation.abandonment_blocked",
+        actor_agent=None,
+        details={"abandonment_id": abandonment_id, "reason": "awaiting_hold_resolution"},
+        result_code="OK",
+        result_ok=True,
+    )
+    return get_abandonment_attempt(conn, abandonment_id)
+
+
+def apply_operation_abandonment_succession_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    abandonment_id: str,
+    succession_id: str,
+    successor_operation_id: str,
+    source_content_version_id: str,
+    successor_content_version_id: str,
+    successor_operation_kind: str,
+    successor_phase: str,
+    successor_expected_section_gid: str,
+    successor_schema_version: str,
+    successor_claim_mode: str,
+    transition_reason: str,
+    candidate_transfer_kind: str,
+    source_cycle_id: str | None = None,
+    close_source_cycle_as_abandoned: bool = False,
+    successor_cycle_id: str | None = None,
+    successor_cycle_number: int | None = None,
+    successor_protocol_release: str | None = None,
+    successor_protocol_text: str | None = None,
+    successor_editor_agent: str | None = None,
+    successor_researcher_agent: str | None = None,
+    successor_verifier_agent: str | None = None,
+    successor_run_id: str | None = None,
+    successor_independence_attestation: str | None = None,
+    successor_actor_facts: Sequence[Mapping[str, Any]] = (),
+    result: Mapping[str, Any] | None = None,
+    created_at: str | None = None,
+) -> tuple[sqlite3.Row, sqlite3.Row, sqlite3.Row]:
+    """Atomically terminalize one clean source and create its prepared successor.
+
+    The caller owns the outer writer transaction and all stage policy.  This
+    primitive performs no network work and does not decide which baseline,
+    actors, cycle, or placement are correct.  It revalidates their exact durable
+    bindings and publishes source cancellation, successor state, lineage, lease
+    retirement, and abandonment progress as one SQLite unit.
+    """
+
+    _require_writer_transaction(conn, operation="operation abandonment succession")
+    if successor_claim_mode not in {"stage_actor", "verifier"}:
+        raise ValueError("abandonment successor must require a stage actor or verifier claim")
+    if bool(successor_cycle_id) != bool(successor_cycle_number is not None):
+        raise ValueError("successor cycle id and number must be supplied together")
+    if successor_cycle_id is not None and not successor_protocol_release:
+        raise ValueError("successor Verification cycle requires a protocol release")
+
+    abandonment = get_abandonment_attempt(conn, abandonment_id)
+    if abandonment["status"] not in {
+        "started", "awaiting_hold_resolution", "blocked_manual_reconciliation"
+    }:
+        raise DishRuleError(
+            "WRONG_STATE",
+            "abandonment is not at a restartable local frontier",
+            rule="abandonment_not_restartable",
+            details={"status": abandonment["status"]},
+        )
+    source = assert_clean_abandonment_restart_source(
+        conn, source_operation_id=abandonment["source_operation_id"]
+    )
+    source_version = conn.execute(
+        "SELECT * FROM content_versions WHERE content_version_id=?",
+        (source_content_version_id,),
+    ).fetchone()
+    if source_version is None or (
+        source_version["task_gid"] != abandonment["task_gid"]
+        or source_version["confirmed"] != 1
+    ):
+        raise DishRuleError(
+            "CONFLICT",
+            "selected abandonment baseline is not exact confirmed task content",
+            rule="abandonment_source_baseline_invalid",
+        )
+    if conn.execute(
+        "SELECT 1 FROM operation_successions WHERE source_operation_id=?",
+        (source["operation_id"],),
+    ).fetchone() is not None:
+        raise DishRuleError(
+            "CONFLICT",
+            "source operation already has a successor",
+            rule="operation_already_superseded",
+        )
+    if conn.execute(
+        "SELECT 1 FROM operations WHERE operation_id=?",
+        (successor_operation_id,),
+    ).fetchone() is not None:
+        raise DishRuleError(
+            "CONFLICT",
+            "successor operation identity already exists",
+            rule="successor_operation_exists",
+        )
+
+    stamp = created_at or utc_now()
+    cursor = conn.execute(
+        """UPDATE operations
+              SET status='cancelled', phase='terminal',
+                  terminal_outcome='agent_abandoned', completed_at=?
+            WHERE operation_id=? AND status IN ('open','uncertain')""",
+        (stamp, source["operation_id"]),
+    )
+    if cursor.rowcount != 1:
+        raise DishRuleError(
+            "CONFLICT",
+            "source operation changed before abandonment terminalization",
+            rule="abandonment_source_conflict",
+        )
+
+    if close_source_cycle_as_abandoned:
+        if not source_cycle_id or source_cycle_id != abandonment["attempt_cycle_id"]:
+            raise DishRuleError(
+                "CONFLICT",
+                "source Verification cycle does not match the abandoned attempt",
+                rule="abandonment_cycle_mismatch",
+            )
+        cursor = conn.execute(
+            """UPDATE verification_cycles
+                  SET outcome='abandoned', completed_at=?
+                WHERE cycle_id=? AND operation_id=?
+                  AND completed_at IS NULL AND outcome IS NULL""",
+            (stamp, source_cycle_id, source["operation_id"]),
+        )
+        if cursor.rowcount != 1:
+            raise DishRuleError(
+                "CONFLICT",
+                "only the exact incomplete Verification cycle can be abandoned",
+                rule="abandonment_cycle_not_incomplete",
+            )
+
+    conn.execute(
+        """INSERT INTO operations(
+               operation_id,task_gid,operation_kind,status,editor_agent,
+               researcher_agent,verifier_agent,run_id,independence_attestation,
+               expected_identity,schema_version,expected_section_gid,phase,
+               successor_claim_mode,created_at
+           ) VALUES(?,?,?,'open',?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            successor_operation_id,
+            abandonment["task_gid"],
+            successor_operation_kind,
+            successor_editor_agent,
+            successor_researcher_agent,
+            successor_verifier_agent,
+            successor_run_id,
+            successor_independence_attestation,
+            source_version["identity"],
+            successor_schema_version,
+            successor_expected_section_gid,
+            successor_phase,
+            successor_claim_mode,
+            stamp,
+        ),
+    )
+    conn.execute(
+        """INSERT INTO content_versions(
+               content_version_id,task_gid,operation_id,boundary,identity,
+               title,notes,confirmed,created_at
+           ) VALUES(?,?,?,'successor_baseline',?,?,?,1,?)""",
+        (
+            successor_content_version_id,
+            abandonment["task_gid"],
+            successor_operation_id,
+            source_version["identity"],
+            source_version["title"],
+            source_version["notes"],
+            stamp,
+        ),
+    )
+    for fact in successor_actor_facts:
+        record_actor_fact(
+            conn,
+            operation_id=successor_operation_id,
+            task_gid=abandonment["task_gid"],
+            role=str(fact["role"]),
+            agent=str(fact["agent"]),
+            run_id=fact.get("run_id"),
+            independence_attestation=fact.get("independence_attestation"),
+            candidate_identity=fact.get("candidate_identity"),
+            source_cycle_id=fact.get("source_cycle_id"),
+        )
+
+    if successor_cycle_id is not None:
+        conn.execute(
+            """INSERT INTO verification_cycles(
+                   cycle_id,operation_id,task_gid,cycle_number,protocol_release,
+                   protocol_text,created_at
+               ) VALUES(?,?,?,?,?,?,?)""",
+            (
+                successor_cycle_id,
+                successor_operation_id,
+                abandonment["task_gid"],
+                successor_cycle_number,
+                successor_protocol_release,
+                successor_protocol_text,
+                stamp,
+            ),
+        )
+        record_audit(
+            conn,
+            submission_id=None,
+            task_gid=abandonment["task_gid"],
+            operation_id=successor_operation_id,
+            event_type="verification_cycle.created",
+            actor_agent=None,
+            details={
+                "cycle_number": successor_cycle_number,
+                "protocol_release": successor_protocol_release,
+                "abandonment_id": abandonment_id,
+            },
+            result_code="OK",
+            result_ok=True,
+        )
+
+    result_json = None if result is None else json.dumps(
+        dict(result), sort_keys=True, separators=(",", ":")
+    )
+    conn.execute(
+        """UPDATE abandonment_attempts
+              SET status='awaiting_successor_claim', outcome='restart_prepared',
+                  successor_operation_id=?, successor_cycle_id=?,
+                  current_execution_id=NULL, latest_result_json=?, updated_at=?
+            WHERE abandonment_id=?""",
+        (
+            successor_operation_id,
+            successor_cycle_id,
+            result_json,
+            stamp,
+            abandonment_id,
+        ),
+    )
+    conn.execute(
+        """INSERT INTO operation_successions(
+               succession_id,task_gid,source_operation_id,successor_operation_id,
+               transition_type,transition_reason,source_cycle_id,successor_cycle_id,
+               source_content_version_id,successor_content_version_id,
+               candidate_transfer_kind,abandonment_id,created_at
+           ) VALUES(?,?,?,?,'agent_abandonment',?,?,?,?,?,?,?,?)""",
+        (
+            succession_id,
+            abandonment["task_gid"],
+            source["operation_id"],
+            successor_operation_id,
+            transition_reason,
+            source_cycle_id,
+            successor_cycle_id,
+            source_content_version_id,
+            successor_content_version_id,
+            candidate_transfer_kind,
+            abandonment_id,
+            stamp,
+        ),
+    )
+    _release_abandonment_source_lease_in_transaction(
+        conn, abandonment=abandonment, released_at=stamp
+    )
+    record_audit(
+        conn,
+        submission_id=None,
+        task_gid=abandonment["task_gid"],
+        operation_id=source["operation_id"],
+        event_type="operation.succession_created",
+        actor_agent=None,
+        details={
+            "abandonment_id": abandonment_id,
+            "succession_id": succession_id,
+            "successor_operation_id": successor_operation_id,
+            "successor_cycle_id": successor_cycle_id,
+            "source_content_version_id": source_content_version_id,
+            "successor_content_version_id": successor_content_version_id,
+            "candidate_transfer_kind": candidate_transfer_kind,
+        },
+        result_code="OK",
+        result_ok=True,
+    )
+    return (
+        get_abandonment_attempt(conn, abandonment_id),
+        conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?",
+            (successor_operation_id,),
+        ).fetchone(),
+        conn.execute(
+            "SELECT * FROM operation_successions WHERE succession_id=?",
+            (succession_id,),
+        ).fetchone(),
+    )
+
+
+def complete_abandonment_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    abandonment_id: str,
+    outcome: str,
+    result: Mapping[str, Any],
+    continuation_operation_id: str | None = None,
+    continuation_cycle_id: str | None = None,
+    completed_at: str | None = None,
+) -> sqlite3.Row:
+    _require_writer_transaction(conn, operation="abandonment completion")
+    if outcome not in {"restarted", "committed_finalized", "route_preserved"}:
+        raise ValueError("unsupported completed abandonment outcome")
+    abandonment = get_abandonment_attempt(conn, abandonment_id)
+    stamp = completed_at or utc_now()
+    conn.execute(
+        """UPDATE abandonment_attempts
+              SET status='completed', outcome=?, continuation_operation_id=?,
+                  continuation_cycle_id=?, current_execution_id=NULL,
+                  latest_result_json=?, updated_at=?, completed_at=?
+            WHERE abandonment_id=?""",
+        (
+            outcome,
+            continuation_operation_id,
+            continuation_cycle_id,
+            json.dumps(dict(result), sort_keys=True, separators=(",", ":")),
+            stamp,
+            stamp,
+            abandonment_id,
+        ),
+    )
+    _release_abandonment_source_lease_in_transaction(
+        conn, abandonment=abandonment, released_at=stamp
+    )
+    record_audit(
+        conn,
+        submission_id=None,
+        task_gid=abandonment["task_gid"],
+        operation_id=abandonment["source_operation_id"],
+        event_type="operation.abandonment_completed",
+        actor_agent=None,
+        details={"abandonment_id": abandonment_id, "outcome": outcome},
+        result_code="OK",
+        result_ok=True,
+    )
+    return get_abandonment_attempt(conn, abandonment_id)
+
 def mark_operation_completion(
     conn: sqlite3.Connection, operation_id: str, marker: str
 ) -> sqlite3.Row:
