@@ -140,16 +140,20 @@ Backend UUID validation remains authoritative. The late feedback has low-to-mode
 creates no workflow or replay state. Consider a future UUID representation redesign only if live
 usage shows that connected-side validation would materially improve the experience.
 
-### DISH-014 — private expired-lease recovery
+### DISH-014 — expired leases versus permanently unavailable runs
 
-Expired operation leases have no connected recovery Action. Dish fails closed and gives the agent
-an empty action list, `required_admin_action: recover-lease`, the Marco/admin resolver, the exact
-private admin command, and the actions available after recovery. Marco runs `dish-admin
-recover-lease`; an eligible agent can then reclaim the operation and continue.
+Expired lease recovery and permanent run abandonment are separate authorities. `dish-admin
+recover-lease` releases only lease liveness and is correct when the same durable run will return. It
+never transfers workflow ownership. When the original chat/run is permanently unavailable, Marco
+uses `dish-admin abandon-operation`; Dish verifies the latest expired or released actor attempt and
+then either creates a clean exact-target successor, preserves/finalizes a committed route, preserves
+a governed hold, or blocks for `dish-admin reconcile-abandonment`. The abandoned owner/run cannot
+claim the successor or continuation.
 
-This is accepted as won't-fix for launch. The interruption requires a small manual step but does not
-lose task content or duplicate work, and the agent can tell Marco exactly how to resolve it. Revisit
-only if post-launch lease expiries create meaningful recurring operator friction.
+Agent-facing responses never expose these private commands as connected `allowed_actions`. They
+return the exact admin command and relay instruction. After Marco confirms success, the agent must
+refresh the authoritative Dish action and follow the exact continuation returned. Partial, uncertain,
+or contradictory external effects remain fenced rather than being guessed or compensated.
 
 ### DISH-015 — private Evidence and Human Review resolution
 

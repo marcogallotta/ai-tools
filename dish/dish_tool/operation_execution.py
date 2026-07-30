@@ -223,6 +223,121 @@ def live_operation_execution_claim(
     return row
 
 
+def claim_abandonment_execution(
+    conn: sqlite3.Connection,
+    *,
+    abandonment_id: str,
+    execution_id: str,
+) -> OperationExecutionClaim:
+    """Reclaim the exact crashed admin execution bound to an abandonment."""
+
+    identity = current_process_identity()
+    claim_id = str(uuid.uuid4())
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        abandonment = conn.execute(
+            "SELECT * FROM abandonment_attempts WHERE abandonment_id=?",
+            (abandonment_id,),
+        ).fetchone()
+        execution = conn.execute(
+            "SELECT * FROM operation_executions WHERE execution_id=?",
+            (execution_id,),
+        ).fetchone()
+        if (
+            abandonment is None
+            or execution is None
+            or abandonment["current_execution_id"] != execution_id
+            or execution["operation_id"] != abandonment["source_operation_id"]
+            or execution["command"] not in {
+                "abandon-operation",
+                "reconcile-abandonment",
+            }
+            or execution["status"] not in {"started", "uncertain"}
+        ):
+            raise DishRuleError(
+                "CONFLICT",
+                "abandonment execution is not the exact resumable authority",
+                rule="abandonment_execution_not_resumable",
+                details={"abandonment_id": abandonment_id, "execution_id": execution_id},
+            )
+        existing = conn.execute(
+            "SELECT * FROM operation_execution_claims WHERE operation_id=?",
+            (execution["operation_id"],),
+        ).fetchone()
+        if existing is not None:
+            if existing["execution_id"] != execution_id:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "another mutation owns the abandonment source operation",
+                    rule="operation_mutation_in_progress",
+                    retryable=True,
+                )
+            if process_identity_is_live(_identity(existing)):
+                raise DishRuleError(
+                    "CONFLICT",
+                    "the abandonment execution is still running",
+                    rule="operation_mutation_in_progress",
+                    retryable=True,
+                    details={
+                        "operation_id": execution["operation_id"],
+                        "command": execution["command"],
+                        "acquired_at": existing["acquired_at"],
+                    },
+                )
+            conn.execute(
+                "DELETE FROM operation_execution_claims WHERE operation_id=? AND claim_id=?",
+                (execution["operation_id"], existing["claim_id"]),
+            )
+
+        resuming_uncertain = execution["status"] == "uncertain"
+        if execution["status"] == "started" and _recovery_pending(
+            conn, execution["operation_id"]
+        ):
+            evidence = execution_recovery_state(
+                conn, execution_id=execution_id, failure_rule="process_terminated"
+            )
+            conn.execute(
+                """UPDATE operation_executions
+                      SET status='uncertain', evidence_json=?, completed_at=?
+                    WHERE execution_id=? AND status='started'""",
+                (
+                    json.dumps(evidence or {}, sort_keys=True, separators=(",", ":")),
+                    utc_now(),
+                    execution_id,
+                ),
+            )
+            resuming_uncertain = True
+        conn.execute(
+            """INSERT INTO operation_execution_claims(
+                   operation_id,claim_id,command,hostname,pid,process_start,
+                   acquired_at,execution_id
+               ) VALUES(?,?,?,?,?,?,?,?)""",
+            (
+                execution["operation_id"],
+                claim_id,
+                execution["command"],
+                identity.hostname,
+                identity.pid,
+                identity.process_start,
+                utc_now(),
+                execution_id,
+            ),
+        )
+        conn.execute("COMMIT")
+        return OperationExecutionClaim(
+            operation_id=execution["operation_id"],
+            claim_id=claim_id,
+            execution_id=execution_id,
+            command=execution["command"],
+            request_id=execution["request_id"],
+            resuming_uncertain=resuming_uncertain,
+        )
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+
+
 def claim_operation_execution(
     conn: sqlite3.Connection,
     *,

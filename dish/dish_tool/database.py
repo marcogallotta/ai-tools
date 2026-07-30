@@ -875,6 +875,79 @@ def create_abandonment_attempt_in_transaction(
     return get_abandonment_attempt(conn, abandonment_id)
 
 
+def bind_abandonment_execution_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    abandonment_id: str,
+    execution_id: str,
+    resumed_at: str | None = None,
+) -> sqlite3.Row:
+    """Bind the exact live admin execution that is advancing an abandonment."""
+
+    _require_writer_transaction(conn, operation="abandonment execution binding")
+    abandonment = get_abandonment_attempt(conn, abandonment_id)
+    execution = conn.execute(
+        "SELECT * FROM operation_executions WHERE execution_id=?",
+        (execution_id,),
+    ).fetchone()
+    if (
+        execution is None
+        or execution["operation_id"] != abandonment["source_operation_id"]
+        or execution["command"] not in {"abandon-operation", "reconcile-abandonment"}
+        or execution["status"] not in {"started", "uncertain"}
+    ):
+        raise DishRuleError(
+            "CONFLICT",
+            "abandonment execution does not match the source operation",
+            rule="abandonment_execution_binding_invalid",
+            details={"execution_id": execution_id},
+        )
+    if abandonment["status"] not in {"started", "blocked_manual_reconciliation"}:
+        raise DishRuleError(
+            "WRONG_STATE",
+            "abandonment is not resumable by an admin execution",
+            rule="abandonment_not_reconcilable",
+            details={"status": abandonment["status"]},
+        )
+    if (
+        abandonment["current_execution_id"] is not None
+        and abandonment["current_execution_id"] != execution_id
+    ):
+        raise DishRuleError(
+            "CONFLICT",
+            "another admin execution is already bound to this abandonment",
+            rule="abandonment_execution_conflict",
+            details={
+                "current_execution_id": abandonment["current_execution_id"],
+                "requested_execution_id": execution_id,
+            },
+        )
+    stamp = resumed_at or utc_now()
+    was_blocked = abandonment["status"] == "blocked_manual_reconciliation"
+    conn.execute(
+        """UPDATE abandonment_attempts
+              SET status='started', outcome=NULL, current_execution_id=?, updated_at=?
+            WHERE abandonment_id=?""",
+        (execution_id, stamp, abandonment_id),
+    )
+    if was_blocked:
+        record_audit(
+            conn,
+            submission_id=None,
+            task_gid=abandonment["task_gid"],
+            operation_id=abandonment["source_operation_id"],
+            event_type="operation.abandonment_resumed",
+            actor_agent=None,
+            details={
+                "abandonment_id": abandonment_id,
+                "execution_id": execution_id,
+            },
+            result_code="OK",
+            result_ok=True,
+        )
+    return get_abandonment_attempt(conn, abandonment_id)
+
+
 def assert_clean_abandonment_restart_source(
     conn: sqlite3.Connection, *, source_operation_id: str
 ) -> sqlite3.Row:

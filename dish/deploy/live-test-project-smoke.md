@@ -406,3 +406,18 @@ access to a private route, duplicate provenance, repeated movement, or mismatch 
 state and local durable evidence. Preserve the exact response and identifiers. Resume only after the
 failure is resolved, then repeat the affected gate with a fresh disposable fixture and request
 identity.
+
+## Permanent-run abandonment rehearsal
+
+Before enabling the Marco-only commands in production, rehearse each path against a disposable live task:
+
+- expired/released untouched Planning and Research attempts create exact prepared successors without an Asana write or movement;
+- a clean bound Verification attempt closes only its incomplete cycle and returns an exact successor operation/cycle target;
+- an older actor lease cannot be selected after a later actor attempt exists;
+- the abandoned owner/run cannot claim any returned successor or continuation;
+- a pending step or uncertain effect returns a private `reconcile-abandonment` action and acquires no connected lease;
+- the agent relays the exact command, waits for Marco, refreshes the authoritative action, and follows only the refreshed target;
+- process loss after abandonment creation is resumed through the same operation execution and both service request IDs replay their stored results;
+- a completed route-preserved Verification continuation remains exact-targeted until its cycle is claimed.
+
+`recover-lease` remains the same-run path. Do not use abandonment merely because a lease expired when the original run can still return.

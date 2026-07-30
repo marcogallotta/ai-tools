@@ -168,7 +168,9 @@ evidence is fabricated.
 
 `dish-admin` is Marco-only. In service mode it exposes:
 
-- `recover-lease` to release an expired client/run lease without transferring workflow ownership to Marco;
+- `recover-lease` to release an expired client/run lease when the same durable run will continue, without transferring workflow ownership to Marco;
+- `abandon-operation` to permanently retire the latest expired or administratively released actor attempt and automatically prepare the safe stage-specific continuation;
+- `reconcile-abandonment` to reclassify a blocked or interrupted abandonment after the live task has been inspected or repaired;
 - `expire-lease` to release the active lease selected by exact lease ID, task GID, or a supported Asana task URL;
 - `recover` for ambiguous operation-backed write or movement evidence;
 - `reopen-planning` to reopen a completed bare task and, after interruption, replay the exact original request UUID without blindly repeating the Asana update;
@@ -192,6 +194,16 @@ does not replace or rewrite the approved Verification cycle, and returns `submit
 movement.
 
 There is intentionally no generic workflow-state `unblock` mutation. `expire-lease` is narrower: it releases one lease row without changing workflow state, actor lineage, execution claims, or unresolved external-effect evidence. It is a point-in-time release, not durable run revocation; the previous run may acquire a new lease if it remains lineage-eligible and no replacement lease exists.
+
+Use `recover-lease` when the original chat/run will return. Use `abandon-operation` only when that run is permanently unavailable. Dish selects the stage-specific outcome in code: it restarts only from a clean unchanged frontier, finalizes already-committed work, preserves a governed hold, or blocks for `reconcile-abandonment`. Marco does not manually choose Planning, Research, or Verification rollback behavior. When a private continuation is returned, relay the exact command, wait for success, then refresh the authoritative Dish action before continuing.
+
+```sh
+dish-admin abandon-operation OPERATION_ID \
+  --lease-id LEASE_ID \
+  --reason "original chat session is permanently unavailable"
+
+dish-admin reconcile-abandonment ABANDONMENT_ID
+```
 
 Use it only in shared-service mode:
 

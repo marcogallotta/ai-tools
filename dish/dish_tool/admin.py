@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
@@ -10,6 +12,9 @@ from .application_service import OperationApplicationService
 from .command_support import reject_undeclared_arguments
 from .database import (
     atomic_persistence,
+    bind_abandonment_execution_in_transaction,
+    create_abandonment_attempt_in_transaction,
+    get_abandonment_attempt,
     complete_operation_step,
     declare_operation_step,
     immediate_persistence,
@@ -600,6 +605,389 @@ def _command_authorize_governed_change(self, *, trace: AdminTrace, submission_id
     )
 
 
+def _abandonment_reconcile_action(abandonment_id: str) -> dict[str, Any]:
+    command = f"dish-admin reconcile-abandonment {abandonment_id}"
+    return {
+        "surface": "private-admin",
+        "command": "reconcile-abandonment",
+        "arguments": {"abandonment_id": abandonment_id},
+        "admin_command": command,
+        "relay_text": (
+            f"Tell the human to run: {command}\n"
+            "Then wait for confirmation it succeeded before continuing."
+        ),
+        "after_success": {
+            "start_new_operation": False,
+            "instruction": (
+                "Refresh the authoritative Dish action, then follow the exact "
+                "continuation returned."
+            ),
+        },
+    }
+
+
+def _abandonment_hold_action(operation: sqlite3.Row) -> dict[str, Any]:
+    if operation["phase"] == "held_evidence":
+        command = "supply-evidence"
+        detail = "<summarize the supplied evidence>"
+    else:
+        command = "record-human-decision"
+        detail = "<summarize the human decision and reasoning>"
+    template = (
+        f'dish-admin {command} {operation["operation_id"]} '
+        f'--detail "{detail}" --resume-status pending-research'
+    )
+    return {
+        "surface": "private-admin",
+        "command": command,
+        "arguments": {
+            "submission_id": operation["operation_id"],
+            "resume_status": "pending-research",
+        },
+        "admin_command": None,
+        "admin_command_template": template,
+        "relay_text": (
+            "Tell the human to complete the required hold-resolution command, "
+            "then wait for confirmation it succeeded."
+        ),
+        "after_success": {
+            "start_new_operation": False,
+            "instruction": (
+                "Refresh the authoritative Dish action, then follow the exact "
+                "continuation returned."
+            ),
+        },
+    }
+
+
+def _decorate_abandonment_result(
+    conn: sqlite3.Connection, result: Mapping[str, Any]
+) -> dict[str, Any]:
+    data = dict(result)
+    abandonment_id = str(data.get("abandonment_id") or "").strip()
+    if not abandonment_id:
+        return data
+    abandonment = get_abandonment_attempt(conn, abandonment_id)
+    data["abandonment"] = {key: abandonment[key] for key in abandonment.keys()}
+    if data.get("required_action"):
+        return data
+    if abandonment["status"] == "blocked_manual_reconciliation":
+        data["required_action"] = _abandonment_reconcile_action(abandonment_id)
+    elif abandonment["status"] == "awaiting_hold_resolution":
+        operation = conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?",
+            (abandonment["source_operation_id"],),
+        ).fetchone()
+        if operation is not None:
+            data["required_action"] = _abandonment_hold_action(operation)
+    return data
+
+
+def _select_abandonment_lease(
+    conn: sqlite3.Connection, *, operation_id: str, lease_id: str | None
+) -> sqlite3.Row:
+    operation = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if operation is None:
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    if operation["status"] not in {"open", "uncertain"} or operation["phase"] == "terminal":
+        raise DishRuleError(
+            "WRONG_STATE",
+            "only an active operation can be abandoned",
+            rule="abandonment_source_not_active",
+            details={"status": operation["status"], "phase": operation["phase"]},
+        )
+    clean_lease_id = str(lease_id or "").strip() or None
+    if clean_lease_id is not None:
+        rows = conn.execute(
+            "SELECT * FROM service_leases WHERE lease_id=?", (clean_lease_id,)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """SELECT * FROM service_leases
+                 WHERE operation_id=? AND lease_kind='actor'
+                   AND actor_attempt_seq=(
+                       SELECT MAX(actor_attempt_seq) FROM service_leases
+                        WHERE task_gid=? AND lease_kind='actor'
+                   )
+                   AND (released_at IS NOT NULL OR julianday(expires_at)<=julianday('now'))
+                 ORDER BY actor_attempt_seq DESC""",
+            (operation_id, operation["task_gid"]),
+        ).fetchall()
+    eligible = []
+    for row in rows:
+        latest = conn.execute(
+            """SELECT MAX(actor_attempt_seq) FROM service_leases
+                 WHERE task_gid=? AND lease_kind='actor'""",
+            (operation["task_gid"],),
+        ).fetchone()[0]
+        expired_or_released = bool(
+            row["released_at"] is not None
+            or conn.execute(
+                "SELECT julianday(?)<=julianday('now')", (row["expires_at"],)
+            ).fetchone()[0]
+        )
+        if (
+            row["operation_id"] == operation_id
+            and row["task_gid"] == operation["task_gid"]
+            and row["lease_kind"] == "actor"
+            and row["actor_attempt_seq"] is not None
+            and row["actor_attempt_seq"] == latest
+            and expired_or_released
+        ):
+            eligible.append(row)
+    if len(eligible) != 1:
+        candidate_ids = [row["lease_id"] for row in rows if row["lease_kind"] == "actor"]
+        raise DishRuleError(
+            "CONFLICT",
+            "abandonment requires exactly one latest expired or released actor lease",
+            rule=(
+                "abandonment_lease_not_eligible"
+                if clean_lease_id is not None
+                else "abandonment_lease_selection_required"
+            ),
+            details={"eligible_lease_ids": candidate_ids},
+        )
+    return eligible[0]
+
+
+def _claimed_admin_execution(
+    conn: sqlite3.Connection, *, operation_id: str
+) -> sqlite3.Row:
+    row = conn.execute(
+        """SELECT execution.*
+             FROM operation_execution_claims AS claim
+             JOIN operation_executions AS execution
+               ON execution.execution_id=claim.execution_id
+            WHERE claim.operation_id=?""",
+        (operation_id,),
+    ).fetchone()
+    if (
+        row is None
+        or row["command"] not in {"abandon-operation", "reconcile-abandonment"}
+        or row["status"] not in {"started", "uncertain"}
+    ):
+        raise DishRuleError(
+            "CONFLICT",
+            "abandonment command lacks exact operation execution authority",
+            rule="abandonment_execution_binding_missing",
+        )
+    return row
+
+
+def _stored_abandonment_result(row: sqlite3.Row) -> dict[str, Any]:
+    try:
+        stored = json.loads(row["latest_result_json"] or "{}")
+    except (TypeError, ValueError):
+        stored = {}
+    result = dict(stored) if isinstance(stored, dict) else {}
+    result.setdefault("abandonment_id", row["abandonment_id"])
+    return result
+
+
+def _command_abandon_operation(
+    self,
+    *,
+    trace: AdminTrace,
+    submission_id: str,
+    reason: str,
+    lease_id: str | None = None,
+) -> dict[str, Any]:
+    if self.operation_service is None or self.operation_service.current is None:
+        raise DishRuleError(
+            "PROTOCOL_INCOMPATIBLE",
+            "permanent attempt abandonment requires the current shared workflow service",
+            rule="shared_service_required",
+        )
+    operation_id = _clean_required(
+        submission_id, rule="operation_id_required", label="operation ID"
+    )
+    clean_reason = _clean_required(
+        reason, rule="abandonment_reason_required", label="abandonment reason"
+    )
+    operation = self.conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if operation is None:
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    trace.submission_id = operation_id
+    trace.task_gid = operation["task_gid"]
+    trace.state = operation["status"]
+
+    def execute() -> dict[str, Any]:
+        lease = _select_abandonment_lease(
+            self.conn, operation_id=operation_id, lease_id=lease_id
+        )
+        existing = self.conn.execute(
+            """SELECT * FROM abandonment_attempts
+                 WHERE source_operation_id=? AND source_lease_id=?
+                   AND abandoned_owner_id=? AND abandoned_run_id=?
+                   AND attempt_cycle_id IS ?""",
+            (
+                operation_id,
+                lease["lease_id"],
+                lease["owner_id"],
+                lease["run_id"],
+                lease["context_cycle_id"],
+            ),
+        ).fetchone()
+        if existing is not None:
+            if existing["status"] == "completed":
+                return _stored_abandonment_result(existing)
+            raise DishRuleError(
+                "CONFLICT",
+                "this actor attempt already has an active abandonment",
+                rule="abandonment_attempt_exists",
+                details={
+                    "abandonment_id": existing["abandonment_id"],
+                    "required_admin_action": "reconcile-abandonment",
+                    "admin_command": (
+                        f'dish-admin reconcile-abandonment {existing["abandonment_id"]}'
+                    ),
+                },
+            )
+        abandonment_id = str(uuid.uuid4())
+        execution = _claimed_admin_execution(
+            self.conn, operation_id=operation_id
+        )
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            create_abandonment_attempt_in_transaction(
+                self.conn,
+                abandonment_id=abandonment_id,
+                task_gid=operation["task_gid"],
+                source_operation_id=operation_id,
+                source_lease_id=lease["lease_id"],
+                abandoned_owner_id=lease["owner_id"],
+                abandoned_run_id=lease["run_id"],
+                attempt_cycle_id=lease["context_cycle_id"],
+                current_execution_id=execution["execution_id"],
+                reason=clean_reason,
+            )
+            self.conn.execute("COMMIT")
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
+            raise
+        return self.operation_service.current.settle_abandonment_frontier(
+            abandonment_id, reason=clean_reason
+        )
+
+    data, view = self.operation_service.current.abandon_operation(
+        operation_id, execute
+    )
+    data = _decorate_abandonment_result(self.conn, data)
+    required = data.get("required_action")
+    actions = [required["command"]] if isinstance(required, dict) and required.get("surface") == "connected-agent" else []
+    trace.state = view.get("status") or trace.state
+    return result_envelope(
+        command="abandon-operation",
+        task_gid=operation["task_gid"],
+        submission_id=operation_id,
+        state=trace.state,
+        allowed_actions=actions,
+        data=data,
+    )
+
+
+def _command_reconcile_abandonment(
+    self, *, trace: AdminTrace, abandonment_id: str
+) -> dict[str, Any]:
+    if self.operation_service is None or self.operation_service.current is None:
+        raise DishRuleError(
+            "PROTOCOL_INCOMPATIBLE",
+            "abandonment reconciliation requires the current shared workflow service",
+            rule="shared_service_required",
+        )
+    clean_id = _clean_required(
+        abandonment_id, rule="abandonment_id_required", label="abandonment ID"
+    )
+    abandonment = get_abandonment_attempt(self.conn, clean_id)
+    operation_id = abandonment["source_operation_id"]
+    operation = self.conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    trace.submission_id = operation_id
+    trace.task_gid = abandonment["task_gid"]
+    trace.state = None if operation is None else operation["status"]
+    if abandonment["status"] in {
+        "completed",
+        "awaiting_successor_claim",
+        "awaiting_hold_resolution",
+    }:
+        data = _decorate_abandonment_result(
+            self.conn, _stored_abandonment_result(abandonment)
+        )
+        required = data.get("required_action")
+        actions = [required["command"]] if isinstance(required, dict) and required.get("surface") == "connected-agent" else []
+        return result_envelope(
+            command="reconcile-abandonment",
+            task_gid=abandonment["task_gid"],
+            submission_id=operation_id,
+            state=trace.state,
+            allowed_actions=actions,
+            data=data,
+        )
+
+    prior_execution = None
+    if abandonment["current_execution_id"] is not None:
+        prior_execution = self.conn.execute(
+            "SELECT * FROM operation_executions WHERE execution_id=?",
+            (abandonment["current_execution_id"],),
+        ).fetchone()
+
+    def execute() -> dict[str, Any]:
+        execution = _claimed_admin_execution(
+            self.conn, operation_id=operation_id
+        )
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            bind_abandonment_execution_in_transaction(
+                self.conn,
+                abandonment_id=clean_id,
+                execution_id=execution["execution_id"],
+            )
+            self.conn.execute("COMMIT")
+        except Exception:
+            if self.conn.in_transaction:
+                self.conn.execute("ROLLBACK")
+            raise
+        return self.operation_service.current.settle_abandonment_frontier(
+            clean_id, reason=abandonment["reason"]
+        )
+
+    if (
+        prior_execution is not None
+        and prior_execution["status"] in {"started", "uncertain"}
+    ):
+        data, view = self.operation_service.current.resume_abandonment_execution(
+            operation_id, clean_id, prior_execution["execution_id"], execute
+        )
+        data = dict(data)
+        data["resumed_admin_execution"] = {
+            "execution_id": prior_execution["execution_id"],
+            "command": prior_execution["command"],
+            "request_id": prior_execution["request_id"],
+        }
+    else:
+        data, view = self.operation_service.current.reconcile_abandonment(
+            operation_id, execute
+        )
+    data = _decorate_abandonment_result(self.conn, data)
+    required = data.get("required_action")
+    actions = [required["command"]] if isinstance(required, dict) and required.get("surface") == "connected-agent" else []
+    trace.state = view.get("status") or trace.state
+    return result_envelope(
+        command="reconcile-abandonment",
+        task_gid=abandonment["task_gid"],
+        submission_id=operation_id,
+        state=trace.state,
+        allowed_actions=actions,
+        data=data,
+    )
+
+
 # Current-operation cancellation. Historical submissions are read-only.
 def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, reason: str) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
@@ -685,4 +1073,6 @@ CURRENT_ADMIN_COMMAND_HANDLERS = {
     "record-human-decision": _command_record_human_decision,
     "authorize-governed-change": _command_authorize_governed_change,
     "discard": _current_operation_discard,
+    "abandon-operation": _command_abandon_operation,
+    "reconcile-abandonment": _command_reconcile_abandonment,
 }

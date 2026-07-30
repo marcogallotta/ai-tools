@@ -98,8 +98,7 @@ a fresh `client.request_id`. Do not supply the operation UUID as a top-level or 
 handoff may release the actor lease while leaving
 the task operation active; follow the returned actions rather than renewing after handoff.
 
-If a lease expires, stop. Only Marco may use `dish-admin recover-lease`; the GPT must not create a
-replacement operation or change its run identity to bypass ownership.
+If a lease expires, stop. If the same chat/run will continue, only Marco may use `dish-admin recover-lease`; the GPT must not change run identity to bypass ownership. If the original chat/run is permanently unavailable, tell Marco to use the exact `dish-admin abandon-operation` or `reconcile-abandonment` command returned by Dish. Relay the command exactly, wait for confirmation it succeeded, then refresh the authoritative Dish action and follow the exact continuation. Never invent a replacement operation or target.
 
 ## Preview gate
 

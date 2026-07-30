@@ -40,7 +40,8 @@ _AGENT_EXPOSED_ACTIONS = {
     "sections", "start", "submit",
 }
 _ADMIN_ONLY_ACTIONS = {
-    "record-human-decision", "reopen", "repair-destination", "supply-evidence",
+    "record-human-decision", "reconcile-abandonment", "reopen",
+    "repair-destination", "supply-evidence",
 }
 
 
@@ -109,6 +110,8 @@ def _exposed_result_contract(
             "continuation_surface",
             "connected_action_available",
             "admin_command",
+            "directive",
+            "required_action",
             "historical_evidence",
         ):
             if key in view:
@@ -129,6 +132,8 @@ def _copy_recovery_guidance(
             "continuation_surface",
             "connected_action_available",
             "admin_command",
+            "directive",
+            "required_action",
             "historical_evidence",
         ):
             if key in view:

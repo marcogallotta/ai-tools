@@ -352,7 +352,7 @@ sequence numbers or carry cycle context. These creation facts are immutable. Leg
 unclassified until drained, but new code must never infer attempt order or Verification-cycle identity
 from timestamps or from admin lease history.
 
-The abandoned-attempt persistence foundation is intentionally not an operator surface yet.
+Permanent-run abandonment is exposed only through the private Marco admin surface.
 `abandonment_attempts` binds one exact classified actor lease, owner, run, and optional Verification
 cycle; a partial unique index permits only one non-completed abandonment per task. A clean restart
 may publish one immutable `operation_successions` edge from an `agent_abandoned` terminal source to
@@ -361,11 +361,10 @@ an exact prepared successor. The successor owns a confirmed `successor_baseline`
 scoped persistence primitive refuses incomplete workflow steps or unresolved external-effect
 attempts, retires the exact source lease, and commits source terminalization, optional incomplete-
 cycle abandonment, successor operation/cycle creation, baseline transfer, lineage, and abandonment
-state together. No CLI, HTTP route, or workflow policy may call this foundation until the later
-stage-specific classification and CurrentWorkflowService authority work is implemented.
+state together. Only `dish-admin abandon-operation` and `dish-admin reconcile-abandonment` may call this foundation, and both route through `CurrentWorkflowService` plus the existing operation-execution claim. Connected agents cannot select a transition, terminal outcome, source lease, or replacement target.
 
-The internal abandonment frontier policy lives in `dish_tool.abandonment` and is routed only
-through `CurrentWorkflowService`; the abandonment command itself is still not a CLI or HTTP surface.
+The abandonment frontier policy lives in `dish_tool.abandonment` and is routed only through
+`CurrentWorkflowService`. `abandon-operation` creates the durable exact-attempt record while holding the source operation execution claim; a crashed admin invocation is resumed by reclaiming that same linked execution rather than creating an unresolved execution chain. `reconcile-abandonment` is valid only for the recorded abandonment.
 The policy rereads the exact live task and revalidates the persisted latest actor attempt before
 selecting one of four bounded results: clean restart preparation, preservation of a pre-construction
 Research hold, completion of an already-applied recovery suffix, or manual reconciliation. It never
@@ -400,7 +399,10 @@ Every Verification start selected by an abandonment uses the same exact-target c
 an already-created cycle preserved after a committed Research handoff or rejection route. Ordinary
 Verification starts may still omit target IDs. A target pair is canonical request identity; one ID
 without the other is invalid, and a delayed target for an older cycle fails rather than selecting a
-later current cycle. The abandonment command remains internal until the operator surface is added.
+later current cycle. The private operator surface returns the exact connected start target; it never transfers the abandoned actor identity.
+
+
+While an abandonment is `started`, `blocked_manual_reconciliation`, `awaiting_hold_resolution`, or `awaiting_successor_claim`, it is also a task-level connected-mutation fence. Reads and inspection remain available, but no actor lease is acquired for an unrelated mutation. The sole exception is the exact prepared successor claim returned by the abandonment. Blocked results include a generated `reconcile-abandonment` command, a wait-for-confirmation relay, and an instruction to refresh the authoritative action afterward. A completed route-preserved Verification continuation remains exact-targeted in authoritative reads until its cycle is claimed.
 
 Request-scoped lease renewal, expired-lease recovery, and explicit administrative lease expiry
 commit the lease effect and replayable service-request result in the same SQLite transaction; neither

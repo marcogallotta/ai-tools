@@ -69,6 +69,8 @@ _RUN_ID_ADMIN_COMMANDS = {"repair-destination"}
 _HANDOFF_PHASES = {"await_verification", "held_evidence", "held_human"}
 _OPERATION_ADMIN_COMMANDS = {
     "recover",
+    "abandon-operation",
+    "reconcile-abandonment",
     "discard",
     "reopen",
     "supply-evidence",
@@ -76,7 +78,7 @@ _OPERATION_ADMIN_COMMANDS = {
     "authorize-governed-change",
     "repair-destination",
 }
-_LEASE_FREE_ADMIN_COMMANDS = {"authorize-governed-change"}
+_LEASE_FREE_ADMIN_COMMANDS = {"authorize-governed-change", "abandon-operation", "reconcile-abandonment"}
 
 LOG = logging.getLogger("dish.service.application")
 
@@ -1072,6 +1074,66 @@ class DishService:
         ).fetchone()
         return row is not None
 
+    @staticmethod
+    def _active_abandonment_for_operation(conn, operation_id: str):
+        return conn.execute(
+            """SELECT abandonment.*, succession.successor_operation_id AS linked_successor_id
+                 FROM abandonment_attempts AS abandonment
+                 LEFT JOIN operation_successions AS succession
+                   ON succession.abandonment_id=abandonment.abandonment_id
+                WHERE abandonment.status!='completed'
+                  AND (abandonment.source_operation_id=?
+                       OR succession.successor_operation_id=?)
+                ORDER BY abandonment.created_at DESC LIMIT 1""",
+            (operation_id, operation_id),
+        ).fetchone()
+
+    def _assert_connected_abandonment_access(
+        self,
+        conn,
+        *,
+        command: str,
+        arguments: Mapping[str, Any],
+        operation_id: str,
+    ) -> None:
+        abandonment = self._active_abandonment_for_operation(conn, operation_id)
+        if abandonment is None:
+            return
+        prepared_claim = bool(
+            command == "start"
+            and abandonment["status"] == "awaiting_successor_claim"
+            and abandonment["successor_operation_id"] == operation_id
+            and (
+                arguments.get("prepared_operation_id") == operation_id
+                or (
+                    arguments.get("target_operation_id") == operation_id
+                    and arguments.get("target_cycle_id")
+                    == abandonment["successor_cycle_id"]
+                )
+            )
+        )
+        if prepared_claim:
+            return
+        command_text = (
+            f'dish-admin reconcile-abandonment {abandonment["abandonment_id"]}'
+        )
+        raise DishRuleError(
+            "WRONG_STATE",
+            "task is fenced by an active permanent-run abandonment",
+            rule="abandonment_fence_active",
+            details={
+                "abandonment_id": abandonment["abandonment_id"],
+                "abandonment_status": abandonment["status"],
+                "required_admin_action": "reconcile-abandonment",
+                "admin_command": command_text,
+                "directive": (
+                    f"Tell the human to run: {command_text}\n"
+                    "Then wait for confirmation it succeeded and refresh the "
+                    "authoritative Dish action."
+                ),
+            },
+        )
+
     def _may_claim_missing_lease(
         self,
         conn,
@@ -1736,6 +1798,13 @@ class DishService:
                             "the abandoned client run cannot claim its replacement Verification attempt",
                             rule="abandoned_run_claim_forbidden",
                         )
+                if operation_id and command in _MUTATING_AGENT_COMMANDS:
+                    self._assert_connected_abandonment_access(
+                        conn,
+                        command=command,
+                        arguments=prepared_arguments,
+                        operation_id=operation_id,
+                    )
                 if command in _LEASED_AGENT_COMMANDS:
                     if not operation_id:
                         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
@@ -2534,10 +2603,27 @@ class DishService:
                 )
             backend = None
             prepared_arguments = dict(arguments)
+            if command == "reconcile-abandonment":
+                abandonment_id = str(
+                    prepared_arguments.get("abandonment_id") or ""
+                ).strip()
+                if abandonment_id:
+                    abandonment_row = conn.execute(
+                        "SELECT source_operation_id FROM abandonment_attempts WHERE abandonment_id=?",
+                        (abandonment_id,),
+                    ).fetchone()
+                    if abandonment_row is not None:
+                        requested_operation_id = str(
+                            abandonment_row["source_operation_id"]
+                        )
             supplied_run_id = str(prepared_arguments.get("run_id") or "").strip()
             if command in _RUN_ID_ADMIN_COMMANDS and not supplied_run_id:
                 prepared_arguments["run_id"] = principal.run_id
-            operation_id = str(prepared_arguments.get("submission_id") or "").strip() or None
+            operation_id = (
+                str(prepared_arguments.get("submission_id") or "").strip()
+                or requested_operation_id
+                or None
+            )
             acquired_for_request = False
             exact_recovery_execution_id: str | None = None
             exact_recovery_lease_id: str | None = None
@@ -2555,7 +2641,12 @@ class DishService:
                     )
                     prior = stored_result(
                         request_row,
-                        permit_uncertain_resume=command in {"repair-destination", "discard"},
+                        permit_uncertain_resume=command in {
+                            "repair-destination",
+                            "discard",
+                            "abandon-operation",
+                            "reconcile-abandonment",
+                        },
                     )
                     if prior is not None:
                         return prior
@@ -2693,6 +2784,23 @@ class DishService:
                 )
                 with self._candidate_file(prepared_arguments) as prepared:
                     result = app.execute(command, **prepared)
+                resumed_admin = None
+                data = result.get("data")
+                if isinstance(data, dict):
+                    resumed_admin = data.pop("resumed_admin_execution", None)
+                if (
+                    result.get("ok")
+                    and isinstance(resumed_admin, dict)
+                    and resumed_admin.get("request_id")
+                    and resumed_admin.get("request_id") != request_id
+                ):
+                    original_result = json.loads(json.dumps(result))
+                    original_result["command"] = str(resumed_admin["command"])
+                    complete_request(
+                        conn,
+                        request_id=str(resumed_admin["request_id"]),
+                        result=original_result,
+                    )
                 result = _preserve_semantic_evidence_result(
                     result,
                     execution_occurred=True,

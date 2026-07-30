@@ -10,6 +10,7 @@ from .database_schema import _validate_semantic_evidence
 from .errors import DishRuleError
 from .legacy_adapter import LegacyReadOnlyAdapter
 from .operation_execution import (
+    claim_abandonment_execution,
     claim_operation_execution,
     execution_recovery_state,
     finish_operation_execution,
@@ -326,6 +327,156 @@ class CurrentWorkflowService:
     def authoritative_view(self, operation_id: str, *, schema=None) -> dict[str, object]:
         snapshot, facts = self._snapshot(operation_id, schema=schema)
         facts["legal_actions"] = legal_actions(snapshot)
+        abandonment = self.conn.execute(
+            """SELECT abandonment.*, succession.successor_operation_id AS linked_successor_id
+                 FROM abandonment_attempts AS abandonment
+                 LEFT JOIN operation_successions AS succession
+                   ON succession.abandonment_id=abandonment.abandonment_id
+                WHERE (
+                        abandonment.status!='completed'
+                        AND (abandonment.source_operation_id=?
+                             OR succession.successor_operation_id=?)
+                      )
+                   OR (
+                        abandonment.status='completed'
+                        AND abandonment.continuation_operation_id=?
+                        AND abandonment.continuation_cycle_id IS NOT NULL
+                      )
+                ORDER BY CASE WHEN abandonment.status!='completed' THEN 0 ELSE 1 END,
+                         abandonment.created_at DESC
+                LIMIT 1""",
+            (operation_id, operation_id, operation_id),
+        ).fetchone()
+        if abandonment is None:
+            return facts
+
+        if abandonment["status"] == "completed":
+            continuation = self.conn.execute(
+                """SELECT operation.status, operation.phase, cycle.run_id,
+                          cycle.verifier_agent, cycle.completed_at
+                     FROM operations AS operation
+                     JOIN verification_cycles AS cycle
+                       ON cycle.operation_id=operation.operation_id
+                    WHERE operation.operation_id=? AND cycle.cycle_id=?""",
+                (
+                    abandonment["continuation_operation_id"],
+                    abandonment["continuation_cycle_id"],
+                ),
+            ).fetchone()
+            if (
+                continuation is None
+                or continuation["status"] != "open"
+                or continuation["phase"] != "await_verification"
+                or continuation["completed_at"] is not None
+                or continuation["run_id"] is not None
+                or continuation["verifier_agent"] is not None
+            ):
+                return facts
+            required_action = {
+                "surface": "connected-agent",
+                "command": "start",
+                "arguments": {
+                    "task_gid": abandonment["task_gid"],
+                    "kind": "verification",
+                    "target_operation_id": abandonment[
+                        "continuation_operation_id"
+                    ],
+                    "target_cycle_id": abandonment["continuation_cycle_id"],
+                },
+            }
+            facts.update(
+                {
+                    "legal_actions": ["verify"],
+                    "required_start_kind": "verification",
+                    "target_operation_id": abandonment[
+                        "continuation_operation_id"
+                    ],
+                    "target_cycle_id": abandonment["continuation_cycle_id"],
+                    "required_action": required_action,
+                    "connected_action_available": True,
+                    "abandonment_id": abandonment["abandonment_id"],
+                    "abandonment_status": "completed",
+                }
+            )
+            return facts
+
+        facts.update({
+            "abandonment_id": abandonment["abandonment_id"],
+            "abandonment_status": abandonment["status"],
+            "abandonment_source_operation_id": abandonment["source_operation_id"],
+            "abandonment_successor_operation_id": abandonment["successor_operation_id"],
+        })
+        try:
+            stored = json.loads(abandonment["latest_result_json"] or "{}")
+        except (TypeError, ValueError):
+            stored = {}
+        required_action = (
+            stored.get("required_action") if isinstance(stored, dict) else None
+        )
+        if abandonment["status"] == "awaiting_successor_claim":
+            internal_action = (
+                "verify"
+                if isinstance(required_action, dict)
+                and required_action.get("arguments", {}).get("kind")
+                == "verification"
+                else "start"
+            )
+            facts["legal_actions"] = (
+                [internal_action] if isinstance(required_action, dict) else []
+            )
+            if isinstance(required_action, dict):
+                facts["required_action"] = required_action
+                arguments = required_action.get("arguments")
+                if isinstance(arguments, dict):
+                    if arguments.get("kind") is not None:
+                        facts["required_start_kind"] = arguments.get("kind")
+                    for key in (
+                        "prepared_operation_id",
+                        "target_operation_id",
+                        "target_cycle_id",
+                    ):
+                        if arguments.get(key) is not None:
+                            facts[key] = arguments[key]
+            facts["recovery_required"] = False
+            facts["connected_action_available"] = bool(facts["legal_actions"])
+            return facts
+
+        facts["legal_actions"] = []
+        facts["connected_action_available"] = False
+        if abandonment["status"] in {"started", "blocked_manual_reconciliation"}:
+            command = (
+                f'dish-admin reconcile-abandonment {abandonment["abandonment_id"]}'
+            )
+            directive = (
+                f"Tell the human to run: {command}\n"
+                "Then wait for confirmation it succeeded before continuing. "
+                "Refresh the authoritative Dish action before doing anything else."
+            )
+            facts.update({
+                "recovery_required": True,
+                "recovery_reasons": ["abandonment_reconciliation_required"],
+                "required_admin_action": "reconcile-abandonment",
+                "resolver": "Marco/admin reconcile-abandonment",
+                "continuation_surface": "private-admin",
+                "admin_command": command,
+                "directive": directive,
+                "required_action": {
+                    "surface": "private-admin",
+                    "command": "reconcile-abandonment",
+                    "arguments": {
+                        "abandonment_id": abandonment["abandonment_id"]
+                    },
+                    "admin_command": command,
+                    "relay_text": directive,
+                    "after_success": {
+                        "start_new_operation": False,
+                        "instruction": (
+                            "Refresh the authoritative Dish action, then follow "
+                            "the exact continuation returned."
+                        ),
+                    },
+                },
+            })
         return facts
 
     def assert_action(self, operation_id: str, action: str, *, schema=None) -> dict[str, object]:
@@ -425,13 +576,26 @@ class CurrentWorkflowService:
         *,
         schema=None,
         assert_action: bool = True,
+        claim_request_id: str | None | object = ...,
+        abandonment_id: str | None = None,
+        abandonment_execution_id: str | None = None,
     ) -> tuple[T, dict[str, object]]:
-        claim = claim_operation_execution(
-            self.conn,
-            operation_id=operation_id,
-            command=command,
-            request_id=self.request_id,
+        execution_request_id = (
+            self.request_id if claim_request_id is ... else claim_request_id
         )
+        if abandonment_id is not None and abandonment_execution_id is not None:
+            claim = claim_abandonment_execution(
+                self.conn,
+                abandonment_id=abandonment_id,
+                execution_id=abandonment_execution_id,
+            )
+        else:
+            claim = claim_operation_execution(
+                self.conn,
+                operation_id=operation_id,
+                command=command,
+                request_id=execution_request_id,
+            )
         result: T
         try:
             if assert_action and not claim.resuming_uncertain:
@@ -645,10 +809,7 @@ class CurrentWorkflowService:
     def settle_abandonment_frontier(
         self, abandonment_id: str, *, reason: str
     ):
-        """Persist only blocked/hold or already-committed abandonment state.
-
-        Clean successor creation is intentionally not part of this stage.
-        """
+        """Settle one already-authorized abandonment frontier."""
         from .abandonment import settle_abandonment_frontier
 
         return settle_abandonment_frontier(
@@ -656,6 +817,71 @@ class CurrentWorkflowService:
             self.backend,
             abandonment_id=abandonment_id,
             reason=reason,
+        )
+
+    def abandon_operation(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+        """Create and settle one permanent-run abandonment under execution authority."""
+        self.operation(operation_id)
+        return self._execute_claimed(
+            operation_id,
+            "abandon-operation",
+            executor,
+            schema=schema,
+            assert_action=False,
+        )
+
+    def reconcile_abandonment(
+        self, operation_id: str, executor: Callable[[], T], *, schema=None
+    ):
+        """Resume one blocked or interrupted abandonment under execution authority."""
+        self.operation(operation_id)
+        return self._execute_claimed(
+            operation_id,
+            "reconcile-abandonment",
+            executor,
+            schema=schema,
+            assert_action=False,
+        )
+
+    def resume_abandonment_execution(
+        self,
+        operation_id: str,
+        abandonment_id: str,
+        execution_id: str,
+        executor: Callable[[], T],
+        *,
+        schema=None,
+    ):
+        """Reclaim the exact crashed admin execution instead of creating a chain."""
+        self.operation(operation_id)
+        execution = self.conn.execute(
+            "SELECT * FROM operation_executions WHERE execution_id=?",
+            (execution_id,),
+        ).fetchone()
+        if (
+            execution is None
+            or execution["operation_id"] != operation_id
+            or execution["command"] not in {
+                "abandon-operation",
+                "reconcile-abandonment",
+            }
+            or execution["status"] not in {"started", "uncertain"}
+        ):
+            raise DishRuleError(
+                "CONFLICT",
+                "abandonment execution is not resumable",
+                rule="abandonment_execution_not_resumable",
+                details={"execution_id": execution_id},
+            )
+        return self._execute_claimed(
+            operation_id,
+            execution["command"],
+            executor,
+            schema=schema,
+            assert_action=False,
+            claim_request_id=execution["request_id"],
+            abandonment_id=abandonment_id,
+            abandonment_execution_id=execution_id,
         )
 
     def cancel(self, operation_id: str, executor: Callable[[], T], *, schema=None):

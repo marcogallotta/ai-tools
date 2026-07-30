@@ -21,8 +21,8 @@ from dish_service.task_urls import task_gid_from_url
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
-_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease", "expire-lease", "backup-create", "backup-restore"}
-_OPERATION_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease"}
+_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "abandon-operation", "reconcile-abandonment", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease", "expire-lease", "backup-create", "backup-restore"}
+_OPERATION_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "abandon-operation", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease"}
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -70,6 +70,23 @@ def build_parser() -> JsonArgumentParser:
     discard = subparsers.add_parser("discard", help="abandon a stale open operation without applying it")
     discard.add_argument("submission_id")
     discard.add_argument("--reason", required=True)
+
+    abandon = subparsers.add_parser(
+        "abandon-operation",
+        help="retire the latest expired or released actor attempt and prepare its safe continuation",
+    )
+    abandon.add_argument("submission_id")
+    abandon.add_argument("--reason", required=True)
+    abandon.add_argument(
+        "--lease-id",
+        help="exact actor lease; may be omitted only when one eligible latest attempt exists",
+    )
+
+    reconcile_abandonment = subparsers.add_parser(
+        "reconcile-abandonment",
+        help="reclassify a blocked or interrupted permanent-run abandonment",
+    )
+    reconcile_abandonment.add_argument("abandonment_id")
 
     reopen = subparsers.add_parser(
         "reopen",
