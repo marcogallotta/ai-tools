@@ -420,4 +420,74 @@ Before enabling the Marco-only commands in production, rehearse each path agains
 - process loss after abandonment creation is resumed through the same operation execution and both service request IDs replay their stored results;
 - a completed route-preserved Verification continuation remains exact-targeted until its cycle is claimed.
 
+### Live rehearsal 2026-07-30
+
+Run against the test project (`DISH_COOKING_PROJECT_GID=1216693403164366`,
+`DISH_DB_PATH=/home/marco/.local/state/dish/test/shared.sqlite3`) via the already-running
+`dish-service` reached through `https://laptop.tail46f0b9.ts.net:8444`. Marco explicitly authorized
+running `dish`/`dish-admin` directly for this session, scoped to the test project only. Complete
+credential-free request/response bodies are in `/tmp/dish-abandonment-rehearsal-2026-07-30.jsonl`.
+
+Passed:
+
+- **Clean Planning abandonment.** Fixture `1217037869783923`, Planning operation
+  `62253077-25c3-4246-a13d-1d376b83ca70`, lease `1e3697f5-aa6b-40ce-923f-167a473b35e7` (run
+  `eebfd364-2bc6-4c5e-8b8f-c7a892b4ed16`). After `expire-lease` and `abandon-operation`,
+  classification returned `restart_prepared` with exact prepared successor
+  `b0bfeb0a-9677-46d4-ba34-71a32552fec1`. `read` confirmed unchanged live identity, placement, and
+  `modified_at` — no Asana write or movement occurred.
+- **Abandoned-owner rejection.** The abandoned run (`eebfd364...`) attempting to claim the returned
+  successor was refused `AGENT_MISMATCH/abandoned_run_claim_forbidden`. A fresh run
+  (`6db9a0cb-fe84-4f70-a570-522c4cdf5ad4`) claimed it cleanly.
+- **Clean Research (initial) abandonment.** Same fixture, Planning prepared and handed off to
+  Research; Research operation `3d318753-b176-45ea-8997-6ed371f79734` (run
+  `804a5580-3107-4763-8ab2-6b503863f6b2`) was released and abandoned the same way, returning
+  `restart_prepared` with exact successor `4c49df37-b042-4fc2-b0d7-3f4f595c3c11`. `read` confirmed
+  `identity_matches`/`placement_matches` true.
+- **Older-lease rejection.** Successor `4c49df37...` was claimed by run `1d66b112...`
+  (lease `716530f2-8b99-4786-bd25-e09fdd4dfa76`), that lease was expired, and a later actor attempt
+  was created on the same run via `reject --route evidence` (a pre-construction Evidence hold).
+  `abandon-operation` supplied the stale older lease id and was correctly refused
+  `CONFLICT/abandonment_lease_not_eligible`. The hold was then resolved with admin
+  `supply-evidence` to continue the rehearsal (bonus coverage of the hold-resolution path, not one
+  of the eight bullets).
+- **Mid-cycle Verification abandonment.** The same fixture was carried through Research completion
+  and Verification start (cycle `31ea4a79-0994-4eb0-b6ee-d5c8f1abc3ca`, run
+  `ceeea6e8-d6e3-422f-9a74-2a075dfb5150`). After releasing that lease, `abandon-operation` closed
+  only the incomplete cycle and returned an exact successor operation/cycle target
+  (`2fae553b-6d05-4e49-9daa-5453227ac901` / `eeb77beb-d660-4981-a028-8326c7ecf612`). Researcher
+  lineage (`run_id 1d66b112...`) was retained on the successor; verifier identity was not. `read`
+  confirmed the live task stayed in Verification Queue with unchanged identity/placement.
+- **Route-preserved Verification continuation.** While `awaiting_successor_claim`, `inspect`
+  repeatedly returned the same exact `target_operation_id`/`target_cycle_id`. A fresh independent
+  verifier run (`194436b3-7194-4258-b75d-a93df7cca886`) claimed it successfully by supplying both
+  target IDs.
+- **Crash-and-resume.** Disposable fixture `1217037942022033`, Planning operation
+  `b8748041-9a21-42a1-92b9-b459e26e0ce5`. `abandon-operation` was launched in the background to
+  attempt an interrupted invocation, but the local call completed in well under the interception
+  window (sub-50ms), so a real mid-flight kill could not be produced; instead the identical
+  `abandon-operation` invocation (same submission id, lease id, and reason) was issued a second time
+  immediately after the first succeeded, simulating a client that lost the response. The retry
+  correctly failed closed with `WRONG_STATE/abandonment_source_not_active` rather than creating a
+  second abandonment or successor chain; `read` confirmed exactly one abandonment
+  (`14e1d559-64eb-41ed-a429-94470e007795`) and one successor
+  (`ca4fe9d7-4d08-4f91-9e48-967269c10df1`) exist. Note: `dish-admin abandon-operation` exposes no
+  `--request-id` flag (unlike `expire-lease`), so this does not exercise literal same-request-UUID
+  replay — it exercises the safety property that matters (no duplicate successor chain), not the
+  exact replay mechanism.
+
+Not exercised — blocked by available tooling:
+
+- **Blocked/uncertain-state abandonment returning `reconcile-abandonment`.** No safe way was found
+  in this live rehearsal to construct a genuine pending step or unresolved external-effect attempt.
+  `generic_asana_guard` fails closed against direct writes to covered Cooking tasks, so live-state
+  drift cannot be manufactured through the general `asana` CLI, and local HTTP calls complete too
+  fast to interrupt mid-transaction from the client side. This needs a supported fault injector (see
+  Stage 5 "Optional resilience") rather than an artificial live-state construction.
+
+Disposable fixtures remaining in the test project, awaiting approved cleanup: `1217037869783923`
+(claimed successor `2fae553b-6d05-4e49-9daa-5453227ac901`, open in Verification, unresolved) and
+`1217037942022033` (successor `ca4fe9d7-4d08-4f91-9e48-967269c10df1`, unclaimed
+`awaiting_successor_claim`).
+
 `recover-lease` remains the same-run path. Do not use abandonment merely because a lease expired when the original run can still return.
