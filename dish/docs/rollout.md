@@ -47,12 +47,13 @@ selection, migration rehearsal, rollback proof, or production authorization.
 Resolve and record these review items before production activation. Until a decision changes the
 implementation or runtime documentation, the current code and contracts remain authoritative.
 
-1. **Abandoned run ownership, Part I.** Blocking; being implemented now. Land the pre-rollout
-   abandonment patch in
-   [`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) (§1–15): `abandon-operation`
-   and `reconcile-abandonment`, stage policy, and the durable abandonment/succession records, so a
-   permanently lost chat run can no longer strand an open Planning, Research, or Verification
-   attempt. Part II of that document is a post-rollout draft, not launch scope; see below.
+1. **Abandoned run ownership, Part I.** Complete. The pre-rollout abandonment patch —
+   `abandon-operation` and `reconcile-abandonment`, stage policy, the durable
+   abandonment/succession records, and the pre-construction Research reject lease-reacquisition
+   fix — is implemented and documented in `docs/architecture.md` and `docs/runtime-contract.md`.
+   [`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) Part I is now a
+   historical summary, not a live spec. Part II of that document is a post-rollout draft, reopened
+   for review only, not launch scope; see below.
 2. **Final regression gate.** Preserve the deterministic recovery and governed-audit regressions,
    then pass focused concurrency/recovery coverage plus the complete suite on the final code.
 3. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
@@ -60,9 +61,9 @@ implementation or runtime documentation, the current code and contracts remain a
 
 ## Post-rollout: abandoned run ownership Part II review
 
-Not launch-blocking; do not start before Part I above has shipped. Part II of
-[`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) (§16–23) is a post-rollout
-draft, deliberately parked, and must not add requirements to Part I.
+Not launch-blocking. Part I has shipped, so the design document's Part II is reopened for review
+comments, but it remains a draft that is not ready for implementation and must not add
+requirements to Part I.
 
 1. Commission a full ChatGPT review of Part II once production evidence from Part I is available.
 2. Follow with a focused Claude review of Part II's proposal against the invariants most prone to

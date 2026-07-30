@@ -205,13 +205,13 @@ don't count against it."
 This is distinct from the unchanged-signed-content `reverify` above (that one is admin-triggered,
 post-signoff, on content that already passed). This one fires mid-cycle, before signoff, as the
 verifier's own decision. It should reuse the same successor-operation/cycle primitive that
-[`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) Part I is building for
+[`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) Part I shipped for
 abandonment — cancel the source, create a fresh unbound Verification operation/cycle, preserve the
 exact candidate — but triggered by verifier judgment instead of a lost run, and carrying the
 concern forward as structured data on the successor (not a free-text comment the next agent has to
-rediscover by re-reading the whole task). Land this once Part I's successor-cycle mechanism exists;
-it should not require Part II's cross-agent session redesign, since the triggering run is still
-live and simply choosing not to sign off yet.
+rediscover by re-reading the whole task). Part I's successor-cycle mechanism now exists; this
+should not require Part II's cross-agent session redesign, since the triggering run is still live
+and simply choosing not to sign off yet.
 
 ### Archive route for unapproved or redundant composite dishes
 
@@ -262,15 +262,15 @@ design, including the task-state/action precedence table, `dish_find`'s exact/fu
 contract, and why duplicate prevention stays deliberately best-effort rather than adding reservation
 machinery. Implement any of this only if real recurring friction shows up, not on a schedule.
 
-## In progress: abandoned-run recovery and long-term ownership
+## Shipped, with a long-term follow-on: abandoned-run recovery and long-term ownership
 
 Part I of [`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) — an explicit
 `abandon-operation`/`reconcile-abandonment` path for a permanently lost chat run stranding
-Planning, Research, or Verification — is a pre-rollout implementation candidate being built now,
-not a deferred future item. Part II of that same document, a long-term attempt/session ownership
-redesign that would let a replacement session (potentially a different agent) continue an
-in-progress attempt instead of always forcing a fresh operation, is intentionally parked as a
-post-rollout draft: re-open only after Part I ships and production evidence is available.
+Planning, Research, or Verification — has shipped; it is no longer a deferred future item. Part II
+of that same document, a long-term attempt/session ownership redesign that would let a replacement
+session (potentially a different agent) continue an in-progress attempt instead of always forcing
+a fresh operation, is reopened for review comments but remains a post-rollout draft not ready for
+implementation: production evidence from Part I is still needed before it can be promoted.
 
 ## Later architectural options
 
