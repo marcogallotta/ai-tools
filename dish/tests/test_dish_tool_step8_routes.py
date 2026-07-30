@@ -41,7 +41,7 @@ def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     _review(app, "codex", run="first")
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK.replace("100 g", "120 g"))
-    first = app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="method needs replacement", file_path=str(candidate), run_id="first", independence_attestation="independent")
+    first = app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="method needs replacement", file_path=str(candidate), run_id="first")
     assert first["ok"] and first["data"]["new_cycle_id"]
     assert first["allowed_actions"] == ["start"]
     assert first["data"]["required_start_kind"] == "verification"
@@ -49,7 +49,7 @@ def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
     assert barred["code"] == "AGENT_MISMATCH"
     _review(app, "gpt", run="second")
     candidate.write_text(TASK.replace("100 g", "130 g"))
-    second = app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="premise still unresolved", file_path=str(candidate), run_id="second", independence_attestation="independent")
+    second = app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="premise still unresolved", file_path=str(candidate), run_id="second")
     assert second["ok"] and second["data"]["two_pass_hold"]
     assert "Status: pending-human-review" in backend.notes
     assert "Resume status: pending-verification" in backend.notes
@@ -104,9 +104,9 @@ def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK)
     _review(app, "codex", run="one")
-    app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="first", file_path=str(candidate), run_id="one", independence_attestation="independent")
+    app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="first", file_path=str(candidate), run_id="one")
     _review(app, "gpt", run="two")
-    app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="second", file_path=str(candidate), run_id="two", independence_attestation="independent")
+    app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="second", file_path=str(candidate), run_id="two")
     admin = DishAdminApplication(app.conn, backend=backend)
     bad = admin.execute("reopen", submission_id=operation_id, category="hash", before="a", after="b", editor="codex", model="gpt-5.6-sol", run_id="reopen-run", file_path=str(candidate), date="2026-07-25")
     assert bad["code"] == "INVALID_ARGUMENT"
@@ -213,7 +213,6 @@ def test_large_route_rejects_hold_resume_status(tmp_path):
         "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id,
         route="large", reason="material correction", file_path=str(candidate),
         resume_status="pending-verification", run_id="review-large-resume",
-        independence_attestation="independent",
     )
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"][0]["rule"] == "large_resume_status_unexpected"

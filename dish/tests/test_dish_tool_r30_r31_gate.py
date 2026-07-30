@@ -72,7 +72,6 @@ def test_large_route_actor_is_recoverable_before_cycle_is_usable(monkeypatch, tm
     failed = app.execute(
         "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="material correction", file_path=str(candidate), run_id="large-editor",
-        independence_attestation="independent",
     )
     assert not failed["ok"]
     assert app.conn.execute(
@@ -107,7 +106,6 @@ def test_two_pass_hold_advertises_reopen_not_human_decision(tmp_path):
     first = app.execute(
         "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="first failure", file_path=str(candidate), run_id="first",
-        independence_attestation="independent",
     )
     assert first["ok"]
 
@@ -116,7 +114,6 @@ def test_two_pass_hold_advertises_reopen_not_human_decision(tmp_path):
     second = app.execute(
         "reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="second failure", file_path=str(candidate), run_id="second",
-        independence_attestation="independent",
     )
     assert second["ok"] and second["data"]["two_pass_hold"]
     assert second["allowed_actions"] == []

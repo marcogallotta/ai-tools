@@ -63,9 +63,10 @@ Add an operating instruction with all of these requirements:
 - Independent Verification requires that run ID to differ from the run that constructed or last
   materially edited the candidate. A new operation ID, cycle ID, actor/model identity, or
   `independence_attestation` does not establish independence. A non-blank attestation is required as
-  supplementary audit context for Verification start and Large rejection, but it cannot replace
-  `client.run_id`. Approval, Evidence rejection, and Human Review rejection inherit the exact
-  persisted start attestation and do not accept the field.
+  supplementary audit context only on Verification start, and it cannot replace `client.run_id`.
+  Approval and every rejection route — including Large — inherit the exact persisted start
+  attestation automatically and do not accept the field; never send `independence_attestation` on
+  `reject`.
 - Follow only the returned `allowed_actions`. A completed cross-stage handoff names `start` plus
   `data.required_start_kind`; pass that exact value as `arguments.kind` and do not reopen the terminal
   prior operation. In particular, Planning → Research returns `required_start_kind: initial`: call
@@ -75,7 +76,9 @@ Add an operating instruction with all of these requirements:
 - Treat `file_text` as the complete candidate. Never send a partial patch or assume that the service
   can read a local file. For approval with `correction: none`, omit `file_text`: Dish signs the exact
   inspected candidate. For `correction: small`, supply the complete corrected candidate as
-  `file_text`.
+  `file_text`. `approve` never accepts `correction: large`. A Large correction is never sent through
+  `approve`: call `reject` with `route: large`, `file_text` (the complete corrected candidate), and
+  `reason` instead.
 - A tool pass proves deterministic conformance only; complete the semantic work required by the
   stage protocol returned by Dish.
 - After successful Verification approval returns `submit`, call `submit` in the same pass.

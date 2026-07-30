@@ -72,7 +72,6 @@ def test_large_route_actor_is_recoverable_before_cycle_is_usable(monkeypatch, tm
     failed = app.execute(
         "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="material correction", file_path=str(candidate), run_id="large-editor",
-        independence_attestation="independent",
     )
     assert not failed["ok"]
     assert app.conn.execute(

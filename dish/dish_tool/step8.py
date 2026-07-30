@@ -376,7 +376,6 @@ def _validate_rejection_route_arguments(
     permitted = {
         "large": [
             "submission_id", "agent", "reason", "route", "model", "file_path",
-            "independence_attestation",
         ],
         "evidence": [
             "submission_id", "agent", "reason", "route", "resume_status",
@@ -395,6 +394,13 @@ def _validate_rejection_route_arguments(
             "route": route,
             "permitted_arguments": permitted,
         })
+
+    if str(independence_attestation or "").strip():
+        add(
+            "hold_independence_attestation_unexpected",
+            "independence_attestation",
+            "every rejection route inherits the verifier run already bound by Verification start",
+        )
 
     if route == "large":
         if resume_status is not None:
@@ -417,12 +423,6 @@ def _validate_rejection_route_arguments(
             )
         if str(model or "").strip():
             add("hold_model_unexpected", "model", "hold routes do not accept model")
-        if str(independence_attestation or "").strip():
-            add(
-                "hold_independence_attestation_unexpected",
-                "independence_attestation",
-                "hold routes use the verifier run already bound by Verification start",
-            )
         if resume_status not in {"pending-verification", "pending-research"}:
             add(
                 "resume_status_required", "resume_status",
@@ -482,9 +482,7 @@ def _resume_pending_rejection_finalize(
     ).fetchone()
     if cycle is None or op is None or op["status"] != "open":
         return None
-    authority_attestation = (
-        independence_attestation if route == "large" else cycle["independence_attestation"]
-    )
+    authority_attestation = cycle["independence_attestation"]
     assert_verifier_authority(
         cycle, agent=agent, run_id=run_id,
         independence_attestation=authority_attestation,
@@ -706,9 +704,7 @@ def _resume_rejected_cycle(
     ).fetchone()
     if prior is not None and unresolved is None:
         return None
-    authority_attestation = (
-        independence_attestation if route == "large" else cycle["independence_attestation"]
-    )
+    authority_attestation = cycle["independence_attestation"]
     assert_verifier_authority(
         cycle, agent=agent, run_id=run_id,
         independence_attestation=authority_attestation,
@@ -805,11 +801,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
             model=model,
         )
     op, cycle = _rows(conn, operation_id)
-    authority_attestation = (
-        independence_attestation
-        if route == "large"
-        else cycle["independence_attestation"]
-    )
+    authority_attestation = cycle["independence_attestation"]
     assert_verifier_authority(
         cycle,
         agent=agent,

@@ -244,7 +244,6 @@ def test_large_correction_preserves_constructor_and_fresh_verifier_runs(tmp_path
             "route": "large",
             "reason": "material correction",
             "file_text": candidate,
-            "independence_attestation": "independent",
         },
         principal=first_verifier,
     )

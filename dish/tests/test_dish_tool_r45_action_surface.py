@@ -466,10 +466,9 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     reject = spec["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     variants = {item["properties"]["route"]["const"]: item for item in reject["oneOf"]}
     assert set(variants) == {"large", "evidence", "human-review"}
-    assert {"model", "file_text", "independence_attestation"}.issubset(
-        variants["large"]["required"]
-    )
+    assert {"model", "file_text"}.issubset(variants["large"]["required"])
     assert "resume_status" not in variants["large"]["properties"]
+    assert "independence_attestation" not in variants["large"]["properties"]
     for route in ("evidence", "human-review"):
         props = variants[route]["properties"]
         assert "resume_status" in variants[route]["required"]

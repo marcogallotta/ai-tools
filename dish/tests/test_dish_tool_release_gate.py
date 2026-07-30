@@ -39,7 +39,6 @@ def test_large_cycle_freezes_current_release_and_preserves_all_run_lineage(tmp_p
     result = app.execute(
         "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="material correction", file_path=str(candidate), run_id="editor-run",
-        independence_attestation="independent",
     )
     assert result["ok"]
     cycles = app.conn.execute(
@@ -62,7 +61,6 @@ def test_governed_lock_change_requires_human_authorization(tmp_path):
     result = app.execute(
         "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="change lock", file_path=str(candidate), run_id="review-run",
-        independence_attestation="independent",
     )
     assert result["code"] == "VALIDATION_FAILED"
     assert result["errors"][0]["rule"] == "governed_change_unauthorized"

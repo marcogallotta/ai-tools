@@ -158,7 +158,6 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "string",
                 "enum": ["pending-research", "pending-verification"],
             },
-            "independence_attestation": {"type": "string"},
         },
     },
     "submit": {
@@ -295,8 +294,8 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
         "oneOf": [
             variant(
                 "large",
-                extra=("model", "file_text", "independence_attestation"),
-                required=("model", "file_text", "independence_attestation"),
+                extra=("model", "file_text"),
+                required=("model", "file_text"),
             ),
             variant(
                 "evidence",

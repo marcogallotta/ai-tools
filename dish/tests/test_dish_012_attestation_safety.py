@@ -40,26 +40,14 @@ def test_independence_attestation_rejects_structural_characters(attestation):
     assert error.details == {"field": "independence_attestation"}
 
 
-@pytest.mark.parametrize("command", ("start", "reject"))
+@pytest.mark.parametrize("command", ("start",))
 def test_action_boundary_rejects_unsafe_attestation_for_every_public_entry(command):
-    arguments = (
-        {
-            "task_gid": "1216963171560192",
-            "agent": "gpt",
-            "kind": "verification",
-            "independence_attestation": "independent\nsecond line",
-        }
-        if command == "start"
-        else {
-            "submission_id": str(uuid.uuid4()),
-            "agent": "gpt",
-            "model": "gpt-5.6-sol",
-            "reason": "material issue",
-            "route": "large",
-            "file_text": TASK,
-            "independence_attestation": "independent\u200bhidden",
-        }
-    )
+    arguments = {
+        "task_gid": "1216963171560192",
+        "agent": "gpt",
+        "kind": "verification",
+        "independence_attestation": "independent\nsecond line",
+    }
     request = {
         "client": {
             "run_id": str(uuid.uuid4()),

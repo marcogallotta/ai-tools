@@ -486,7 +486,6 @@ def test_no_correction_large_rejection_and_stale_candidate_rules_remain_intact(t
         reason="material quantity correction requires another review",
         file_path=str(large_candidate),
         run_id="large",
-        independence_attestation="independent",
     )
     assert rejected["ok"]
     old_cycle = large_app.conn.execute(

@@ -72,7 +72,6 @@ def test_large_crash_before_new_cycle_recovers_missing_suffix(tmp_path, monkeypa
         reason="replace method",
         file_path=str(candidate),
         run_id="first",
-        independence_attestation="independent",
     )
     assert result["code"] == "BACKEND_UNCERTAIN"
     assert result["retryable"] is False

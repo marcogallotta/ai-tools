@@ -888,8 +888,7 @@
                           "reason",
                           "route",
                           "model",
-                          "file_text",
-                          "independence_attestation"
+                          "file_text"
                         ],
                         "properties": {
                           "submission_id": {
@@ -919,9 +918,6 @@
                             "type": "string"
                           },
                           "file_text": {
-                            "type": "string"
-                          },
-                          "independence_attestation": {
                             "type": "string"
                           }
                         }

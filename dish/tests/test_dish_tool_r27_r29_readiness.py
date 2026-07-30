@@ -39,13 +39,11 @@ def test_reopen_recovery_records_editor_before_cycle_is_usable(tmp_path, monkeyp
     assert app.execute(
         "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="first", file_path=str(candidate), run_id="one",
-        independence_attestation="independent",
     )["ok"]
     _review(app, "two", agent="gpt")
     assert app.execute(
         "reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="second", file_path=str(candidate), run_id="two",
-        independence_attestation="independent",
     )["ok"]
 
     corrected = tmp_path / "corrected.txt"

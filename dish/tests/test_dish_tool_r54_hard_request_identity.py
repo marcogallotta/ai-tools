@@ -1058,7 +1058,6 @@ def test_approval_finalizes_rejected_change_and_corrective_change(tmp_path):
         reason="the quick method would produce the wrong texture",
         file_path=str(corrected),
         run_id="first-change-review",
-        independence_attestation="independent",
     )
     assert rejected["ok"]
     rejected_document = parse_task_document(f"{backend.title}\n{backend.notes}")

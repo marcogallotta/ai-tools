@@ -247,7 +247,6 @@ def build_parser() -> JsonArgumentParser:
     reject.add_argument("--file", dest="file_path")
     reject.add_argument("--resume-status", choices=("pending-verification", "pending-research"))
     reject.add_argument("--run-id")
-    reject.add_argument("--independence-attestation")
 
     submit = subparsers.add_parser(
         "submit", help="move a signed task to its recorded destination (run after a successful approve)"

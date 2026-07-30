@@ -107,7 +107,7 @@ def test_approve_rejects_attestation_argument_then_inherits_start_value(tmp_path
     }
 
 
-def test_large_reject_rejects_blank_attestation_then_accepts_corrected_call(tmp_path):
+def test_large_reject_rejects_supplied_attestation_then_accepts_call_without_it(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
     app.execute(
         "start",
@@ -132,13 +132,21 @@ def test_large_reject_rejects_blank_attestation_then_accepts_corrected_call(tmp_
         reason="method needs replacement",
         file_path=str(candidate),
         run_id="reject-attestation",
-        independence_attestation="",
+        independence_attestation=ATTESTATION,
     )
     assert rejected["code"] == "INVALID_ARGUMENT"
     assert rejected["retryable"] is True
     assert rejected["errors"][0] == {
-        "rule": "independence_attestation_required",
+        "rule": "hold_independence_attestation_unexpected",
         "field": "independence_attestation",
+        "message": (
+            "every rejection route inherits the verifier run already bound "
+            "by Verification start"
+        ),
+        "route": "large",
+        "permitted_arguments": [
+            "submission_id", "agent", "reason", "route", "model", "file_path",
+        ],
     }
 
     corrected = app.execute(
@@ -150,9 +158,14 @@ def test_large_reject_rejects_blank_attestation_then_accepts_corrected_call(tmp_
         reason="method needs replacement",
         file_path=str(candidate),
         run_id="reject-attestation",
-        independence_attestation=ATTESTATION,
     )
     assert corrected["ok"]
+    audit = app.conn.execute(
+        "SELECT actor_provenance FROM audit_events WHERE operation_id=? "
+        "AND event_type='verification.rejected' ORDER BY rowid DESC LIMIT 1",
+        (operation_id,),
+    ).fetchone()
+    assert json.loads(audit["actor_provenance"])["independence_attestation"] == ATTESTATION
 
 
 @pytest.mark.parametrize("route", ["evidence", "human-review"])

@@ -160,7 +160,6 @@ def test_unsafe_reason_fails_after_journaling_but_before_backend_or_workflow_mut
             "route": "large",
             "reason": reason,
             "file_text": corrected,
-            "independence_attestation": "independent",
         },
         principal=verifier,
         request_id=request_id,
@@ -201,7 +200,6 @@ def test_invalid_request_replays_exact_failure_then_fresh_valid_long_reason_proc
         "route": "large",
         "reason": "unsafe\nreason",
         "file_text": corrected,
-        "independence_attestation": "independent",
     }
 
     first = service.execute_agent(
@@ -281,7 +279,6 @@ def test_historical_malformed_material_change_is_not_rewritten_and_has_manual_gu
             "route": "large",
             "reason": valid_reason,
             "file_text": corrected,
-            "independence_attestation": "independent",
         },
         principal=verifier,
         request_id="40000000-0000-4000-8000-000000000001",

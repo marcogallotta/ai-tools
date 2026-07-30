@@ -983,15 +983,7 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = 
         and exists["operation_kind"] == "initial"
         and exists["content_write_completed_at"] is None
     )
-    clean_attestation = (
-        None
-        if preconstruction_hold
-        else (
-            validate_independence_attestation(independence_attestation)
-            if route == "large"
-            else independence_attestation
-        )
-    )
+    clean_attestation = None if preconstruction_hold else independence_attestation
     trace.validation_scope = scope_for_command("reject")
     from .step8 import reject_route
     release = self._load_release("verification")
