@@ -1684,7 +1684,47 @@ BEGIN SELECT RAISE(ABORT, 'service request completion or resolution is invalid')
 
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30}
+
+_MIGRATION_31 = """
+ALTER TABLE service_leases ADD COLUMN lease_kind TEXT
+    CHECK(lease_kind IS NULL OR lease_kind IN ('actor','admin_request'));
+ALTER TABLE service_leases ADD COLUMN actor_attempt_seq INTEGER
+    CHECK(actor_attempt_seq IS NULL OR actor_attempt_seq > 0);
+ALTER TABLE service_leases ADD COLUMN context_cycle_id TEXT
+    REFERENCES verification_cycles(cycle_id);
+
+CREATE UNIQUE INDEX service_leases_actor_attempt_sequence_unique
+    ON service_leases(task_gid, actor_attempt_seq)
+    WHERE lease_kind='actor';
+
+CREATE TRIGGER service_leases_attempt_context_insert
+BEFORE INSERT ON service_leases
+WHEN NEW.lease_kind IS NULL
+  OR (NEW.lease_kind='actor' AND NEW.actor_attempt_seq IS NULL)
+  OR (NEW.lease_kind='admin_request' AND NEW.actor_attempt_seq IS NOT NULL)
+  OR (NEW.lease_kind='admin_request' AND NEW.context_cycle_id IS NOT NULL)
+  OR (NEW.lease_kind='actor' AND NEW.actor_attempt_seq <> (
+        SELECT COALESCE(MAX(actor_attempt_seq), 0) + 1
+          FROM service_leases
+         WHERE task_gid=NEW.task_gid AND lease_kind='actor'
+     ))
+  OR (NEW.context_cycle_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM verification_cycles AS cycle
+         WHERE cycle.cycle_id=NEW.context_cycle_id
+           AND cycle.operation_id=NEW.operation_id
+           AND cycle.task_gid=NEW.task_gid
+     ))
+BEGIN SELECT RAISE(ABORT, 'service lease attempt context is invalid'); END;
+
+CREATE TRIGGER service_leases_attempt_context_immutable_update
+BEFORE UPDATE ON service_leases
+WHEN NEW.lease_kind IS NOT OLD.lease_kind
+  OR NEW.actor_attempt_seq IS NOT OLD.actor_attempt_seq
+  OR NEW.context_cycle_id IS NOT OLD.context_cycle_id
+BEGIN SELECT RAISE(ABORT, 'service lease attempt context is immutable'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31}
 
 
 def _backup_legacy_database(db_path: Path) -> None:

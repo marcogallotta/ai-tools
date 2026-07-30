@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import sqlite3
 import threading
 
 import pytest
@@ -19,6 +20,7 @@ from dish_tool.database import (
 )
 from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
+from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
 from tests.test_dish_tool_r52_request_restore_durability import Backend, _service
 
 
@@ -710,7 +712,21 @@ def test_migration_reopens_historical_uncertain_request_for_reconciliation(
     tmp_path, attempt_outcome
 ):
     db_path = tmp_path / "historical.sqlite3"
-    conn = initialize_database(db_path)
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    for version in range(1, 30):
+        _execute_script_statements(conn, MIGRATIONS[version])
+        conn.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (version, f"v{version}"),
+        )
+        conn.execute(f"PRAGMA user_version = {version}")
+    conn.execute("COMMIT")
     begin_request(
         conn,
         request_id=REQUEST_ID,
@@ -745,17 +761,6 @@ def test_migration_reopens_historical_uncertain_request_for_reconciliation(
         ),
     )
 
-    conn.execute("DROP TRIGGER planning_reopen_attempts_status_monotonic_update")
-    conn.execute(
-        """CREATE TRIGGER planning_reopen_attempts_status_monotonic_update
-        BEFORE UPDATE OF outcome, finished_at, confirmed_modified_at ON planning_reopen_attempts
-        WHEN OLD.outcome <> 'started'
-          OR NEW.outcome NOT IN ('confirmed','not_applied','uncertain')
-          OR NEW.finished_at IS NULL
-        BEGIN SELECT RAISE(ABORT, 'planning reopen attempt completion is one-way'); END"""
-    )
-    conn.execute("DELETE FROM schema_migrations WHERE version=30")
-    conn.execute("PRAGMA user_version=29")
     conn.close()
 
     upgraded = initialize_database(db_path)

@@ -8,6 +8,7 @@ from dish_service.leases import ServicePrincipal
 from dish_service.request_replay import begin_request
 from dish_tool.commands import DishApplication
 from dish_tool.database import initialize_database
+from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
 from tests.test_dish_tool_r42_service_foundation import _release_loader
 from tests.test_dish_tool_step7_verification import Backend as WorkflowBackend
 
@@ -319,14 +320,20 @@ def test_schema_20_upgrades_with_empty_request_ledger(tmp_path):
     from dish_tool.constants import SCHEMA_VERSION
 
     db_path = tmp_path / "v20.sqlite3"
-    conn = initialize_database(db_path)
-    conn.execute("DROP TABLE service_requests")
-    conn.execute("DROP TABLE operation_execution_claims")
-    conn.execute("DROP TABLE operation_executions")
-    conn.execute("DROP INDEX write_attempts_one_unresolved_operation")
-    conn.execute("DROP INDEX movement_attempts_one_unresolved_operation")
-    conn.execute("DELETE FROM schema_migrations WHERE version>=21")
-    conn.execute("PRAGMA user_version=20")
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    for version in range(1, 21):
+        _execute_script_statements(conn, MIGRATIONS[version])
+        conn.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (version, f"v{version}"),
+        )
+        conn.execute(f"PRAGMA user_version = {version}")
+    conn.execute("COMMIT")
     conn.close()
 
     upgraded = initialize_database(db_path)

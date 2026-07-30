@@ -162,7 +162,18 @@ class LeaseManager:
         self._release_row(row, reason="terminal_lease_reaped", now=now)
         return True
 
-    def acquire(self, operation_id: str, principal: ServicePrincipal):
+    def acquire(
+        self,
+        operation_id: str,
+        principal: ServicePrincipal,
+        *,
+        lease_kind: str = "actor",
+        context_cycle_id: str | None = None,
+    ):
+        if lease_kind not in {"actor", "admin_request"}:
+            raise ValueError("unsupported service lease kind")
+        if lease_kind == "admin_request" and context_cycle_id is not None:
+            raise ValueError("admin request leases cannot carry Verification cycle context")
         now = self.now()
         expiry = now + timedelta(seconds=self.ttl_seconds)
         self.conn.execute("BEGIN IMMEDIATE")
@@ -184,6 +195,34 @@ class LeaseManager:
                             "service lease expired and requires administrative recovery",
                             rule="service_lease_expired",
                             details={"operation_id": operation_id, "expires_at": existing["expires_at"]},
+                        )
+                    existing_kind = existing["lease_kind"]
+                    if existing_kind is not None and existing_kind != lease_kind:
+                        raise DishRuleError(
+                            "CONFLICT",
+                            "active service lease has a different authority kind",
+                            rule="service_lease_context_mismatch",
+                            details={
+                                "operation_id": operation_id,
+                                "lease_kind": existing_kind,
+                                "requested_lease_kind": lease_kind,
+                            },
+                        )
+                    existing_cycle = existing["context_cycle_id"]
+                    if (
+                        existing_kind is not None
+                        and context_cycle_id is not None
+                        and existing_cycle != context_cycle_id
+                    ):
+                        raise DishRuleError(
+                            "CONFLICT",
+                            "active service lease is bound to a different Verification cycle",
+                            rule="service_lease_context_mismatch",
+                            details={
+                                "operation_id": operation_id,
+                                "context_cycle_id": existing_cycle,
+                                "requested_context_cycle_id": context_cycle_id,
+                            },
                         )
                     self.conn.execute("COMMIT")
                     return existing
@@ -214,15 +253,27 @@ class LeaseManager:
                     rule="task_lease_held",
                     details={"operation_id": task_existing["operation_id"]},
                 )
+            if lease_kind == "actor":
+                actor_attempt_seq = self.conn.execute(
+                    """SELECT COALESCE(MAX(actor_attempt_seq), 0) + 1
+                         FROM service_leases
+                        WHERE task_gid=? AND lease_kind='actor'""",
+                    (op["task_gid"],),
+                ).fetchone()[0]
+            else:
+                actor_attempt_seq = None
+
             lease_id = str(uuid.uuid4())
             stamp = _stamp(now)
             self.conn.execute(
                 """INSERT INTO service_leases(
                        lease_id,operation_id,task_gid,owner_id,run_id,
-                       acquired_at,renewed_at,expires_at
-                   ) VALUES(?,?,?,?,?,?,?,?)""",
+                       acquired_at,renewed_at,expires_at,lease_kind,
+                       actor_attempt_seq,context_cycle_id
+                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
                 (lease_id, operation_id, op["task_gid"], principal.owner_id,
-                 principal.run_id, stamp, stamp, _stamp(expiry)),
+                 principal.run_id, stamp, stamp, _stamp(expiry), lease_kind,
+                 actor_attempt_seq, context_cycle_id),
             )
             row = self.conn.execute(
                 "SELECT * FROM service_leases WHERE lease_id=?", (lease_id,)

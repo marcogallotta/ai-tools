@@ -344,6 +344,13 @@ Concurrency uses separate mechanisms for separate facts:
 5. the in-process maintenance gate makes restore exclusive while ordinary requests may run
    concurrently.
 
+New service leases classify their authority at creation. Actor leases carry a task-monotonic
+`actor_attempt_seq`; Verification actor leases also carry the exact `context_cycle_id`. Temporary
+operation-scoped admin leases use `lease_kind=admin_request` and do not consume actor-attempt
+sequence numbers or carry cycle context. These creation facts are immutable. Legacy rows may remain
+unclassified until drained, but new code must never infer attempt order or Verification-cycle identity
+from timestamps or from admin lease history.
+
 Request-scoped lease renewal, expired-lease recovery, and explicit administrative lease expiry
 commit the lease effect and replayable service-request result in the same SQLite transaction; neither
 fact may become durable alone. `expire-lease` resolves an exact lease ID or the one active lease for a

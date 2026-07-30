@@ -10,6 +10,7 @@ from dish_service.leases import ServicePrincipal
 from dish_service.maintenance import MaintenanceGate
 from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database import initialize_database
+from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
 from tests.test_dish_tool_r46_operational_hardening import UnavailableBackend, _service
 
 
@@ -106,14 +107,20 @@ def test_restore_migrates_previous_schema_copy_without_mutating_backup(tmp_path)
     old_backup = service.config.backup_dir / "dish-schema-20.sqlite3"
     old_backup.parent.mkdir(parents=True, exist_ok=True)
 
-    old_conn = initialize_database(old_backup)
-    old_conn.execute("DROP TABLE service_requests")
-    old_conn.execute("DROP TABLE operation_execution_claims")
-    old_conn.execute("DROP TABLE operation_executions")
-    old_conn.execute("DROP INDEX write_attempts_one_unresolved_operation")
-    old_conn.execute("DROP INDEX movement_attempts_one_unresolved_operation")
-    old_conn.execute("DELETE FROM schema_migrations WHERE version>=21")
-    old_conn.execute("PRAGMA user_version=20")
+    old_conn = sqlite3.connect(old_backup, isolation_level=None)
+    old_conn.execute("PRAGMA foreign_keys = ON")
+    old_conn.execute("BEGIN IMMEDIATE")
+    old_conn.execute(
+        "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    for version in range(1, 21):
+        _execute_script_statements(old_conn, MIGRATIONS[version])
+        old_conn.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (version, f"v{version}"),
+        )
+        old_conn.execute(f"PRAGMA user_version = {version}")
+    old_conn.execute("COMMIT")
     old_conn.close()
     before = _digest(old_backup)
 

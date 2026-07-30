@@ -599,6 +599,38 @@ class DishService:
         return prepared
 
     @staticmethod
+    def _verification_lease_cycle_id(
+        conn,
+        operation_id: str,
+        principal: ServicePrincipal,
+        *,
+        pending_first: bool = False,
+    ) -> str:
+        if not pending_first:
+            bound = conn.execute(
+                """SELECT cycle_id FROM verification_cycles
+                     WHERE operation_id=? AND run_id=?
+                     ORDER BY cycle_number DESC LIMIT 1""",
+                (operation_id, principal.run_id),
+            ).fetchone()
+            if bound is not None:
+                return str(bound["cycle_id"])
+        pending = conn.execute(
+            """SELECT cycle_id FROM verification_cycles
+                 WHERE operation_id=? AND completed_at IS NULL
+                 ORDER BY cycle_number DESC LIMIT 2""",
+            (operation_id,),
+        ).fetchall()
+        if len(pending) != 1:
+            raise DishRuleError(
+                "WRONG_STATE",
+                "Verification lease requires one exact current cycle",
+                rule="verification_cycle_context_required",
+                details={"operation_id": operation_id, "candidate_count": len(pending)},
+            )
+        return str(pending[0]["cycle_id"])
+
+    @staticmethod
     def _lease_payload(row) -> dict[str, Any] | None:
         if row is None:
             return None
@@ -1488,7 +1520,14 @@ class DishService:
 
         active = leases.active_for_operation(operation_id)
         if active is None:
-            leases.acquire(operation_id, principal)
+            cycle_id = (
+                self._verification_lease_cycle_id(conn, operation_id, principal)
+                if kind == "verification"
+                else None
+            )
+            leases.acquire(
+                operation_id, principal, context_cycle_id=cycle_id
+            )
         elif not leases.is_owned_by(active, principal):
             raise pending_error("start", request_id, operation_id=operation_id)
 
@@ -1674,7 +1713,16 @@ class DishService:
                                 rule="service_lease_claim_forbidden",
                                 details={"operation_id": operation_id, "run_id": principal.run_id},
                             )
-                        leases.acquire(operation_id, principal)
+                        cycle_id = (
+                            None
+                            if command == "prepare"
+                            else self._verification_lease_cycle_id(
+                                conn, operation_id, principal
+                            )
+                        )
+                        leases.acquire(
+                            operation_id, principal, context_cycle_id=cycle_id
+                        )
                         acquired_for_request = True
                     else:
                         leases.assert_owned(operation_id, principal)
@@ -1683,7 +1731,13 @@ class DishService:
                         raise DishRuleError("NOT_FOUND", "task has no open operation", rule="open_operation_missing")
                     active = leases.active_for_operation(operation_id)
                     if active is None:
-                        leases.acquire(operation_id, principal)
+                        leases.acquire(
+                            operation_id,
+                            principal,
+                            context_cycle_id=self._verification_lease_cycle_id(
+                                conn, operation_id, principal, pending_first=True
+                            ),
+                        )
                         acquired_for_request = True
                     else:
                         leases.assert_owned(operation_id, principal)
@@ -2530,7 +2584,9 @@ class DishService:
                 ):
                     existing = leases.active_for_operation(operation_id)
                     if existing is None:
-                        leases.acquire(operation_id, principal)
+                        leases.acquire(
+                            operation_id, principal, lease_kind="admin_request"
+                        )
                         acquired_for_request = True
                     else:
                         # Ordinary admin continuations never steal a live actor

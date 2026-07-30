@@ -14,7 +14,7 @@ from dish_service.database_ownership import (
 )
 from dish_service.process_lock import ServiceProcessLock
 from dish_tool.constants import SCHEMA_VERSION
-from dish_tool.database_schema import MIGRATIONS, initialize_database
+from dish_tool.database_schema import MIGRATIONS, _execute_script_statements, initialize_database
 from dish_tool.errors import DishRuleError
 from tests.test_dish_tool_r46_operational_hardening import _service
 
@@ -22,6 +22,25 @@ from tests.test_dish_tool_r46_operational_hardening import _service
 def _sha(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
+
+
+
+def _database_at_version(path: Path, version: int) -> sqlite3.Connection:
+    conn = sqlite3.connect(path, isolation_level=None)
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+    )
+    for current in range(1, version + 1):
+        _execute_script_statements(conn, MIGRATIONS[current])
+        conn.execute(
+            "INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)",
+            (current, f"v{current}"),
+        )
+        conn.execute(f"PRAGMA user_version = {current}")
+    conn.execute("COMMIT")
+    return conn
 
 def _v2_database(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path, isolation_level=None)
@@ -134,14 +153,7 @@ def test_restore_metadata_hashes_actual_migrated_bytes(tmp_path):
     service, _backend = _service(tmp_path)
     source = service.config.backup_dir / "dish-schema-20.sqlite3"
     source.parent.mkdir(parents=True, exist_ok=True)
-    old = initialize_database(source)
-    old.execute("DROP TABLE service_requests")
-    old.execute("DROP TABLE operation_execution_claims")
-    old.execute("DROP TABLE operation_executions")
-    old.execute("DROP INDEX write_attempts_one_unresolved_operation")
-    old.execute("DROP INDEX movement_attempts_one_unresolved_operation")
-    old.execute("DELETE FROM schema_migrations WHERE version>=21")
-    old.execute("PRAGMA user_version=20")
+    old = _database_at_version(source, 20)
     old.close()
     source_hash = _sha(source)
 
