@@ -111,6 +111,56 @@ intent or durable cycle evidence and may be accidental. Material post-signoff ch
 a new Verification cycle through the normal Change workflow; this proposal covers only unchanged
 signed content.
 
+### Verification `reverify` decision outcome (flagged concern, not a rejection)
+
+This is a real observed need from live review, not a speculative addition: a verifier sometimes
+wants to preserve the current candidate, record a specific concern (e.g. a fish naming/pan-method
+question, a filling-balance judgment, herb-timing on service), and get a fresh independent look
+without it counting as a rejection or triggering a correction. Today the only decision routes are
+`approve` and `reject` (Small/Large/Evidence/Human Review); none of them mean "unchanged, re-queue,
+don't count against it."
+
+This is distinct from the unchanged-signed-content `reverify` above (that one is admin-triggered,
+post-signoff, on content that already passed). This one fires mid-cycle, before signoff, as the
+verifier's own decision. It should reuse the same successor-operation/cycle primitive that
+[`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) Part I is building for
+abandonment — cancel the source, create a fresh unbound Verification operation/cycle, preserve the
+exact candidate — but triggered by verifier judgment instead of a lost run, and carrying the
+concern forward as structured data on the successor (not a free-text comment the next agent has to
+rediscover by re-reading the whole task). Land this once Part I's successor-cycle mechanism exists;
+it should not require Part II's cross-agent session redesign, since the triggering run is still
+live and simply choosing not to sign off yet.
+
+### Archive route for unapproved or redundant composite dishes
+
+Also a real, observed need, not speculative: unapproved or redundant composite dishes currently
+have no governed disposition — they just sit. Add a placement move into a dedicated Archived
+section under the Cooking project, as a first-class governed Dish operation (exact Cooking-project
+GID placement, like every other section move), not a raw Asana section/project metadata call —
+`generic_asana_guard` already fails closed on exactly that path and must stay that way. Precondition
+is likely "no open operation on the task," so an in-progress Planning/Research/Verification attempt
+cannot be archived out from under an agent.
+
+Duplicate composite dishes do not need a dedicated `merge` operation: resolve them with an ordinary
+edit to the surviving task plus an archive of the redundant one. Adding real cross-task merge
+authority would cut against the single-task operation model for no real gain.
+
+### Return-to-Planning transition (open design question, not scheduled)
+
+A Verification-time decision that a dish's *structure or purpose* needs redesign, not just a
+correction — e.g. a macro-distorting quantity or a materially changed halal adaptation — currently
+has no route back to Planning. Everything today that returns to Planning is `reopen-planning`:
+Marco-only, and only for a completed task. Moving an *active* Verification attempt back to Planning
+is a new class of transition; Part I's stage-policy successors are all same-stage (Planning→Planning,
+Research→Research, Verification→new cycle), so Verification→Planning has no precedent to build on
+yet.
+
+Open questions before this is buildable: is the transition itself agent-legal, or does it need
+Marco authorization the way other governed-Planning-fact changes do; and how do "replanning notes"
+(the concern that triggered the send-back) get attached to the new Planning operation so the next
+Planning pass doesn't have to re-derive the problem from scratch. No near-term timeframe — needs a
+real design pass, not a quick add.
+
 ### Natural-language dish lookup and generalized task-authority
 
 Nothing here blocks rollout. The state-driven Custom GPT instructions (closing the "create" vs.
@@ -209,4 +259,6 @@ The following should not be revived without a new requirement:
 - recursive dependency audits;
 - a generic remote Asana proxy;
 - a generic admin `unblock` command;
-- broad semantic recipe judgment inside the deterministic tool.
+- broad semantic recipe judgment inside the deterministic tool;
+- a dedicated cross-task `merge` operation for duplicate composite dishes — resolve via ordinary
+  edit plus archive instead.
