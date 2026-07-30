@@ -91,6 +91,11 @@ The durable `operations` constraint is the one-active-operation-per-task lock. A
 
 `dish-admin recover-lease` and `dish-admin abandon-operation` are deliberately different. Recovery releases an expired lease so the same durably bound run may continue; `ownership_transferred` remains false. Permanent abandonment names the latest classified actor lease and asserts that its owner/run will not return. It is accepted only for an expired or administratively released lease. Dish then selects one bounded result from exact durable and live evidence: a clean prepared successor, an already-committed finalization/continuation, a preserved pre-construction hold, or `blocked_manual_reconciliation`. It performs no launch-time compensation across partial or uncertain effects.
 
+The same original Initial Research run may also reacquire a missing lease when retrying a
+pre-construction Evidence or Human Review `reject`. That command is still Research stage-actor work,
+so the replacement lease has no Verification cycle context. A fresh run cannot use this route to
+take over the operation.
+
 An abandonment result carries `data.abandonment` and, when work remains, `data.required_action`. A connected continuation names the exact `prepared_operation_id` for Planning/Research or exact `target_operation_id` and `target_cycle_id` for Verification. A blocked result carries `surface: private-admin`, the executable `dish-admin reconcile-abandonment ABANDONMENT_ID` command, relay text telling the agent to wait for Marco, and an `after_success` instruction to refresh the authoritative action. The exact abandoned owner/run is forbidden from claiming any replacement. While the abandonment is active, the task is fenced from unrelated connected mutation and lease acquisition.
 
 A crashed `abandon-operation`/`reconcile-abandonment` invocation keeps its exact operation execution ID on the abandonment record. Reconciliation reclaims that same dead execution and settles the earlier service request as well as the current one; it does not create an unresolved A1/A2 execution chain. Exact request replay returns the stored result.

@@ -352,6 +352,12 @@ sequence numbers or carry cycle context. These creation facts are immutable. Leg
 unclassified until drained, but new code must never infer attempt order or Verification-cycle identity
 from timestamps or from admin lease history.
 
+Missing-lease reacquisition follows the durable role that owns the next command, not the command name
+alone. In particular, an Initial Research run retrying a pre-construction Evidence or Human Review
+`reject` remains stage-actor work: only the exact recorded Research run may reacquire, and its new
+actor lease carries no Verification cycle context. A different run remains ineligible and must use
+the permanent-abandonment path instead.
+
 Permanent-run abandonment is exposed only through the private Marco admin surface.
 `abandonment_attempts` binds one exact classified actor lease, owner, run, and optional Verification
 cycle; a partial unique index permits only one non-completed abandonment per task. A clean restart

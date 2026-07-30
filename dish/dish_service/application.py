@@ -1075,6 +1075,40 @@ class DishService:
         return row is not None
 
     @staticmethod
+    def _is_preconstruction_research_reject(op, command: str) -> bool:
+        return bool(
+            command == "reject"
+            and op["operation_kind"] == "initial"
+            and op["phase"] == "prepare_required"
+            and op["content_write_completed_at"] is None
+        )
+
+    def _stage_actor_may_claim_missing_lease(
+        self,
+        conn,
+        operation_id: str,
+        principal: ServicePrincipal,
+        op,
+        *,
+        agent: str | None = None,
+    ) -> bool:
+        expected_agent = (
+            op["researcher_agent"]
+            if op["operation_kind"] == "initial"
+            else op["editor_agent"]
+        )
+        if agent and expected_agent and agent != expected_agent:
+            return False
+        if str(op["run_id"] or "").strip() == principal.run_id:
+            return True
+        return self._run_has_role(
+            conn,
+            operation_id,
+            principal.run_id,
+            ("planner", "constructor", "material_editor"),
+        )
+
+    @staticmethod
     def _active_abandonment_for_operation(conn, operation_id: str):
         return conn.execute(
             """SELECT abandonment.*, succession.successor_operation_id AS linked_successor_id
@@ -1146,19 +1180,11 @@ class DishService:
         op = self._operation_row(conn, operation_id)
         if op is None or op["status"] != "open":
             return False
-        if command == "prepare":
-            expected_agent = (
-                op["researcher_agent"]
-                if op["operation_kind"] == "initial"
-                else op["editor_agent"]
-            )
-            if agent and expected_agent and agent != expected_agent:
-                return False
-            if str(op["run_id"] or "").strip() == principal.run_id:
-                return True
-            return self._run_has_role(
-                conn, operation_id, principal.run_id,
-                ("planner", "constructor", "material_editor"),
+        if command == "prepare" or self._is_preconstruction_research_reject(
+            op, command
+        ):
+            return self._stage_actor_may_claim_missing_lease(
+                conn, operation_id, principal, op, agent=agent
             )
         if command in {"approve", "reject", "submit"}:
             if agent and op["verifier_agent"] and agent != op["verifier_agent"]:
@@ -1167,6 +1193,20 @@ class DishService:
                 conn, operation_id, principal.run_id, ("verifier",)
             )
         return False
+
+    def _reclaimed_lease_cycle_id(
+        self,
+        conn,
+        operation_id: str,
+        principal: ServicePrincipal,
+        command: str,
+    ) -> str | None:
+        if command == "prepare":
+            return None
+        op = self._operation_row(conn, operation_id)
+        if op is not None and self._is_preconstruction_research_reject(op, command):
+            return None
+        return self._verification_lease_cycle_id(conn, operation_id, principal)
 
     def _apply_principal_access(
         self,
@@ -1844,12 +1884,8 @@ class DishService:
                                 rule="service_lease_claim_forbidden",
                                 details={"operation_id": operation_id, "run_id": principal.run_id},
                             )
-                        cycle_id = (
-                            None
-                            if command == "prepare"
-                            else self._verification_lease_cycle_id(
-                                conn, operation_id, principal
-                            )
+                        cycle_id = self._reclaimed_lease_cycle_id(
+                            conn, operation_id, principal, command
                         )
                         leases.acquire(
                             operation_id, principal, context_cycle_id=cycle_id

@@ -8,6 +8,7 @@ import pytest
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements, initialize_database
 from tests.test_dish_tool_r43_service_leases import _service
+from tests.test_dish_tool_r46_operational_hardening import Clock
 from tests.test_dish_tool_step7_verification import Backend, TASK
 
 
@@ -84,6 +85,85 @@ def test_actor_attempt_sequence_and_verification_cycle_context_are_durable(tmp_p
             conn.execute(
                 "UPDATE service_leases SET actor_attempt_seq=99 WHERE actor_attempt_seq=2"
             )
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("route", ["evidence", "human-review"])
+def test_preconstruction_reject_reclaims_same_stage_actor_without_cycle_context(
+    tmp_path, route,
+):
+    backend = Backend()
+    clock = Clock()
+    service = _service(tmp_path, backend, clock=clock, ttl=60)
+    researcher = _principal("researcher", "research-run")
+
+    started = service.execute_agent(
+        "start",
+        {
+            "agent": "gpt",
+            "task_gid": "t",
+            "kind": "initial",
+            "run_id": researcher.run_id,
+        },
+        principal=researcher,
+        request_id=str(uuid.uuid4()),
+    )
+    assert started["ok"]
+    operation_id = started["submission_id"]
+
+    clock.advance(61)
+    recovered = service.recover_lease(
+        operation_id,
+        _principal("marco", "admin-run"),
+        reason="test expired actor recovery",
+    )
+    assert recovered["ok"]
+
+    fresh_run = _principal("researcher", "fresh-run")
+    forbidden = service.execute_agent(
+        "reject",
+        {
+            "agent": "gpt",
+            "submission_id": operation_id,
+            "route": route,
+            "reason": "Need authoritative source before construction",
+            "resume_status": "pending-research",
+        },
+        principal=fresh_run,
+        request_id=str(uuid.uuid4()),
+    )
+    assert not forbidden["ok"]
+    assert forbidden["code"] == "AGENT_MISMATCH"
+    assert forbidden["errors"][0]["rule"] == "service_lease_claim_forbidden"
+
+    rejected = service.execute_agent(
+        "reject",
+        {
+            "agent": "gpt",
+            "submission_id": operation_id,
+            "route": route,
+            "reason": "Need authoritative source before construction",
+            "resume_status": "pending-research",
+        },
+        principal=researcher,
+        request_id=str(uuid.uuid4()),
+    )
+    assert rejected["ok"], rejected
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        leases = conn.execute(
+            """SELECT lease_kind,actor_attempt_seq,context_cycle_id,released_at
+                 FROM service_leases WHERE operation_id=?
+                 ORDER BY actor_attempt_seq""",
+            (operation_id,),
+        ).fetchall()
+        assert len(leases) == 2
+        assert [row["lease_kind"] for row in leases] == ["actor", "actor"]
+        assert [row["actor_attempt_seq"] for row in leases] == [1, 2]
+        assert [row["context_cycle_id"] for row in leases] == [None, None]
+        assert leases[1]["released_at"] is not None
     finally:
         conn.close()
 
