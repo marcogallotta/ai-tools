@@ -679,6 +679,136 @@ def _prepare_stage_successor(
     return result
 
 
+def _successor_actor_facts(
+    conn: sqlite3.Connection, source_operation_id: str
+) -> list[dict[str, Any]]:
+    """Copy exact producer lineage without inheriting verifier authority."""
+
+    rows = conn.execute(
+        """SELECT role,agent,run_id,independence_attestation,
+                  candidate_identity,source_cycle_id
+             FROM operation_actor_facts
+            WHERE operation_id=? AND role!='verifier'
+            ORDER BY created_at, rowid""",
+        (source_operation_id,),
+    ).fetchall()
+    return [{key: row[key] for key in row.keys()} for row in rows]
+
+
+def _prepare_verification_successor(
+    conn: sqlite3.Connection,
+    *,
+    abandonment_id: str,
+    frontier: AbandonmentFrontier,
+) -> dict[str, Any]:
+    if frontier.stage != "verification":
+        raise DishRuleError(
+            "WRONG_STATE",
+            "this successor path requires a Verification abandonment frontier",
+            rule="abandonment_stage_mismatch",
+        )
+    if frontier.source_cycle_id is None or frontier.source_content_version_id is None:
+        raise DishRuleError(
+            "CONFLICT",
+            "clean Verification abandonment lacks exact cycle or candidate evidence",
+            rule="abandonment_verification_evidence_invalid",
+        )
+    source = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?",
+        (frontier.source_operation_id,),
+    ).fetchone()
+    source_cycle = conn.execute(
+        """SELECT * FROM verification_cycles
+            WHERE cycle_id=? AND operation_id=?""",
+        (frontier.source_cycle_id, frontier.source_operation_id),
+    ).fetchone()
+    if (
+        source is None
+        or source_cycle is None
+        or source_cycle["completed_at"] is not None
+        or not source_cycle["protocol_release"]
+    ):
+        raise DishRuleError(
+            "CONFLICT",
+            "only the exact incomplete Verification attempt can be replaced",
+            rule="abandonment_cycle_not_incomplete",
+        )
+
+    successor_operation_id = str(uuid.uuid4())
+    successor_content_version_id = str(uuid.uuid4())
+    successor_cycle_id = str(uuid.uuid4())
+    succession_id = str(uuid.uuid4())
+    next_cycle_number = conn.execute(
+        "SELECT COALESCE(MAX(cycle_number),0)+1 FROM verification_cycles WHERE task_gid=?",
+        (source["task_gid"],),
+    ).fetchone()[0]
+    action = {
+        "surface": "connected-agent",
+        "command": "start",
+        "arguments": {
+            "task_gid": source["task_gid"],
+            "kind": "verification",
+            "target_operation_id": successor_operation_id,
+            "target_cycle_id": successor_cycle_id,
+        },
+    }
+    result = {
+        "abandonment_id": abandonment_id,
+        "classification": frontier.to_dict(),
+        "succession_id": succession_id,
+        "successor_operation_id": successor_operation_id,
+        "successor_cycle_id": successor_cycle_id,
+        "required_action": action,
+    }
+    completed_steps = (
+        _completed_change_intent(conn, source["operation_id"])
+        if source["operation_kind"] == "change"
+        else {}
+    )
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        abandonment, successor, succession = (
+            apply_operation_abandonment_succession_in_transaction(
+                conn,
+                abandonment_id=abandonment_id,
+                succession_id=succession_id,
+                successor_operation_id=successor_operation_id,
+                source_content_version_id=frontier.source_content_version_id,
+                successor_content_version_id=successor_content_version_id,
+                successor_operation_kind=source["operation_kind"],
+                successor_phase="await_verification",
+                successor_expected_section_gid=source["expected_section_gid"],
+                successor_schema_version=source["schema_version"],
+                successor_claim_mode="verifier",
+                transition_reason="permanent_verifier_run_abandonment",
+                candidate_transfer_kind="inherited_confirmed_candidate",
+                source_cycle_id=source_cycle["cycle_id"],
+                close_source_cycle_as_abandoned=True,
+                successor_cycle_id=successor_cycle_id,
+                successor_cycle_number=int(next_cycle_number),
+                successor_protocol_release=source_cycle["protocol_release"],
+                successor_protocol_text=source_cycle["protocol_text"],
+                successor_editor_agent=source["editor_agent"],
+                successor_researcher_agent=source["researcher_agent"],
+                successor_run_id=source["run_id"],
+                successor_actor_facts=_successor_actor_facts(
+                    conn, source["operation_id"]
+                ),
+                successor_completed_steps=completed_steps,
+                result=result,
+            )
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    result["abandonment"] = {key: abandonment[key] for key in abandonment.keys()}
+    result["successor"] = {key: successor[key] for key in successor.keys()}
+    result["succession"] = {key: succession[key] for key in succession.keys()}
+    return result
+
+
 def resolve_preconstruction_hold_to_successor(
     conn: sqlite3.Connection,
     *,
@@ -807,9 +937,8 @@ def settle_abandonment_frontier(
     abandonment_id: str,
     reason: str,
 ) -> dict[str, Any]:
-    """Persist a safe frontier and create clean Planning/Research successors.
+    """Persist a safe frontier and create clean stage successors.
 
-    Verification successor construction remains deferred to the next stage.
     This function performs no compensating external write or movement.
     """
 
@@ -823,7 +952,9 @@ def settle_abandonment_frontier(
             return _prepare_stage_successor(
                 conn, abandonment_id=abandonment_id, frontier=frontier
             )
-        return result
+        return _prepare_verification_successor(
+            conn, abandonment_id=abandonment_id, frontier=frontier
+        )
     if frontier.outcome == "blocked_manual_reconciliation":
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -912,6 +1043,17 @@ def settle_abandonment_frontier(
             "continuation_cycle_id": continuation_cycle_id,
         }
     )
+    if continuation_operation_id and continuation_cycle_id:
+        result["required_action"] = {
+            "surface": "connected-agent",
+            "command": "start",
+            "arguments": {
+                "task_gid": operation["task_gid"],
+                "kind": "verification",
+                "target_operation_id": continuation_operation_id,
+                "target_cycle_id": continuation_cycle_id,
+            },
+        }
     conn.execute("BEGIN IMMEDIATE")
     try:
         row = complete_abandonment_in_transaction(

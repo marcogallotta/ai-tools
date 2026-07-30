@@ -174,6 +174,14 @@ def build_parser() -> JsonArgumentParser:
         "--prepared-operation-id",
         help="exact abandonment-created Planning/Research successor to claim",
     )
+    start.add_argument(
+        "--target-operation-id",
+        help="exact Verification operation returned by an abandonment action",
+    )
+    start.add_argument(
+        "--target-cycle-id",
+        help="exact Verification cycle returned by an abandonment action",
+    )
 
     prepare = subparsers.add_parser(
         "prepare",

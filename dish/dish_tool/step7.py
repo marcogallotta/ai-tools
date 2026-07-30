@@ -9,7 +9,7 @@ from .constants import COOKING_PROJECT_GID
 from .database import (
     mark_operation_completion, record_audit, transition_operation, assert_fresh_verifier,
     record_actor_fact, declare_operation_step, complete_operation_step, content_identity,
-    record_dish_inspect_fact, atomic_persistence,
+    record_dish_inspect_fact, atomic_persistence, complete_abandonment_in_transaction,
 )
 from .errors import DishRuleError
 from .models import (
@@ -26,7 +26,12 @@ from .task_store import read_complete_task, write_exact_content
 from .step5 import verification_lineage
 
 
-def _operation_and_cycle(conn: sqlite3.Connection, operation_id: str):
+def _operation_and_cycle(
+    conn: sqlite3.Connection,
+    operation_id: str,
+    *,
+    target_cycle_id: str | None = None,
+):
     op = conn.execute("SELECT * FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     if op is None:
         raise DishRuleError("NOT_FOUND", f"operation not found: {operation_id}", rule="operation_not_found")
@@ -38,7 +43,130 @@ def _operation_and_cycle(conn: sqlite3.Connection, operation_id: str):
     ).fetchone()
     if cycle is None:
         raise DishRuleError("WRONG_STATE", "operation has no pending Verification cycle", rule="verification_cycle_missing")
+    if target_cycle_id is not None and cycle["cycle_id"] != target_cycle_id:
+        raise DishRuleError(
+            "WRONG_STATE",
+            "Verification start target no longer names the current cycle",
+            rule="verification_start_target_stale",
+            details={
+                "target_operation_id": operation_id,
+                "target_cycle_id": target_cycle_id,
+                "current_operation_id": operation_id,
+                "current_cycle_id": cycle["cycle_id"],
+            },
+        )
     return op, cycle
+
+
+def verification_start_abandonment_authority(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    cycle_id: str,
+):
+    """Return the abandonment authority that made this exact start actionable.
+
+    Prepared Verification successors remain fenced by an awaiting abandonment.
+    Route-preserved continuations are bound by the completed abandonment that
+    selected the exact operation/cycle pair. Ordinary Verification starts have
+    no abandonment authority row and remain untargeted-compatible.
+    """
+
+    prepared = conn.execute(
+        """SELECT abandonment.*
+             FROM operation_successions AS succession
+             JOIN abandonment_attempts AS abandonment
+               ON abandonment.abandonment_id=succession.abandonment_id
+             JOIN operations AS successor
+               ON successor.operation_id=succession.successor_operation_id
+            WHERE succession.successor_operation_id=?
+              AND succession.successor_cycle_id=?
+              AND successor.successor_claim_mode='verifier'
+              AND abandonment.status='awaiting_successor_claim'""",
+        (operation_id, cycle_id),
+    ).fetchone()
+    if prepared is not None:
+        return prepared
+    return conn.execute(
+        """SELECT * FROM abandonment_attempts
+            WHERE status='completed'
+              AND outcome='route_preserved'
+              AND continuation_operation_id=?
+              AND continuation_cycle_id=?
+            ORDER BY completed_at DESC, rowid DESC LIMIT 1""",
+        (operation_id, cycle_id),
+    ).fetchone()
+
+
+def resolve_verification_start_target(
+    conn: sqlite3.Connection,
+    *,
+    task_gid: str,
+    target_operation_id: str | None,
+    target_cycle_id: str | None,
+):
+    """Resolve one exact Verification start target without external work."""
+
+    clean_operation = str(target_operation_id or "").strip() or None
+    clean_cycle = str(target_cycle_id or "").strip() or None
+    if bool(clean_operation) != bool(clean_cycle):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "Verification start requires both target_operation_id and target_cycle_id",
+            rule="verification_start_target_pair_required",
+        )
+    if clean_operation is None:
+        rows = conn.execute(
+            """SELECT * FROM operations
+                 WHERE task_gid=? AND status='open'
+                 ORDER BY created_at DESC LIMIT 2""",
+            (task_gid,),
+        ).fetchall()
+        if not rows:
+            raise DishRuleError(
+                "NOT_FOUND", "task has no open operation", rule="open_operation_missing"
+            )
+        if len(rows) != 1:
+            raise DishRuleError(
+                "CONFLICT",
+                "task does not have one unique open Verification operation",
+                rule="verification_start_operation_ambiguous",
+            )
+        operation = rows[0]
+    else:
+        operation = conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?",
+            (clean_operation,),
+        ).fetchone()
+        if operation is None or operation["task_gid"] != task_gid:
+            raise DishRuleError(
+                "WRONG_STATE",
+                "Verification start target no longer belongs to this task",
+                rule="verification_start_target_stale",
+                details={
+                    "target_operation_id": clean_operation,
+                    "target_cycle_id": clean_cycle,
+                },
+            )
+    op, cycle = _operation_and_cycle(
+        conn,
+        operation["operation_id"],
+        target_cycle_id=clean_cycle,
+    )
+    authority = verification_start_abandonment_authority(
+        conn, operation_id=op["operation_id"], cycle_id=cycle["cycle_id"]
+    )
+    if authority is not None and clean_operation is None:
+        raise DishRuleError(
+            "WRONG_STATE",
+            "this Verification continuation requires the exact abandonment target",
+            rule="verification_start_target_required",
+            details={
+                "target_operation_id": op["operation_id"],
+                "target_cycle_id": cycle["cycle_id"],
+            },
+        )
+    return op, cycle, authority
 
 
 
@@ -150,8 +278,43 @@ def verification_read(
     run_id: str | None,
     independence_attestation: str | None,
     schema: Mapping[str, Any] | None = None,
+    target_operation_id: str | None = None,
+    target_cycle_id: str | None = None,
 ) -> dict[str, Any]:
-    op, cycle = _operation_and_cycle(conn, operation_id)
+    if target_operation_id is not None and target_operation_id != operation_id:
+        raise DishRuleError(
+            "WRONG_STATE",
+            "Verification start target no longer names this operation",
+            rule="verification_start_target_stale",
+            details={
+                "target_operation_id": target_operation_id,
+                "target_cycle_id": target_cycle_id,
+                "current_operation_id": operation_id,
+            },
+        )
+    op, cycle = _operation_and_cycle(
+        conn, operation_id, target_cycle_id=target_cycle_id
+    )
+    abandonment = verification_start_abandonment_authority(
+        conn, operation_id=operation_id, cycle_id=cycle["cycle_id"]
+    )
+    if abandonment is not None:
+        if target_operation_id is None or target_cycle_id is None:
+            raise DishRuleError(
+                "WRONG_STATE",
+                "this Verification continuation requires the exact abandonment target",
+                rule="verification_start_target_required",
+                details={
+                    "target_operation_id": operation_id,
+                    "target_cycle_id": cycle["cycle_id"],
+                },
+            )
+        if str(run_id or "").strip() == str(abandonment["abandoned_run_id"] or "").strip():
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "the abandoned run cannot claim its replacement Verification attempt",
+                rule="abandoned_run_claim_forbidden",
+            )
     handoff = conn.execute("SELECT completed_at FROM operation_steps WHERE operation_id=? AND step_name='verification_handoff'", (operation_id,)).fetchone()
     if handoff is not None and handoff["completed_at"] is None:
         raise DishRuleError("WRONG_STATE", "Verification handoff is incomplete", rule="verification_handoff_incomplete")
@@ -184,6 +347,34 @@ def verification_read(
     # one atomic unit so a crash leaves either no review binding or a complete one.
     conn.execute("SAVEPOINT verification_read_local")
     try:
+        current_op, current_cycle = _operation_and_cycle(
+            conn, operation_id, target_cycle_id=target_cycle_id
+        )
+        current_abandonment = verification_start_abandonment_authority(
+            conn,
+            operation_id=operation_id,
+            cycle_id=current_cycle["cycle_id"],
+        )
+        if abandonment is not None:
+            expected_claim_mode = (
+                "verifier"
+                if abandonment["status"] == "awaiting_successor_claim"
+                else "none"
+            )
+            if (
+                current_abandonment is None
+                or current_abandonment["abandonment_id"] != abandonment["abandonment_id"]
+                or current_op["successor_claim_mode"] != expected_claim_mode
+            ):
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "Verification abandonment target changed before claim",
+                    rule="verification_start_target_stale",
+                    details={
+                        "target_operation_id": operation_id,
+                        "target_cycle_id": cycle["cycle_id"],
+                    },
+                )
         if not cycle["protocol_text"]:
             conn.execute(
                 "UPDATE verification_cycles SET protocol_text = ? WHERE cycle_id = ?",
@@ -194,7 +385,13 @@ def verification_read(
             task_gid=op["task_gid"], identity=live.identity,
         )
         conn.execute(
-            "UPDATE operations SET verifier_agent = ?, independence_attestation = ? WHERE operation_id = ?",
+            """UPDATE operations
+                  SET verifier_agent = ?, independence_attestation = ?,
+                      successor_claim_mode = CASE
+                          WHEN successor_claim_mode='verifier' THEN 'none'
+                          ELSE successor_claim_mode
+                      END
+                WHERE operation_id = ?""",
             (agent, clean_attestation, operation_id),
         )
         conn.execute(
@@ -213,6 +410,24 @@ def verification_read(
             result_code="OK", result_ok=True, actor_run_id=run_id,
             actor_attestation=clean_attestation,
         )
+        if (
+            abandonment is not None
+            and abandonment["status"] == "awaiting_successor_claim"
+        ):
+            completion_result = {
+                "abandonment_id": abandonment["abandonment_id"],
+                "operation_id": operation_id,
+                "cycle_id": cycle["cycle_id"],
+                "outcome": "restarted",
+            }
+            complete_abandonment_in_transaction(
+                conn,
+                abandonment_id=abandonment["abandonment_id"],
+                outcome="restarted",
+                result=completion_result,
+                continuation_operation_id=operation_id,
+                continuation_cycle_id=cycle["cycle_id"],
+            )
     except Exception:
         conn.execute("ROLLBACK TO verification_read_local")
         conn.execute("RELEASE verification_read_local")
@@ -242,6 +457,7 @@ def replay_verification_read(
     operation_id: str,
     agent: str,
     run_id: str,
+    target_cycle_id: str | None = None,
 ) -> dict[str, Any]:
     """Reconstruct a proven completed Verification read after response loss.
 
@@ -249,7 +465,9 @@ def replay_verification_read(
     cycle, verifier actor fact, exact reviewed content, and live Verification
     placement all still prove that the original `start verification` applied.
     """
-    op, cycle = _operation_and_cycle(conn, operation_id)
+    op, cycle = _operation_and_cycle(
+        conn, operation_id, target_cycle_id=target_cycle_id
+    )
     if (
         str(cycle["verifier_agent"] or "").strip() != str(agent).strip()
         or str(cycle["run_id"] or "").strip() != str(run_id).strip()

@@ -385,8 +385,22 @@ completes the abandonment; the abandoned run is ineligible. Change successors re
 completed `change_intent`. A preserved pre-construction Research hold keeps the dead-run source fenced
 until its existing hold-resolution command succeeds; that resolution atomically terminalizes the
 source and publishes the fresh Research successor instead of returning the source to
-`prepare_required`. Ordinary Planning/Research starts still omit `prepared_operation_id`. Verification
-successor construction and exact Verification targeting remain owned by the next role-specific stage.
+`prepare_required`. Ordinary Planning/Research starts still omit `prepared_operation_id`.
+
+Clean Verification abandonment now terminalizes the source operation, closes only the exact
+incomplete abandoned cycle as `abandoned`, and publishes a fresh `await_verification` successor with
+an unbound cycle. Producer and material-editor lineage are retained; verifier projection, review
+binding, attestation, and decision authority are not. The connected continuation names the exact
+`target_operation_id` and `target_cycle_id`. The exact abandoned owner/run is ineligible, and the
+claim revalidates the target before the external reread and again before persisting review authority.
+Successful claim binds the new verifier, clears `successor_claim_mode=verifier`, and completes the
+abandonment with the review-start facts in the same local transaction.
+
+Every Verification start selected by an abandonment uses the same exact-target contract, including
+an already-created cycle preserved after a committed Research handoff or rejection route. Ordinary
+Verification starts may still omit target IDs. A target pair is canonical request identity; one ID
+without the other is invalid, and a delayed target for an older cycle fails rather than selecting a
+later current cycle. The abandonment command remains internal until the operator surface is added.
 
 Request-scoped lease renewal, expired-lease recovery, and explicit administrative lease expiry
 commit the lease effect and replayable service-request result in the same SQLite transaction; neither

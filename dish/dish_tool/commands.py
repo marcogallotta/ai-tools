@@ -842,6 +842,8 @@ def _step7_start(
     change_level: str | None = None,
     change_reason: str | None = None,
     prepared_operation_id: str | None = None,
+    target_operation_id: str | None = None,
+    target_cycle_id: str | None = None,
     run_id: str | None = None,
     independence_attestation: str | None = None,
 ) -> dict[str, Any]:
@@ -857,20 +859,20 @@ def _step7_start(
             "prepared_operation_id is accepted only for Planning or Research successors",
             rule="prepared_operation_id_forbidden",
         )
-    from .step7 import verification_read
+    from .step7 import resolve_verification_start_target, verification_read
     clean_attestation = validate_independence_attestation(
         independence_attestation
     )
     agent_family(agent)
     task_gid = _clean_required(task_gid, rule="task_gid_required", label="task GID")
     trace.task_gid = task_gid
-    row = self.conn.execute(
-        "SELECT operation_id FROM operations WHERE task_gid = ? AND status = 'open' ORDER BY created_at DESC LIMIT 1",
-        (task_gid,),
-    ).fetchone()
-    if row is None:
-        raise DishRuleError("NOT_FOUND", "task has no open operation", rule="open_operation_missing")
-    operation_id = row["operation_id"]
+    operation, cycle, _authority = resolve_verification_start_target(
+        self.conn,
+        task_gid=task_gid,
+        target_operation_id=target_operation_id,
+        target_cycle_id=target_cycle_id,
+    )
+    operation_id = operation["operation_id"]
     release = self._load_release("verification")
     data, view = self.operation_service.current.start_verification(
         operation_id,
@@ -878,6 +880,8 @@ def _step7_start(
             self.conn, self.backend, operation_id=operation_id, agent=agent,
             honest_root=release.root, run_id=run_id,
             independence_attestation=clean_attestation, schema=release.schema,
+            target_operation_id=target_operation_id,
+            target_cycle_id=target_cycle_id,
         ),
         schema=release.schema,
     )

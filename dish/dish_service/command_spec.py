@@ -100,6 +100,8 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "change_level": {"type": "string", "enum": ["small", "large"]},
             "change_reason": {"type": "string"},
             "prepared_operation_id": dict(DISH_UUID_SCHEMA),
+            "target_operation_id": dict(DISH_UUID_SCHEMA),
+            "target_cycle_id": dict(DISH_UUID_SCHEMA),
         },
     },
     "prepare": {
@@ -217,6 +219,8 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
                 start_variant(
                     "verification",
                     "independence_attestation",
+                    "target_operation_id",
+                    "target_cycle_id",
                     required=("independence_attestation",),
                 ),
             ],
@@ -467,4 +471,22 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
             "argument_unexpected",
             field="prepared_operation_id",
         )
+    if command == "start" and arguments.get("kind") != "verification":
+        for field in ("target_operation_id", "target_cycle_id"):
+            if field in arguments:
+                raise _argument_error(
+                    f"{field} is accepted only for Verification starts",
+                    "argument_unexpected",
+                    field=field,
+                )
+    if command == "start" and arguments.get("kind") == "verification":
+        has_operation = "target_operation_id" in arguments
+        has_cycle = "target_cycle_id" in arguments
+        if has_operation != has_cycle:
+            missing = "target_cycle_id" if has_operation else "target_operation_id"
+            raise _argument_error(
+                "Verification target operation and cycle must be supplied together",
+                "argument_required",
+                field=missing,
+            )
     return dict(client), dict(arguments)

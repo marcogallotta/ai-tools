@@ -566,6 +566,8 @@ class DishService:
             return operation_id
         if command == "start" and arguments.get("prepared_operation_id"):
             return str(arguments.get("prepared_operation_id") or "").strip() or None
+        if command == "start" and arguments.get("target_operation_id"):
+            return str(arguments.get("target_operation_id") or "").strip() or None
         if command == "start" and arguments.get("kind") == "verification":
             task_gid = str(arguments.get("task_gid") or "").strip()
             row = conn.execute(
@@ -1455,15 +1457,26 @@ class DishService:
         """Return a proven start result after response loss, or fail uncertain."""
         task_gid = str(arguments.get("task_gid") or "").strip()
         kind = str(arguments.get("kind") or "").strip()
-        rows = conn.execute(
-            """SELECT * FROM operations
-                 WHERE task_gid=? AND status IN ('open','uncertain')
-                 ORDER BY created_at DESC""",
-            (task_gid,),
-        ).fetchall()
-        if len(rows) != 1 or rows[0]["status"] != "open":
-            raise pending_error("start", request_id)
-        operation = rows[0]
+        if kind == "verification":
+            from dish_tool.step7 import resolve_verification_start_target
+
+            operation, cycle, _authority = resolve_verification_start_target(
+                conn,
+                task_gid=task_gid,
+                target_operation_id=arguments.get("target_operation_id"),
+                target_cycle_id=arguments.get("target_cycle_id"),
+            )
+        else:
+            rows = conn.execute(
+                """SELECT * FROM operations
+                     WHERE task_gid=? AND status IN ('open','uncertain')
+                     ORDER BY created_at DESC""",
+                (task_gid,),
+            ).fetchall()
+            if len(rows) != 1 or rows[0]["status"] != "open":
+                raise pending_error("start", request_id)
+            operation = rows[0]
+            cycle = None
         operation_id = operation["operation_id"]
         prepared_operation_id = str(arguments.get("prepared_operation_id") or "").strip()
         if prepared_operation_id and operation_id != prepared_operation_id:
@@ -1473,6 +1486,9 @@ class DishService:
             data = replay_verification_read(
                 conn, backend, operation_id=operation_id,
                 agent=str(arguments.get("agent") or ""), run_id=principal.run_id,
+                target_cycle_id=(
+                    None if cycle is None else str(cycle["cycle_id"])
+                ),
             )
         else:
             if (
@@ -1698,6 +1714,28 @@ class DishService:
                             "the abandoned client run cannot claim its replacement attempt",
                             rule="abandoned_run_claim_forbidden",
                         )
+                verification_start_cycle_id = None
+                if command == "start" and prepared_arguments.get("kind") == "verification":
+                    from dish_tool.step7 import resolve_verification_start_target
+
+                    target_operation, target_cycle, authority = resolve_verification_start_target(
+                        conn,
+                        task_gid=str(prepared_arguments.get("task_gid") or "").strip(),
+                        target_operation_id=prepared_arguments.get("target_operation_id"),
+                        target_cycle_id=prepared_arguments.get("target_cycle_id"),
+                    )
+                    operation_id = str(target_operation["operation_id"])
+                    verification_start_cycle_id = str(target_cycle["cycle_id"])
+                    if (
+                        authority is not None
+                        and authority["abandoned_owner_id"] == principal.owner_id
+                        and authority["abandoned_run_id"] == principal.run_id
+                    ):
+                        raise DishRuleError(
+                            "AGENT_MISMATCH",
+                            "the abandoned client run cannot claim its replacement Verification attempt",
+                            rule="abandoned_run_claim_forbidden",
+                        )
                 if command in _LEASED_AGENT_COMMANDS:
                     if not operation_id:
                         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
@@ -1758,8 +1796,11 @@ class DishService:
                         leases.acquire(
                             operation_id,
                             principal,
-                            context_cycle_id=self._verification_lease_cycle_id(
-                                conn, operation_id, principal, pending_first=True
+                            context_cycle_id=(
+                                verification_start_cycle_id
+                                or self._verification_lease_cycle_id(
+                                    conn, operation_id, principal, pending_first=True
+                                )
                             ),
                         )
                         acquired_for_request = True
