@@ -267,7 +267,10 @@ requires — not the task GID), `data.continuation_surface: private-admin`,
 `--resume-status` when the pending resume state is known from the preconstruction hold or the held
 Verification cycle), and `data.after_resolution.legal_actions` naming what becomes legal once Marco
 resolves the hold. `admin_command`/`connected_action_available` follow the same private-continuation
-convention already used for `recover-lease`.
+convention already used for `recover-lease`. These responses also return `data.directive`, a
+ready-to-relay instruction telling the agent to hand the human the exact `admin_command`, wait for
+confirmation it succeeded, and then resume the same submission (never start a new operation) with
+the action named in `after_resolution.legal_actions`.
 
 A historical task whose Material-change lines already fail `material-changes.format` or
 `material-changes.field-count` is never rewritten automatically. Ordinary connected actions remain

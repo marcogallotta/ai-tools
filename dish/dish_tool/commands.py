@@ -196,6 +196,13 @@ def _evidence_hold_continuation(
     command = f"dish-admin {admin_action} {operation_id} --detail TEXT"
     if resume_status:
         command += f" --resume-status {resume_status}"
+    next_action = after_resolution["legal_actions"][0] if after_resolution["legal_actions"] else None
+    directive = (
+        f"Tell the human to run: {command}\n"
+        "Then wait for confirmation it succeeded before continuing — do not start a new "
+        "operation; resume this same submission"
+        + (f" with `{next_action}`." if next_action else ".")
+    )
     return {
         "phase": phase,
         "submission_id": operation_id,
@@ -205,6 +212,7 @@ def _evidence_hold_continuation(
         "continuation_surface": "private-admin",
         "connected_action_available": False,
         "admin_command": command,
+        "directive": directive,
         "after_resolution": after_resolution,
     }
 
