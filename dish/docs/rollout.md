@@ -34,6 +34,10 @@ complete and need not be repeated wholesale:
   authorization, submission, backup, and replay fixes. Its two audit blockers—immediate admin
   recovery under a live Action lease and atomic pre-construction Research hold/audit persistence—
   are fixed with deterministic regressions.
+- The release-specific evidence record and final semantic rehearsal in the Honest rollout checkout's
+  [`rollout.md`](../../../honest-pantry-dish-rollout/rollout.md) are largely complete, including
+  Planning, Research, and Verification protocol testing through Dish's bounded regression set with
+  sound positive controls and known material failure shapes.
 
 This evidence does not replace the final Honest semantic rehearsal, release-specific regression
 selection, migration rehearsal, rollback proof, or production authorization.
@@ -43,31 +47,47 @@ selection, migration rehearsal, rollback proof, or production authorization.
 Resolve and record these review items before production activation. Until a decision changes the
 implementation or runtime documentation, the current code and contracts remain authoritative.
 
-1. **Final regression gate.** Preserve the deterministic recovery and governed-audit regressions,
+1. **Abandoned run ownership, Part I.** Blocking; being implemented now. Land the pre-rollout
+   abandonment patch in
+   [`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) (§1–15): `abandon-operation`
+   and `reconcile-abandonment`, stage policy, and the durable abandonment/succession records, so a
+   permanently lost chat run can no longer strand an open Planning, Research, or Verification
+   attempt. Part II of that document is a post-rollout draft, not launch scope; see below.
+2. **Final regression gate.** Preserve the deterministic recovery and governed-audit regressions,
    then pass focused concurrency/recovery coverage plus the complete suite on the final code.
-2. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
+3. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
    and section-registry verification, and production cutover still require explicit authorization.
+
+## Post-rollout: abandoned run ownership Part II review
+
+Not launch-blocking; do not start before Part I above has shipped. Part II of
+[`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) (§16–23) is a post-rollout
+draft, deliberately parked, and must not add requirements to Part I.
+
+1. Commission a full ChatGPT review of Part II once production evidence from Part I is available.
+2. Follow with a focused Claude review of Part II's proposal against the invariants most prone to
+   silent drift across files: cross-cutting `allowed_actions`/current-action projection consistency
+   (`workflow_policy.py`, `application_service.py`, `step5.py`–`step9.py`, `http.py`,
+   `command_spec.py`), the transaction-atomicity claims implied by the new attempt/session model, and
+   the writer-lock/external-effect boundary trade-off carried over from Part I's abandonment
+   transactions.
 
 ## Remaining test-project rehearsal
 
 Use the isolated rollout checkout, test project, database, and backup directory documented in
 [`../README.md`](../README.md). Never point this rehearsal at production Cooking.
 
-1. Complete the release-specific evidence record and final semantic rehearsal in the Honest rollout
-   checkout's [`rollout.md`](../../../honest-pantry-dish-rollout/rollout.md). Test the final Planning,
-   Research, and Verification protocols through Dish using its bounded regression set, including
-   sound positive controls and known material failure shapes.
-2. Review code commits since the last recorded automated pass and run proportionate regression
+1. Review code commits since the last recorded automated pass and run proportionate regression
    coverage against the frozen release revisions. Use the complete Dish suite only when the
    intervening workflow, persistence, concurrency, recovery, migration, or service-boundary changes
    warrant it.
-3. Close the activation record with one frozen Honest revision, one frozen Dish revision, verified
+2. Close the activation record with one frozen Honest revision, one frozen Dish revision, verified
    runtime configuration and health, and durable redacted transcript locations outside `/tmp`.
    Reuse applicable recorded smoke evidence rather than rerunning every earlier adversarial case.
-4. Confirm stale-state, uncertain-effect, migration-failure, and movement-retry enforcement through
+3. Confirm stale-state, uncertain-effect, migration-failure, and movement-retry enforcement through
    the existing authoritative automated or local fault-injection coverage. Do not require a
    connected agent to manufacture an unsafe state that the Action surface cannot legally create.
-5. Confirm the rollback inputs below are complete and usable.
+4. Confirm the rollback inputs below are complete and usable.
 
 Stop on any condition named in the smoke procedure. Resolve the failure and repeat the affected
 gate, or document it under the established launch-triage policy when it is proven low-risk and
