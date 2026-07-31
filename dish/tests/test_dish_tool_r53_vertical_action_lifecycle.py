@@ -1,4 +1,5 @@
 from __future__ import annotations
+import pytest
 
 import threading
 
@@ -14,6 +15,7 @@ from tests.test_dish_tool_r40_placement_gate import StatefulAsanaTransport, _rel
 from tests.test_dish_tool_step6_prepare import PLANNING, TASK
 
 
+@pytest.mark.smoke
 def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
     config = asana.Configuration()
     config.return_page_iterator = False

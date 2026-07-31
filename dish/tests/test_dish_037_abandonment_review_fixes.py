@@ -85,6 +85,7 @@ def _abandonment_in_state(conn, backend, *, target_status: str) -> sqlite3.Row:
     return source
 
 
+@pytest.mark.smoke
 def test_active_abandonment_fences_new_operation_after_source_terminalizes():
     conn = initialize_database(":memory:")
     backend = Backend(section="pi")
@@ -115,6 +116,7 @@ def test_active_abandonment_fences_new_operation_after_source_terminalizes():
     ).fetchone()[0] == 1
 
 
+@pytest.mark.smoke
 def test_service_blocks_ordinary_start_before_backend_while_task_is_fenced(tmp_path):
     db_path = tmp_path / "dish.db"
     conn = initialize_database(db_path)
@@ -152,6 +154,7 @@ def test_service_blocks_ordinary_start_before_backend_while_task_is_fenced(tmp_p
     check.close()
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     "target_status",
     [
@@ -209,6 +212,7 @@ def test_active_abandonment_fences_new_operation_across_all_active_states(
     check.close()
 
 
+@pytest.mark.smoke
 def test_awaiting_successor_claim_lets_plain_start_through_to_resolve(tmp_path):
     """A ready prepared successor is no longer a fence for a plain start.
 
@@ -241,6 +245,7 @@ def test_awaiting_successor_claim_lets_plain_start_through_to_resolve(tmp_path):
     assert result["errors"][0]["rule"] == "planning_intent_confirmation_required"
 
 
+@pytest.mark.smoke
 def test_reconcile_finishes_execution_and_requests_after_post_settlement_crash(
     tmp_path, monkeypatch
 ):
@@ -333,6 +338,7 @@ def test_reconcile_finishes_execution_and_requests_after_post_settlement_crash(
     final.close()
 
 
+@pytest.mark.smoke
 def test_prepared_stage_successor_adopts_current_schema_at_claim():
     conn = initialize_database(":memory:")
     backend = Backend(section="pi")
@@ -364,6 +370,7 @@ def test_prepared_stage_successor_adopts_current_schema_at_claim():
     assert '"claimed_schema_version":"3"' in audit["details"]
 
 
+@pytest.mark.smoke
 def test_abandoned_hold_relay_includes_generated_command_template():
     conn = initialize_database(":memory:")
     backend = Backend(section="rq")
@@ -400,6 +407,7 @@ def test_abandoned_hold_relay_includes_generated_command_template():
     assert "replacing the angle-bracketed detail text" in action["relay_text"]
 
 
+@pytest.mark.smoke
 def test_abandoned_human_review_hold_relay_includes_generated_command_template():
     conn = initialize_database(":memory:")
     backend = Backend(section="rq")
@@ -447,6 +455,7 @@ class RepairBackend(Backend):
         self.section = section_gid
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("drift_content", "drift_section"),
     [(True, False), (False, True), (True, True)],

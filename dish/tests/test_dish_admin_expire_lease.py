@@ -57,6 +57,7 @@ def _admin(run_id: str = ADMIN_RUN):
     return ServicePrincipal("marco-admin", run_id)
 
 
+@pytest.mark.smoke
 def test_expire_exact_lease_releases_row_and_preserves_workflow(tmp_path):
     service, _backend = _service(tmp_path)
     _owner, started = _start(service)
@@ -93,6 +94,7 @@ def test_expire_exact_lease_releases_row_and_preserves_workflow(tmp_path):
     assert tuple(operation) == ("open", "prepare_required")
 
 
+@pytest.mark.smoke
 def test_previous_eligible_run_can_reacquire_after_release(tmp_path):
     service, backend = _service(tmp_path)
     owner, started = _start(service)
@@ -117,6 +119,7 @@ def test_previous_eligible_run_can_reacquire_after_release(tmp_path):
     assert backend.writes == 1
 
 
+@pytest.mark.smoke
 def test_exact_replay_never_touches_replacement_lease(tmp_path):
     service, _backend = _service(tmp_path)
     owner, started = _start(service)
@@ -150,6 +153,7 @@ def test_exact_replay_never_touches_replacement_lease(tmp_path):
     assert active["lease_id"] == replacement["lease_id"]
 
 
+@pytest.mark.smoke
 def test_task_noop_replay_never_touches_later_lease(tmp_path):
     service, _backend = _service(tmp_path)
     owner, started = _start(service)
@@ -184,6 +188,7 @@ def test_task_noop_replay_never_touches_later_lease(tmp_path):
     assert active["lease_id"] == replacement["lease_id"]
 
 
+@pytest.mark.smoke
 def test_same_request_id_requires_same_admin_run(tmp_path):
     service, _backend = _service(tmp_path)
     _owner, started = _start(service)
@@ -207,6 +212,7 @@ def test_same_request_id_requires_same_admin_run(tmp_path):
     assert different["errors"][0]["rule"] == "service_request_identity_conflict"
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize("claim_live", [True, False])
 def test_execution_claim_guard_uses_existing_liveness_and_preserves_claim(
     tmp_path, monkeypatch, claim_live
@@ -256,6 +262,7 @@ def test_execution_claim_guard_uses_existing_liveness_and_preserves_claim(
         assert active["released_at"] is not None
 
 
+@pytest.mark.smoke
 def test_result_persistence_failure_rolls_back_release(tmp_path, monkeypatch):
     service, _backend = _service(tmp_path)
     _owner, started = _start(service)
@@ -284,6 +291,7 @@ def test_result_persistence_failure_rolls_back_release(tmp_path, monkeypatch):
     assert request["status"] == "pending"
 
 
+@pytest.mark.smoke
 def test_expiry_service_path_never_constructs_backend_or_release(tmp_path):
     seed, _backend = _service(tmp_path)
     _owner, started = _start(seed)
@@ -301,6 +309,7 @@ def test_expiry_service_path_never_constructs_backend_or_release(tmp_path):
     assert result["ok"] is True
 
 
+@pytest.mark.smoke
 def test_service_canonicalizes_reason_before_request_hash(tmp_path):
     service, _backend = _service(tmp_path)
     _owner, started = _start(service)
@@ -317,6 +326,7 @@ def test_service_canonicalizes_reason_before_request_hash(tmp_path):
     assert replay["data"]["request_replayed"] is True
 
 
+@pytest.mark.smoke
 def test_fresh_task_request_can_release_replacement_lease(tmp_path):
     service, _backend = _service(tmp_path)
     owner, started = _start(service)
@@ -339,6 +349,7 @@ def test_fresh_task_request_can_release_replacement_lease(tmp_path):
     assert result["data"]["lease"]["lease_id"] == replacement["lease_id"]
 
 
+@pytest.mark.smoke
 def test_already_released_exact_target_preserves_original_release(tmp_path):
     service, _backend = _service(tmp_path)
     _owner, started = _start(service)
@@ -358,6 +369,7 @@ def test_already_released_exact_target_preserves_original_release(tmp_path):
     assert second["data"]["lease"]["release_reason"] == "admin expiry: first reason"
 
 
+@pytest.mark.smoke
 def test_unknown_exact_lease_returns_canonical_not_found(tmp_path):
     service, _backend = _service(tmp_path)
     unknown = str(uuid.uuid4())
@@ -375,6 +387,7 @@ def test_unknown_exact_lease_returns_canonical_not_found(tmp_path):
     assert result["errors"] == [{"rule": "service_lease_not_found", "lease_id": unknown}]
 
 
+@pytest.mark.smoke
 def test_active_lease_on_terminal_operation_can_be_released(tmp_path):
     service, _backend = _service(tmp_path)
     _owner, started = _start(service)
@@ -398,6 +411,7 @@ def test_active_lease_on_terminal_operation_can_be_released(tmp_path):
     assert result["data"]["outcome"] == "released"
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("principal", "reason"),
     [
@@ -422,6 +436,8 @@ def test_request_identity_conflicts_on_principal_or_reason_change(
     assert conflict["errors"][0]["rule"] == "service_request_identity_conflict"
 
 
+@pytest.mark.invariant_lease_authority
+@pytest.mark.smoke
 def test_duplicate_request_id_concurrency_returns_one_release_and_one_replay(tmp_path):
     service, _backend = _service(tmp_path)
     _owner, started = _start(service)
@@ -452,6 +468,7 @@ def test_duplicate_request_id_concurrency_returns_one_release_and_one_replay(tmp
     assert {result["data"]["lease"]["lease_id"] for result in results} == {lease_id}
 
 
+@pytest.mark.smoke
 def test_foreign_host_execution_claim_fails_closed(tmp_path):
     service, _backend = _service(tmp_path)
     _owner, started = _start(service)
@@ -483,6 +500,7 @@ def test_foreign_host_execution_claim_fails_closed(tmp_path):
     assert result["errors"][0]["rule"] == "operation_mutation_in_progress"
 
 
+@pytest.mark.smoke
 def test_permission_denied_process_check_fails_closed(tmp_path, monkeypatch):
     service, _backend = _service(tmp_path)
     _owner, started = _start(service)

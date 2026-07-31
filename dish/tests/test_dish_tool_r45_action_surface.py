@@ -85,6 +85,7 @@ def _raw_post(url, path, *, token, body):
         connection.close()
 
 
+@pytest.mark.smoke
 def test_cli_and_action_receive_identical_workflow_results(tmp_path, running_server):
     _backend, server, thread, url = running_server()
     cli = DishServiceClient(url, token="cli-secret", run_id="9940d276-a582-5787-b6d9-b4fba846e271")
@@ -94,6 +95,7 @@ def test_cli_and_action_receive_identical_workflow_results(tmp_path, running_ser
     assert cli_result == action_result
 
 
+@pytest.mark.smoke
 def test_action_credential_is_rejected_from_cli_and_admin_surfaces(tmp_path, running_server):
     _backend, server, thread, url = running_server()
     wrong_cli = DishServiceClient(url, token="action-secret", run_id="7b87f6d2-db66-5199-882f-07841e94589c")
@@ -104,6 +106,7 @@ def test_action_credential_is_rejected_from_cli_and_admin_surfaces(tmp_path, run
     assert admin_result["errors"][0]["rule"] == "service_scope_forbidden"
 
 
+@pytest.mark.smoke
 def test_cli_credential_is_rejected_from_action_surface(tmp_path, running_server):
     _backend, server, thread, url = running_server()
     wrong = DishActionClient(url, token="cli-secret", run_id="9940d276-a582-5787-b6d9-b4fba846e271")
@@ -112,6 +115,7 @@ def test_cli_credential_is_rejected_from_action_surface(tmp_path, running_server
     assert result["errors"][0]["rule"] == "service_scope_forbidden"
 
 
+@pytest.mark.smoke
 def test_action_surface_supports_leased_start_prepare_and_heartbeat(tmp_path, running_server):
     backend, server, thread, url = running_server()
     action = DishActionClient(url, token="action-secret", run_id="60f24aac-64a6-590a-99f5-a52fb9aae0a5")
@@ -138,6 +142,7 @@ def test_action_surface_supports_leased_start_prepare_and_heartbeat(tmp_path, ru
     assert backend.moves == 1
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     "task_gid",
     ["not-a-gid", "123abc", "", " ", "-1"],
@@ -163,6 +168,7 @@ def test_action_rejects_malformed_task_gid_before_backend_call(tmp_path, task_gi
     assert calls == 0
 
 
+@pytest.mark.smoke
 def test_action_distinguishes_nonexistent_numeric_gid_and_reaches_backend(tmp_path, running_server):
     backend, server, thread, url = running_server()
     calls = 0
@@ -187,6 +193,7 @@ def test_action_distinguishes_nonexistent_numeric_gid_and_reaches_backend(tmp_pa
     assert calls == 1
 
 
+@pytest.mark.smoke
 def test_valid_numeric_gid_reaches_action_backend_path(tmp_path, running_server):
     backend, server, thread, url = running_server()
     calls = 0
@@ -204,6 +211,7 @@ def test_valid_numeric_gid_reaches_action_backend_path(tmp_path, running_server)
     assert calls == 2
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize("command", ["read", "start"])
 @pytest.mark.parametrize(
     "task_gid",
@@ -244,6 +252,7 @@ def test_action_rejects_out_of_range_task_gid_before_backend_call(
     assert calls == 0
 
 
+@pytest.mark.smoke
 def test_action_accepts_maximum_supported_task_gid(tmp_path, running_server):
     backend, server, thread, url = running_server()
     calls = 0
@@ -272,6 +281,7 @@ def test_action_accepts_maximum_supported_task_gid(tmp_path, running_server):
     assert calls == 1
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize("submission_id", ["not-an-operation", "", " "])
 def test_action_rejects_malformed_submission_id_before_database_routing(
     tmp_path, submission_id,
@@ -289,6 +299,7 @@ def test_action_rejects_malformed_submission_id_before_database_routing(
     ]
 
 
+@pytest.mark.smoke
 def test_action_rejects_malformed_lease_operation_id(tmp_path, running_server):
     _backend, server, thread, url = running_server()
     action = DishActionClient(url, token="action-secret", run_id="f946b9ec-2b97-5b20-9831-e749d02e9883")
@@ -299,6 +310,7 @@ def test_action_rejects_malformed_lease_operation_id(tmp_path, running_server):
     ]
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("field", "value", "rule"),
     [
@@ -320,6 +332,7 @@ def test_all_http_identifier_field_classes_use_strict_grammar(field, value, rule
     assert caught.value.details == expected
 
 
+@pytest.mark.smoke
 def test_action_sanitizes_raw_backend_rejection(tmp_path, running_server):
     backend, server, thread, url = running_server()
 
@@ -341,6 +354,7 @@ def test_action_sanitizes_raw_backend_rejection(tmp_path, running_server):
     assert "raw-body" not in rendered
 
 
+@pytest.mark.smoke
 def test_inaccessible_backend_identifier_is_distinct_and_non_retryable():
     class Forbidden(Exception):
         status = 403
@@ -361,11 +375,13 @@ def test_inaccessible_backend_identifier_is_distinct_and_non_retryable():
     assert "private access policy" not in json.dumps(result)
 
 
+@pytest.mark.smoke
 def test_canonical_operation_uuid_is_accepted_by_boundary_validator():
     operation_id = str(uuid.uuid4())
     validate_identifier_fields({"submission_id": operation_id})
 
 
+@pytest.mark.smoke
 def test_uuid_validation_message_names_field_and_expected_format(tmp_path, running_server):
     _backend, server, thread, url = running_server()
     action = DishActionClient(url, token="action-secret", run_id="sections-001")
@@ -381,6 +397,7 @@ def test_uuid_validation_message_names_field_and_expected_format(tmp_path, runni
     )
 
 
+@pytest.mark.smoke
 def test_action_request_limit_applies_before_workflow_execution(tmp_path, running_server):
     backend, server, thread, url = running_server(max_body=80)
     action = DishActionClient(url, token="action-secret", run_id="f946b9ec-2b97-5b20-9831-e749d02e9883")
@@ -390,6 +407,7 @@ def test_action_request_limit_applies_before_workflow_execution(tmp_path, runnin
     assert backend.writes == 0
 
 
+@pytest.mark.smoke
 def test_pre_body_auth_and_size_rejections_close_the_connection(tmp_path, running_server):
     backend, server, thread, url = running_server(max_body=80)
     valid_body = json.dumps(
@@ -416,6 +434,7 @@ def test_pre_body_auth_and_size_rejections_close_the_connection(tmp_path, runnin
     assert rejected_size[3]["errors"][0]["rule"] == "request_too_large"
     assert backend.writes == 0
 
+@pytest.mark.smoke
 def test_failed_start_request_id_cannot_be_reused_for_different_work(tmp_path, running_server):
     _backend, server, thread, url = running_server()
     request_id = str(uuid.uuid4())
@@ -434,6 +453,7 @@ def test_failed_start_request_id_cannot_be_reused_for_different_work(tmp_path, r
     assert second["errors"][0]["rule"] == "service_request_identity_conflict"
 
 
+@pytest.mark.smoke
 def test_failed_start_request_replays_stored_validation_result(tmp_path, running_server):
     _backend, server, thread, url = running_server()
     request_id = str(uuid.uuid4())
@@ -452,6 +472,7 @@ def test_failed_start_request_replays_stored_validation_result(tmp_path, running
     assert second["data"]["request_id"] == request_id
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize("task_gid", ["0", "0000", "0123456789"])
 def test_action_rejects_noncanonical_numeric_task_gid_before_backend_call(tmp_path, task_gid, running_server):
     backend, server, thread, url = running_server()
@@ -472,6 +493,7 @@ def test_action_rejects_noncanonical_numeric_task_gid_before_backend_call(tmp_pa
     assert result["errors"][0]["rule"] == "numeric_identifier_required"
 
 
+@pytest.mark.smoke
 def test_action_rejects_noncanonical_client_run_id_before_work(tmp_path, running_server):
     backend, server, thread, url = running_server()
     action = DishActionClient(url, token="action-secret", run_id="not-a-run")
@@ -482,6 +504,7 @@ def test_action_rejects_noncanonical_client_run_id_before_work(tmp_path, running
 
 
 
+@pytest.mark.smoke
 def test_action_lease_renewal_rejects_legacy_path_and_top_level_operation_id(tmp_path, running_server):
     _backend, server, thread, url = running_server()
     operation_id = "99999999-9999-4999-8999-999999999999"

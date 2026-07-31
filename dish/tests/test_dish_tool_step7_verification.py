@@ -1,3 +1,4 @@
+import pytest
 import sys
 from pathlib import Path
 
@@ -92,6 +93,7 @@ def make_app(tmp_path):
     return app, backend, start["submission_id"], verification_text
 
 
+@pytest.mark.smoke
 def test_constructor_cannot_verify(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     result = app.execute("start", agent="gpt", task_gid="t", kind="verification", run_id="constructor-run", independence_attestation="independent")
@@ -99,6 +101,7 @@ def test_constructor_cannot_verify(tmp_path):
     assert backend.writes == 1
 
 
+@pytest.mark.smoke
 def test_verifier_without_run_id_is_rejected_even_with_attestation(tmp_path):
     app, backend, operation_id, protocol = make_app(tmp_path)
     result = app.execute("start", agent="codex", task_gid="t", kind="verification", independence_attestation="fresh independent ChatGPT run")
@@ -106,6 +109,7 @@ def test_verifier_without_run_id_is_rejected_even_with_attestation(tmp_path):
     assert result["errors"][0]["rule"] == "verifier_identity_required"
 
 
+@pytest.mark.smoke
 def test_approve_and_reject_require_a_current_dish_inspect_fact(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute(
@@ -136,6 +140,7 @@ def test_approve_and_reject_require_a_current_dish_inspect_fact(tmp_path):
     assert approved["ok"]
 
 
+@pytest.mark.smoke
 def test_stale_candidate_blocks_approval(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-2", independence_attestation="independent")
@@ -148,6 +153,7 @@ def test_stale_candidate_blocks_approval(tmp_path):
     assert backend.writes == 1
 
 
+@pytest.mark.smoke
 def test_approval_signs_exact_reread_without_moving_and_requires_inputs(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-3", independence_attestation="independent")
@@ -176,6 +182,7 @@ def test_approval_signs_exact_reread_without_moving_and_requires_inputs(tmp_path
     assert row["movement_completed_at"] is None  # verification handoff is not final submission movement
 
 
+@pytest.mark.smoke
 def test_reviewed_identity_mismatch_is_retryable_with_corrected_identity(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
     review = app.execute(
@@ -203,6 +210,7 @@ def test_reviewed_identity_mismatch_is_retryable_with_corrected_identity(tmp_pat
     assert corrected["ok"]
 
 
+@pytest.mark.smoke
 def test_approval_requires_model(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-model", independence_attestation="independent")
@@ -213,6 +221,7 @@ def test_approval_requires_model(tmp_path):
     assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_required"
 
 
+@pytest.mark.smoke
 def test_approval_rejects_model_with_em_dash(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-model-dash", independence_attestation="independent")
@@ -223,6 +232,7 @@ def test_approval_rejects_model_with_em_dash(tmp_path):
     assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_invalid_characters"
 
 
+@pytest.mark.smoke
 def test_approval_rejects_model_with_comma(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-model-comma", independence_attestation="independent")
@@ -233,6 +243,7 @@ def test_approval_rejects_model_with_comma(tmp_path):
     assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_invalid_characters"
 
 
+@pytest.mark.smoke
 def test_caller_cannot_forge_current_identity_after_review(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-forge", independence_attestation="independent")
@@ -247,6 +258,7 @@ def test_caller_cannot_forge_current_identity_after_review(tmp_path):
     assert result["errors"][0]["rule"] == "live_task_drift"
 
 
+@pytest.mark.smoke
 def test_review_and_signoff_bind_immutable_content_versions(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="run-bind", independence_attestation="independent")
@@ -263,12 +275,14 @@ def test_review_and_signoff_bind_immutable_content_versions(tmp_path):
     assert cycle["signed_content_version_id"]
 
 
+@pytest.mark.smoke
 def test_same_agent_different_run_can_verify(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     result = app.execute("start", agent="gpt", task_gid="t", kind="verification", run_id="fresh-verifier-run", independence_attestation="independent")
     assert result["ok"]
 
 
+@pytest.mark.smoke
 def test_persisted_hash_protocol_text_survives_file_change(tmp_path):
     app, backend, operation_id, protocol = make_app(tmp_path)
     honest = tmp_path / "honest"
@@ -278,6 +292,7 @@ def test_persisted_hash_protocol_text_survives_file_change(tmp_path):
     assert result["data"]["verification_protocol"]["text"] == protocol
 
 
+@pytest.mark.smoke
 def test_approval_requires_exact_verifier_run_proof(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="proof-run", independence_attestation="independent")
@@ -292,6 +307,7 @@ def test_approval_requires_exact_verifier_run_proof(tmp_path):
     assert result["errors"][0]["rule"] == "verifier_proof_mismatch"
 
 
+@pytest.mark.smoke
 def test_approval_requires_the_persisted_verifier_run(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="fresh-run", independence_attestation="independent")
@@ -306,6 +322,7 @@ def test_approval_requires_the_persisted_verifier_run(tmp_path):
     assert result["errors"][0]["rule"] == "verifier_proof_mismatch"
 
 
+@pytest.mark.smoke
 def test_verification_start_surfaces_candidate_lineage_and_current_run_eligibility(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
     result = app.execute(
@@ -326,6 +343,7 @@ def test_verification_start_surfaces_candidate_lineage_and_current_run_eligibili
     )
 
 
+@pytest.mark.smoke
 def test_inspect_surfaces_ineligible_constructor_run_before_verification_decision(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
     app.invocation_run_id = "constructor-run"

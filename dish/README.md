@@ -311,7 +311,9 @@ python3 -m venv .venv
 ```
 
 Use the curated smoke suite for rapid confidence during normal iteration, then run the complete
-suite before handing work back:
+suite before handing work back. Smoke membership is an explicit per-test contract, so moving or
+splitting a test module cannot silently remove a critical test from the gate. Collection also checks
+that the gate retains representative coverage of each required launch-critical invariant:
 
 ```sh
 .venv/bin/python -m pytest --smoke

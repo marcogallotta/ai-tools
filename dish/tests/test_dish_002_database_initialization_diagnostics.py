@@ -14,6 +14,7 @@ from dish_tool.errors import DishRuleError
 from tests.test_dish_tool_r46_operational_hardening import _service
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("exc", "classification", "expected"),
     [
@@ -57,6 +58,7 @@ def test_database_initialization_exception_classification(exc, classification, e
         assert details[key] == value
 
 
+@pytest.mark.smoke
 def test_database_initialization_failure_logs_original_exception_and_safe_request_context(
     tmp_path, monkeypatch, caplog
 ):
@@ -120,6 +122,7 @@ def test_database_initialization_failure_logs_original_exception_and_safe_reques
     assert "disk I/O error: original diagnostic" in rendered_traceback
 
 
+@pytest.mark.smoke
 def test_database_initialization_failure_logs_backup_request_context(
     tmp_path, monkeypatch, caplog
 ):
@@ -157,6 +160,7 @@ def test_database_initialization_failure_logs_backup_request_context(
     assert "SENSITIVE BACKUP LABEL" not in message
 
 
+@pytest.mark.smoke
 def test_semantic_initialization_failure_keeps_classification_and_preexecution_retry(
     tmp_path,
 ):
@@ -248,6 +252,7 @@ def test_semantic_initialization_failure_keeps_classification_and_preexecution_r
     assert "SENSITIVE REQUEST PAYLOAD" not in rendered
 
 
+@pytest.mark.smoke
 def test_semantic_failure_after_request_start_requires_fresh_request_id(
     tmp_path, monkeypatch
 ):

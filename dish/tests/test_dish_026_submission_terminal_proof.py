@@ -3,10 +3,14 @@ from __future__ import annotations
 import sqlite3
 import uuid
 
+import pytest
+
 from dish_tool.database_schema import _validate_semantic_evidence, initialize_database
 from tests.test_dish_tool_r46_operational_hardening import _approved, _service
 
 
+@pytest.mark.smoke
+@pytest.mark.invariant_submission_terminal_proof
 def test_submission_audit_failure_preserves_movement_and_exact_replay_finalizes_once(
     tmp_path, monkeypatch
 ):

@@ -163,6 +163,7 @@ def release_repo(tmp_path):
     return repo, commit
 
 
+@pytest.mark.smoke
 def test_resolver_loads_external_schema_adapter_for_legacy_note_checks(release_repo):
     repo, _ = release_repo
     release = resolve_release(repo, protocol_role="planning")
@@ -176,6 +177,7 @@ def test_resolver_loads_external_schema_adapter_for_legacy_note_checks(release_r
     }
 
 
+@pytest.mark.smoke
 def test_literal_note_validation_uses_manifest(release_repo):
     repo, _ = release_repo
     manifest = resolve_release(repo).manifests["planning"]
@@ -196,6 +198,7 @@ Research notes: Opaque text
     assert {"unknown_heading", "duplicate_label", "mixed_exemptions"} <= rules
 
 
+@pytest.mark.smoke
 def test_literal_note_validation_rejects_unknown_manifest_kind(release_repo):
     repo, _ = release_repo
     manifest = dict(resolve_release(repo).manifests["planning"])
@@ -206,6 +209,7 @@ def test_literal_note_validation_rejects_unknown_manifest_kind(release_repo):
     assert exc.value.rule == "manifest_malformed"
 
 
+@pytest.mark.smoke
 def test_contextual_label_is_required_only_when_heading_present(release_repo):
     repo, _ = release_repo
     manifest = resolve_release(repo).manifests["complete_task"]
@@ -221,6 +225,7 @@ Verification: pending
     assert any(error["rule"] == "missing_contextual_label" for error in result.errors)
 
 
+@pytest.mark.smoke
 def test_resolver_preserves_requested_protocol_bytes_exactly(release_repo):
     repo, _ = release_repo
     exact = "# Research protocol\nTrailing spaces stay.   \n\n"

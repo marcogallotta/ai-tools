@@ -1,3 +1,4 @@
+import pytest
 import sys
 from pathlib import Path
 
@@ -24,6 +25,7 @@ def _signed(tmp_path):
     return app, backend, operation_id
 
 
+@pytest.mark.smoke
 def test_submit_is_movement_only_and_moves_vq_once(tmp_path):
     app, backend, operation_id = _signed(tmp_path)
     before = (backend.title, backend.notes, backend.writes)
@@ -41,6 +43,7 @@ def test_submit_is_movement_only_and_moves_vq_once(tmp_path):
     assert backend.moves == 2
 
 
+@pytest.mark.smoke
 def test_already_at_destination_is_idempotent_without_content_write(tmp_path):
     app, backend, operation_id = _signed(tmp_path)
     backend.section = "12345"
@@ -50,6 +53,7 @@ def test_already_at_destination_is_idempotent_without_content_write(tmp_path):
     assert backend.moves == 1 and backend.writes == writes
 
 
+@pytest.mark.smoke
 def test_research_and_manual_placement_are_preserved(tmp_path):
     for section, handoff in (("rq", "research_queue_preserved"), ("ref", "manual_placement_preserved")):
         app, backend, operation_id = _signed(tmp_path / section)
@@ -59,6 +63,7 @@ def test_research_and_manual_placement_are_preserved(tmp_path):
         assert backend.section == section
 
 
+@pytest.mark.smoke
 def test_missing_destination_keeps_ready_and_reports_diagnostic(tmp_path):
     app, backend, operation_id = _signed(tmp_path)
     # A post-signoff content edit must not be able to rebind signoff by inserting
@@ -73,6 +78,7 @@ def test_missing_destination_keeps_ready_and_reports_diagnostic(tmp_path):
     assert "Status: ready" in backend.notes and backend.section == "vq"
 
 
+@pytest.mark.smoke
 def test_changed_content_after_signoff_blocks_movement(tmp_path):
     app, backend, operation_id = _signed(tmp_path)
     backend.notes = backend.notes.replace("Crisp and aromatic.", "Crisp and very aromatic.")
@@ -87,6 +93,7 @@ def test_changed_content_after_signoff_blocks_movement(tmp_path):
     assert backend.moves == moves
 
 
+@pytest.mark.smoke
 def test_admin_recovery_uses_live_reread_evidence(tmp_path):
     app, backend, operation_id = _signed(tmp_path)
     admin = DishAdminApplication(app.conn, backend=backend)

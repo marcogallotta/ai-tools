@@ -67,6 +67,7 @@ def release(role=None, migrations=False):
 
 def app(tmp_path, backend): return DishApplication(initialize_database(tmp_path/"d.db"), backend, release_loader=lambda role=None: release(role))
 
+@pytest.mark.smoke
 def test_sections_and_create_are_scoped_and_bare(tmp_path):
     b=Backend(); a=app(tmp_path,b)
     assert a.execute("sections",agent="claude")["data"]["project_gid"] == COOKING_PROJECT_GID
@@ -75,6 +76,7 @@ def test_sections_and_create_are_scoped_and_bare(tmp_path):
     assert b.notes == "" and b.section == "rq" and b.create_calls == 1
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize("unsafe", ["\n", "\t", "\u2028", "\u2029", "\x00"])
 def test_create_rejects_unsafe_title_characters_before_external_creation(
     tmp_path, unsafe
@@ -91,6 +93,7 @@ def test_create_rejects_unsafe_title_characters_before_external_creation(
     ]
     assert b.create_calls == 0
 
+@pytest.mark.smoke
 def test_read_reports_exact_state_and_migration_required(tmp_path):
     lines=TASK.replace("Schema version: 2","Schema version: 1").splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n")
     result=app(tmp_path,b).execute("read",agent="gpt",task_gid="t")
@@ -98,6 +101,7 @@ def test_read_reports_exact_state_and_migration_required(tmp_path):
     assert result["data"]["migration_required"] is True
     assert result["data"]["content_identity"]
 
+@pytest.mark.smoke
 def test_read_bare_task_is_not_migration_required(tmp_path):
     b=Backend(); result=app(tmp_path,b).execute("read",agent="gpt",task_gid="t")
     assert result["data"]["parsed"] is None
@@ -105,6 +109,7 @@ def test_read_bare_task_is_not_migration_required(tmp_path):
     assert result["data"]["migration_required"] is False
     assert result["data"]["validation"] == []
 
+@pytest.mark.smoke
 def test_read_planning_stage_brief_is_not_migration_required(tmp_path):
     notes = (
         "### Planning brief\n"
@@ -123,18 +128,21 @@ def test_read_planning_stage_brief_is_not_migration_required(tmp_path):
     assert result["data"]["validation"] == []
     assert result["data"]["migration_required"] is False
 
+@pytest.mark.smoke
 def test_read_current_schema_canonical_task_is_not_migration_required(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n")
     result=app(tmp_path,b).execute("read",agent="gpt",task_gid="t")
     assert result["data"]["parsed"] is not None
     assert result["data"]["migration_required"] is False
 
+@pytest.mark.smoke
 def test_read_unparseable_task_with_no_schema_line_is_migration_required(tmp_path):
     lines=TASK.replace("Schema version: 2\n","").splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n")
     result=app(tmp_path,b).execute("read",agent="gpt",task_gid="t")
     assert result["data"]["parsed"] is None
     assert result["data"]["migration_required"] is True
 
+@pytest.mark.smoke
 def test_read_malformed_but_current_schema_task_is_not_migration_required(tmp_path):
     duplicated = TASK.replace(
         "## WHAT TO BUY\nNone - pantry snapshot lists required items in stock\n",
@@ -147,6 +155,7 @@ def test_read_malformed_but_current_schema_task_is_not_migration_required(tmp_pa
     assert any(v["rule"] == "section_duplicate" for v in result["data"]["validation"])
     assert result["data"]["migration_required"] is False
 
+@pytest.mark.smoke
 def test_read_canonical_document_with_corrupted_state_block_is_not_masked_as_planning_stage(tmp_path):
     # The Planning brief block is intact and would parse cleanly on its own, but
     # the document carries process-record markers ("---" / "## PROCESS RECORD"),
@@ -163,12 +172,14 @@ def test_read_canonical_document_with_corrupted_state_block_is_not_masked_as_pla
     assert any(v["rule"] == "state_field_duplicate" for v in result["data"]["validation"])
     assert result["data"]["migration_required"] is False
 
+@pytest.mark.smoke
 def test_start_planning_on_bare_task_reports_no_diagnostics(tmp_path):
     b=Backend(); a=app(tmp_path,b)
     result=a.execute("start",agent="gpt",task_gid="t",kind="planning",change_level=None,change_reason=None)
     assert result["ok"]
     assert result["data"]["schema"]["diagnostics"] == []
 
+@pytest.mark.smoke
 def test_start_research_on_planning_stage_brief_reports_no_diagnostics(tmp_path):
     notes = (
         "### Planning brief\n"
@@ -186,6 +197,7 @@ def test_start_research_on_planning_stage_brief_reports_no_diagnostics(tmp_path)
     assert result["ok"]
     assert result["data"]["schema"]["diagnostics"] == []
 
+@pytest.mark.smoke
 def test_start_claims_once_and_returns_only_stage_protocol(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n") ; a=app(tmp_path,b)
     first=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
@@ -196,12 +208,14 @@ def test_start_claims_once_and_returns_only_stage_protocol(tmp_path):
     assert inspected["data"]["operation"]["operation_kind"] == "initial"
     assert "protocol_bundle" not in inspected["data"]
 
+@pytest.mark.smoke
 def test_start_fails_closed_on_drift(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
     confirm_task_content(a.conn,task_gid="t",title="different",notes=b.notes,schema_version="2")
     result=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
     assert result["code"] == "CONFLICT"
 
+@pytest.mark.smoke
 def test_admin_migration_sets_version_only_on_validated_exact_write(tmp_path):
     lines=TASK.replace("Schema version: 2","Schema version: 1").splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n")
     admin=DishAdminApplication(initialize_database(tmp_path/"d.db"), backend=b, release_loader=lambda: release(None,True))
@@ -209,6 +223,7 @@ def test_admin_migration_sets_version_only_on_validated_exact_write(tmp_path):
     assert result["ok"] and result["data"]["schema_version"] == "2"
     assert "Schema version: 2" in b.notes
 
+@pytest.mark.smoke
 def test_wrong_state_response_exposes_current_legal_action(tmp_path):
     b = Backend()
     a = app(tmp_path, b)
@@ -222,6 +237,7 @@ def test_wrong_state_response_exposes_current_legal_action(tmp_path):
     assert result["retryable"] is False
 
 
+@pytest.mark.smoke
 def test_retryable_prepare_validation_exposes_prepare_action(tmp_path):
     b = Backend()
     a = app(tmp_path, b)
@@ -239,6 +255,7 @@ def test_retryable_prepare_validation_exposes_prepare_action(tmp_path):
     assert result["retryable"] is True
     assert result["allowed_actions"] == ["prepare"]
 
+@pytest.mark.smoke
 def test_read_exposes_active_operation_and_next_action(tmp_path):
     b = Backend()
     a = app(tmp_path, b)

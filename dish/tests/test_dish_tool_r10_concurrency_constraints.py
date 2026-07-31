@@ -32,6 +32,7 @@ def _make_v2(path: Path) -> None:
         conn.close()
 
 
+@pytest.mark.smoke
 def test_concurrent_initializers_serialize_migrations(tmp_path: Path) -> None:
     db_path = tmp_path / "concurrent-v2.sqlite"
     _make_v2(db_path)
@@ -87,6 +88,7 @@ def _content_version(conn: sqlite3.Connection, version_id: str, identity: str = 
     )
 
 
+@pytest.mark.smoke
 def test_database_rejects_stronger_impossible_states(tmp_path: Path) -> None:
     conn = initialize_database(tmp_path / "constraints.sqlite")
     try:
@@ -185,6 +187,7 @@ def test_database_rejects_stronger_impossible_states(tmp_path: Path) -> None:
         conn.close()
 
 
+@pytest.mark.smoke
 def test_many_concurrent_initializers_all_converge(tmp_path: Path) -> None:
     db_path = tmp_path / "concurrent-many-v2.sqlite"
     _make_v2(db_path)

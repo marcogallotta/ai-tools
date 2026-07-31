@@ -82,6 +82,7 @@ def app(tmp_path, backend):
 def write(tmp_path, name, text):
     p=tmp_path/name; p.write_text(text); return str(p)
 
+@pytest.mark.smoke
 def test_planning_prepare_writes_live_and_preserves_research_queue(tmp_path):
     b=Backend(); a=app(tmp_path,b)
     started=a.execute("start",agent="gpt",task_gid="t",kind="planning",change_level=None,change_reason=None)
@@ -95,6 +96,7 @@ def test_planning_prepare_writes_live_and_preserves_research_queue(tmp_path):
     ]
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize("kind", ["planning", "initial"])
 @pytest.mark.parametrize("character", ["\x00", "\u200b", "\u202e"])
 def test_prepare_rejects_unsafe_candidate_text_before_mutation(
@@ -143,6 +145,7 @@ def test_prepare_rejects_unsafe_candidate_text_before_mutation(
     )
 
 
+@pytest.mark.smoke
 def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
     started=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
@@ -181,6 +184,7 @@ _DUPLICATE_SCHEMA_CANDIDATE = TASK.replace(
 )
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("candidate", "filename", "expected_error"),
     [
@@ -245,6 +249,7 @@ def test_research_prepare_rejects_invalid_document_before_write(
     assert backend.moves == 0
 
 
+@pytest.mark.smoke
 def test_planning_prepare_reports_every_missing_field_and_required_label(tmp_path):
     b = Backend("Planning task", "")
     a = app(tmp_path, b)
@@ -279,6 +284,7 @@ def test_planning_prepare_reports_every_missing_field_and_required_label(tmp_pat
     ]
 
 
+@pytest.mark.smoke
 def test_planning_prepare_rejects_unsupported_field_before_write(tmp_path):
     b = Backend("Planning task", "")
     a = app(tmp_path, b)
@@ -309,6 +315,7 @@ def test_planning_prepare_rejects_unsupported_field_before_write(tmp_path):
     assert b.writes == 0
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize("field_name", ["Dish candidate", "Purpose", "Priors"])
 def test_planning_prepare_rejects_empty_required_values_before_write(
     tmp_path, field_name
@@ -342,6 +349,7 @@ def test_planning_prepare_rejects_empty_required_values_before_write(
     assert b.writes == 0
 
 
+@pytest.mark.smoke
 def test_planning_prepare_rejects_unsupported_exemption_before_write(tmp_path):
     b = Backend("Planning task", "")
     a = app(tmp_path, b)
@@ -366,6 +374,7 @@ def test_planning_prepare_rejects_unsupported_exemption_before_write(tmp_path):
     assert b.writes == 0
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("candidate", "expected_rule", "expected_location", "expected_field"),
     [
@@ -420,6 +429,7 @@ def test_initial_start_rejects_invalid_planning_brief_before_operation(
     assert backend.moves == 0
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("model", "expected_rule", "expects_validation_scope"),
     [
@@ -457,6 +467,7 @@ def test_initial_prepare_rejects_missing_or_invalid_model(
     assert backend.writes == 0
 
 
+@pytest.mark.smoke
 def test_stale_baseline_blocks_before_write(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
     started=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
@@ -465,6 +476,7 @@ def test_stale_baseline_blocks_before_write(tmp_path):
     assert result["code"] == "CONFLICT" and b.writes == 0 and b.moves == 0
 
 
+@pytest.mark.smoke
 def test_prepare_rejects_placement_drift_for_all_operation_kinds(tmp_path):
     import pytest
     from dish_tool.database import confirm_task_content, create_operation
@@ -525,6 +537,7 @@ def test_prepare_rejects_placement_drift_for_all_operation_kinds(tmp_path):
         assert b.moves == 0
 
 
+@pytest.mark.smoke
 def test_completed_task_requires_audited_marco_reopen_before_planning(tmp_path):
     from dish_tool.admin import DishAdminApplication
 
@@ -585,6 +598,7 @@ def test_completed_task_requires_audited_marco_reopen_before_planning(tmp_path):
     assert started["ok"]
 
 
+@pytest.mark.smoke
 def test_planning_reopen_rejects_non_bare_completed_task(tmp_path):
     from dish_tool.admin import DishAdminApplication
 

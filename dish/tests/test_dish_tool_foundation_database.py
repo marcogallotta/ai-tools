@@ -44,6 +44,7 @@ def insert_submission(conn, submission_id, task_gid, status):
     conn.commit()
 
 
+@pytest.mark.smoke
 @pytest.mark.real_database_bootstrap
 def test_schema_creation_and_migration_are_idempotent(tmp_path):
     db_path = tmp_path / "dish-tool.db"
@@ -81,6 +82,7 @@ def test_schema_creation_and_migration_are_idempotent(tmp_path):
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 
+@pytest.mark.smoke
 def test_schema_34_and_35_upgrade_existing_database_with_current_journals(tmp_path):
     db_path = tmp_path / "upgrade.db"
     conn = sqlite3.connect(db_path, isolation_level=None)
@@ -118,6 +120,7 @@ def test_schema_34_and_35_upgrade_existing_database_with_current_journals(tmp_pa
         upgraded.close()
 
 
+@pytest.mark.smoke
 def test_schema_35_upgrades_schema_34_audit_journal(tmp_path):
     db_path = tmp_path / "schema-34.db"
     conn = sqlite3.connect(db_path, isolation_level=None)
@@ -161,6 +164,7 @@ def test_schema_35_upgrades_schema_34_audit_journal(tmp_path):
         upgraded.close()
 
 
+@pytest.mark.smoke
 def test_partial_unique_index_holds_for_every_nonterminal_state(tmp_path):
     conn = initialize_database(tmp_path / "dish-tool.db")
     for index, status in enumerate(sorted(NONTERMINAL_STATES)):
@@ -170,6 +174,7 @@ def test_partial_unique_index_holds_for_every_nonterminal_state(tmp_path):
             insert_submission(conn, f"second-{index}", task_gid, "drafting")
 
 
+@pytest.mark.smoke
 def test_partial_unique_index_releases_for_terminal_states(tmp_path):
     conn = initialize_database(tmp_path / "dish-tool.db")
     for index, status in enumerate(sorted(TERMINAL_STATES)):
@@ -178,6 +183,7 @@ def test_partial_unique_index_releases_for_terminal_states(tmp_path):
         insert_submission(conn, f"new-{index}", task_gid, "drafting")
 
 
+@pytest.mark.smoke
 def test_audit_rows_allow_null_submission_and_keep_task_gid(tmp_path):
     conn = initialize_database(tmp_path / "dish-tool.db")
     event_id = record_audit(
@@ -197,6 +203,7 @@ def test_audit_rows_allow_null_submission_and_keep_task_gid(tmp_path):
     assert json.loads(row[2]) == {"code": "OK", "command": "set-notes"}
 
 
+@pytest.mark.smoke
 def test_conditional_transition_fails_competing_state_change(tmp_path):
     conn = initialize_database(tmp_path / "dish-tool.db")
     insert_submission(conn, "s1", "t1", "drafting")
@@ -207,6 +214,7 @@ def test_conditional_transition_fails_competing_state_change(tmp_path):
     assert exc.value.code == "WRONG_STATE"
 
 
+@pytest.mark.smoke
 def test_process_identity_and_recovery_quarantine_invariant():
     identity = current_process_identity()
     assert identity.hostname == socket.gethostname()
@@ -219,6 +227,7 @@ def test_process_identity_and_recovery_quarantine_invariant():
     )
 
 
+@pytest.mark.smoke
 def test_begin_write_attempt_records_identity_and_compare_and_swap(tmp_path):
     conn = initialize_database(tmp_path / "dish-tool.db")
     insert_submission(conn, "s1", "t1", "ready")

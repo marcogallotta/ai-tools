@@ -54,6 +54,7 @@ def _post(url, path, payload, token="admin-secret"):
         connection.close()
 
 
+@pytest.mark.smoke
 def test_http_route_trims_reason_before_request_hash(tmp_path):
     service, _backend, server, thread, url = _running(tmp_path)
     _owner, started = _start(service)
@@ -74,6 +75,7 @@ def test_http_route_trims_reason_before_request_hash(tmp_path):
     assert replay["data"]["request_replayed"] is True
 
 
+@pytest.mark.smoke
 def test_http_validation_boundary_journals_target_reason_but_not_shape(tmp_path):
     service, _backend, server, thread, url = _running(tmp_path)
     invalid_request = str(uuid.uuid4())
@@ -114,6 +116,7 @@ def test_http_validation_boundary_journals_target_reason_but_not_shape(tmp_path)
     assert [row["request_id"] for row in rows] == [invalid_request]
 
 
+@pytest.mark.smoke
 def test_task_url_parser_is_narrow_and_deterministic():
     assert task_gid_from_url(
         "https://APP.ASANA.COM/0/987654321/123456789"
@@ -161,6 +164,7 @@ class _BaseFakeConnection:
         self.closed = True
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize("failure", ["disconnect", "invalid-json", "noncanonical"])
 def test_expire_client_maps_post_dispatch_failures_to_exact_replay_envelope(
     monkeypatch, failure
@@ -193,6 +197,7 @@ def test_expire_client_maps_post_dispatch_failures_to_exact_replay_envelope(
     assert result["errors"] == [{"rule": "service_response_ambiguous"}]
 
 
+@pytest.mark.smoke
 def test_expire_client_keeps_connect_failure_nonambiguous(monkeypatch):
     class FakeConnection(_BaseFakeConnection):
         def connect(self):
@@ -210,6 +215,7 @@ def test_expire_client_keeps_connect_failure_nonambiguous(monkeypatch):
     assert exc.value.rule == "service_unavailable"
 
 
+@pytest.mark.smoke
 def test_real_http_client_accepts_canonical_expiry_response(tmp_path):
     service, _backend, server, thread, url = _running(tmp_path)
     _owner, started = _start(service)
@@ -226,6 +232,7 @@ def test_real_http_client_accepts_canonical_expiry_response(tmp_path):
     assert result["data"]["outcome"] == "released"
 
 
+@pytest.mark.smoke
 def test_committed_lost_response_exact_retry_does_not_release_replacement(
     tmp_path, monkeypatch
 ):
@@ -294,6 +301,7 @@ def test_committed_lost_response_exact_retry_does_not_release_replacement(
         server.shutdown(); server.server_close(); thread.join(timeout=2)
 
 
+@pytest.mark.smoke
 def test_settimeout_failure_is_known_predispatch_failure(monkeypatch):
     class FailingSocket:
         def settimeout(self, _value):
@@ -315,6 +323,7 @@ def test_settimeout_failure_is_known_predispatch_failure(monkeypatch):
     assert exc.value.rule == "service_unavailable"
 
 
+@pytest.mark.smoke
 def test_http_nonstring_reason_and_target_cardinality_are_journalled(tmp_path):
     service, _backend, server, thread, url = _running(tmp_path)
     reason_request = str(uuid.uuid4())
@@ -358,6 +367,7 @@ def test_http_nonstring_reason_and_target_cardinality_are_journalled(tmp_path):
     }
 
 
+@pytest.mark.smoke
 def test_http_invalid_client_identity_is_not_journalled(tmp_path):
     service, _backend, server, thread, url = _running(tmp_path)
     request_id = str(uuid.uuid4())
@@ -385,6 +395,7 @@ def test_http_invalid_client_identity_is_not_journalled(tmp_path):
     assert stored is None
 
 
+@pytest.mark.smoke
 def test_action_listener_does_not_expose_expiry_route(tmp_path):
     service, _backend = _service(tmp_path)
     server = DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action")

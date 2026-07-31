@@ -82,6 +82,7 @@ def guard_transport():
         close_asana_sdk_client(client)
 
 
+@pytest.mark.smoke
 def test_real_sdk_guard_blocks_managed_task_but_allows_excluded_and_outside(guard_transport):
     guard, transport = guard_transport
     with pytest.raises(CookingMutationBlocked, match="managed_section"):
@@ -95,12 +96,14 @@ def test_real_sdk_guard_blocks_managed_task_but_allows_excluded_and_outside(guar
     ]
 
 
+@pytest.mark.smoke
 def test_lookup_failure_fails_closed_before_generic_write(guard_transport):
     guard, _transport = guard_transport
     with pytest.raises(CookingMutationBlocked, match="task_lookup_unresolved"):
         guard.before_task_mutation("500", command="rename")
 
 
+@pytest.mark.smoke
 def test_move_blocks_source_or_destination_crossing_governed_boundary(guard_transport):
     guard, _transport = guard_transport
     with pytest.raises(CookingMutationBlocked, match="managed_section"):
@@ -110,6 +113,7 @@ def test_move_blocks_source_or_destination_crossing_governed_boundary(guard_tran
     guard.before_move(task_gid="200", section_gid="800", command="move")
 
 
+@pytest.mark.smoke
 def test_create_and_subtask_guard_cover_governed_cooking_targets(guard_transport):
     guard, _transport = guard_transport
     with pytest.raises(CookingMutationBlocked):
@@ -127,6 +131,7 @@ def test_create_and_subtask_guard_cover_governed_cooking_targets(guard_transport
         guard.before_create_subtask(parent_gid="100", command="create-subtask")
 
 
+@pytest.mark.smoke
 def test_raw_task_and_section_mutations_are_guarded(guard_transport):
     guard, _transport = guard_transport
     with pytest.raises(CookingMutationBlocked):

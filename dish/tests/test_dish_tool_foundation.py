@@ -60,6 +60,7 @@ from dish_tool.results import exit_status, result_envelope  # noqa: E402
 from dish_tool.validation import validate_note  # noqa: E402
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("agent", "family"),
     [("claude", "claude"), ("gpt", "gpt"), ("codex", "gpt")],
@@ -69,12 +70,14 @@ def test_agent_family_mapping(agent, family):
     assert opposite_family(family) != family
 
 
+@pytest.mark.smoke
 def test_unknown_agent_fails_closed():
     with pytest.raises(DishRuleError) as exc:
         agent_family("other")
     assert exc.value.code == "INVALID_ARGUMENT"
 
 
+@pytest.mark.smoke
 def test_task_provenance_uses_canonical_actor_names_and_separate_model_tokens():
     assert material_editor_line("gpt", "GPT-5.6 Thinking", "2026-07-27") == (
         "Custom GPT — self-reported model: GPT-5.6 Thinking, 2026-07-27"
@@ -95,6 +98,7 @@ def test_task_provenance_uses_canonical_actor_names_and_separate_model_tokens():
     )
 
 
+@pytest.mark.smoke
 def test_section_resolution_and_management_fail_closed():
     sections = [
         {"gid": "10", "name": "Research Queue"},
@@ -117,6 +121,7 @@ def test_section_resolution_and_management_fail_closed():
         resolve_destination("Ready to Cook", "999", registry)
 
 
+@pytest.mark.smoke
 def test_section_setup_rejects_missing_or_duplicate_names():
     sections = [
         {"gid": "10", "name": "Research Queue"},
@@ -129,6 +134,7 @@ def test_section_setup_rejects_missing_or_duplicate_names():
         SectionRegistry.from_sections(sections)
 
 
+@pytest.mark.smoke
 def test_common_result_contract_and_exit_statuses():
     success = result_envelope(command="prepare", state="ready")
     assert success == {
@@ -162,6 +168,7 @@ def test_common_result_contract_and_exit_statuses():
         assert exit_status(code) == expected
 
 
+@pytest.mark.smoke
 def test_agent_dispatcher_rejects_undeclared_argument_as_invalid_argument(tmp_path):
     from dish_tool.commands import DishApplication
     from dish_tool.models import ResolvedRelease
@@ -188,6 +195,7 @@ def test_agent_dispatcher_rejects_undeclared_argument_as_invalid_argument(tmp_pa
     ]
 
 
+@pytest.mark.smoke
 def test_admin_dispatcher_rejects_undeclared_argument_as_invalid_argument(tmp_path):
     from dish_tool.admin import DishAdminApplication
 

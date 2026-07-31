@@ -126,6 +126,8 @@ def test_terminalization_between_admin_precheck_and_atomic_grant_is_rejected(tmp
     grant_conn.close()
 
 
+@pytest.mark.smoke
+@pytest.mark.invariant_authorization
 def test_authorization_is_not_reservable_before_grant_audit_commits(tmp_path, monkeypatch):
     app, _, operation_id, _ = make_app(tmp_path)
     grant_conn = _second_connection(app.conn)

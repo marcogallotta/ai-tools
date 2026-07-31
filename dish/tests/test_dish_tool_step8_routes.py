@@ -1,3 +1,4 @@
+import pytest
 import sys
 from pathlib import Path
 
@@ -18,6 +19,7 @@ def _review(app, agent, task="t", run="review"):
     return result
 
 
+@pytest.mark.smoke
 def test_small_correction_is_written_rechecked_and_signed_same_pass(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = _review(app, "codex")
@@ -37,6 +39,7 @@ def test_small_correction_is_written_rechecked_and_signed_same_pass(tmp_path):
     assert tuple(cycle) == ("small", "approved")
 
 
+@pytest.mark.smoke
 def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     _review(app, "codex", run="first")
@@ -57,6 +60,7 @@ def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
     assert blocked["code"] == "WRONG_STATE"
 
 
+@pytest.mark.smoke
 def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     _review(app, "codex")
@@ -87,6 +91,7 @@ def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path)
 
 
 
+@pytest.mark.smoke
 def test_human_review_route_reports_private_continuation_without_exposing_it(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     _review(app, "codex", run="human-review")
@@ -100,6 +105,7 @@ def test_human_review_route_reports_private_continuation_without_exposing_it(tmp
     assert result["data"]["required_admin_action"] == "record-human-decision"
     assert "Status: pending-human-review" in backend.notes
 
+@pytest.mark.smoke
 def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK)
@@ -128,6 +134,7 @@ def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     assert app.conn.execute("SELECT COUNT(*) FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()[0] == 3
 
 
+@pytest.mark.smoke
 def test_small_correction_cannot_replace_unreviewed_live_content(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = _review(app, "codex", run="small-proof")
@@ -143,6 +150,7 @@ def test_small_correction_cannot_replace_unreviewed_live_content(tmp_path):
     assert result["errors"][0]["rule"] == "live_task_drift"
 
 
+@pytest.mark.smoke
 def test_reject_requires_exact_verifier_run_proof(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     _review(app, "codex", run="reject-proof")
@@ -154,6 +162,7 @@ def test_reject_requires_exact_verifier_run_proof(tmp_path):
     assert result["errors"][0]["rule"] == "verifier_proof_mismatch"
 
 
+@pytest.mark.smoke
 def test_approve_rejects_candidate_file_without_small_correction(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-extra-file", independence_attestation="independent")
@@ -169,6 +178,7 @@ def test_approve_rejects_candidate_file_without_small_correction(tmp_path):
     assert result["errors"][0]["rule"] == "approval_file_unexpected"
 
 
+@pytest.mark.smoke
 def test_small_correction_requires_candidate_file(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-missing-file", independence_attestation="independent")
@@ -181,6 +191,7 @@ def test_small_correction_requires_candidate_file(tmp_path):
     assert result["errors"][0]["rule"] == "small_correction_file_required"
 
 
+@pytest.mark.smoke
 def test_hold_routes_reject_large_only_arguments(tmp_path):
     for suffix, extra, rule in (
         ("file", {"file_path": str(tmp_path / "unused.txt")}, "hold_candidate_unexpected"),
@@ -203,6 +214,7 @@ def test_hold_routes_reject_large_only_arguments(tmp_path):
         assert result["errors"][0]["rule"] == rule
 
 
+@pytest.mark.smoke
 def test_large_route_rejects_hold_resume_status(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-large-resume", independence_attestation="independent")
@@ -218,6 +230,7 @@ def test_large_route_rejects_hold_resume_status(tmp_path):
     assert result["errors"][0]["rule"] == "large_resume_status_unexpected"
 
 
+@pytest.mark.smoke
 def test_hold_route_reports_all_incompatible_arguments_and_permitted_set(tmp_path):
     candidate = tmp_path / "unused.txt"
     candidate.write_text(TASK)

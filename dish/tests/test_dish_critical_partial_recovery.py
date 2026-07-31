@@ -31,6 +31,8 @@ from tests._partial_recovery_helpers import (
 )
 
 
+@pytest.mark.smoke
+@pytest.mark.invariant_partial_effect_recovery
 @pytest.mark.parametrize(
     ("fault_step", "write_committed", "cycle_created", "move_committed"),
     [

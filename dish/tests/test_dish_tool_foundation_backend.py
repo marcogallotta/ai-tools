@@ -17,6 +17,7 @@ from dish_tool.errors import BackendFailure, DishRuleError
 from dish_tool.models import RequestPhase
 
 
+@pytest.mark.smoke
 def test_backend_failure_classification_tracks_request_phase():
     pre_send = map_backend_exception(
         TimeoutError("connect failed"), phase=RequestPhase.PRE_SEND
@@ -50,6 +51,7 @@ def test_backend_failure_classification_tracks_request_phase():
     assert timeout_response.code == "BACKEND_UNCERTAIN"
 
 
+@pytest.mark.smoke
 def test_backend_call_without_explicit_tracker_marks_request_as_sent():
     backend = AsanaBackend(api_client=object())
 
@@ -62,6 +64,7 @@ def test_backend_call_without_explicit_tracker_marks_request_as_sent():
     assert exc.value.phase == RequestPhase.POSSIBLY_SENT.value
 
 
+@pytest.mark.smoke
 def test_backend_call_never_requests_async_execution():
     """close_asana_sdk_client's bounded pool shutdown is only safe because the
     Asana SDK's worker pool never carries a live request; it stays safe only
@@ -78,6 +81,7 @@ def test_backend_call_never_requests_async_execution():
     assert "async_req" not in recorded_kwargs or not recorded_kwargs["async_req"]
 
 
+@pytest.mark.smoke
 def test_asana_backend_reuses_client_and_disables_sdk_retries(monkeypatch):
     monkeypatch.setenv("ASANA_PAT", "test-token")
     backend = AsanaBackend()
@@ -92,6 +96,7 @@ def test_asana_backend_reuses_client_and_disables_sdk_retries(monkeypatch):
         backend.close()
 
 
+@pytest.mark.smoke
 def test_asana_backend_closes_only_the_client_it_created(monkeypatch):
     monkeypatch.setenv("ASANA_PAT", "test-token")
     owned = AsanaBackend()
@@ -117,6 +122,7 @@ def test_asana_backend_closes_only_the_client_it_created(monkeypatch):
     assert injected.pool is not None
 
 
+@pytest.mark.smoke
 def test_close_asana_sdk_client_terminates_a_pool_that_will_not_join(monkeypatch):
     from dish_tool import backend as backend_module
 
@@ -153,6 +159,7 @@ def test_close_asana_sdk_client_terminates_a_pool_that_will_not_join(monkeypatch
     assert pool.terminated is True
 
 
+@pytest.mark.smoke
 def test_asana_auth_loader_and_timeout_configuration(tmp_path, monkeypatch):
     env_file = tmp_path / ".env"
     env_file.write_text("ASANA_PAT=file-token\n")

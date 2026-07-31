@@ -44,6 +44,7 @@ def _raw_post(
         connection.close()
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("path", "token", "payload", "expected_status"),
     [
@@ -97,6 +98,7 @@ def test_protected_json_routes_reject_non_json_media_type(
     assert backend.moves == 0
 
 
+@pytest.mark.smoke
 def test_protected_json_route_rejects_missing_media_type_before_parsing(tmp_path):
     _service, backend, server, thread, url = _running(tmp_path)
     try:
@@ -116,6 +118,7 @@ def test_protected_json_route_rejects_missing_media_type_before_parsing(tmp_path
     assert backend.writes == 0
 
 
+@pytest.mark.smoke
 def test_application_json_with_charset_remains_accepted(tmp_path):
     _service, _backend, server, thread, url = _running(tmp_path)
     body = json.dumps(
@@ -135,6 +138,7 @@ def test_application_json_with_charset_remains_accepted(tmp_path):
     assert result["ok"] is True
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("body", "field"),
     [
@@ -192,6 +196,7 @@ def _logical_database_dump(path: Path) -> str:
         conn.close()
 
 
+@pytest.mark.smoke
 def test_health_write_readiness_probe_is_logically_side_effect_free(tmp_path):
     service, _backend, _server, _thread, _url = _running(tmp_path)
     # The helper starts a server; stop it so this test exercises the service directly.
@@ -208,6 +213,7 @@ def test_health_write_readiness_probe_is_logically_side_effect_free(tmp_path):
     assert after == before
 
 
+@pytest.mark.smoke
 def test_health_rejects_read_only_database_as_not_mutation_ready(monkeypatch, tmp_path):
     service, _backend, server, thread, _url = _running(tmp_path)
     server.shutdown(); server.server_close(); thread.join(timeout=2)
@@ -232,6 +238,7 @@ def test_health_rejects_read_only_database_as_not_mutation_ready(monkeypatch, tm
     }
 
 
+@pytest.mark.smoke
 def test_health_reports_transient_writer_lock_without_calling_it_corruption(
     monkeypatch, tmp_path
 ):

@@ -87,6 +87,7 @@ def _prepared_verification(tmp_path):
     return app, backend, operation_id, cycle_id, prepared
 
 
+@pytest.mark.smoke
 def test_clean_verification_abandonment_creates_exact_unbound_successor(tmp_path):
     app, _backend, source_id, source_cycle_id, prepared = _prepared_verification(
         tmp_path
@@ -142,6 +143,7 @@ def test_clean_verification_abandonment_creates_exact_unbound_successor(tmp_path
     assert "verifier" not in roles
 
 
+@pytest.mark.smoke
 def test_prepared_verification_resolves_target_and_requires_fresh_run(tmp_path):
     app, _backend, _source_id, _source_cycle_id, prepared = _prepared_verification(
         tmp_path
@@ -193,6 +195,7 @@ def test_prepared_verification_resolves_target_and_requires_fresh_run(tmp_path):
     ).fetchone()[:] == ("completed", "restarted")
 
 
+@pytest.mark.smoke
 def test_service_claims_exact_verification_target_and_binds_lease_cycle(
     tmp_path, monkeypatch
 ):
@@ -253,6 +256,7 @@ def test_service_claims_exact_verification_target_and_binds_lease_cycle(
     check.close()
 
 
+@pytest.mark.smoke
 def test_route_preserved_verification_continuation_resolves_omitted_target(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute(
@@ -321,6 +325,7 @@ def test_route_preserved_verification_continuation_resolves_omitted_target(tmp_p
     assert claimed["data"]["cycle_id"] == next_cycle["cycle_id"]
 
 
+@pytest.mark.smoke
 def test_route_preserved_verification_continuation_is_exact_targeted(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute(
@@ -435,6 +440,7 @@ def test_route_preserved_verification_continuation_is_exact_targeted(tmp_path):
     ).fetchone()[0] is None
 
 
+@pytest.mark.smoke
 def test_action_schema_accepts_only_complete_verification_target_pair():
     client = {
         "run_id": str(uuid.uuid4()),

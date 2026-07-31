@@ -42,6 +42,7 @@ def _config(tmp_path, **updates):
     return replace(base, **updates)
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize("token_name", ["agent_token", "admin_token", "action_token"])
 def test_runtime_rejects_surrounding_token_whitespace(tmp_path, token_name):
     config = _config(tmp_path, **{token_name: " token-secret "})
@@ -51,6 +52,7 @@ def test_runtime_rejects_surrounding_token_whitespace(tmp_path, token_name):
     assert exc.value.details["token"] == token_name.removesuffix("_token")
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("path", "token", "payload"),
     [
@@ -84,6 +86,7 @@ def test_protected_routes_reject_presented_token_whitespace(
     assert result["errors"][0]["rule"] == "service_auth_invalid"
 
 
+@pytest.mark.smoke
 def test_unmodified_bearer_token_remains_accepted(tmp_path):
     _service, _backend, server, thread, url = _running(tmp_path)
     try:
@@ -99,6 +102,7 @@ def test_unmodified_bearer_token_remains_accepted(tmp_path):
     assert result["ok"] is True
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize("timeout", [math.nan, math.inf, -math.inf, 0.0])
 def test_runtime_rejects_nonfinite_or_nonpositive_timeout(tmp_path, timeout):
     with pytest.raises(DishRuleError) as exc:
@@ -107,6 +111,7 @@ def test_runtime_rejects_nonfinite_or_nonpositive_timeout(tmp_path, timeout):
     assert exc.value.details["field"] == "request_timeout_seconds"
 
 
+@pytest.mark.smoke
 def test_runtime_rejects_lease_ttl_shorter_than_legitimate_request(tmp_path):
     minimum = MAX_REQUEST_LIFETIME_SECONDS + RECOVERY_SAFETY_MARGIN_SECONDS
     with pytest.raises(DishRuleError) as exc:
@@ -115,6 +120,7 @@ def test_runtime_rejects_lease_ttl_shorter_than_legitimate_request(tmp_path):
     assert exc.value.details["minimum_exclusive"] == minimum
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize("field", ["connect_timeout", "response_timeout"])
 @pytest.mark.parametrize("timeout", [math.nan, math.inf, -math.inf, 0.0])
 def test_client_rejects_invalid_timeout(field, timeout):
@@ -160,6 +166,7 @@ class _FakeResponse:
         return self._payload
 
 
+@pytest.mark.smoke
 def test_client_closes_failed_http_response(monkeypatch):
     payload = b'{"ok":false,"code":"INVALID_ARGUMENT"}'
     made = {}
@@ -182,6 +189,7 @@ def test_client_closes_failed_http_response(monkeypatch):
     assert made["connection"].closed is True
 
 
+@pytest.mark.smoke
 def test_client_maps_abrupt_disconnect_to_service_error(monkeypatch):
     class DisconnectingConnection(_FakeConnection):
         def getresponse(self):
@@ -198,6 +206,7 @@ def test_client_maps_abrupt_disconnect_to_service_error(monkeypatch):
     assert exc.value.retryable is True
 
 
+@pytest.mark.smoke
 def test_short_body_is_rejected_before_json_execution(tmp_path):
     backend, server, thread, url = _running_action(tmp_path)
     parsed = urlsplit(url)
@@ -233,6 +242,7 @@ def test_short_body_is_rejected_before_json_execution(tmp_path):
     assert backend.writes == 0
 
 
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("path", "token", "payload", "field"),
     [
@@ -271,6 +281,7 @@ def test_private_routes_reject_unexpected_top_level_fields(
     }
 
 
+@pytest.mark.smoke
 def test_read_action_rejects_undefined_request_id(tmp_path):
     _backend, server, thread, url = _running_action(tmp_path)
     try:
@@ -285,6 +296,7 @@ def test_read_action_rejects_undefined_request_id(tmp_path):
     }
 
 
+@pytest.mark.smoke
 def test_nonverification_start_rejects_independence_attestation(tmp_path):
     _backend, server, thread, url = _running_action(tmp_path)
     try:
@@ -310,6 +322,7 @@ def _argument_variants(schema):
     return schema.get("oneOf") or [schema]
 
 
+@pytest.mark.smoke
 def test_action_contract_has_one_run_identity_and_precise_start_shapes():
     spec = action_openapi()
     for command in ("start", "approve", "reject"):

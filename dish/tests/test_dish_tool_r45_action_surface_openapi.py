@@ -1,8 +1,10 @@
+import pytest
 import json
 
 from dish_service.openapi import ACTION_COMMANDS, action_openapi
 
 
+@pytest.mark.smoke
 def test_trimmed_openapi_contains_only_action_workflow_and_renewal_paths():
     spec = action_openapi(server_url="https://dish.example.test")
     paths = set(spec["paths"])
@@ -45,6 +47,7 @@ def test_trimmed_openapi_contains_only_action_workflow_and_renewal_paths():
             assert "run_id" not in arguments["required"]
 
 
+@pytest.mark.smoke
 def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     from dish_service.identifiers import CANONICAL_DISH_UUID_PATTERN
 
@@ -105,6 +108,7 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     assert "no_blockers" not in prepare.get("properties", {})
 
 
+@pytest.mark.smoke
 def test_every_openapi_uuid_schema_requires_canonical_lowercase_pattern():
     from jsonschema import Draft202012Validator
 
@@ -141,6 +145,7 @@ def test_every_openapi_uuid_schema_requires_canonical_lowercase_pattern():
         assert not validator.is_valid(NIL_DISH_UUID)
 
 
+@pytest.mark.smoke
 def test_checked_in_openapi_matches_generator():
     from pathlib import Path
 

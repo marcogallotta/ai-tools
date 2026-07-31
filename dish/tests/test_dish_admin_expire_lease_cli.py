@@ -1,4 +1,5 @@
 from __future__ import annotations
+import pytest
 
 import json
 
@@ -28,6 +29,7 @@ class _RecordingAdminClient:
         }
 
 
+@pytest.mark.smoke
 def test_cli_prints_and_flushes_replay_identity_before_dispatch(capsys):
     client = _RecordingAdminClient()
     status = admin_cli.main(
@@ -56,6 +58,7 @@ def test_cli_prints_and_flushes_replay_identity_before_dispatch(capsys):
     ]
 
 
+@pytest.mark.smoke
 def test_cli_local_mode_rejects_before_local_dependencies(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("DISH_MODE", "local")
     monkeypatch.setenv("DISH_CLIENT_RUN_ID", ADMIN_RUN)
@@ -77,6 +80,7 @@ def test_cli_local_mode_rejects_before_local_dependencies(tmp_path, monkeypatch,
     assert result["errors"][0]["rule"] == "shared_service_required"
 
 
+@pytest.mark.smoke
 def test_cli_malformed_target_and_invalid_run_id_fail_before_dependencies(
     monkeypatch, capsys
 ):

@@ -32,6 +32,8 @@ def test_immediate_transaction_commits_owned_unit():
     assert _values(conn) == ["committed"]
 
 
+@pytest.mark.smoke
+@pytest.mark.invariant_transaction_rollback
 @pytest.mark.parametrize("error", [RuntimeError("failure"), SystemExit("crash")])
 def test_immediate_transaction_rolls_back_errors_and_process_exit(error):
     conn = _connection()

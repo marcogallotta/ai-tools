@@ -96,6 +96,8 @@ def _connect(service):
     return initialize_database(service.config.db_path)
 
 
+@pytest.mark.smoke
+@pytest.mark.invariant_planning_intent
 def test_first_planning_start_only_issues_durable_confirmation(tmp_path):
     backend_calls = 0
 

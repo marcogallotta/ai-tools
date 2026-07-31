@@ -12,6 +12,8 @@ from tests._service_test_helpers import RUN_ID, post as _post, running as _runni
 UNKNOWN_OPERATION = "99999999-9999-4999-8999-999999999999"
 
 
+@pytest.mark.invariant_request_replay
+@pytest.mark.smoke
 @pytest.mark.parametrize(
     ("path", "token", "body", "command"),
     [
@@ -91,6 +93,7 @@ def test_unknown_operation_results_are_completed_and_replayable(
     assert json.loads(row["result_json"])["submission_id"] == UNKNOWN_OPERATION
 
 
+@pytest.mark.smoke
 def test_unknown_operation_request_id_still_rejects_changed_reuse(tmp_path):
     _service, _backend, server, thread, url = _running(tmp_path)
     request_id = str(uuid.uuid4())

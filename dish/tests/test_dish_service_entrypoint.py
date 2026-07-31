@@ -14,6 +14,7 @@ from dish_service.config import ServiceConfig
 ROOT = Path(__file__).resolve().parent.parent
 
 
+@pytest.mark.smoke
 @pytest.mark.boundary
 def test_dish_service_help_uses_the_repository_virtualenv_without_starting_service():
     completed = subprocess.run(
@@ -31,6 +32,7 @@ def test_dish_service_help_uses_the_repository_virtualenv_without_starting_servi
     assert completed.stderr == ""
 
 
+@pytest.mark.smoke
 @pytest.mark.boundary
 def test_dish_service_fails_closed_when_repository_virtualenv_is_missing(tmp_path):
     launcher = tmp_path / "dish-service"
@@ -54,6 +56,7 @@ def test_dish_service_fails_closed_when_repository_virtualenv_is_missing(tmp_pat
     assert f"dish-service: no virtualenv at {expected}" in completed.stderr
 
 
+@pytest.mark.smoke
 def test_sigterm_handler_closes_admission_before_logging(monkeypatch):
     import threading
 
@@ -71,6 +74,7 @@ def test_sigterm_handler_closes_admission_before_logging(monkeypatch):
     assert observed == [True]
 
 
+@pytest.mark.smoke
 def test_second_listener_bind_failure_closes_first(monkeypatch):
     class PrivateServer:
         closed = False
@@ -90,6 +94,7 @@ def test_second_listener_bind_failure_closes_first(monkeypatch):
     assert private.closed is True
 
 
+@pytest.mark.smoke
 def test_process_lock_contention_is_a_concise_startup_diagnostic(
     tmp_path, monkeypatch, caplog
 ):
@@ -115,6 +120,7 @@ def test_process_lock_contention_is_a_concise_startup_diagnostic(
     assert "Traceback" not in caplog.text
 
 
+@pytest.mark.smoke
 def test_listener_failure_stops_and_closes_both_servers():
     import threading
 

@@ -28,6 +28,7 @@ def _released_actor_lease(conn, operation_id: str, *, owner="owner", run_id="dea
     return lease
 
 
+@pytest.mark.smoke
 def test_admin_abandon_operation_creates_exact_planning_successor():
     conn = initialize_database(":memory:")
     backend = Backend(section="pi")
@@ -64,6 +65,8 @@ def test_admin_abandon_operation_creates_exact_planning_successor():
     ).fetchone()[:] == ("abandon-operation", "completed")
 
 
+@pytest.mark.invariant_abandonment
+@pytest.mark.smoke
 def test_blocked_abandonment_returns_exact_private_relay_and_fences_agents(tmp_path, monkeypatch):
     db_path = tmp_path / "dish.db"
     conn = initialize_database(db_path)
@@ -113,6 +116,7 @@ def test_blocked_abandonment_returns_exact_private_relay_and_fences_agents(tmp_p
     check.close()
 
 
+@pytest.mark.smoke
 def test_abandonment_requires_latest_released_actor_attempt():
     conn = initialize_database(":memory:")
     backend = Backend(section="pi")
@@ -139,6 +143,7 @@ def test_abandonment_requires_latest_released_actor_attempt():
     assert accepted["ok"]
 
 
+@pytest.mark.smoke
 def test_cli_parses_abandonment_commands():
     abandon = vars(
         build_parser().parse_args(
@@ -167,6 +172,7 @@ def test_cli_parses_abandonment_commands():
     }
 
 
+@pytest.mark.smoke
 def test_crashed_admin_execution_is_reclaimed_and_both_requests_replay(
     tmp_path, monkeypatch
 ):
@@ -250,6 +256,7 @@ def test_crashed_admin_execution_is_reclaimed_and_both_requests_replay(
     final.close()
 
 
+@pytest.mark.smoke
 def test_completed_route_continuation_remains_exact_in_authoritative_view(tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
     review = app.execute(

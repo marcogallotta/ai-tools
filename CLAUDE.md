@@ -48,9 +48,11 @@ python3 -m venv .venv
 .venv/bin/python -m pytest --smoke
 ```
 
-Use `pytest --smoke` for rapid confidence while iterating. Before handing back code or staged
-archives, run the complete `.venv/bin/python -m pytest` suite. Never package `.venv` in a patch or
-archive.
+Use `pytest --smoke` for rapid confidence while iterating. Smoke membership is attached to each
+test with an explicit marker rather than inferred from its filename, and collection fails if the
+gate loses representative coverage of a required launch-critical invariant. Before handing back
+code or staged archives, run the complete `.venv/bin/python -m pytest` suite. Never package
+`.venv` in a patch or archive.
 
 ## Live Dish smoke-test credentials
 
