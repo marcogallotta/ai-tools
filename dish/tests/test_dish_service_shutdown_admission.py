@@ -95,16 +95,18 @@ def test_shutdown_gate_drops_request_on_existing_unadmitted_connection(tmp_path)
 def test_shutdown_wakes_idle_preaccepted_connection_without_request_timeout(tmp_path):
     service = _HealthService(_config(tmp_path, request_timeout_seconds=30.0))
     _service, server, stop_event, thread = _running_server(tmp_path, service)
+    accepted = threading.Event()
+    real_get_request = server.get_request
+
+    def observed_get_request():
+        result = real_get_request()
+        accepted.set()
+        return result
+
+    server.get_request = observed_get_request  # type: ignore[method-assign]
     connection = socket.create_connection(server.server_address, timeout=2)
     try:
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            with server._admission_lock:
-                if server._pending_connections:
-                    break
-            time.sleep(0.005)
-        else:
-            raise AssertionError("server did not accept idle connection")
+        assert accepted.wait(timeout=2), "server did not accept idle connection"
 
         started = time.monotonic()
         stop_event.set()
@@ -140,15 +142,25 @@ def test_shutdown_drains_request_that_crossed_admission_boundary(tmp_path):
     assert entered.wait(timeout=2)
 
     stop_event.set()
-    shutdown_thread = threading.Thread(
-        target=service_main._shutdown_servers,
-        args=((server,), (thread,)),
-        kwargs={"started_count": 1},
-        daemon=False,
-    )
+    shutdown_started = threading.Event()
+    shutdown_finished = threading.Event()
+    shutdown_errors: list[BaseException] = []
+
+    def shutdown():
+        shutdown_started.set()
+        try:
+            service_main._shutdown_servers((server,), (thread,), started_count=1)
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            shutdown_errors.append(exc)
+        finally:
+            shutdown_finished.set()
+
+    shutdown_thread = threading.Thread(target=shutdown, daemon=False)
     shutdown_thread.start()
-    time.sleep(0.05)
-    assert shutdown_thread.is_alive()
+    assert shutdown_started.wait(timeout=2)
+    assert not shutdown_finished.is_set(), (
+        "shutdown completed before the admitted request drained"
+    )
 
     release.set()
     request_thread.join(timeout=2)
@@ -159,6 +171,7 @@ def test_shutdown_drains_request_that_crossed_admission_boundary(tmp_path):
     assert service.calls == 1
     assert not request_thread.is_alive()
     assert not shutdown_thread.is_alive()
+    assert shutdown_errors == []
     assert not thread.is_alive()
 
 

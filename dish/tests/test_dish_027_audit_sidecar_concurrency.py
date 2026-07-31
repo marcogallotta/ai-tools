@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import threading
-import time
 
+import dish_tool.audit_repair_sidecar as sidecar_module
 import dish_tool.database as database_module
 from dish_tool.database import _import_command_audit_repair_fallback
 from dish_tool.database_schema import initialize_database
@@ -46,7 +46,10 @@ def test_import_does_not_delete_concurrent_emergency_append(monkeypatch, tmp_pat
     importer_inside_claim = threading.Event()
     release_importer = threading.Event()
     writer_finished = threading.Event()
+    writer_lock_attempted = threading.Event()
+    thread_errors: list[BaseException] = []
     real_loads = json.loads
+    real_flock = sidecar_module.fcntl.flock
     first_load = True
 
     def blocking_loads(value, *args, **kwargs):
@@ -57,38 +60,55 @@ def test_import_does_not_delete_concurrent_emergency_append(monkeypatch, tmp_pat
             assert release_importer.wait(timeout=5)
         return real_loads(value, *args, **kwargs)
 
+    def observed_flock(fd, operation):
+        if (
+            threading.current_thread().name == "audit-sidecar-writer"
+            and operation & sidecar_module.fcntl.LOCK_EX
+        ):
+            writer_lock_attempted.set()
+        return real_flock(fd, operation)
+
     monkeypatch.setattr(database_module.json, "loads", blocking_loads)
+    monkeypatch.setattr(sidecar_module.fcntl, "flock", observed_flock)
     imported_counts: list[int] = []
 
     def importer():
-        conn = initialize_database(db_path)
         try:
-            imported_counts.append(_import_command_audit_repair_fallback(conn))
-        finally:
-            conn.close()
+            conn = initialize_database(db_path)
+            try:
+                imported_counts.append(_import_command_audit_repair_fallback(conn))
+            finally:
+                conn.close()
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            thread_errors.append(exc)
 
     def writer():
-        conn = initialize_database(db_path)
         try:
-            assert _write_emergency_repair(conn, _repair("repair-concurrent"))
+            conn = initialize_database(db_path)
+            try:
+                assert _write_emergency_repair(conn, _repair("repair-concurrent"))
+            finally:
+                conn.close()
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            thread_errors.append(exc)
         finally:
-            conn.close()
             writer_finished.set()
 
-    importer_thread = threading.Thread(target=importer)
+    importer_thread = threading.Thread(target=importer, name="audit-sidecar-importer")
     importer_thread.start()
     assert importer_inside_claim.wait(timeout=5)
 
-    writer_thread = threading.Thread(target=writer)
+    writer_thread = threading.Thread(target=writer, name="audit-sidecar-writer")
     writer_thread.start()
-    time.sleep(0.1)
-    assert not writer_finished.is_set(), "writer must wait for the importer sidecar lock"
+    assert writer_lock_attempted.wait(timeout=5), "writer never attempted the sidecar lock"
+    assert not writer_finished.is_set(), "writer acquired the importer-held sidecar lock"
 
     release_importer.set()
     importer_thread.join(timeout=5)
     writer_thread.join(timeout=5)
     assert not importer_thread.is_alive()
     assert not writer_thread.is_alive()
+    assert thread_errors == []
     assert imported_counts == [1]
 
     sidecar = tmp_path / "dish.db.audit-repair.jsonl"

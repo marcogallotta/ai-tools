@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from datetime import datetime, timedelta, timezone
 
 from dish_service.application import DishService
@@ -281,10 +280,25 @@ def test_server_close_drains_inflight_request_before_return(monkeypatch, tmp_pat
         assert entered.wait(timeout=2)
 
         server.shutdown()
-        closer = threading.Thread(target=server.server_close, daemon=False)
+        closer_started = threading.Event()
+        closer_finished = threading.Event()
+        closer_errors: list[BaseException] = []
+
+        def close_server():
+            closer_started.set()
+            try:
+                server.server_close()
+            except BaseException as exc:  # pragma: no cover - surfaced below
+                closer_errors.append(exc)
+            finally:
+                closer_finished.set()
+
+        closer = threading.Thread(target=close_server, daemon=False)
         closer.start()
-        time.sleep(0.05)
-        assert closer.is_alive(), "server_close returned before the active request drained"
+        assert closer_started.wait(timeout=2)
+        assert not closer_finished.is_set(), (
+            "server_close returned before the active request drained"
+        )
     finally:
         release.set()
         if closer is None:
@@ -296,6 +310,7 @@ def test_server_close_drains_inflight_request_before_return(monkeypatch, tmp_pat
         listener.join(timeout=2)
 
     assert closer is not None and not closer.is_alive()
+    assert closer_errors == []
     assert not requester.is_alive()
     assert not listener.is_alive()
     assert result["ok"] is True

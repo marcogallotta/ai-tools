@@ -1,6 +1,5 @@
 import sqlite3
 import threading
-import time
 
 import pytest
 
@@ -133,7 +132,9 @@ def test_authorization_is_not_reservable_before_grant_audit_commits(tmp_path, mo
     reserve_conn = _second_connection(app.conn)
     audit_entered = threading.Event()
     release_audit = threading.Event()
+    reserve_started = threading.Event()
     reserve_finished = threading.Event()
+    thread_errors: list[BaseException] = []
     original = __import__("dish_tool.database", fromlist=["record_audit"]).record_audit
 
     def paused_audit(conn, **kwargs):
@@ -154,24 +155,32 @@ def test_authorization_is_not_reservable_before_grant_audit_commits(tmp_path, mo
     assert app.conn.execute("SELECT COUNT(*) FROM marco_authorizations").fetchone()[0] == 0
 
     def reserve():
-        reserve_result.extend(
-            reserve_marco_authorizations(
-                reserve_conn,
-                task_gid="t",
-                operation_id=operation_id,
-                changes=({"field": "Purpose", "before": "old", "after": "new"},),
+        reserve_started.set()
+        try:
+            reserve_result.extend(
+                reserve_marco_authorizations(
+                    reserve_conn,
+                    task_gid="t",
+                    operation_id=operation_id,
+                    changes=({"field": "Purpose", "before": "old", "after": "new"},),
+                )
             )
-        )
-        reserve_finished.set()
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            thread_errors.append(exc)
+        finally:
+            reserve_finished.set()
 
-    reserve_thread = threading.Thread(target=reserve)
+    reserve_thread = threading.Thread(target=reserve, name="authorization-reserver")
     reserve_thread.start()
-    time.sleep(0.1)
-    assert not reserve_finished.is_set()
+    assert reserve_started.wait(timeout=5)
+    assert not reserve_finished.is_set(), "reservation completed before the grant audit committed"
 
     release_audit.set()
     grant_thread.join(timeout=10)
     reserve_thread.join(timeout=10)
+    assert not grant_thread.is_alive()
+    assert not reserve_thread.is_alive()
+    assert thread_errors == []
     assert len(grant_result) == 1
     assert len(reserve_result) == 1
     assert reserve_result[0]["authorization_id"] == grant_result[0]["authorization_id"]

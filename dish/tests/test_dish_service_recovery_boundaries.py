@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 import threading
-import time
 from pathlib import Path
 
 from dish_service.leases import ServicePrincipal
@@ -219,7 +218,10 @@ def test_maintenance_gate_gives_waiting_restore_priority():
     first.start()
     assert first_entered.wait(timeout=2)
     writer.start()
-    time.sleep(0.05)
+    with gate._condition:
+        assert gate._condition.wait_for(
+            lambda: gate._restore_waiters == 1, timeout=2
+        ), "restore thread never entered the gate's writer wait queue"
     second.start()
     assert not second_entered.wait(timeout=0.1)
     release_first.set()
@@ -229,4 +231,7 @@ def test_maintenance_gate_gives_waiting_restore_priority():
     first.join(timeout=2)
     writer.join(timeout=2)
     second.join(timeout=2)
+    assert not first.is_alive()
+    assert not writer.is_alive()
+    assert not second.is_alive()
     assert order == ["first", "restore", "second"]

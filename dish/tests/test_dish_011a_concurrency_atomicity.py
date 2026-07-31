@@ -22,10 +22,14 @@ def test_concurrent_read_never_observes_partial_submit_terminal_evidence(
     operation_id, verifier = _approved(service)
     terminal_audit_entered = threading.Event()
     release_terminal_audit = threading.Event()
+    inspect_database_attempted = threading.Event()
     inspect_done = threading.Event()
     submitted: list[dict] = []
     inspected: list[dict] = []
+    thread_errors: list[BaseException] = []
     real_record_audit = step9.record_audit
+    import dish_tool.database_schema as database_schema
+    real_migrate_database = database_schema.migrate_database
 
     def pause_terminal_audit(*args, **kwargs):
         if kwargs.get("event_type") == "operation.submitted":
@@ -33,46 +37,60 @@ def test_concurrent_read_never_observes_partial_submit_terminal_evidence(
             assert release_terminal_audit.wait(5)
         return real_record_audit(*args, **kwargs)
 
-    monkeypatch.setattr(step9, "record_audit", pause_terminal_audit)
+    def observed_migrate_database(conn):
+        if threading.current_thread().name == "partial-submit-inspector":
+            inspect_database_attempted.set()
+        return real_migrate_database(conn)
 
-    submit_thread = threading.Thread(
-        target=lambda: submitted.append(
-            service.execute_agent(
-                "submit", {"submission_id": operation_id}, principal=verifier
+    monkeypatch.setattr(step9, "record_audit", pause_terminal_audit)
+    monkeypatch.setattr(database_schema, "migrate_database", observed_migrate_database)
+
+    def submit():
+        try:
+            submitted.append(
+                service.execute_agent(
+                    "submit", {"submission_id": operation_id}, principal=verifier
+                )
             )
-        )
-    )
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            thread_errors.append(exc)
+
+    submit_thread = threading.Thread(target=submit, name="partial-submit-writer")
     submit_thread.start()
     assert terminal_audit_entered.wait(5)
 
     def inspect():
-        inspected.append(
-            service.execute_agent(
-                "inspect",
-                {"agent": "codex", "submission_id": operation_id},
-                principal=verifier,
+        try:
+            inspected.append(
+                service.execute_agent(
+                    "inspect",
+                    {"agent": "codex", "submission_id": operation_id},
+                    principal=verifier,
+                )
             )
-        )
-        inspect_done.set()
+        except BaseException as exc:  # pragma: no cover - surfaced below
+            thread_errors.append(exc)
+        finally:
+            inspect_done.set()
 
-    inspect_thread = threading.Thread(target=inspect)
+    inspect_thread = threading.Thread(target=inspect, name="partial-submit-inspector")
     inspect_thread.start()
-    # A reader may block behind initialization's bounded write lock or see the
-    # coherent pre-terminal snapshot. It must never return the half-written
-    # terminal state as a semantic-validation failure.
-    completed_early = inspect_done.wait(0.2)
-    if completed_early:
-        assert inspected[0]["ok"]
-        assert inspected[0]["state"] == "open"
+    assert inspect_database_attempted.wait(timeout=5), (
+        "inspector never reached database initialization while submit was paused"
+    )
+    assert not inspect_done.is_set(), (
+        "inspector returned while terminal evidence was still uncommitted"
+    )
 
     release_terminal_audit.set()
     submit_thread.join(timeout=5)
     inspect_thread.join(timeout=5)
     assert not submit_thread.is_alive()
     assert not inspect_thread.is_alive()
+    assert thread_errors == []
     assert submitted[0]["ok"]
     assert inspected[0]["ok"]
-    assert inspected[0]["state"] in {"open", "completed"}
+    assert inspected[0]["state"] == "completed"
 
 
 def test_concurrent_read_accepts_durable_submit_intent_during_external_move(

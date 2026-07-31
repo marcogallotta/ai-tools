@@ -367,7 +367,7 @@ def test_concurrent_exact_first_calls_share_one_durable_challenge(tmp_path):
 
     def invoke():
         try:
-            barrier.wait()
+            barrier.wait(timeout=5)
             results.append(_issue(service))
         except BaseException as exc:  # pragma: no cover - assertion reports it
             failures.append(exc)
@@ -375,9 +375,10 @@ def test_concurrent_exact_first_calls_share_one_durable_challenge(tmp_path):
     threads = [threading.Thread(target=invoke) for _ in range(2)]
     for thread in threads:
         thread.start()
-    barrier.wait()
+    barrier.wait(timeout=5)
     for thread in threads:
         thread.join(timeout=5)
+        assert not thread.is_alive(), "Planning challenge worker did not terminate"
 
     assert not failures
     assert len(results) == 2
@@ -427,7 +428,27 @@ def test_concurrent_exact_followups_converge_on_one_operation(tmp_path):
     results: list[dict] = []
     failures: list[BaseException] = []
     second_started = threading.Event()
+    second_lock_attempted = threading.Event()
     second_done = threading.Event()
+    challenge_id = arguments["intent_challenge_id"]
+    lock_index = sum(challenge_id.encode("utf-8")) % len(
+        service._planning_intent_locks
+    )
+    real_lock = service._planning_intent_locks[lock_index]
+
+    class ObservedPlanningIntentLock:
+        def __enter__(self):
+            if threading.current_thread().name == "planning-followup-second":
+                second_lock_attempted.set()
+            real_lock.acquire()
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            real_lock.release()
+
+    locks = list(service._planning_intent_locks)
+    locks[lock_index] = ObservedPlanningIntentLock()
+    service._planning_intent_locks = tuple(locks)
 
     def invoke(*, second=False):
         try:
@@ -447,16 +468,25 @@ def test_concurrent_exact_followups_converge_on_one_operation(tmp_path):
             if second:
                 second_done.set()
 
-    first = threading.Thread(target=invoke)
+    first = threading.Thread(target=invoke, name="planning-followup-first")
     first.start()
     assert entered_read.wait(timeout=5)
-    second = threading.Thread(target=invoke, kwargs={"second": True})
+    second = threading.Thread(
+        target=invoke, kwargs={"second": True}, name="planning-followup-second"
+    )
     second.start()
     assert second_started.wait(timeout=5)
-    assert not second_done.wait(timeout=0.1)
+    assert second_lock_attempted.wait(timeout=5), (
+        "second exact follow-up never attempted the serialized challenge lock"
+    )
+    assert not second_done.is_set(), (
+        "second exact follow-up completed before the first request released"
+    )
     release_read.set()
     first.join(timeout=5)
     second.join(timeout=5)
+    assert not first.is_alive()
+    assert not second.is_alive()
 
     assert not failures
     assert len(results) == 2
