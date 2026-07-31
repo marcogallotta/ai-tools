@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-BIN = HERE.parents[2]
-sys.path.insert(0, str(BIN))
 
 from dish_tool.database import content_identity
 from dish_tool.database_schema import initialize_database

@@ -1,11 +1,9 @@
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
 BIN_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BIN_DIR))
 
 from dish_tool.migrations import migrate_task_document
 from dish_tool.task_document import (

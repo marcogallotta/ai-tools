@@ -1,10 +1,7 @@
-import sys
 from pathlib import Path
 
 import pytest
 
-BIN = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BIN))
 
 from dish_tool.models import (
     material_change_line,

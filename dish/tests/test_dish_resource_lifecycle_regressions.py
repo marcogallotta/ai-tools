@@ -55,7 +55,6 @@ print('closed')
 """
     env = dict(os.environ)
     env["ASANA_PAT"] = "test-pat-token"
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(root), env.get("PYTHONPATH"))))
     completed = subprocess.run(
         [sys.executable, "-c", script],
         cwd=root,

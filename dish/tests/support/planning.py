@@ -2,7 +2,6 @@
 """Shared helpers extracted from test_dish_tool_step6_prepare.py."""
 
 
-import sys
 
 from pathlib import Path
 

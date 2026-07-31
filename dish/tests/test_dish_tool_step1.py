@@ -10,12 +10,11 @@ import pytest
 BIN_DIR = Path(__file__).resolve().parent.parent
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "dish-version-current"
 GIT_COMMIT = BIN_DIR.parent / "tools" / "git-commit"
-sys.path.insert(0, str(BIN_DIR))
 
-from dish_tool import cli as dish_cli  # noqa: E402
-from dish_tool.commands import DishApplication  # noqa: E402
-from dish_tool.errors import ReleaseResolutionError  # noqa: E402
-from dish_tool.releases import (  # noqa: E402
+from dish_tool import cli as dish_cli
+from dish_tool.commands import DishApplication
+from dish_tool.errors import ReleaseResolutionError
+from dish_tool.releases import (
     configured_honest_path,
     current_verification_protocol_release,
     parse_dish_version,

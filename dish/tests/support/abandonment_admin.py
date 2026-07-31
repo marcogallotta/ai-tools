@@ -27,7 +27,7 @@ from dish_tool.database import declare_operation_step
 from dish_tool.database_schema import initialize_database
 
 
-from _workflow_builders import create_large_rejection_successor
+from tests._workflow_builders import create_large_rejection_successor
 from tests.support.abandonment import Backend, _release, _source
 from tests.support.verification import TASK, make_app
 

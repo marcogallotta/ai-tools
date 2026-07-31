@@ -1,9 +1,5 @@
-import sys
 from pathlib import Path
 
-BIN = Path(__file__).resolve().parent.parent
-TESTS = Path(__file__).resolve().parent
-sys.path[:0] = [str(BIN), str(TESTS)]
 
 from dish_tool.database import record_marco_authorization
 from tests.support.verification import TASK, make_app

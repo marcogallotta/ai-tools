@@ -16,7 +16,7 @@ from dish_tool.database import create_abandonment_attempt_in_transaction
 from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import ResolvedRelease
-from _workflow_builders import create_large_rejection_successor, reject_large
+from tests._workflow_builders import create_large_rejection_successor, reject_large
 from tests.support.verification import TASK, make_app
 
 

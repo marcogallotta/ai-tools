@@ -1,9 +1,5 @@
-import sys
 from pathlib import Path
 
-BIN = Path(__file__).resolve().parent.parent
-TESTS = Path(__file__).resolve().parent
-sys.path[:0] = [str(BIN), str(TESTS)]
 
 from dish_tool.task_document import parse_task_document, validate_task_document
 from tests.support.verification import TASK, make_app

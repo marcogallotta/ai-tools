@@ -1,9 +1,5 @@
-import sys
 from pathlib import Path
 
-BIN = Path(__file__).resolve().parent.parent
-TESTS = Path(__file__).resolve().parent
-sys.path[:0] = [str(BIN), str(TESTS)]
 
 from dish_tool.admin import DishAdminApplication
 from dish_tool import step7, step8

@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import json
-import sys
 import threading
 from pathlib import Path
 
 import pytest
 
-BIN = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BIN))
 
 from dish_service.application import DishService
 from dish_service.leases import ServicePrincipal

@@ -1,14 +1,11 @@
 import json
 import shutil
 import sqlite3
-import sys
 from pathlib import Path
 
 import pytest
 
-BIN = Path(__file__).resolve().parent.parent
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "upgrade"
-sys.path.insert(0, str(BIN))
 
 from dish_tool.constants import COOKING_PROJECT_GID
 from dish_tool.database import content_identity, initialize_database

@@ -3,23 +3,20 @@ import os
 import socket
 import sqlite3
 import subprocess
-import sys
 import shutil
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-BIN_DIR = Path(__file__).resolve().parent.parent
 FIXTURE_RELEASE_DIR = Path(__file__).resolve().parent / "fixtures" / "dish-version-current"
-sys.path.insert(0, str(BIN_DIR))
-from dish_tool.backend import (  # noqa: E402
+from dish_tool.backend import (
     AsanaBackend,
     close_asana_sdk_client,
     load_asana_pat,
     map_backend_exception,
 )
-from dish_tool.constants import (  # noqa: E402
+from dish_tool.constants import (
     ASANA_REQUEST_TIMEOUT,
     CONNECT_TIMEOUT_SECONDS,
     EXIT_STATUS_BY_CODE,
@@ -31,15 +28,15 @@ from dish_tool.constants import (  # noqa: E402
     SCHEMA_VERSION,
     TERMINAL_STATES,
 )
-from dish_tool.database import (  # noqa: E402
+from dish_tool.database import (
     initialize_database,
     migrate_database,
     record_audit,
     transition_submission,
 )
-from dish_tool.database_schema import MIGRATIONS, _execute_script_statements  # noqa: E402
-from dish_tool.errors import BackendFailure, DishRuleError, ReleaseResolutionError  # noqa: E402
-from dish_tool.models import (  # noqa: E402
+from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
+from dish_tool.errors import BackendFailure, DishRuleError, ReleaseResolutionError
+from dish_tool.models import (
     RequestPhase,
     SectionRegistry,
     agent_family,
@@ -49,15 +46,15 @@ from dish_tool.models import (  # noqa: E402
     opposite_family,
     resolve_destination,
 )
-from dish_tool.recovery import (  # noqa: E402
+from dish_tool.recovery import (
     begin_write_attempt,
     current_process_identity,
     finish_write_attempt,
     process_identity_is_live,
 )
-from dish_tool.releases import resolve_release  # noqa: E402
-from dish_tool.results import exit_status, result_envelope  # noqa: E402
-from dish_tool.validation import validate_note  # noqa: E402
+from dish_tool.releases import resolve_release
+from dish_tool.results import exit_status, result_envelope
+from dish_tool.validation import validate_note
 
 
 @pytest.mark.smoke

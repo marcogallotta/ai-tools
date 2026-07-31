@@ -1,14 +1,10 @@
 import copy
 import json
-import sys
 import uuid
 from pathlib import Path
 
 import pytest
 
-BIN = Path(__file__).resolve().parent.parent
-TESTS = Path(__file__).resolve().parent
-sys.path[:0] = [str(BIN), str(TESTS)]
 
 import dish_tool.application_service as application_service
 import dish_tool.step8 as step8

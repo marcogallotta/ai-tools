@@ -1,11 +1,8 @@
 import sqlite3
-import sys
 from pathlib import Path
 
 import pytest
 
-BIN = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(BIN))
 
 from dish_tool.database import create_operation, mark_operation_completion, confirm_task_content
 import dish_tool.database_schema as database_schema

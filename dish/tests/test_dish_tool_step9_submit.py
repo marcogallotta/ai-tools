@@ -1,10 +1,6 @@
 import pytest
-import sys
 from pathlib import Path
 
-BIN = Path(__file__).resolve().parent.parent
-TESTS = Path(__file__).resolve().parent
-sys.path[:0] = [str(BIN), str(TESTS)]
 
 from dish_tool.admin import DishAdminApplication
 from tests.support.submission import (
