@@ -138,11 +138,18 @@ exact notes file, notes SHA-256, or Asana `modified_at`.
    released Planned and 6 Korean) matched their expected name, section, and `modified_at` exactly;
    results are in `migration/cooking-raw-capture/`. This is raw source capture only, not the
    transformed Dish document format — item 3 is still open for every task, including the original 88.
-3. **Offline transformation.** Give the captured batch and frozen rollout protocols to ChatGPT. It
-   produces one template per released task plus manifest updates and an exceptions report.
-4. **Deterministic validation.** Check inventory coverage, hashes, schema structure after placeholder
-   resolution, destination legality, prohibited inference, and cross-file consistency. Return every
-   failure for correction.
+3. **Offline transformation — done for all 99 governed tasks (2026-07-31).** ChatGPT produced one
+   template per task from `migration/transformation-handoff.tgz`. The first pass blanket-flagged
+   boilerplate questions on nearly every task; two correction rounds
+   (`migration/transformation-handoff-correction.md`, `migration/transformation-handoff-correction-2.md`)
+   fixed it to attempt Role/Destination/Locks inference from source content and only flag genuine
+   ambiguity. Final batch: `migration/batch-002-correction-2.tgz`, 0 open exceptions.
+4. **Deterministic validation — done for the current batch (2026-07-31).** ChatGPT built
+   `migration/validate_batch_002.py` from `migration/validator-request.md`'s spec (coverage, source
+   fidelity, placeholder integrity, destination legality, Planning brief structure, no fabricated
+   Research/Verification evidence, schema legality, Korean status guard). One scoping bug was found
+   and fixed locally (a Status-field scan was catching preserved legacy note prose instead of only the
+   live record). Current result: 99/99 tasks pass. Re-run this script over any future batch revision.
 5. **Dish durable-state initialization.** Decide and implement how imported `pending-research`,
    `pending-verification`, and accepted-ready tasks acquire legal Dish durable state. Rendered legacy
    provenance or Verification prose is not durable Dish evidence. This must be resolved before any
