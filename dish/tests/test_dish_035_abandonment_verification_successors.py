@@ -18,7 +18,7 @@ from dish_tool.database import (
 from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import ResolvedRelease
-from test_dish_tool_step7_verification import make_app
+from test_dish_tool_step7_verification import TASK, make_app
 
 
 def _release(root: Path, role: str | None = None) -> ResolvedRelease:
@@ -38,6 +38,32 @@ def _release(root: Path, role: str | None = None) -> ResolvedRelease:
         migration_metadata={},
         requested_protocol_role=role,
     )
+
+
+
+
+def _create_large_rejection_successor(app, tmp_path, *, operation_id: str, run_id: str):
+    inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
+    assert inspected["ok"]
+    candidate = tmp_path / f"large-rejection-{run_id}.txt"
+    candidate.write_text(TASK.replace("100 g", "120 g"), encoding="utf-8")
+    rejected = app.execute(
+        "reject",
+        agent="codex",
+        model="gpt-5.6-sol",
+        submission_id=operation_id,
+        route="large",
+        reason="method needs replacement",
+        file_path=str(candidate),
+        run_id=run_id,
+    )
+    assert rejected["ok"]
+    cycle = app.conn.execute(
+        "SELECT * FROM verification_cycles WHERE cycle_id=?",
+        (rejected["data"]["new_cycle_id"],),
+    ).fetchone()
+    assert cycle is not None
+    return cycle
 
 
 def _prepared_verification(tmp_path):
@@ -263,23 +289,8 @@ def test_route_preserved_verification_continuation_resolves_omitted_target(tmp_p
         independence_attestation="independent",
     )
     old_cycle_id = review["data"]["cycle_id"]
-    protocol_release = app.conn.execute(
-        "SELECT protocol_release FROM verification_cycles WHERE cycle_id=?",
-        (old_cycle_id,),
-    ).fetchone()["protocol_release"]
-    app.conn.execute(
-        """UPDATE verification_cycles
-              SET outcome='rejected', correction_class='large', completed_at='now'
-            WHERE cycle_id=?""",
-        (old_cycle_id,),
-    )
-    next_cycle = create_verification_cycle(
-        app.conn,
-        operation_id=operation_id,
-        task_gid="t",
-        cycle_number=2,
-        protocol_release=protocol_release,
-        protocol_text="# Exact frozen Verification protocol\n",
+    next_cycle = _create_large_rejection_successor(
+        app, tmp_path, operation_id=operation_id, run_id="dead-verifier-run"
     )
     lease = LeaseManager(app.conn).acquire(
         operation_id,
@@ -341,19 +352,8 @@ def test_route_preserved_verification_continuation_is_exact_targeted(tmp_path):
         independence_attestation="independent",
     )
     old_cycle_id = review["data"]["cycle_id"]
-    app.conn.execute(
-        """UPDATE verification_cycles
-              SET outcome='rejected', correction_class='large', completed_at='now'
-            WHERE cycle_id=?""",
-        (old_cycle_id,),
-    )
-    next_cycle = create_verification_cycle(
-        app.conn,
-        operation_id=operation_id,
-        task_gid="t",
-        cycle_number=2,
-        protocol_release="1.0.10",
-        protocol_text="# Exact frozen Verification protocol\n",
+    next_cycle = _create_large_rejection_successor(
+        app, tmp_path, operation_id=operation_id, run_id="dead-verifier-run"
     )
     lease = LeaseManager(app.conn).acquire(
         operation_id,
