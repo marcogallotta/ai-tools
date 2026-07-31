@@ -2155,7 +2155,34 @@ WHEN NEW.operation_id IS NOT NULL
 BEGIN SELECT RAISE(ABORT, 'agent-abandoned operation cannot receive content versions'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32}
+_MIGRATION_33 = """
+DROP TRIGGER operations_creation_facts_immutable_update;
+CREATE TRIGGER operations_creation_facts_immutable_update
+BEFORE UPDATE ON operations
+WHEN NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.operation_kind IS NOT OLD.operation_kind
+  OR NEW.expected_identity IS NOT OLD.expected_identity
+  OR (
+       NEW.schema_version IS NOT OLD.schema_version
+       AND NOT (
+           OLD.status='open' AND NEW.status='open'
+           AND OLD.phase='prepare_required' AND NEW.phase='prepare_required'
+           AND OLD.successor_claim_mode='stage_actor'
+           AND NEW.successor_claim_mode='none'
+           AND OLD.run_id IS NULL AND NEW.run_id IS NOT NULL
+           AND OLD.operation_kind IN ('planning','initial','change')
+       )
+     )
+  OR NEW.expected_section_gid IS NOT OLD.expected_section_gid
+  OR NEW.created_at IS NOT OLD.created_at
+  OR NEW.migration_reconciliation_required IS NOT OLD.migration_reconciliation_required
+  OR NEW.migration_reconciliation_reason IS NOT OLD.migration_reconciliation_reason
+BEGIN SELECT RAISE(ABORT, 'operation creation facts are immutable'); END;
+"""
+
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33}
 
 
 def _backup_legacy_database(db_path: Path) -> None:

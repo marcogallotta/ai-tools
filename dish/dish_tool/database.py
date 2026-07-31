@@ -690,6 +690,31 @@ def create_operation(
     operation_id = str(uuid.uuid4())
     conn.execute("BEGIN IMMEDIATE")
     try:
+        abandonment = conn.execute(
+            """SELECT abandonment_id,status,source_operation_id,successor_operation_id
+                 FROM abandonment_attempts
+                WHERE task_gid=? AND status!='completed'
+                ORDER BY created_at DESC LIMIT 1""",
+            (task_gid,),
+        ).fetchone()
+        if abandonment is not None:
+            command = (
+                f"dish-admin reconcile-abandonment "
+                f"{abandonment['abandonment_id']}"
+            )
+            raise DishRuleError(
+                "WRONG_STATE",
+                "task is fenced by an active permanent-run abandonment",
+                rule="abandonment_fence_active",
+                details={
+                    "abandonment_id": abandonment["abandonment_id"],
+                    "abandonment_status": abandonment["status"],
+                    "source_operation_id": abandonment["source_operation_id"],
+                    "successor_operation_id": abandonment["successor_operation_id"],
+                    "required_admin_action": "reconcile-abandonment",
+                    "admin_command": command,
+                },
+            )
         state = conn.execute(
             """SELECT last_confirmed_identity, last_confirmed_content_version_id
                  FROM task_content_state WHERE task_gid = ?""",
@@ -1487,16 +1512,7 @@ def claim_prepared_stage_successor_in_transaction(
                 "actual_section_gid": live_section_gid,
             },
         )
-    if row["schema_version"] != schema_version:
-        raise DishRuleError(
-            "VALIDATION_FAILED",
-            "prepared successor no longer matches the deployment-current schema",
-            rule="prepared_successor_schema_mismatch",
-            details={
-                "operation_schema_version": row["schema_version"],
-                "current_schema_version": schema_version,
-            },
-        )
+    prior_schema_version = row["schema_version"]
     if operation_kind == "change":
         intent = conn.execute(
             """SELECT intended_json, completed_at FROM operation_steps
@@ -1534,31 +1550,30 @@ def claim_prepared_stage_successor_in_transaction(
         )
 
     if operation_kind == "planning":
-        updates = (agent, clean_run, prepared_operation_id)
         cursor = conn.execute(
             """UPDATE operations
-                  SET editor_agent=?, run_id=?, successor_claim_mode='none'
+                  SET editor_agent=?, run_id=?, schema_version=?, successor_claim_mode='none'
                 WHERE operation_id=? AND editor_agent IS NULL AND run_id IS NULL
                   AND successor_claim_mode='stage_actor'""",
-            updates,
+            (agent, clean_run, schema_version, prepared_operation_id),
         )
         role = "planner"
     elif operation_kind == "initial":
         cursor = conn.execute(
             """UPDATE operations
-                  SET researcher_agent=?, run_id=?, successor_claim_mode='none'
+                  SET researcher_agent=?, run_id=?, schema_version=?, successor_claim_mode='none'
                 WHERE operation_id=? AND researcher_agent IS NULL AND run_id IS NULL
                   AND successor_claim_mode='stage_actor'""",
-            (agent, clean_run, prepared_operation_id),
+            (agent, clean_run, schema_version, prepared_operation_id),
         )
         role = "constructor"
     elif operation_kind == "change":
         cursor = conn.execute(
             """UPDATE operations
-                  SET editor_agent=?, run_id=?, successor_claim_mode='none'
+                  SET editor_agent=?, run_id=?, schema_version=?, successor_claim_mode='none'
                 WHERE operation_id=? AND editor_agent IS NULL AND run_id IS NULL
                   AND successor_claim_mode='stage_actor'""",
-            (agent, clean_run, prepared_operation_id),
+            (agent, clean_run, schema_version, prepared_operation_id),
         )
         role = "material_editor"
     else:
@@ -1606,6 +1621,8 @@ def claim_prepared_stage_successor_in_transaction(
         details={
             "abandonment_id": row["abandonment_id"],
             "operation_kind": operation_kind,
+            "previous_schema_version": prior_schema_version,
+            "claimed_schema_version": schema_version,
         },
         result_code="OK",
         result_ok=True,

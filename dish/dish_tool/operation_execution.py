@@ -243,10 +243,27 @@ def claim_abandonment_execution(
             "SELECT * FROM operation_executions WHERE execution_id=?",
             (execution_id,),
         ).fetchone()
+        settled_replay = bool(
+            abandonment is not None
+            and abandonment["current_execution_id"] is None
+            and abandonment["status"] in {
+                "awaiting_successor_claim",
+                "awaiting_hold_resolution",
+                "completed",
+            }
+            and conn.execute(
+                "SELECT 1 FROM operation_execution_claims WHERE execution_id=?",
+                (execution_id,),
+            ).fetchone()
+            is not None
+        )
         if (
             abandonment is None
             or execution is None
-            or abandonment["current_execution_id"] != execution_id
+            or not (
+                abandonment["current_execution_id"] == execution_id
+                or settled_replay
+            )
             or execution["operation_id"] != abandonment["source_operation_id"]
             or execution["command"] not in {
                 "abandon-operation",

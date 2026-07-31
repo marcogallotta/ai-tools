@@ -637,6 +637,12 @@ def _abandonment_hold_action(operation: sqlite3.Row) -> dict[str, Any]:
         f'dish-admin {command} {operation["operation_id"]} '
         f'--detail "{detail}" --resume-status pending-research'
     )
+    relay = (
+        "Tell the human to run the following command after replacing the "
+        "angle-bracketed detail text:\n"
+        f"{template}\n"
+        "Then wait for confirmation it succeeded before continuing."
+    )
     return {
         "surface": "private-admin",
         "command": command,
@@ -646,10 +652,7 @@ def _abandonment_hold_action(operation: sqlite3.Row) -> dict[str, Any]:
         },
         "admin_command": None,
         "admin_command_template": template,
-        "relay_text": (
-            "Tell the human to complete the required hold-resolution command, "
-            "then wait for confirmation it succeeded."
-        ),
+        "relay_text": relay,
         "after_success": {
             "start_new_operation": False,
             "instruction": (
@@ -774,6 +777,39 @@ def _claimed_admin_execution(
             rule="abandonment_execution_binding_missing",
         )
     return row
+
+
+def _unsettled_abandonment_execution(
+    conn: sqlite3.Connection, *, operation_id: str, current_execution_id: str | None
+) -> sqlite3.Row | None:
+    """Return the one unresolved abandonment execution, including post-settlement crashes."""
+
+    if current_execution_id is not None:
+        row = conn.execute(
+            "SELECT * FROM operation_executions WHERE execution_id=?",
+            (current_execution_id,),
+        ).fetchone()
+        if row is not None and row["status"] in {"started", "uncertain"}:
+            return row
+    rows = conn.execute(
+        """SELECT execution.*
+             FROM operation_executions AS execution
+             JOIN operation_execution_claims AS claim
+               ON claim.execution_id=execution.execution_id
+            WHERE execution.operation_id=?
+              AND execution.command IN ('abandon-operation','reconcile-abandonment')
+              AND execution.status IN ('started','uncertain')
+            ORDER BY execution.created_at DESC""",
+        (operation_id,),
+    ).fetchall()
+    if len(rows) > 1:
+        raise DishRuleError(
+            "CONFLICT",
+            "multiple unresolved abandonment executions require manual repair",
+            rule="abandonment_execution_ambiguous",
+            details={"execution_ids": [row["execution_id"] for row in rows]},
+        )
+    return None if not rows else rows[0]
 
 
 def _stored_abandonment_result(row: sqlite3.Row) -> dict[str, Any]:
@@ -911,11 +947,17 @@ def _command_reconcile_abandonment(
     trace.submission_id = operation_id
     trace.task_gid = abandonment["task_gid"]
     trace.state = None if operation is None else operation["status"]
-    if abandonment["status"] in {
+    prior_execution = _unsettled_abandonment_execution(
+        self.conn,
+        operation_id=operation_id,
+        current_execution_id=abandonment["current_execution_id"],
+    )
+    settled = abandonment["status"] in {
         "completed",
         "awaiting_successor_claim",
         "awaiting_hold_resolution",
-    }:
+    }
+    if settled and prior_execution is None:
         data = _decorate_abandonment_result(
             self.conn, _stored_abandonment_result(abandonment)
         )
@@ -930,14 +972,11 @@ def _command_reconcile_abandonment(
             data=data,
         )
 
-    prior_execution = None
-    if abandonment["current_execution_id"] is not None:
-        prior_execution = self.conn.execute(
-            "SELECT * FROM operation_executions WHERE execution_id=?",
-            (abandonment["current_execution_id"],),
-        ).fetchone()
-
     def execute() -> dict[str, Any]:
+        if settled:
+            return _stored_abandonment_result(
+                get_abandonment_attempt(self.conn, clean_id)
+            )
         execution = _claimed_admin_execution(
             self.conn, operation_id=operation_id
         )

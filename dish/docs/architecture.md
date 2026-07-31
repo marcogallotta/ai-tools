@@ -386,7 +386,11 @@ Clean Planning and Research frontiers now publish the immutable successor, succe
 and exact `prepared_operation_id` start action. The successor remains unowned with
 `successor_claim_mode=stage_actor` until that exact target is claimed. Claiming binds the fresh
 planner, constructor, or material editor run, records its actor fact, clears the claim mode, and
-completes the abandonment; the abandoned run is ineligible. Change successors retain the exact
+completes the abandonment; the abandoned run is ineligible. Because no stage work has started on
+the prepared successor, an exact claim that passes deployment-current live validation may also
+adopt the current schema version in that same claim transaction. This is the only permitted update
+to an operation creation-time schema binding; ordinary and already-claimed operations remain
+immutable. Change successors retain the exact
 completed `change_intent`. A preserved pre-construction Research hold keeps the dead-run source fenced
 until its existing hold-resolution command succeeds; that resolution atomically terminalizes the
 source and publishes the fresh Research successor instead of returning the source to
@@ -408,7 +412,15 @@ without the other is invalid, and a delayed target for an older cycle fails rath
 later current cycle. The private operator surface returns the exact connected start target; it never transfers the abandoned actor identity.
 
 
-While an abandonment is `started`, `blocked_manual_reconciliation`, `awaiting_hold_resolution`, or `awaiting_successor_claim`, it is also a task-level connected-mutation fence. Reads and inspection remain available, but no actor lease is acquired for an unrelated mutation. The sole exception is the exact prepared successor claim returned by the abandonment. Blocked results include a generated `reconcile-abandonment` command, a wait-for-confirmation relay, and an instruction to refresh the authoritative action afterward. A completed route-preserved Verification continuation remains exact-targeted in authoritative reads until its cycle is claimed.
+While an abandonment is `started`, `blocked_manual_reconciliation`, `awaiting_hold_resolution`, or `awaiting_successor_claim`, it is also a task-level connected-mutation fence. Reads and inspection remain available, but no actor lease is acquired for an unrelated mutation. The service checks this fence before an ordinary `start` can construct a backend or select an operation, and `create_operation` rechecks it inside the operation-creation writer transaction. The sole exception is the exact prepared successor claim returned by the abandonment. Blocked results include a generated `reconcile-abandonment` command, a wait-for-confirmation relay, and an instruction to refresh the authoritative action afterward. Hold continuations that require human-authored detail include the generated command template directly in the relay text. A completed route-preserved Verification continuation remains exact-targeted in authoritative reads until its cycle is claimed.
+
+Abandonment workflow settlement and operation-execution/request settlement are separate crash
+boundaries. If succession, hold preservation, or committed finalization commits before the linked
+Marco execution and service request complete, the durable operation claim remains the exact replay
+authority even though `abandonment_attempts.current_execution_id` has already been cleared. A later
+`reconcile-abandonment` reclaims that same dead execution, returns the already-stored abandonment
+result without repeating workflow effects, and completes both the original request and the
+reconciliation request.
 
 Request-scoped lease renewal, expired-lease recovery, and explicit administrative lease expiry
 commit the lease effect and replayable service-request result in the same SQLite transaction; neither

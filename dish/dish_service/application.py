@@ -1122,6 +1122,66 @@ class DishService:
             (operation_id, operation_id),
         ).fetchone()
 
+    @staticmethod
+    def _active_abandonment_for_task(conn, task_gid: str):
+        return conn.execute(
+            """SELECT * FROM abandonment_attempts
+                WHERE task_gid=? AND status!='completed'
+                ORDER BY created_at DESC LIMIT 1""",
+            (task_gid,),
+        ).fetchone()
+
+    def _assert_connected_task_abandonment_access(
+        self,
+        conn,
+        *,
+        command: str,
+        arguments: Mapping[str, Any],
+    ) -> None:
+        if command != "start":
+            return
+        task_gid = str(arguments.get("task_gid") or "").strip()
+        if not task_gid:
+            return
+        abandonment = self._active_abandonment_for_task(conn, task_gid)
+        if abandonment is None:
+            return
+        exact_claim = bool(
+            abandonment["status"] == "awaiting_successor_claim"
+            and abandonment["successor_operation_id"]
+            and (
+                arguments.get("prepared_operation_id")
+                == abandonment["successor_operation_id"]
+                or (
+                    arguments.get("target_operation_id")
+                    == abandonment["successor_operation_id"]
+                    and arguments.get("target_cycle_id")
+                    == abandonment["successor_cycle_id"]
+                )
+            )
+        )
+        if exact_claim:
+            return
+        command_text = (
+            f'dish-admin reconcile-abandonment {abandonment["abandonment_id"]}'
+        )
+        raise DishRuleError(
+            "WRONG_STATE",
+            "task is fenced by an active permanent-run abandonment",
+            rule="abandonment_fence_active",
+            details={
+                "abandonment_id": abandonment["abandonment_id"],
+                "abandonment_status": abandonment["status"],
+                "required_admin_action": "reconcile-abandonment",
+                "admin_command": command_text,
+                "directive": (
+                    f"Tell the human to run: {command_text}\n"
+                    "Then wait for confirmation it succeeded and refresh the "
+                    "authoritative Dish action."
+                ),
+            },
+        )
+
     def _assert_connected_abandonment_access(
         self,
         conn,
@@ -1768,6 +1828,12 @@ class DishService:
                     prepared_arguments["reason"] = validate_rejection_reason(
                         prepared_arguments.get("reason")
                     )
+
+                self._assert_connected_task_abandonment_access(
+                    conn,
+                    command=command,
+                    arguments=prepared_arguments,
+                )
 
                 backend = self.backend_factory()
                 if command not in _READ_ONLY_AGENT_COMMANDS:
