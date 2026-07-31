@@ -157,6 +157,13 @@ exact notes file, notes SHA-256, or Asana `modified_at`.
    separately authorized joint cutover in [`rollout.md`](../docs/rollout.md). Do not activate a mixed
    protocol/schema/tool/database/project state.
 
+## Repo hygiene note
+
+`migration/` currently carries several committed binary blobs (`corpus-migration-pre-batch-002-v3.tgz`,
+`transformation-handoff.tgz`, and `cooking-raw-capture/`'s many small note files), which grow the repo.
+Once the migration is accepted and cutover confirmed (item 8), remove or move these working artifacts
+out of version control rather than leaving them permanently committed.
+
 ## Resume instructions
 
 Before continuing, read [`../../CLAUDE.md`](../../CLAUDE.md), [`../README.md`](../README.md),
