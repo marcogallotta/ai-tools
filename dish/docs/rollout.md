@@ -116,6 +116,23 @@ Follow the approved corpus-wide procedure in the frozen Honest rollout revision'
 the initial corpus-migration mechanism. Completed historical tasks remain untouched unless
 deliberately reopened, when they must migrate before substantive work.
 
+## Test/prod flip (planned, not yet built)
+
+Only one public Funnel slot exists on the service host, but test and prod must both stay live so
+local/tailnet agents can address either at will and GPT Actions can be redirected fast in an
+emergency. Decided direction: run `dish-service-test` and `dish-service-prod` as two permanently
+running instances on distinct fixed ports; local/tailnet clients reach either directly by port, so
+nothing about local access ever needs to "flip." A Caddy instance sits statically behind Funnel and
+is the sole flip point — the running config is changed live via Caddy's admin API to point at the
+test or prod port, with `GET /config/...` as the "what's live right now" check. Rejected: relying on
+shell env (e.g. `~/.bashrc` exports) as the source of truth, since already-open shells/sessions don't
+pick up a change; and nginx-reload/consul-template style approaches, which reintroduce "did the flip
+actually take" uncertainty under stress.
+
+This may be short-lived: prod is likely to move to AWS in the medium term, at which point this local
+two-instance/Caddy setup can be retired without unwinding any custom code. Not built yet; step 2 below
+still describes the current single-service-swap model until this replaces it.
+
 ## Production cutover
 
 Production cutover requires a separate explicit authorization. After authorization:
