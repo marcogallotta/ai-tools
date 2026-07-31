@@ -11,42 +11,24 @@ from dish_tool.constants import COOKING_PROJECT_GID
 from dish_tool.database import content_identity, initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.step9 import recover_operation
+from tests.support.asana_backend import StatefulAsanaBackend
 
 DB_NAME = "dish-tool-recovery-v12.sqlite"
 
 
-class SidecarBackend:
+class SidecarBackend(StatefulAsanaBackend):
     def __init__(self, tasks):
-        self.tasks = {item["task_gid"]: dict(item) for item in tasks}
-
-    def read_task(self, gid):
-        item = self.tasks[gid]
-        return {
-            "gid": gid,
-            "name": item["title"],
-            "notes": item["notes"],
-            "completed": False,
-            "modified_at": "fixture",
-            "projects": [{"gid": COOKING_PROJECT_GID}],
-            "memberships": [{"project": {"gid": COOKING_PROJECT_GID}, "section": {"gid": item["section_gid"]}}],
-        }
-
-    def update_task_content(self, *, task_gid, title, notes):
-        self.tasks[task_gid]["title"] = title
-        self.tasks[task_gid]["notes"] = notes
-
-    def move_task_to_section(self, *, task_gid, section_gid):
-        self.tasks[task_gid]["section_gid"] = section_gid
-
-    def list_sections(self, project_gid):
-        return [
-            {"gid": "research", "name": "Research Queue"},
-            {"gid": "verification", "name": "Verification Queue"},
-            {"gid": "destination", "name": "Destination"},
-            {"gid": "third-section", "name": "Other"},
-            {"gid": "ref", "name": "Reference"},
-            {"gid": "src", "name": "Sourcing"},
-        ]
+        super().__init__(
+            tasks=tasks,
+            sections=[
+                {"gid": "research", "name": "Research Queue"},
+                {"gid": "verification", "name": "Verification Queue"},
+                {"gid": "destination", "name": "Destination"},
+                {"gid": "third-section", "name": "Other"},
+                {"gid": "ref", "name": "Reference"},
+                {"gid": "src", "name": "Sourcing"},
+            ],
+        )
 
 
 def _semantic_snapshot(path: Path):

@@ -27,12 +27,9 @@ from tests.support.verification import Backend as WorkflowBackend
 
 
 class Backend(WorkflowBackend):
-    def create_bare_task(self, *, title, project_gid, section_gid):
-        self.writes += 1
-        self.title = title
-        self.notes = ""
-        self.section = section_gid
-        return {"gid": "1000000000000001", "name": title, "notes": ""}
+    def __init__(self):
+        super().__init__(created_task_gid="1000000000000001")
+
 
 def _service(tmp_path, backend=None):
     backend = backend or Backend()

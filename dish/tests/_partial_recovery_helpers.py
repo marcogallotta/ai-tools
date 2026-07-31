@@ -7,6 +7,8 @@ from dish_tool.constants import COOKING_PROJECT_GID
 from dish_tool.database import initialize_database
 from dish_tool.models import ResolvedRelease
 
+from tests.support.asana_backend import StatefulAsanaBackend
+
 TASK = """[non-main] Test dish — crisp comparison side
 A compact side dish for testing texture.
 WHY COOK IT
@@ -45,66 +47,17 @@ Schema version: 2
 """
 
 
-class Backend:
-    def __init__(self, title="Bare", notes="", section="rq", completed=False):
-        self.title = title
-        self.notes = notes
-        self.section = section
-        self.completed = completed
-        self.sections = [
-            {"gid": "rq", "name": "Research Queue"},
-            {"gid": "vq", "name": "Verification Queue"},
-            {"gid": "12345", "name": "Sichuan"},
-            {"gid": "ref", "name": "Reference"},
-            {"gid": "src", "name": "Sourcing"},
-        ]
-        self.writes = 0
-        self.moves = 0
-
-    def list_sections(self, project_gid):
-        return self.sections
-
-    def read_task(self, gid):
-        return {
-            "gid": gid,
-            "name": self.title,
-            "notes": self.notes,
-            "completed": self.completed,
-            "modified_at": "now",
-            "projects": [{"gid": COOKING_PROJECT_GID}],
-            "memberships": [
-                {
-                    "project": {"gid": COOKING_PROJECT_GID},
-                    "section": {"gid": self.section},
-                }
-            ],
-        }
-
-    def update_task_content(self, *, task_gid, title, notes):
-        self.writes += 1
-        self.title = title
-        self.notes = notes
-
-    def update_task_completed(self, *, task_gid, completed):
-        self.writes += 1
-        self.completed = completed
-
-    def move_task_to_section(self, *, task_gid, section_gid):
-        self.moves += 1
-        self.section = section_gid
+Backend = StatefulAsanaBackend
 
 
-class ServiceBackend(Backend):
+class ServiceBackend(StatefulAsanaBackend):
     def __init__(self):
         lines = TASK.splitlines()
-        super().__init__(lines[0], "\n".join(lines[1:]) + "\n")
-
-    def create_bare_task(self, *, title, project_gid, section_gid):
-        self.writes += 1
-        self.title = title
-        self.notes = ""
-        self.section = section_gid
-        return {"gid": "1000000000000001", "name": title, "notes": ""}
+        super().__init__(
+            title=lines[0],
+            notes="\n".join(lines[1:]) + "\n",
+            created_task_gid="1000000000000001",
+        )
 
 
 def release(root: Path, role=None):

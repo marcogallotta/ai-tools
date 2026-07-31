@@ -47,46 +47,20 @@ from dish_tool.step8 import resolve_hold
 from dish_tool.task_store import LiveTask
 
 from tests.planning_intent_support import confirmed_planning_start
+from tests.support.asana_backend import StatefulAsanaBackend
 
-class Backend:
+class Backend(StatefulAsanaBackend):
     def __init__(self, *, title: str = "Bare", notes: str = "", section: str = "rq"):
-        self.title = title
-        self.notes = notes
-        self.section = section
-        self.sections = [
-            {"gid": "pi", "name": "Planning (Incomplete)"},
-            {"gid": "rq", "name": "Research Queue"},
-            {"gid": "vq", "name": "Verification Queue"},
-            {"gid": "dst", "name": "Sichuan"},
-            {"gid": "src", "name": "Sourcing"},
-            {"gid": "ref", "name": "Reference"},
-        ]
+        super().__init__(title=title, notes=notes, section=section)
+        self.forbid(
+            "update_task_content",
+            "clean stage successor creation must not write Asana",
+        )
+        self.forbid(
+            "move_task_to_section",
+            "clean stage successor creation must not move Asana",
+        )
 
-    def list_sections(self, project_gid):
-        assert project_gid == COOKING_PROJECT_GID
-        return self.sections
-
-    def read_task(self, gid):
-        return {
-            "gid": gid,
-            "name": self.title,
-            "notes": self.notes,
-            "completed": False,
-            "modified_at": "now",
-            "projects": [{"gid": COOKING_PROJECT_GID}],
-            "memberships": [
-                {
-                    "project": {"gid": COOKING_PROJECT_GID},
-                    "section": {"gid": self.section},
-                }
-            ],
-        }
-
-    def update_task_content(self, **_kwargs):
-        raise AssertionError("clean stage successor creation must not write Asana")
-
-    def move_task_to_section(self, **_kwargs):
-        raise AssertionError("clean stage successor creation must not move Asana")
 
 def _release(role: str) -> ResolvedRelease:
     return ResolvedRelease(

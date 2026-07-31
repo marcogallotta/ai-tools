@@ -15,6 +15,8 @@ from dish_tool.database import initialize_database
 
 from dish_tool.models import ResolvedRelease
 
+from tests.support.asana_backend import StatefulAsanaBackend
+
 TASK = """[non-main] Test dish — crisp comparison side
 A compact side dish for testing texture.
 WHY COOK IT
@@ -52,31 +54,16 @@ source.example/test — Construction — hydration ratio — selected route is d
 Schema version: 2
 """
 
-class Backend:
-    def __init__(self):
+class Backend(StatefulAsanaBackend):
+    def __init__(self, *, created_task_gid="1000000000000001"):
         lines = TASK.splitlines()
-        self.title = lines[0]
-        self.notes = "\n".join(lines[1:]) + "\n"
-        self.section = "rq"
-        self.writes = 0
-        self.moves = 0
-        self.sections = [
-            {"gid": "rq", "name": "Research Queue"},
-            {"gid": "vq", "name": "Verification Queue"},
-            {"gid": "12345", "name": "Sichuan"},
-            {"gid": "ref", "name": "Reference"},
-            {"gid": "src", "name": "Sourcing"},
-        ]
+        super().__init__(
+            title=lines[0],
+            notes="\n".join(lines[1:]) + "\n",
+            section="rq",
+            created_task_gid=created_task_gid,
+        )
 
-    def list_sections(self, project_gid): return self.sections
-    def read_task(self, gid):
-        return {"gid": gid, "name": self.title, "notes": self.notes, "completed": False,
-                "modified_at": "now", "projects": [{"gid": COOKING_PROJECT_GID}],
-                "memberships": [{"project": {"gid": COOKING_PROJECT_GID}, "section": {"gid": self.section}}]}
-    def update_task_content(self, *, task_gid, title, notes):
-        self.writes += 1; self.title, self.notes = title, notes
-    def move_task_to_section(self, *, task_gid, section_gid):
-        self.moves += 1; self.section = section_gid
 
 def make_app(tmp_path):
     backend = Backend()

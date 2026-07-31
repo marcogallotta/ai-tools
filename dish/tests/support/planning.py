@@ -15,6 +15,8 @@ from dish_tool.database import initialize_database
 
 from dish_tool.models import ResolvedRelease
 
+from tests.support.asana_backend import StatefulAsanaBackend
+
 TASK = """[non-main] Test dish — crisp comparison side
 A compact side dish for testing texture.
 WHY COOK IT
@@ -63,17 +65,7 @@ Research emphasis: Compare two hydration levels
 Destination section: Sichuan — 12345
 """
 
-class Backend:
-    def __init__(self, title="Bare", notes="", section="rq", completed=False):
-        self.title, self.notes, self.section, self.completed = title, notes, section, completed
-        self.sections = [{"gid":"rq","name":"Research Queue"},{"gid":"vq","name":"Verification Queue"},{"gid":"12345","name":"Sichuan"},{"gid":"ref","name":"Reference"},{"gid":"src","name":"Sourcing"}]
-        self.writes = 0; self.moves = 0
-    def list_sections(self, project_gid): return self.sections
-    def read_task(self, gid):
-        return {"gid":gid,"name":self.title,"notes":self.notes,"completed":self.completed,"modified_at":"now","projects":[{"gid":COOKING_PROJECT_GID}],"memberships":[{"project":{"gid":COOKING_PROJECT_GID},"section":{"gid":self.section}}]}
-    def update_task_content(self, *, task_gid, title, notes): self.writes += 1; self.title, self.notes = title, notes
-    def update_task_completed(self, *, task_gid, completed): self.writes += 1; self.completed = completed
-    def move_task_to_section(self, *, task_gid, section_gid): self.moves += 1; self.section=section_gid
+Backend = StatefulAsanaBackend
 
 def release(root, role=None):
     return ResolvedRelease(version="1.0.10", commit="", root=root, protocols={} if role is None else {role:f"{role} protocol"}, manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}", migration_metadata={}, requested_protocol_role=role)
