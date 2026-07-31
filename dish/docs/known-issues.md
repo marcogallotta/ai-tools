@@ -54,39 +54,6 @@ Implement this before lower-priority post-rollout candidates unless rollout evid
 priority. Reconsider launch blocking only if another pre-rollout occurrence causes unwanted live
 content or repeated operator cleanup.
 
-### distributed-transaction-ownership
-
-**Resolved in the current base.**
-
-SQLite control-statement ownership is now centralized in `dish_tool.transactions`. The runtime uses
-named contracts for isolated nested units, caller-joined atomic units, and helpers that require an
-existing transaction. Service request journaling, backup identity, lease mutation, operation
-execution, abandonment succession, external-effect reconciliation, governed authorization, audit
-repair, schema migration, and health write probing no longer hand-roll transaction control.
-
-A structural regression test rejects raw `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, or `RELEASE`
-statements outside the transaction primitive module. Behavior-focused concurrency, replay,
-crash-recovery, lease, abandonment, authorization, backup, migration, and audit-repair tests remain
-the authority for the actual atomic units; the structural test prevents ownership from becoming
-distributed again.
-
-### oversized-recovery-functions
-
-**Resolved in the current base.**
-
-The eight audited hotspots were decomposed without changing their public behavior or transaction
-boundaries: `_validate_semantic_evidence`, `recover_operation`, `execute_agent`, `execute_admin`,
-`apply_operation_abandonment_succession_in_transaction`, `classify_abandonment_frontier`,
-`claim_operation_execution`, and `execution_recovery_state`. Each is now a coordinator of less than
-100 lines, with named helpers separating classification, validation, persistence, dispatch, and
-result construction.
-
-The refactor deliberately retained validation/error ordering, fault-injection seams, monkeypatch
-surfaces used by recovery tests, and caller-owned transaction units. Focused concurrency,
-recovery, service/admin, abandonment, schema, and database suites plus the complete test suite
-remain the behavior authority; no test asserts helper layout as a substitute for workflow
-invariants.
-
 ### connected-request-status-inspection
 
 **Priority: p3; not launch-blocking.**
