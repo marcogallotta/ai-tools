@@ -14,7 +14,8 @@ from dish_tool.application_service import CurrentWorkflowService
 from dish_tool.database import declare_operation_step
 from dish_tool.database_schema import initialize_database
 from test_dish_034_abandonment_stage_successors import Backend, _release, _source
-from test_dish_035_abandonment_verification_successors import make_app
+from _workflow_builders import create_large_rejection_successor
+from test_dish_tool_step7_verification import TASK, make_app
 
 
 def _released_actor_lease(conn, operation_id: str, *, owner="owner", run_id="dead-run"):
@@ -260,22 +261,15 @@ def test_completed_route_continuation_remains_exact_in_authoritative_view(tmp_pa
         independence_attestation="independent",
     )
     cycle_id = review["data"]["cycle_id"]
-    app.conn.execute(
-        """UPDATE verification_cycles
-              SET outcome='rejected', correction_class='large', completed_at='now'
-            WHERE cycle_id=?""",
-        (cycle_id,),
-    )
-    from dish_tool.database import create_abandonment_attempt_in_transaction, create_verification_cycle
-
-    next_cycle = create_verification_cycle(
-        app.conn,
+    next_cycle = create_large_rejection_successor(
+        app,
+        tmp_path,
         operation_id=operation_id,
-        task_gid="t",
-        cycle_number=2,
-        protocol_release="1.0.10",
-        protocol_text="# Exact frozen Verification protocol\n",
+        agent="codex",
+        run_id="dead-verifier-run",
+        candidate_text=TASK.replace("100 g", "120 g"),
     )
+    from dish_tool.database import create_abandonment_attempt_in_transaction
     lease = LeaseManager(app.conn).acquire(
         operation_id,
         ServicePrincipal("owner", "dead-verifier-run"),

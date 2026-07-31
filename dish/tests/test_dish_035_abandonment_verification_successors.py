@@ -9,15 +9,14 @@ from dish_service.application import DishService
 from dish_service.command_spec import validate_action_request
 from dish_service.config import ServiceConfig
 from dish_service.leases import LeaseManager, ServicePrincipal
+from dish_tool.admin import DishAdminApplication
 from dish_tool.abandonment import settle_abandonment_frontier
 from dish_tool.commands import DishApplication
-from dish_tool.database import (
-    create_abandonment_attempt_in_transaction,
-    create_verification_cycle,
-)
+from dish_tool.database import create_abandonment_attempt_in_transaction
 from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import ResolvedRelease
+from _workflow_builders import create_large_rejection_successor, reject_large
 from test_dish_tool_step7_verification import TASK, make_app
 
 
@@ -40,30 +39,6 @@ def _release(root: Path, role: str | None = None) -> ResolvedRelease:
     )
 
 
-
-
-def _create_large_rejection_successor(app, tmp_path, *, operation_id: str, run_id: str):
-    inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
-    assert inspected["ok"]
-    candidate = tmp_path / f"large-rejection-{run_id}.txt"
-    candidate.write_text(TASK.replace("100 g", "120 g"), encoding="utf-8")
-    rejected = app.execute(
-        "reject",
-        agent="codex",
-        model="gpt-5.6-sol",
-        submission_id=operation_id,
-        route="large",
-        reason="method needs replacement",
-        file_path=str(candidate),
-        run_id=run_id,
-    )
-    assert rejected["ok"]
-    cycle = app.conn.execute(
-        "SELECT * FROM verification_cycles WHERE cycle_id=?",
-        (rejected["data"]["new_cycle_id"],),
-    ).fetchone()
-    assert cycle is not None
-    return cycle
 
 
 def _prepared_verification(tmp_path):
@@ -289,8 +264,13 @@ def test_route_preserved_verification_continuation_resolves_omitted_target(tmp_p
         independence_attestation="independent",
     )
     old_cycle_id = review["data"]["cycle_id"]
-    next_cycle = _create_large_rejection_successor(
-        app, tmp_path, operation_id=operation_id, run_id="dead-verifier-run"
+    next_cycle = create_large_rejection_successor(
+        app,
+        tmp_path,
+        operation_id=operation_id,
+        agent="codex",
+        run_id="dead-verifier-run",
+        candidate_text=TASK.replace("100 g", "120 g"),
     )
     lease = LeaseManager(app.conn).acquire(
         operation_id,
@@ -352,8 +332,13 @@ def test_route_preserved_verification_continuation_is_exact_targeted(tmp_path):
         independence_attestation="independent",
     )
     old_cycle_id = review["data"]["cycle_id"]
-    next_cycle = _create_large_rejection_successor(
-        app, tmp_path, operation_id=operation_id, run_id="dead-verifier-run"
+    next_cycle = create_large_rejection_successor(
+        app,
+        tmp_path,
+        operation_id=operation_id,
+        agent="codex",
+        run_id="dead-verifier-run",
+        candidate_text=TASK.replace("100 g", "120 g"),
     )
     lease = LeaseManager(app.conn).acquire(
         operation_id,
@@ -387,24 +372,59 @@ def test_route_preserved_verification_continuation_is_exact_targeted(tmp_path):
         "target_cycle_id": next_cycle["cycle_id"],
     }
 
-    app.conn.execute(
-        "UPDATE verification_cycles SET outcome='rejected', completed_at='later' WHERE cycle_id=?",
-        (next_cycle["cycle_id"],),
-    )
-    later = create_verification_cycle(
-        app.conn,
-        operation_id=operation_id,
-        task_gid="t",
-        cycle_number=3,
-        protocol_release="1.0.10",
-        protocol_text="# Exact frozen Verification protocol\n",
-    )
-    stale = app.execute(
+    claimed = app.execute(
         "start",
         agent="gpt",
         task_gid="t",
         kind="verification",
         run_id="fresh-run",
+        independence_attestation="independent",
+        target_operation_id=operation_id,
+        target_cycle_id=next_cycle["cycle_id"],
+    )
+    assert claimed["ok"], claimed
+    live_candidate = f"{backend.title}\n{backend.notes}".replace("120 g", "130 g")
+    held = reject_large(
+        app,
+        tmp_path,
+        operation_id=operation_id,
+        agent="gpt",
+        run_id="fresh-run",
+        candidate_text=live_candidate,
+    )
+    assert held["data"]["two_pass_hold"] is True
+
+    reopened_text = f"{backend.title}\n{backend.notes}".replace(
+        "Compare hydration routes.",
+        "Compare hydration routes after a rested-starch reset.",
+    )
+    reopened_candidate = tmp_path / "reopened-route.txt"
+    reopened_candidate.write_text(reopened_text, encoding="utf-8")
+    reopened = DishAdminApplication(app.conn, backend=backend).execute(
+        "reopen",
+        submission_id=operation_id,
+        category="premise",
+        before="Compare hydration routes.",
+        after="Compare hydration routes after a rested-starch reset.",
+        editor="codex",
+        model="gpt-5.6-sol",
+        run_id="reopen-run",
+        file_path=str(reopened_candidate),
+        date="2026-07-31",
+    )
+    assert reopened["ok"], reopened
+    later = app.conn.execute(
+        "SELECT * FROM verification_cycles WHERE operation_id=? AND completed_at IS NULL",
+        (operation_id,),
+    ).fetchone()
+    assert later is not None
+
+    stale = app.execute(
+        "start",
+        agent="codex",
+        task_gid="t",
+        kind="verification",
+        run_id="later-run",
         independence_attestation="independent",
         target_operation_id=operation_id,
         target_cycle_id=next_cycle["cycle_id"],
