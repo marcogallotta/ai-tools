@@ -34,6 +34,7 @@ def _grant(conn, operation_id):
     )
 
 
+@pytest.mark.flake_stress
 def test_duplicate_exact_grant_race_creates_one_audited_capability(tmp_path):
     app, _, operation_id, _ = make_app(tmp_path)
     first = _second_connection(app.conn)
@@ -128,6 +129,7 @@ def test_terminalization_between_admin_precheck_and_atomic_grant_is_rejected(tmp
 
 @pytest.mark.smoke
 @pytest.mark.invariant_authorization
+@pytest.mark.flake_stress
 def test_authorization_is_not_reservable_before_grant_audit_commits(tmp_path, monkeypatch):
     app, _, operation_id, _ = make_app(tmp_path)
     grant_conn = _second_connection(app.conn)

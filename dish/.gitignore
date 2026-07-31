@@ -2,3 +2,5 @@ __pycache__/
 .venv/
 .coverage
 var/
+.venv-flake/
+.test-artifacts/

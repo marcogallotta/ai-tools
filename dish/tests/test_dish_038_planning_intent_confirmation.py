@@ -361,6 +361,14 @@ def test_exact_replay_converges_after_operation_commit_before_result(tmp_path, m
 
 
 
+@pytest.mark.flake_stress
+@pytest.mark.flake_candidate(
+    issue="DISH-flake-038-concurrent-challenge-backup-race",
+    owner="Marco",
+    first_seen="2026-07-31",
+    signature="sqlite3.DatabaseError: legacy backup schema version mismatch racing "
+    "concurrent initialize_database calls in _backup_legacy_database",
+)
 def test_concurrent_exact_first_calls_share_one_durable_challenge(tmp_path):
     service, _ = _service(tmp_path)
     barrier = threading.Barrier(3)
@@ -400,6 +408,7 @@ def test_concurrent_exact_first_calls_share_one_durable_challenge(tmp_path):
         conn.close()
 
 
+@pytest.mark.flake_stress
 def test_concurrent_exact_followups_converge_on_one_operation(tmp_path):
     entered_read = threading.Event()
     release_read = threading.Event()

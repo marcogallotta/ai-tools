@@ -13,6 +13,7 @@ loading every Dish document.
 |---|---|
 | installation, deployment, service operation, or an operator command | [`../README.md`](../README.md) and the linked deployment guide |
 | response fields, exit status, retry, leases, recovery, or client-visible behavior | [`runtime-contract.md`](runtime-contract.md) |
+| test execution, flaky-test diagnosis, quarantine, or test artifacts | [`testing.md`](testing.md) |
 | post-rollout candidates, testing boundaries, and accepted launch limitations | [`known-issues.md`](known-issues.md) |
 | GPT Action exposure or editor configuration | [`../deploy/gpt-action.md`](../deploy/gpt-action.md) |
 | Tailscale Serve or Funnel | [`../deploy/tailscale/README.md`](../deploy/tailscale/README.md) |

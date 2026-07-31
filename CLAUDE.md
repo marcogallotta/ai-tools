@@ -12,6 +12,8 @@ documentation roles are:
 - `dish/README.md` — installation, deployment, and operator entry points;
 - `dish/docs/architecture.md` — current code structure, authority boundaries,
   invariants, persistence, recovery, and extension rules;
+- `dish/docs/testing.md` — authoritative test gates, flaky-test diagnosis, quarantine, and
+  test-artifact handling;
 - `dish/docs/known-issues.md` — post-rollout candidates, testing boundaries, and accepted
   launch limitations;
 - `dish/docs/runtime-contract.md` — response, exit-status, retry, and
@@ -48,6 +50,9 @@ python3 -m venv .venv
 .venv/bin/python -m pytest --smoke
 .venv/bin/python -m pytest --database-boundary
 ```
+
+Flaky-test detection uses a separate environment created from `requirements-flake.txt`; follow
+`dish/docs/testing.md`. Normal smoke, database-boundary, and full-suite gates never rerun failures.
 
 Use `pytest --smoke` for rapid confidence while iterating. The smoke gate is selected by explicit
 per-test markers and enforces representative coverage of the launch-critical invariants. Run

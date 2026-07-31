@@ -6,6 +6,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+import pytest
 
 from dish_service import __main__ as service_main
 from dish_service.config import ServiceConfig
@@ -72,6 +73,7 @@ def test_normal_response_closes_loopback_connection(tmp_path):
         _stop(server, stop_event, thread)
 
 
+@pytest.mark.flake_stress
 def test_shutdown_gate_drops_request_on_existing_unadmitted_connection(tmp_path):
     service, server, stop_event, thread = _running_server(tmp_path)
     connection = socket.create_connection(server.server_address, timeout=2)
@@ -92,6 +94,7 @@ def test_shutdown_gate_drops_request_on_existing_unadmitted_connection(tmp_path)
         assert not thread.is_alive()
 
 
+@pytest.mark.flake_stress
 def test_shutdown_wakes_idle_preaccepted_connection_without_request_timeout(tmp_path):
     service = _HealthService(_config(tmp_path, request_timeout_seconds=30.0))
     _service, server, stop_event, thread = _running_server(tmp_path, service)
@@ -120,6 +123,7 @@ def test_shutdown_wakes_idle_preaccepted_connection_without_request_timeout(tmp_
         connection.close()
 
 
+@pytest.mark.flake_stress
 def test_shutdown_drains_request_that_crossed_admission_boundary(tmp_path):
     entered = threading.Event()
     release = threading.Event()
@@ -175,6 +179,7 @@ def test_shutdown_drains_request_that_crossed_admission_boundary(tmp_path):
     assert not thread.is_alive()
 
 
+@pytest.mark.flake_stress
 def test_shutdown_closes_both_admission_gates_before_waiting_for_listener():
     events: list[str] = []
 

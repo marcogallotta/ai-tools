@@ -185,6 +185,7 @@ def test_pre35_inflight_execution_retains_conservative_audit_fallback(tmp_path):
     assert state["safe_to_retry"] is False
 
 
+@pytest.mark.flake_stress
 def test_real_authorization_racing_no_effect_prepare_is_not_misattributed(
     tmp_path, monkeypatch
 ):
@@ -270,6 +271,7 @@ def test_real_authorization_racing_no_effect_prepare_is_not_misattributed(
     assert evidence["safe_to_retry"] is True
 
 
+@pytest.mark.flake_stress
 def test_real_verifier_inspect_racing_no_effect_approve_is_not_misattributed(
     tmp_path, monkeypatch
 ):

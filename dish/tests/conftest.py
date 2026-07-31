@@ -10,6 +10,12 @@ import os
 import pathlib
 import sqlite3
 import sys
+
+from tests.flake_policy import (
+    CANDIDATE_MARKER,
+    QUARANTINE_MARKER,
+    validate_marker_metadata,
+)
 from importlib.machinery import SourceFileLoader
 
 import pytest
@@ -50,17 +56,60 @@ def pytest_addoption(parser):
         default=False,
         help="run the real SQLite bootstrap, migration, concurrency, and durability lane",
     )
+    parser.addoption(
+        "--flake-candidates",
+        action="store_true",
+        default=False,
+        help="run only tests under active flaky-test investigation",
+    )
+    parser.addoption(
+        "--quarantine",
+        action="store_true",
+        default=False,
+        help="run only confirmed, time-bounded quarantined flaky tests",
+    )
 
 
-def pytest_collection_modifyitems(config, items):
+def _flake_policy_violations(items):
+    violations = []
+    for item in items:
+        candidate = item.get_closest_marker(CANDIDATE_MARKER)
+        quarantine = item.get_closest_marker(QUARANTINE_MARKER)
+        if candidate is not None and quarantine is not None:
+            violations.append(
+                f"{item.nodeid}: cannot be both flake_candidate and quarantined"
+            )
+            continue
+        marker = quarantine or candidate
+        if marker is None:
+            continue
+        launch_critical = (
+            item.get_closest_marker("smoke") is not None
+            or any(mark.name.startswith("invariant_") for mark in item.iter_markers())
+        )
+        for error in validate_marker_metadata(
+            marker.name, marker.kwargs, launch_critical=launch_critical
+        ):
+            violations.append(f"{item.nodeid}: {error}")
+    return violations
+
+
+def _select_items(config, items):
     smoke_requested = config.getoption("--smoke")
     database_boundary_requested = config.getoption("--database-boundary")
-    if smoke_requested and database_boundary_requested:
+    candidates_requested = config.getoption("--flake-candidates")
+    quarantine_requested = config.getoption("--quarantine")
+    selectors = [
+        smoke_requested,
+        database_boundary_requested,
+        candidates_requested,
+        quarantine_requested,
+    ]
+    if sum(bool(value) for value in selectors) > 1:
         raise pytest.UsageError(
-            "--smoke and --database-boundary are separate test lanes"
+            "--smoke, --database-boundary, --flake-candidates, and --quarantine "
+            "are separate test lanes"
         )
-    if not smoke_requested and not database_boundary_requested:
-        return
 
     if smoke_requested:
         selected = [
@@ -68,6 +117,7 @@ def pytest_collection_modifyitems(config, items):
             for item in items
             if item.get_closest_marker("smoke") is not None
             and item.get_closest_marker("full_suite_only") is None
+            and item.get_closest_marker(QUARANTINE_MARKER) is None
         ]
         covered = {
             marker
@@ -81,11 +131,14 @@ def pytest_collection_modifyitems(config, items):
                 "smoke suite lacks required invariant coverage: "
                 + ", ".join(sorted(missing))
             )
-    else:
+        return selected
+
+    if database_boundary_requested:
         selected = [
             item
             for item in items
             if item.get_closest_marker("database_boundary") is not None
+            and item.get_closest_marker(QUARANTINE_MARKER) is None
         ]
         covered = {
             marker
@@ -99,11 +152,51 @@ def pytest_collection_modifyitems(config, items):
                 "database-boundary lane lacks required coverage: "
                 + ", ".join(sorted(missing))
             )
+        return selected
 
+    if candidates_requested:
+        return [
+            item
+            for item in items
+            if item.get_closest_marker(CANDIDATE_MARKER) is not None
+            and item.get_closest_marker(QUARANTINE_MARKER) is None
+        ]
+
+    if quarantine_requested:
+        return [
+            item
+            for item in items
+            if item.get_closest_marker(QUARANTINE_MARKER) is not None
+        ]
+
+    return [
+        item
+        for item in items
+        if item.get_closest_marker(QUARANTINE_MARKER) is None
+    ]
+
+
+def pytest_collection_modifyitems(config, items):
+    violations = _flake_policy_violations(items)
+    if violations:
+        raise pytest.UsageError(
+            "invalid flaky-test policy metadata:\n" + "\n".join(violations)
+        )
+
+    selected = _select_items(config, items)
     selected_set = set(selected)
     deselected = [item for item in items if item not in selected_set]
     items[:] = selected
-    config.hook.pytest_deselected(items=deselected)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if exitstatus != pytest.ExitCode.NO_TESTS_COLLECTED:
+        return
+    config = session.config
+    if config.getoption("--flake-candidates") or config.getoption("--quarantine"):
+        session.exitstatus = pytest.ExitCode.OK
 
 
 

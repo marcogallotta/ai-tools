@@ -13,6 +13,7 @@ from tests.support.operational import _approved, _service
 from tests.support.submission import _signed
 
 
+@pytest.mark.flake_stress
 def test_concurrent_read_never_observes_partial_submit_terminal_evidence(
     tmp_path, monkeypatch
 ):
@@ -93,6 +94,7 @@ def test_concurrent_read_never_observes_partial_submit_terminal_evidence(
     assert inspected[0]["state"] == "completed"
 
 
+@pytest.mark.flake_stress
 def test_concurrent_read_accepts_durable_submit_intent_during_external_move(
     tmp_path, monkeypatch
 ):
@@ -153,6 +155,7 @@ def test_concurrent_read_accepts_durable_submit_intent_during_external_move(
     assert submitted[0]["ok"]
 
 
+@pytest.mark.flake_stress
 def test_concurrent_read_accepts_terminal_lease_cleanup_tail(tmp_path, monkeypatch):
     service, _backend = _service(tmp_path)
     operation_id, verifier = _approved(service)

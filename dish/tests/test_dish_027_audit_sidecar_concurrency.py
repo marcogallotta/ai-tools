@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
+import pytest
 
 import dish_tool.audit_repair_sidecar as sidecar_module
 import dish_tool.database as database_module
@@ -37,6 +38,7 @@ def _repair_ids(conn) -> list[str]:
     ]
 
 
+@pytest.mark.flake_stress
 def test_import_does_not_delete_concurrent_emergency_append(monkeypatch, tmp_path):
     db_path = tmp_path / "dish.db"
     setup = initialize_database(db_path)

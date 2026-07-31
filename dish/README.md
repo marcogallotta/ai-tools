@@ -323,11 +323,18 @@ override for tests that must exercise real bootstrap, migration, locking, and du
 .venv/bin/python -m pytest
 ```
 
-Do not copy or package `.venv`; it is interpreter-local. The committed implementation tests cover service restart, concurrency, leases, credential scopes, the generated Asana SDK path, Action/CLI equivalence, private/admin HTTP parity, backup/restore, operational health, and private/public surface separation.
+Do not copy or package `.venv`; it is interpreter-local. Flake detection uses a separate
+`.venv-flake` environment and explicit commands that preserve seeds, JUnit XML, environment
+metadata, and pass-on-rerun failures without weakening the authoritative gates. See
+[`docs/testing.md`](docs/testing.md) for the candidate/quarantine policy and reproducible detection
+commands. The committed implementation tests cover service restart, concurrency, leases, credential
+scopes, the generated Asana SDK path, Action/CLI equivalence, private/admin HTTP parity,
+backup/restore, operational health, and private/public surface separation.
 
 ## Documentation map
 
 - `docs/architecture.md` — mandatory agent change map: authorities, invariants, owning layers, and routed reading.
+- `docs/testing.md` — authoritative test gates, flake detection, candidate/quarantine policy, and artifact handling.
 - `docs/runtime-contract.md` — JSON meanings, exit statuses, retry rules, and operational recovery.
 - `docs/rollout.md` — separately authorized test-project rehearsal, migration, production cutover, and rollback.
 - `docs/future.md` — only work that is not already implemented.
