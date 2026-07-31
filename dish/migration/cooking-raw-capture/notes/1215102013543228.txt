@@ -1,0 +1,72 @@
+Nam tok gai — seared chicken salad
+
+Hard-seared chicken thigh dressed warm with lime, fish sauce, chilli, shallot, herbs, resting juices and khao khua.
+
+WHY COOK IT
+Compare the laap/nam-tok family through sliced browned meat and warm juices rather than minced meat.
+
+CAN I COOK IT? Yes.
+
+## WHAT TO BUY
+- Boneless chicken thigh: 350g
+- Shallot: 45g
+- Scallion: 1
+- Cilantro: 10g
+- Lime: enough for at least 30ml juice
+
+## CHECK BEFORE COOKING
+- Homemade khao khua, fish sauce, dried chilli and mint are in Pantry; harvest mint only if its current flavour is acceptable.
+- This is one fresh sitting, not a three-portion storage dish.
+
+## QUANTITIES
+Portions: 1 substantial fresh serving.
+- Boneless chicken thigh: 350g
+- Shallot: 45g, thinly sliced
+- Scallion: 1, sliced
+- Cilantro: 10g
+- Mint: 10g
+- Fish sauce: start with 25ml
+- Lime juice: start with 25ml
+- Khao khua: 12g
+- Dried chilli flakes: 1/2–1 tsp
+- All resting juices from the chicken
+- White sugar: none by default
+
+## HOW TO COOK IT
+1. Pat the chicken dry. Salt only lightly, accounting for the later fish sauce.
+2. Sear in an uncrowded pan until deeply browned and safely cooked. Rest 5 minutes and retain every drop of juice.
+3. Slice across the grain.
+4. Mix 25ml fish sauce, 25ml lime, chilli and resting juices. Taste the dressing before it reaches the meat; correct with measured additions only.
+5. Toss the warm chicken with dressing, shallot and scallion.
+6. Fold in mint and cilantro, then khao khua immediately before serving.
+
+## WHAT SUCCESS LOOKS LIKE
+Chicken is juicy with genuinely browned edges. Dressing is sour-salty-hot and clings to thin slices without pooling. Herbs remain bright; coarse toasted rice adds aroma and light binding rather than grit or paste.
+
+Visual reference — https://www.seriouseats.com/guide-to-thai-salads-5209897 — Observe thinly sliced browned meat, visible herbs and toasted rice, and dressing that clings rather than pools. Ignore pork/beef and grill equipment.
+
+## WATCH OUT FOR
+Do not crowd the pan, discard resting juices, build fish sauce and lime blindly, add soy marinade to the baseline or hold the dressed salad.
+
+## STORAGE
+None recommended after dressing. Cook and eat immediately.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: GPT, 2026-07-16, contract 0dceb66
+
+### Decisions
+Human — Marco: Use the named chicken variant with seared chicken thigh rather than treating chicken as an undisclosed substitute.
+
+### Research basis
+Intentional chicken nam-tok variant, human-approved.
+Construction — Eating Thai Food, https://www.eatingthaifood.com/nam-tok-recipe/ — per 250g grilled meat uses 30ml fish sauce, about 22ml lime, 1 tbsp khao khua and about 35g shallot.
+Later validation — Susie Cooks Thai, https://susiecooksthai.com/thai-beef-salad-nam-tok-recipe/ — per 454g meat uses 30ml fish sauce, 30ml lime and 2 tbsp khao khua.
+At 350g, the two sources span approximately 23–42ml fish sauce, 23–31ml lime and 12–15g khao khua. The task's 25ml, 25ml and 12g sit inside that range as tasting starting points.
+
+### Material changes
+2026-07-16 — Claude — Delta: reconciled chicken weight, fish sauce, lime, khao khua and shallot against two direct sources.
+2026-07-16 — GPT — Verification correction: added complete sourcing/storage language, retained the source-supported conservative starting balance and signed the contained Delta.

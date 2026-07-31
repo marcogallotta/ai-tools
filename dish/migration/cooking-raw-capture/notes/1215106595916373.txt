@@ -1,0 +1,91 @@
+Ash-e reshteh — Persian herb, bean and noodle soup
+
+A thick Persian soup of legumes, herbs, spinach and noodles, finished per bowl with kashk and mint-garlic oil. Broken linguine or fettuccine is the approved practical reshteh substitute.
+
+WHY COOK IT
+Learn a substantial Persian herb-soup structure distinct from khoresh: legumes, greens, noodles, kashk acidity and mint-oil finishing.
+
+CAN I COOK IT? No - soak chickpeas and kidney beans overnight and either make the half-batch kashk ahead or source about 240ml liquid kashk.
+
+## WHAT TO BUY
+- Chickpeas: 45g dry
+- Kidney beans: 45g dry
+- Brown or green lentils: 40g
+- Parsley: 60g
+- Cilantro: 60g
+- Scallions or chives: 4–5
+- Spinach: 150g
+- Onion: 1 medium
+- Garlic: 7 cloves total
+- Broken linguine or fettuccine: 75g
+- Full-fat plain yogurt: about 960g for the half-batch kashk, unless buying liquid kashk
+
+## CHECK BEFORE COOKING
+- Soak chickpeas and kidney beans 8–12 hours; lentils need no soak.
+- Make kashk at least the day before if using the stovetop method.
+- Keep kashk and mint oil separate from the stored soup base.
+
+## KASHK — HALF BATCH FOR THIS DISH
+Makes about 240ml / 1 cup, enough for the cook with some serving margin.
+- Full-fat plain yogurt: about 960g / 4 cups
+- Water: 240ml / 1 cup
+- Fine salt: about 4.5g / 3/4 tsp
+- Additional water for blending: 60–120ml as required
+Simmer yogurt and water gently for roughly 2–2.5 hours until separated, beige and greatly concentrated. Drain and squeeze firmly, then blend with salt and enough water for a smooth pourable paste.
+
+## QUANTITIES
+Portions: 3 substantial bowls.
+- Chickpeas: 45g dry, soaked
+- Kidney beans: 45g dry, soaked
+- Brown or green lentils: 40g
+- Parsley: 60g
+- Cilantro: 60g
+- Scallions or chives: 4–5
+- Spinach: 150g
+- Onion: 1 medium
+- Garlic: 3 cloves in the soup plus 4 for garnish
+- Turmeric: 1.5 tsp
+- Broken linguine or fettuccine: 75g
+- Water: begin around 1.2L, with hot water available
+- Kashk: up to 240ml, mostly for serving
+- Garnish oil: 45ml neutral oil
+- Dried mint: 1.5 tbsp
+- Fine salt and black pepper
+
+## HOW TO COOK IT
+1. Cook onion until golden; add the three base garlic cloves and turmeric.
+2. Add soaked chickpeas and kidney beans with about 1.2L water. Simmer until nearly tender, then add lentils.
+3. Add chopped herbs and spinach. Simmer uncovered 20–30 minutes until fully cooked, aromatic and thick.
+4. Add broken pasta and cook only until tender, adding hot water only if the soup becomes paste before noodles cook.
+5. Fry sliced garnish garlic until golden and remove. Take oil off direct heat, stir in dried mint briefly and do not let it burn.
+6. Serve thick soup with kashk, garlic and mint oil visibly swirled over each bowl.
+
+## WHAT SUCCESS LOOKS LIKE
+The base is a thick pottage that mounds softly then settles. Herbs are dark and fully cooked, legumes identifiable and noodles integrated but not dissolved. Pale tangy kashk and mint-garlic oil remain visible on top.
+
+Visual reference — https://www.theguardian.com/lifeandstyle/2010/feb/20/legume-noodle-soup-yotam-ottolenghi — Observe thick pottage structure with visible noodles, legumes and contrasting dairy/oil garnish. Ignore its different legume and dairy system.
+
+## WATCH OUT FOR
+Broken Italian pasta is a real compromise: it lacks reshteh's exact flavour and thickening behaviour, though the broad noodle structure remains. Dried mint burns quickly and noodles continue softening in storage.
+
+## STORAGE
+Refrigerate the soup base up to 4 days or freeze. Store kashk and garnish oil separately; loosen the base carefully on reheating.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: GPT, 2026-07-16, contract 0dceb66
+
+### Decisions
+Human — Marco: Use broken linguine or fettuccine as the practical reshteh substitute.
+
+### Research basis
+Intentional noodle substitution, human-approved.
+Construction and later validation — The Delicious Crescent, https://www.thedeliciouscrescent.com/persian-noodle-soup-with-beans-and-herbs/ — confirms beans, lentils, abundant herbs/spinach, thick porridge-like structure, 90g reshteh or linguine, kashk and mint oil.
+Kashk construction — The Delicious Crescent, https://www.thedeliciouscrescent.com/persian-kashk-recipe/ — full recipe uses 8 cups yogurt, 2 cups water and 1/2 tbsp salt and yields about 2 cups. This task uses an exact half batch, not the former full 16-serving condiment batch.
+
+### Material changes
+2026-07-16 — Claude — Delta: restored complete shopping and lead-time instructions and replaced an inaccessible source.
+2026-07-16 — GPT — Verification correction: scaled homemade kashk to the dish rather than a 16-serving standing batch, reconciled storage/readiness and signed the contained Delta.

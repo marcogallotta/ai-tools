@@ -1,0 +1,77 @@
+Phở gà repeat — pressure-cooker correction
+
+A deliberate multi-variable correction of an earlier phở gà, changing pot fill, release timing, wing load, cinnamon identity, cao-guo dose, sprouts and serving-meat handling.
+
+WHY COOK IT
+Run Marco’s approved practical correction while keeping the broth, noodles and serving chicken appropriate for three substantial bowls.
+
+CAN I COOK IT? No — the revised brief is complete and requires later independent verification.
+
+## CHECK BEFORE COOKING
+- Use a clearly lower Instant Pot fill than the previous cook.
+- Use a timed 10–15 minute natural release; do not leave it open-ended.
+- Poach serving meat only after straining; do not pressure-cook it with the bones.
+- Cook noodles and prepare sprouts/garnishes fresh for each bowl.
+
+## QUANTITIES
+Portions: 3 substantial bowls.
+
+Broth:
+- Chicken carcass: 1
+- Chicken wings: 5
+- Small onion: 1, charred
+- Ginger: 30–40g, charred
+- Star anise: 1
+- Cassia: about 0.6 stick
+- Cao guo: 1/2 large pod, lightly cracked
+- Cloves: 2
+- Coriander seed: 1/2 tsp
+- Water: 1.25–1.5L, subject to safe fill
+- Fish sauce and fine salt: after straining, to taste
+
+Serving chicken and assembly:
+- Boneless chicken breast or leg meat: 450g total, about 150g raw per bowl
+- Flat rice noodles: 450g dry total, 150g per bowl
+- Fresh bean sprouts: 150–210g total, 50–70g per bowl
+- Scallion, raw onion and chilli
+- Fresh lemon juice: up to 20ml per bowl, added at service rather than to stored broth
+
+## HOW TO COOK IT
+1. Char onion and ginger. Toast spices briefly without scorching.
+2. Load carcass, wings, aromatics, spices and 1.25L water. Add only enough further water to reach the intended lower fill, never above 1.5L or the safe-fill line.
+3. Pressure-cook on high for 25 minutes.
+4. Natural release for 10–15 minutes only, then release remaining pressure carefully.
+5. Strain and discard bones, spent aromatics and spices.
+6. Gently poach the 450g serving chicken in the strained broth until just cooked. Remove, rest and slice; divide into three equal portions.
+7. Measure the broth and divide it into three equal bowl portions. Season the full broth gradually with fish sauce and salt only after measuring.
+8. At each sitting, cook 150g dry noodles fresh, reheat one broth portion, and assemble with one chicken portion, sprouts and fresh garnishes.
+
+## WHAT SUCCESS LOOKS LIKE
+The broth is clear, chicken-forward but not over-extracted, and restrained in spice. Each bowl contains a substantial noodle portion and a clear serving of juicy chicken. Sprouts remain crisp and garnishes stay fresh. Because several variables change together, improvement must not be attributed to one variable without evidence.
+
+## WATCH OUT FOR
+- The correction is based on Marco’s thermal-mass explanation: a fuller pot produces a longer natural release and therefore a longer effective extraction. Do not revive the unsupported claim that fill level directly weakens spice extraction.
+- Do not pressure-cook the serving meat.
+- Do not use a whole large cao-guo pod.
+- Do not batch-cook noodles or add lemon to stored broth.
+
+## STORAGE
+Chill broth and poached chicken promptly in three portions. Keep noodles, sprouts and garnishes separate.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done — revised brief requires later independent verification.
+
+### Decisions
+Human — Marco: approved the multi-variable practical correction and accepted that any improvement cannot be assigned to one variable.
+Human — Marco: confirmed that the controlling mechanism is additional thermal mass extending natural-release time. Cassia and restrained cao-guo are separate choices, not explanations for the earlier result.
+Agent — GPT: resolved the missing portion count as three substantial bowls and replaced the inadequate 275g serving-meat placeholder with 450g total chicken, 150g per bowl. Retained 150g dry noodles per bowl as the established substantial portion.
+
+### Research basis
+The prior cook used one carcass, ten wings and about 2.5L water with a long natural release. This correction uses one carcass, five wings, 1.25–1.5L water, the same 25-minute pressure cycle and a controlled 10–15-minute release. A separate poached serving-meat step protects texture. The earlier Cooking History record described the first result as good; therefore this task is an approved refinement based on Marco’s own thermal-mass assessment, not a claim that the prior cook objectively failed.
+
+### Material changes
+2026-07-30 — Fixed the unresolved bowl count at three; increased reserved serving chicken from 275g to 450g total; made broth division and per-bowl assembly executable; removed the stale instruction to recover the intended bowl count later.

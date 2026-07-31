@@ -1,0 +1,95 @@
+Bibimbap
+
+Rice topped with separately cooked and seasoned vegetables, egg, kimchi if appropriate and a staged gochujang sauce.
+
+WHY COOK IT
+Build Korean rice-table composition after simpler namul and ferment blocks have been assessed.
+
+CAN I COOK IT? No - awaiting independent verification.
+
+## WHAT TO BUY
+- Short- or medium-grain rice
+- Soybean sprouts
+- Spinach
+- Courgette
+- Carrot
+- Mushrooms
+- Eggs
+
+## CHECK BEFORE COOKING
+- Use young homemade gochujang only if ready; otherwise use a reference halal-suitable gochujang and record the substitution.
+- Keep beef out of the first version unless deliberately requested.
+
+## QUANTITIES
+Yield: 3 substantial bowls. With no beef, tofu or other named protein, committed protein is roughly
+12-15g/bowl (egg plus vegetables), well under the ~50g target. Accepted as a deliberate consequence
+of the no-beef decision below, not an oversight; if a fuller-protein version is wanted later, add a
+stated protein component rather than inflating egg count alone.
+- Short- or medium-grain rice: 300g dry
+- Soybean sprouts: 300g
+- Spinach: 250g
+- Courgette: 250g
+- Carrot: 180g
+- Dried shiitake: 25g dry, rehydrated, or 200g fresh mushrooms
+- Eggs: 3
+- Neutral oil, sesame oil, garlic, scallion, salt, soy and sesame seeds as needed
+
+Gochujang sauce:
+- Young homemade or reference gochujang: 45g
+- Sesame oil: 11ml
+- White sugar: 6g
+- Water: 11ml
+- Garlic: 5g, optional
+
+## HOW TO COOK IT
+1. Cook rice and keep it hot.
+2. Prepare soybean sprouts as kongnamul-muchim.
+3. Blanch spinach briefly, squeeze dry and season lightly.
+4. Stir-fry courgette until just tender; remove.
+5. Stir-fry carrot until tender-crisp; remove.
+6. Cook mushrooms with a small amount of soy and garlic until glossy and no longer wet.
+7. Mix the sauce and fry eggs fresh.
+8. Arrange components separately over rice. Add sauce gradually and mix at the table.
+
+## WHAT SUCCESS LOOKS LIKE
+Each vegetable remains separately legible in distinct bands over hot rice. Sauce binds the mixed bowl without erasing the component identities, and young gochujang, if used, contributes ferment depth without raw or harsh notes.
+
+Visual reference and free video — https://www.maangchi.com/recipe/bibimbap — Observe each vegetable cooked and held separately, then arranged in distinct bands over rice before mixing. This validates component separation and final assembly. Ignore the source's beef, raw-yolk option, expanded vegetable set and dolsot branch.
+
+## WATCH OUT FOR
+Do not cook all vegetables together, over-season every component or use bibimbap as the first simultaneous test of every homemade ferment.
+
+## STORAGE
+Store components separately up to 2 days. Cook rice and eggs fresh when possible.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: Not done - requires Claude, contract 0dceb66
+
+### Decisions
+Human — Marco: beef is not bibimbap's defining protein — rice, namul and gochujang sauce are the
+defining structure, and a traditional no-meat lineage ("Sanchae bibimbap") exists — so no Human
+Review is required on keeping beef out of this first version.
+Human — Marco: vinegar dropped from the sauce — the cited source has no vinegar in its actual recipe;
+only a reader comment (not the author's recipe) offers a vinegar variant at roughly 1:6 ratio to
+gochujang, far below what this task previously used (20ml against 60g gochujang).
+
+### Research basis
+Source-backed dish.
+Construction update — The vegetable set is deliberately flexible. Use slightly dry short-grain rice, prepare each topping
+separately and season lightly. For three bowls, 450–500g cooked rice, four vegetables, 250–300g beef
+or tofu and three eggs is workable.
+
+Sauce corrected to the source baseline: koreanbapsang.com's actual "Basic Gochujang Sauce" is 4 tbsp
+gochujang : 2 tsp sugar : 1 tbsp sesame oil : 1 tbsp water, with no vinegar. Scaled to this task's
+45g gochujang (~0.75x) that gives ~11ml water, ~11ml sesame oil and ~6g sugar. Sauce corrected to
+source baseline. Research is sufficient.
+Sources: <https://www.koreanbapsang.com/bibimbap/>
+
+### Material changes
+2026-07-17 — Claude — Delta: added the contract-required protein-shortfall disclosure under Yield
+(~12-15g/bowl vs. the ~50g target with no beef/tofu), which the recorded no-beef decision hadn't
+carried through to its nutritional consequence. No quantities changed.

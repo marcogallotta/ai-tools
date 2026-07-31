@@ -1,0 +1,97 @@
+Bún chả-style chicken plate — halal adaptation, not pork-equivalent
+
+A halal chicken dish using the meal architecture of bún chả: deeply browned chicken-thigh patties, warm diluted nước chấm, carrot-daikon đồ chua, rice vermicelli, lettuce, mint and cilantro. It is not presented as equivalent to pork bún chả: chicken lacks pork fat, pan-searing lacks charcoal smoke, and no pork-belly component is reproduced.
+
+WHY COOK IT
+Test whether the bún chả service structure remains worthwhile with an explicitly different halal protein.
+
+CAN I COOK IT? No — the revised brief is complete and requires later independent verification.
+
+## WHAT TO BUY
+Pantry snapshot checked 2026-07-30.
+- Minced chicken thigh: 480g
+- Shallot: enough for about 40ml minced
+- Carrot: 120g
+- Daikon: 120g
+- Lettuce
+- Rice vermicelli / bún: 450g dry if the pantry stock check fails
+- Fresh lime only if the available lime/lemon juice is insufficient
+
+Do not buy cilantro merely for this task while the homegrown plant is not harvestable. Mint is available but may be weak in hot weather; judge it at service.
+
+## CHECK BEFORE COOKING
+- Wait until homegrown cilantro is harvestable.
+- Confirm 450g dry rice vermicelli is available.
+- Mix patties 20–30 minutes before cooking.
+- Batch patties, đồ chua and nước chấm; cook noodles and prepare herbs fresh.
+
+## QUANTITIES
+Portions: 3 substantial, carb-forward assemblies.
+
+Chicken patties:
+- Minced chicken thigh: 480g
+- Fish sauce: 20ml [approx]
+- White sugar: 10g [approx]
+- Minced shallot: 40ml [approx]
+- Garlic: 1.5 tsp
+- Black pepper: 1/2 tsp
+- Baking soda: scant 1/2 tsp [approx]
+- Neutral oil: only enough for effective browning
+
+Đồ chua:
+- Carrot: 120g
+- Daikon: 120g
+- Fine salt: 9g [approx], for draining
+- White sugar: 30g [approx]
+- Rice vinegar: 32ml [approx]
+- Water: 65ml [approx]
+
+Warm nước chấm:
+- Fish sauce: 56ml
+- Warm water: 169ml
+- White sugar: 35–40g
+- Fresh lime or lemon juice: 45ml
+- Garlic: 1–2 cloves
+- Chilli: optional
+
+Per portion:
+- Dry rice vermicelli: 150g, cooked fresh
+- One-third of the patties
+- One-third of the đồ chua
+- One-third of the nước chấm
+- Lettuce, mint and cilantro
+
+## HOW TO COOK IT
+1. Salt carrot and daikon for 10–15 minutes, rinse or squeeze gently, then combine with sugar, vinegar and water. Rest at least 1 hour.
+2. Mix the chicken patty ingredients, form patties and pan-sear to deep browning and a 74°C centre.
+3. Divide cooked patties, pickles and dipping sauce into three portions.
+4. For later sittings, reheat patties briefly in a hot pan, then place them only briefly in that sitting’s warmed nước chấm.
+5. Cook 150g dry noodles and prepare herbs fresh for each sitting.
+
+## WHAT SUCCESS LOOKS LIKE
+Chicken patties are deeply browned but juicy and sit partly immersed in warm diluted nước chấm. Noodles, herbs and pickles remain separate until eating. The result should read as a deliberate chicken plate using bún chả architecture, never as a simulation of pork fat or charcoal-grilled pork.
+
+## WATCH OUT FOR
+- Do not use “traditional,” “authentic replacement,” or “equivalent” language for the chicken.
+- Do not inflate chicken or oil to force the normal protein target; Marco approved a sensible chicken quantity and carb-forward meal.
+- Do not under-brown patties, simmer reheated patties for long, serve the dipping sauce refrigerator-cold, or batch-cook noodles.
+
+## STORAGE
+Refrigerate patties promptly in separate portions. Store đồ chua and nước chấm separately. Prepare noodles and herbs fresh.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done — revised brief requires later independent verification.
+
+### Decisions
+Human — Marco: approved chicken and pan-searing as an explicit halal adaptation; approved three substantial portions with 150g dry bún per portion and accepted lower protein rather than distorting the dish.
+Agent — GPT: made the non-equivalence explicit in the title, summary, success criteria and warnings; completed the pantry-based shopping check instead of leaving it as future work.
+
+### Research basis
+Ground-patty ratios are bounded by genuine bún chả patty recipes rather than sliced-pork bún thịt nướng. The 480g chicken formula uses 20ml fish sauce, 10g sugar, about 40ml shallot, garlic, pepper and a scant 1/2 tsp baking soda. Nước chấm uses the corrected 1:3 fish-sauce-to-water ratio. Đồ chua quantities are scaled from a carrot-daikon pickle construction. These sources support the service system and seasoning ranges; they do not establish chicken as pork-equivalent.
+
+### Material changes
+2026-07-30 — Renamed and reframed the dish as explicitly non-equivalent; replaced the unresolved WHAT TO BUY placeholder with a pantry-based shopping list; preserved the Human-approved three-portion, 480g-chicken and 150g-noodle structure.

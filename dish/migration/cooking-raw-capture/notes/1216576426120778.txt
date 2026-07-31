@@ -1,0 +1,61 @@
+# [Thai basil] Khao pad kra pao — basil fried rice
+[Thai basil] Khao pad kra pao — basil fried rice
+
+WHY COOK IT
+A genuinely different Thai-basil technique format (basil-in-fried-rice) rather than a repeat of the already-tracked stir-fry-over-rice dishes. No sourcing blocker — straightforward ingredients.
+
+CAN I COOK IT? No - awaiting independent verification.
+
+## WHAT TO BUY
+- Chicken thigh: 150g
+
+## CHECK BEFORE COOKING
+Harvest 0.75 loosely packed cup of Thai basil and prepare 200–225g cooked jasmine rice far enough ahead to chill fully. Postpone if the basil is unavailable; do not use Italian basil.
+
+## QUANTITIES
+Portions: 1. Fresh-finish fried-rice dish (dressed rice cooked and served in one pass); the project default of 3 portions does not apply to fresh-finish components cooked for solo eating (CLAUDE.md). No stated reason was found in the task for the prior Portions: 2 - corrected to 1 and quantities halved proportionally.
+- Chicken thigh: 150g
+- Cold cooked jasmine rice: 200–225g
+- Garlic: 2–3 cloves
+- Chillies: to target heat
+- Marco's vegetarian mushroom sauce: 7.5ml
+- Light soy: 7.5ml
+- Fish sauce: 5ml
+- Sugar: 3.5g
+- Water: 15ml
+- Thai basil: 0.75 loosely packed cup
+
+## HOW TO COOK IT
+1. Cook chicken first in batches and remove.
+2. Fry garlic and chilli, then the cold rice.
+3. Return chicken with the premixed sauce and toss until dry-glossy.
+4. Remove from direct heat and fold in basil.
+
+## WHAT SUCCESS LOOKS LIKE
+Rice grains stay separate and dry-glossy, chicken is cooked but juicy, and Thai basil remains vivid and aromatic rather than blackened.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: Not done - requires GPT, contract ac2220e
+
+### Decisions
+Agent — Codex: Reconciled the construction update with the recorded Human Review result and removed stale pending/rejected branches from the process record.
+Agent — Claude: Corrected Portions from 2 to 1 per the CLAUDE.md fresh-finish-dish default (no repeat-sitting rationale was recorded for 2) and halved QUANTITIES proportionally; recomputed amounts are [approx] pending a live check.
+
+### Research basis
+Source-backed dish.
+Construction update — Use chicken thigh for the first halal run. For two portions: 300g chicken, 400–450g cold cooked
+jasmine rice, five garlic cloves, chillies, 15ml Marco's vegetarian mushroom sauce, 15ml soy, 10ml
+fish sauce, 7g sugar, 30ml water and 1.5 loosely packed cups basil. This is a disclosed substitution
+for the source's oyster sauce, which is not permitted under the project's aquatic-animal rule. Cook
+chicken first and remove it under weak-burner conditions; fry aromatics and rice, return chicken
+with sauce, then add basil off heat. Research is complete.
+Sources: <https://hot-thai-kitchen.com/pad-kra-pao-anything/>,
+<https://hungryinthailand.com/khao-pad-krapow/>
+
+
+### Open questions
+Practical only: Thai basil must be harvestable.

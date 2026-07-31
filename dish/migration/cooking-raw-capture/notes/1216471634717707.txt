@@ -1,0 +1,68 @@
+Mapo tofu — Lee Kum Kee toban djan versus Pixian
+
+The same mapo-tofu recipe and corrected technique that produced the improved Pixian cook, with Lee Kum Kee Chili Bean Sauce substituted at equal dose as a single-variable product test.
+
+WHY COOK IT
+Test whether readily available LKK toban djan is close enough to Pixian doubanjiang in this kitchen. Cook LKK alone first; run a same-session side-by-side only if memory gives no clear verdict.
+
+CAN I COOK IT? Yes.
+
+## QUANTITIES
+Portions: 3.
+- Silken tofu: 700g
+- Fatty minced beef: 200g
+- LKK Chili Bean Sauce: 2–2.5 tbsp, equal to the Pixian dose
+- Water: 200–250ml
+- Neutral oil: 2–3 tbsp
+- Starch slurry: 2 tsp starch plus 2 tbsp cold water
+- Ground red Sichuan pepper: 1–1.5 tsp, late
+- Dried red Chinese chillies: 4–6
+- Garlic: 4–6 cloves
+- Ginger: 15–20g
+- Scallions: about 3, whites and greens separated
+- Homemade chilli oil: about 1 tbsp for the batch, finishing only
+
+No sesame paste, tahini, sweet sauce or douchi; the paste product is the only intended variable.
+
+## HOW TO COOK IT
+1. Brown beef hard and remove it completely.
+2. Clear residual moisture.
+3. Add fresh oil so the bean sauce fries rather than steams.
+4. Bloom LKK alone until red oil forms and the raw edge is gone.
+5. Add garlic and ginger, then return beef.
+6. Add water, simmer, add tofu and cook gently.
+7. Add slurry gradually until glossy and spoonable, not paste-thick.
+8. Finish with 1 tbsp chilli oil, ground red Sichuan pepper and scallions.
+
+## WHAT SUCCESS LOOKS LIKE
+Judge the product test: is LKK clearly flatter or more salt-forward than the remembered Pixian cook, or close enough to require a direct side-by-side? Do not compensate by changing dose during the first test.
+
+## WATCH OUT FOR
+“Saltier, flatter and less fermented” is a hypothesis, not a guaranteed product fact. Taste before adding salt or soy.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: ChatGPT, 2026-07-12
+
+### Decisions
+Human — Marco: The product is Lee Kum Kee Chili Bean Sauce (Toban Djan).
+Human — Marco: Use a single-version-first design and escalate to same-session side-by-side only if memory is inconclusive.
+Agent — Claude: Keep the same 2–2.5 tbsp dose because equal-dose performance is the experiment.
+Agent — ChatGPT: Reframed product differences as hypotheses and removed an unreopened source.
+Agent — GPT-5.6 Thinking: Recovered the exact prior-cook task and source roles.
+
+### Research basis
+Intentional product-comparison repeat — no claim that LKK is equivalent to Pixian or that equal dose is a substitution recommendation.
+Construction — Cooking History task “Mapo tofu repeat / correction,” 1215653034471994, especially Marco’s comments dated 2026-06-13 and 2026-07-12 — supplied the 700g tofu, 200g beef, 2–2.5 tbsp Pixian, water, oil, slurry, aromatics and the corrected sequence of removing beef before blooming paste in clean oil.
+Construction — Human — Marco decisions recorded in this task — selected the LKK product and single-version-first comparison.
+Later validation — SPICEography, “Toban Djan vs Doubanjiang”: https://spiceography.com/toban-djan-vs-doubanjiang/ — supplied directional product-character comparison only, not a dose conversion.
+Later validation — Burnt My Fingers, “Taste Test: Douban Jiang”: https://burntmyfingers.com/2018/09/18/taste-test-douban-jiang-sichuan-chili-bean-paste/ — supplied one comparative tasting, not a universal technical finding.
+Technical premise: directly supported as an experiment. Equal dose deliberately tests product performance rather than optimising each paste; the previous mapo actuals provide the controlled base.
+
+### Open questions
+If memory does not produce a clear verdict, run a same-session side-by-side with identical base and technique.
+
+### Post-cook actuals

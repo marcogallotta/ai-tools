@@ -1,0 +1,69 @@
+Xiao su rou — Sichuan pepper crispy fried chicken, halal adaptation
+
+Traditional xiao su rou uses pork. This approved first experiment uses boneless chicken thigh in a Sichuan-pepper egg-and-potato-starch batter. It is a same-session fry test and does not claim protein equivalence.
+
+WHY COOK IT
+Fill the deep-fry technique gap with a protein-and-thick-batter system that can later pair with mala tang.
+
+CAN I COOK IT? Yes.
+
+## WHAT TO BUY
+- Boneless skinless chicken thigh: 340g
+- Frying oil: enough for a safe 5cm depth in a deep pot, never more than one-third full
+
+## CHECK BEFORE COOKING
+Use a thermometer. Confirm potato starch, eggs and fresh red Sichuan pepper. This first test is cooked and eaten in one session; there is no frozen first-fry branch.
+
+## QUANTITIES
+One first-test batch, about two snack or hotpot-side servings.
+- Boneless skinless chicken thigh: 340g, in roughly 1 x 8cm strips
+- Red Sichuan pepper: 8g, toasted and ground, split
+- Ginger: 1 tsp, grated
+- Light soy: 15ml
+- Fine salt: 1/8 tsp in the marinade plus 1/2 tsp in the batter
+- Potato starch: about 85g
+- Eggs: 2
+- Baking soda: 1/8 tsp
+- Frying oil: as above
+
+## HOW TO COOK IT
+1. Marinate chicken with half the pepper, ginger, soy and marinade salt for 20-30 minutes.
+2. Whisk eggs, potato starch, baking soda, batter salt and remaining pepper until lump-free and thick. Do not add water unless the actual eggs are unusually small and dry pockets remain.
+3. Add chicken only when the oil is nearly ready.
+4. Heat the oil to 190C before loading. First-fry in batches while keeping the working oil around 175-185C, until the coating is set, pale gold and the chicken is cooked through, about 4-5 minutes by thickness.
+5. Rest on a rack at least 5 minutes.
+6. Second-fry at 185-190C for about 2-3 minutes, until deep gold and crisp.
+7. Serve immediately.
+
+## WHAT SUCCESS LOOKS LIKE
+A thick crisp egg-starch crust, juicy thigh and clear pepper fragrance without bitter black seeds.
+Visual reference: https://blog.themalamarket.com/sichuan-pepper-studded-little-crispy-pork-xiao-su-rou/ - observe thick stirrable batter and the two fry-colour stages. Ignore pork fat, flour-cornstarch batter and Shaoxing wine.
+Second ratio reference: https://thewoksoflife.com/little-crispy-pork-xiaosurou/ - observe the pure starch-and-egg batter. Ignore pork and its hotter first-fry route.
+
+## SUBSTITUTION DISCLOSURE
+Chicken thigh is a human-approved experiment, not pork-equivalent: it loses pork fat and chew and may dry sooner. Shaoxing wine is omitted rather than silently replaced; this modestly reduces fermented aroma.
+
+## WATCH OUT FOR
+Do not crowd the pot or let battered pieces rest together. Keep the oil vessel no more than one-third full.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Claude, 2026-07-15
+
+### Decisions
+Human — Marco: Use boneless chicken thigh and do not reopen the protein choice.
+Agent — Claude: Selected potato starch as the available alternative to sweet-potato starch.
+Agent — Codex: Removed the unsupported frozen-first-fry claim and reduced the first run to the source's 340g same-session scale.
+
+### Research basis
+Human-approved halal test of a source-backed xiao-su-rou frying system.
+Construction — The Mala Market: https://blog.themalamarket.com/sichuan-pepper-studded-little-crispy-pork-xiao-su-rou/ — supplies dish identity, pepper-studded thick batter and two-stage frying around 163C then higher heat.
+Construction — The Woks of Life: https://thewoksoflife.com/little-crispy-pork-xiaosurou/ — supplies the 340g protein scale, 2/3-cup sweet-potato-starch branch, two eggs, baking soda, soy/ginger marinade, 190C preheat and immediate double fry.
+Construction — Human — Marco decision recorded in this task — approves chicken thigh.
+Technical premise: inferred from close precedent. Chicken may be drier and potato starch more brittle than pork and sweet-potato starch. The earlier claim that The Woks of Life supported freezing first-fried pieces was false and has been removed.
+
+### Open questions
+Record crust, juiciness and pepper intensity. Storage testing is a separate future experiment.

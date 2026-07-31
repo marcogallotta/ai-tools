@@ -1,0 +1,83 @@
+Caponata — one-aubergine steamed agrodolce test
+
+A lighter stovetop Sicilian caponata adaptation with steamed aubergine, celery, onion, tomato, olives and capers folded into restrained vinegar-sugar agrodolce. Steaming is a documented lower-oil branch; it is not presented as identical to traditional fried aubergine.
+
+WHY COOK IT
+Run one seasonal side-portion test of caponata’s separate-component texture, celery-led savoury base and rested sweet-sour balance without a large frying-oil load.
+
+CAN I COOK IT? No — the revised single-portion brief requires later independent verification.
+
+## WHAT TO BUY
+- Aubergine: 275g
+- Celery: 55g
+- Onion: 55g
+- Fresh tomatoes: 85g
+- Passata: 35g
+- Green olives: 45g
+- Capers: 7g
+- Pine nuts: 25g, optional
+- Fresh basil: a few leaves, optional
+
+## CHECK BEFORE COOKING
+- Confirm plain white vinegar, sugar, olive oil and salt.
+- Plain white vinegar is a disclosed substitution for white-wine vinegar; it supplies acidity with less aroma.
+- Use a steamer that holds the aubergine in an uncrowded layer or work in batches.
+- This is one seasonal lane test and one side portion. Do not reinterpret it as a three-meal batch.
+- Rest before eating; do not schedule for immediate hot service.
+
+## QUANTITIES
+Portions: 1 generous side portion.
+- Aubergine: 275g, cut into 2.5–3cm cubes
+- Fine salt: 2.5g for the aubergine
+- Onion: 55g, finely chopped
+- Celery: 55g, small dice
+- Fresh tomatoes: 85g, diced
+- Passata: 35g
+- Green olives: 45g, pitted and halved
+- Capers: 7g, rinsed and drained
+- Extra-virgin olive oil: 17ml for the soffritto
+- Extra-virgin olive oil: 8ml finishing reserve
+- Plain white vinegar: 17ml
+- White sugar: 7g
+- Pine nuts: 25g, optional, toasted
+- Fresh basil: 3–4 leaves, optional
+- Fine salt: only after tasting olives and capers
+
+## HOW TO COOK IT
+1. Toss aubergine with 2.5g salt for 30 minutes. Rinse briefly and dry thoroughly.
+2. Steam in an uncrowded layer for 5–7 minutes until tender but intact; remove immediately.
+3. Cook onion and celery in 17ml oil over medium-low for 8–10 minutes until soft without hard browning.
+4. Add fresh tomato and passata; cook 4–6 minutes until cohesive and no longer watery.
+5. Add olives and capers for 2 minutes.
+6. Fold in aubergine and the 8ml finishing oil; cook gently for 2 minutes.
+7. Dissolve sugar in vinegar, add around the pan and raise heat briefly until the sharp vapour softens and liquid coats rather than pools.
+8. Cool and rest at least 2 hours; overnight is acceptable. Add optional pine nuts and basil at service.
+
+## WHAT SUCCESS LOOKS LIKE
+Aubergine is fully tender but recognisable. Celery remains structural; tomato binds without becoming stew; olives and capers remain distinct; agrodolce is bright and rounded rather than sweet relish. The rested dish is glossy but not oily.
+
+## WATCH OUT FOR
+Do not try to brown raw aubergine soft in very little oil, underweight the celery, leave steamed cubes above hot water, reduce vinegar to syrup, or serve boiling hot or fridge-cold.
+
+## STORAGE
+This task is planned as one side portion. A brief refrigerated rest is part of the dish, but no multi-portion storage plan is required. Return to room temperature before eating.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done — revised portion plan requires later independent verification.
+
+### Decisions
+Human — Marco: this is one seasonal lane test and one side portion, not three side portions.
+Human — Marco: the previous Jacob Kenedy citation was unsuitable because that recipe excludes olives; use directly inspectable evidence.
+Agent — GPT: retained plain white vinegar as the disclosed alcohol-free pantry substitution and retained the documented steamed-aubergine route.
+
+### Research basis
+Tavolartegusto supplies the normalized aubergine, onion, celery, tomato, passata, olive, caper, sugar, vinegar and optional pine-nut ratios: https://www.tavolartegusto.it/ricetta/caponata-siciliana/
+Dissapore supports separately cooked aubergine, onion-celery soffritto, tomato, olives, capers, agrodolce, cooling and a lighter steamed-aubergine branch: https://www.dissapore.com/ricette/caponata-di-melanzane-siciliana/
+Yumsome explicitly steams aubergine chunks for 5–7 minutes until tender and removes them promptly: https://www.yumsome.com/how-to-make-sicilian-caponata/
+
+### Material changes
+2026-07-30 — Corrected the planning unit from three side portions to one generous seasonal side portion; recipe quantities remain the one-aubergine test already researched.

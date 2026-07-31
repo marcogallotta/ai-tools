@@ -1,0 +1,81 @@
+Musakhan — sumac chicken and caramelized-onion flatbread
+
+Three bone-in chicken legs with sumac onions, flatbread and pine nuts. This is an explicit no-oven stovetop adaptation of Palestinian msakhan.
+
+WHY COOK IT
+Learn sumac as a dry acid working with onions, olive oil, chicken fat and bread.
+
+CAN I COOK IT? Yes.
+
+## WHAT TO BUY
+- Skin-on whole chicken legs: 3, about 750g total
+- Yellow onions: about 825g
+- Sturdy flatbread: 3
+
+## CHECK BEFORE COOKING
+- Sumac: at least 12g
+- Pine nuts or slivered almonds: 50-55g
+- Thaw chicken fully if frozen.
+
+## QUANTITIES
+Portions: 3.
+Chicken:
+- Skin-on whole chicken legs: 3, about 750g
+- Extra-virgin olive oil: 17ml
+- Sumac: 3/4 tsp
+- Ground allspice: 1/2 tsp
+- Ground cumin: 3/8 tsp
+- Black pepper: 3/8 tsp
+- Fine salt: 6g
+
+Onions and assembly:
+- Yellow onions: 825g, sliced
+- Extra-virgin olive oil: 68ml
+- Fine salt: 6g
+- Sumac: 7.5g
+- Ground cumin: 4.5g
+- Ground cinnamon: 3/8 tsp
+- Black pepper: 3/8 tsp
+- Water or unsalted chicken stock: 45ml
+- Sturdy pita, naan or other pocketless flatbread: 3
+- Pine nuts or slivered almonds: 50-55g, toasted
+- Extra sumac to finish
+
+## HOW TO COOK IT
+1. Rub chicken with its oil, sumac, spices and salt.
+2. Brown skin-side down in the 28cm pan; work in batches if needed. Turn, add a small splash of water, cover and cook gently until the joints yield and the thickest leg reaches at least 80C. Uncover and re-crisp the skin. Reserve the juices.
+3. Cook onions with 68ml oil and salt over medium-low heat until completely soft and golden, about 30-40 minutes.
+4. Add sumac, cumin, cinnamon, pepper, 45ml water or stock and the chicken juices. Cook until jammy and glazed, about 8-10 minutes.
+5. Warm bread in a dry pan or microwave. Spread with onions and their oil, then add chicken, toasted nuts and extra sumac.
+
+## WHAT SUCCESS LOOKS LIKE
+The onions are purple-brown, jammy and abundant; the chicken is tender with re-crisped skin; the bread carries onion oil without disintegrating.
+Visual reference: https://www.seriouseats.com/msakhan-recipe-5219618 - observe the dense onion layer, intact chicken and nut finish. Ignore its oven roasting and broiling.
+
+## WATCH OUT FOR
+This stovetop route cannot reproduce taboon bread or the final oven melding. Use sturdy bread and do not soak it far ahead.
+
+## STORAGE
+Refrigerate chicken and onions separately for up to 3 days. Assemble on freshly warmed bread.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Claude, 2026-07-15
+
+### Decisions
+Human — Marco: Use whole leg quarters and retain the explicit stovetop adaptation.
+Agent — Claude: Kept sumac dominant and designed the stovetop route.
+Agent — Codex: Replaced the unsupported spice scale with a three-leg normalization of the exact Reem Kassis formula and made the equipment compromise explicit.
+
+### Research basis
+Halal, no-oven port of source-backed Palestinian msakhan.
+Construction — Reem Kassis/Serious Eats Palestinian food guide: https://www.seriouseats.com/how-to-get-started-cooking-palestinian-food-7106766 — supplied the dish identity and onion-bread-chicken-nut structure.
+Construction — Human — Marco decision recorded in this task — selected whole legs and the stovetop route.
+Later validation — Reem Kassis, exact msakhan recipe: https://www.seriouseats.com/msakhan-recipe-5219618 — used during repair to correct the chicken, onion, oil, sumac, spice and nut ratios.
+Technical premise: inferred from close precedent. Covered stovetop cooking can tenderize the legs and preserve their juices for the onions, but the skin and bread endpoint remain first-cook evidence.
+
+### Open questions
+Record skin crispness and bread absorption after the first cook.

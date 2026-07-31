@@ -1,0 +1,89 @@
+Shuizhu yu — Pixian mala hot-oil poached cod
+
+Cod poached gently in a Pixian broth over mung-bean sprouts, finished with a chilli-and-Sichuan-pepper hot-oil pour. This repeats a successful cook while correcting broth strength.
+
+WHY COOK IT
+Preserve the successful fish, sprout and hot-oil technique while correcting broth strength through more Pixian and soy rather than sugar.
+
+CAN I COOK IT? Yes.
+
+## WHAT TO BUY
+- Cod: 600g
+- Mung-bean sprouts: 300-350g
+
+## CHECK BEFORE COOKING
+- Confirm Pixian, erjingtiao and fresh red Sichuan pepper are available.
+- Prepare 225g dry rice separately if serving as three complete meals.
+
+## QUANTITIES
+Three bowls, each served with rice. At 200g cod per bowl this remains slightly below the project's usual 50g-protein target, intentionally preserving the successful fish ratio.
+- Dry rice: 225g total, cooked separately
+
+Fish:
+- Cod: 600g, in 6-8 large chunks
+- Fine salt: 4g
+- Black pepper: pinch
+- Potato or corn starch: 18-20g
+- Neutral oil: 5ml
+
+Vegetable bed:
+- Mung-bean sprouts: 300-350g
+- Neutral oil: 15ml
+- Fine salt: pinch
+
+Broth:
+- Neutral oil: 30ml
+- Pixian doubanjiang: 38-45g
+- Garlic: 4-5 cloves
+- Ginger: 20g
+- Scallion whites: 2
+- Hot water or unsalted stock: 700ml
+- Light soy: 22ml to start, then taste
+- White sugar: 2g
+
+Finish:
+- Dried erjingtiao: 10-12g, mostly deseeded
+- Red Sichuan peppercorn: 1.5 tsp, lightly crushed
+- Neutral oil: 40ml
+
+## HOW TO COOK IT
+1. Mix cod with salt, pepper, starch and 5ml oil; rest 10-15 minutes.
+2. Stir-fry sprouts 90-120 seconds until crisp but not raw; transfer to the serving bowl.
+3. Fry Pixian in 30ml oil until red oil appears, 60-90 seconds. Add garlic, ginger and scallion whites briefly.
+4. Add soy, sugar and 700ml hot water or stock; simmer 5-8 minutes.
+5. Taste before adding fish. The broth should be slightly stronger than the final target; adjust with soy, not sugar.
+6. Add cod at a bare simmer without stirring and poach about 4-5 minutes, until just opaque.
+7. Pour fish and broth over sprouts. Scatter chilli and peppercorn, then pour 40ml shimmering oil directly over them.
+8. Serve with freshly cooked rice.
+
+## WHAT SUCCESS LOOKS LIKE
+A thin red broth reads clearly of Pixian before the oil pour. Cod stays intact and moist over crisp sprouts; the finishing oil adds aroma rather than rescuing weak seasoning.
+Visual reference: https://www.seriouseats.com/what-is-sichuan-szechuan-chinese-cuisine - observe intact fish in a thinner red broth with vegetables underneath. The page does not validate cod doneness or the oil-pour temperature.
+
+## WATCH OUT FOR
+Taste before fish enters; late correction risks overcooking it. Keep the oil pour aromatic, not smoking.
+
+## STORAGE
+Store broth, fish and sprouts separately where possible. Cook rice fresh or cool it promptly and reheat safely.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Claude, 2026-07-15
+
+### Decisions
+Human — Marco: Confirmed the reconstructed original recipe as the repeat anchor.
+Human — Marco: Commodity erjingtiao remains usable; upgraded chilli is a future comparison, not a blocker.
+Agent — Codex: Preserved the history-supported correction and added an explicit meal frame without changing the fish method.
+
+### Research basis
+Intentional correction repeat, not a universal canonical formula.
+Construction — Cooking History “DONE — Shuizhu yu with cod + mung sprouts,” 1215097253714925, including Marco comment 1216473250979235 — establishes that cod, sprouts and oil technique worked; identifies weak broth as the problem; and specifies roughly 2.5-3 tbsp Pixian plus stronger soy.
+Construction — Marco's reconstructed quantities recorded in this task on 2026-07-12.
+Later validation — Serious Eats Sichuan guide: https://www.seriouseats.com/what-is-sichuan-szechuan-chinese-cuisine — checks finished layering only.
+Technical premise: directly supported as a correction repeat.
+
+### Open questions
+If broth succeeds but aroma remains weak, repeat later with upgraded erjingtiao while holding the formula constant.

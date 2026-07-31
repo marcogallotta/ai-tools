@@ -1,0 +1,83 @@
+Maghreb kefta — Moroccan-style meatballs in tomato sauce
+
+Small halal beef kefta simmered in a cumin-paprika tomato sauce, with eggs reserved for a later branch.
+
+WHY COOK IT
+Keep the Maghreb side of a direct kofta/kefta comparison: tomato-simmered cumin-paprika meatballs versus the Levant's grilled or griddled, herb-and-allspice logic.
+
+CAN I COOK IT? Yes.
+
+## WHAT TO BUY
+- Halal minced beef, 15–20% fat: 600g
+- Ripe tomatoes: 1200g
+- Parsley: about 40g total
+- Cilantro: about 40g total
+
+## CHECK BEFORE COOKING
+- This counts as the week's red-meat dish.
+- Keep eggs out of the first baseline.
+
+## QUANTITIES
+Portions: 3 substantial portions with bread or couscous.
+
+Kefta:
+- Beef: 600g
+- Onion: 60g, finely grated and lightly squeezed
+- Parsley: 20g, finely chopped
+- Cilantro: 20g, finely chopped
+- Garlic: 8g, optional documented variation
+- Cumin seed: 1.5 tsp, toasted and ground
+- Sweet paprika: 1 tsp
+- Black pepper: 1/2 tsp
+- Fine salt: 8g
+
+Sauce:
+- Olive oil: 80ml
+- Onion: 120g, finely chopped
+- Garlic: 10g
+- Ripe tomatoes: 1200g, peeled and chopped or grated
+- Parsley: 20g [approx]
+- Cilantro: 20g [approx]
+- Cumin seed: 1.5 tsp, toasted and ground
+- Sweet paprika: 1.5 tsp
+- Harissa: begin with 10g, optional adaptation
+- Fine salt: begin with 6g
+- Water: none initially; add only if the sauce becomes too tight before meatballs cook
+- Eggs: 0 for the baseline; up to 3 on a later branch
+
+## HOW TO COOK IT
+1. Mix kefta ingredients only until evenly cohesive. Form small cherry- to walnut-size meatballs.
+2. Soften the sauce onion in olive oil. Add garlic, cumin, paprika and optional harissa briefly.
+3. Add tomatoes, sauce herbs and starting salt. Simmer until a rich but still spoonable sauce forms.
+4. Add meatballs in one layer, cover and simmer gently for 10–15 minutes until just cooked.
+5. Uncover only enough to restore a coating sauce that still pools lightly between the meatballs.
+6. On a later repeat, crack eggs into the finished sauce and cover until whites set.
+
+## WHAT SUCCESS LOOKS LIKE
+Small tender meatballs remain separately legible in a cumin-forward tomato sauce that coats but still pools. It does not read as Italian marinara, dry meatballs or watery tomato soup.
+
+## WATCH OUT FOR
+Do not overwork lean mince, reduce the tomato sauce too far before adding meatballs or cook the small meatballs past done. Bell pepper and bay leaf from the controlling source are deliberately omitted for a cleaner comparison; garlic in the kefta and harissa are disclosed variations.
+
+## STORAGE
+Refrigerate up to 3 days. Reheat gently with a splash of water if needed.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: GPT, 2026-07-16, contract 426e405
+
+### Decisions
+Human — Marco: Keep this specifically for comparison against Levant kofta.
+Human — Marco: Omit eggs from the first clean baseline.
+
+### Research basis
+Source-backed comparison dish.
+Construction — Taste of Maroc, https://tasteofmaroc.com/moroccan-meatball-tagine-tomato-sauce/ — 454g meat, 908g tomato, 60ml oil, parsley and cilantro in both meat and sauce, small meatballs and a 10–15-minute covered simmer. Scaling by 600/454 gives approximately 1200g tomato and 79ml oil, used here as 1200g and 80ml.
+The source's optional egg branch is deferred by Human decision. Bell pepper and bay are disclosed omissions; garlic-in-kefta and harissa are common additions but are not presented as source requirements.
+
+### Material changes
+2026-07-16 — Claude — Delta: corrected the tomato ratio and restored cilantro to the kefta.
+2026-07-16 — GPT — Verification correction: restored the source-scaled oil and sauce herbs, removed unsupported tomato paste, completed the variation disclosure and signed the contained Delta.

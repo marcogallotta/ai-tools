@@ -1,0 +1,89 @@
+[Mint] [Cilantro] Gỏi cuốn — control herb comparison
+
+Vietnamese fresh rice-paper rolls with shrimp, poached chicken breast, rice vermicelli, lettuce, cucumber, blanched bean sprouts, mint and cilantro, served with a light hoisin-and-ground-peanut sauce.
+
+WHY COOK IT
+Run the mint-and-cilantro half of the controlled comparison against the rau-răm sibling while holding wrapper, fillings, sauce and method constant.
+
+CAN I COOK IT? No - awaiting independent verification.
+
+## CHECK BEFORE COOKING
+- Wait until homegrown cilantro is harvestable.
+- Prepare bean sprouts ahead if home-growing.
+- Batch proteins and sauce only; cook noodles and assemble fresh.
+
+## QUANTITIES
+Portions: 3 substantial fresh sittings, about 6 rolls each.
+
+Per sitting:
+- Shrimp: 150g
+- Chicken breast: 100g
+- Rice vermicelli: 60g dry
+- Rice paper: 6 sheets plus spares
+- Lettuce: 6 leaves
+- Cucumber: about 80g
+- Bean sprouts: about 40g, blanched for 10–15 seconds
+- Mint: about 7.5g
+- Cilantro: about 7.5g
+
+Totals:
+- Shrimp: 450g
+- Chicken breast: 300g
+- Dry rice vermicelli: 180g
+- Rice paper: about 18 usable sheets plus spares
+
+Shared sauce:
+- Hoisin: 45–50ml
+- Roasted unsalted peanuts: 20g, finely ground
+- Water: 50–70ml
+- Garlic: 1 small clove
+- Chilli or sambal: optional
+- White sugar: only if needed
+- Added oil: none
+
+## HOW TO COOK IT
+1. Poach chicken gently to a safe endpoint, cool, slice and divide into 3 portions.
+2. Cook shrimp just opaque, cool immediately and portion.
+3. Simmer hoisin with 50ml water and garlic briefly. Stir in ground peanuts and loosen only until dip-able. Divide into 3 portions.
+4. Keep vegetables and herbs dry and separate.
+5. Each sitting, cook 60g vermicelli, prepare one portion of vegetables and herbs, soften rice paper briefly and roll immediately.
+
+## WHAT SUCCESS LOOKS LIKE
+Wrappers are translucent and taut rather than split, gummy or loose; fillings form an even cylinder without overfilling. Physical execution matches the rau-răm sibling exactly so only the herb effect changes.
+
+Visual reference — http://web.archive.org/web/20260116090032/https://www.seriouseats.com/vietnamese-rice-paper-roll-platter-technique-11885063 — Observe rice paper moistened lightly rather than soaked, fillings placed in the lower third with side margins, and the wrapper tightened as it rolls. This validates hydration, placement and tight-cylinder boundaries. Ignore the source's variable proteins, sauces and herb selection; it does not validate the project's halal filling or comparison quantities.
+
+## WATCH OUT FOR
+Do not use commercial peanut butter, add oil to the sauce, alter the sauce between tasks, pre-roll and refrigerate or over-soak rice paper. Shrimp plus chicken breast is a halal adaptation and chicken does not reproduce pork belly.
+
+## STORAGE
+Do not store finished rolls. Refrigerate chicken, shrimp and sauce in portions. Cook noodles and assemble fresh.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done - requires Claude, contract 0dceb66
+
+### Decisions
+Human — Marco: Approved shrimp and chicken filling and a three-sitting controlled comparison of rau-răm against mint/cilantro. Peppermint was used in the past cooks; a peppermint-versus-spearmint control remains a separate, non-blocking open question.
+
+### Research basis
+Intentional test dish, human-approved.
+Construction update — This is the control sibling of the researched rau-răm version (`1216218269479101`),
+which is the actual controlling source for every quantity here (protein weights, noodle/wrapper
+counts, sauce, and three-sitting structure) — only the herbs differ. Keep fillings, sauce, wrappers,
+vegetables, roll count and three sittings identical; only herbs change. Brief hydration and
+lower-third assembly are source-supported. Research is complete; sprouts and herbs are readiness.
+Sources: <http://web.archive.org/web/20260116090032/https://www.seriouseats.com/vietnamese-rice-paper-roll-platter-technique-11885063>
+
+### Open questions
+Practical only: mint and cilantro must be harvestable.
+
+### Material changes
+2026-07-17 — Claude — Local: swapped the dead Serious Eats URL for the working Wayback snapshot
+already used by the rau-răm sibling task; reconciled total herb mass to 15g (7.5g mint + 7.5g
+cilantro) to match the sibling's 15g rau răm, since the stated comparison purpose requires holding
+every other component constant. Previously 10g mint + 10g cilantro (20g total), an undisclosed ~33%
+deviation from the sibling.

@@ -1,0 +1,64 @@
+Sup nor mai — Lao bamboo-shoot salad
+
+Cleaned bamboo shoots dressed sour, salty and fermented with pla ra, fish sauce, lime, chilli and toasted rice powder, then finished with shallot, scallion, mint and cilantro.
+
+WHY COOK IT
+Learn an Isan/Lao bamboo-shoot salad built around fermented funk, chilli, herbs and resilient shoot texture.
+
+CAN I COOK IT? Yes.
+
+## WHAT TO BUY
+- Canned or jarred bamboo shoots: enough for 200–250g drained
+- Shallot: 25g
+- Scallion: 1
+- Lime: enough for 20–25ml juice
+- Cilantro: 10–15g
+
+## CHECK BEFORE COOKING
+- Mae Boonlam pla ra, fish sauce and homemade khao khua are in Pantry.
+- Harvest 10–15g mint only if it tastes acceptable; bought mint is a quality upgrade, not a structural requirement.
+
+## QUANTITIES
+Portions: 1 fresh sitting.
+- Canned bamboo shoots: 200–250g drained
+- Shallot: 25g, thinly sliced
+- Scallion: 1, sliced
+- Mint: 10–15g
+- Cilantro: 10–15g
+- Mae Boonlam pla ra: start with 25ml
+- Fish sauce: start with 5ml
+- Lime juice: 20–25ml
+- Dried chilli flakes: 1/2–1 tsp
+- Khao khua: 1 tbsp
+
+## HOW TO COOK IT
+1. Rinse the bamboo shoots, simmer them in fresh water for 5–10 minutes, then drain extremely well.
+2. While warm or at room temperature, mix with shallot, scallion, 25ml pla ra, 5ml fish sauce, lime and chilli.
+3. Taste before adding any more salty ferment. Fold in khao khua, then mint and cilantro.
+4. Serve immediately, warm or at room temperature, with sticky rice.
+
+## WHAT SUCCESS LOOKS LIKE
+The bamboo tastes clean rather than canned or sulphurous. Dressing is sour, salty and fermented without becoming briny. Shoots and herbs remain visible in a loose lightly bound salad; khao khua does not make it pasty.
+
+## WATCH OUT FOR
+Do not skip the cleaning boil, leave the shoots wet, or dress the salad far ahead. Yanang, lemongrass, galangal and makrut leaf appear in fuller versions; omitting them makes this a pared-back salad rather than the most aromatic possible construction.
+
+## STORAGE
+Eat fresh. Dressed herbs and toasted rice deteriorate on holding.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: GPT, 2026-07-16, contract 0dceb66
+
+### Research basis
+Source-backed dish.
+Construction — Cooking with Morgane, https://www.cookingwithmorgane.com/en/recipe/soup-nor-mai-lao-bamboo-shoot-salad.html — 800g bamboo shoots, 75ml padaek and 15ml fish sauce; scaling to about 225g gives approximately 21ml padaek and 4ml fish sauce.
+Later validation — Simply Suwanee, https://www.simplysuwanee.com/soop-nor-mai/ — 454g shoots, 45ml pla ra, 30ml fish sauce and 37ml lime; scaling confirms approximately 22ml pla ra and 18ml lime for this task weight.
+The task's 25ml pla ra, 5ml fish sauce and 20–25ml lime are therefore a coherent conservative starting balance.
+
+### Material changes
+2026-07-16 — Claude — Delta: reconciled the salty-ferment quantities with the cited sources, removed false Human Review provenance and added the one-sitting portion rule.
+2026-07-16 — GPT — Verification correction: added a complete buy/readiness classification, disclosed the pared-back aromatic construction and signed the contained Delta.

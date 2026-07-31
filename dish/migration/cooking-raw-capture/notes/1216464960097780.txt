@@ -1,0 +1,90 @@
+[Belacan] Asam laksa — sour fish-and-noodle soup
+
+Penang-style sour mackerel noodle soup adapted to available ingredients, with tamarind, chilli-shallot paste and cooked rau răm or daun kesum.
+
+WHY COOK IT
+Build Indo/Malay depth through a sour fish-and-noodle soup rather than another curry-paste dish. The task tests tamarind acidity, oily fish, cooked rau-răm logic and explicit authenticity gaps.
+
+CAN I COOK IT? No - awaiting independent verification.
+
+## WHAT TO BUY
+- Belacan: about 8g real belacan (the sourcing gate itself - do not substitute kapi)
+- Whole small mackerel: about 500g
+- Dried rice noodles (laksa-style, thick round): about 200g
+- Shallots: 65g
+- Fresh long red chillies: 2
+- Cucumber, red onion, mint: fresh garnish produce
+
+## CHECK BEFORE COOKING
+Source about 8g real belacan and toast it with ventilation before building the paste. Postpone if only kapi or generic shrimp paste is available; they are not the approved fallback.
+
+## QUANTITIES
+Portions: 3, with a half-batch fallback if the plant cannot supply 20–25g rau răm.
+
+Broth:
+- Whole small mackerel: about 500g total
+- Water: 1.5L
+- Tamarind paste: 45g, dissolved in 180ml warm water and strained
+- Rau răm: 20–25g, kept in large torn pieces or tied loosely
+
+Paste:
+- Dried chillies: 5, soaked
+- Fresh long red chillies: 2
+- Shallots: 65g
+- Lemongrass tender lower section: about 1.5 stalks
+- Turmeric powder: 1.5 tsp
+- Belacan: about 8g, toasted
+- Galangal: none in the baseline
+
+Seasoning:
+- Fine salt: start with 6g
+- Sugar: start with 8–10g
+- Extra tamarind, salt and sugar for final adjustment only
+
+Service:
+- Dried rice noodles: about 200g total
+- Cucumber, red onion and mint
+
+## HOW TO COOK IT
+1. Simmer mackerel gently in the water until flesh releases cleanly, usually 12–18 minutes.
+2. Lift out the fish and reserve the flakes. Return clean bones and heads for another 10 minutes only if not bitter, then strain.
+3. Blend and fry the paste until cooked, fragrant and slightly darkened.
+4. Add strained broth, paste and tamarind liquid. Simmer 10 minutes.
+5. Add rau răm and simmer gently for 8–12 minutes.
+6. Return fish and add the starting salt and sugar.
+7. Adjust sourness first, then salt and only enough sugar to round the acidity.
+8. Cook noodles separately and garnish each bowl fresh.
+
+## WHAT SUCCESS LOOKS LIKE
+Broth is distinctly sour, fish-rich and herbal, with visible fine fish flakes but enough liquid to remain a noodle soup rather than a paste. Noodles and raw garnish stay separately legible. The broth contains no coconut milk; rau răm reads as a cooked backbone, while the missing bunga kantan remains an acknowledged aroma gap.
+
+Visual reference — https://www.seriouseats.com/travel-guide-kuala-lumpur-malaysia-11700960 — Observe the Mark’s Asam Laksa image only for opaque fish-flake broth, generous liquid around the noodles and fresh garnish remaining visible. Ignore restaurant garnish details and any use of bunga kantan, asam gelugor or belacan; the image does not validate this task’s rau-răm, tamarind and kapi substitutions.
+
+## WATCH OUT FOR
+No bunga kantan and no asam gelugor are real authenticity losses. Do not compensate with extra lemongrass or ginger. Use real belacan; do not substitute kapi. Do not use rau răm as a token raw garnish if it is meant to replace daun kesum’s cooked herbal role.
+
+## STORAGE
+Store broth without noodles or garnish for 2–3 days or freeze. Cook noodles and prepare raw garnish fresh.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done - requires Claude, contract ac2220e
+
+### Decisions
+Human — Marco: Block this dish until real belacan is sourced. Marco plans to buy belacan; do not substitute kapi.
+Agent — Codex: Reconciled the construction update with the recorded Human Review result and removed stale pending/rejected branches from the process record.
+
+### Research basis
+Source-backed dish.
+Construction update — Use the direct baseline: 680g mackerel, 1.9L water, asam keping/tamarind, chilli-shallot-galangal-
+belacan-lemongrass paste, sugar/salt, thick rice noodles and raw cucumber, mint, daun kesom, onion,
+lettuce and pineapple. Oily mackerel is the right local fish; dried noodles are explicitly supported.
+Torch ginger may be omitted and rau-răm is a declared daun-kesom comparison. Research is complete.
+Sources: <https://rasamalaysia.com/assam-laksa-nyonya-noodles-with-fish-broth/>
+
+
+### Open questions
+Practical only: real belacan must be sourced; do not substitute kapi.

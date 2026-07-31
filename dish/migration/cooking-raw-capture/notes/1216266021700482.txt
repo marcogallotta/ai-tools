@@ -1,0 +1,90 @@
+Pajeon
+
+Two thin scallion-led pancakes with crisp edges and a soy-vinegar dipping sauce.
+
+WHY COOK IT
+Build Korean jeon technique: scallion structure, cold loose batter, pan heat, oil level, crisp edges and dipping-sauce balance.
+
+CAN I COOK IT? No - awaiting independent verification.
+
+## WHAT TO BUY
+- Scallions: 180–200g
+- Plain flour, if low
+- Potato or corn starch, if low
+
+## CHECK BEFORE COOKING
+- Use young homemade ganjang in the sauce only if ready; otherwise use a known halal-suitable soy and record the substitution.
+- Use fresh scallions with lively greens.
+
+## QUANTITIES
+Yield: 2 medium pancakes.
+
+Pancake:
+- Scallions: 180–200g, cut to pan length
+- Plain flour: 120g
+- Potato or corn starch: 40g
+- Fine salt: 2g
+- Ice-cold water: begin with 190ml; up to 220ml if needed
+- Egg: 1, optional
+- Neutral oil: 45–60ml across two pancakes
+
+Dipping sauce:
+- Young ganjang, Korean soy or halal-suitable light soy: 30ml
+- Rice vinegar: 15ml
+- Water: 30ml
+- Gochugaru: 1/2 tsp, optional
+- Garlic: 1 small clove
+- Toasted sesame seeds: 1 tsp
+- Scallion: 1 tbsp, finely sliced
+
+## HOW TO COOK IT
+1. Mix the dipping sauce.
+2. Whisk flour, starch and salt. Add egg if using, then 190ml ice water. Keep the batter loose enough to coat lightly.
+3. Heat the pan thoroughly and add a visible shallow film of oil.
+4. Arrange half the scallions in one layer and pour over half the batter.
+5. Cook over medium-high heat until deeply golden and crisp underneath. Flip and finish the second side.
+6. Drain briefly on a rack and serve immediately. Repeat.
+
+## WHAT SUCCESS LOOKS LIKE
+Scallions remain distinct. Batter is thin and tender inside with crisp oily edges, and the sauce is sharp enough to cut the fry.
+
+Visual reference and free video — https://www.maangchi.com/recipe/pajeon — Observe scallions laid parallel in one layer, batter poured evenly over them, the visible oil film and the crispy golden-brown underside used as the flipping cue. Ignore the source’s doenjang-and-sugar batter, rectangular shape and lack of added starch; it does not validate this task’s flour-starch ratio or dipping sauce.
+
+## WATCH OUT FOR
+Do not use warm or thick batter, stack finished pancakes or turn the first baseline into haemul pajeon.
+
+## STORAGE
+Eat immediately.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: Not done - requires Claude, contract 0dceb66
+
+### Research basis
+Source-backed dish.
+Construction update — Korean Bapsang supports starch-containing batter, optional egg and two large pancakes: one cup
+pancake mix or salted flour to 180ml ice water, plus scallions. Its dip is 15ml soy, 10–15ml vinegar
+and 15ml water. For a homemade mix, 120g flour plus 30–40g starch is reasonable; add ice water only
+to thin-coating consistency and record the actual amount. Dry scallions and use adequate oil.
+Sources: <https://www.koreanbapsang.com/haemul-pajeon/>
+
+Dip-sauce citation correction — the task previously cited "House of Nash Eats (2 tablespoons soy : 1
+tablespoon vinegar : 1 tablespoon water)" as supporting this task's soy-forward 30:20:10 ratio, with
+no URL. Reopened the actual page directly (houseofnasheats.com/korean-pancakes-scallions-pajeon/):
+its real dipping sauce is 1 tbsp soy sauce : 1 tbsp water : 1 tsp rice vinegar — soy and water equal,
+vinegar the smallest component — the opposite proportional relationship from what was previously
+claimed, and closer to the originally-cited Korean Bapsang source's near-equal-parts style
+(15ml soy : 15ml water : 12ml vinegar) than to the task's own prior 30:20:10. The dip ratio is
+corrected to 30ml soy : 30ml water : 15ml rice vinegar, consistent with both real sources' soy≈water,
+reduced-vinegar pattern.
+Sources: <https://www.koreanbapsang.com/haemul-pajeon/>, <https://houseofnasheats.com/korean-pancakes-scallions-pajeon/>
+
+### Material changes
+2026-07-17 — Claude — Delta: corrected the dip-sauce ratio (30:20:10 soy:vinegar:water -> 30ml soy :
+30ml water : 15ml vinegar) after finding the cited House of Nash Eats source didn't support the prior
+figures and its real ratio pointed the opposite direction; removed legacy `Ready to shop`/`Initial
+construction` fields at this touch per contract. Contained to the dipping-sauce sub-section and
+Research basis; pancake batter and method unaffected.

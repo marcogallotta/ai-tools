@@ -1,0 +1,75 @@
+Miến gà — chicken glass-noodle soup
+
+Clear chicken broth with ginger, wood ear, shiitake, mung-bean glass noodles, scallion and black pepper.
+
+WHY COOK IT
+Add a Vietnamese glass-noodle soup reference after phở and cháo, focusing on clean broth, mushroom texture and fresh noodle assembly.
+
+CAN I COOK IT? No - awaiting independent verification.
+
+## CHECK BEFORE COOKING
+- Rehydrate wood ear and shiitake.
+- Prepare glass noodles per package and sensory texture rather than a rigid soak time.
+- Parboiling is the selected clean-broth method, not a universal requirement.
+- Keep serving meat separate from the final bone extraction.
+
+## QUANTITIES
+Portions: 3 bowls. Batch broth, chicken and mushrooms; prepare noodles and garnish fresh.
+- Bone-in chicken thighs or legs: 750g
+- Water: 1.4–1.5L
+- Ginger: 1 thumb, smashed
+- Shallot or onion: 1
+- Fine salt: 6g initially
+- White sugar: about 2 tsp
+- Fish sauce: start with 1 tsp
+- Dried wood ear: 5–8g
+- Dried shiitake: 3–4
+- Mung-bean glass noodles: 300g dry
+- Scallion and black pepper
+
+## HOW TO COOK IT
+1. Briefly parboil the chicken; discard the water and rinse the chicken and pot.
+2. Add fresh water, ginger and shallot; bring to a gentle simmer.
+3. Cook the chicken only until done and juicy. Remove, cool enough to handle and reserve the meat.
+4. Return bones with rehydrated mushrooms for 10–15 minutes.
+5. Strain if desired. Add 6g salt, sugar and 1 tsp fish sauce; adjust carefully while preserving a light chicken-forward broth.
+6. Prepare 100g noodles separately per bowl according to package and texture.
+7. Assemble noodles, chicken and mushrooms; add boiling broth, scallion and pepper.
+
+## WHAT SUCCESS LOOKS LIKE
+The broth is clear and restrained, chicken juicy, and glass noodles form separate translucent, slippery strands rather than a clump.
+
+Visual sourcing gap — phở-gà media is too remote because flat rice noodles do not validate mung-bean glass-noodle hydration. Photograph the strained broth, one lifted bundle of cooked noodles and the assembled bowl before stirring.
+
+## WATCH OUT FOR
+Do not overcook serving meat, season heavily before tasting or store noodles in broth.
+
+## STORAGE
+Refrigerate broth, chicken and mushrooms for 2–3 days. Keep noodles and garnish separate.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: Not done - requires Claude, contract 0dceb66
+
+### Research basis
+Source-backed dish.
+Construction update — Two direct constructions support the task. Christine Ha uses a whole chicken with charred onion and
+ginger, stock/water, fish sauce and sugar; she simmers chicken 30–40 minutes, removes it, and serves
+with glass noodles, shiitake/wood ear, scallion, herbs and black pepper. Hungry Huy's 907g (2 lb)
+chicken leg/thigh serves 5 bowls (~181g chicken/bowl); its ~71g dry glass noodles is a direct
+per-bowl figure. The task's 750g/3 bowls (250g/bowl-equivalent) is about 1.38x that per-bowl chicken
+basis — deliberately generous, not deficient. The task's 70g per bowl is therefore directly
+supported.
+Sources:
+
+- <https://www.theblindcook.com/blog/2018/04/26/recipe-vietnamese-chicken-and-glass-noodle-soup-mien-ga>
+- <https://www.hungryhuy.com/mien-ga/>
+
+The task's 750g chicken for three bowls is generous rather than deficient. Its remove-meat and
+briefly return-bones sequence is a reasonable project adaptation that protects serving meat; wood
+ear and shiitake are both source-supported. Research is sufficient. Keep noodles separate and use
+package/sensory timing, as already written. The first cook should record broth yield and actual fish
+sauce rather than treating the 1-teaspoon starting dose as final seasoning.

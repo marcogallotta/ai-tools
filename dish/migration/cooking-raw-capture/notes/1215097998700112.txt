@@ -1,0 +1,22 @@
+[Homemade miso] Saba misoni — mackerel simmered in miso
+
+A future homemade-miso application dish. The recipe should be rebuilt around the actual salinity, sweetness, age and aroma of Moinudin's homemade miso rather than treated as a generic less-sweet repeat.
+
+CAN I COOK IT? Not yet — first define the homemade-miso lane and assess the current miso.
+
+## PLANNING BRIEF
+- Use mackerel simmered with ginger in a miso-based sauce.
+- Homemade miso is mandatory; commercial miso is not the baseline.
+- Do not preserve the current 70–90g miso and 15–25g sugar ranges as canonical until the homemade miso is tasted and characterised.
+- Rebuild the sauce around the actual miso, then decide whether sugar, soy or acid are needed.
+- Keep the dish in the Fish section and out of Research and Verification queues until the homemade-miso lane is defined.
+
+---
+
+## PROCESS RECORD
+Stage: Planning
+Human review: Moinudin, pending lane definition
+Verification: Not applicable at planning stage
+
+### Decisions
+Human — Moinudin: This belongs in a homemade-miso lane, not as a generic correction repeat.

@@ -1,0 +1,98 @@
+Lamb tagine with home-dried figs — dense sweet-fruit balance test
+
+Lamb shoulder pressure-braised with onion, ginger, turmeric, cinnamon and coriander, then finished with a measured batch of home-dried fresh figs so the figs soften into the sauce without turning the dish cloying.
+
+WHY COOK IT
+Test dense, honeyed, seedy dried fig against lamb. This is a separate dried-fruit lesson, not a clean continuation of the apricot comparison.
+
+CAN I COOK IT? No — drying and research are defined, but the current task requires a fresh independent verification pass.
+
+## WHAT TO BUY
+- Fresh figs for drying: 6–8 firm-ripe figs, not split, leaking, bruised or fermenting
+- Lamb shoulder: 700–900g, bone-in or boneless, cut into 3–4cm chunks
+- Almonds or walnuts: 25–35g if absent
+- Lemon: 1 if absent
+
+## CHECK BEFORE COOKING
+- This counts as the week’s red-meat dish.
+- Lamb is a Human-approved exception because the lesson is specifically lamb plus dense dried fruit.
+- Self-dried figs are required unless Marco explicitly changes the experiment.
+- Dry only during hot, dry, low-humidity weather; bring figs inside before evening humidity, rain or storms.
+- Discard any fig that smells alcoholic or sour, leaks, grows mould, or remains wet inside.
+- Refrigerate or freeze the dried figs; this is not shelf-stable preservation.
+
+## QUANTITIES
+Portions: 3 substantial portions.
+
+Fig prep:
+- Fresh figs: 6–8
+- Final dried yield: use the complete measured yield unless it exceeds 150g; if above 150g, use 120–150g and reserve the rest
+
+Lamb base:
+- Lamb shoulder: 700–900g
+- Onion: 200g
+- Garlic: 10g
+- Neutral or olive oil: 20ml, plus only what browning requires
+- Fresh ginger: 10g
+- Turmeric: 1 tsp
+- Coriander seed: 1 tsp, toasted and ground
+- Ceylon cinnamon: 1 stick
+- Black pepper: 1/2 tsp
+- Fine salt: begin with 6g for 800g lamb, then adjust
+- Water or unsalted stock: 175ml; use 150ml only with very juicy onions and 200ml only if scorching risk requires it
+
+Finish:
+- Home-dried figs: measured yield, capped as above
+- Lemon juice: 10ml initially, plus up to 10ml reserve
+- Honey: 0–10ml only after tasting
+- Toasted almonds or walnuts: 25–35g
+- Optional cilantro or parsley: small fresh finish
+
+## HOW TO DRY THE FIGS
+1. Select firm-ripe figs and reject split, leaking, bruised, over-soft, sour-smelling or fermenting fruit.
+2. Weigh whole figs. Wash gently, dry thoroughly and halve through the stem; quarter only if very large or wet.
+3. Weigh prepared figs. Arrange cut-side up on a clean rack with airflow underneath and fine mesh held clear of the fruit.
+4. Dry in full sun during hot, dry weather. Bring inside before evening humidity, dew, rain or storms.
+5. Stop when the figs are darker, compact, leathery and pliable, with no wet or tacky centre. Cut one open to check.
+6. Record final dried weight and yield. Store airtight in the fridge or freezer.
+
+## HOW TO COOK IT
+1. Brown lamb in uncrowded batches; remove.
+2. Soften onion, then add garlic, ginger, turmeric, coriander, cinnamon and black pepper.
+3. Deglaze with the measured liquid, scrape clean and return lamb.
+4. Pressure-cook on high for 35 minutes, then allow 15 minutes natural release. If still resistant, pressure-cook 5–10 minutes more.
+5. Remove cinnamon. Reduce uncovered if the sauce is thin.
+6. Add dried figs during the finishing phase and simmer gently, checking after 8–10 minutes. Stop before they dissolve.
+7. Taste before adding honey. Use lemon, salt and spice to keep the finish savoury; add honey only if the figs need rounding.
+8. Rest overnight if practical and record whether a longer rest materially improves balance.
+9. Finish with nuts and optional herbs.
+
+## WHAT SUCCESS LOOKS LIKE
+Lamb is tender and integrated. Figs soften and perfume the sauce while retaining some chew and seed texture. The sauce is savoury first, with dense fig sweetness in balance rather than becoming jammy or dessert-like.
+
+## WATCH OUT FOR
+- Do not use mouldy, fermenting or wet-centred figs.
+- Do not add honey automatically.
+- Do not boil figs until they disappear into paste.
+- Do not call this a single-variable continuation of the apricot work.
+
+## STORAGE
+Refrigerate up to 3 days. Freeze lamb and sauce if needed; fig texture may soften further. Freeze any unused home-dried figs.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete — lamb approved as an exception and figs must be self-dried
+Verification: Not done — current revised task requires a fresh independent verification pass.
+
+### Decisions
+Human — Marco: add this as a fig-season task; use lamb as the approved exception; require drying the figs at home rather than using bought dried figs.
+Agent — Codex: kept this separate from the beef fresh-vs-dried apricot comparison because fig asks a different question.
+Agent — GPT: reconciled the stale prior verification line with the current Verification Queue state; retained the previously researched drying safeguards and recipe construction.
+
+### Research basis
+MarocMama and Global Table Adventure support lamb with dried figs, onion, garlic, ginger, warm spices, honey and nuts in a Moroccan-style sweet-savoury tagine. National Center for Home Food Preservation supports drying ripe figs and halving large figs, but does not validate local sun-drying conditions or use the exact “leathery/pliable” wording. La Cucina Italiana supports traditional sun-drying of halved figs over multiple sunny days, protecting from insects and bringing them inside at night; it is a practical-method source, not a safety authority. The task therefore uses conservative discard checks and refrigerated/frozen storage.
+
+### Material changes
+2026-07-30 — Reset the stale prior verification credit to pending independent verification so the state block agrees with Verification Queue placement. Recipe, Human decisions and safety boundaries unchanged.

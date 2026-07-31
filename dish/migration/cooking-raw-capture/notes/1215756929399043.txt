@@ -1,0 +1,69 @@
+Doubanjiang fish — Pixian chilli-bean braised orata
+
+Two small whole oratas are seared and gently braised in a modest Pixian sauce. This tests whether a firmer whole fish tolerates the sauce better than the earlier hake while also correcting that cook's excess liquid.
+
+WHY COOK IT
+Test whole-fish handling and whether orata remains legible under Pixian. The previous hake sauce was both loose from excess liquid and too dominant for the delicate fish; this changes more than one variable and cannot isolate causality.
+
+CAN I COOK IT? Yes.
+
+## WHAT TO BUY
+- Whole orata: 2 x 300-350g, gutted, scaled and gilled
+
+## CHECK BEFORE COOKING
+- Confirm both fish fit the 28cm pan without overlap; otherwise sear sequentially.
+- Serve with about 100g dry rice for the one fresh sitting.
+
+## QUANTITIES
+One fresh substantial sitting.
+- Whole orata: 2 x 300-350g
+- Fine salt: 3g total
+- Neutral oil: 45ml
+- Pixian doubanjiang: 22-25g
+- Garlic: 4 cloves, chopped
+- Ginger: 20g, chopped
+- Water or light unsalted stock: begin with 100ml; hold up to 40ml
+- Light soy: 5ml to start
+- White sugar: 3g
+- Zhenjiang vinegar: 7.5ml, off heat
+- Starch: up to 3g with cold water, only if reduction does not give light cling
+- Dry rice: about 100g, cooked separately
+
+## HOW TO COOK IT
+1. Score each fish two or three times per side. Salt, rest 10-15 minutes and pat very dry.
+2. Sear in the 28cm stainless pan until golden and released cleanly, about 3-4 minutes per side; work sequentially if needed.
+3. Remove fish. Fry Pixian until red oil appears, then add ginger and garlic briefly.
+4. Return fish. Add 100ml liquid, soy and sugar. Cover and simmer gently, spooning sauce over exposed surfaces rather than flipping.
+5. Add held liquid only if the pan is genuinely drying before the fish is done.
+6. Cook about 6-9 minutes, checking near the spine for clean release from bone.
+7. Transfer with wide support. Reduce sauce without the fish if needed; use slurry only if reduction alone cannot create light cling. Remove from heat and add vinegar.
+8. Serve immediately with rice.
+
+## WHAT SUCCESS LOOKS LIKE
+The fish remains intact and moist, with golden skin still legible beneath a red sauce that coats rather than pools. Pixian is clear but does not erase the orata.
+Visual reference: https://blog.themalamarket.com/wok-fried-snapper-chili-bean-sauce/ - observe whole-fish integrity, sear colour and light sauce coverage. Ignore snapper, wok heat, Shaoxing wine and its soy/scallion-heavy branch.
+
+## SUBSTITUTION DISCLOSURE
+The close sources use Shaoxing wine. Omitting it modestly reduces fermented aroma and deodorising support; vinegar is not an equivalent cooking-stage replacement.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Claude, 2026-07-15
+
+### Decisions
+Human — Marco: Use two small whole oratas, the 28cm stainless pan and one fresh sitting.
+Agent — Codex: Corrected the prior-cook diagnosis, reduced starting liquid to 100ml and reduced Pixian to a source-plausible 22-25g.
+
+### Research basis
+Halal multi-variable correction repeat of Sichuan douban fish.
+Construction — Cooking History “DONE — Doubanjiang fish with hake,” 1215097253917910, including Marco comment 1216473248667420 — records two distinct problems: loose sauce from 180-220ml liquid and a sauce that overwhelmed mild hake. It recommends 100-140ml for the next liquid test.
+Construction — China Sichuan Food: https://www.chinasichuanfood.com/braised-spicy-fish-sichuan-style/ — supplies whole-fish salting, light browning and doubanjiang braising structure.
+Construction — The Mala Market: https://blog.themalamarket.com/wok-fried-snapper-chili-bean-sauce/ — supplies two approximately 340g fish, 3-4-minute browning and about 180ml total assembled sauce containing substantial soy, vinegar and two bean pastes.
+Construction — Human — Marco decision recorded in this task — selected orata, pan and one-sitting format.
+Technical premise: partly supported. The lower liquid directly follows the prior diagnosis; whether orata solves the sauce-dominance problem remains an intentional test.
+
+### Open questions
+Record pan fit, actual added liquid and whether the fish remains distinct under Pixian.

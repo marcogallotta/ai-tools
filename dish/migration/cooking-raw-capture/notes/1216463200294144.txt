@@ -1,0 +1,67 @@
+Turkish delight — small rosewater batch
+
+A gelatin-free sugar-and-cornstarch confection using one coherent starch-paste construction, cooked until golden, glossy and cohesive, then set, cut and dusted.
+
+WHY COOK IT
+Learn syrup concentration, starch gelatinisation, final dehydration, elasticity and setting in a genuinely small batch.
+
+CAN I COOK IT? No — awaiting independent verification.
+
+## WHAT TO BUY
+- Rosewater: at least 5ml
+- Cream of tartar: at least 2ml
+- Icing sugar: at least 15g
+
+## CHECK BEFORE COOKING
+- Use a reliable thermometer. Measure the boiling point of plain water with the same thermometer; the syrup target is that reading plus 12°C.
+- Prepare both pans and a lined, lightly oiled mould of about 80–90cm² base area before heating.
+- Allow roughly 60 minutes of continuous-attention work.
+
+## QUANTITIES
+One small batch, roughly 10 bite-size pieces.
+- White sugar: 200g
+- Syrup water: 40ml
+- Cornstarch: 30g
+- Starch-paste water: 150ml
+- Cream of tartar: 2ml
+- Rosewater: 2ml, with up to 1ml extra only after tasting a cooled smear
+- Neutral oil: about 3ml, for mould and lining
+- Icing sugar: 15g, for coating
+- Cornstarch: 15g, for coating
+
+## HOW TO COOK IT
+1. Lightly oil and line the mould. Sift the coating sugar and starch together.
+2. Heat sugar and 40ml water gently, stirring only until dissolved. Simmer without further stirring to the measured boiling point plus 12°C.
+3. Whisk 30g starch, cream of tartar and 150ml cold water smooth. Cook while stirring until it becomes a thick smooth paste with no free liquid.
+4. Off heat, add syrup in 4–5 additions, mixing each fully smooth.
+5. Return to the lowest stable heat and cook about 35–50 minutes, stirring and scraping increasingly often.
+6. Stop when golden, glossy and cohesive; the scraped pot bottom remains visible briefly and a cooled teaspoon holds its mound with a tender-chewy texture.
+7. Remove from heat and stir in 2ml rosewater. Add no more than 1ml extra after tasting a cooled smear.
+8. Transfer immediately to the mould. Set at room temperature at least 4 hours, preferably overnight. Do not refrigerate.
+9. Turn out, coat, cut and coat every surface.
+
+## WHAT SUCCESS LOOKS LIKE
+The final mass is translucent, golden, glossy and elastic. Set pieces hold clean edges without weeping or raw-starch taste; the bite is tender-chewy rather than gummy or brittle.
+
+Visual process analogue — https://blog.thermoworks.com/turkish-delight-recipe-with-thermal-guidance/ — Observe starch thickening, gradual syrup incorporation, golden cohesive mass and partial pull-away. Ignore its different formula.
+
+## WATCH OUT FOR
+Do not mix this formula with a higher-water, higher-temperature construction. Stop stirring the syrup once dissolved. Do not stop while the mixture remains opaque-white or sauce-like. Do not refrigerate.
+
+## STORAGE
+Store at cool room temperature in a sealed container, separated with parchment and generously coated.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done — requires fresh independent verifier
+
+### Decisions
+Human — Marco: Approved halving the prior 400g-sugar rehearsal batch.
+
+### Research basis
+Construction — Adam Liaw / SBS Food, https://www.sbs.com.au/food/the-cook-up-with-adam-liaw/recipe/turkish-delight/dte56nfut — controlling formula and method, scaled to 200g sugar.
+Later validation — ThermoWorks, https://blog.thermoworks.com/turkish-delight-recipe-with-thermal-guidance/ — endpoint observations only.
+Altitude method — Colorado State University Extension, https://extension.colostate.edu/resource/candy-making-at-high-elevation/ — supports adjusting the finish against the measured local boiling point.

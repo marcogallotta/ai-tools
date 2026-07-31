@@ -1,0 +1,96 @@
+[Thai basil harvest] Vietnamese aubergine vermicelli bowl — cà tím mỡ hành test
+A project-designed rice-vermicelli bowl built around Vietnamese aubergine with scallion oil, fish-sauce dressing and peanuts. The aubergine treatment is source-backed; adding noodles and a Thai-basil-led herb bowl is a Human-approved assembly test, not a claim that this exact combination is a canonical named dish.
+
+WHY COOK IT
+Use peak aubergine in a fresh noodle format while comparing a steamed, plush aubergine treatment against the charred character normally supplied by grilling.
+
+CAN I COOK IT? No - confirm about 10g Thai basil is harvestable, check rice-vermicelli stock, and obtain independent Claude verification.
+
+## WHAT TO BUY
+- Aubergine: 250–300g
+- Rice vermicelli: 70g dry, only if live stock is insufficient
+- Scallions: enough for 15g sliced green parts
+- Lime: 1
+- Optional cucumber or lettuce: 50–80g
+
+## CHECK BEFORE COOKING
+- Harvest about 10g healthy, aromatic Thai basil. Postpone if that amount is not available.
+- Use one fresh sitting; cook the noodles immediately before assembly.
+- Stovetop steaming is the controlling no-oven route. It supplies tenderness but not char. Record whether the finished bowl lacks enough roasted character before changing the dressing.
+- Mint is optional support. Use rau răm only when a meaningful healthy amount is harvestable.
+- Cook the aubergine in a single uncrowded steamer layer or in batches.
+
+## QUANTITIES
+Portions: one fresh sitting; the purpose is a seasonal aubergine-and-herb test rather than a complete protein meal.
+
+Aubergine:
+- Aubergine: 250–300g
+- Fine salt: 1g
+
+Scallion oil:
+- Scallion green parts: 15g, thinly sliced
+- Neutral oil: 20ml
+- Fine salt: 0.5g
+
+Dressing:
+- Warm water: 25ml
+- Fish sauce: 7.5ml
+- White sugar: 3.5g
+- Lime juice: 4ml initially
+- Lime-juice reserve: 2ml
+- Garlic: 2g, finely minced
+- Bird's-eye chilli: up to 1/2, according to actual heat
+
+Bowl:
+- Rice vermicelli: 70g dry
+- Thai basil: about 10g, broadly torn
+- Mint: 3–5g, optional
+- Rau răm: up to 5g, optional and only if meaningfully harvestable
+- Roasted peanuts: 15g, lightly crushed
+- Optional cucumber or lettuce: 50–80g
+
+## HOW TO COOK IT
+1. Trim the aubergine and cut it lengthwise into thick quarters or into pieces that fit the steamer while retaining skin on every piece. Arrange skin-side down without crowding.
+2. Steam over actively boiling water for about 10 minutes, then test the thickest centre. Continue only until a chopstick passes through easily while the pieces still hold their shape. Drain any pooled water immediately.
+3. Place the hot aubergine on the serving plate, season with 1g salt and split or tear into large plush pieces.
+4. Put the sliced scallion and 0.5g salt in a heatproof bowl. Heat 20ml oil until a test piece sizzles immediately, then pour it over the scallion and stir. Spoon it over the warm aubergine.
+5. Dissolve sugar in warm water. Stir in fish sauce, the initial lime juice, garlic and chilli. Hold the 2ml lime reserve separately.
+6. Cook the vermicelli according to its package until tender but resilient. Rinse cool and drain extremely thoroughly.
+7. Assemble noodles, optional fresh vegetables, aubergine, broadly torn herbs and peanuts. Add half the dressing first and toss once.
+8. Taste a complete bite. Add remaining dressing only as needed; use the lime reserve in 1ml steps only if more lift improves the aubergine rather than making the bowl sharply acidic.
+
+## WHAT SUCCESS LOOKS LIKE
+The aubergine is fully plush but remains in visible pieces; noodles are separate; Thai basil leads and mint supports. Scallion oil gives aroma and richness, while the dressing seasons without forming a wet pool. The first-run observation is whether steaming gives enough character or whether a future direct-flame comparison is justified.
+
+Visual reference — https://www.pbs.org/food/recipes/steamed-eggplant-with-scallion-oil — Observe steamed skin-on pieces soft enough to pierce but firm enough to hold shape. Ignore its soy-based vegan dressing and fried-shallot garnish.
+
+## WATCH OUT FOR
+Do not treat surface colour as doneness, let pooled steaming water dilute the bowl, add all dressing automatically, mince the herbs, let mint dominate or describe the assembled bowl as a canonical Vietnamese dish.
+
+## STORAGE
+One fresh sitting only. Dressing and scallion oil may be prepared shortly ahead, but cook noodles and steam aubergine immediately before assembly.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete - 2026-07-11
+Verification: Not done - requires Claude, contract SHA-256 3fcfb645a051d12b0a58ab596dd451b30a1e8161fc20ca30bedb4604a89f8730, read 2026-07-17 12:15 Europe/Rome
+
+### Decisions
+Human — Marco: No added meat for the first run; this is an aubergine, noodle, dressing and herb-balance lesson rather than a complete protein meal.
+Human — Marco: Thai basil leads, mint supports and rau răm is used only when meaningfully harvestable.
+
+### Research basis
+Intentional test dish, Human-approved. The aubergine treatment and individual bowl components are supported; no source is claimed to validate the exact assembled aubergine-vermicelli-herb combination.
+
+Construction — PBS Food, “Cà Tím Hấp Mỡ Hành,” https://www.pbs.org/food/recipes/steamed-eggplant-with-scallion-oil — directly supports skin-on aubergine steamed in an uncrowded layer for about 10 minutes until pierce-tender but still holding shape, draining pooled water, and serving with scallion oil. Its soy-based vegan dressing is not used.
+
+Construction — Delightful Plate, “Vietnamese Grilled Eggplant with Scallion Oil,” https://delightfulplate.com/vietnamese-grilled-eggplant-scallion-oil/ — for 600g aubergine uses 15ml fish sauce, 5–7.5ml lime, 7.5g sugar, 60ml water, 45ml oil, 30g scallion and 45g peanuts. Scaling to 300g gives 7.5ml fish sauce, 2.5–3.75ml lime, 3.75g sugar, 30ml water, 22.5ml oil, 15g scallion and 22.5g peanuts. The task uses 25ml water, 4ml lime, 3.5g sugar, 20ml oil and 15g peanuts, all close to that half-scale while reducing free liquid and peanut load for a noodle bowl.
+
+Serving precedent — Andrea Nguyen's Vietnamese rice-noodle-bowl blueprint, publicly summarized in the Boston Globe adaptation of Vietnamese Food Any Day, supports rice noodles, fresh herbs, crisp vegetables, nuts and nước chấm as a flexible bowl structure. It does not validate aubergine as the defining topping or the exact 70g noodle and herb ratios.
+
+Adaptation boundary: steaming is directly supported as cà tím hấp mỡ hành, but it omits the char of cà tím nướng mỡ hành. Noodles and Thai-basil-led assembly remain a Human-approved test. The material failure risk is a bowl that is soft and well-seasoned but lacks enough roasted contrast.
+
+### Material changes
+2026-07-17 — GPT — Reconstruction. Replaced generic “established bowl architecture” with named direct and serving precedents; normalized the aubergine dressing and scallion oil; made steaming a directly supported but non-charred route; kept the Human-approved no-protein and herb decisions; and reset whole-task verification to Claude.

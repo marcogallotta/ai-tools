@@ -1,0 +1,90 @@
+Zhong shuijiao — red-oil dumplings with fuzhi soy sauce
+
+Boiled chicken dumplings served in sweet aromatic fuzhi soy sauce, Sichuan chilli oil, raw garlic and sesame. Chicken is the approved halal filling; the defining lesson is the Zhong-shuijiao sauce system.
+
+WHY COOK IT
+Learn fuzhi soy sauce and its balance with chilli oil in a high-priority Sichuan cold-sauce family.
+
+CAN I COOK IT? No - source Shanghai-style dumpling wrappers, or deliberately choose the slower homemade-wrapper route and allow dough-resting time.
+
+## WHAT TO BUY
+- Chicken thigh mince: 300g
+- Scallions: about 10 thin scallions
+- Ginger: enough for about 2 tbsp minced plus one thumb-size piece for infusion
+- Egg: 1
+- Shanghai-style dumpling wrappers: enough for about 40 dumplings; not thin gyoza wrappers
+- Raw garlic: a small amount for serving
+
+## CHECK BEFORE COOKING
+- Confirm the wrapper route before starting. Keep purchased wrappers covered; homemade dough requires a separate rest and rolling stage.
+- Homemade chilli oil and the live soy sauces/spices are already in Pantry.
+
+## QUANTITIES
+Portions: 3 substantial dumpling servings, about 12–14 dumplings each.
+
+Chicken filling:
+- Chicken thigh mince: 300g
+- Scallions: about 10, finely chopped; reserve part for the infusion
+- Ginger: about 2 tbsp minced; reserve part for the infusion
+- Light soy sauce: 40ml
+- Toasted sesame oil: 12.5ml
+- Fine salt: 1 tsp
+- Ground red Sichuan pepper: 1/3 tsp
+- Egg: about 2/3 of one beaten egg by volume
+- Hot water for ginger-scallion infusion: 40ml
+- Filling per wrapper: about 7g
+
+Fuzhi soy sauce:
+- Chinese dark soy: 80ml
+- Water: 160ml
+- Brown sugar: 5 tbsp
+- Cassia: 5cm
+- Star anise: 1
+- Fennel seed: 1/2 tsp
+- Whole red Sichuan pepper: 1/2 tsp
+- Ginger: 2.5cm, smashed
+
+Serving:
+- Fuzhi soy sauce to chilli oil: about 2:1 by volume
+- Raw garlic and toasted sesame: small amounts
+
+## HOW TO COOK IT
+1. Steep the reserved ginger and scallion in 40ml hot water for 10 minutes; strain.
+2. Work salt into the chicken in one direction until tacky. Add the remaining ginger and scallion, soy, sesame oil and Sichuan pepper.
+3. Add the infusion gradually, stopping if the filling ceases to absorb it cleanly. Work in about 2/3 beaten egg. Fry or microwave a teaspoon and correct seasoning before wrapping.
+4. Fill wrappers with about 7g each and seal securely. Keep covered.
+5. Simmer all fuzhi ingredients uncovered for about 20 minutes until aromatic and slightly syrupy but still pourable; cool and strain.
+6. Boil dumplings in gently rolling water, stirring carefully at the start. Cut one open to confirm the chicken is fully cooked.
+7. Dress with roughly two parts fuzhi soy to one part chilli oil, then raw garlic and sesame. The dumplings should sit in fluid sauce, not a sticky glaze.
+
+## WHAT SUCCESS LOOKS LIKE
+The filling is juicy and cohesive rather than bouncy or wet. The fuzhi soy remains dark and fluid. Sweet, salty and hot sauce surrounds intact dumplings, with chilli sediment visible and garlic aromatic but not dominant.
+
+Visual reference — https://blog.themalamarket.com/chengdu-challenge-15-dumplings-red-oil-zhong-shui-jiao/ — Observe the dark fluid fuzhi soy and red oil surrounding the dumplings. Ignore the pork filling and handmade-wrapper requirement.
+
+## WATCH OUT FOR
+Do not pour all infusion in automatically, round the egg up to a whole egg, use very thin gyoza wrappers, or reduce the fuzhi soy into caramel.
+
+## STORAGE
+Freeze uncooked dumplings separately on a tray, then bag. Refrigerate fuzhi soy separately. Boil dumplings and dress only at service.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: GPT, 2026-07-16, contract 0dceb66
+
+### Decisions
+Human — Marco: Use chicken thigh as the halal filling.
+Human — Marco: Do not add the extra neutral oil used by some chicken-dumpling recipes; thigh already supplies sufficient fat.
+
+### Research basis
+Halal port of Zhong shuijiao, human-approved.
+Construction — The Mala Market, https://blog.themalamarket.com/chengdu-challenge-15-dumplings-red-oil-zhong-shui-jiao/ — controls wrapper style, pork-filling baseline, fuzhi-soy formula and approximately 2:1 fuzhi-soy-to-chilli-oil service. Its 454g filling was scaled to 300g at factor 0.661.
+Later validation — Taste of Asian Food, https://tasteasianfood.com/chinese-chicken-dumpling-recipe/ — directly supports ginger-scallion water for 300g chicken: 60ml is prepared, added gradually and not necessarily all used. This task's 40ml is a conservative maximum, not an invented fixed absorption claim.
+The chicken adaptation keeps the Mala Market seasoning architecture and adds only the directly supported moisture technique.
+
+### Material changes
+2026-07-16 — Claude — Delta: rebuilt the chicken filling from the controlling source, added ginger-scallion infusion and restored the missing wrapper step.
+2026-07-16 — GPT — Verification correction: reopened a traceable chicken-infusion source, corrected the audit wording from red-oil-to-soy to fuzhi-soy-to-chilli-oil, added a cooked-filling seasoning test and signed the contained Delta.

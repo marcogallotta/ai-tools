@@ -1,0 +1,70 @@
+Chana/chole repeat
+Chana/chole repeat — controlled hydration
+
+Kabuli chickpeas in a medium-bodied onion-tomato gravy, using reserved chickpea liquor to stop the cook before it drifts into dry bhuna.
+
+WHY COOK IT
+Keep chana/chole as a distinctive repeatable legume dish while correcting the prior insufficient-liquor problem.
+
+CAN I COOK IT? Yes — if chickpeas are soaked.
+
+## QUANTITIES
+- Dried kabuli chickpeas: 300g, soaked overnight
+- Reserved cooking liquor: at least 500ml
+- Neutral oil: 45ml
+- Onion: 300g
+- Garlic: 18g
+- Ginger: 18g
+- Green chilli: 1–2
+- Pelati tomatoes: 400g
+- Cumin seed: 1.5 tsp
+- Coriander seed: 2 tsp
+- Turmeric: 1/2 tsp
+- Kashmiri chilli: 1 tsp
+- Hing (asafoetida): a small pinch (about 1/8 tsp), bloomed in the oil
+- Black cardamom: 1 pod, bruised
+- Amchur: begin with 1 tsp
+- Marco's own garam masala: optional 1 tsp
+- Fine salt: begin with 10g
+
+## HOW TO COOK IT
+1. Pressure-cook chickpeas until fully tender and reserve the liquor.
+2. Bloom cumin and hing together, then cook onion soft to light golden.
+3. Add garlic, ginger, chilli, black cardamom and ground spices.
+4. Add tomato and cook cohesive, stopping before dry bhuna.
+5. Add chickpeas and 350ml liquor. Simmer to medium-bodied, flowing but clinging.
+6. Add more liquor whenever pastiness advances beyond target.
+7. Finish with amchur and optional own garam masala; remove the black cardamom pod; rest warm.
+
+## WHAT SUCCESS LOOKS LIKE
+Chickpeas are fully tender and suspended in cohesive gravy that coats but still settles and flows between them. It is neither watery soup nor dry masala crust; most oil remains integrated.
+
+Visual upper boundary — https://www.seriouseats.com/channa-masala-recipe — Observe chickpeas suspended in integrated tomato-spice gravy. Its moundable final body is the upper thickness boundary: stop earlier and looser. Ignore exact onion, tomato, spice, tea and cooking method.
+
+## WATCH OUT FOR
+Reserve liquor before draining, use kabuli rather than kala chana and omit butter from the baseline.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Claude, 2026-07-15, contract b319a51
+
+### Decisions
+Human — Marco: Keep chana/chole as one of the selected legume dishes.
+Agent — Codex: Reframed it as a clean dish repeat rather than a generic gravy drill.
+Agent — GPT-5.6 Thinking: Recovered the prior cook and normalised its role.
+Human — Marco: Restore hing and black cardamom to the recipe.
+Agent — Claude: Restored hing and black cardamom, both credited in Cooking History 1215099926895948 as part of what made the prior excellent version work ("Hing gives fullness... black cardamom adds subtle smoky bass"); amchur was already retained but these two had been dropped without documentation.
+
+### Research basis
+Intentional correction repeat of source-backed chana/chole.
+Construction — Cooking History task "DONE — Punjabi chole / chana masala with chicken drumsticks," 1215099926895948 — supplied the successful dish family and the key correction: reserve at least 500ml chickpea liquor, use enough oil and aim slightly soupier, plus hing, amchur and black cardamom as confirmed positive flavour elements. Verified directly during this pass.
+Construction — Human — Marco decision recorded in this task — selected chana/chole as a retained legume dish, then approved restoring hing and black cardamom.
+Construction — Agent baseline recorded in this task — removes the prior chicken branch and sets 300g chickpeas with staged liquor as the controlled repeat.
+Later validation — Serious Eats, channa masala: https://www.seriouseats.com/channa-masala-recipe — checked chickpea suspension and integrated gravy and was explicitly labelled an upper-thickness boundary. Not independently re-verified this pass (seriouseats.com not accessible); not load-bearing since it is an upper-boundary visual only, not a Construction source.
+Technical premise: directly supported as a correction. Reserved liquor addresses the observed tightness without pretending the exact 350ml starting amount is universal; hing and black cardamom restore flavour elements already confirmed to work.
+
+### Open questions
+Whether the hydration target repeats successfully, and whether the restored hing/black cardamom read as intended at this smaller scale.

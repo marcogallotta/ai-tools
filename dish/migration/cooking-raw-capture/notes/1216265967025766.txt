@@ -1,0 +1,78 @@
+Kimchi family
+
+A small baechu or mak-kimchi-style batch made 10–14 days before the Korean soft landing, using the project's own saeujeot and/or myeolchi-jeot if available.
+
+WHY COOK IT
+Build the kimchi component that the first Korean cooking block depends on and test whether the homemade seafood ferments are good enough to use in real kimchi.
+
+CAN I COOK IT? No - awaiting independent verification.
+
+## WHAT TO BUY
+- Napa cabbage: 500g prepared weight (fresh produce — confirm stock before shopping)
+- Daikon or Korean radish: 80g per 500g cabbage
+- Scallion: 30g per 500g cabbage
+- Gochugaru, garlic, ginger, sugar, rice flour: check against General pantry stock before shopping
+
+## QUANTITIES
+- Napa cabbage: 500g prepared weight, scalable to 1kg
+- Coarse salt: 25g per 500g cabbage for salting, most rinsed away
+- Daikon or Korean radish: 80g per 500g cabbage
+- Scallion: 30g per 500g cabbage
+- Gochugaru: begin with 25g per 500g cabbage; up to 35g
+- Garlic: 15g per 500g cabbage
+- Ginger: 5g per 500g cabbage
+- Homemade saeujeot and/or myeolchi-jeot: dose to be decided after tasting
+- White sugar: 5g per 500g cabbage
+- Rice-flour paste: 5g rice flour cooked with 60ml water per 500g cabbage, optional
+
+## HOW TO COOK IT
+1. Salt cabbage evenly for 60–90 minutes, turning once or twice, until flexible but not limp.
+2. Rinse thoroughly 2–3 times and drain for at least 20 minutes.
+3. Cook and cool rice paste if using.
+4. Mix paste, gochugaru, garlic, ginger, seafood ferment and sugar. Fold in radish and scallion.
+5. Coat cabbage evenly, pack tightly into a clean jar and leave headspace.
+6. Ferment at cool room temperature, checking from 18–24 hours. Refrigerate when light sourness and gas activity are evident.
+7. Taste on packing day, refrigeration day and days 3, 7 and 14.
+
+## WHAT SUCCESS LOOKS LIKE
+Cabbage is seasoned through but still crisp. Red paste is evenly distributed; the jar is tightly packed with headspace, and homemade jeotgal supports savoury depth without distracting off-notes.
+
+Visual reference and free video — http://web.archive.org/web/20260624020641/https://www.maangchi.com/recipe/easy-kimchi — Observe cabbage salted and rinsed in batches, red paste mixed thoroughly through it and finished kimchi packed into containers. This validates broad salting workflow, even coating and packing only. It does not demonstrate this task's exact flexible-but-not-limp endpoint, absence of large air gaps or early fermentation bubbles. Ignore the source's large batch, exact seafood ingredients, optional squid and fruit-heavy seasoning.
+
+## WATCH OUT FOR
+Do not use colatura as the default baseline or run several kimchi variants at once. The homemade jeotgal dose must be set from its actual salinity and aroma.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: Not done - requires Claude, contract 0dceb66
+
+### Research basis
+Source-backed dish.
+Construction update — Use Maangchi's process anchor: salt until pliable, rinse three times, drain, coat, pack tightly and
+ferment until active before refrigeration. Scale it to 500g cabbage and use commercial fish sauce
+for the first controlled batch; test homemade jeotgal later. Keep ginger and radish closer to the
+source rather than the draft's inflated levels. Source recipe is 10 lb (~4.5 kg) napa cabbage, an
+approximate 1:9 scale factor (0.11x) confirmed consistent with this task's gochugaru (25g vs. scaled
+~25g) and garlic (15g vs. scaled ~16.5g) quantities. The live URL is blocked; the Wayback snapshot
+dated 2026-06-24 above is the accessible locator. Record input, temperature and time. Research is
+sufficient.
+Sources: <http://web.archive.org/web/20260624020641/https://www.maangchi.com/recipe/easy-kimchi>
+
+Disclosed departures from source, added at verification — the source also includes carrot, onion and
+leek in the paste; this task omits all three (not previously disclosed as a deliberate choice). The
+task's ginger (5g/500g cabbage) runs ~5x the linearly-scaled source amount; a plausible reason is that
+scaled-down ginger would fall below what an ordinary kitchen scale can reliably weigh, and the
+source's own comments warn that too much ginger over-doses to bitterness, but this reasoning was not
+previously stated. Neither departure changes the defining cabbage/gochugaru/garlic/ginger/fish-sauce
+structure; logged for disclosure, no quantity changed.
+
+### Open questions
+Practical only: the selected kimchi batch ingredients and fermentation window must be available.
+
+### Material changes
+2026-07-17 — Claude — Delta: added the contract-required `## WHAT TO BUY` section, which was entirely
+missing despite fresh napa cabbage needing a purchase/stock check; disclosed the source's dropped
+carrot/onion/leek and the ginger scaling departure in Research basis. No quantities changed.

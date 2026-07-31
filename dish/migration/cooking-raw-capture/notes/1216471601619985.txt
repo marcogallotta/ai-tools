@@ -1,0 +1,73 @@
+Red-oil cold chicken repeat — sesame-paste development
+
+Poached chicken dressed with the established red-oil cold-chicken system, adding a restrained homemade Chinese sesame-paste accent.
+
+WHY COOK IT
+Repeat a dish Marco previously rated good and test whether a small sesame-paste addition adds roasted depth without obscuring the bright chilli-oil, soy and vinegar character.
+
+CAN I COOK IT? No — the revised brief is complete and requires later independent verification.
+
+## CHECK BEFORE COOKING
+- Confirm the homemade sesame paste is fresh and not bitter or stale.
+- Use the current erjingtiao chilli oil; its actual heat controls final adjustment.
+- Keep enough sauce for rice, which was a strong positive in the prior cook.
+
+## QUANTITIES
+Portions: 3.
+
+Chicken:
+- Whole chicken legs or leg quarters: about 1.2kg bone-in, skin-on
+- Fine salt: 12g
+- Ginger: 10–15g
+- Scallion: 1 large
+
+Sauce:
+- Erjingtiao chilli oil: 75ml initially, with up to 15ml reserved for adjustment
+- Light soy: 45ml
+- Zhenjiang vinegar: 45ml
+- White sugar: 8–10g
+- Fresh Chinese sesame paste: 15g
+- Garlic: 1–2 cloves, finely grated
+- Ground roasted red Sichuan pepper: about 1 tsp
+- Chicken cooking liquid: 30–60ml, only as needed for a loose coating consistency
+
+## HOW TO COOK IT
+1. Salt the chicken for 1 hour. Poach gently with ginger and scallion until safely cooked but still juicy.
+2. Cool the chicken in some cooking liquid, then debone and cut or tear into substantial pieces.
+3. Whisk sesame paste with 30ml cooking liquid until smooth. Add soy, vinegar, sugar, garlic, Sichuan pepper and 75ml chilli oil.
+4. Taste before using the reserved chilli oil. The sauce must remain bright and red-oil-led, not sesame-heavy.
+5. Add further cooking liquid only until the sauce coats easily and leaves enough loose sauce for rice.
+6. Dress shortly before serving and divide into three portions.
+
+## WHAT SUCCESS LOOKS LIKE
+The sauce remains red, loose and led by chilli oil, vinegar and soy. Sesame paste adds roasted depth and slight body without making the sauce opaque or turning it into bang-bang chicken sauce. Chicken stays juicy, and extra sauce remains available for rice.
+
+## DECISION RULES
+- Sesame dominates or dulls acidity: do not add more paste; increase vinegar only in 3ml increments if needed.
+- Sauce is too thick: add cooking liquid 10ml at a time.
+- Heat is too low: use the reserved chilli oil gradually rather than assuming all 90ml is required.
+
+## WATCH OUT FOR
+- Fifteen grams of sesame paste is a bounded repeat variable, not a canonical ratio.
+- Do not silently correct away a negative sesame result.
+- Do not ask the verifier to inspect Cooking History; the prior evidence is reconciled below.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done — revised brief requires later independent verification.
+
+### Decisions
+Human — Marco: confirmed this is a worthwhile repeat and that the dish has been cooked successfully more than once.
+Agent — GPT: reconciled the prior Cooking History record before handoff and bounded the uncertain chilli-oil dose with a 75ml start plus 15ml reserve.
+
+### Prior-cook evidence
+Cooking History task 1215097077071729 records about 1.2kg bone-in, skin-on drumsticks. The result was good/nice but not a top winner. The uncooked chilli-oil, light-soy and Chinkiang-vinegar structure was successful; the sauce improved as it sat, and sauce on rice was a major positive. The exact prior chilli-oil ratio and aromatics were not recorded. The homemade oil was intentionally mild, and Marco preferred starting light and increasing rather than overshooting. A sesame-paste/bang-bang direction was explicitly identified as a possible next variant.
+
+### Research basis
+The prior cook controls the dish purpose and scale. Published kou-shui-ji constructions support the same sauce family. A Mala Market formula for roughly 680–900g chicken uses about 60ml chilli oil, 30ml soy, 30ml black vinegar and 2 tsp sesame paste; scaling that range toward 1.2kg supports the current 90/45/45 envelope and a restrained 15g paste. Other cold-chicken recipes show materially variable oil levels, so the mild homemade oil is handled through a measured reserve rather than a false exactness claim.
+
+### Material changes
+2026-07-30 — Removed the future instruction for the verifier to inspect Cooking History; incorporated the actual prior-cook findings into the task; changed chilli oil from an unconditional 90ml to 75ml plus a 15ml measured reserve while preserving the 45ml soy, 45ml vinegar and 15g sesame-paste test.

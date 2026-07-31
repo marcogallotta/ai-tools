@@ -1,0 +1,85 @@
+# Laap gai — controlled chicken-thigh pork-replacement repeat
+Laap gai — controlled chicken-thigh pork-replacement repeat
+
+Coarsely hand-minced chicken thigh gently cooked without browning, then dressed off heat with lime, fish sauce, dried chilli, coarse khao khua, mint, cilantro and scallion.
+
+WHY COOK IT
+Test chicken thigh as the closest practical halal replacement for a pork-based laap comparison while holding the established laap structure steady.
+
+CAN I COOK IT? No - awaiting independent verification.
+
+## WHAT TO BUY
+- Chicken thigh: 140g boneless weight
+- Cilantro: 6-8g (Pantry Growing lists cilantro "too hot right now" - buy fresh)
+- Scallion: 1
+
+## QUANTITIES
+Portions: one fresh serving.
+
+Initial cook:
+- Chicken thigh: 140g boneless weight, hand-chopped to coarse mince
+- Fish sauce: 5ml
+- White sugar: 1g
+- Lime juice: 2.5ml
+- Water: 30ml
+
+Off-heat finish:
+- Additional lime juice: begin with 10ml; keep 5ml reserve
+- Additional fish sauce: begin with 2.5ml; keep 2.5ml reserve
+- Padaek: 0–2.5ml only after tasting; reduce ordinary fish sauce correspondingly
+- Roasted dried chilli powder: begin with 1/2 tsp
+- Khao khua: 6g, coarse rather than flour-fine
+- Scallion: 1
+- Mint: 8–10g
+- Cilantro: 6–8g
+
+## HOW TO COOK IT
+1. Toast glutinous rice until deep golden and fragrant. Cool and grind to coarse sand.
+2. Hand-chop chicken thigh to a loose coarse mince. Mix with fish sauce, sugar and lime for no more than 5–10 minutes.
+3. Cook chicken, marinade and water over medium heat, breaking up gently until just cooked. Do not brown; retain the cooking juice.
+4. Remove from heat. Stir in starting lime, fish sauce, chilli and 4g khao khua.
+5. Taste warm. Add reserved lime, fish sauce or measured padaek only until sour, salty, chilli-warm and savoury without pooled liquid.
+6. Fold through scallion, mint, cilantro and remaining khao khua. Serve immediately or at warm room temperature.
+
+## WHAT SUCCESS LOOKS LIKE
+Chicken remains juicy, loose and soft rather than browned into dry crumbles. Lime is sharp, fish sauce integrated, mint leads, and coarse khao khua remains nutty, visible and slightly gritty.
+
+Visual reference — https://www.theguardian.com/food/2022/feb/02/how-to-make-the-perfect-pork-or-chicken-duck-or-tofu-larb-recipe — Observe loose moist mince with visible herbs and coarse toasted-rice powder rather than browned crumbles or a wet salad. Use the chicken option only; ignore its larger batch and ratios because this task claims to be anchored to a prior 140g cook.
+
+## WATCH OUT FOR
+Do not brown the chicken, grind khao khua to flour, add rau răm or dill, use all reserves automatically or let padaek create an uncontrolled second variable.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done - requires Claude, contract ac2220e
+
+### Decisions
+Human — Marco: Corrected the "untraceable baseline" flag: he reports three prior chicken cooks under "larb," not "laap gai," with one third cook untracked in Asana. Approved this as a genuine controlled repeat.
+Human — Marco: ignore `halal.md`'s four-route cut-substitution requirement for this task entirely; state only the chicken thigh amount and that it is boneless weight, with no cut-substitution reasoning attached.
+
+### Research basis
+Intentional test dish, human-approved.
+Construction update — A direct Lao home formula for 340g cooked chicken uses 7.5ml each padaek and fish sauce, 15ml
+toasted rice, one teaspoon chilli, 30–45ml lime, two scallions, cilantro and mint. Mince cooked
+chicken by hand, dress barely warm and add herbs last. The lost May baseline prevents "controlled
+repeat" language but does not block this researched cook.
+Sources: <https://craftstocrumbs.com/recipes/laap-gai/>
+
+Scale factor: the cited source states 340g cooked chicken; this task's controlling weight, 140g, is
+raw thigh before cooking. Using an [approx] estimate of ~20% weight loss for gently poached,
+unbrowned minced chicken thigh (lower than typical roasting shrinkage since this method avoids
+browning), 140g raw yields roughly 112g cooked. Scale factor against the 340g cooked source basis:
+112/340 ~ 0.33. Applied to the source's 340g formula, the task's fish sauce/padaek, toasted rice,
+chilli, lime, and scallion quantities land within a defensible range of the scaled amounts - flagged
+[approx] rather than settled, since the cook-loss percentage itself is an estimate, not a cited
+figure.
+
+Flag, not a claim of certainty: padaek and the stocked "pla ra sauce, weak-ish MAE BOONLAM" are being
+treated as the working substitute for each other in this task's off-heat finish; their identity as
+equivalent products has not been independently confirmed.
+
+### Open questions
+Practical only: none outstanding beyond the padaek/pla-ra substitution flag above.

@@ -1,0 +1,72 @@
+Chettinad chicken
+Chettinad chicken — roasted spice and dry-paste system
+
+Chicken cooked in a freshly roasted pepper, fennel and coriander masala with curry leaves and a restrained coconut-onion base.
+
+WHY COOK IT
+Add a South Indian roasted-spice and dry-paste contrast to korma and North Indian gravy systems.
+
+CAN I COOK IT? Yes — if curry leaves remain after the higher-priority Sri Lankan task.
+
+## QUANTITIES
+- Bone-in chicken: 900g
+- Onion: 250g
+- Tomato: 250g
+- Garlic: 20g
+- Ginger: 20g
+- Curry leaves: 20
+- Coconut: 40g
+- Neutral oil: 40ml
+- Water: 200ml initially
+- Fine salt: begin with 9g
+
+Roast and grind:
+- Coriander seed: 2 tbsp
+- Fennel seed: 2 tsp
+- Cumin seed: 1 tsp
+- Black pepper: 2 tsp
+- Dried chilli: 8–12g
+- Cassia: 3cm
+- Cloves: 4
+- Green cardamom: 4
+- Star anise: 1/2
+- Poppy seed: optional 1 tsp
+- Turmeric: 1/2 tsp after grinding
+
+## HOW TO COOK IT
+1. Roast spices and coconut separately; cool and grind with a little water.
+2. Brown chicken lightly and remove.
+3. Cook onion and curry leaves until golden; add garlic and ginger.
+4. Add tomato and reduce.
+5. Fry masala paste until rawness disappears and oil begins showing.
+6. Return chicken with water and salt; cover and simmer until tender.
+7. Uncover and reduce until masala coats without greasiness.
+
+## WHAT SUCCESS LOOKS LIKE
+Spices and coconut are deepened without black scorch. Ground masala coats rather than remaining sandy. The finished gravy is dark and clinging with visible curry leaves and restrained oil; it is neither soupy nor burnt-dry.
+
+Visual reference — https://www.indianhealthyrecipes.com/chicken-chettinad/ — Observe whole spices roasted, coconut and curry leaves toasted, a smooth ground paste, tomato reduced before paste frying and dark cohesive gravy coating chicken. Ignore kalpasi, cashews, marination, exact ratios and spice formula.
+
+## WATCH OUT FOR
+Do not scorch coconut or spices, overdo pepper or make the dish soupy.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: Claude, 2026-07-15, contract b319a51
+
+### Decisions
+Agent — Codex: Kept this after Sri Lankan black chicken in the curry-leaf sequence.
+Agent — GPT-5.6 Thinking: Normalised construction and later-validation source roles.
+
+### Research basis
+Source-backed Chettinad chicken with a project spice calibration.
+Construction — Swasthi Shreekanth/Indian Healthy Recipes, chicken Chettinad: https://www.indianhealthyrecipes.com/chicken-chettinad/ — supplied roasting whole spices and coconut, curry leaves, grinding a smooth fresh paste, tomato reduction and dark coating gravy. Verified directly against full page text; confirms kalpasi, cashews and marination are present in the source and correctly excluded here.
+Construction — Agent calibration recorded in this task — selected the current pepper-fennel-coriander quantities, optional poppy seed and 200ml starting water; these are working ratios rather than copied authority.
+Later validation — the same Swasthi page, re-inspected during the visual audit and again during verification — checked roast progression, paste texture and finished sauce body.
+Technical premise: directly supported in structure. Exact coconut, pepper and water levels remain first-cook calibrations rather than research blockers.
+
+### Open questions
+Coconut level and pepper-fennel balance.

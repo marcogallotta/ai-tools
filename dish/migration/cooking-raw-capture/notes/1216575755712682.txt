@@ -1,0 +1,89 @@
+[Rau răm] Cá diêu hồng gói rau răm — pan-cooked whole-fish parcel
+
+A whole cleaned tilapia scored and coated with rau răm, galangal, turmeric, garlic and chilli, enclosed in parchment and foil, then cooked in a covered pan. This is adapted from a Vietnamese cá diêu hồng nướng rau răm construction; the live title does not call the pan-cooked version nướng.
+
+WHY COOK IT
+Extend the rau-răm block with a moist wrapped-fish technique that preserves the source’s herb-and-galangal construction in the no-oven kitchen.
+
+CAN I COOK IT? No — the revised brief is complete and requires later independent verification.
+
+## WHAT TO BUY
+- One cleaned whole tilapia or similar whole fish, ideally about 400–500g and small enough for the covered pan
+- Baking parchment and foil for one sealed parcel
+- Shallot and mild red chilli
+
+Banana leaf is optional only if already available at reasonable cost.
+
+## CHECK BEFORE COOKING
+- Weigh the actual fish and scale all seasonings from the per-100g ratios below.
+- Confirm enough rau răm is harvestable.
+- Confirm the parcel fits flat inside the covered pan.
+
+## QUANTITIES
+Portions: 1 fresh whole-fish sitting. This is a recorded Human-approved exception to the normal three-portion default because the purchased whole-fish size is unpredictable and the dish is neither batched nor reheated.
+
+Per 100g whole cleaned fish:
+- Rau răm: 1.5g; chop leaves and reserve stems
+- Green bird’s-eye chilli: 0.5, reduced if the actual chilli is unusually hot
+- Galangal: 1g
+- Garlic: 0.5 clove
+- Chopped shallot-garlic mixture: 0.2 tbsp
+- Mild red chilli: 0.1
+- Turmeric: 0.05 tbsp
+- Mild chilli paste: 0.1 tbsp
+- Fish sauce: 3ml
+- Neutral oil: 1.5ml
+
+Worked 400–500g example:
+- Rau răm: 6–7.5g
+- Green bird’s-eye chillies: about 2
+- Galangal: 4–5g
+- Garlic: 2 cloves
+- Shallot-garlic mixture: about 1 tbsp
+- Mild red chilli: 1/2
+- Turmeric: 1/4 tbsp
+- Mild chilli paste: 1/2 tbsp
+- Fish sauce: 12–15ml
+- Neutral oil: 6–7.5ml
+
+Tamarind dip per 100g fish:
+- Fish sauce: 3ml
+- Tamarind water: 1.5ml
+- Water: 3ml
+- Sugar: 2.5g, then adjust to the tamarind
+- Garlic and chilli: to taste
+
+## HOW TO COOK IT
+1. Pat the fish dry and cut three diagonal slashes on each side without cutting through the backbone.
+2. Mix the scaled rau-răm leaves, chillies, galangal, garlic, shallot, turmeric, chilli paste, fish sauce and oil. Omit the source’s pork-flavoured seasoning powder without silent replacement.
+3. Rub the mixture over the fish, into the slashes and inside the cavity. Marinate for 15 minutes.
+4. Put the rau-răm stems and fish on parchment, add remaining marinade, wrap tightly, then seal in foil.
+5. Put the parcel in a preheated heavy covered pan over medium-low heat. Cook 10 minutes, turn carefully, then cook another 10 minutes.
+6. Open away from the face and check the thickest shoulder flesh. It must be opaque, release cleanly from the backbone and reach at least 63°C. If not, reseal and continue in 3-minute increments.
+7. Mix the scaled tamarind dip and serve immediately.
+
+## WHAT SUCCESS LOOKS LIKE
+The fish is moist and just cooked, with rau răm and galangal clearly present. The marinade does not scorch. Parchment-and-foil results are not described as banana-leaf-equivalent.
+
+## WATCH OUT FOR
+- Pan timing is a checkpoint, not a doneness guarantee; fish thickness controls completion.
+- Do not use nướng as the live method label for this covered-pan version.
+- Open the parcel cautiously because of trapped steam.
+- Do not scale this into a standing three-portion batch; the one-fish exception is already Human-approved and documented.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done — revised brief requires later independent verification.
+
+### Decisions
+Human — Marco: approved the covered-pan parcel, parchment inside foil as the baseline, banana leaf as optional, and one actual purchased fish per fresh sitting rather than a fictional fixed-weight three-portion batch.
+Agent — GPT: verified the naming boundary and removed nướng from the live task title/body while preserving the source attribution as an adaptation.
+
+### Research basis
+Món Ngon Mỗi Ngày’s “Cá diêu hồng nướng rau răm” supports the tilapia, rau răm, galangal, garlic, turmeric, chilli, fish-sauce marinade, 15-minute rest, wrapped cooking and tamarind dip. The per-100g ratios are linear scales from its 1kg fish. A Four Seasons pepes-ikan construction supports covered-pan parcel cooking at roughly 8–10 minutes per side as a checkpoint. Neither source proves exact timing for every whole-fish thickness, so the 63°C and backbone-release checks control completion.
+
+### Material changes
+2026-07-30 — Reconciled the title and task body to “gói rau răm — pan-cooked whole-fish parcel”; kept nướng only as the source route being adapted; preserved the Human-approved one-fish exception and ratio-based scaling.

@@ -1,0 +1,78 @@
+Dubu-jorim — Korean braised tofu
+
+Firm tofu browned lightly, then briefly braised in a ganjang, gochugaru, garlic and scallion sauce until seasoned and glossy.
+
+WHY COOK IT
+Build Korean browned-tofu jorim technique and, when the homemade ganjang is released for cooking, observe how the young ganjang behaves under a short reduction without onion or heavy sesame masking it.
+
+CAN I COOK IT? No — initial verification pending; young homemade ganjang is not yet available or released for cooking. A light-soy cook is allowed only as a separately recorded technique rehearsal, not as the ganjang assessment.
+
+## WHAT TO BUY
+- Scallions: 30g
+- Korean gochugaru: at least 5ml / about 2g
+- Toasted sesame seeds: at least 5ml / about 3g
+- Firm tofu: 500g only if the live check-stock entry confirms none is available
+
+## CHECK BEFORE COOKING
+- Check the Pantry tofu entry and buy 500g firm block tofu only if needed. Do not use silken tofu.
+- The ganjang assessment must wait until the homemade ganjang exists and has separately been released for food use. Cooking it in this dish does not resolve an upstream ferment-safety decision.
+- Compare the young ganjang with pantry light soy before mixing the sauce. If broadly similar in salt intensity, use the main 45ml ganjang + 45ml water formula. If the ganjang is clearly saltier, start with 30ml ganjang + 60ml water and reserve 15ml ganjang for adjustment during the braise [approx].
+- If using pantry light soy instead, use 45ml light soy + 45ml water and record the cook as technique-only. This is a real compromise: it tests jorim handling but provides no evidence about homemade ganjang.
+
+## QUANTITIES
+Portions: 3 banchan servings. This is not a standalone 800kcal / 50g-protein meal; serve with rice and other dishes.
+- Firm tofu: 500g, cut into 12–13mm rectangular slices
+- Neutral oil: 20ml, divided for two browning batches
+- Young ganjang: 45ml, or the saltier-ganjang branch above
+- Water: 45ml, or the saltier-ganjang branch above
+- White sugar: 5ml / about 4g [approx]
+- Korean gochugaru: 5ml / about 2g [approx]
+- Garlic: 5ml minced / about 5g [approx]
+- Scallion whites and pale greens: 20g, finely sliced
+- Scallion dark greens: 10g, finely sliced and held for finishing
+- Toasted sesame oil: 5ml
+- Toasted sesame seeds: 5ml / about 3g [approx]
+
+## HOW TO COOK IT
+1. Drain the tofu for 10 minutes and pat it dry without hard-pressing. Cut into 12–13mm slices.
+2. Mix ganjang, water, sugar, gochugaru, garlic and the 20g scallion whites/pale greens. Keep sesame oil, dark scallion greens and sesame seeds separate.
+3. Heat the 24cm non-stick pan over medium to medium-high heat. Add 10ml oil and brown half the tofu for about 3–4 minutes per side, until lightly golden and resilient enough to turn without tearing. Repeat with the remaining oil and tofu. Do not chase a hard crust.
+4. Arrange all tofu in one shallow layer in the 28cm stainless pan. Pour the sauce over and lift edges so liquid reaches underneath.
+5. Bring to a gentle simmer over medium-low heat. Cook 3–4 minutes, spooning sauce over the tops. Turn carefully, then cook another 1–2 minutes.
+6. Stop while the sauce is glossy and concentrated but one or two tablespoons still move freely when the pan is tilted. If it is disappearing before the tofu is seasoned, add water 15ml at a time. If using the saltier-ganjang branch and the sauce remains underseasoned, add the reserved ganjang 5ml at a time.
+7. Remove from the heat. Add sesame oil, dark scallion greens and sesame seeds. Rest 5 minutes before tasting so surface heat does not hide salt intensity.
+
+## WHAT SUCCESS LOOKS LIKE
+The tofu remains intact, lightly golden outside and tender within. The brief braise seasons the surfaces and edges without turning them leathery. The sauce clings in a thin glossy layer but is not reduced to a salty paste. Ganjang, garlic and restrained chilli remain legible; sesame aroma is a finish rather than the dominant flavour.
+
+Visual reference — https://www.koreanbapsang.com/dubu-jorim-korean-braised-tofu/ — Observe 12–13mm tofu slices, light golden browning, sauce spooned over and underneath, intact turning, and a brief 3–4-minute plus 1–2-minute braise. Ignore its full 15ml sesame-oil quantity; this task deliberately uses the lower Maangchi-supported 5ml finish so young ganjang remains easier to assess.
+
+## WATCH OUT FOR
+- Do not extend the braise to 6–10 minutes by default; the source-backed 12–13mm construction uses about 4–6 minutes total.
+- Do not reduce the pan dry. Add water, not more soy, if evaporation outruns seasoning.
+- Do not add sesame oil at the start; prolonged heat dulls it and makes the ganjang assessment less clear.
+- Do not treat a light-soy rehearsal as evidence about the homemade ganjang.
+
+## STORAGE
+Good warm, cool or at room temperature. Refrigerate up to 3 days with the sauce; bring toward room temperature or rewarm gently so the tofu does not toughen and the sauce does not reduce further.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: Not done - requires Claude, contract SHA-256 be14ab349c9f97d9b709bd69fd5d5d9034d05970dc63e053b02bca5a27bbec5d, read 2026-07-16 21:32 Europe/Rome
+
+### Research basis
+Source-backed dish with a future ingredient-observation branch.
+
+Construction — Korean Bapsang, “Dubu Jorim (Braised Tofu)”: https://www.koreanbapsang.com/dubu-jorim-korean-braised-tofu/ — source uses about 510g firm tofu cut 1/2 inch / 12.7mm, 45ml soy sauce, 45ml water, 15ml oil, 5ml each sugar, gochugaru, sesame seeds and minced garlic, scallions, and a 3–4-minute braise followed by 1–2 minutes after turning. Task controlling weight is 500g tofu; scale factor 500/510 = 0.980. Soy and water scale to 44.1ml each and are rounded to 45ml. Slice thickness and braise timing are retained. Oil is raised to 20ml because the 24cm pan requires two browning batches; this changes handling, not sauce concentration.
+
+Material disagreement and chosen route — Maangchi, “Dubu-jorim”: https://www.maangchi.com/recipe/dubu-jorim — source uses 510g tofu cut 1/4 inch / about 6mm, 15ml soy plus separate salt, 120ml water, onion, 15ml gochugaru and only a one-minute final braise. Its thin slices, separate salt, onion-heavy construction and timing are not used. Its 5ml toasted sesame-oil finish is used because it is a credible lower end of the source range and better preserves the task’s ganjang-observation purpose.
+
+Adaptation — young homemade ganjang salinity is unknown until the live ferment exists. The main 45ml ganjang + 45ml water branch assumes commercial-soy-like salt intensity. The conditional 30ml ganjang + 60ml water start with 15ml reserved is an explicitly unvalidated control for a clearly saltier ganjang; its material failure risk is underseasoning initially, corrected by staged addition. It must remain observational rather than an authenticity or controlled-comparison claim.
+
+Live state — Pantry lists firm tofu as check-stock; neutral oil, garlic, white sugar, toasted sesame oil and light soy are in stock. Korean gochugaru is not recorded as live stock; the only gochugaru task is a future sourcing upgrade. Fermentation schedules the first doenjang/ganjang split for 2026-10-21 and the Korean cooking block for 2027-04-15, so the intended young ganjang is not currently available.
+
+### Material changes
+2026-07-16 — GPT-5.6 Thinking — Reconstruction. Replaced the untraceable 15mm, 30ml soy, 90ml water and 6–10-minute hybrid with a scaled Korean Bapsang construction; bounded Maangchi’s role to the lower sesame finish and conflicting-route comparison; added the ganjang salinity branch, live-state blocker, equipment execution and complete sourcing/readiness language. Whole-task verification required.

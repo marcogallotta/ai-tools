@@ -1,0 +1,89 @@
+Gulai kambing — Malaysian/Indonesian lamb curry
+
+A wet Malaysian/Indonesian-style lamb curry with fried bumbu, coconut milk, warm spice and a loose, pourable sauce. Lamb shoulder and the Instant Pot are practical adaptations.
+
+WHY COOK IT
+Add a wet gulai contrast to rendang in the Indo/Malay curry-paste lane. The lamb-for-goat substitution and Instant Pot workflow are deliberate hot-season practicality choices.
+
+CAN I COOK IT? No - awaiting independent verification.
+
+## WHAT TO BUY
+- Boneless lamb shoulder: 750g
+- Shallots: 165g
+- Fresh long red chillies: about 8-10, adjusted to actual heat
+- Candlenuts: 6-7 - check stock first; if unavailable, cashews are in stock as the stated fallback
+
+## QUANTITIES
+Portions: 3.
+
+Bumbu:
+- Shallots: 165g
+- Garlic: 8 cloves
+- Fresh long red chillies: about 8–10, adjusted to actual heat
+- Candlenuts: 6–7; raw macadamia or cashew fallback
+- Ginger: about 25g
+- Galangal: about 20g
+- Turmeric powder: 3/4 tsp
+- Coriander seed: 2 tsp, freshly ground
+- Cumin seed: 1/2 tsp, freshly ground
+
+Curry:
+- Boneless lamb shoulder: 750g, 3–4cm chunks
+- Neutral oil: 30ml
+- Coconut milk: 400ml
+- Water or light stock: start with 150ml; add only if needed for safe pressure-cooker circulation
+- Lemongrass: 1–2 stalks, bruised
+- Makrut lime leaves: 3
+- Daun salam: 3 if available; otherwise omit
+- Cinnamon: 1 small stick
+- Cloves: 3
+- Green cardamom: 2 pods, crushed
+- Palm sugar: start with 15g
+- Fine salt: start with 8g, then adjust after reduction
+- White pepper: 1/2–3/4 tsp
+
+Estimated [approx]: ~940 kcal / ~48g protein per portion from the curry alone, before rice. Already at/above the ~800kcal/50g target; adding rice pushes total further above guideline, acceptable per CLAUDE.md's athlete/adequate-carbs stance.
+
+## HOW TO COOK IT
+1. Blend the bumbu to a coarse-fine paste.
+2. Fry it patiently in oil until the raw smell disappears and oil begins showing at the edges.
+3. Add lamb and coat well; lightly brown where practical.
+4. Transfer to the Instant Pot with coconut milk, 150ml water or stock, whole aromatics, sugar, salt and pepper.
+5. Pressure-cook on high for 25 minutes.
+6. Allow about 15 minutes natural release, then vent the remaining pressure gradually.
+7. Check tenderness. If still tight, pressure-cook another 5–8 minutes.
+8. Remove whole spices and aromatics. Simmer uncovered only until the sauce lightly coats a spoon while remaining pourable.
+9. Adjust salt, sweetness and water only at the end.
+10. Serve over steamed jasmine rice, about 150g cooked (~65g dry rice, in stock) per portion.
+
+## WHAT SUCCESS LOOKS LIKE
+Lamb is tender and the bumbu tastes cooked rather than raw. The coconut sauce is rich, coloured by turmeric and chilli, and still loose enough to pool around the meat and pour from a spoon; it must not reach kalio or rendang dryness.
+
+Visual sourcing gap — higher-quality Indonesian sources checked explain the bumbu and wet-braise family but did not provide clearly inspectable media for this exact lamb/goat and pressure-cooker boundary. Photograph the sauce immediately after pressure release and at the final pourable endpoint.
+
+## WATCH OUT FOR
+Lamb is expensive and materially changes the dish; it may be richer and less goat-like than the intended gulai kambing reference. Do not force extra liquid into the Instant Pot, claim natural release itself prevents toughness, over-reduce toward rendang or substitute Mediterranean bay for daun salam.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done - requires Claude, contract ac2220e
+
+### Decisions
+Human — Marco: Chose lamb because goat is unavailable from his usual halal butchers and would require another special order that is not worthwhile for the marginal identity gain now. State clearly: “lamb (not goat — kambing’s literal species; goat unavailable via usual halal butchers).”
+Agent — Codex: Reconciled the construction update with the recorded Human Review result and removed stale pending/rejected branches from the process record.
+
+### Research basis
+Intentional test dish, human-approved.
+Construction update — Direct sources establish lamb/mutton, fried shallot-garlic-candlenut-turmeric-coriander-cumin paste,
+lemongrass, lime leaf, daun salam, warm spices and coconut milk. For 500g lamb use roughly 500–700ml
+thin coconut milk. Pressure-cook with the thin phase, then add/reduce remaining coconut milk
+uncovered. Research is sufficient; pressure time is a cut calibration.
+Sources: <https://dailycookingquest.com/gulai-kambing-indonesian-lamb-curry.html>,
+<https://guide.michelin.com/sg/en/article/dining-in/recipe-gulai-kambing>
+
+
+### Open questions
+Practical only: lamb must be sourced and counted as the week's red-meat dish.

@@ -1,0 +1,80 @@
+Doenjang-jjigae
+
+A compact stew of anchovy-dashima stock, young homemade doenjang, tofu, courgette, potato, onion, garlic and scallion.
+
+WHY COOK IT
+Build the central Korean stew block and test whether young doenjang has usable salinity, soybean depth, aroma and body.
+
+CAN I COOK IT? No - awaiting independent verification.
+
+## WHAT TO BUY
+- Firm tofu: 300g
+- Courgette: 180g
+- Potato: 150g
+- Dried anchovies and dashima, if absent
+
+## CHECK BEFORE COOKING
+- Use young homemade doenjang for the ferment test. Purchased doenjang is a recorded reference substitution.
+- Do not use pork, clams, squid or mixed seafood in the baseline.
+
+## QUANTITIES
+Yield: 3 side-stew portions with rice.
+
+Stock:
+- Water: 900ml
+- Dried anchovies: 12–15g
+- Dashima: 8g
+- Dried shiitake: 1, optional
+
+Stew:
+- Young homemade doenjang: begin with 45g; up to 60g after tasting
+- Potato: 150g
+- Onion: 100g
+- Courgette: 180g
+- Firm tofu: 300g
+- Garlic: 10g
+- Fresh green chilli or gochugaru: optional and restrained
+- Scallion: 1
+
+## HOW TO COOK IT
+1. Soak dashima and anchovies in water for 20 minutes if time allows. Remove dashima before a hard boil; simmer anchovies for 10 minutes and strain.
+2. Dissolve 45g doenjang into 750ml stock through a small sieve.
+3. Add potato and onion; simmer until nearly tender.
+4. Add courgette, tofu and garlic. Simmer for 5–7 minutes.
+5. Taste. Add more doenjang only if both soybean depth and salinity are weak; loosen with stock or water if too intense.
+6. Finish with scallion and optional chilli.
+
+## WHAT SUCCESS LOOKS LIKE
+A concentrated compact stew with clear fermented-soy depth, tender vegetables and intact tofu. Brown broth flows between densely arranged components rather than diluting into soup.
+
+Visual reference and free video — https://www.maangchi.com/recipe/doenjang-jjigae — Observe tofu and vegetables remaining individually visible and densely occupying the pot while enough brown broth flows between them. Ignore the source’s shrimp, larger doenjang dose and different stock sequence; it does not validate this young-doenjang test formula.
+
+## WATCH OUT FOR
+Do not season with soy before understanding the doenjang, boil dashima hard or dilute the stew into generic soup.
+
+## STORAGE
+Refrigerate up to 2 days; reheat gently.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: Not done - requires Claude, contract 0dceb66
+
+### Research basis
+Source-backed dish.
+Construction update — Direct versions use two tablespoons doenjang for a meat-based stock. For a
+vegetable/tofu pot with young homemade doenjang, start at 40g per 600ml anchovy-dashima stock and
+reserve 10–15g for tasting. Add radish/potato first, then onion, tofu, zucchini, chilli and garlic;
+finish with scallion. Research is sufficient; paste salinity is the intended calibration.
+Sources: <https://www.koreanbapsang.com/doenjang-jjigae-korean-soy-bean-paste/>
+
+The task makes about 900ml stock but dissolves the doenjang into only 750ml of it, deliberately
+holding back roughly 150ml rather than scaling the seasoning to the full yield. Marco confirmed this
+concentrated approach is preferred for the first attempt. A second source, Drive Me Hungry's
+doenjang-jjigae (1 cup stock : 1 tablespoon doenjang), supports a much more concentrated ratio than a
+full-yield dilution would give, consistent with jjigae's typical dense-stew character.
+
+### Open questions
+Practical only: homemade doenjang must be ready for calibration.

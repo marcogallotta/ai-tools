@@ -1,0 +1,68 @@
+Brik — Tunisian tuna-and-egg malsouka parcel
+
+A thin malsouka sheet folded around tuna, onion, parsley, capers, harissa and a whole egg, then shallow-fried quickly so the wrapper crisps before the yolk hardens.
+
+WHY COOK IT
+Continue calibration of proper-wrapper handling, leakage control, oil heat and yolk timing in a dish already attempted.
+
+CAN I COOK IT? Yes.
+
+## WHAT TO BUY
+- Eggs: one per brik
+- Tuna: about 50g drained per brik
+- Lemon for serving
+
+## CHECK BEFORE COOKING
+- Proper warka/malsouka is already on hand.
+- Cook one brik at a time and eat it immediately.
+- Use a small safe pan, wide spatula and lid or splatter protection nearby.
+
+## QUANTITIES
+Per brik:
+- Malsouka/warka wrapper: 1
+- Egg: 1
+- Drained tuna: about 45–50g
+- Onion: about 25g, finely chopped and softened
+- Parsley: 6–7g
+- Capers: about 4–5g
+- Harissa: 1.5–3g
+- Black pepper
+- Frying oil: enough for about 2cm depth
+
+## HOW TO COOK IT
+1. Soften the onion in a very small amount of oil; cool. Mix with tuna, parsley, capers, harissa and pepper.
+2. Heat about 2cm oil over medium heat. A numeric 175–180°C target is an approximate operating range, not a sourced requirement.
+3. Lay the wrapper over a shallow plate. Place filling off-centre, make a clear well and crack in the egg.
+4. Fold immediately into a rectangle, triangle or half-moon and slide seam-first into the oil.
+5. Fry one at a time, turning once, until both faces are blistered and golden. Begin assessing at about 2 minutes total; wrapper colour and yolk preference control the endpoint.
+6. Drain briefly and serve immediately with lemon.
+
+## WHAT SUCCESS LOOKS LIKE
+The wrapper seals without egg leakage and becomes thin, blistered and crisp rather than greasy. Filling is hot and the yolk is soft-to-jammy, not cold-raw or hard-boiled.
+
+Visual/process reference — https://cultureatz.com/tunisian-brick/ — Observe the tuna-onion-caper-parsley-harissa filling, egg well, immediate folding and shallow frying. Ignore its spring-roll/filo fallback because proper malsouka is available.
+
+## WATCH OUT FOR
+A leaking egg can spit violently. Do not overfill, pre-assemble, chase an exact clock over wrapper colour or fry several for holding.
+
+## STORAGE
+None after assembly. Keep wrappers covered and filling chilled; crack the egg only immediately before frying.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: GPT, 2026-07-16, contract 0dceb66
+
+### Decisions
+Human — Marco: Proper warka/malsouka is already on hand; use it rather than a substitute.
+
+### Research basis
+Source-backed dish.
+Construction — CulturEatz, https://cultureatz.com/tunisian-brick/ — four briks use 180g tuna, one onion, 1 tbsp capers, 1/4 cup parsley, 1 tsp harissa, four wrappers and four eggs. Per brik this gives approximately 45g tuna, one-quarter onion, 4g capers, 6–7g parsley and one-quarter teaspoon harissa.
+The source specifies 2cm oil, medium heat, turn once and fry until golden; it does not support an exact temperature or second count.
+
+### Material changes
+2026-07-16 — Claude — Delta: replaced a mismatched potato-and-cheese source, reduced harissa and labelled numeric frying guidance approximate.
+2026-07-16 — GPT — Verification correction: restored the source-scaled onion quantity, replaced false precision with colour-led timing and signed the contained Delta.

@@ -1,0 +1,60 @@
+# [Scallion greens] Trứng chiên hành lá — Vietnamese scallion egg
+[Scallion greens] Trứng chiên hành lá — Vietnamese scallion egg
+
+WHY COOK IT
+Correct herb-block replacement for the axed "[Rau Ram] Trứng chiên" task — rau răm has no real tradition with fried egg; the attested rau-răm/egg pairing is with boiled egg/balut (duck, out of scope here).
+
+CAN I COOK IT? No - awaiting independent verification.
+
+## WHAT TO BUY
+- Eggs: 4 (fresh, not Pantry-tracked)
+- Scallion: 1 whole scallion - buy from the shop like any other dish
+
+## CHECK BEFORE COOKING
+- Scallion greens (harvest — if unavailable, postpone or substitute shop-bought scallion)
+
+## QUANTITIES
+Portions: 1
+- Eggs: 4
+- Scallion: 1 normal whole-scallion equivalent, using home-grown greens plus bought white only if needed
+- Fish sauce: 5ml
+- Sugar: 2g
+- Black pepper: pinch
+- Neutral oil or butter: 15ml
+
+## HOW TO COOK IT
+1. Whisk everything except fat thoroughly.
+2. Spread thinly in a medium-hot pan.
+3. Push cooked edges inward so liquid fills the gaps.
+4. Stop direct heat while the top is still slightly wet and let residual heat finish it.
+
+## WHAT SUCCESS LOOKS LIKE
+The egg is thin, tender and fully set by residual heat without becoming dry or deeply browned; scallion remains fresh and clearly aromatic.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: Not done - requires GPT, contract ac2220e
+
+### Decisions
+Agent — Codex: Reconciled the construction update with the recorded Human Review result and removed stale pending/rejected branches from the process record.
+Human — Marco: there is a home-grown scallion plant but it is limited/unreliable use; dropped the "designated use for home-grown scallion greens" framing and default to buying shop scallion like every other dish.
+
+### Research basis
+Source-backed dish.
+Construction update — Vicky Pham supplies a complete four-egg formula: 4 eggs, 1 green onion, 1 teaspoon fish sauce,
+1/2 teaspoon sugar, 1/8 teaspoon black pepper and 1 tablespoon butter or oil. Everything except the
+fat is thoroughly whisked. The egg is spread thinly in a medium-hot pan; cooked edges are pushed
+inward so liquid fills the gaps; heat is stopped while the top is still slightly wet and residual
+heat finishes it.
+Sources: <https://vickypham.com/blog/easy-vietnamese-scrambled-eggs/>
+
+This is already enough to make the task executable. The source uses the whole scallion and does not
+support a special white-to-green ratio. Use one normal scallion equivalent, buying shop scallion by
+default; home-grown greens may be used opportunistically but are not a designated dependency given
+their limited/unreliable availability.
+
+### Open questions
+Practical only: fresh scallion greens must be harvestable if home-grown is used opportunistically.

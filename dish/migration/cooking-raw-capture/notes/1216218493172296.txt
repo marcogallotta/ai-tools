@@ -1,0 +1,73 @@
+[Thai basil] Crispy chicken with kra-pao-style seasoning
+
+Crisp double-fried chicken thigh tossed briefly with garlic, chilli and a concentrated kra-pao-style sauce, then finished with Thai basil. This is a deliberate texture adaptation, not an equivalent to moo grob or pork crackling.
+
+WHY COOK IT
+Test crisp chicken, fast sauce glazing and fresh Thai-basil aroma as a three-portion meal rather than an unjustified one-off sample.
+
+CAN I COOK IT? No — the revised brief is complete and requires later independent verification.
+
+## CHECK BEFORE COOKING
+- Harvest 45g Thai basil.
+- Use the smaller safe deep-frying pot and a thermometer if available.
+- Mix the full sauce before frying.
+- Fry chicken in small batches; do not increase oil depth merely because the recipe is now three portions.
+- Cook rice fresh per sitting if the portions are not eaten together.
+
+## QUANTITIES
+Portions: 3 substantial portions.
+
+Chicken:
+- Boneless skinless chicken thigh: 750g, cut into 2.5cm pieces
+- Potato or corn starch: 90–120g, used only as needed for a dry coating
+- Frying oil: enough for 3–4cm depth in the smallest suitable pot; reuse the same oil across batches
+- Garlic: 9 cloves
+- Bird’s-eye chilli: 9–18, adjusted to actual chilli heat
+- Thai basil: 45g whole leaves
+- Jasmine rice: 225g dry total, 75g per portion
+
+Sauce:
+- Vegetarian mushroom oyster sauce: 36ml
+- Fish sauce: 15ml
+- Light soy: 15ml
+- Dark soy: 3–6ml
+- Sugar: 9g
+- Water: 60ml
+
+## HOW TO COOK IT
+1. Divide the chicken into frying batches. Pat dry and dust only the batch entering the oil.
+2. First-fry each batch at 170–175°C until cooked and pale gold. Drain on a rack.
+3. Let the oil recover, then second-fry each batch at 185–190°C until crisp.
+4. In a separate wide pan, fry garlic and chilli briefly. Add the sauce and bubble for only a few seconds.
+5. Add all fried chicken and toss rapidly until thinly glazed. Work in two glazing batches if the pan cannot coat 750g without steaming.
+6. Remove from direct heat, fold in Thai basil and divide into three portions.
+7. Serve each portion with 75g dry rice cooked for that sitting.
+
+## WHAT SUCCESS LOOKS LIKE
+Chicken is crisp outside and juicy inside. The craggy starch crust remains intact after a very brief thin glaze; sauce clings rather than soaking the crust, and Thai basil remains aromatic. Scaling to three portions must not turn either frying or glazing into overcrowded steaming.
+
+## WATCH OUT FOR
+- The starch crust does not reproduce pork skin or pork-fat layers.
+- Do not describe this as moo grob.
+- Do not pre-dust and hold chicken, overcrowd either fry, or over-reduce sauce before the chicken enters.
+- Do not triple the oil volume; maintain safe depth and cook in batches.
+
+## STORAGE
+Best eaten fresh. If later portions must be held, store fried chicken unglazed and re-crisp once before applying that portion’s sauce and basil; do not store already-glazed chicken as the default plan.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done — revised brief requires later independent verification.
+
+### Decisions
+Human — Marco: approved double-fried chicken thigh with no claim of equivalence to moo grob or pork crackling; confirmed the dish should be kept.
+Agent — GPT: removed the unjustified single-portion construction and scaled the dish to the Planning default of three substantial portions while preserving batch-frying mechanics and the thin-glaze ratio.
+
+### Research basis
+The dish intentionally combines two supported systems: twice-fried starch-coated chicken and a concentrated pad-kra-pao-style basil sauce. Fry around 170–175°C until cooked, rest, then fry briefly at 185–190°C. The sauce is reduced below a normal stir-fry volume so it coats rather than soaks the crust; basil is folded in off heat. The three-portion scale is a direct 3x ingredient scale, but oil depth remains equipment-controlled and frying/glazing are batched.
+
+### Material changes
+2026-07-30 — Scaled chicken 250g→750g, rice 75g→225g and sauce/aromatics 3x; retained one safe oil depth and added explicit batch-frying/glazing instructions; replaced the unsupported one-portion plan with three portions.

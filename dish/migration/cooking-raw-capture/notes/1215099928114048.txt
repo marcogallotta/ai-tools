@@ -1,0 +1,66 @@
+Chicken jalfrezi
+Chicken jalfrezi — dry high-heat baseline
+
+Chicken and crisp vegetables cooked separately, then combined in a light tomato-chilli coating.
+
+WHY COOK IT
+Establish a Subcontinent dry high-heat system distinct from bhuna, korma and dal.
+
+CAN I COOK IT? Yes.
+
+## QUANTITIES
+Portions: 3.
+- Chicken breast: 600g, 3cm pieces
+- Bell peppers: 350g
+- Onion: 250g, petals
+- Tomatoes: 300g
+- Garlic: 15g
+- Ginger: 20g, half held for finish
+- Fresh green chillies: 15–25g
+- Neutral oil: 45ml
+- Cumin seed: 1 tsp
+- Coriander seed: 2 tsp
+- Turmeric: 1/2 tsp
+- Kashmiri chilli: 1 tsp
+- Garam masala: 1/2 tsp
+- Fine salt: begin with 8g
+- Lemon juice: optional 10ml
+
+## HOW TO COOK IT
+1. Cook chicken in uncrowded high-heat batches until browned and just cooked; remove.
+2. Stir-fry peppers and onion separately until blistered but crisp; remove.
+3. Bloom cumin, then add garlic, half the ginger and chilli.
+4. Add tomato and ground spices; reduce rapidly to a light coating sauce.
+5. Return chicken and vegetables and toss only until glossy and hot.
+6. Finish with ginger julienne, the garam masala, and optional lemon.
+
+## WHAT SUCCESS LOOKS LIKE
+Chicken remains browned and juicy. Pepper and onion retain distinct shapes, blistered edges and crisp-tender structure. Tomato forms a light glossy coating with no pooled liquid or thick bhuna-like paste.
+
+Visual reference — https://www.indianhealthyrecipes.com/chicken-jalfrezi/ — Observe peppers and onions stir-fried separately, removed and returned for a short final toss; finished vegetables stay distinct in a semi-dry coating. Ignore pre-cooked chicken, sauces, kasuri methi, fennel and exact tomato ratio.
+
+## WATCH OUT FOR
+Do not crowd the pan, turn tomato into bhuna or overcook vegetables during recombination.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done — requires fresh verification after quantity and rationale correction.
+
+### Decisions
+Agent — Codex: Kept chicken breast because this is a quick separate-stage high-heat cook.
+Agent — GPT-5.6 Thinking: Normalised construction and later-validation roles.
+Agent — Claude: Added garam masala (1/2 tsp); it is a key listed spice in the cited source but had been dropped from this task's ingredient list without documentation, unlike kasuri methi and fennel which are explicitly and deliberately excluded.
+Human — Marco: Set the batch to 600g chicken breast and rejected the claim that the ordinary burner limits this dish; the burner limitation applies specifically to wok use.
+
+### Research basis
+Source-backed chicken jalfrezi with a simplified project spice formula.
+Construction — Swasthi Shreekhanth/Indian Healthy Recipes, chicken jalfrezi: https://www.indianhealthyrecipes.com/chicken-jalfrezi/ — supplied separate high-heat cooking of peppers and onions, short recombination, semi-dry tomato coating, and the spice list including garam masala. Verified directly against full page text.
+Construction — Agent calibration recorded in this task — selected fresh chicken breast and the current spice set and quantities.
+Later validation — the same Swasthi page, re-inspected during the visual audit and again during verification — checked separate vegetable handling, crispness and dry glossy finish.
+Technical premise: directly supported. Vegetable doneness is cook calibration, not an unresolved identity question.
+
+### Open questions
+Preferred vegetable doneness.

@@ -1,0 +1,78 @@
+Abgoosht / dizi — lamb, chickpea, and dried-lime broth
+
+A Persian lamb-and-legume broth served in two stages: aromatic broth with bread first, then coarsely mashed lamb, beans and potato. This version uses an Instant Pot as an explicit equipment adaptation.
+
+WHY COOK IT
+Learn loomi in a brothy meat-and-legume system and practise the broth-plus-mashed-solids service structure.
+
+CAN I COOK IT? Yes.
+
+## WHAT TO BUY
+- Bone-in lamb shoulder, shank, neck or ribs: 800g
+- Dried chickpeas: 150g
+- Dried white beans: 150g
+- Potatoes: 250g
+- Tomato: about 120g
+
+## CHECK BEFORE COOKING
+- Soak both legumes for 8–12 hours and drain.
+- Whole dried limes are in Pantry.
+- This counts as the week's red-meat dish.
+- Check the soaked ingredients and lamb remain below the Instant Pot's safe max-fill line before pressure cooking.
+
+## QUANTITIES
+Portions: 3 substantial portions.
+- Bone-in lamb: 800g
+- Chickpeas: 150g dry, soaked
+- White beans: 150g dry, soaked
+- Potatoes: 250g, large pieces
+- Onion: 150g
+- Garlic: 3 cloves
+- Tomato: 120g, chopped
+- Tomato paste: 20g
+- Turmeric: 1 tsp
+- Ground cinnamon: 1 tsp, added in the second phase
+- Dried limes: 2 initially; a third held for adjustment
+- Water: 700ml initially in the Instant Pot
+- Fine salt and black pepper
+
+## HOW TO COOK IT
+1. Drain the soaked legumes. Sauté onion briefly with turmeric, then add garlic.
+2. Add lamb, chickpeas, beans, tomato, two pierced dried limes and 700ml water. Confirm safe fill.
+3. Pressure-cook on high for 30 minutes. Natural release for 15 minutes, then vent carefully.
+4. Check lamb and legumes. Remove a lime early if the broth is already sufficiently sour.
+5. Add potatoes, tomato paste and cinnamon. Add the third lime only if the first phase is too mild.
+6. Pressure-cook on high for 15 minutes. Natural release 10 minutes, then vent carefully.
+7. Remove all limes. Separate the broth from the solids and correct salt.
+8. Strip lamb from bones. Coarsely mash lamb, legumes and potato, leaving visible fibres and bean texture.
+9. Serve broth first with torn bread, followed by the mash.
+
+## WHAT SUCCESS LOOKS LIKE
+The first service is savoury clear-to-lightly-cloudy broth, commonly absorbed into torn bread. The second is a rustic coarse mash with lamb fibres and bean texture, not a smooth puree. Loomi is rounded-sour without peel bitterness.
+
+## WATCH OUT FOR
+Do not use a stovetop liquid quantity in the pressure cooker, exceed safe fill, crush the limes or leave them in storage. The 250g potato quantity is deliberately lower than the prior 650g draft, which would have made potato dominate the lamb-and-legume mash.
+
+## STORAGE
+Store broth and solids separately. Remove limes before refrigeration. Refrigerate up to 3 days or freeze in portions.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: GPT, 2026-07-16, contract 0dceb66
+
+### Decisions
+Human — Marco: Use lamb as the stronger traditional-character choice rather than beef.
+
+### Research basis
+Human-approved lamb route with a source-backed pressure adaptation.
+Construction — Persian Recipes, https://persianrecipes.com/recipe/abgoosht-made-in-a-pressure-cooker/ — directly supports bone-in lamb, chickpeas, white beans and dried lime for a 30-minute first pressure phase, followed by potato, tomato paste and cinnamon for 15 minutes, then separate broth and mashed solids.
+Later validation — Hami Sharafi, https://www.hamisharafi.com/free-recipes/abgoosht — supports lamb as the normal choice, one dried lime per portion, tomato, potato and the two-stage table service.
+Later validation — 196 Flavors, https://www.196flavors.com/iran-abgoosht/ — supports cinnamon, tomato, lamb/beef, legumes, potato and loomi as a coherent family.
+The quantities are sized to the user's three substantial meal portions; pressure liquid is independently set for the actual method rather than copied from stovetop.
+
+### Material changes
+2026-07-16 — Claude — Delta: corrected the second pressure phase to 15 minutes and restored cinnamon.
+2026-07-16 — GPT — Verification correction: reconciled the title/body with Marco's lamb decision, reduced the excessive potato load, restored tomato, bounded loomi bitterness and signed the contained Delta.

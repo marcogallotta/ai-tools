@@ -1,0 +1,70 @@
+Sambar follow-up — tamarind and vegetable sweetness
+
+A controlled follow-up focused on dal body, tamarind integration, vegetable sweetness and tempering.
+
+WHY COOK IT
+Preserve the previous excellent vegetable-sweetness and tamarind interaction while cleaning up tamarind integration.
+
+CAN I COOK IT? Yes — if toor dal, tamarind and a sensible vegetable set are available.
+
+## QUANTITIES
+Portions: 3.
+- Toor dal: 180g
+- Pressure-cook water: 550–650ml initially
+- Turmeric: 1/2 tsp
+- Carrot: 150g
+- Pumpkin or winter squash: 200g if available
+- Onion or shallot: 100g
+- Tomato: optional 150g
+- Tamarind paste: start with 18g, dissolved and strained if needed
+- Sambar powder: 18–22g
+- Fine salt: begin with 8g
+- Additional water: 500–700ml available
+
+Tempering:
+- Oil or ghee: 25ml
+- Mustard seed: 1 tsp
+- Fenugreek seed: 1/4 tsp
+- Dried chilli: 1–2
+- Curry leaves: 10–15 if available
+- Hing: pinch
+
+## HOW TO COOK IT
+1. Pressure-cook dal with turmeric until soft and mash lightly.
+2. Cook vegetables until tender but intact.
+3. Add dal, sambar powder, salt and enough water for a flowing stew.
+4. Add tamarind after vegetables are tender and simmer 5–8 minutes.
+5. Temper mustard, fenugreek, chilli, curry leaves and hing; add to the sambar.
+6. Rest 10–20 minutes before final judgment.
+
+## WHAT SUCCESS LOOKS LIKE
+Dal forms a thick pouring stew rather than paste. Vegetables stay recognisable. Tamarind integrates into the body rather than sitting as a sharp watery layer, and fresh tempering remains visible at the surface.
+
+Visual reference — https://www.indianhealthyrecipes.com/andhra-sambar-recipe-how-to-make-south-indian-sambar/ — Observe fully softened mashed dal, vegetables tender before tamarind, a thick pouring consistency and final mustard-curry-leaf tempering. Ignore vegetable set, fresh powder, dal blend, jaggery and exact water ratio.
+
+## WATCH OUT FOR
+Do not change tamarind amount and timing together, add chicken to the baseline, use generic pressure-cooker water or judge only the first spoonful.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Claude, 2026-07-15
+
+### Decisions
+Human — Marco: Keep sambar as one of the genuinely distinctive dal dishes.
+Agent — Codex: Kept curry leaves desirable but non-blocking for the tamarind-focused test.
+Agent — GPT-5.6 Thinking: Recovered the prior cook and normalised construction roles.
+Agent — Claude: Verification found QUANTITIES had no Portions line; added Portions: 3. No other issues found; source reopened and confirmed.
+
+### Research basis
+Intentional correction follow-up of source-backed sambar.
+Construction — Cooking History task “DONE — Previous sambar / deeper sambar track,” 1215099887307192 — supplied the excellent vegetable-sweetness/tamarind interaction and the identified tamarind-integration problem.
+Construction — Swasthi Shreekanth/Indian Healthy Recipes, Andhra sambar: https://www.indianhealthyrecipes.com/andhra-sambar-recipe-how-to-make-south-indian-sambar/ — supplied fully softened dal, vegetables before tamarind, thick pouring body and final tempering.
+Construction — Human — Marco decision recorded in this task — retained sambar as a distinctive dal dish.
+Later validation — the same Swasthi page, re-inspected during the visual audit — checked body, vegetable tenderness, late tamarind and visible tempering.
+Technical premise: directly supported as a correction. The 18g starting tamarind is a bounded calibration; the single intended change is integration timing unless the actual ingredient demands a dose adjustment.
+
+### Open questions
+Vegetable mix, exact water adjustment and tamarind outcome.

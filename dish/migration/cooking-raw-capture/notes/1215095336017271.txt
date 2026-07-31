@@ -1,0 +1,73 @@
+Ghormeh sabzi — herb and dried-lime beef stew
+
+A dark Persian herb khoresh with beef, kidney beans, dried lime and restrained fenugreek. The defining technique is thoroughly drying and sautéing the herbs until their aroma changes from grassy to deep and toasted.
+
+WHY COOK IT
+Learn bulk-herb handling, fenugreek restraint, loomi balance and non-tomato khoresh architecture.
+
+CAN I COOK IT? Yes.
+
+## WHAT TO BUY
+- Flat-leaf parsley: 300g
+- Cilantro: 200g
+- Chives, scallion greens or leek greens: 75g
+- Beef chuck or shin: 800g
+- Kidney beans: one 400g can
+
+## CHECK BEFORE COOKING
+- Whole dried limes and dried fenugreek are in Pantry.
+- This counts as the week's red-meat dish.
+- Wash herbs early enough to dry them completely before chopping.
+
+## QUANTITIES
+Portions: 3 substantial portions; the stew is batchable and freezes well.
+- Beef: 800g, cut into 4–5cm chunks
+- Parsley: 300g, finely chopped
+- Cilantro: 200g, finely chopped
+- Chive, scallion or leek greens: 75g, finely chopped
+- Dried fenugreek: 1 tbsp; up to 1.5 tbsp only after tasting a cooked batch
+- Onion: 1 large
+- Turmeric: 1 tsp
+- Dried limes: 4, pierced
+- Kidney beans: one 400g can, rinsed
+- Neutral oil: about 30ml for meat/onion plus 45–60ml for herbs
+- Stovetop water: begin around 750ml, with hot water available
+- Fine salt and black pepper
+
+## HOW TO COOK IT
+1. Wash and dry herbs extremely thoroughly, then chop finely.
+2. Brown beef in batches; remove. Cook onion until golden and bloom turmeric and pepper.
+3. Sauté parsley, cilantro and greens separately over medium heat until greatly reduced, dark matte green and toasted-smelling. Add dried fenugreek only for the final 2–3 minutes.
+4. Combine beef, onion, herbs and pierced limes with about 750ml hot water.
+5. Simmer partly covered for 1.5–2.5 hours, adding hot water only as required, until beef is tender and sauce cohesive.
+6. Add canned kidney beans for the final 20–30 minutes.
+7. Taste the loomi and fenugreek balance. Press softened lime pulp into the stew only as needed and remove limes before bitterness dominates.
+8. Finish uncovered until a light oil sheen appears and sauce coats the meat.
+
+## WHAT SUCCESS LOOKS LIKE
+The herb mass is dark matte green before braising, no longer wet or grassy. Finished stew is near-black-green and cohesive, with tender beef and a restrained surface sheen; it is neither bright herb soup nor dry paste.
+
+Visual reference — https://persianmama.com/persian-herb-stew-ghormeh-sabzi-sabzi-ghorma/ — Observe the reduced sautéed herb mass and dark cohesive finished stew. Ignore its Azeri tomato branch, pinto beans, pressure sequence and exact herb blend.
+
+## WATCH OUT FOR
+Wet or under-sautéed herbs make a thin grassy stew. Fenugreek burns easily and becomes bitter in excess. Do not transfer the stovetop water quantity unchanged to a pressure cooker.
+
+## STORAGE
+Improves overnight and freezes well. Store rice separately.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: GPT, 2026-07-16, contract 426e405
+
+### Research basis
+Source-backed Persian herb stew with disclosed household-ratio variation.
+Construction — Persian Mama, https://persianmama.com/persian-herb-stew-ghormeh-sabzi-sabzi-ghorma/ — supports dried herb handling, dark sauté, beef, beans and dried lime.
+Later validation — Turmeric & Saffron, https://turmericsaffron.blogspot.com/2008/12/ghormeh-sabzi-persian-herb-stew.html — for approximately 907g meat uses 1 tbsp dried fenugreek and explicitly warns that excess makes the stew bitter; also supports kidney beans and 3–4 dried limes.
+The task deliberately uses a parsley/cilantro-forward local herb mix and stovetop braise. Those are disclosed variations, not claims about one canonical ratio.
+
+### Material changes
+2026-07-16 — Claude — Delta: replaced an unsupported 2–2.5 tbsp fenugreek dose with the source-supported restrained 1 tbsp and added portions.
+2026-07-16 — GPT — Verification correction: completed sourcing/readiness language, clarified the household-ratio variation and signed the contained Delta.

@@ -1,0 +1,72 @@
+Arayes — crisp beef-stuffed pita
+
+Thin pita pockets filled edge-to-edge with moist, warmly spiced halal beef and pan-cooked until the bread is crisp and the meat safely cooked. Serve with tahini-yogurt sauce and a fresh side.
+
+WHY COOK IT
+Make a normal Levantine beef arayes while managing the practical bread-crisping versus meat-doneness balance through thin filling and moderate pan heat.
+
+CAN I COOK IT? Yes.
+
+## WHAT TO BUY
+- Halal minced beef, 15–20% fat: 330–360g
+- Medium pita: 3
+- Full-fat yogurt: 250g
+
+## QUANTITIES
+Portions: 3 substantial portions, one medium pita per person.
+- Beef: 330–360g
+- Pita: 3, halved
+- Onion: 90g, grated and lightly squeezed
+- Parsley: 20–25g, optional-preferred
+- Mint: 5–8g, optional
+- Garlic: 12g
+- Tomato paste: 15g
+- Cumin: 1 tsp
+- Coriander: 1 tsp
+- Sweet paprika: 1 tsp
+- Allspice: 3/4 tsp
+- Cinnamon: 1/4 tsp
+- Black pepper: 1/2 tsp
+- Fine salt: 8g
+- Olive oil: 20g
+
+Sauce:
+- Yogurt: 250g
+- Tahini: 45g
+- Lemon juice: 25g
+- Garlic: 5g
+- Cold water: 30–60ml
+- Fine salt to taste
+
+## HOW TO COOK IT
+1. Mix the sauce and chill.
+2. Combine filling ingredients only until evenly bound.
+3. Divide into six 55–60g portions and spread inside pita halves in an even 3–4mm layer to all edges.
+4. Brush lightly with oil and cook in uncrowded batches over medium-low to medium: 4–5 minutes per broad face, then 1–2 minutes on the cut edge.
+5. Reduce heat if bread colour outruns meat doneness. Verify at least 71°C or cut the first piece.
+6. Rest 2 minutes and serve immediately, keeping batches unstacked.
+
+## WHAT SUCCESS LOOKS LIKE
+Pita is evenly golden and audibly crisp across both broad faces and the cut edge. The filling forms one thin juicy layer bonded edge-to-edge to the bread, with no thick raw centre, empty pockets or steamed grey meat.
+
+## WATCH OUT FOR
+Thick filling, wet onion, very lean mince and stacking hot pieces are the main failure modes.
+
+## STORAGE
+Best fresh. Freeze uncooked stuffed halves flat if needed; reheat cooked leftovers in a dry pan.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Moinudin, complete
+Verification: Not done after framing correction
+
+### Decisions
+Human — Moinudin: Keep the supported beef recipe but remove experimental and calibration framing.
+
+### Research basis
+Direct arayes sources support beef or lamb, 55–60g filling per pita half, edge-to-edge spreading and moderate pan cooking.
+
+### Material changes
+2026-07-31 — GPT — Removed unnecessary experiment language without changing the recipe.

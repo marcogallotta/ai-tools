@@ -1,0 +1,82 @@
+Kuku sabzi — herb-packed Persian egg cake
+A thick Persian kuku in which spinach and fresh herbs form the bulk and egg binds them, cooked entirely on the stovetop in the 24cm non-stick and flipped for two dark-browned faces.
+
+WHY COOK IT
+Learn the defining herb-to-egg structure of kuku sabzi without drifting into an egg-heavy Western frittata.
+
+CAN I COOK IT? No - the reconstructed herb ratio and stovetop method require independent Claude verification.
+
+## WHAT TO BUY
+- Eggs: 5 medium or large
+- Spinach: 200g
+- Parsley: 50g
+- Fresh dill: 50g
+- Cilantro: 75g
+- Garlic: 2 cloves
+- Flatbread and yogurt, if serving as a meal
+
+## CHECK BEFORE COOKING
+- Confirm flour, turmeric, dried fenugreek, baking powder, neutral oil, salt and black pepper from live stock.
+- Dry the spinach and herbs extremely thoroughly after washing. If they remain wet, postpone mixing until they are dry.
+- Walnuts and barberries are optional additions, not substitutes for missing greens.
+- Use the 24cm non-stick and a flat plate wider than the pan for inversion.
+
+## QUANTITIES
+Portions: 3 with flatbread and yogurt.
+- Spinach: 200g
+- Fresh parsley: 50g
+- Fresh dill: 50g
+- Fresh cilantro: 75g
+- Eggs: 5
+- Garlic: 2 cloves, about 7g, crushed
+- Dried fenugreek leaf: 1 tsp
+- Plain flour: 15g
+- Baking powder: 1 tsp
+- Ground turmeric: 1/2 tsp
+- Fine salt: 5g
+- Black pepper: 1 tsp, freshly ground
+- Neutral oil: 45ml for the first side
+- Neutral-oil reserve: 5ml for the second side
+- Walnuts: 35g, optional, chopped
+- Barberries: 20g, optional, rinsed and dried
+
+## HOW TO COOK IT
+1. Wash the spinach and herbs, then dry them completely. Chop finely by hand or pulse briefly in batches; do not purée them or squeeze out green liquid.
+2. Whisk eggs with flour, baking powder, turmeric, fenugreek, salt and pepper only until smooth.
+3. Gently fry the garlic in 5ml taken from the first-side oil over low heat for about 2 minutes without colouring. Scrape garlic and oil into the egg mixture.
+4. Fold in all greens and the optional walnuts and barberries. The result must be a very thick green batter with much more plant matter than visible egg. If free liquid collects, stop and correct the wet-herb problem rather than adding flour automatically.
+5. Heat the remaining 40ml first-side oil in the 24cm non-stick over low-medium heat. Add the batter and flatten it evenly.
+6. Cover and cook about 15 minutes, loosening the edges occasionally, until the sides are firm and the top is set enough to invert without flowing.
+7. Place the plate over the pan and invert decisively. Add the separately measured 5ml reserve oil, then slide the kuku back uncooked-side down.
+8. Cover and cook about 8–10 minutes. Uncover briefly only if needed to deepen the second face. The centre must be set but moist rather than spongy.
+9. Rest at least 10 minutes before cutting.
+
+## WHAT SUCCESS LOOKS LIKE
+The broad faces are dark green-brown, close to black in patches but not bitter. The cut interior is dense, moist and vividly green, with herbs and spinach visibly dominating the egg. Pieces hold cleanly after resting.
+
+Visual reference — https://cookingwithayeh.com/kuku-sabzi-persian-herb-frittata/ — Observe the extremely thick green batter, 24cm pan, set-top flip, dark first face, slide-back and ten-minute second side. Ignore its cup-measured herb formula because the task's controlling weights come from Yasmin Khan.
+
+## WATCH OUT FOR
+Do not use wet greens, reduce the herb mass to fit the eggs, add extra eggs because the batter looks dense, flip while the top can still flow or cut while hot.
+
+## STORAGE
+Refrigerate up to 3 days. Serve cold, at room temperature or gently rewarmed; do not microwave until rubbery.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: Not done - requires Claude, contract SHA-256 3fcfb645a051d12b0a58ab596dd451b30a1e8161fc20ca30bedb4604a89f8730, read 2026-07-17 12:15 Europe/Rome
+
+### Research basis
+Source-backed kuku sabzi using a weighed herb formula and a separate directly supported stovetop completion method.
+
+Construction — Yasmin Khan, “Kuku-Ye Sabzi,” Vice/Munchies, https://www.vice.com/en/article/kuku-ye-sabzi/ — directly provides 200g spinach, 50g parsley, 50g dill, 75g cilantro and five eggs, plus turmeric, 2 tbsp flour, fenugreek and garlic. This is the controlling herb-to-egg ratio: 375g weighed greens to five eggs. The prior task used only 170–270g herbs for eight eggs and could not support its claim that herbs formed the bulk.
+
+Construction — Cooking with Ayeh, “Kuku Sabzi,” https://cookingwithayeh.com/kuku-sabzi-persian-herb-frittata/ — directly supports an herb-heavy batter in a 24cm non-stick, 45ml oil, about 15 minutes before a plate inversion, about 10 minutes on the second side, baking powder and a ten-minute rest. It uses four eggs and cup-measured parsley, cilantro, dill, spinach and scallions; those volumes are not used as weight evidence.
+
+Reconciliation: Khan's formula is finished under a grill, which is unavailable. Ayeh supplies the directly applicable two-sided stovetop route. Combining a weighed formula from one kuku source with the pan completion from another kuku source is a disclosed direct-dish composite, not an inference from a different food.
+
+### Material changes
+2026-07-17 — GPT — Reconstruction. Replaced the egg-heavy eight-egg formula with a directly weighed 375g-greens/five-egg construction; restored spinach and dill as defining greens; removed the unsupported wide herb branches; made first- and second-side oil separate; and reset whole-task verification to Claude.

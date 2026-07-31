@@ -1,0 +1,77 @@
+Dan dan noodles revisit — newer chilli oil, yacai and sesame paste
+
+A practical multi-variable repeat of Marco’s successful Sichuan mixed-noodle lane. It uses the locked prior sauce ratio, current chilli oil, mandatory fresh sesame paste and yacai; it is not a single-variable experiment.
+
+WHY COOK IT
+Tier-1 noodle work and a deliberate real-world test of the current chilli-oil, sesame-paste and yacai system.
+
+CAN I COOK IT? No — the researched brief is complete and requires later independent verification under the current protocol.
+
+## CHECK BEFORE COOKING
+- Use the intended current chilli oil; postpone if it is stale or not ready.
+- Confirm yacai and fresh homemade sesame paste are available.
+- Cook each 200g noodle portion fresh. The topping may be cooked once for all three sittings.
+
+## QUANTITIES
+Portions: 3 substantial portions.
+
+Noodles:
+- Dry thin alkaline wheat noodles: 600g, divided into 3 x 200g
+
+Beef-yacai topping:
+- Beef mince: 300g
+- Neutral oil: 30ml
+- Pixian doubanjiang: 22g
+- Yacai: 45–60g, with some reserved as sharper pockets
+- Ginger: 15g, minced
+- Garlic: 2 cloves, minced
+- Light soy: 20ml
+- White sugar: 5g
+
+Locked sauce, per 200g dry noodles:
+- Chilli oil with sediment: 20ml
+- Light soy: 20ml
+- Chinkiang vinegar: 10ml
+- White sugar: 5g
+- MSG: 1g
+- Ground red Sichuan pepper: 2g
+- Fresh Chinese sesame paste: about 10g
+- Raw garlic: 1/2 small clove, finely minced
+- Hot noodle water: 15–30ml, only as needed for emulsification
+
+## HOW TO COOK IT
+1. Put each complete sauce, except noodle water, in its serving bowl before boiling noodles.
+2. Brown beef until its water is gone. Remove briefly if needed so Pixian can fry in clean oil rather than steam.
+3. Fry Pixian until red oil appears, then add ginger, garlic, soy, sugar and about two-thirds of the yacai. Return beef and finish the topping.
+4. Cook one 200g noodle portion. Transfer it hot to its sauce with 15ml noodle water and toss hard until coated; add more water only if the sauce remains tight.
+5. Add one-third of the topping after the noodles are coated. Finish with held yacai for sharper funk pockets.
+6. Repeat fresh for the remaining sittings.
+
+## WHAT SUCCESS LOOKS LIKE
+The sauce clings to strands rather than pooling. Sesame paste binds without muting the sharp chilli-oil, vinegar and Sichuan-pepper profile. Fine beef and yacai remain unevenly distributed as flavour pockets.
+
+## WATCH OUT FOR
+- Do not sauce the topping first.
+- Do not assign a better or worse result to one condiment because three pantry variables change together.
+- The 200g dry-noodle portion is an established Human-approved substantial bowl, not a generic serving recommendation.
+
+## STORAGE
+Store topping separately for up to 3 days or freeze. Cook and sauce noodles fresh for every sitting.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Marco, complete
+Verification: Not done — current task requires a fresh independent verification pass.
+
+### Decisions
+Human — Marco: treat this as a practical multi-variable repeat, not a controlled single-variable test; preserve the successful sharp, vinegar-forward home character.
+Agent — Codex: replaced the unsupported claimed anchor with the exact locked Cooking History ratio and made sesame paste mandatory.
+Agent — GPT: reconciled the stale verification line with the task’s actual Verification Queue state; no recipe quantities changed.
+
+### Research basis
+Cooking History task 1215097069875632 and Marco comment 1215910773925689 supply the exact 20ml chilli oil : 20ml soy : 10ml vinegar : 5g sugar : 1g MSG : 2g pepper : 10g sesame-paste ratio, bowl-first emulsification and topping-second method. Cooking History task 1215097253661453 establishes the beef/Pixian version as excellent and worth revisiting. The Mala Market and Red House Spice are later boundary checks for yacai, fine topping, sesame-paste and mixed coating; the home ratio is not claimed as canonical dan-dan formula.
+
+### Material changes
+2026-07-30 — Reset the stale prior verification credit to pending independent verification so the state block agrees with Verification Queue placement. Recipe, portion and method locks unchanged.

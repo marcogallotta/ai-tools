@@ -1,0 +1,70 @@
+Nihari
+
+Beef shank pressure-cooked with spices, then finished on the stovetop with controlled atta thickening and fresh ginger.
+
+WHY COOK IT
+Learn a gelatin-rich extraction gravy distinct from emulsion and reduction.
+
+CAN I COOK IT? Yes.
+
+## QUANTITIES
+- Beef shank: 1kg, bone-in if practical
+- Oil or ghee: 60ml
+- Onion: 200g
+- Garlic: 20g
+- Ginger: 25g, split cooked and fresh
+- Water: 900ml in the Instant Pot, subject to max fill
+- Atta: 30g mixed with 90ml cold water
+- Fine salt: begin with 11g
+
+Spices (scaled ~2.2x off the source's 1lb/454g meat basis to this task's 1kg shank):
+- Fennel: 1 tsp
+- Coriander: 1 tsp
+- Cumin: 1 tsp
+- Black pepper: 1/2 tsp
+- Cloves: 7–8
+- Green cardamom: 6–7
+- Black cardamom: 1 — not in the cited source (which points to a separate masala recipe); kept as a standard nihari-masala inclusion, unconfirmed by this citation
+- Cassia: 1 stick, about 7–8cm — corrected from "4cm", which was a likely cm/inch slip against the source's 3–4in stick
+- Star anise: 2
+- Nutmeg: pinch
+- Mace: optional small blade — same unconfirmed status as black cardamom
+- Kashmiri chilli: 2–2.5 tsp — consolidates the source's paprika + chilli powder + crushed chilli into one form
+- Turmeric: 1/2 tsp
+
+## HOW TO COOK IT
+1. Toast and grind whole spices.
+2. Brown beef; cook onion deep golden; add garlic and cooked ginger.
+3. Add spices, water and beef.
+4. Pressure-cook on high for 50 minutes; natural release 20 minutes, then vent.
+5. Add 8–10 minutes only if shank remains tight.
+6. Simmer stovetop and add slurry gradually until lightly coating; unused slurry is expected. (The source instead does a second low-pressure Instant Pot cycle before an optional stovetop reduction; this task uses a plain stovetop simmer instead, to avoid double pressure-cycling — a disclosed simplification, not a sourced match.)
+7. Simmer 10–15 minutes to cook out flour; adjust salt and water.
+8. Finish with ginger julienne.
+
+## WHAT SUCCESS LOOKS LIKE
+Beef is collapsingly tender. Gravy is gelatinous and flowing: it coats a spoon but pours back rather than standing as paste. Atta is lump-free and cooked through; a controlled surface sheen and fresh ginger remain.
+
+Visual reference — https://www.indianhealthyrecipes.com/nihari/ — Observe smooth slurry, gradual addition, a thickened but flowing finish, surface fat and fresh ginger. Ignore mutton, yogurt, stovetop timing, flour amount and spice formula.
+
+## WATCH OUT FOR
+Do not use flour to compensate for weak extraction, add all slurry automatically or carry stovetop water into the pressure cooker.
+
+---
+
+## PROCESS RECORD
+Stage: Researched
+Human review: Not required
+Verification: Claude, 2026-07-15
+
+### Decisions
+Agent — Codex: Reconciled the construction update with the recorded Human Review result and removed stale pending/rejected branches from the process record.
+Agent — Claude: Verification found spices didn't track a consistent scale factor off the source (some ~2x over, some under). Recomputed at 2.2x (source's 1lb/454g meat to this task's 1kg shank): fennel/coriander down to 1 tsp, pepper down to 1/2 tsp, cloves up to 7-8, cardamom up to 6-7, star anise up to 2, chilli consolidated to 2-2.5 tsp Kashmiri. Fixed cassia from "4cm" (likely a cm/inch slip) to 1 stick/~7-8cm. Water (900ml) kept as an Instant Pot fill-line-bounded quantity, not linearly scaled. Disclosed that this task's stovetop finish diverges from the source's second pressure cycle.
+
+### Research basis
+Source-backed dish.
+Construction update — A direct Instant Pot precedent supports beef shank, pressure extraction and post-pressure flour
+slurry. Fry aromatics/spices, pressure-cook shank spoon-tender, then add slurry and simmer away raw
+flour taste. The draft's 1kg shank/900ml is reasonable, but normalize spices to this source rather
+than the unrelated mutton-yogurt recipe. Research is sufficient; slurry depends on gelatin/reduction.
+Sources: <https://www.teaforturmeric.com/easy-instant-pot-nihari-pakistani-beef-stew/>
