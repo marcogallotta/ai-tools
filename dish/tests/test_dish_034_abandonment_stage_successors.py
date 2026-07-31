@@ -366,7 +366,7 @@ def test_start_without_prepared_id_auto_claims_ready_successor(tmp_path):
     ).fetchone()[:] == ("completed", "restarted")
 
 
-def test_service_claims_exact_prepared_successor_and_acquires_actor_lease(tmp_path, monkeypatch):
+def test_service_claims_exact_prepared_successor_and_acquires_actor_lease(tmp_path):
     db_path = tmp_path / "dish.db"
     conn = initialize_database(db_path)
     backend = Backend(section="pi")
@@ -381,8 +381,8 @@ def test_service_claims_exact_prepared_successor_and_acquires_actor_lease(tmp_pa
     service = DishService(
         ServiceConfig(db_path=db_path, honest_root=tmp_path),
         backend_factory=lambda: backend,
+        release_loader=lambda role=None: _release(role or "planning"),
     )
-    monkeypatch.setattr(service, "_release", lambda role=None: _release(role or "planning"))
 
     blocked = confirmed_planning_start(
         service,

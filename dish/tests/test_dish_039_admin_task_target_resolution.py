@@ -20,6 +20,7 @@ from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
 from tests.support.abandonment import Backend
+from tests.support.service_foundation import _release_loader
 
 _NUMERIC_TASK_GID = "1234567890123456"
 _TASK_URL = f"https://app.asana.com/0/999888777666555/{_NUMERIC_TASK_GID}"
@@ -127,7 +128,7 @@ def test_reconcile_abandonment_resolves_task_gid_to_active_abandonment():
     assert resolve_admin_abandonment_target(conn, _TASK_URL) == "abandonment-1"
 
 
-def test_service_execute_admin_resolves_task_gid_for_abandon_operation(tmp_path, monkeypatch):
+def test_service_execute_admin_resolves_task_gid_for_abandon_operation(tmp_path):
     db_path = tmp_path / "dish.db"
     conn = initialize_database(db_path)
     backend = Backend(section="pi")
@@ -135,11 +136,13 @@ def test_service_execute_admin_resolves_task_gid_for_abandon_operation(tmp_path,
     lease = _released_actor_lease(conn, source["operation_id"])
     conn.close()
 
+    honest = tmp_path / "honest"
+    honest.mkdir()
     service = DishService(
-        ServiceConfig(db_path=db_path, honest_root=tmp_path / "honest"),
+        ServiceConfig(db_path=db_path, honest_root=honest),
         backend_factory=lambda: backend,
+        release_loader=_release_loader(honest),
     )
-    monkeypatch.setattr(service, "_assert_mutation_ready", lambda _backend: None)
     principal = ServicePrincipal(str(uuid.uuid4()), str(uuid.uuid4()))
 
     result = service.execute_admin(
@@ -157,16 +160,18 @@ def test_service_execute_admin_resolves_task_gid_for_abandon_operation(tmp_path,
     assert result["submission_id"] == source["operation_id"]
 
 
-def test_service_execute_admin_task_gid_with_no_open_operation_fails_not_found(tmp_path, monkeypatch):
+def test_service_execute_admin_task_gid_with_no_open_operation_fails_not_found(tmp_path):
     db_path = tmp_path / "dish.db"
     initialize_database(db_path).close()
     backend = Backend(section="pi")
 
+    honest = tmp_path / "honest"
+    honest.mkdir()
     service = DishService(
-        ServiceConfig(db_path=db_path, honest_root=tmp_path / "honest"),
+        ServiceConfig(db_path=db_path, honest_root=honest),
         backend_factory=lambda: backend,
+        release_loader=_release_loader(honest),
     )
-    monkeypatch.setattr(service, "_assert_mutation_ready", lambda _backend: None)
     principal = ServicePrincipal(str(uuid.uuid4()), str(uuid.uuid4()))
 
     result = service.execute_admin(
@@ -187,7 +192,7 @@ def test_service_execute_admin_task_gid_with_no_open_operation_fails_not_found(t
     )
 
 
-def test_real_http_admin_client_abandons_by_task_gid_with_no_lease_id(tmp_path, monkeypatch):
+def test_real_http_admin_client_abandons_by_task_gid_with_no_lease_id(tmp_path):
     db_path = tmp_path / "dish.db"
     conn = initialize_database(db_path)
     backend = Backend(section="pi")
@@ -195,18 +200,20 @@ def test_real_http_admin_client_abandons_by_task_gid_with_no_lease_id(tmp_path, 
     _released_actor_lease(conn, source["operation_id"])
     conn.close()
 
+    honest = tmp_path / "honest"
+    honest.mkdir()
     service = DishService(
         ServiceConfig(
             db_path=db_path,
-            honest_root=tmp_path / "honest",
+            honest_root=honest,
             port=0,
             agent_token="agent-secret",
             admin_token="admin-secret",
             action_token="action-secret",
         ),
         backend_factory=lambda: backend,
+        release_loader=_release_loader(honest),
     )
-    monkeypatch.setattr(service, "_assert_mutation_ready", lambda _backend: None)
     server = build_server(service)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -225,6 +232,7 @@ def test_real_http_admin_client_abandons_by_task_gid_with_no_lease_id(tmp_path, 
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+        assert not thread.is_alive()
 
     assert result["ok"], result
     assert result["submission_id"] == source["operation_id"]

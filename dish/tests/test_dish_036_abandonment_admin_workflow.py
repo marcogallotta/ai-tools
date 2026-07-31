@@ -14,8 +14,9 @@ from dish_tool.application_service import CurrentWorkflowService
 from dish_tool.database import declare_operation_step
 from dish_tool.database_schema import initialize_database
 from tests._workflow_builders import create_large_rejection_successor
-from tests.support.abandonment import Backend, _release, _source
+from tests.support.abandonment import Backend, _source
 from tests.support.verification import TASK, make_app
+from tests.support.service_foundation import _release_loader
 from tests.support.abandonment_admin import (
     _released_actor_lease,
 
@@ -63,7 +64,7 @@ def test_admin_abandon_operation_creates_exact_planning_successor():
 
 @pytest.mark.invariant_abandonment
 @pytest.mark.smoke
-def test_blocked_abandonment_returns_exact_private_relay_and_fences_agents(tmp_path, monkeypatch):
+def test_blocked_abandonment_returns_exact_private_relay_and_fences_agents(tmp_path):
     db_path = tmp_path / "dish.db"
     conn = initialize_database(db_path)
     backend = Backend(section="pi")
@@ -93,12 +94,13 @@ def test_blocked_abandonment_returns_exact_private_relay_and_fences_agents(tmp_p
     assert view["required_action"]["admin_command"] == action["admin_command"]
     conn.close()
 
+    honest = tmp_path / "honest"
+    honest.mkdir()
     service = DishService(
-        ServiceConfig(db_path=db_path, honest_root=tmp_path / "honest"),
+        ServiceConfig(db_path=db_path, honest_root=honest),
         backend_factory=lambda: backend,
+        release_loader=_release_loader(honest),
     )
-    monkeypatch.setattr(service, "_assert_mutation_ready", lambda _backend: None)
-    monkeypatch.setattr(service, "_release", lambda role=None: _release("planning"))
     attempted = service.execute_agent(
         "prepare",
         {"submission_id": source["operation_id"], "agent": "gpt"},
@@ -179,11 +181,13 @@ def test_crashed_admin_execution_is_reclaimed_and_both_requests_replay(
     lease = _released_actor_lease(conn, source["operation_id"])
     conn.close()
 
+    honest = tmp_path / "honest"
+    honest.mkdir()
     service = DishService(
-        ServiceConfig(db_path=db_path, honest_root=tmp_path / "honest"),
+        ServiceConfig(db_path=db_path, honest_root=honest),
         backend_factory=lambda: backend,
+        release_loader=_release_loader(honest),
     )
-    monkeypatch.setattr(service, "_assert_mutation_ready", lambda _backend: None)
     principal = ServicePrincipal(str(uuid.uuid4()), str(uuid.uuid4()))
     abandon_request = str(uuid.uuid4())
     arguments = {

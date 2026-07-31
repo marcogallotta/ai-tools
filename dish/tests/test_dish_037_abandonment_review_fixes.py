@@ -24,6 +24,7 @@ from dish_tool.models import OperationActors
 from dish_tool.step5 import claim_prepared_stage_successor
 from tests.support.abandonment import Backend, _abandon, _live, _release, _source
 from tests.support.abandonment_admin import _released_actor_lease
+from tests.support.service_foundation import _release_loader
 
 
 def _count(conn, table: str) -> int:
@@ -250,11 +251,13 @@ def test_reconcile_finishes_execution_and_requests_after_post_settlement_crash(
     lease = _released_actor_lease(conn, source["operation_id"])
     conn.close()
 
+    honest = tmp_path / "honest"
+    honest.mkdir()
     service = DishService(
-        ServiceConfig(db_path=db_path, honest_root=tmp_path / "honest"),
+        ServiceConfig(db_path=db_path, honest_root=honest),
         backend_factory=lambda: backend,
+        release_loader=_release_loader(honest),
     )
-    monkeypatch.setattr(service, "_assert_mutation_ready", lambda _backend: None)
     principal = ServicePrincipal(str(uuid.uuid4()), str(uuid.uuid4()))
     abandon_request = str(uuid.uuid4())
     arguments = {

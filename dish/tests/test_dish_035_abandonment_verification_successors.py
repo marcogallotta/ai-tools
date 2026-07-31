@@ -196,9 +196,7 @@ def test_prepared_verification_resolves_target_and_requires_fresh_run(tmp_path):
 
 
 @pytest.mark.smoke
-def test_service_claims_exact_verification_target_and_binds_lease_cycle(
-    tmp_path, monkeypatch
-):
+def test_service_claims_exact_verification_target_and_binds_lease_cycle(tmp_path):
     app, backend, _source_id, _source_cycle_id, prepared = _prepared_verification(
         tmp_path
     )
@@ -209,9 +207,7 @@ def test_service_claims_exact_verification_target_and_binds_lease_cycle(
     service = DishService(
         ServiceConfig(db_path=tmp_path / "dish.db", honest_root=tmp_path / "honest"),
         backend_factory=lambda: backend,
-    )
-    monkeypatch.setattr(
-        service, "_release", lambda role=None: _release(tmp_path / "honest", role)
+        release_loader=lambda role=None: _release(tmp_path / "honest", role),
     )
     request_id = str(uuid.uuid4())
     result = service.execute_agent(
