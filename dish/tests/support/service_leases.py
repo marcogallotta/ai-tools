@@ -1,5 +1,5 @@
 
-"""Shared helpers extracted from test_dish_tool_r43_service_leases.py."""
+"""Shared helpers extracted from test_service_leases.py."""
 
 
 from datetime import datetime, timedelta, timezone

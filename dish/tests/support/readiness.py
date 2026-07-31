@@ -1,5 +1,5 @@
 
-"""Shared helpers extracted from test_dish_tool_r27_r29_readiness.py."""
+"""Shared helpers extracted from test_recovery_readiness.py."""
 
 
 from pathlib import Path

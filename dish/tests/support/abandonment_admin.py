@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-"""Shared helpers extracted from test_dish_036_abandonment_admin_workflow.py."""
+"""Shared helpers extracted from test_abandonment_admin_workflow.py."""
 
 
 import socket

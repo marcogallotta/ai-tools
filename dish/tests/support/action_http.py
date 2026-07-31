@@ -1,5 +1,5 @@
 
-"""Shared helpers extracted from test_dish_tool_r45_action_surface.py."""
+"""Shared helpers extracted from test_action_surface.py."""
 
 
 import json

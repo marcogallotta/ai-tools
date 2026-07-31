@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-"""Shared helpers extracted from test_dish_tool_r52_request_restore_durability.py."""
+"""Shared helpers extracted from test_request_replay_and_restore_durability.py."""
 
 
 import pytest

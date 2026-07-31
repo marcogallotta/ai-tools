@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-"""Shared helpers extracted from test_dish_tool_r51_lease_authority.py."""
+"""Shared helpers extracted from test_lease_authority.py."""
 
 
 from dish_service.application import DishService

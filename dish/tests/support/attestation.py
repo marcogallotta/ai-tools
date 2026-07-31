@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-"""Shared helpers extracted from test_dish_tool_easy_backlog.py."""
+"""Shared helpers extracted from test_verification_arguments_and_hold_contracts.py."""
 
 
 import json

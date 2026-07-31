@@ -126,7 +126,7 @@ Narrow it when investigating one area:
 
 ```sh
 .venv-flake/bin/python -m tests.flake_runner rerun-detect -- \
-  tests/test_dish_038_planning_intent_confirmation.py
+  tests/test_planning_intent_confirmation.py
 ```
 
 ### Randomize test order

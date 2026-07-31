@@ -1,5 +1,5 @@
 
-"""Shared helpers extracted from test_dish_tool_r42_service_foundation.py."""
+"""Shared helpers extracted from test_service_foundations.py."""
 
 
 import threading

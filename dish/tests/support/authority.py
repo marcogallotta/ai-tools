@@ -1,5 +1,5 @@
 
-"""Shared helpers extracted from test_dish_tool_r42_authority_matrix.py."""
+"""Shared helpers extracted from test_material_change_authority_matrix.py."""
 
 
 import dataclasses

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-"""Shared helpers extracted from test_dish_tool_r40_placement_gate.py."""
+"""Shared helpers extracted from test_asana_placement_lifecycle.py."""
 
 
 import copy

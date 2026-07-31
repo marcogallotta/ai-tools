@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-"""Shared helpers extracted from test_dish_tool_r46_operational_hardening.py."""
+"""Shared helpers extracted from test_operational_recovery.py."""
 
 
 import threading

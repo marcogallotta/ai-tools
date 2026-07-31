@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-"""Shared helpers extracted from test_dish_034_abandonment_stage_successors.py."""
+"""Shared helpers extracted from test_abandonment_stage_successors.py."""
 
 
 import sqlite3
