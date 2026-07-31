@@ -79,6 +79,29 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                         },
                         "uniqueItems": True,
                     },
+                    "intent_challenge_id": {
+                        **DISH_UUID_SCHEMA,
+                        "description": (
+                            "Durable single-use Planning intent challenge. Repeat start with a "
+                            "fresh client.request_id and this exact identifier."
+                        ),
+                    },
+                    "required_intent_basis": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "enum": ["user_requested", "agent_override"],
+                        },
+                        "uniqueItems": True,
+                    },
+                    "planning_intent_confirmation": {
+                        "type": "object",
+                        "additionalProperties": True,
+                        "description": (
+                            "Durable first-call Planning confirmation challenge. It does not "
+                            "open an operation or acquire a lease."
+                        ),
+                    },
                     "required_start_kind": {
                         "type": "string",
                         "enum": ["planning", "initial", "verification"],

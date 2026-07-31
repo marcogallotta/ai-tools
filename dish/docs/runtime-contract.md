@@ -65,8 +65,23 @@ work while systemd is waiting for the active handlers to finish.
 Agent-facing action guidance is authoritative even on failures. When an operation-scoped command is
 rejected, `allowed_actions` reports the currently legal exposed continuation when one exists. A
 retryable candidate-validation failure therefore keeps the same corrective command available.
-Fresh bare tasks created by `create` report `data.required_start_kind: planning`. An Asana-completed
-bare task cannot start Planning directly: `start --kind planning` returns
+Fresh bare tasks created by `create` report `data.required_start_kind: planning`. A connected
+Planning start is always a two-request operation-intent exchange before ordinary workflow admission.
+The first `start` with `kind=planning` and a new `client.request_id` returns
+`CONFIRMATION_REQUIRED` with `data.intent_challenge_id`; it does not read or change the task, create
+an operation, or acquire a lease. Supplying `intent_basis` on that first request does not bypass the
+challenge. To continue, make a fresh call with a different `client.request_id`, the exact same
+Planning target and agent, the returned `intent_challenge_id`, and either
+`intent_basis: user_requested`, or `intent_basis: agent_override` with a non-blank
+`override_reason`. Use `user_requested` only when Marco actually requested Planning for that exact
+task. The challenge is bound to the authenticated owner/run and is single-use. Exact replay of the
+first request returns the same challenge; exact replay of the confirmed request converges on the same
+operation and result. If confirmed admission then reports a state or admin prerequisite, satisfy that
+prerequisite and begin a new two-request Planning confirmation exchange rather than reusing the
+claimed challenge.
+
+An Asana-completed bare task cannot start Planning directly after confirmation: the confirmed
+`start --kind planning` returns
 `planning_completed_task_reopen_required`, `data.required_admin_action: reopen-planning`,
 `data.resolver: Marco/admin reopen-planning`, and `data.legal_next_step` directing Marco/admin to
 run that audited command with a reason and, only after success, directing the agent to retry
@@ -326,6 +341,7 @@ promise that the submitted candidate text was written byte-for-byte unchanged.
 | Code | Exit | Meaning and handling |
 |---|---:|---|
 | `OK` | 0 | Deterministic command success. Continue the protocol’s semantic duty; a pass is not substantive approval. |
+| `CONFIRMATION_REQUIRED` | 3 | No Planning operation or lease was opened. Preserve the returned challenge and make the documented fresh confirmed Planning call only after establishing the exact user-intent basis. |
 | `INVALID_ARGUMENT` | 2 | Fix command syntax or required arguments; rerun only after correction. |
 | `NOT_FOUND` | 2 | Confirm the task/operation identifier. Do not create substitute state. |
 | `UNMANAGED_TASK` | 2 | Task is outside the governed Cooking scope; do not force it through this workflow. |

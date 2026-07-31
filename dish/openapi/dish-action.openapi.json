@@ -18,6 +18,14 @@
           "data": {
             "additionalProperties": true,
             "properties": {
+              "intent_challenge_id": {
+                "description": "Durable single-use Planning intent challenge. Repeat start with a fresh client.request_id and this exact identifier.",
+                "format": "uuid",
+                "maxLength": 36,
+                "minLength": 36,
+                "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
               "legal_next_step": {
                 "description": "Exact legal continuation after a blocked agent mutation, including the private resolver and the fresh follow-up Action when applicable.",
                 "type": "string"
@@ -70,6 +78,11 @@
                   "null"
                 ]
               },
+              "planning_intent_confirmation": {
+                "additionalProperties": true,
+                "description": "Durable first-call Planning confirmation challenge. It does not open an operation or acquire a lease.",
+                "type": "object"
+              },
               "request_id": {
                 "description": "The accepted mutation request UUID. Present on a replayed stored result.",
                 "format": "uuid",
@@ -85,6 +98,17 @@
               "required_admin_action": {
                 "description": "Exact private administrative Action required before the agent workflow may continue. It is not exposed in allowed_actions.",
                 "type": "string"
+              },
+              "required_intent_basis": {
+                "items": {
+                  "enum": [
+                    "user_requested",
+                    "agent_override"
+                  ],
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
               },
               "required_start_kind": {
                 "description": "Exact arguments.kind for the returned start action: planning starts Planning from a bare task; initial starts the first Research construction after Planning; verification starts independent Verification after Research. A planning-to-research handoff always requires kind=initial.",
@@ -1106,9 +1130,29 @@
                             ],
                             "type": "string"
                           },
+                          "intent_basis": {
+                            "description": "Explicit basis for the fresh confirmed Planning call. user_requested means Marco requested Planning for this exact task.",
+                            "enum": [
+                              "user_requested",
+                              "agent_override"
+                            ],
+                            "type": "string"
+                          },
+                          "intent_challenge_id": {
+                            "description": "Durable challenge returned by the first Planning start call. Omit it on the first call and use it only on the fresh confirmed call.",
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
                           "kind": {
                             "const": "planning",
-                            "description": "Start Planning from a bare Cooking task.",
+                            "description": "Start Planning from a bare Cooking task through the required two-call intent-confirmation gate. The first call always returns a durable challenge.",
+                            "type": "string"
+                          },
+                          "override_reason": {
+                            "description": "Required non-blank explanation only when intent_basis=agent_override.",
                             "type": "string"
                           },
                           "prepared_operation_id": {

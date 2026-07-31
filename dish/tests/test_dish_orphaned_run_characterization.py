@@ -14,6 +14,7 @@ from __future__ import annotations
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
+from tests.planning_intent_support import confirmed_planning_start
 from tests.test_dish_tool_easy_backlog import ATTESTATION
 from tests.test_dish_tool_r46_operational_hardening import Clock, _service
 from tests.test_dish_tool_step6_prepare import Backend as PlanningBackend, PLANNING, release as planning_release
@@ -156,8 +157,12 @@ def test_planning_fresh_run_is_permanently_locked_out_by_durable_run_id(tmp_path
     service, _backend = _planning_service(tmp_path, clock=clock, ttl=60)
     run_a = _agent("gpt", "planning-run-a")
     run_b = _agent("gpt", "planning-run-b")
-    started = service.execute_agent(
-        "start", {"agent": "gpt", "task_gid": "t", "kind": "planning"}, principal=run_a,
+    started = confirmed_planning_start(
+        service,
+        {"agent": "gpt", "task_gid": "t", "kind": "planning"},
+        principal=run_a,
+        challenge_request_id="11111111-1111-4111-8111-111111111111",
+        start_request_id="22222222-2222-4222-8222-222222222222",
     )
     assert started["ok"], started
     operation_id = started["submission_id"]

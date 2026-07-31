@@ -27,6 +27,8 @@ from dish_tool.step5 import claim_prepared_stage_successor
 from dish_tool.step8 import resolve_hold
 from dish_tool.task_store import LiveTask
 
+from tests.planning_intent_support import confirmed_planning_start
+
 
 class Backend:
     def __init__(self, *, title: str = "Bare", notes: str = "", section: str = "rq"):
@@ -443,8 +445,8 @@ def test_service_claims_exact_prepared_successor_and_acquires_actor_lease(tmp_pa
     )
     monkeypatch.setattr(service, "_release", lambda role=None: _release(role or "planning"))
 
-    blocked = service.execute_agent(
-        "start",
+    blocked = confirmed_planning_start(
+        service,
         {
             "task_gid": "task",
             "agent": "gpt",
@@ -452,13 +454,14 @@ def test_service_claims_exact_prepared_successor_and_acquires_actor_lease(tmp_pa
             "prepared_operation_id": successor_id,
         },
         principal=ServicePrincipal("owner", "dead-run"),
-        request_id=str(uuid.uuid4()),
+        challenge_request_id=str(uuid.uuid4()),
+        start_request_id=str(uuid.uuid4()),
     )
     assert blocked["ok"] is False
     assert blocked["errors"][0]["rule"] == "abandoned_run_claim_forbidden"
 
-    result = service.execute_agent(
-        "start",
+    result = confirmed_planning_start(
+        service,
         {
             "task_gid": "task",
             "agent": "gpt",
@@ -466,7 +469,8 @@ def test_service_claims_exact_prepared_successor_and_acquires_actor_lease(tmp_pa
             "prepared_operation_id": successor_id,
         },
         principal=ServicePrincipal("owner", "fresh-run"),
-        request_id=str(uuid.uuid4()),
+        challenge_request_id=str(uuid.uuid4()),
+        start_request_id=str(uuid.uuid4()),
     )
     assert result["ok"] is True
     assert result["submission_id"] == successor_id

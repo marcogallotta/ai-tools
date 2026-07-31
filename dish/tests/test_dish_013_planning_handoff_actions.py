@@ -3,6 +3,7 @@ from __future__ import annotations
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
+from tests.planning_intent_support import confirmed_planning_start
 from tests.test_dish_tool_step6_prepare import Backend, PLANNING, release
 
 
@@ -31,11 +32,12 @@ def test_service_preserves_planning_handoff_start_contract(tmp_path):
         run_id="11111111-1111-4111-8111-111111111111",
     )
 
-    started = service.execute_agent(
-        "start",
+    started = confirmed_planning_start(
+        service,
         {"agent": "gpt", "task_gid": "123456789", "kind": "planning"},
         principal=principal,
-        request_id="22222222-2222-4222-8222-222222222222",
+        challenge_request_id="22222222-2222-4222-8222-222222222222",
+        start_request_id="77777777-7777-4777-8777-777777777777",
     )
     assert started["ok"], started
 
@@ -57,11 +59,12 @@ def test_service_preserves_planning_handoff_start_contract(tmp_path):
     assert prepared["data"]["required_start_kind"] == "initial"
     assert prepared["data"]["service_access"] == {"state": "handoff"}
 
-    repeated_planning = service.execute_agent(
-        "start",
+    repeated_planning = confirmed_planning_start(
+        service,
         {"agent": "gpt", "task_gid": "123456789", "kind": "planning"},
         principal=principal,
-        request_id="44444444-4444-4444-8444-444444444444",
+        challenge_request_id="44444444-4444-4444-8444-444444444444",
+        start_request_id="88888888-8888-4888-8888-888888888888",
     )
 
     assert repeated_planning["code"] == "VALIDATION_FAILED"

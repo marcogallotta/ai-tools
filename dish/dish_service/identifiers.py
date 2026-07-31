@@ -16,6 +16,7 @@ _DISH_UUID_FIELDS = {
     "lease_id",
     "cycle_id",
     "verification_cycle_id",
+    "intent_challenge_id",
 }
 NIL_DISH_UUID = "00000000-0000-0000-0000-000000000000"
 CANONICAL_DISH_UUID_PATTERN = (

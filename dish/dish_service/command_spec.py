@@ -100,6 +100,27 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "change_level": {"type": "string", "enum": ["small", "large"]},
             "change_reason": {"type": "string"},
             "prepared_operation_id": dict(DISH_UUID_SCHEMA),
+            "intent_challenge_id": {
+                **DISH_UUID_SCHEMA,
+                "description": (
+                    "Durable challenge returned by the first Planning start call. "
+                    "Omit it on the first call and use it only on the fresh confirmed call."
+                ),
+            },
+            "intent_basis": {
+                "type": "string",
+                "enum": ["user_requested", "agent_override"],
+                "description": (
+                    "Explicit basis for the fresh confirmed Planning call. "
+                    "user_requested means Marco requested Planning for this exact task."
+                ),
+            },
+            "override_reason": {
+                "type": "string",
+                "description": (
+                    "Required non-blank explanation only when intent_basis=agent_override."
+                ),
+            },
             "target_operation_id": dict(DISH_UUID_SCHEMA),
             "target_cycle_id": dict(DISH_UUID_SCHEMA),
         },
@@ -181,7 +202,10 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
         common = {name: deepcopy(base[name]) for name in ("task_gid", "agent")}
 
         start_kind_descriptions = {
-            "planning": "Start Planning from a bare Cooking task.",
+            "planning": (
+                "Start Planning from a bare Cooking task through the required two-call "
+                "intent-confirmation gate. The first call always returns a durable challenge."
+            ),
             "initial": (
                 "Start the first Research construction after Planning. "
                 "For a planning-to-research handoff, use kind=initial; do not start Planning again."
@@ -210,7 +234,13 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
 
         return {
             "oneOf": [
-                start_variant("planning", "prepared_operation_id"),
+                start_variant(
+                    "planning",
+                    "prepared_operation_id",
+                    "intent_challenge_id",
+                    "intent_basis",
+                    "override_reason",
+                ),
                 start_variant("initial", "prepared_operation_id"),
                 start_variant(
                     "change", "change_level", "change_reason",
@@ -451,6 +481,14 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
         )
     for field, value in arguments.items():
         _validate_scalar(field, value, properties[field])
+    if command == "start" and arguments.get("kind") != "planning":
+        for field in ("intent_challenge_id", "intent_basis", "override_reason"):
+            if field in arguments:
+                raise _argument_error(
+                    f"{field} is accepted only for Planning starts",
+                    "argument_unexpected",
+                    field=field,
+                )
     if (
         command == "start"
         and arguments.get("kind") != "verification"

@@ -36,7 +36,12 @@ Planning's only tool responsibility is the boundary check before handing the exa
 Planning task to Research:
 
   1. dish start TASK_GID --agent AGENT --kind planning
-  2. dish prepare SUBMISSION_ID --agent AGENT --model MODEL --file PATH
+     Dish returns CONFIRMATION_REQUIRED and a durable intent challenge.
+  2. Repeat start with a fresh request ID and either:
+       --intent-challenge-id ID --intent-basis user_requested
+     or:
+       --intent-challenge-id ID --intent-basis agent_override --override-reason TEXT
+  3. dish prepare SUBMISSION_ID --agent AGENT --model MODEL --file PATH
 
 A passing `prepare` establishes deterministic structural conformance only -- it does not
 authorize handoff by itself; Planning judgment still governs.
@@ -173,6 +178,19 @@ def build_parser() -> JsonArgumentParser:
     start.add_argument(
         "--prepared-operation-id",
         help="exact abandonment-created Planning/Research successor to claim",
+    )
+    start.add_argument(
+        "--intent-challenge-id",
+        help="durable challenge returned by the first Planning start call",
+    )
+    start.add_argument(
+        "--intent-basis",
+        choices=("user_requested", "agent_override"),
+        help="explicit basis for a confirmed Planning start",
+    )
+    start.add_argument(
+        "--override-reason",
+        help="required non-blank reason when --intent-basis agent_override",
     )
     start.add_argument(
         "--target-operation-id",

@@ -107,6 +107,19 @@ after success.
 
 A Change operation and its completed `change_intent` step are one local transaction; an open Change without that exact intent is invalid and cannot be reconstructed as a successful start.
 
+Planning legality does not establish user intent. A connected `start` with `kind=planning` therefore
+uses a durable two-request gate before workflow execution. The first request atomically completes its
+`service_requests` result with a single-use `planning_intent_challenges` row and returns
+`CONFIRMATION_REQUIRED`; it does not construct the workflow application, read or change the task,
+open an operation, or acquire a lease. A fresh request from the same authenticated owner/run may
+claim that exact challenge only for the same task, agent, and start target, with either
+`intent_basis=user_requested` or `intent_basis=agent_override` plus a non-blank
+`override_reason`. The follow-up request is durable before the serialized challenge transition;
+only one fresh request can claim the issued row, and successful Planning start atomically binds the
+consumed challenge to the resulting operation and authoritative request result. Exact replay returns
+the existing challenge or result; a different request cannot
+reuse the challenge. Supplying an intent basis on the first request cannot bypass challenge issuance.
+
 Every multi-step workflow mutation routed through the operation service has a request-scoped
 `operation_executions` baseline. Failure reconstruction may attribute only evidence created or
 changed by that execution; older operation history cannot be presented as the failed call's work.
@@ -295,6 +308,7 @@ cannot silently create separate live authorities.
 | governed authority | `marco_authorizations` |
 | execution and ownership | `operation_executions`, `operation_execution_claims`, `service_leases` |
 | request replay | `service_requests`; sibling identity, checkpoint, and result journal for `backup-restore` |
+| Planning intent confirmation | `planning_intent_challenges` |
 | audit and repair | `audit_events`, `command_audit_repairs` |
 | historical quarantine | `legacy_submission_quarantine` and read-only legacy records |
 

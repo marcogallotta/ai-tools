@@ -5,6 +5,7 @@ import pytest
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
+from tests.planning_intent_support import confirmed_planning_start
 from dish_service.request_replay import begin_request
 from dish_tool.commands import DishApplication
 from dish_tool.database import initialize_database
@@ -369,11 +370,12 @@ def test_completed_planning_reopen_is_marco_only_audited_and_request_replayed(tm
     backend = CompletedBackend()
     service, _ = _service(tmp_path, backend)
     planner = ServicePrincipal(owner_id="action", run_id="planner-run")
-    blocked = service.execute_agent(
-        "start",
+    blocked = confirmed_planning_start(
+        service,
         {"agent": "gpt", "task_gid": "t", "kind": "planning"},
         principal=planner,
-        request_id="44444444-4444-4444-8444-444444444444",
+        challenge_request_id="44444444-4444-4444-8444-444444444444",
+        start_request_id="77777777-7777-4777-8777-777777777777",
     )
     assert blocked["code"] == "WRONG_STATE"
     assert blocked["data"]["required_admin_action"] == "reopen-planning"
@@ -402,11 +404,12 @@ def test_completed_planning_reopen_is_marco_only_audited_and_request_replayed(tm
     assert backend.reopens == 1
     assert replayed["data"]["request_replayed"] is True
 
-    started = service.execute_agent(
-        "start",
+    started = confirmed_planning_start(
+        service,
         {"agent": "gpt", "task_gid": "t", "kind": "planning"},
         principal=planner,
-        request_id="66666666-6666-4666-8666-666666666666",
+        challenge_request_id="88888888-8888-4888-8888-888888888888",
+        start_request_id="66666666-6666-4666-8666-666666666666",
     )
     assert started["ok"]
 

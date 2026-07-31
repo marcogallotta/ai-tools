@@ -135,6 +135,23 @@ they are derived from the exact live content, placement, durable operation evide
 recovery work, and signoff state. The HTTP health and OpenAPI documents have their own response
 shapes.
 
+Planning uses a durable two-call confirmation gate on both the live CLI and GPT Action. The first
+call creates no operation or lease and returns `data.intent_challenge_id`:
+
+```sh
+dish start TASK_GID --agent gpt --kind planning
+# => CONFIRMATION_REQUIRED; copy data.intent_challenge_id
+
+dish start TASK_GID --agent gpt --kind planning \
+  --intent-challenge-id CHALLENGE_UUID \
+  --intent-basis user_requested
+```
+
+Use `--intent-basis agent_override --override-reason "..."` only for an intentional agent override.
+The second invocation is a fresh request; the bundled live CLI generates its new request UUID
+automatically. Replaying a lost first response requires the original request UUID at the service/API
+level, so the CLI's existing lost-response guidance still applies.
+
 Typical Research and Verification lifecycle:
 
 ```text

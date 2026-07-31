@@ -67,6 +67,16 @@ Add an operating instruction with all of these requirements:
   Approval and every rejection route — including Large — inherit the exact persisted start
   attestation automatically and do not accept the field; never send `independence_attestation` on
   `reject`.
+- Planning start requires a guaranteed two-call intent gate. On the first `start` with
+  `kind: planning`, omit `intent_challenge_id`, `intent_basis`, and `override_reason`; Dish returns
+  `CONFIRMATION_REQUIRED` without opening an operation or lease. Do not treat task legality, a prior
+  conversation summary, or the returned `start` action as proof that Marco requested Planning. Make
+  the fresh follow-up call with the returned challenge and `intent_basis: user_requested` only when
+  Marco explicitly requested Planning for that exact task. Otherwise ask Marco, or deliberately use
+  `intent_basis: agent_override` with a concrete non-blank explanation of why the agent is overriding
+  the absence of an explicit request. Never populate an intent basis on the first call to evade the
+  challenge. Preserve the first request UUID for exact replay after response loss, and use a new
+  request UUID for the confirmed follow-up. Never reuse a challenge for another task, run, or start.
 - Follow only the returned `allowed_actions`. A completed cross-stage handoff names `start` plus
   `data.required_start_kind`; pass that exact value as `arguments.kind` and do not reopen the terminal
   prior operation. In particular, Planning → Research returns `required_start_kind: initial`: call

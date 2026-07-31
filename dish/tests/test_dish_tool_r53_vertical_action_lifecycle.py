@@ -56,12 +56,22 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
             request_id="11111111-1111-4111-8111-111111111111",
         )
         task_gid = created["task_gid"]
-        planning = planner.execute(
+        planning_challenge = planner.execute(
             "start",
             agent="gpt",
             task_gid=task_gid,
             kind="planning",
             request_id="22222222-2222-4222-8222-222222222222",
+        )
+        assert planning_challenge["code"] == "CONFIRMATION_REQUIRED"
+        planning = planner.execute(
+            "start",
+            agent="gpt",
+            task_gid=task_gid,
+            kind="planning",
+            intent_challenge_id=planning_challenge["data"]["intent_challenge_id"],
+            intent_basis="user_requested",
+            request_id="25252525-2525-4525-8525-252525252525",
         )
         planned = planner.execute(
             "prepare",
@@ -144,7 +154,10 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 2
         assert conn.execute(
             "SELECT COUNT(*) FROM service_requests WHERE status='completed'"
-        ).fetchone()[0] == 8
+        ).fetchone()[0] == 9
+        assert conn.execute(
+            "SELECT COUNT(*) FROM planning_intent_challenges WHERE status='consumed'"
+        ).fetchone()[0] == 1
         assert conn.execute(
             "SELECT COUNT(*) FROM service_leases WHERE released_at IS NULL"
         ).fetchone()[0] == 0

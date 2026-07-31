@@ -2182,8 +2182,97 @@ WHEN NEW.operation_id IS NOT OLD.operation_id
 BEGIN SELECT RAISE(ABORT, 'operation creation facts are immutable'); END;
 """
 
+_MIGRATION_34 = """
+CREATE TABLE planning_intent_challenges (
+    challenge_id TEXT PRIMARY KEY,
+    created_request_id TEXT NOT NULL UNIQUE REFERENCES service_requests(request_id),
+    owner_id TEXT NOT NULL CHECK(length(trim(owner_id)) > 0),
+    run_id TEXT NOT NULL CHECK(length(trim(run_id)) > 0),
+    task_gid TEXT NOT NULL CHECK(length(trim(task_gid)) > 0),
+    agent TEXT NOT NULL CHECK(length(trim(agent)) > 0),
+    target_hash TEXT NOT NULL CHECK(length(trim(target_hash)) > 0),
+    status TEXT NOT NULL CHECK(status IN ('issued','claimed','consumed')),
+    claimed_request_id TEXT UNIQUE REFERENCES service_requests(request_id),
+    intent_basis TEXT CHECK(intent_basis IN ('user_requested','agent_override')),
+    override_reason TEXT,
+    operation_id TEXT UNIQUE REFERENCES operations(operation_id),
+    created_at TEXT NOT NULL,
+    claimed_at TEXT,
+    consumed_at TEXT,
+    CHECK (
+        (status='issued'
+         AND claimed_request_id IS NULL
+         AND intent_basis IS NULL
+         AND override_reason IS NULL
+         AND operation_id IS NULL
+         AND claimed_at IS NULL
+         AND consumed_at IS NULL)
+        OR
+        (status='claimed'
+         AND claimed_request_id IS NOT NULL
+         AND intent_basis IS NOT NULL
+         AND operation_id IS NULL
+         AND claimed_at IS NOT NULL
+         AND consumed_at IS NULL
+         AND ((intent_basis='user_requested' AND override_reason IS NULL)
+              OR (intent_basis='agent_override'
+                  AND length(trim(COALESCE(override_reason,''))) > 0)))
+        OR
+        (status='consumed'
+         AND claimed_request_id IS NOT NULL
+         AND intent_basis IS NOT NULL
+         AND operation_id IS NOT NULL
+         AND claimed_at IS NOT NULL
+         AND consumed_at IS NOT NULL
+         AND ((intent_basis='user_requested' AND override_reason IS NULL)
+              OR (intent_basis='agent_override'
+                  AND length(trim(COALESCE(override_reason,''))) > 0)))
+    )
+);
+CREATE INDEX planning_intent_challenges_principal_idx
+    ON planning_intent_challenges(owner_id, run_id, task_gid, created_at);
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33}
+CREATE TRIGGER planning_intent_challenges_identity_immutable_update
+BEFORE UPDATE ON planning_intent_challenges
+WHEN NEW.challenge_id IS NOT OLD.challenge_id
+  OR NEW.created_request_id IS NOT OLD.created_request_id
+  OR NEW.owner_id IS NOT OLD.owner_id
+  OR NEW.run_id IS NOT OLD.run_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.agent IS NOT OLD.agent
+  OR NEW.target_hash IS NOT OLD.target_hash
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'Planning intent challenge identity is immutable'); END;
+
+CREATE TRIGGER planning_intent_challenges_transition_monotonic_update
+BEFORE UPDATE OF status, claimed_request_id, intent_basis, override_reason,
+                 operation_id, claimed_at, consumed_at
+ON planning_intent_challenges
+WHEN NOT (
+    (OLD.status='issued' AND NEW.status='claimed'
+     AND NEW.claimed_request_id IS NOT NULL
+     AND NEW.intent_basis IS NOT NULL
+     AND NEW.operation_id IS NULL
+     AND NEW.claimed_at IS NOT NULL
+     AND NEW.consumed_at IS NULL)
+    OR
+    (OLD.status='claimed' AND NEW.status='consumed'
+     AND NEW.claimed_request_id IS OLD.claimed_request_id
+     AND NEW.intent_basis IS OLD.intent_basis
+     AND NEW.override_reason IS OLD.override_reason
+     AND NEW.operation_id IS NOT NULL
+     AND NEW.claimed_at IS OLD.claimed_at
+     AND NEW.consumed_at IS NOT NULL)
+)
+BEGIN SELECT RAISE(ABORT, 'Planning intent challenge transition is invalid'); END;
+
+CREATE TRIGGER planning_intent_challenges_append_only_delete
+BEFORE DELETE ON planning_intent_challenges
+BEGIN SELECT RAISE(ABORT, 'Planning intent challenges are append-only'); END;
+"""
+
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -2373,6 +2462,7 @@ _SEMANTIC_RECORD_SELECTORS = {
     "marco_authorizations": "authorization_id",
     "dish_inspect_facts": "fact_id",
     "planning_reopen_attempts": "attempt_id",
+    "planning_intent_challenges": "challenge_id",
     "backup_creations": "request_id",
     "service_requests": "request_id",
     "operations": "operation_id",
@@ -2385,12 +2475,13 @@ _SEMANTIC_RECORD_SELECTORS = {
 }
 _SEMANTIC_PROVENANCE_FIELDS = (
     "task_gid", "operation_id", "request_id", "execution_id", "command",
+    "challenge_id", "created_request_id", "claimed_request_id",
     "run_id", "actor_run_id", "owner_id", "cycle_id", "source_cycle_id",
 )
 _SEMANTIC_TIMESTAMP_FIELDS = (
     "created_at", "confirmed_at", "started_at", "finished_at", "completed_at",
     "acquired_at", "renewed_at", "expires_at", "released_at", "reserved_at",
-    "consumed_at", "resolved_at", "process_start", "expected_modified_at",
+    "claimed_at", "consumed_at", "resolved_at", "process_start", "expected_modified_at",
     "confirmed_modified_at", "content_write_completed_at",
     "signoff_completed_at", "movement_completed_at",
 )
@@ -2740,6 +2831,39 @@ def _semantic_relationship(
             "targets": [{**same_record, "fields": ["execution_id", "operation_id"]}],
             "required_predicate": (
                 "evidence_json.execution_id and evidence_json.operation_id equal the owning row identifiers"
+            ),
+        },
+        "planning_intent_creation_binding": {
+            "source_fields": ["challenge_id", "created_request_id", "owner_id", "run_id", "task_gid"],
+            "targets": [{
+                "record_type": "service_requests",
+                "selector": _semantic_selector(row, "created_request_id"),
+                "fields": ["command", "owner_id", "run_id", "status", "result_json"],
+            }],
+            "required_predicate": (
+                "created request is the completed matching start request whose result returns this exact challenge"
+            ),
+        },
+        "planning_intent_claim_binding": {
+            "source_fields": ["challenge_id", "claimed_request_id", "owner_id", "run_id"],
+            "targets": [{
+                "record_type": "service_requests",
+                "selector": _semantic_selector(row, "claimed_request_id"),
+                "fields": ["command", "owner_id", "run_id", "request_id"],
+            }],
+            "required_predicate": (
+                "claimed request is a distinct matching start request for the same authenticated owner and run"
+            ),
+        },
+        "planning_intent_operation_binding": {
+            "source_fields": ["challenge_id", "operation_id", "task_gid", "run_id"],
+            "targets": [{
+                "record_type": "operations",
+                "selector": _semantic_selector(row, "operation_id"),
+                "fields": ["operation_kind", "task_gid", "run_id"],
+            }],
+            "required_predicate": (
+                "consumed challenge selects one Planning operation for the same task and run"
             ),
         },
         "two_pass_reset_binding": {
@@ -3241,6 +3365,92 @@ def _validate_execution_and_lease_evidence(
                     row["execution_id"],
                 ))
 
+def _validate_planning_intent_evidence(
+    conn: sqlite3.Connection, problems: list[dict[str, Any]]
+) -> None:
+    for row in conn.execute("SELECT * FROM planning_intent_challenges"):
+        created = conn.execute(
+            "SELECT * FROM service_requests WHERE request_id=?",
+            (row["created_request_id"],),
+        ).fetchone()
+        valid_created = False
+        if (
+            created is not None
+            and created["command"] == "start"
+            and created["owner_id"] == row["owner_id"]
+            and created["run_id"] == row["run_id"]
+            and created["status"] == "completed"
+        ):
+            try:
+                result = json.loads(created["result_json"] or "null")
+            except (TypeError, ValueError):
+                result = None
+            confirmation = (
+                (result.get("data") or {}).get("planning_intent_confirmation")
+                if isinstance(result, dict)
+                else None
+            )
+            valid_created = bool(
+                isinstance(result, dict)
+                and result.get("code") == "CONFIRMATION_REQUIRED"
+                and result.get("task_gid") == row["task_gid"]
+                and (result.get("data") or {}).get("intent_challenge_id")
+                == row["challenge_id"]
+                and isinstance(confirmation, dict)
+                and confirmation.get("challenge_id") == row["challenge_id"]
+            )
+        if not valid_created:
+            problems.append(_semantic_problem(
+                conn,
+                "planning_intent_creation_binding",
+                "planning_intent_challenges",
+                row["challenge_id"],
+                related_record_type="service_requests",
+                related_record_id=row["created_request_id"],
+            ))
+
+        if row["status"] in {"claimed", "consumed"}:
+            claimed = conn.execute(
+                "SELECT * FROM service_requests WHERE request_id=?",
+                (row["claimed_request_id"],),
+            ).fetchone()
+            if (
+                claimed is None
+                or claimed["command"] != "start"
+                or claimed["owner_id"] != row["owner_id"]
+                or claimed["run_id"] != row["run_id"]
+                or claimed["request_id"] == row["created_request_id"]
+            ):
+                problems.append(_semantic_problem(
+                    conn,
+                    "planning_intent_claim_binding",
+                    "planning_intent_challenges",
+                    row["challenge_id"],
+                    related_record_type="service_requests",
+                    related_record_id=row["claimed_request_id"],
+                ))
+
+        if row["status"] == "consumed":
+            operation = conn.execute(
+                "SELECT * FROM operations WHERE operation_id=?",
+                (row["operation_id"],),
+            ).fetchone()
+            if (
+                operation is None
+                or operation["operation_kind"] != "planning"
+                or operation["task_gid"] != row["task_gid"]
+                or operation["run_id"] != row["run_id"]
+            ):
+                problems.append(_semantic_problem(
+                    conn,
+                    "planning_intent_operation_binding",
+                    "planning_intent_challenges",
+                    row["challenge_id"],
+                    related_record_type="operations",
+                    related_record_id=row["operation_id"],
+                ))
+
+
 def _validate_backup_and_reset_evidence(
     conn: sqlite3.Connection, problems: list[dict[str, Any]]
 ) -> None:
@@ -3526,6 +3736,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
     _validate_content_and_cycle_evidence(conn, problems)
     _validate_operation_and_inspection_evidence(conn, problems)
     _validate_execution_and_lease_evidence(conn, problems)
+    _validate_planning_intent_evidence(conn, problems)
     _validate_backup_and_reset_evidence(conn, problems)
     _validate_abandonment_attempt_evidence(conn, problems)
     _validate_succession_evidence(conn, problems)
@@ -3555,7 +3766,7 @@ def _validate_current_database(conn: sqlite3.Connection) -> None:
     user_version, ledger_version = _schema_version_state(conn)
     if user_version != current or ledger_version != current:
         raise DishRuleError("VALIDATION_FAILED", "database did not converge to the current schema", rule="database_schema_not_current", details={"user_version": user_version, "ledger_version": ledger_version, "current": current})
-    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims", "operation_executions", "dish_inspect_facts", "planning_reopen_attempts", "backup_creations", "abandonment_attempts", "operation_successions"}
+    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims", "operation_executions", "dish_inspect_facts", "planning_reopen_attempts", "backup_creations", "abandonment_attempts", "operation_successions", "planning_intent_challenges"}
     actual = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     missing = sorted(required - actual)
     if missing:

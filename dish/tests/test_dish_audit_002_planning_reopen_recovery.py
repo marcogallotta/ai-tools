@@ -21,6 +21,7 @@ from dish_tool.database import (
 from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
+from tests.planning_intent_support import confirmed_planning_start
 from tests.test_dish_tool_r52_request_restore_durability import Backend, _service
 
 
@@ -33,6 +34,7 @@ PLANNER = ServicePrincipal(owner_id="action", run_id="planner-run")
 REQUEST_ID = "a0000000-0000-4000-8000-000000000001"
 FRESH_ADMIN_ID = "a0000000-0000-4000-8000-000000000002"
 FRESH_START_ID = "a0000000-0000-4000-8000-000000000003"
+FRESH_START_CHALLENGE_ID = "a0000000-0000-4000-8000-000000000006"
 ARGS = {"task_gid": "t", "reason": "repeat the cook"}
 
 
@@ -99,12 +101,17 @@ def _rows(service):
         conn.close()
 
 
-def _start(service, request_id=FRESH_START_ID):
-    return service.execute_agent(
-        "start",
+def _start(
+    service,
+    request_id=FRESH_START_ID,
+    challenge_request_id=FRESH_START_CHALLENGE_ID,
+):
+    return confirmed_planning_start(
+        service,
         {"agent": "gpt", "task_gid": "t", "kind": "planning"},
         principal=PLANNER,
-        request_id=request_id,
+        challenge_request_id=challenge_request_id,
+        start_request_id=request_id,
     )
 
 
@@ -348,7 +355,9 @@ def test_crash_after_attempt_finalization_before_request_completion_is_replayed(
     # proceed once the backend is available again, and exact replay is stored.
     restarted = _restart(service, backend)
     allowed = _start(
-        restarted, request_id="a0000000-0000-4000-8000-000000000005"
+        restarted,
+        request_id="a0000000-0000-4000-8000-000000000005",
+        challenge_request_id="a0000000-0000-4000-8000-000000000007",
     )
     assert allowed["ok"]
     replay = _exact_replay(restarted)
@@ -460,11 +469,12 @@ def test_genuinely_uncertain_reopen_blocks_only_its_task_and_never_retries(tmp_p
     assert request["status"] == "pending"
     assert domain == 0
 
-    other = restarted.execute_agent(
-        "start",
+    other = confirmed_planning_start(
+        restarted,
         {"agent": "gpt", "task_gid": "other", "kind": "planning"},
         principal=PLANNER,
-        request_id="a0000000-0000-4000-8000-000000000004",
+        challenge_request_id="a0000000-0000-4000-8000-000000000008",
+        start_request_id="a0000000-0000-4000-8000-000000000004",
     )
     assert other["ok"]
     assert other["task_gid"] == "other"

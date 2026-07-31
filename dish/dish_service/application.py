@@ -7,6 +7,7 @@ import json
 import logging
 import sqlite3
 import tempfile
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -48,6 +49,7 @@ from dish_tool.task_store import (
 from dish_tool.releases import resolve_release
 from dish_tool.results import error_envelope, result_envelope
 from dish_tool.validation_scope import scope_for_command
+from dish_tool.transactions import immediate_transaction
 
 from .backup import BackupManager, BackupRecord
 from .backup_creation_journal import (
@@ -59,6 +61,11 @@ from .config import ServiceConfig
 from .identifiers import require_asana_gid, require_dish_uuid
 from .leases import LeaseManager, ServicePrincipal
 from .maintenance import MaintenanceGate
+from .planning_intent import (
+    consume_planning_intent,
+    issue_or_claim_planning_intent,
+    planning_start_may_resume,
+)
 from .request_replay import begin_request, complete_request, pending_error, stored_result
 from .restore_fault import RestoreFaultMarker
 from .restore_request_journal import RestoreRequestJournal
@@ -451,8 +458,20 @@ class DishService:
         self.release_loader = release_loader
         self.lease_now = lease_now
         self._maintenance_gate = MaintenanceGate()
+        self._planning_intent_locks = tuple(threading.Lock() for _ in range(64))
         self._restore_fault = RestoreFaultMarker(self.config.db_path)
         self._restore_requests = RestoreRequestJournal(self.config.db_path)
+
+    def _planning_intent_execution_lock(
+        self, command: str, arguments: Mapping[str, Any]
+    ):
+        if command != "start" or arguments.get("kind") != "planning":
+            return contextlib.nullcontext()
+        challenge_id = arguments.get("intent_challenge_id")
+        if not isinstance(challenge_id, str) or not challenge_id:
+            return contextlib.nullcontext()
+        index = sum(challenge_id.encode("utf-8")) % len(self._planning_intent_locks)
+        return self._planning_intent_locks[index]
 
     def _initialize_database(
         self,
@@ -613,6 +632,16 @@ class DishService:
         run_id: str | None,
     ) -> dict[str, Any]:
         prepared = dict(arguments)
+        if command == "start" and prepared.get("kind") != "planning":
+            for field in ("intent_challenge_id", "intent_basis", "override_reason"):
+                if field in prepared:
+                    raise DishRuleError(
+                        "INVALID_ARGUMENT",
+                        f"{field} is accepted only for Planning starts",
+                        rule="argument_unexpected",
+                        retryable=False,
+                        details={"field": field},
+                    )
         if prepared.get("independence_attestation") is not None:
             prepared["independence_attestation"] = validate_independence_attestation(
                 prepared["independence_attestation"]
@@ -1765,7 +1794,14 @@ class DishService:
             principal=principal,
             agent=str(arguments.get("agent") or "") or None,
         )
-        complete_request(conn, request_id=request_id, result=result)
+        if kind == "planning":
+            with immediate_transaction(conn, "complete_planning_start_replay"):
+                consume_planning_intent(
+                    conn, request_id=request_id, operation_id=operation_id
+                )
+                complete_request(conn, request_id=request_id, result=result)
+        else:
+            complete_request(conn, request_id=request_id, result=result)
         return result
 
 
@@ -1807,6 +1843,28 @@ class DishService:
         self._assert_connected_task_abandonment_access(
             state.conn, command=command, arguments=prepared
         )
+        if command == "start" and prepared.get("kind") == "planning":
+            if not request_id:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    "Planning start requires a durable request ID",
+                    rule="planning_intent_request_id_required",
+                    retryable=False,
+                    details={"field": "client.request_id"},
+                )
+            with immediate_transaction(state.conn, "planning_intent_gate"):
+                confirmation = issue_or_claim_planning_intent(
+                    state.conn,
+                    request_id=request_id,
+                    principal=state.principal,
+                    arguments=prepared,
+                )
+                if confirmation is not None:
+                    confirmation = complete_request(
+                        state.conn, request_id=request_id, result=confirmation
+                    )
+            if confirmation is not None:
+                return confirmation
         return None
 
     def _build_agent_application(
@@ -1997,6 +2055,11 @@ class DishService:
                 validation_scope=scope_for_command("submit"),
             )
         with self._candidate_file(state.prepared_arguments) as prepared:
+            if command == "start" and prepared.get("kind") == "planning":
+                prepared = dict(prepared)
+                prepared.pop("intent_challenge_id", None)
+                prepared.pop("intent_basis", None)
+                prepared.pop("override_reason", None)
             return state.app.execute(command, **prepared)
 
     def _finish_agent_result(
@@ -2069,7 +2132,25 @@ class DishService:
             result["allowed_actions"] = []
         if request_id and command in _MUTATING_AGENT_COMMANDS:
             result.setdefault("data", {})["request_id"] = request_id
-            complete_request(state.conn, request_id=request_id, result=result)
+            if (
+                command == "start"
+                and prepared.get("kind") == "planning"
+                and result.get("ok")
+                and result_operation_id
+            ):
+                with immediate_transaction(
+                    state.conn, "complete_planning_start_request"
+                ):
+                    consume_planning_intent(
+                        state.conn,
+                        request_id=request_id,
+                        operation_id=str(result_operation_id),
+                    )
+                    complete_request(
+                        state.conn, request_id=request_id, result=result
+                    )
+            else:
+                complete_request(state.conn, request_id=request_id, result=result)
         return result
 
     def _agent_rule_error_result(
@@ -2149,7 +2230,9 @@ class DishService:
         principal: ServicePrincipal | None = None,
         request_id: str | None = None,
     ) -> dict[str, Any]:
-        with self._maintenance_gate.request():
+        with self._maintenance_gate.request(), self._planning_intent_execution_lock(
+            command, arguments
+        ):
             explicit_principal = principal is not None
             principal = principal or self._default_principal(arguments)
             task_gid = str(arguments.get("task_gid") or "").strip() or None
@@ -2201,15 +2284,24 @@ class DishService:
                     and not state.replay_started
                     and command == "start"
                 ):
-                    return self._reconcile_pending_start(
-                        conn=state.conn,
-                        backend=state.backend,
-                        app=state.app,
-                        leases=state.leases,
-                        principal=state.principal,
-                        arguments=state.prepared_arguments,
-                        request_id=str(request_id),
+                    resumable_planning = bool(
+                        state.prepared_arguments.get("kind") == "planning"
+                        and planning_start_may_resume(
+                            state.conn,
+                            request_id=str(request_id),
+                            arguments=state.prepared_arguments,
+                        )
                     )
+                    if not resumable_planning:
+                        return self._reconcile_pending_start(
+                            conn=state.conn,
+                            backend=state.backend,
+                            app=state.app,
+                            leases=state.leases,
+                            principal=state.principal,
+                            arguments=state.prepared_arguments,
+                            request_id=str(request_id),
+                        )
                 self._resolve_agent_operation(state, command=command)
                 self._acquire_agent_lease(state, command=command)
                 result = self._dispatch_agent_command(state, command=command)
