@@ -20,7 +20,7 @@ rollout.
 
 Current behavior remains defined by [`architecture.md`](architecture.md) and
 [`runtime-contract.md`](runtime-contract.md); the Custom GPT payload remains
-`~/honest-pantry-dish-rollout/dish-custom-gpt-instructions.md` until an approved change lands there.
+`~/honest-pantry/dish-custom-gpt-instructions.md` until an approved change lands there.
 
 ## Problem
 
@@ -198,7 +198,7 @@ v2, deliberately not rollout-blocking. All three are honest, accepted gaps, not 
 
 **v1 landing scope (once picked up — currently soon-after-rollout, not scheduled):**
 
-- the Custom GPT instructions rewrite (`~/honest-pantry-dish-rollout`, separate repo/rules);
+- the Custom GPT instructions rewrite (`~/honest-pantry`, separate repo/rules);
 - a documentation-only `deploy/gpt-action.md` update covering the existing-task `read` rule, the
   successful-`create` exception, and the complete create-versus-existing decision tree above.
   Documentation only — no schema or Action change.
@@ -673,5 +673,5 @@ fact"), the same landing must also update:
 ## Not in scope here
 
 The Custom GPT instructions rewrite (state-driven Action selection, part of v1) is a
-`~/honest-pantry-dish-rollout` change, governed by that repo's own protocol-doc rules, not this
+`~/honest-pantry` change, governed by that repo's own protocol-doc rules, not this
 file.

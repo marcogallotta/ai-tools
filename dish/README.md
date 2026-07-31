@@ -55,7 +55,7 @@ Only the service-host environment contains Asana credentials. Protect the enviro
 For the controlled rollout test deployment, keep test state separate from production:
 
 ```sh
-DISH_HONEST_PATH=/home/marco/honest-pantry-dish-rollout
+DISH_HONEST_PATH=/home/marco/honest-pantry
 DISH_COOKING_PROJECT_GID=1216693403164366
 DISH_DB_PATH=/home/marco/.local/state/dish/test/shared.sqlite3
 DISH_SERVICE_BACKUP_DIR=/home/marco/.local/state/dish/test/backups

@@ -38,7 +38,7 @@ Do not turn this ledger into an incident log or paste large responses into it.
 ## Preconditions for every live stage
 
 - The complete unit and hermetic SDK suites pass.
-- Service host uses `DISH_HONEST_PATH=/home/marco/honest-pantry-dish-rollout`.
+- Service host uses `DISH_HONEST_PATH=/home/marco/honest-pantry`.
 - Service host uses the test `DISH_COOKING_PROJECT_GID=1216693403164366`.
 - Test state is isolated under `/home/marco/.local/state/dish/test/`; it does not reuse the
   production database or backup directory.

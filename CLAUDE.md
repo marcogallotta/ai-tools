@@ -31,7 +31,7 @@ run `dish-admin` write/recovery commands yourself — only Marco can, regardless
 got stuck.
 
 `dish/deploy/gpt-action.md`'s "Instructions for the GPT" section is a template only. The custom
-GPT actually runs on `~/honest-pantry-dish-rollout/dish-custom-gpt-instructions.md`, outside this
+GPT actually runs on `~/honest-pantry/dish-custom-gpt-instructions.md`, outside this
 repo. Any edit to that template must be merged into the live file, in the same pass, as its own
 commit in that repo. A repo commit does not update the running GPT: also tell Marco explicitly to
 paste the live file's current contents into the custom GPT's instructions field.

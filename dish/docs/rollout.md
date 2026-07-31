@@ -36,7 +36,7 @@ complete and need not be repeated wholesale:
   recovery under a live Action lease and atomic pre-construction Research hold/audit persistence—
   are fixed with deterministic regressions.
 - The release-specific evidence record and final semantic rehearsal in the Honest rollout checkout's
-  [`rollout.md`](../../../honest-pantry-dish-rollout/rollout.md) are largely complete, including
+  [`rollout.md`](../../../honest-pantry/rollout.md) are largely complete, including
   Planning, Research, and Verification protocol testing through Dish's bounded regression set with
   sound positive controls and known material failure shapes.
 - **Abandoned run ownership, Part I** is complete. The pre-rollout abandonment patch —
@@ -98,7 +98,7 @@ fail-safe; do not silently reinterpret a failed gate as a pass.
 ## Corpus migration
 
 Follow the approved corpus-wide procedure in the frozen Honest rollout revision's
-[`dish-docs-design.md`](../../../honest-pantry-dish-rollout/dish-docs-design.md):
+[`dish-docs-design.md`](../../../honest-pantry/dish-docs-design.md):
 
 1. Snapshot the complete target corpus to a tarball.
 2. Give a fresh agent the snapshot and final protocol bundle. Produce the migrated corpus locally,
