@@ -1,11 +1,22 @@
 from __future__ import annotations
 
+import copy
 import json
+
+import pytest
 from pathlib import Path
 
 from dish_service.command_spec import ACTION_COMMANDS, REPLAY_SAFE_COMMANDS
-from dish_service.identifiers import CANONICAL_DISH_UUID_PATTERN
 from dish_service.openapi import action_openapi
+from tests.support.action_contract import (
+    EXPECTED_ACTION_COMMANDS,
+    EXPECTED_DISH_UUID_SCHEMA,
+    EXPECTED_READ_ONLY_COMMANDS,
+    EXPECTED_REPLAY_SAFE_COMMANDS,
+    assert_independent_action_openapi_contract,
+    expected_run_and_request_id_paths,
+    named_run_and_request_id_schemas,
+)
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,11 +30,11 @@ def _request_schema(spec, command):
 
 def test_openapi_documents_complete_action_replay_semantics():
     spec = action_openapi()
-    for command in ACTION_COMMANDS:
+    for command in EXPECTED_ACTION_COMMANDS:
         post = spec["paths"][f"/v1/action/{command}"]["post"]
         client = _request_schema(spec, command)["properties"]["client"]
         description = post["description"].lower()
-        if command in REPLAY_SAFE_COMMANDS:
+        if command in EXPECTED_REPLAY_SAFE_COMMANDS:
             assert "request_id" in client["required"]
             assert len(post["description"]) <= 300
             assert "binds command, arguments, owner, and client.run_id" in description
@@ -36,6 +47,7 @@ def test_openapi_documents_complete_action_replay_semantics():
         else:
             assert "request_id" not in client["properties"]
             assert "request_id" not in client["required"]
+            assert command in EXPECTED_READ_ONLY_COMMANDS
             assert "read-only" in description
             assert "does not accept client.request_id" in description
 
@@ -60,7 +72,7 @@ def test_openapi_documents_complete_action_replay_semantics():
     assert envelope["data"]["properties"]["request_replayed"]["type"] == "boolean"
     request_id = envelope["data"]["properties"]["request_id"]
     assert request_id["format"] == "uuid"
-    assert request_id["pattern"] == CANONICAL_DISH_UUID_PATTERN
+    assert request_id["pattern"] == EXPECTED_DISH_UUID_SCHEMA["pattern"]
     assert "fresh call" in envelope["retryable"]["description"]
     assert "does not override exact request replay" in envelope["retryable"]["description"]
 
@@ -97,84 +109,51 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     assert "fresh UUID represents new work" in runtime
 
 
-def test_every_run_and_request_id_openapi_occurrence_uses_shared_uuid_authority():
-    import json
+def test_action_command_inventory_matches_independent_public_contract():
+    assert tuple(ACTION_COMMANDS) == EXPECTED_ACTION_COMMANDS
+    assert frozenset(REPLAY_SAFE_COMMANDS) == EXPECTED_REPLAY_SAFE_COMMANDS
 
-    from dish_service.command_spec import ACTION_COMMANDS, REPLAY_SAFE_COMMANDS
-    from dish_service.identifiers import CANONICAL_DISH_UUID_SCHEMA
 
+def test_every_run_and_request_id_openapi_occurrence_uses_independent_uuid_contract():
     generated = action_openapi()
     checked = json.loads((ROOT / "openapi" / "dish-action.openapi.json").read_text())
 
-    def named_identifier_schemas(document):
-        found = {}
-
-        def collect(value, path=()):
-            if isinstance(value, dict):
-                for key, child in value.items():
-                    child_path = (*path, key)
-                    if key in {"run_id", "request_id"}:
-                        found[child_path] = child
-                    collect(child, child_path)
-            elif isinstance(value, list):
-                for index, child in enumerate(value):
-                    collect(child, (*path, str(index)))
-
-        collect(document)
-        return found
-
-    expected_run_paths = {
-        (
-            "paths",
-            f"/v1/action/{command}",
-            "post",
-            "requestBody",
-            "content",
-            "application/json",
-            "schema",
-            "properties",
-            "client",
-            "properties",
-            "run_id",
-        )
-        for command in ACTION_COMMANDS
-    }
-    expected_request_paths = {
-        (
-            "paths",
-            f"/v1/action/{command}",
-            "post",
-            "requestBody",
-            "content",
-            "application/json",
-            "schema",
-            "properties",
-            "client",
-            "properties",
-            "request_id",
-        )
-        for command in REPLAY_SAFE_COMMANDS
-    }
-    expected_request_paths.add(
-        (
-            "components",
-            "schemas",
-            "ResultEnvelope",
-            "properties",
-            "data",
-            "properties",
-            "request_id",
-        )
-    )
-    expected_paths = expected_run_paths | expected_request_paths
-
     for document in (generated, checked):
-        found = named_identifier_schemas(document)
-        assert set(found) == expected_paths
+        found = named_run_and_request_id_schemas(document)
+        assert set(found) == expected_run_and_request_id_paths()
         for path, schema in found.items():
-            for key, expected in CANONICAL_DISH_UUID_SCHEMA.items():
+            for key, expected in EXPECTED_DISH_UUID_SCHEMA.items():
                 assert schema.get(key) == expected, (path, key)
 
+
+def test_generated_and_checked_in_openapi_match_independent_action_contract():
+    checked = json.loads((ROOT / "openapi" / "dish-action.openapi.json").read_text())
+    for document in (action_openapi(), checked):
+        assert_independent_action_openapi_contract(document)
+
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda document: document["paths"].pop("/v1/action/inspect"),
+        lambda document: document["paths"]["/v1/action/read"]["post"].__setitem__(
+            "x-openai-isConsequential", True
+        ),
+        lambda document: document["paths"]["/v1/action/create"]["post"][
+            "requestBody"
+        ]["content"]["application/json"]["schema"]["properties"]["client"][
+            "properties"
+        ]["run_id"].pop("pattern"),
+    ],
+    ids=["missing-command", "wrong-consequence", "weakened-uuid"],
+)
+def test_independent_action_contract_rejects_plausible_generator_regressions(mutate):
+    document = copy.deepcopy(action_openapi())
+    mutate(document)
+
+    with pytest.raises(AssertionError):
+        assert_independent_action_openapi_contract(document)
 
 def test_connected_uuid_acceptance_remains_explicitly_reimport_gated():
     action_guide = " ".join(

@@ -1,33 +1,28 @@
 import pytest
 import json
 
-from dish_service.openapi import ACTION_COMMANDS, action_openapi
+from dish_service.openapi import action_openapi
+from tests.support.action_contract import (
+    EXPECTED_ACTION_COMMANDS,
+    EXPECTED_CONSEQUENTIAL,
+    EXPECTED_DISH_UUID_SCHEMA,
+    assert_independent_action_openapi_contract,
+)
 
 
 @pytest.mark.smoke
 def test_trimmed_openapi_contains_only_action_workflow_and_renewal_paths():
     spec = action_openapi(server_url="https://dish.example.test")
     paths = set(spec["paths"])
-    expected = {f"/v1/action/{command}" for command in ACTION_COMMANDS}
+    expected = {f"/v1/action/{command}" for command in EXPECTED_ACTION_COMMANDS}
     assert paths == expected
     consequential = {
         command: spec["paths"][f"/v1/action/{command}"]["post"][
             "x-openai-isConsequential"
         ]
-        for command in ACTION_COMMANDS
+        for command in EXPECTED_ACTION_COMMANDS
     }
-    assert consequential == {
-        "create": True,
-        "sections": False,
-        "read": False,
-        "inspect": False,
-        "start": True,
-        "prepare": True,
-        "approve": True,
-        "reject": True,
-        "submit": True,
-        "renew-lease": True,
-    }
+    assert consequential == EXPECTED_CONSEQUENTIAL
     assert "/v1/action/leases/{operation_id}/renew" not in paths
     rendered = json.dumps(spec).lower()
     assert "/admin" not in rendered
@@ -49,17 +44,15 @@ def test_trimmed_openapi_contains_only_action_workflow_and_renewal_paths():
 
 @pytest.mark.smoke
 def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
-    from dish_service.identifiers import CANONICAL_DISH_UUID_PATTERN
-
     spec = action_openapi(server_url="https://dish.example.test")
     create_client = spec["paths"]["/v1/action/create"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["client"]
     run_id = create_client["properties"]["run_id"]
     request_id = create_client["properties"]["request_id"]
     assert run_id["format"] == "uuid"
-    assert run_id["pattern"] == CANONICAL_DISH_UUID_PATTERN
+    assert run_id["pattern"] == EXPECTED_DISH_UUID_SCHEMA["pattern"]
     assert "canonical lowercase uuid" in run_id["description"].lower()
     assert request_id["format"] == "uuid"
-    assert request_id["pattern"] == CANONICAL_DISH_UUID_PATTERN
+    assert request_id["pattern"] == EXPECTED_DISH_UUID_SCHEMA["pattern"]
     assert "one logical mutation" in request_id["description"]
     assert "lost response" in request_id["description"]
 
@@ -69,12 +62,12 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     assert renew_client["properties"]["run_id"]["format"] == "uuid"
     renew_arguments = renew_schema["properties"]["arguments"]
     assert renew_arguments["required"] == ["operation_id"]
-    assert renew_arguments["properties"]["operation_id"]["pattern"] == CANONICAL_DISH_UUID_PATTERN
+    assert renew_arguments["properties"]["operation_id"]["pattern"] == EXPECTED_DISH_UUID_SCHEMA["pattern"]
     assert "parameters" not in spec["paths"]["/v1/action/renew-lease"]["post"]
 
     envelope_submission = spec["components"]["schemas"]["ResultEnvelope"]["properties"]["submission_id"]
     assert envelope_submission["format"] == "uuid"
-    assert envelope_submission["pattern"] == CANONICAL_DISH_UUID_PATTERN
+    assert envelope_submission["pattern"] == EXPECTED_DISH_UUID_SCHEMA["pattern"]
 
     reject = spec["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     variants = {item["properties"]["route"]["const"]: item for item in reject["oneOf"]}
@@ -112,11 +105,6 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
 def test_every_openapi_uuid_schema_requires_canonical_lowercase_pattern():
     from jsonschema import Draft202012Validator
 
-    from dish_service.identifiers import (
-        CANONICAL_DISH_UUID_PATTERN,
-        NIL_DISH_UUID,
-    )
-
     spec = action_openapi()
     uuid_schemas = []
 
@@ -133,7 +121,7 @@ def test_every_openapi_uuid_schema_requires_canonical_lowercase_pattern():
     collect(spec)
     assert uuid_schemas
     assert all(
-        schema.get("pattern") == CANONICAL_DISH_UUID_PATTERN
+        schema.get("pattern") == EXPECTED_DISH_UUID_SCHEMA["pattern"]
         for schema in uuid_schemas
     )
     canonical = "11111111-1111-4111-8111-111111111111"
@@ -142,13 +130,23 @@ def test_every_openapi_uuid_schema_requires_canonical_lowercase_pattern():
         validator = Draft202012Validator(schema)
         assert validator.is_valid(canonical)
         assert not validator.is_valid(uppercase)
-        assert not validator.is_valid(NIL_DISH_UUID)
+        assert not validator.is_valid("00000000-0000-0000-0000-000000000000")
 
 
 @pytest.mark.smoke
-def test_checked_in_openapi_matches_generator():
+def test_checked_in_openapi_is_synchronized_with_generator():
     from pathlib import Path
 
     checked = json.loads((Path(__file__).parent.parent / "openapi" / "dish-action.openapi.json").read_text())
     assert checked == action_openapi()
 
+
+
+def test_generated_and_checked_in_openapi_satisfy_independent_action_contract():
+    from pathlib import Path
+
+    checked = json.loads(
+        (Path(__file__).parent.parent / "openapi" / "dish-action.openapi.json").read_text()
+    )
+    for document in (action_openapi(), checked):
+        assert_independent_action_openapi_contract(document)

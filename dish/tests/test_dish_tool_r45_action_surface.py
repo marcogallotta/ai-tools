@@ -11,7 +11,6 @@ from dish_service.client import DishActionClient, DishAdminServiceClient, DishSe
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
 from dish_service.identifiers import validate_identifier_fields
-from dish_service.openapi import ACTION_COMMANDS, action_openapi
 from dish_tool.backend import map_backend_exception
 from dish_tool.errors import BackendFailure, DishRuleError
 from dish_tool.models import RequestPhase
