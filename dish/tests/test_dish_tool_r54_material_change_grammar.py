@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from dish_tool.errors import DishRuleError
 from tests.support.canonical import TASK as CANONICAL_TASK
 from tests.support.readiness import _approve_and_submit
 from tests.support.authority import _authorize_dish_candidate, _review
@@ -259,10 +260,14 @@ def test_submit_refuses_ready_task_with_any_material_change_pending(tmp_path, mo
     identity = content_identity(backend.title, backend.notes).digest
     monkeypatch.setattr(step9, "_signed_identity", lambda conn, op_id: identity)
 
-    with pytest.raises(Exception) as exc_info:
+    with pytest.raises(DishRuleError) as exc_info:
         step9.submit_live(application.conn, backend, operation_id=operation_id)
     error = exc_info.value
-    assert getattr(error, "rule", None) == "material_change_verification_pending"
+    assert error.code == "VALIDATION_FAILED"
+    assert error.rule == "material_change_verification_pending"
+    assert error.retryable is False
+    assert error.details["required_state"] == "verified"
+    assert error.details["pending_material_changes"] == [pending]
     row = application.conn.execute(
         "SELECT status,phase,terminal_outcome FROM operations WHERE operation_id=?",
         (operation_id,),

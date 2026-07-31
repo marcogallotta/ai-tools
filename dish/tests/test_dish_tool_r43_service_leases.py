@@ -8,6 +8,7 @@ from dish_service.config import ServiceConfig
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.commands import DishApplication
 from dish_tool.database import initialize_database
+from dish_tool.errors import DishRuleError
 from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend, TASK
 from tests.support.service_leases import (
@@ -207,9 +208,11 @@ def test_task_lock_cannot_release_before_terminal_completion(tmp_path):
     conn = initialize_database(service.config.db_path)
     try:
         leases = LeaseManager(conn, ttl_seconds=60)
-        with pytest.raises(Exception) as exc:
+        with pytest.raises(DishRuleError) as exc:
             leases.release_terminal(started["submission_id"], owner)
-        assert getattr(exc.value, "rule", None) == "service_task_lock_active"
+        assert exc.value.code == "WRONG_STATE"
+        assert exc.value.rule == "service_task_lock_active"
+        assert exc.value.retryable is False
         assert leases.active_for_operation(started["submission_id"]) is not None
     finally:
         conn.close()

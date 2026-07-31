@@ -14,20 +14,29 @@ def _review(app, run="review"):
     return result
 
 
-def test_small_cannot_self_authorize_lock_change(tmp_path):
+def test_small_lock_change_requires_large_before_embedded_decision_can_authorize(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = _review(app)
     candidate = tmp_path / "small.txt"
     candidate.write_text(TASK.replace("Locks: Keep crisp", "Locks: Remove crispness constraint").replace(
         "Decisions:\nNone", "Decisions:\nHuman — Marco: Authorizes Locks change: remove crispness"
     ))
+    writes_before = backend.writes
     result = app.execute(
         "approve", model="gpt-5.6-sol", agent="codex", submission_id=operation_id, correction="small",
         file_path=str(candidate), reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True, provenance_complete=True, run_id="review",
     )
     assert result["code"] == "VALIDATION_FAILED"
-    assert result["errors"][0]["rule"] in {"small_correction_scope", "governed_change_unauthorized", "large_correction_required"}
+    assert result["retryable"] is True
+    assert result["errors"] == [
+        {
+            "rule": "large_correction_required",
+            "fields": [],
+            "material_reasons": ["locks"],
+        }
+    ]
+    assert backend.writes == writes_before
 
 
 def test_constructor_run_from_prior_operation_can_verify_later_operation(tmp_path):

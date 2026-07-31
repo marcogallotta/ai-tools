@@ -140,9 +140,11 @@ def test_service_process_lock_rejects_second_process_owner(tmp_path):
     path = tmp_path / "shared.db.service.lock"
     first = ServiceProcessLock(path).acquire()
     try:
-        with pytest.raises(Exception) as exc:
+        with pytest.raises(DishRuleError) as exc:
             ServiceProcessLock(path).acquire()
-        assert getattr(exc.value, "rule", None) == "service_process_lock_held"
+        assert exc.value.code == "CONFLICT"
+        assert exc.value.rule == "service_process_lock_held"
+        assert exc.value.retryable is False
     finally:
         first.release()
 

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 
+from dish_tool.errors import DishRuleError
 from dish_tool.models import (
     material_change_line,
     material_editor_line,
@@ -30,7 +31,7 @@ UNSAFE_TEXT = [
 
 @pytest.mark.parametrize("value", UNSAFE_TEXT)
 def test_model_rejects_structural_unicode_before_trimming(value):
-    with pytest.raises(Exception) as caught:
+    with pytest.raises(DishRuleError) as caught:
         validate_actor_model(value)
     error = caught.value
     assert error.code == "INVALID_ARGUMENT"
@@ -41,7 +42,7 @@ def test_model_rejects_structural_unicode_before_trimming(value):
 
 @pytest.mark.parametrize("value", UNSAFE_TEXT)
 def test_change_reason_rejects_structural_unicode_before_trimming(value):
-    with pytest.raises(Exception) as caught:
+    with pytest.raises(DishRuleError) as caught:
         validate_change_reason(value)
     error = caught.value
     assert error.code == "INVALID_ARGUMENT"
@@ -55,7 +56,7 @@ def test_change_reason_rejects_structural_unicode_before_trimming(value):
     ["\x00", "\t", "\u200b", "\u2028", "\u2029", "\u202e"],
 )
 def test_candidate_text_rejects_unsafe_structural_characters(character):
-    with pytest.raises(Exception) as caught:
+    with pytest.raises(DishRuleError) as caught:
         validate_candidate_text(f"safe\ntext{character}hidden")
     error = caught.value
     assert error.code == "INVALID_ARGUMENT"

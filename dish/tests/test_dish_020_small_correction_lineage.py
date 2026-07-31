@@ -518,4 +518,8 @@ def test_no_correction_large_rejection_and_stale_candidate_rules_remain_intact(t
         run_id="stale",
     )
     assert stale["code"] == "CONFLICT"
-    assert stale["errors"][0]["rule"] in {"live_task_drift", "stale_verifier_review"}
+    assert stale["retryable"] is False
+    assert stale["allowed_actions"] == []
+    assert stale["errors"][0]["rule"] == "live_task_drift"
+    assert stale["errors"][0]["action"] == "approve"
+    assert stale["errors"][0]["authoritative_view"]["identity_matches"] is False
