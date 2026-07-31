@@ -7,6 +7,7 @@ from typing import Any
 
 from dish_tool.errors import DishRuleError
 from dish_tool.models import utc_now
+from dish_tool.transactions import immediate_transaction, require_transaction
 
 from .backup import BackupRecord
 
@@ -25,8 +26,7 @@ def reserve_backup_creation(
 ):
     """Commit the exact output identity before snapshot creation may begin."""
 
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "reserve_backup_creation"):
         row = creation_for_request(conn, request_id)
         if row is None:
             conn.execute(
@@ -36,12 +36,7 @@ def reserve_backup_creation(
                 (request_id, backup_id, utc_now()),
             )
             row = creation_for_request(conn, request_id)
-        conn.execute("COMMIT")
         return row
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 
 def complete_backup_creation(
@@ -52,8 +47,9 @@ def complete_backup_creation(
 ) -> None:
     """Complete the reserved identity inside the caller's result transaction."""
 
-    if not conn.in_transaction:
-        raise RuntimeError("backup creation completion requires an active transaction")
+    require_transaction(
+        conn, operation="backup creation completion"
+    )
     row = creation_for_request(conn, request_id)
     if row is None:
         raise DishRuleError(

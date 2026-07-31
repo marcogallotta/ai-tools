@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping
 from .constants import RECOVERY_QUARANTINE_SECONDS
 from .database import atomic_persistence, record_audit, transition_submission
 from .errors import DishRuleError
+from .transactions import immediate_transaction
 from .models import ProcessIdentity, WriteAttempt, utc_now
 
 
@@ -112,8 +113,7 @@ def finish_write_attempt(
 
     assignments = ["status = ?"] + [f"{column} = ?" for column in updates]
     params = [target_state, *updates.values(), submission_id, attempt_id]
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "finish_write_attempt"):
         cursor = conn.execute(
             f"""
             UPDATE submissions
@@ -125,7 +125,6 @@ def finish_write_attempt(
             params,
         )
         if cursor.rowcount != 1:
-            conn.execute("ROLLBACK")
             raise DishRuleError(
                 "CONFLICT",
                 "write attempt no longer owns this submission",
@@ -134,14 +133,7 @@ def finish_write_attempt(
         row = conn.execute(
             "SELECT * FROM submissions WHERE submission_id = ?", (submission_id,)
         ).fetchone()
-        conn.execute("COMMIT")
         return row
-    except DishRuleError:
-        raise
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 
 def _parse_recorded_timestamp(value: Any) -> datetime:
@@ -266,8 +258,7 @@ def recover_write_attempt(
 
     content_written_at = utc_now() if target_state == "written" else None
 
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "recover_write_attempt"):
         cursor = conn.execute(
             """
             UPDATE submissions
@@ -290,7 +281,6 @@ def recover_write_attempt(
             ),
         )
         if cursor.rowcount != 1:
-            conn.execute("ROLLBACK")
             raise DishRuleError(
                 "CONFLICT",
                 "write attempt changed before recovery completed",
@@ -299,14 +289,7 @@ def recover_write_attempt(
         row = conn.execute(
             "SELECT * FROM submissions WHERE submission_id = ?", (submission_id,)
         ).fetchone()
-        conn.execute("COMMIT")
         return row
-    except DishRuleError:
-        raise
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 
 def begin_operation_write_attempt(

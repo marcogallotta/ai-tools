@@ -345,8 +345,7 @@ def verification_read(
 
     # The external read is complete. Persist every local review-authority fact as
     # one atomic unit so a crash leaves either no review binding or a complete one.
-    conn.execute("SAVEPOINT verification_read_local")
-    try:
+    with atomic_persistence(conn, "verification_read_local"):
         current_op, current_cycle = _operation_and_cycle(
             conn, operation_id, target_cycle_id=target_cycle_id
         )
@@ -428,12 +427,6 @@ def verification_read(
                 continuation_operation_id=operation_id,
                 continuation_cycle_id=cycle["cycle_id"],
             )
-    except Exception:
-        conn.execute("ROLLBACK TO verification_read_local")
-        conn.execute("RELEASE verification_read_local")
-        raise
-    else:
-        conn.execute("RELEASE verification_read_local")
     return {
         "operation_id": operation_id,
         "cycle_id": cycle["cycle_id"],

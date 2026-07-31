@@ -14,6 +14,7 @@ from typing import Any, Iterable, Mapping
 
 from .constants import DEFAULT_DB_PATH, SUBMISSION_STATES
 from .errors import DishRuleError
+from .transactions import immediate_transaction
 from .models import ContentIdentity, OperationActors, agent_family, utc_now
 
 _MIGRATION_1 = f"""
@@ -3600,13 +3601,12 @@ def _canonical_schema_manifest() -> dict[str, str]:
         probe = sqlite3.connect(":memory:", isolation_level=None)
         try:
             probe.execute("PRAGMA foreign_keys = ON")
-            probe.execute("BEGIN IMMEDIATE")
-            probe.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
-            for version in sorted(MIGRATIONS):
-                _execute_script_statements(probe, MIGRATIONS[version])
-                probe.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?, 'canonical')", (version,))
-                probe.execute(f"PRAGMA user_version = {version}")
-            probe.execute("COMMIT")
+            with immediate_transaction(probe, "build_canonical_schema"):
+                probe.execute("CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)")
+                for version in sorted(MIGRATIONS):
+                    _execute_script_statements(probe, MIGRATIONS[version])
+                    probe.execute("INSERT INTO schema_migrations(version, applied_at) VALUES (?, 'canonical')", (version,))
+                    probe.execute(f"PRAGMA user_version = {version}")
             _CANONICAL_SCHEMA_MANIFEST = _schema_manifest(probe)
         finally:
             probe.close()
@@ -3616,8 +3616,7 @@ def _canonical_schema_manifest() -> dict[str, str]:
 def migrate_database(conn: sqlite3.Connection) -> None:
     # Hold one SQLite write lock across discovery and every migration. This makes
     # concurrent initializers serialize instead of racing on CREATE/ALTER steps.
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "migrate_database"):
         # Validate existing claims before creating or applying anything. A truly
         # empty database is the only permitted ledger-less state.
         existing_tables = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchone()[0]
@@ -3638,8 +3637,3 @@ def migrate_database(conn: sqlite3.Connection) -> None:
                 (version, utc_now()),
             )
             conn.execute(f"PRAGMA user_version = {version}")
-        conn.execute("COMMIT")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise

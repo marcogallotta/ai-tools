@@ -30,6 +30,7 @@ from .database import (
 )
 from .errors import DishRuleError
 from .models import SectionRegistry, utc_now
+from .transactions import immediate_transaction
 from .task_store import LiveTask, move_exact, read_complete_task, write_exact_content
 
 
@@ -759,8 +760,7 @@ def _prepare_stage_successor(
         if source["operation_kind"] == "change"
         else {}
     )
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "_prepare_stage_successor"):
         abandonment, successor, succession = (
             apply_operation_abandonment_succession_in_transaction(
                 conn,
@@ -780,11 +780,6 @@ def _prepare_stage_successor(
                 result=result,
             )
         )
-        conn.execute("COMMIT")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
     result["abandonment"] = {key: abandonment[key] for key in abandonment.keys()}
     result["successor"] = {key: successor[key] for key in successor.keys()}
     result["succession"] = {key: succession[key] for key in succession.keys()}
@@ -877,8 +872,7 @@ def _prepare_verification_successor(
         if source["operation_kind"] == "change"
         else {}
     )
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "_prepare_verification_successor"):
         abandonment, successor, succession = (
             apply_operation_abandonment_succession_in_transaction(
                 conn,
@@ -910,11 +904,6 @@ def _prepare_verification_successor(
                 result=result,
             )
         )
-        conn.execute("COMMIT")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
     result["abandonment"] = {key: abandonment[key] for key in abandonment.keys()}
     result["successor"] = {key: successor[key] for key in successor.keys()}
     result["succession"] = {key: succession[key] for key in succession.keys()}
@@ -987,8 +976,7 @@ def resolve_preconstruction_hold_to_successor(
         "succession_id": succession_id,
         "required_action": action,
     }
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "resolve_preconstruction_hold_to_successor"):
         from .database import complete_operation_step, declare_operation_step
 
         declare_operation_step(
@@ -1034,11 +1022,6 @@ def resolve_preconstruction_hold_to_successor(
             candidate_transfer_kind="restored_stage_baseline",
             result=result,
         )
-        conn.execute("COMMIT")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
     return result
 
 
@@ -1108,16 +1091,10 @@ def _mark_post_succession_blocked(
     result = _post_succession_block_result(
         abandonment, reason=reason, details=details
     )
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "_mark_post_succession_blocked"):
         row = mark_abandonment_blocked_in_transaction(
             conn, abandonment_id=abandonment_id, result=result
         )
-        conn.execute("COMMIT")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
     result["abandonment"] = {key: row[key] for key in row.keys()}
     return result
 
@@ -1351,8 +1328,7 @@ def _reconcile_prepared_stage_successor(
         "successor_operation_id": successor_id,
         "required_action": action,
     }
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "_reconcile_prepared_stage_successor"):
         current = get_abandonment_attempt(conn, abandonment_id)
         if current["status"] != "started" or current["successor_operation_id"] != successor_id:
             raise DishRuleError(
@@ -1386,11 +1362,6 @@ def _reconcile_prepared_stage_successor(
             result_code="OK",
             result_ok=True,
         )
-        conn.execute("COMMIT")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
     return result
 
 
@@ -1428,29 +1399,17 @@ def settle_abandonment_frontier(
             conn, abandonment_id=abandonment_id, frontier=frontier
         )
     if frontier.outcome == "blocked_manual_reconciliation":
-        conn.execute("BEGIN IMMEDIATE")
-        try:
+        with immediate_transaction(conn, "mark_abandonment_blocked"):
             row = mark_abandonment_blocked_in_transaction(
                 conn, abandonment_id=abandonment_id, result=result
             )
-            conn.execute("COMMIT")
-        except Exception:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
         result["abandonment"] = {key: row[key] for key in row.keys()}
         return result
     if frontier.outcome == "awaiting_hold_resolution":
-        conn.execute("BEGIN IMMEDIATE")
-        try:
+        with immediate_transaction(conn, "mark_abandonment_awaiting_hold"):
             row = mark_abandonment_awaiting_hold_in_transaction(
                 conn, abandonment_id=abandonment_id, result=result
             )
-            conn.execute("COMMIT")
-        except Exception:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
         result["abandonment"] = {key: row[key] for key in row.keys()}
         return result
 
@@ -1526,8 +1485,7 @@ def settle_abandonment_frontier(
                 "target_cycle_id": continuation_cycle_id,
             },
         }
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "complete_abandonment"):
         row = complete_abandonment_in_transaction(
             conn,
             abandonment_id=abandonment_id,
@@ -1536,10 +1494,5 @@ def settle_abandonment_frontier(
             continuation_operation_id=continuation_operation_id,
             continuation_cycle_id=continuation_cycle_id,
         )
-        conn.execute("COMMIT")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
     result["abandonment"] = {key: row[key] for key in row.keys()}
     return result

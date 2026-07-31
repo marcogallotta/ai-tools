@@ -11,6 +11,7 @@ from .errors import DishRuleError
 from .models import OperationActors, ResolvedRelease
 from .migrations import migrate_task_document
 from .task_document import DocumentParseError, document_parse_error_payloads, document_shape, parse_planning_brief, parse_task_document, validate_task_document, finding_payload
+from .transactions import immediate_transaction
 from .task_store import LiveTask, read_complete_task, write_exact_content
 
 _SCHEMA_VERSION_LINE = re.compile(r"^Schema version:\s*(.+)$", re.MULTILINE)
@@ -188,37 +189,32 @@ def claim_prepared_stage_successor(
         "task_gid": live.gid,
         "kind": kind,
     }
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        row = claim_prepared_stage_successor_in_transaction(
-            conn,
-            prepared_operation_id=clean_id,
-            task_gid=live.gid,
-            operation_kind=kind,
-            agent=agent,
-            run_id=str(run_id or "").strip(),
-            live_identity=live.identity,
-            live_section_gid=live.section_gid,
-            schema_version=release.schema_version,
-            expected_change_intent=(
-                {"level": change_level, "reason": change_reason}
-                if kind == "change"
-                else None
-            ),
-            result=result,
-        )
-        conn.execute("COMMIT")
-    except DishRuleError as exc:
-        if conn.in_transaction:
-            if exc.rule == "prepared_successor_drift":
-                conn.execute("COMMIT")
-            else:
-                conn.execute("ROLLBACK")
-        raise
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
+    drift_error: DishRuleError | None = None
+    with immediate_transaction(conn, "claim_prepared_stage_successor"):
+        try:
+            row = claim_prepared_stage_successor_in_transaction(
+                conn,
+                prepared_operation_id=clean_id,
+                task_gid=live.gid,
+                operation_kind=kind,
+                agent=agent,
+                run_id=str(run_id or "").strip(),
+                live_identity=live.identity,
+                live_section_gid=live.section_gid,
+                schema_version=release.schema_version,
+                expected_change_intent=(
+                    {"level": change_level, "reason": change_reason}
+                    if kind == "change"
+                    else None
+                ),
+                result=result,
+            )
+        except DishRuleError as exc:
+            if exc.rule != "prepared_successor_drift":
+                raise
+            drift_error = exc
+    if drift_error is not None:
+        raise drift_error
     return row
 
 

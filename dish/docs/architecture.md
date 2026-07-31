@@ -305,7 +305,19 @@ explicit example: its phase transition, completed hold step, and
 unit fails before any workflow effect commits, the operation execution remains uncertain only to
 bind exact request replay; replay of that request UUID reconstructs the same hold outcome and
 resolves the request ledger after the hold and audit are durable. Workflow and transport code must
-use repository primitives rather than bypassing those invariants with ad hoc SQL. A Marco authorization
+use repository primitives rather than bypassing those invariants with ad hoc SQL.
+
+SQLite transaction control is centralized in `dish_tool.transactions`. Runtime code chooses one of
+three explicit ownership contracts: `immediate_transaction` owns a serialized writer unit and uses a
+savepoint when nested; `join_or_begin_immediate` joins a caller-owned atomic unit or creates the
+boundary when none exists; and `require_transaction` marks helpers that may only participate in an
+existing caller transaction. `savepoint_transaction` owns nested rollback isolation. No workflow,
+service, lease, request-journal, recovery, migration, or audit-repair module issues raw
+`BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT` statements. This preserves each documented atomic unit while
+making commit ownership reviewable in one module and ensuring process-exit exceptions roll back the
+unit they own.
+
+A Marco authorization
 grant is one `BEGIN IMMEDIATE` unit: the operation-open check, exact semantic deduplication,
 authorization row, and `marco.authorization` audit either all commit or all roll back. Reservation
 never treats an unaudited historical row as a usable capability.

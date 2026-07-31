@@ -8,6 +8,7 @@ from typing import Any, Mapping, MutableMapping
 
 from dish_tool.errors import DishRuleError
 from dish_tool.models import utc_now
+from dish_tool.transactions import immediate_transaction, join_or_begin_immediate
 
 
 def request_hash(command: str, arguments: Mapping[str, Any]) -> str:
@@ -30,8 +31,7 @@ def begin_request(
     arguments: Mapping[str, Any],
 ):
     digest = request_hash(command, arguments)
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "begin_service_request"):
         row = conn.execute(
             "SELECT * FROM service_requests WHERE request_id=?", (request_id,)
         ).fetchone()
@@ -45,7 +45,6 @@ def begin_request(
             row = conn.execute(
                 "SELECT * FROM service_requests WHERE request_id=?", (request_id,)
             ).fetchone()
-            conn.execute("COMMIT")
             return row, True
         if (
             row["owner_id"] != owner_id
@@ -59,12 +58,7 @@ def begin_request(
                 rule="service_request_identity_conflict",
                 details={"request_id": request_id},
             )
-        conn.execute("COMMIT")
         return row, False
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 
 def stored_result(
@@ -128,10 +122,7 @@ def complete_request(
     encoded = json.dumps(
         dict(result), sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
-    owns_transaction = not conn.in_transaction
-    if owns_transaction:
-        conn.execute("BEGIN IMMEDIATE")
-    try:
+    with join_or_begin_immediate(conn, "complete_service_request"):
         row = conn.execute(
             "SELECT * FROM service_requests WHERE request_id=?", (request_id,)
         ).fetchone()
@@ -194,12 +185,6 @@ def complete_request(
             authoritative.setdefault("data", {})["request_replayed"] = True
             authoritative["data"]["request_id"] = request_id
             authoritative["data"]["request_completion_race_resolved"] = True
-        if owns_transaction:
-            conn.execute("COMMIT")
-    except Exception:
-        if owns_transaction and conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
     if isinstance(result, MutableMapping):
         result.clear()

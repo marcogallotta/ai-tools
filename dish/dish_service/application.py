@@ -18,6 +18,7 @@ from dish_tool.backend import AsanaBackend
 from dish_tool.commands import DishApplication, expose_authoritative_view
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
 from dish_tool.database import (
+    atomic_persistence,
     immediate_persistence,
     initialize_database,
     planning_reopen_attempt_by_request,
@@ -381,24 +382,21 @@ def _probe_database_write_readiness(conn: sqlite3.Connection) -> None:
 
     timeout_row = conn.execute("PRAGMA busy_timeout").fetchone()
     prior_timeout_ms = int(timeout_row[0]) if timeout_row is not None else 0
-    savepoint = "dish_health_write_probe"
-    savepoint_open = False
     try:
         conn.execute("PRAGMA busy_timeout = 100")
-        conn.execute(f"SAVEPOINT {savepoint}")
-        savepoint_open = True
-        conn.execute(
-            """UPDATE schema_migrations
-                  SET applied_at = applied_at
-                WHERE version = (SELECT MAX(version) FROM schema_migrations)"""
-        )
-        if conn.execute("SELECT changes()").fetchone()[0] != 1:
-            raise DishRuleError(
-                "VALIDATION_FAILED",
-                "workflow database readiness probe could not bind the current schema",
-                rule="database_write_probe_invalid",
-                retryable=False,
+        with atomic_persistence(conn, "health_write_probe"):
+            conn.execute(
+                """UPDATE schema_migrations
+                      SET applied_at = applied_at
+                    WHERE version = (SELECT MAX(version) FROM schema_migrations)"""
             )
+            if conn.execute("SELECT changes()").fetchone()[0] != 1:
+                raise DishRuleError(
+                    "VALIDATION_FAILED",
+                    "workflow database readiness probe could not bind the current schema",
+                    rule="database_write_probe_invalid",
+                    retryable=False,
+                )
     except sqlite3.OperationalError as exc:
         message = str(exc).lower()
         error_code = getattr(exc, "sqlite_errorcode", None)
@@ -425,11 +423,6 @@ def _probe_database_write_readiness(conn: sqlite3.Connection) -> None:
             ) from exc
         raise
     finally:
-        if savepoint_open:
-            try:
-                conn.execute(f"ROLLBACK TO {savepoint}")
-            finally:
-                conn.execute(f"RELEASE {savepoint}")
         conn.execute(f"PRAGMA busy_timeout = {prior_timeout_ms}")
 
 
@@ -1588,28 +1581,27 @@ class DishService:
             fallback_applied = False
             fallback_error: Exception | None = None
             try:
-                conn.execute("BEGIN IMMEDIATE")
-                active = conn.execute(
-                    "SELECT lease_id,owner_id,run_id FROM service_leases "
-                    "WHERE operation_id=? AND released_at IS NULL",
-                    (operation_id,),
-                ).fetchone()
-                if (
-                    active is not None
-                    and active["owner_id"] == principal.owner_id
-                    and active["run_id"] == principal.run_id
-                ):
-                    cursor = conn.execute(
-                        "UPDATE service_leases SET released_at=?, release_reason=? "
-                        "WHERE lease_id=? AND released_at IS NULL",
-                        (
-                            _now_stamp(),
-                            f"admin cleanup fallback:{command}",
-                            active["lease_id"],
-                        ),
-                    )
-                    fallback_applied = cursor.rowcount == 1
-                conn.execute("COMMIT")
+                with immediate_persistence(conn, "admin_lease_cleanup_fallback"):
+                    active = conn.execute(
+                        "SELECT lease_id,owner_id,run_id FROM service_leases "
+                        "WHERE operation_id=? AND released_at IS NULL",
+                        (operation_id,),
+                    ).fetchone()
+                    if (
+                        active is not None
+                        and active["owner_id"] == principal.owner_id
+                        and active["run_id"] == principal.run_id
+                    ):
+                        cursor = conn.execute(
+                            "UPDATE service_leases SET released_at=?, release_reason=? "
+                            "WHERE lease_id=? AND released_at IS NULL",
+                            (
+                                _now_stamp(),
+                                f"admin cleanup fallback:{command}",
+                                active["lease_id"],
+                            ),
+                        )
+                        fallback_applied = cursor.rowcount == 1
                 data["service_lease"] = self._lease_payload(
                     leases.active_for_operation(operation_id)
                 )
@@ -1621,8 +1613,6 @@ class DishService:
                     "fallback_release_applied": fallback_applied,
                 }
             except Exception as fallback_exc:
-                if conn.in_transaction:
-                    conn.execute("ROLLBACK")
                 fallback_error = fallback_exc
             if fallback_error is not None:
                 data["service_recovery_required"] = True
@@ -2336,9 +2326,12 @@ class DishService:
                         details={"actual": operation["status"]},
                     )
                 leases = self._lease_manager(conn)
-                if request_id:
-                    conn.execute("BEGIN IMMEDIATE")
-                try:
+                transaction = (
+                    immediate_persistence(conn, "renew_service_lease_request")
+                    if request_id
+                    else contextlib.nullcontext()
+                )
+                with transaction:
                     row = leases.renew(
                         operation_id, principal,
                         manage_transaction=not bool(request_id),
@@ -2353,12 +2346,7 @@ class DishService:
                     if request_id:
                         result.setdefault("data", {})["request_id"] = request_id
                         complete_request(conn, request_id=request_id, result=result)
-                        conn.execute("COMMIT")
                     return result
-                except Exception:
-                    if request_id and conn.in_transaction:
-                        conn.execute("ROLLBACK")
-                    raise
             except DishRuleError as exc:
                 exc = _preserve_semantic_evidence_error(
                     exc,
@@ -2452,9 +2440,12 @@ class DishService:
                         details={"actual": operation["status"]},
                     )
                 leases = self._lease_manager(conn)
-                if request_id:
-                    conn.execute("BEGIN IMMEDIATE")
-                try:
+                transaction = (
+                    immediate_persistence(conn, "recover_service_lease_request")
+                    if request_id
+                    else contextlib.nullcontext()
+                )
+                with transaction:
                     released = leases.admin_recover(
                         operation_id, principal, reason=reason,
                         manage_transaction=not bool(request_id),
@@ -2479,12 +2470,7 @@ class DishService:
                     if request_id:
                         result.setdefault("data", {})["request_id"] = request_id
                         complete_request(conn, request_id=request_id, result=result)
-                        conn.execute("COMMIT")
                     return result
-                except Exception:
-                    if request_id and conn.in_transaction:
-                        conn.execute("ROLLBACK")
-                    raise
             except DishRuleError as exc:
                 exc = _preserve_semantic_evidence_error(
                     exc,
@@ -2592,8 +2578,7 @@ class DishService:
                     prior["allowed_actions"] = []
                     return prior
 
-                conn.execute("BEGIN IMMEDIATE")
-                try:
+                with immediate_persistence(conn, "expire_service_lease_request"):
                     current_request = conn.execute(
                         "SELECT * FROM service_requests WHERE request_id=?",
                         (request_id,),
@@ -2601,7 +2586,6 @@ class DishService:
                     prior = stored_result(current_request)
                     if prior is not None:
                         prior["allowed_actions"] = []
-                        conn.execute("COMMIT")
                         return prior
 
                     leases = self._lease_manager(conn)
@@ -2710,12 +2694,7 @@ class DishService:
                     result["allowed_actions"] = []
                     result.setdefault("data", {})["request_id"] = request_id
                     complete_request(conn, request_id=request_id, result=result)
-                    conn.execute("COMMIT")
                     return result
-                except Exception:
-                    if conn.in_transaction:
-                        conn.execute("ROLLBACK")
-                    raise
             finally:
                 conn.close()
 
@@ -3235,23 +3214,24 @@ class DishService:
         result: dict[str, Any],
     ) -> dict[str, Any]:
         """Commit backup metadata and the replay result as one SQLite unit."""
-        conn.execute("BEGIN IMMEDIATE")
+
+        class _AuthoritativeReplayWon(Exception):
+            def __init__(self, authoritative: dict[str, Any]) -> None:
+                self.authoritative = authoritative
+
         try:
-            complete_backup_creation(
-                conn, request_id=request_id, record=record
-            )
-            authoritative = complete_request(
-                conn, request_id=request_id, result=result
-            )
-            if not self._backup_result_matches_record(authoritative, record):
-                conn.execute("ROLLBACK")
+            with immediate_persistence(conn, "complete_backup_creation_request"):
+                complete_backup_creation(
+                    conn, request_id=request_id, record=record
+                )
+                authoritative = complete_request(
+                    conn, request_id=request_id, result=result
+                )
+                if not self._backup_result_matches_record(authoritative, record):
+                    raise _AuthoritativeReplayWon(authoritative)
                 return authoritative
-            conn.execute("COMMIT")
-            return authoritative
-        except Exception:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
+        except _AuthoritativeReplayWon as replay:
+            return replay.authoritative
 
     def create_backup(
         self,

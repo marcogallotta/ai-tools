@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import sqlite3
@@ -15,6 +14,7 @@ from .constants import SUBMISSION_STATES
 from .database_schema import MIGRATIONS, initialize_database, migrate_database
 from .errors import DishRuleError
 from .models import ContentIdentity, OperationActors, agent_family, utc_now
+from .transactions import immediate_transaction, savepoint_transaction
 
 
 @dataclass(frozen=True)
@@ -48,36 +48,17 @@ class _AbandonmentSuccessionSpec:
     created_at: str
 
 
-@contextlib.contextmanager
 def atomic_persistence(conn: sqlite3.Connection, label: str):
-    """Make a local state mutation and its required audit one SQLite unit."""
-    savepoint = f"dish_{label}_{uuid.uuid4().hex}"
-    conn.execute(f"SAVEPOINT {savepoint}")
-    try:
-        yield
-    except Exception:
-        conn.execute(f"ROLLBACK TO {savepoint}")
-        conn.execute(f"RELEASE {savepoint}")
-        raise
-    else:
-        conn.execute(f"RELEASE {savepoint}")
+    """Backward-compatible alias for an isolated nested persistence unit."""
 
-@contextlib.contextmanager
+    return savepoint_transaction(conn, label)
+
+
 def immediate_persistence(conn: sqlite3.Connection, label: str):
-    """Serialize an idempotency check and its write across connections."""
-    if conn.in_transaction:
-        with atomic_persistence(conn, label):
-            yield
-        return
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        yield
-    except BaseException:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
-    else:
-        conn.execute("COMMIT")
+    """Backward-compatible alias for a serialized persistence unit."""
+
+    return immediate_transaction(conn, label)
+
 
 def record_audit(
     conn: sqlite3.Connection,
@@ -285,8 +266,7 @@ def create_submission(
             separators=(",", ":"),
         )
     )
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_persistence(conn, "create_submission"):
         existing = get_open_submission_for_task(conn, task_gid)
         if existing is not None:
             raise DishRuleError(
@@ -344,16 +324,7 @@ def create_submission(
                 ) from exc
             raise
         row = get_submission(conn, submission_id)
-        conn.execute("COMMIT")
         return row
-    except DishRuleError:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 _ALLOWED_SUBMISSION_UPDATE_COLUMNS = {
     "prepared_exemption_tags",
@@ -402,8 +373,7 @@ def transition_submission(
     assignments = ["status = ?"] + [f"{column} = ?" for column in changes]
     params: list[Any] = [target_state, *changes.values(), submission_id, *expected]
     placeholders = ",".join("?" for _ in expected)
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_persistence(conn, "transition_submission"):
         cursor = conn.execute(
             f"""
             UPDATE submissions
@@ -418,7 +388,6 @@ def transition_submission(
                 "SELECT status FROM submissions WHERE submission_id = ?",
                 (submission_id,),
             ).fetchone()
-            conn.execute("ROLLBACK")
             if row is None:
                 raise DishRuleError(
                     "NOT_FOUND",
@@ -435,14 +404,7 @@ def transition_submission(
             "SELECT * FROM submissions WHERE submission_id = ?",
             (submission_id,),
         ).fetchone()
-        conn.execute("COMMIT")
         return row
-    except DishRuleError:
-        raise
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 
 def normalize_transport_text(value: str) -> str:
@@ -480,8 +442,7 @@ def confirm_task_content(
     identity = content_identity(title, notes)
     now = utc_now()
     version_id = str(uuid.uuid4())
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_persistence(conn, "confirm_task_content"):
         conn.execute(
             """
             INSERT INTO content_versions (
@@ -509,11 +470,6 @@ def confirm_task_content(
             """,
             (task_gid, identity.digest, identity.title, identity.notes, schema_version, now, version_id),
         )
-        conn.execute("COMMIT")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
     return identity
 
 
@@ -529,8 +485,7 @@ def finalize_confirmed_write_attempt(
     """Atomically bind a confirmed external write to all local facts it proves."""
     identity = content_identity(title, notes)
     now = utc_now()
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_persistence(conn, "finalize_confirmed_write_attempt"):
         attempt = conn.execute("SELECT * FROM write_attempts WHERE attempt_id = ?", (attempt_id,)).fetchone()
         if attempt is None:
             raise DishRuleError("NOT_FOUND", "write attempt not found", rule="write_attempt_not_found")
@@ -538,7 +493,6 @@ def finalize_confirmed_write_attempt(
             version = conn.execute("SELECT * FROM content_versions WHERE content_version_id = ?", (attempt["confirmed_content_version_id"],)).fetchone()
             if version is None or version["identity"] != identity.digest:
                 raise DishRuleError("CONFLICT", "confirmed write binding is inconsistent", rule="confirmed_write_binding_invalid")
-            conn.execute("COMMIT")
             return version
         if attempt["outcome"] not in {"started", "uncertain", "confirmed"}:
             raise DishRuleError("CONFLICT", "write attempt cannot be confirmed from its current state", rule="stale_write_attempt")
@@ -612,69 +566,181 @@ def finalize_confirmed_write_attempt(
                      details={"attempt_id": attempt_id, "outcome": "confirmed", "purpose": attempt["purpose"], "content_version_id": version_id},
                      result_code="OK", result_ok=True)
         version = conn.execute("SELECT * FROM content_versions WHERE content_version_id = ?", (version_id,)).fetchone()
-        conn.execute("COMMIT")
         return version
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 
-def finalize_not_applied_write_attempt(conn: sqlite3.Connection, *, attempt_id: str) -> sqlite3.Row:
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        row = conn.execute("SELECT * FROM write_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
+def finalize_not_applied_write_attempt(
+    conn: sqlite3.Connection, *, attempt_id: str
+) -> sqlite3.Row:
+    with immediate_persistence(conn, "finalize_not_applied_write_attempt"):
+        row = conn.execute(
+            "SELECT * FROM write_attempts WHERE attempt_id=?", (attempt_id,)
+        ).fetchone()
         if row is None:
-            raise DishRuleError("NOT_FOUND", "write attempt not found", rule="write_attempt_not_found")
+            raise DishRuleError(
+                "NOT_FOUND", "write attempt not found", rule="write_attempt_not_found"
+            )
         if row["outcome"] not in {"started", "uncertain", "not_applied"}:
-            raise DishRuleError("CONFLICT", "write attempt cannot be marked not applied", rule="stale_write_attempt")
-        conn.execute("UPDATE write_attempts SET outcome='not_applied', finished_at=COALESCE(finished_at, ?) WHERE attempt_id=?", (utc_now(), attempt_id))
+            raise DishRuleError(
+                "CONFLICT",
+                "write attempt cannot be marked not applied",
+                rule="stale_write_attempt",
+            )
+        conn.execute(
+            """UPDATE write_attempts
+                  SET outcome='not_applied', finished_at=COALESCE(finished_at, ?)
+                WHERE attempt_id=?""",
+            (utc_now(), attempt_id),
+        )
         context = json.loads(row["context_json"] or "{}")
         authorization_ids = tuple(context.get("authorization_ids") or ())
         if authorization_ids:
             release_marco_authorization_reservations(
-                conn, operation_id=row["operation_id"], authorization_ids=authorization_ids,
+                conn,
+                operation_id=row["operation_id"],
+                authorization_ids=authorization_ids,
             )
-        record_audit(conn, submission_id=None, task_gid=conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (row["operation_id"],)).fetchone()[0], operation_id=row["operation_id"], event_type="write_attempt.reconciled", actor_agent=None, details={"attempt_id": attempt_id, "outcome": "not_applied", "purpose": row["purpose"]}, result_code="OK", result_ok=True)
-        out=conn.execute("SELECT * FROM write_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
-        conn.execute("COMMIT")
-        return out
-    except Exception:
-        if conn.in_transaction: conn.execute("ROLLBACK")
-        raise
+        task_gid = conn.execute(
+            "SELECT task_gid FROM operations WHERE operation_id=?",
+            (row["operation_id"],),
+        ).fetchone()[0]
+        record_audit(
+            conn,
+            submission_id=None,
+            task_gid=task_gid,
+            operation_id=row["operation_id"],
+            event_type="write_attempt.reconciled",
+            actor_agent=None,
+            details={
+                "attempt_id": attempt_id,
+                "outcome": "not_applied",
+                "purpose": row["purpose"],
+            },
+            result_code="OK",
+            result_ok=True,
+        )
+        return conn.execute(
+            "SELECT * FROM write_attempts WHERE attempt_id=?", (attempt_id,)
+        ).fetchone()
 
 
-def finalize_confirmed_movement_attempt(conn: sqlite3.Connection, *, attempt_id: str, live_section_gid: str) -> sqlite3.Row:
-    now=utc_now(); conn.execute("BEGIN IMMEDIATE")
-    try:
-        row=conn.execute("SELECT * FROM movement_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
-        if row is None: raise DishRuleError("NOT_FOUND", "movement attempt not found", rule="movement_attempt_not_found")
-        if live_section_gid != row["intended_section_gid"]: raise DishRuleError("CONFLICT", "live placement does not match movement intent", rule="movement_intent_mismatch")
-        if row["outcome"] not in {"started","uncertain","confirmed"}: raise DishRuleError("CONFLICT", "movement attempt cannot be confirmed", rule="stale_movement_attempt")
-        conn.execute("UPDATE movement_attempts SET outcome='confirmed', finished_at=COALESCE(finished_at, ?), confirmed_section_gid=? WHERE attempt_id=?", (now, live_section_gid, attempt_id))
+
+def finalize_confirmed_movement_attempt(
+    conn: sqlite3.Connection, *, attempt_id: str, live_section_gid: str
+) -> sqlite3.Row:
+    now = utc_now()
+    with immediate_persistence(conn, "finalize_confirmed_movement_attempt"):
+        row = conn.execute(
+            "SELECT * FROM movement_attempts WHERE attempt_id=?", (attempt_id,)
+        ).fetchone()
+        if row is None:
+            raise DishRuleError(
+                "NOT_FOUND",
+                "movement attempt not found",
+                rule="movement_attempt_not_found",
+            )
+        if live_section_gid != row["intended_section_gid"]:
+            raise DishRuleError(
+                "CONFLICT",
+                "live placement does not match movement intent",
+                rule="movement_intent_mismatch",
+            )
+        if row["outcome"] not in {"started", "uncertain", "confirmed"}:
+            raise DishRuleError(
+                "CONFLICT",
+                "movement attempt cannot be confirmed",
+                rule="stale_movement_attempt",
+            )
+        conn.execute(
+            """UPDATE movement_attempts
+                  SET outcome='confirmed', finished_at=COALESCE(finished_at, ?),
+                      confirmed_section_gid=?
+                WHERE attempt_id=?""",
+            (now, live_section_gid, attempt_id),
+        )
         if row["purpose"] == "destination_submission":
-            conn.execute("UPDATE operations SET movement_completed_at=COALESCE(movement_completed_at, ?), destination_movement_attempt_id=? WHERE operation_id=?", (now, attempt_id, row["operation_id"]))
-        task_gid=conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (row["operation_id"],)).fetchone()[0]
-        record_audit(conn, submission_id=None, task_gid=task_gid, operation_id=row["operation_id"], event_type="movement_attempt.reconciled", actor_agent=None, details={"attempt_id":attempt_id,"outcome":"confirmed","purpose":row["purpose"],"section_gid":live_section_gid}, result_code="OK", result_ok=True)
-        out=conn.execute("SELECT * FROM movement_attempts WHERE attempt_id=?", (attempt_id,)).fetchone(); conn.execute("COMMIT"); return out
-    except Exception:
-        if conn.in_transaction: conn.execute("ROLLBACK")
-        raise
+            conn.execute(
+                """UPDATE operations
+                      SET movement_completed_at=COALESCE(movement_completed_at, ?),
+                          destination_movement_attempt_id=?
+                    WHERE operation_id=?""",
+                (now, attempt_id, row["operation_id"]),
+            )
+        task_gid = conn.execute(
+            "SELECT task_gid FROM operations WHERE operation_id=?",
+            (row["operation_id"],),
+        ).fetchone()[0]
+        record_audit(
+            conn,
+            submission_id=None,
+            task_gid=task_gid,
+            operation_id=row["operation_id"],
+            event_type="movement_attempt.reconciled",
+            actor_agent=None,
+            details={
+                "attempt_id": attempt_id,
+                "outcome": "confirmed",
+                "purpose": row["purpose"],
+                "section_gid": live_section_gid,
+            },
+            result_code="OK",
+            result_ok=True,
+        )
+        return conn.execute(
+            "SELECT * FROM movement_attempts WHERE attempt_id=?", (attempt_id,)
+        ).fetchone()
 
 
-def finalize_not_applied_movement_attempt(conn: sqlite3.Connection, *, attempt_id: str) -> sqlite3.Row:
-    now=utc_now(); conn.execute("BEGIN IMMEDIATE")
-    try:
-        row=conn.execute("SELECT * FROM movement_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
-        if row is None: raise DishRuleError("NOT_FOUND", "movement attempt not found", rule="movement_attempt_not_found")
-        if row["outcome"] not in {"started","uncertain","not_applied"}: raise DishRuleError("CONFLICT", "movement attempt cannot be marked not applied", rule="stale_movement_attempt")
-        conn.execute("UPDATE movement_attempts SET outcome='not_applied', finished_at=COALESCE(finished_at, ?) WHERE attempt_id=?", (now, attempt_id))
-        task_gid=conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (row["operation_id"],)).fetchone()[0]
-        record_audit(conn, submission_id=None, task_gid=task_gid, operation_id=row["operation_id"], event_type="movement_attempt.reconciled", actor_agent=None, details={"attempt_id":attempt_id,"outcome":"not_applied","purpose":row["purpose"]}, result_code="OK", result_ok=True)
-        out=conn.execute("SELECT * FROM movement_attempts WHERE attempt_id=?", (attempt_id,)).fetchone(); conn.execute("COMMIT"); return out
-    except Exception:
-        if conn.in_transaction: conn.execute("ROLLBACK")
-        raise
+
+def finalize_not_applied_movement_attempt(
+    conn: sqlite3.Connection, *, attempt_id: str
+) -> sqlite3.Row:
+    now = utc_now()
+    with immediate_persistence(conn, "finalize_not_applied_movement_attempt"):
+        row = conn.execute(
+            "SELECT * FROM movement_attempts WHERE attempt_id=?", (attempt_id,)
+        ).fetchone()
+        if row is None:
+            raise DishRuleError(
+                "NOT_FOUND",
+                "movement attempt not found",
+                rule="movement_attempt_not_found",
+            )
+        if row["outcome"] not in {"started", "uncertain", "not_applied"}:
+            raise DishRuleError(
+                "CONFLICT",
+                "movement attempt cannot be marked not applied",
+                rule="stale_movement_attempt",
+            )
+        conn.execute(
+            """UPDATE movement_attempts
+                  SET outcome='not_applied', finished_at=COALESCE(finished_at, ?)
+                WHERE attempt_id=?""",
+            (now, attempt_id),
+        )
+        task_gid = conn.execute(
+            "SELECT task_gid FROM operations WHERE operation_id=?",
+            (row["operation_id"],),
+        ).fetchone()[0]
+        record_audit(
+            conn,
+            submission_id=None,
+            task_gid=task_gid,
+            operation_id=row["operation_id"],
+            event_type="movement_attempt.reconciled",
+            actor_agent=None,
+            details={
+                "attempt_id": attempt_id,
+                "outcome": "not_applied",
+                "purpose": row["purpose"],
+            },
+            result_code="OK",
+            result_ok=True,
+        )
+        return conn.execute(
+            "SELECT * FROM movement_attempts WHERE attempt_id=?", (attempt_id,)
+        ).fetchone()
+
 
 
 def assert_expected_identity(
@@ -682,13 +748,11 @@ def assert_expected_identity(
 ) -> sqlite3.Row:
     """Atomically reject stale callers before they can create an operation."""
 
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_persistence(conn, "assert_expected_identity"):
         row = conn.execute(
             "SELECT * FROM task_content_state WHERE task_gid = ?", (task_gid,)
         ).fetchone()
         if row is None or row["last_confirmed_identity"] != expected_identity:
-            conn.execute("ROLLBACK")
             raise DishRuleError(
                 "CONFLICT",
                 "live task content differs from the expected identity",
@@ -698,14 +762,7 @@ def assert_expected_identity(
                     "actual_identity": None if row is None else row["last_confirmed_identity"],
                 },
             )
-        conn.execute("COMMIT")
         return row
-    except DishRuleError:
-        raise
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 
 def create_operation(
@@ -720,8 +777,7 @@ def create_operation(
     initial_steps: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> sqlite3.Row:
     operation_id = str(uuid.uuid4())
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_persistence(conn, "create_operation"):
         abandonment = conn.execute(
             """SELECT abandonment_id,status,source_operation_id,successor_operation_id
                  FROM abandonment_attempts
@@ -819,16 +875,7 @@ def create_operation(
             after_state={"open_operation_id": operation_id, "status": "open"},
             actor_run_id=actors.run_id, actor_attestation=actors.independence_attestation,
         )
-        conn.execute("COMMIT")
         return row
-    except DishRuleError:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 
 
@@ -2395,8 +2442,7 @@ def record_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, opera
     before_json = json.dumps(before, sort_keys=True)
     after_json = json.dumps(after, sort_keys=True)
     clean_run_id = str(actor_run_id or "").strip() or None
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_persistence(conn, "record_marco_authorization"):
         if operation_id is not None:
             operation = conn.execute(
                 "SELECT task_gid,status FROM operations WHERE operation_id=?",
@@ -2447,7 +2493,6 @@ def record_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, opera
                     retryable=False,
                     details={"authorization_id": existing["authorization_id"]},
                 )
-            conn.execute("COMMIT")
             return existing
         conn.execute(
             """INSERT INTO marco_authorizations(authorization_id,task_gid,operation_id,field_name,before_json,after_json,reason,actor_run_id,created_at)
@@ -2461,12 +2506,7 @@ def record_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, opera
             "SELECT * FROM marco_authorizations WHERE authorization_id=?",
             (authorization_id,),
         ).fetchone()
-        conn.execute("COMMIT")
         return row
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 def reserve_marco_authorizations(
     conn: sqlite3.Connection,
@@ -2481,8 +2521,7 @@ def reserve_marco_authorizations(
     authorization. Existing reservations owned by this operation are reusable;
     reservations owned by another operation fail closed.
     """
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_persistence(conn, "reserve_marco_authorizations"):
         operation = conn.execute(
             "SELECT task_gid,status FROM operations WHERE operation_id=?",
             (operation_id,),
@@ -2555,12 +2594,7 @@ def reserve_marco_authorizations(
             conn.execute("SELECT * FROM marco_authorizations WHERE authorization_id=?", (row["authorization_id"],)).fetchone()
             for row in rows
         )
-        conn.execute("COMMIT")
         return reserved
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 
 def release_marco_authorization_reservations(
@@ -2653,9 +2687,8 @@ def _import_command_audit_repair_fallback(conn: sqlite3.Connection) -> int:
 def process_command_audit_repairs(conn: sqlite3.Connection, *, limit: int = 100) -> int:
     """Import and replay pending invocation-audit repairs exactly once."""
     _import_command_audit_repair_fallback(conn)
-    conn.execute("BEGIN IMMEDIATE")
     repaired = 0
-    try:
+    with immediate_persistence(conn, "process_command_audit_repairs"):
         rows = conn.execute(
             """SELECT * FROM command_audit_repairs
                  WHERE repaired_at IS NULL
@@ -2686,35 +2719,27 @@ def process_command_audit_repairs(conn: sqlite3.Connection, *, limit: int = 100)
                 "repaired_from": row["repair_id"],
                 "original_audit_error": row["audit_error"],
             })
-            conn.execute("SAVEPOINT audit_repair")
             try:
-                record_audit(
-                    conn, submission_id=row["submission_id"],
-                    task_gid=row["task_gid"], operation_id=row["operation_id"],
-                    event_type=event_type, actor_agent=row["actor_agent"],
-                    details=details, result_code=result.get("code"),
-                    result_ok=bool(result.get("ok")),
-                    actor_source="audit-repair-worker", **audit_kwargs,
-                )
-                cursor = conn.execute(
-                    """UPDATE command_audit_repairs SET repaired_at=?
-                         WHERE repair_id=? AND repaired_at IS NULL""",
-                    (utc_now(), row["repair_id"]),
-                )
-                if cursor.rowcount != 1:
-                    raise DishRuleError(
-                        "CONFLICT", "audit repair was claimed by another worker",
-                        rule="audit_repair_claim_lost",
+                with atomic_persistence(conn, "audit_repair_row"):
+                    record_audit(
+                        conn, submission_id=row["submission_id"],
+                        task_gid=row["task_gid"], operation_id=row["operation_id"],
+                        event_type=event_type, actor_agent=row["actor_agent"],
+                        details=details, result_code=result.get("code"),
+                        result_ok=bool(result.get("ok")),
+                        actor_source="audit-repair-worker", **audit_kwargs,
                     )
-                conn.execute("RELEASE audit_repair")
+                    cursor = conn.execute(
+                        """UPDATE command_audit_repairs SET repaired_at=?
+                             WHERE repair_id=? AND repaired_at IS NULL""",
+                        (utc_now(), row["repair_id"]),
+                    )
+                    if cursor.rowcount != 1:
+                        raise DishRuleError(
+                            "CONFLICT", "audit repair was claimed by another worker",
+                            rule="audit_repair_claim_lost",
+                        )
                 repaired += 1
             except Exception:
-                conn.execute("ROLLBACK TO audit_repair")
-                conn.execute("RELEASE audit_repair")
                 break
-        conn.execute("COMMIT")
         return repaired
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise

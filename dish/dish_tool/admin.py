@@ -887,8 +887,7 @@ def _command_abandon_operation(
         execution = _claimed_admin_execution(
             self.conn, operation_id=operation_id
         )
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
+        with immediate_persistence(self.conn, "create_abandonment_attempt"):
             create_abandonment_attempt_in_transaction(
                 self.conn,
                 abandonment_id=abandonment_id,
@@ -901,11 +900,6 @@ def _command_abandon_operation(
                 current_execution_id=execution["execution_id"],
                 reason=clean_reason,
             )
-            self.conn.execute("COMMIT")
-        except Exception:
-            if self.conn.in_transaction:
-                self.conn.execute("ROLLBACK")
-            raise
         return self.operation_service.current.settle_abandonment_frontier(
             abandonment_id, reason=clean_reason
         )
@@ -980,18 +974,12 @@ def _command_reconcile_abandonment(
         execution = _claimed_admin_execution(
             self.conn, operation_id=operation_id
         )
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
+        with immediate_persistence(self.conn, "bind_abandonment_execution"):
             bind_abandonment_execution_in_transaction(
                 self.conn,
                 abandonment_id=clean_id,
                 execution_id=execution["execution_id"],
             )
-            self.conn.execute("COMMIT")
-        except Exception:
-            if self.conn.in_transaction:
-                self.conn.execute("ROLLBACK")
-            raise
         return self.operation_service.current.settle_abandonment_frontier(
             clean_id, reason=abandonment["reason"]
         )

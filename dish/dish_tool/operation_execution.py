@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from .errors import DishRuleError
+from .transactions import immediate_transaction
 from .models import ProcessIdentity, utc_now
 from .recovery import current_process_identity, process_identity_is_live
 
@@ -233,8 +234,7 @@ def claim_abandonment_execution(
 
     identity = current_process_identity()
     claim_id = str(uuid.uuid4())
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "claim_abandonment_execution"):
         abandonment = conn.execute(
             "SELECT * FROM abandonment_attempts WHERE abandonment_id=?",
             (abandonment_id,),
@@ -340,7 +340,6 @@ def claim_abandonment_execution(
                 execution_id,
             ),
         )
-        conn.execute("COMMIT")
         return OperationExecutionClaim(
             operation_id=execution["operation_id"],
             claim_id=claim_id,
@@ -349,10 +348,6 @@ def claim_abandonment_execution(
             request_id=execution["request_id"],
             resuming_uncertain=resuming_uncertain,
         )
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 
 
@@ -629,8 +624,7 @@ def claim_operation_execution(
     execution_id = str(uuid.uuid4())
     clean_command = str(command).strip()
     clean_request = str(request_id or "").strip() or None
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "claim_operation_execution"):
         operation = conn.execute(
             "SELECT status FROM operations WHERE operation_id=?", (operation_id,)
         ).fetchone()
@@ -672,12 +666,7 @@ def claim_operation_execution(
                 execution_id=execution_id,
                 identity=identity,
             )
-        conn.execute("COMMIT")
         return claim
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 
 
@@ -1187,8 +1176,7 @@ def finish_operation_execution(
     encoded = json.dumps(
         dict(final_evidence), sort_keys=True, separators=(",", ":")
     )
-    conn.execute("BEGIN IMMEDIATE")
-    try:
+    with immediate_transaction(conn, "finish_operation_execution"):
         current = conn.execute(
             "SELECT status FROM operation_executions WHERE execution_id=?",
             (claim.execution_id,),
@@ -1244,11 +1232,6 @@ def finish_operation_execution(
                 retryable=False,
                 details={"operation_id": claim.operation_id},
             )
-        conn.execute("COMMIT")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
 
 
 def resolve_recovered_unclaimed_local_executions(
@@ -1284,8 +1267,7 @@ def resolve_recovered_unclaimed_local_executions(
         ):
             continue
         encoded = json.dumps(state, sort_keys=True, separators=(",", ":"))
-        conn.execute("BEGIN IMMEDIATE")
-        try:
+        with immediate_transaction(conn, "resolve_unclaimed_execution"):
             updated = conn.execute(
                 """UPDATE operation_executions
                       SET status='completed', resolution_evidence_json=?, resolved_at=?
@@ -1293,11 +1275,6 @@ def resolve_recovered_unclaimed_local_executions(
                       AND resolved_at IS NULL AND request_id IS NULL""",
                 (encoded, utc_now(), row["execution_id"]),
             )
-            conn.execute("COMMIT")
-        except Exception:
-            if conn.in_transaction:
-                conn.execute("ROLLBACK")
-            raise
         if updated.rowcount == 1:
             resolved.append(row["execution_id"])
     return resolved

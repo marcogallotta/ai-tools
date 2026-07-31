@@ -56,26 +56,19 @@ content or repeated operator cleanup.
 
 ### distributed-transaction-ownership
 
-**Priority: p2; not launch-blocking.**
+**Resolved in the current base.**
 
-The source has roughly 47 explicit `BEGIN IMMEDIATE` sites, 58 commits, and 53 rollbacks, spread
-across service orchestration, application services, workflow steps, database helpers, lease
-management, abandonment, recovery, and request replay. Individual transactions are often carefully
-written, but no single place owns cross-transaction invariants, which makes them hard to review
-together.
+SQLite control-statement ownership is now centralized in `dish_tool.transactions`. The runtime uses
+named contracts for isolated nested units, caller-joined atomic units, and helpers that require an
+existing transaction. Service request journaling, backup identity, lease mutation, operation
+execution, abandonment succession, external-effect reconciliation, governed authorization, audit
+repair, schema migration, and health write probing no longer hand-roll transaction control.
 
-This is not itself a demonstrated defect, but it is strongly correlated with the repeated "state
-committed, envelope unfinished" recovery bugs found across audits, including
-`execution-recovery-audit-misattribution` below. The worst effect is indirect: harder review makes
-future concurrency/recovery defects more likely and
-slower to find, not a specific reproducible failure today. No agent-facing guidance gap exists
-because the symptom, when it occurs, surfaces as a normal recovery-required response.
-
-Consolidate transaction ownership toward fewer, clearer boundaries (e.g. one writer-transaction
-entry point per workflow mutation) rather than patching individual sites as new bugs appear.
-Reconsider priority downward only if a full audit shows the current distribution is not actually
-implicated in new defects; reconsider upward on any new recovery bug traceable to an overlapping or
-misowned transaction.
+A structural regression test rejects raw `BEGIN`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, or `RELEASE`
+statements outside the transaction primitive module. Behavior-focused concurrency, replay,
+crash-recovery, lease, abandonment, authorization, backup, migration, and audit-repair tests remain
+the authority for the actual atomic units; the structural test prevents ownership from becoming
+distributed again.
 
 ### oversized-recovery-functions
 

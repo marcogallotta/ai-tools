@@ -1,6 +1,7 @@
 """Durable client/run leases layered over the operation task lock."""
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -8,6 +9,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from dish_tool.errors import DishRuleError
+from dish_tool.transactions import immediate_transaction, require_transaction
+
+def _lease_transaction(
+    conn: sqlite3.Connection, *, label: str, manage_transaction: bool
+) -> contextlib.AbstractContextManager[None]:
+    if manage_transaction:
+        return immediate_transaction(conn, label)
+    require_transaction(conn, operation=label.replace("_", " "))
+    return contextlib.nullcontext()
 
 
 def _utc_now() -> datetime:
@@ -176,8 +186,7 @@ class LeaseManager:
             raise ValueError("admin request leases cannot carry Verification cycle context")
         now = self.now()
         expiry = now + timedelta(seconds=self.ttl_seconds)
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
+        with immediate_transaction(self.conn, "acquire_service_lease"):
             op = self._operation(operation_id)
             if op["status"] != "open":
                 raise DishRuleError(
@@ -224,7 +233,6 @@ class LeaseManager:
                                 "requested_context_cycle_id": context_cycle_id,
                             },
                         )
-                    self.conn.execute("COMMIT")
                     return existing
                 expired = _parse(existing["expires_at"]) <= now
                 raise DishRuleError(
@@ -265,32 +273,27 @@ class LeaseManager:
 
             lease_id = str(uuid.uuid4())
             stamp = _stamp(now)
-            self.conn.execute(
-                """INSERT INTO service_leases(
-                       lease_id,operation_id,task_gid,owner_id,run_id,
-                       acquired_at,renewed_at,expires_at,lease_kind,
-                       actor_attempt_seq,context_cycle_id
-                   ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                (lease_id, operation_id, op["task_gid"], principal.owner_id,
-                 principal.run_id, stamp, stamp, _stamp(expiry), lease_kind,
-                 actor_attempt_seq, context_cycle_id),
-            )
+            try:
+                self.conn.execute(
+                    """INSERT INTO service_leases(
+                           lease_id,operation_id,task_gid,owner_id,run_id,
+                           acquired_at,renewed_at,expires_at,lease_kind,
+                           actor_attempt_seq,context_cycle_id
+                       ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    (lease_id, operation_id, op["task_gid"], principal.owner_id,
+                     principal.run_id, stamp, stamp, _stamp(expiry), lease_kind,
+                     actor_attempt_seq, context_cycle_id),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "service lease acquisition collided",
+                    rule="service_lease_conflict",
+                ) from exc
             row = self.conn.execute(
                 "SELECT * FROM service_leases WHERE lease_id=?", (lease_id,)
             ).fetchone()
-            self.conn.execute("COMMIT")
             return row
-        except sqlite3.IntegrityError as exc:
-            if self.conn.in_transaction:
-                self.conn.execute("ROLLBACK")
-            raise DishRuleError(
-                "CONFLICT", "service lease acquisition collided",
-                rule="service_lease_conflict",
-            ) from exc
-        except Exception:
-            if self.conn.in_transaction:
-                self.conn.execute("ROLLBACK")
-            raise
 
     def assert_owned(self, operation_id: str, principal: ServicePrincipal):
         return self._assert_owned_row(
@@ -344,11 +347,9 @@ class LeaseManager:
     ):
         now = self.now()
         expiry = now + timedelta(seconds=self.ttl_seconds)
-        if manage_transaction:
-            self.conn.execute("BEGIN IMMEDIATE")
-        elif not self.conn.in_transaction:
-            raise RuntimeError("lease renewal requires an active caller transaction")
-        try:
+        with _lease_transaction(
+            self.conn, label="renew_service_lease", manage_transaction=manage_transaction
+        ):
             op = self._operation(operation_id)
             if op["status"] != "open":
                 raise DishRuleError(
@@ -373,13 +374,7 @@ class LeaseManager:
                     rule="service_lease_conflict",
                 )
             renewed = self.active_for_operation(operation_id)
-            if manage_transaction:
-                self.conn.execute("COMMIT")
             return renewed
-        except Exception:
-            if manage_transaction and self.conn.in_transaction:
-                self.conn.execute("ROLLBACK")
-            raise
 
     def release(
         self,
@@ -390,11 +385,9 @@ class LeaseManager:
         admin: bool = False,
     ):
         now = self.now()
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
+        with immediate_transaction(self.conn, "release_service_lease"):
             row = self.active_for_operation(operation_id)
             if row is None:
-                self.conn.execute("COMMIT")
                 return None
             if not admin:
                 if principal is None:
@@ -404,19 +397,13 @@ class LeaseManager:
                     )
                 self._assert_owned_row(row, principal, now=now)
             released = self._release_row(row, reason=reason, now=now)
-            self.conn.execute("COMMIT")
             return released
-        except Exception:
-            if self.conn.in_transaction:
-                self.conn.execute("ROLLBACK")
-            raise
 
     def release_for_handoff(
         self, operation_id: str, principal: ServicePrincipal, *, reason: str
     ):
         now = self.now()
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
+        with immediate_transaction(self.conn, "release_for_handoff"):
             op = self._operation(operation_id)
             row = self._assert_owned_row(
                 self.active_for_operation(operation_id), principal, now=now
@@ -448,12 +435,7 @@ class LeaseManager:
                     rule="service_lease_completion_pending",
                 )
             released = self._release_row(row, reason=reason, now=now)
-            self.conn.execute("COMMIT")
             return released
-        except Exception:
-            if self.conn.in_transaction:
-                self.conn.execute("ROLLBACK")
-            raise
 
     def release_after_exact_recovery_handoff(
         self,
@@ -474,8 +456,7 @@ class LeaseManager:
         """
 
         now = self.now()
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
+        with immediate_transaction(self.conn, "release_after_exact_recovery_handoff"):
             operation = self._operation(operation_id)
             execution = self.conn.execute(
                 """SELECT * FROM operation_executions
@@ -578,7 +559,6 @@ class LeaseManager:
                             "active_lease_id": active["lease_id"],
                         },
                     )
-                self.conn.execute("COMMIT")
                 return None
             active = self.active_for_operation(operation_id)
             if active is None or active["lease_id"] != lease_id:
@@ -589,12 +569,7 @@ class LeaseManager:
                     details={"operation_id": operation_id, "lease_id": lease_id},
                 )
             released = self._release_row(lease, reason=reason, now=now)
-            self.conn.execute("COMMIT")
             return released
-        except Exception:
-            if self.conn.in_transaction:
-                self.conn.execute("ROLLBACK")
-            raise
 
     def release_terminal(
         self,
@@ -604,15 +579,13 @@ class LeaseManager:
         reason: str = "operation_terminal",
     ):
         now = self.now()
-        self.conn.execute("BEGIN IMMEDIATE")
-        try:
+        with immediate_transaction(self.conn, "release_terminal"):
             op = self._operation(operation_id)
             row = self.active_for_operation(operation_id)
             if row is None and op["status"] in {"completed", "cancelled"}:
                 # A later operation may have safely reaped this cleanup tail
                 # after terminal workflow commit but before this request's own
                 # response bookkeeping reached lease release.
-                self.conn.execute("COMMIT")
                 return None
             row = self._assert_owned_row(row, principal, now=now)
             if op["status"] not in {"completed", "cancelled"}:
@@ -639,12 +612,7 @@ class LeaseManager:
                     rule="service_lease_completion_pending",
                 )
             released = self._release_row(row, reason=reason, now=now)
-            self.conn.execute("COMMIT")
             return released
-        except Exception:
-            if self.conn.in_transaction:
-                self.conn.execute("ROLLBACK")
-            raise
 
     def admin_recover(
         self,
@@ -663,15 +631,12 @@ class LeaseManager:
                 rule="lease_recovery_reason_placeholder",
             )
         now = self.now()
-        if manage_transaction:
-            self.conn.execute("BEGIN IMMEDIATE")
-        elif not self.conn.in_transaction:
-            raise RuntimeError("lease recovery requires an active caller transaction")
-        try:
+        with _lease_transaction(
+            self.conn, label="recover_service_lease", manage_transaction=manage_transaction
+        ):
             self._operation(operation_id)
             row = self.active_for_operation(operation_id)
             if row is None:
-                self.conn.execute("COMMIT")
                 return None
             if _parse(row["expires_at"]) > now:
                 raise DishRuleError(
@@ -682,13 +647,7 @@ class LeaseManager:
             released = self._release_row(
                 row, reason=f"admin recovery: {reason}", now=now
             )
-            if manage_transaction:
-                self.conn.execute("COMMIT")
             return released
-        except Exception:
-            if manage_transaction and self.conn.in_transaction:
-                self.conn.execute("ROLLBACK")
-            raise
 
     def admin_expire_selected(
         self,
@@ -700,11 +659,9 @@ class LeaseManager:
         """Release one exact active lease without changing any workflow authority."""
 
         now = self.now()
-        if manage_transaction:
-            self.conn.execute("BEGIN IMMEDIATE")
-        elif not self.conn.in_transaction:
-            raise RuntimeError("lease expiry requires an active caller transaction")
-        try:
+        with _lease_transaction(
+            self.conn, label="expire_service_lease", manage_transaction=manage_transaction
+        ):
             row = self.by_id(lease_id)
             if row is None:
                 raise DishRuleError(
@@ -714,14 +671,6 @@ class LeaseManager:
                     details={"lease_id": lease_id},
                 )
             if row["released_at"] is not None:
-                if manage_transaction:
-                    self.conn.execute("COMMIT")
                 return row, False
             released = self._release_row(row, reason=reason, now=now)
-            if manage_transaction:
-                self.conn.execute("COMMIT")
             return released, True
-        except Exception:
-            if manage_transaction and self.conn.in_transaction:
-                self.conn.execute("ROLLBACK")
-            raise
