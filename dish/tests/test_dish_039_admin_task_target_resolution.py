@@ -19,7 +19,7 @@ from dish_tool.database import (
 from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
-from test_dish_034_abandonment_stage_successors import Backend
+from tests.support.abandonment import Backend
 
 _NUMERIC_TASK_GID = "1234567890123456"
 _TASK_URL = f"https://app.asana.com/0/999888777666555/{_NUMERIC_TASK_GID}"

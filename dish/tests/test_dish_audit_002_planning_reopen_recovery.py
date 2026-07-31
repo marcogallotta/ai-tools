@@ -22,7 +22,7 @@ from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
 from tests.planning_intent_support import confirmed_planning_start
-from tests.test_dish_tool_r52_request_restore_durability import Backend, _service
+from tests.support.request_restore import Backend, _service
 
 
 class SimulatedProcessDeath(BaseException):

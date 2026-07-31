@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dish_tool.application_service import CurrentWorkflowService
 from dish_tool.errors import DishRuleError
-from test_dish_tool_step7_verification import make_app
+from tests.support.verification import make_app
 
 
 def test_current_workflow_service_is_same_authority_used_by_inspect(tmp_path):

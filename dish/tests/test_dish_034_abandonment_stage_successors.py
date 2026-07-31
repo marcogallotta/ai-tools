@@ -28,141 +28,25 @@ from dish_tool.step8 import resolve_hold
 from dish_tool.task_store import LiveTask
 
 from tests.planning_intent_support import confirmed_planning_start
+from tests.support.abandonment import (
+    Backend,
+    _abandon,
+    _live,
+    _release,
+    _source,
+
+)
+from tests.support.verification import TASK
 
 
-class Backend:
-    def __init__(self, *, title: str = "Bare", notes: str = "", section: str = "rq"):
-        self.title = title
-        self.notes = notes
-        self.section = section
-        self.sections = [
-            {"gid": "pi", "name": "Planning (Incomplete)"},
-            {"gid": "rq", "name": "Research Queue"},
-            {"gid": "vq", "name": "Verification Queue"},
-            {"gid": "dst", "name": "Sichuan"},
-            {"gid": "src", "name": "Sourcing"},
-            {"gid": "ref", "name": "Reference"},
-        ]
-
-    def list_sections(self, project_gid):
-        assert project_gid == COOKING_PROJECT_GID
-        return self.sections
-
-    def read_task(self, gid):
-        return {
-            "gid": gid,
-            "name": self.title,
-            "notes": self.notes,
-            "completed": False,
-            "modified_at": "now",
-            "projects": [{"gid": COOKING_PROJECT_GID}],
-            "memberships": [
-                {
-                    "project": {"gid": COOKING_PROJECT_GID},
-                    "section": {"gid": self.section},
-                }
-            ],
-        }
-
-    def update_task_content(self, **_kwargs):
-        raise AssertionError("clean stage successor creation must not write Asana")
-
-    def move_task_to_section(self, **_kwargs):
-        raise AssertionError("clean stage successor creation must not move Asana")
 
 
-def _release(role: str) -> ResolvedRelease:
-    return ResolvedRelease(
-        version="test-release",
-        commit="test",
-        root=Path("."),
-        protocols={role: f"{role} protocol"},
-        manifests={},
-        manifest_texts={},
-        schema_version="2",
-        schema={},
-        schema_text="{}",
-        requested_protocol_role=role,
-    )
 
 
-def _source(
-    conn: sqlite3.Connection,
-    backend: Backend,
-    *,
-    kind: str,
-    phase: str = "prepare_required",
-    run_id: str = "dead-run",
-    initial_steps=None,
-):
-    baseline = confirm_task_content(
-        conn,
-        task_gid="task",
-        title=backend.title,
-        notes=backend.notes,
-        schema_version="2",
-        boundary="test-baseline",
-    )
-    actors = OperationActors(
-        editor_agent="gpt" if kind in {"planning", "change"} else None,
-        researcher_agent="gpt" if kind == "initial" else None,
-        run_id=run_id,
-    )
-    operation = create_operation(
-        conn,
-        task_gid="task",
-        operation_kind=kind,
-        expected_identity=baseline.digest,
-        schema_version="2",
-        expected_section_gid=backend.section,
-        actors=actors,
-        initial_steps=initial_steps,
-    )
-    if phase != "prepare_required":
-        conn.execute(
-            "UPDATE operations SET phase=? WHERE operation_id=?",
-            (phase, operation["operation_id"]),
-        )
-    return conn.execute(
-        "SELECT * FROM operations WHERE operation_id=?", (operation["operation_id"],)
-    ).fetchone()
 
 
-def _abandon(conn: sqlite3.Connection, operation: sqlite3.Row, *, abandonment_id="abandonment"):
-    lease = LeaseManager(conn).acquire(
-        operation["operation_id"], ServicePrincipal("owner", "dead-run")
-    )
-    LeaseManager(conn).release(
-        operation["operation_id"], None, reason="stale actor released", admin=True
-    )
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        row = create_abandonment_attempt_in_transaction(
-            conn,
-            abandonment_id=abandonment_id,
-            task_gid=operation["task_gid"],
-            source_operation_id=operation["operation_id"],
-            source_lease_id=lease["lease_id"],
-            abandoned_owner_id="owner",
-            abandoned_run_id="dead-run",
-            reason="conversation permanently unavailable",
-        )
-        conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
-    return row
 
 
-def _live(backend: Backend) -> LiveTask:
-    return LiveTask(
-        gid="task",
-        title=backend.title,
-        notes=backend.notes,
-        section_gid=backend.section,
-        completed=False,
-        modified_at="now",
-    )
 
 
 def test_clean_planning_abandonment_creates_exact_unowned_successor():
@@ -359,7 +243,6 @@ def test_real_reject_route_hold_then_abandonment_creates_research_successor(tmp_
     the real producer leaves the shape the fabricated-state test assumes.
     """
     from dish_tool.commands import DishApplication
-    from test_dish_tool_step7_verification import TASK
 
     lines = TASK.splitlines()
     backend = Backend(
@@ -435,7 +318,6 @@ def test_start_without_prepared_id_auto_claims_ready_successor(tmp_path):
     back: dish resolves it from task_gid alone once the successor is ready.
     """
     from dish_tool.commands import DishApplication
-    from test_dish_tool_step7_verification import TASK
 
     lines = TASK.splitlines()
     backend = Backend(

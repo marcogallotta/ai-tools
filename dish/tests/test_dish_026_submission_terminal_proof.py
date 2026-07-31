@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from dish_tool.database_schema import _validate_semantic_evidence, initialize_database
-from tests.test_dish_tool_r46_operational_hardening import _approved, _service
+from tests.support.operational import _approved, _service
 
 
 @pytest.mark.smoke

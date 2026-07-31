@@ -5,8 +5,8 @@ from dish_tool.database import reserve_marco_authorizations
 from dish_tool.errors import DishRuleError
 from dish_tool.governed_diff import explicit_material_reasons
 from dish_tool.task_document import parse_task_document
-from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
-from tests.test_dish_tool_step7_verification import TASK, make_app
+from tests.support.readiness import _approve_and_submit
+from tests.support.verification import TASK, make_app
 
 
 def _doc(text=TASK):

@@ -8,8 +8,6 @@ from dish_service.application import DishService
 from dish_service.backup import BackupManager
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
-from tests.test_dish_tool_r42_service_foundation import _release_loader
-from tests.test_dish_tool_r52_request_restore_durability import Backend
 from tests._service_test_helpers import (
     OTHER_REQUEST_ID,
     REQUEST_ID,
@@ -17,6 +15,12 @@ from tests._service_test_helpers import (
     complete_service_submission as _complete_service_submission,
     service as _service,
 )
+from tests.support.service_foundation import _release_loader
+from tests.support.request_restore import Backend
+from tests.support.planning import Backend as PlanningBackend, PLANNING, app, write
+from tests.support.submission import _signed
+from tests.support.planning import Backend as PlanningBackend, TASK, app, release
+from tests.support.planning import Backend as PlanningBackend, TASK, app
 
 
 
@@ -113,7 +117,6 @@ def test_completed_submit_exact_and_fresh_request_are_idempotent(tmp_path):
 
 
 def test_planning_rejects_nonexistent_destination_before_write(tmp_path):
-    from tests.test_dish_tool_step6_prepare import Backend as PlanningBackend, PLANNING, app, write
 
     backend = PlanningBackend()
     application = app(tmp_path, backend)
@@ -135,7 +138,6 @@ def test_planning_rejects_nonexistent_destination_before_write(tmp_path):
 
 
 def test_destination_deleted_after_approval_leaves_recoverable_open_state(tmp_path):
-    from tests.test_dish_tool_step9_submit import _signed
 
     application, backend, operation_id = _signed(tmp_path)
     backend.sections = [row for row in backend.sections if row["gid"] != "12345"]
@@ -158,7 +160,6 @@ def test_admin_destination_repair_changes_only_destination_and_preserves_signoff
     from dish_tool.admin import DishAdminApplication
     from dish_tool.governed_diff import canonical_diff
     from dish_tool.task_document import parse_task_document
-    from tests.test_dish_tool_step9_submit import _signed
 
     application, backend, operation_id = _signed(tmp_path)
     approved = parse_task_document(f"{backend.title}\n{backend.notes}")
@@ -218,7 +219,6 @@ def test_admin_destination_repair_changes_only_destination_and_preserves_signoff
 def test_destination_repair_rejects_queue_and_retry_safe_failure(tmp_path):
     from dish_tool.admin import DishAdminApplication
     from dish_tool.errors import BackendFailure
-    from tests.test_dish_tool_step9_submit import _signed
 
     application, backend, operation_id = _signed(tmp_path / "unrecoverable")
     backend.sections = [row for row in backend.sections if row["gid"] != "12345"]
@@ -268,7 +268,6 @@ def test_destination_repair_evidence_survives_restart(tmp_path):
     from dish_tool.admin import DishAdminApplication
     from dish_tool.commands import DishApplication
     from dish_tool.database import initialize_database
-    from tests.test_dish_tool_step9_submit import _signed
 
     application, backend, operation_id = _signed(tmp_path)
     backend.sections = [row for row in backend.sections if row["gid"] != "12345"]
@@ -309,7 +308,6 @@ def test_destination_repair_request_replays_without_second_write(tmp_path, monke
     from dish_service.application import DishService
     from dish_service.config import ServiceConfig
     from dish_service.leases import ServicePrincipal
-    from tests.test_dish_tool_step9_submit import _signed
 
     application, backend, operation_id = _signed(tmp_path)
     backend.sections = [row for row in backend.sections if row["gid"] != "12345"]
@@ -365,7 +363,6 @@ def test_destination_repair_request_replays_without_second_write(tmp_path, monke
 def test_uncertain_destination_repair_recovers_from_live_evidence(tmp_path):
     from dish_tool.admin import DishAdminApplication
     from dish_tool.errors import BackendFailure
-    from tests.test_dish_tool_step9_submit import _signed
 
     application, backend, operation_id = _signed(tmp_path)
     backend.sections = [row for row in backend.sections if row["gid"] != "12345"]
@@ -439,7 +436,6 @@ def test_uncertain_destination_repair_recovers_from_live_evidence(tmp_path):
 
 def test_not_applied_destination_move_can_retry_without_content_write(tmp_path):
     from dish_tool.errors import BackendFailure
-    from tests.test_dish_tool_step9_submit import _signed
 
     application, backend, operation_id = _signed(tmp_path)
     original_move = backend.move_task_to_section
@@ -482,7 +478,6 @@ def test_initial_research_can_hold_before_prepare_and_resume_same_operation(
     tmp_path, route, admin_command, held_phase
 ):
     from dish_tool.admin import DishAdminApplication
-    from tests.test_dish_tool_step6_prepare import Backend as PlanningBackend, TASK, app, release
 
     lines = TASK.splitlines()
     backend = PlanningBackend(lines[0], "\n".join(lines[1:]) + "\n")
@@ -542,7 +537,6 @@ def test_initial_research_can_hold_before_prepare_and_resume_same_operation(
 
 
 def test_preconstruction_hold_rejects_wrong_resume_status_without_false_cycle(tmp_path):
-    from tests.test_dish_tool_step6_prepare import Backend as PlanningBackend, TASK, app
 
     lines = TASK.splitlines()
     backend = PlanningBackend(lines[0], "\n".join(lines[1:]) + "\n")

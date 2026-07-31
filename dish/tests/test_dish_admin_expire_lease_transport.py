@@ -15,14 +15,7 @@ from dish_service.leases import LeaseManager
 from dish_service.task_urls import task_gid_from_url
 from dish_tool.database import initialize_database
 from dish_tool.errors import DishRuleError
-from tests.test_dish_admin_expire_lease import (
-    ADMIN_RUN,
-    EXPIRY_REQUEST,
-    TASK_GID,
-    _admin,
-    _service,
-    _start,
-)
+from tests.support.lease_expiry import ADMIN_RUN, EXPIRY_REQUEST, TASK_GID, _admin, _service, _start
 
 
 def _running(tmp_path):

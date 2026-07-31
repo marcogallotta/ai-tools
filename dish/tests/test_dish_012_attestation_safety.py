@@ -9,9 +9,9 @@ from dish_service.command_spec import validate_action_request
 from dish_tool.database import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import validate_independence_attestation
-from tests.test_dish_tool_r45_action_surface import _raw_post, _running, _stop
-from tests.test_dish_tool_r51_lease_authority import _principal, _service, _start
-from tests.test_dish_tool_step7_verification import TASK
+from tests.support.action_http import _raw_post, _running, _stop
+from tests.support.lease_authority import _principal, _service, _start
+from tests.support.verification import TASK
 
 
 UNSAFE_ATTESTATIONS = (

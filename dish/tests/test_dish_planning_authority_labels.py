@@ -3,7 +3,8 @@ from __future__ import annotations
 import pytest
 
 from dish_tool.task_document import DocumentParseError, parse_planning_brief
-from tests.test_dish_tool_step6_prepare import Backend, PLANNING, app, write
+from tests.support.planning import Backend, PLANNING, app, write
+from tests.support.canonical import TASK
 
 
 def _with_extra_label(label: str) -> str:
@@ -108,7 +109,6 @@ def test_zero_width_space_duplicate_fails_before_planning_write(tmp_path):
 
 
 def test_case_variant_process_subheading_reports_direct_canonical_diagnostic():
-    from tests.test_dish_tool_step2_canonical import TASK
     from dish_tool.task_document import parse_task_document
 
     candidate = TASK.replace("### Research basis", "### Research Basis")
@@ -179,7 +179,6 @@ def test_case_variant_heading_in_planning_prepare_fails_before_write(
 
 
 def test_case_variant_process_subheading_is_detected_as_duplicate():
-    from tests.test_dish_tool_step2_canonical import TASK
     from dish_tool.task_document import parse_task_document
 
     candidate = TASK.replace(
@@ -200,7 +199,6 @@ def test_case_variant_process_subheading_is_detected_as_duplicate():
 
 
 def test_case_variant_top_level_heading_reports_direct_diagnostic():
-    from tests.test_dish_tool_step2_canonical import TASK
     from dish_tool.task_document import parse_task_document
 
     candidate = TASK.replace("## QUANTITIES", "## quantities")
@@ -215,7 +213,6 @@ def test_case_variant_top_level_heading_reports_direct_diagnostic():
 
 
 def test_case_variant_process_heading_reports_direct_diagnostic():
-    from tests.test_dish_tool_step2_canonical import TASK
     from dish_tool.task_document import parse_task_document
 
     candidate = TASK.replace("## PROCESS RECORD", "## Process Record")

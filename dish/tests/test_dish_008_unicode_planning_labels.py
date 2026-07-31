@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from dish_tool.task_document import DocumentParseError, parse_planning_brief
-from tests.test_dish_tool_step6_prepare import Backend, PLANNING, app, write
+from tests.support.planning import Backend, PLANNING, app, write
 
 
 @pytest.mark.parametrize(

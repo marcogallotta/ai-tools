@@ -1,6 +1,6 @@
 from __future__ import annotations
+from tests.support.verification import make_app
 
-from tests.test_dish_tool_step7_verification import make_app
 
 
 def test_inspect_names_baseline_and_current_identity_comparison_separately(tmp_path):

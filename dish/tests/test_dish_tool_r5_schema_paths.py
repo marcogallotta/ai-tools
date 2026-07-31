@@ -8,6 +8,7 @@ import pytest
 from dish_tool.errors import ReleaseResolutionError
 from dish_tool.releases import resolve_release
 from dish_tool.task_document import parse_task_document, validate_task_document
+from tests.support.canonical import TASK
 
 
 def _fixture_root() -> Path:
@@ -15,7 +16,6 @@ def _fixture_root() -> Path:
 
 
 def test_runtime_validation_executes_resolved_schema():
-    from test_dish_tool_step2_canonical import TASK
     release = resolve_release(_fixture_root(), protocol_role="research")
     document = parse_task_document(TASK)
     assert validate_task_document(document, expected_schema_version=release.schema_version, schema=release.schema).ok

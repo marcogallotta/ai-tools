@@ -9,7 +9,7 @@ from dish_tool.errors import DishRuleError
 from dish_tool.governed_diff import explicit_material_reasons, require_small_scope
 from dish_tool.task_document import parse_task_document
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
-from test_dish_tool_step6_prepare import TASK
+from tests.support.planning import TASK
 
 
 def _doc(text=TASK):

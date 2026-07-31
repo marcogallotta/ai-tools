@@ -10,7 +10,7 @@ from dish_tool.database import (
 from dish_tool.errors import DishRuleError
 from dish_tool.recovery import begin_movement_attempt, begin_operation_write_attempt
 from dish_tool.step9 import recover_operation
-from tests.test_dish_tool_step6_prepare import Backend, PLANNING, app, write
+from tests.support.planning import Backend, PLANNING, app, write
 
 
 def _nbsp_duplicate_planning() -> str:

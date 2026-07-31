@@ -11,7 +11,7 @@ from dish_service import application as service_application
 from dish_service.leases import ServicePrincipal
 from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
-from tests.test_dish_tool_r46_operational_hardening import _service
+from tests.support.operational import _service
 
 
 @pytest.mark.smoke

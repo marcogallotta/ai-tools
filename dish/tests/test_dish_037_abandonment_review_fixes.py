@@ -22,14 +22,8 @@ from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
 from dish_tool.step5 import claim_prepared_stage_successor
-from test_dish_034_abandonment_stage_successors import (
-    Backend,
-    _abandon,
-    _live,
-    _release,
-    _source,
-)
-from test_dish_036_abandonment_admin_workflow import _released_actor_lease
+from tests.support.abandonment import Backend, _abandon, _live, _release, _source
+from tests.support.abandonment_admin import _released_actor_lease
 
 
 def _count(conn, table: str) -> int:

@@ -13,8 +13,8 @@ from dish_tool.database import (
     consume_reserved_marco_authorizations,
 )
 from dish_tool.errors import DishRuleError
-from test_dish_tool_step6_prepare import TASK, Backend, app, write
-from test_dish_tool_step7_verification import make_app
+from tests.support.planning import TASK, Backend, app, write
+from tests.support.verification import make_app
 
 
 def test_marco_authorizations_reserve_all_or_nothing(tmp_path):

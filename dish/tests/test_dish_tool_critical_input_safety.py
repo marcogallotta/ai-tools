@@ -14,7 +14,7 @@ from dish_tool.models import (
     validate_change_reason,
 )
 from dish_tool.task_document import parse_task_document, validate_task_document
-from tests.test_dish_tool_step6_prepare import Backend, TASK, app, write
+from tests.support.planning import Backend, TASK, app, write
 
 
 UNSAFE_TEXT = [

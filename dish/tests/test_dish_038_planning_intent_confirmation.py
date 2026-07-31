@@ -16,7 +16,7 @@ from dish_tool.cli import build_parser
 from dish_tool.database import initialize_database
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
 from dish_tool.errors import DishRuleError
-from tests.test_dish_tool_step6_prepare import Backend, release
+from tests.support.planning import Backend, release
 
 
 TASK_GID = "123456789"

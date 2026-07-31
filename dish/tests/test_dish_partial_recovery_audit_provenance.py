@@ -29,6 +29,7 @@ from tests._partial_recovery_helpers import (
     started_application as _started_application,
     fault_at_step as _fault_at_step,
 )
+from tests.support.verification import make_app
 
 
 
@@ -275,7 +276,6 @@ def test_real_authorization_racing_no_effect_prepare_is_not_misattributed(
 def test_real_verifier_inspect_racing_no_effect_approve_is_not_misattributed(
     tmp_path, monkeypatch
 ):
-    from tests.test_dish_tool_step7_verification import make_app
     from dish_tool.application_service import CurrentWorkflowService
 
     application, backend, operation_id, _protocol = make_app(tmp_path)

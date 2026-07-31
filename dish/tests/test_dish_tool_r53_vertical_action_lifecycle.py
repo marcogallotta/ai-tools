@@ -11,8 +11,8 @@ from dish_service.config import ServiceConfig
 from dish_service.http import build_action_server
 from dish_tool.backend import AsanaBackend, close_asana_sdk_client
 from dish_tool.database import initialize_database
-from tests.test_dish_tool_r40_placement_gate import StatefulAsanaTransport, _release
-from tests.test_dish_tool_step6_prepare import PLANNING, TASK
+from tests.support.placement import StatefulAsanaTransport, _release
+from tests.support.planning import PLANNING, TASK
 
 
 @pytest.mark.smoke

@@ -4,7 +4,7 @@ import pytest
 import json
 
 from dish_tool import admin_cli
-from tests.test_dish_admin_expire_lease import ADMIN_RUN, EXPIRY_REQUEST, TASK_GID
+from tests.support.lease_expiry import ADMIN_RUN, EXPIRY_REQUEST, TASK_GID
 
 
 class _RecordingAdminClient:

@@ -6,6 +6,7 @@ import pytest
 
 from dish_tool.admin import DishAdminApplication
 from tests._service_test_helpers import RUN_ID, post as _post, running as _running
+from tests.support.submission import _signed
 
 
 @pytest.mark.parametrize(
@@ -129,7 +130,6 @@ def test_recover_validates_required_fields_before_unknown_operation_and_replays(
 def test_recover_validates_blank_fields_before_terminal_operation(
     tmp_path, arguments, field, rule
 ):
-    from tests.test_dish_tool_step9_submit import _signed
 
     application, backend, operation_id = _signed(tmp_path)
     submitted = application.execute("submit", submission_id=operation_id)

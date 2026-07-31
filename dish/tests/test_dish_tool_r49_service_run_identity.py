@@ -3,9 +3,9 @@ import json
 from dish_service.leases import ServicePrincipal
 from dish_tool.commands import DishApplication
 from dish_tool.database import initialize_database
-from tests.test_dish_tool_r42_service_foundation import _release_loader
-from tests.test_dish_tool_r43_service_leases import _service
-from tests.test_dish_tool_step7_verification import Backend, TASK
+from tests.support.service_foundation import _release_loader
+from tests.support.service_leases import _service
+from tests.support.verification import Backend, TASK
 
 
 def _principal(owner: str, run_id: str) -> ServicePrincipal:

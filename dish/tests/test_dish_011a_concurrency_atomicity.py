@@ -9,8 +9,8 @@ from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.database import transition_operation
 from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
-from tests.test_dish_tool_r46_operational_hardening import _approved, _service
-from tests.test_dish_tool_step9_submit import _signed
+from tests.support.operational import _approved, _service
+from tests.support.submission import _signed
 
 
 def test_concurrent_read_never_observes_partial_submit_terminal_evidence(

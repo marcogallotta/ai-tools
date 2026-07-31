@@ -13,8 +13,6 @@ from dish_service.backup import BackupManager
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
 from dish_service.leases import ServicePrincipal
-from tests.test_dish_tool_r42_service_foundation import _release_loader
-from tests.test_dish_tool_r52_request_restore_durability import Backend
 from tests._service_test_helpers import (
     OPERATION_ID,
     REQUEST_ID,
@@ -22,6 +20,8 @@ from tests._service_test_helpers import (
     post as _post,
     running as _running,
 )
+from tests.support.service_foundation import _release_loader
+from tests.support.request_restore import Backend
 
 
 

@@ -18,8 +18,8 @@ from dish_tool.database import content_identity, initialize_database
 from dish_tool.database_schema import _validate_semantic_evidence
 from dish_tool.errors import DishRuleError
 from dish_tool.models import utc_now
-from test_dish_tool_r42_service_foundation import _service
-from test_dish_tool_step7_verification import Backend, TASK, make_app
+from tests.support.service_foundation import _service
+from tests.support.verification import Backend, TASK, make_app
 
 
 def _review_and_inspect(app, operation_id: str, *, run_id: str = "dish-020-review"):

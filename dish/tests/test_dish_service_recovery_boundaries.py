@@ -10,7 +10,7 @@ from dish_service.maintenance import MaintenanceGate
 from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database import initialize_database
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
-from tests.test_dish_tool_r46_operational_hardening import UnavailableBackend, _service
+from tests.support.operational import UnavailableBackend, _service
 
 
 def _digest(path: Path) -> str:

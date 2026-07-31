@@ -7,24 +7,19 @@ from dish_tool.database import reserve_marco_authorizations
 from dish_tool.errors import DishRuleError
 from dish_tool.governed_diff import explicit_material_reasons, require_small_scope
 from dish_tool.task_document import parse_task_document
-from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
-from tests.test_dish_tool_step7_verification import TASK, make_app
+from tests.support.readiness import _approve_and_submit
+from tests.support.verification import TASK, make_app
+from tests.support.authority import (
+    _authorize_dish_candidate,
+    _review,
+
+)
 
 
 def _doc(text=TASK):
     return parse_task_document(text)
 
 
-def _review(app, *, run="review", agent="codex"):
-    result = app.execute(
-        "start", agent=agent, task_gid="t", kind="verification", run_id=run,
-        independence_attestation="independent",
-    )
-    assert result["ok"]
-    inspected = app.execute("inspect", agent=agent, submission_id=result["submission_id"])
-    assert inspected["ok"]
-    assert inspected["allowed_actions"] == ["approve", "reject"]
-    return result
 
 
 
@@ -69,18 +64,6 @@ def test_substantive_recognition_change_remains_material():
     assert "title_or_identity" in explicit_material_reasons(before, after)
 
 
-def _authorize_dish_candidate(app, backend, operation_id, *, before="Test dish", after="Different dish"):
-    admin = DishAdminApplication(
-        app.conn, backend=backend,
-        release_loader=lambda: app._load_release("verification"),
-    )
-    result = admin.execute(
-        "authorize-governed-change", submission_id=operation_id,
-        field="Dish candidate", before=before, after=after,
-        reason="Marco authorized the candidate identity change", run_id="marco",
-    )
-    assert result["ok"]
-    return result
 
 
 @pytest.mark.parametrize(

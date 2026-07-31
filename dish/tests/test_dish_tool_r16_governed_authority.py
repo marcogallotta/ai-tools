@@ -6,7 +6,7 @@ TESTS = Path(__file__).resolve().parent
 sys.path[:0] = [str(BIN), str(TESTS)]
 
 from dish_tool.database import record_marco_authorization
-from test_dish_tool_step7_verification import TASK, make_app
+from tests.support.verification import TASK, make_app
 
 
 def _review(app, run="review"):

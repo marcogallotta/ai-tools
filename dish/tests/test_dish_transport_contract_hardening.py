@@ -19,8 +19,8 @@ from dish_tool.constants import (
     RECOVERY_SAFETY_MARGIN_SECONDS,
 )
 from dish_tool.errors import DishRuleError
-from tests.test_dish_tool_r45_action_surface import _running as _running_action, _stop
 from tests._service_test_helpers import post as _post, running as _running
+from tests.support.action_http import _running as _running_action, _stop
 
 RUN_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 REQUEST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"

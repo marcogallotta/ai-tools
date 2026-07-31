@@ -19,6 +19,7 @@ from dish_tool.database import (
 )
 from dish_tool.database_schema import initialize_database
 from dish_tool.models import OperationActors, ResolvedRelease
+from tests.support.verification import TASK, make_app
 
 
 PLANNING_NOTES = """### Planning brief
@@ -565,7 +566,6 @@ def test_applied_large_rejection_suffix_recovers_without_repeating_external_writ
     tmp_path, monkeypatch
 ):
     import dish_tool.step8 as step8
-    from test_dish_tool_step7_verification import TASK, make_app
 
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute(

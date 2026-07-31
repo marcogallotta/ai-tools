@@ -3,11 +3,8 @@ from __future__ import annotations
 import pytest
 
 from dish_tool.task_document import DocumentParseError, parse_planning_brief
-from tests.test_dish_tool_step5_commands import Backend, TASK, app
-from tests.test_dish_tool_step6_prepare import (
-    Backend as TrackingBackend,
-    app as planning_app,
-)
+from tests.support.step5 import Backend, TASK, app
+from tests.support.planning import Backend as TrackingBackend, app as planning_app
 
 
 def _read(tmp_path, content: str):

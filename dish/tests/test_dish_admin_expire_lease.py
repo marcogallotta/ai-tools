@@ -10,51 +10,28 @@ from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.database import initialize_database
-from tests.test_dish_tool_r42_service_foundation import _release_loader
-from tests.test_dish_tool_step7_verification import Backend, TASK
+from tests.support.service_foundation import _release_loader
+from tests.support.verification import Backend, TASK
+from tests.support.lease_expiry import (
+    ADMIN_RUN,
+    EXPIRY_REQUEST,
+    OWNER_RUN,
+    START_REQUEST,
+    TASK_GID,
+    _admin,
+    _service,
+    _start,
 
-OWNER_RUN = "11111111-1111-4111-8111-111111111111"
-ADMIN_RUN = "22222222-2222-4222-8222-222222222222"
+)
+
 OTHER_ADMIN_RUN = "33333333-3333-4333-8333-333333333333"
-START_REQUEST = "44444444-4444-4444-8444-444444444444"
-EXPIRY_REQUEST = "55555555-5555-4555-8555-555555555555"
 OTHER_REQUEST = "66666666-6666-4666-8666-666666666666"
-TASK_GID = "123456789"
 
 
-def _service(tmp_path, *, backend_factory=None, release_loader=None):
-    backend = Backend()
-    honest = tmp_path / "honest"
-    honest.mkdir(exist_ok=True)
-    service = DishService(
-        ServiceConfig(
-            db_path=tmp_path / "shared.db",
-            honest_root=honest,
-            port=0,
-            agent_token="agent-secret",
-            admin_token="admin-secret",
-            action_token="action-secret",
-        ),
-        backend_factory=backend_factory or (lambda: backend),
-        release_loader=release_loader or _release_loader(honest),
-    )
-    return service, backend
 
 
-def _start(service: DishService):
-    principal = ServicePrincipal("agent", OWNER_RUN)
-    result = service.execute_agent(
-        "start",
-        {"agent": "gpt", "task_gid": TASK_GID, "kind": "initial"},
-        principal=principal,
-        request_id=START_REQUEST,
-    )
-    assert result["ok"]
-    return principal, result
 
 
-def _admin(run_id: str = ADMIN_RUN):
-    return ServicePrincipal("marco-admin", run_id)
 
 
 @pytest.mark.smoke

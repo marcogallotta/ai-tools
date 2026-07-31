@@ -8,7 +8,7 @@ sys.path[:0] = [str(BIN), str(TESTS)]
 from dish_tool.admin import DishAdminApplication
 from dish_tool.database import content_identity
 from dish_tool.recovery import begin_movement_attempt, begin_operation_write_attempt
-from test_dish_tool_step7_verification import make_app
+from tests.support.verification import make_app
 
 
 def _prepared(tmp_path):

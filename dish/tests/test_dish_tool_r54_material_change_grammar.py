@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import pytest
+from tests.support.canonical import TASK as CANONICAL_TASK
+from tests.support.readiness import _approve_and_submit
+from tests.support.authority import _authorize_dish_candidate, _review
+from tests.support.verification import make_app
+from tests.support.readiness import _approve_and_submit, _review
+from tests.support.authority import _authorize_dish_candidate
 
 
 def test_material_change_grammar_reports_all_detectable_subfields():
     from dish_tool.task_document import parse_task_document, validate_task_document
-    from tests.test_dish_tool_step2_canonical import TASK as CANONICAL_TASK
 
     invalid = CANONICAL_TASK.replace(
         "2026-07-25 — ChatGPT — GPT-5 — tightened hydration — improve crispness — Large — pending-verification",
@@ -34,9 +39,6 @@ def test_material_change_grammar_reports_all_detectable_subfields():
 def test_material_change_approval_finalizes_pending_entry_and_survives_restart(tmp_path):
     from dish_tool.database import initialize_database
     from dish_tool.task_document import parse_task_document
-    from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
-    from tests.test_dish_tool_r42_authority_matrix import _authorize_dish_candidate, _review
-    from tests.test_dish_tool_step7_verification import make_app
 
     application, backend, initial_operation, _ = make_app(tmp_path)
     _approve_and_submit(application, initial_operation, run="initial-review")
@@ -114,8 +116,6 @@ def test_material_change_approval_finalizes_pending_entry_and_survives_restart(t
 
 def test_approval_finalizes_rejected_change_and_corrective_change(tmp_path):
     from dish_tool.task_document import parse_task_document
-    from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit, _review
-    from tests.test_dish_tool_step7_verification import make_app
 
     application, backend, initial_operation, _ = make_app(tmp_path)
     _approve_and_submit(application, initial_operation, run="initial-review")
@@ -203,9 +203,6 @@ def test_submit_refuses_ready_task_with_any_material_change_pending(tmp_path, mo
     from dish_tool.database import content_identity
     from dish_tool import step9
     from dish_tool.task_document import parse_task_document
-    from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
-    from tests.test_dish_tool_r42_authority_matrix import _authorize_dish_candidate, _review
-    from tests.test_dish_tool_step7_verification import make_app
 
     application, backend, initial_operation, _ = make_app(tmp_path)
     _approve_and_submit(application, initial_operation, run="initial-review")
@@ -274,9 +271,6 @@ def test_submit_refuses_ready_task_with_any_material_change_pending(tmp_path, mo
 
 
 def test_post_signoff_change_cannot_rewrite_material_change_history(tmp_path):
-    from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
-    from tests.test_dish_tool_r42_authority_matrix import _authorize_dish_candidate, _review
-    from tests.test_dish_tool_step7_verification import make_app
 
     application, backend, initial_operation, _ = make_app(tmp_path)
     _approve_and_submit(application, initial_operation, run="initial-review")
@@ -352,8 +346,6 @@ def test_post_signoff_change_cannot_rewrite_material_change_history(tmp_path):
 
 
 def test_material_classification_is_required_only_for_changed_post_signoff_body(tmp_path):
-    from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
-    from tests.test_dish_tool_step7_verification import make_app
 
     application, backend, initial_operation, _ = make_app(tmp_path)
     _approve_and_submit(application, initial_operation, run="initial-review")
@@ -386,9 +378,6 @@ def test_material_classification_is_required_only_for_changed_post_signoff_body(
 
 
 def test_material_classification_reports_effective_route_and_forced_reasons(tmp_path):
-    from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
-    from tests.test_dish_tool_r42_authority_matrix import _authorize_dish_candidate
-    from tests.test_dish_tool_step7_verification import make_app
 
     application, backend, initial_operation, _ = make_app(tmp_path)
     _approve_and_submit(application, initial_operation, run="initial-review")
@@ -428,8 +417,6 @@ def test_material_classification_reports_effective_route_and_forced_reasons(tmp_
 
 
 def test_material_classification_is_rejected_when_no_body_diff_exists(tmp_path):
-    from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
-    from tests.test_dish_tool_step7_verification import make_app
 
     application, backend, initial_operation, _ = make_app(tmp_path)
     _approve_and_submit(application, initial_operation, run="initial-review")

@@ -16,7 +16,7 @@ from dish_service.process_lock import ServiceProcessLock
 from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements, initialize_database
 from dish_tool.errors import DishRuleError
-from tests.test_dish_tool_r46_operational_hardening import _service
+from tests.support.operational import _service
 
 
 def _sha(path: Path) -> str:

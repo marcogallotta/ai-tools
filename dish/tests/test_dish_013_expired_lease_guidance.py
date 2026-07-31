@@ -3,9 +3,9 @@ from __future__ import annotations
 import uuid
 
 from dish_service.application import DishService
-from tests.test_dish_tool_r43_service_leases import Clock
-from tests.test_dish_tool_r51_lease_authority import _principal, _service, _start
-from tests.test_dish_tool_step7_verification import TASK
+from tests.support.service_leases import Clock
+from tests.support.lease_authority import _principal, _service, _start
+from tests.support.verification import TASK
 
 
 def _verification_with_expired_lease(tmp_path):

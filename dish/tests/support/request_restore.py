@@ -1,0 +1,54 @@
+from __future__ import annotations
+
+
+"""Shared helpers extracted from test_dish_tool_r52_request_restore_durability.py."""
+
+
+import pytest
+
+from dish_service.application import DishService
+
+from dish_service.config import ServiceConfig
+
+from dish_service.leases import ServicePrincipal
+
+from tests.planning_intent_support import confirmed_planning_start
+
+from dish_service.request_replay import begin_request
+
+from dish_tool.commands import DishApplication
+
+from dish_tool.database import initialize_database
+
+from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
+from tests.support.service_foundation import _release_loader
+from tests.support.verification import Backend as WorkflowBackend
+
+
+
+class Backend(WorkflowBackend):
+    def create_bare_task(self, *, title, project_gid, section_gid):
+        self.writes += 1
+        self.title = title
+        self.notes = ""
+        self.section = section_gid
+        return {"gid": "1000000000000001", "name": title, "notes": ""}
+
+def _service(tmp_path, backend=None):
+    backend = backend or Backend()
+    honest = tmp_path / "honest"
+    honest.mkdir(exist_ok=True)
+    service = DishService(
+        ServiceConfig(
+            db_path=tmp_path / "shared.db",
+            honest_root=honest,
+            backup_dir=tmp_path / "backups",
+            port=0,
+            agent_token="agent-secret",
+            admin_token="admin-secret",
+            action_token="action-secret",
+        ),
+        backend_factory=lambda: backend,
+        release_loader=_release_loader(honest),
+    )
+    return service, backend

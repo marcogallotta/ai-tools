@@ -15,8 +15,8 @@ from dish_service.http import build_action_server, build_private_server
 from dish_service.process_lock import ServiceProcessLock
 from dish_tool import admin_cli
 from dish_tool.errors import DishRuleError
-from tests.test_dish_tool_r42_service_foundation import _release_loader
-from tests.test_dish_tool_step7_verification import Backend
+from tests.support.service_foundation import _release_loader
+from tests.support.verification import Backend
 
 
 ROOT = Path(__file__).resolve().parent.parent

@@ -8,7 +8,7 @@ sys.path[:0] = [str(BIN), str(TESTS)]
 from dish_tool.admin import DishAdminApplication
 from dish_tool.database import declare_operation_step
 from dish_tool.step9 import recover_operation
-from test_dish_tool_step5_commands import Backend, app
+from tests.support.step5 import Backend, app
 
 
 def test_planning_recovery_completes_missing_suffix(tmp_path):

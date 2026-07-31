@@ -7,7 +7,7 @@ import pytest
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
-from tests.test_dish_tool_r46_operational_hardening import _service
+from tests.support.operational import _service
 
 
 def _semantic_failure(record_id: str) -> DishRuleError:

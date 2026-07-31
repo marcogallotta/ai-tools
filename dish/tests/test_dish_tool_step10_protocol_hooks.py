@@ -1,4 +1,4 @@
-from tests.test_dish_tool_step7_verification import make_app
+from tests.support.verification import make_app
 
 
 def test_structural_pass_does_not_replace_verifier_semantic_attestation(tmp_path):

@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 
 import pytest
+from tests.support.readiness import _approve_and_submit
+from tests.support.verification import TASK, make_app
+from tests.support.attestation import (
+    ATTESTATION,
 
-from test_dish_tool_r27_r29_readiness import _approve_and_submit
-from test_dish_tool_step7_verification import TASK, make_app
+)
 
 
-ATTESTATION = "independent verifier run"
+
 
 
 @pytest.mark.parametrize("attestation", ["", "   "])

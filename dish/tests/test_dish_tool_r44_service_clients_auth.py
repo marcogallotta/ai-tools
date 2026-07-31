@@ -10,8 +10,8 @@ from dish_service.config import ServiceConfig
 from dish_service.http import build_server
 from dish_tool import admin_cli, cli
 from dish_tool.errors import DishRuleError
-from tests.test_dish_tool_r42_service_foundation import _release_loader
-from tests.test_dish_tool_step7_verification import Backend, TASK
+from tests.support.service_foundation import _release_loader
+from tests.support.verification import Backend, TASK
 
 
 def _running_service(tmp_path):

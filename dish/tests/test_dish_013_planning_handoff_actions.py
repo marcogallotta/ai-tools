@@ -4,7 +4,7 @@ from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
 from tests.planning_intent_support import confirmed_planning_start
-from tests.test_dish_tool_step6_prepare import Backend, PLANNING, release
+from tests.support.planning import Backend, PLANNING, release
 
 
 def test_service_preserves_planning_handoff_start_contract(tmp_path):

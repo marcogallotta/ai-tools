@@ -15,10 +15,10 @@ from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
 from tests.planning_intent_support import confirmed_planning_start
-from tests.test_dish_tool_easy_backlog import ATTESTATION
-from tests.test_dish_tool_r46_operational_hardening import Clock, _service
-from tests.test_dish_tool_step6_prepare import Backend as PlanningBackend, PLANNING, release as planning_release
-from tests.test_dish_tool_step7_verification import TASK, make_app
+from tests.support.attestation import ATTESTATION
+from tests.support.operational import Clock, _service
+from tests.support.planning import Backend as PlanningBackend, PLANNING, release as planning_release
+from tests.support.verification import TASK, make_app
 
 
 def _planning_service(tmp_path, *, clock=None, ttl=60):

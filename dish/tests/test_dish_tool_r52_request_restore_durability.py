@@ -10,17 +10,15 @@ from dish_service.request_replay import begin_request
 from dish_tool.commands import DishApplication
 from dish_tool.database import initialize_database
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
-from tests.test_dish_tool_r42_service_foundation import _release_loader
-from tests.test_dish_tool_step7_verification import Backend as WorkflowBackend
+from tests.support.service_foundation import _release_loader
+from tests.support.verification import Backend as WorkflowBackend
+from tests.support.request_restore import (
+    Backend,
+    _service,
+
+)
 
 
-class Backend(WorkflowBackend):
-    def create_bare_task(self, *, title, project_gid, section_gid):
-        self.writes += 1
-        self.title = title
-        self.notes = ""
-        self.section = section_gid
-        return {"gid": "1000000000000001", "name": title, "notes": ""}
 
 
 CREATE_REQUEST = "11111111-1111-4111-8111-111111111111"
@@ -28,24 +26,6 @@ START_REQUEST = "22222222-2222-4222-8222-222222222222"
 VERIFY_REQUEST = "33333333-3333-4333-8333-333333333333"
 
 
-def _service(tmp_path, backend=None):
-    backend = backend or Backend()
-    honest = tmp_path / "honest"
-    honest.mkdir(exist_ok=True)
-    service = DishService(
-        ServiceConfig(
-            db_path=tmp_path / "shared.db",
-            honest_root=honest,
-            backup_dir=tmp_path / "backups",
-            port=0,
-            agent_token="agent-secret",
-            admin_token="admin-secret",
-            action_token="action-secret",
-        ),
-        backend_factory=lambda: backend,
-        release_loader=_release_loader(honest),
-    )
-    return service, backend
 
 
 def _principal(run="run"):

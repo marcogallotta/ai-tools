@@ -6,7 +6,7 @@ from dish_tool.admin import DishAdminApplication
 from dish_tool.backend import AsanaBackend
 from dish_tool.constants import COOKING_PROJECT_GID
 from dish_tool.database import process_command_audit_repairs
-from tests.test_dish_tool_step7_verification import make_app
+from tests.support.verification import make_app
 
 
 def _review(app, operation_id, *, run="review"):

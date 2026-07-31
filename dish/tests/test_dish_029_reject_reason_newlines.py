@@ -9,9 +9,9 @@ from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
 from dish_tool.database import confirm_task_content, initialize_database
 from dish_tool.task_document import parse_task_document, validate_task_document
-from tests.test_dish_tool_r42_service_foundation import _release_loader
-from tests.test_dish_tool_r52_request_restore_durability import Backend
-from tests.test_dish_tool_step7_verification import TASK
+from tests.support.service_foundation import _release_loader
+from tests.support.request_restore import Backend
+from tests.support.verification import TASK
 
 
 INVALID_REASONS = [

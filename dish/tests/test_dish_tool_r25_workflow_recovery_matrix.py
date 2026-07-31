@@ -4,7 +4,7 @@ import pytest
 
 from dish_tool import step7, step8
 from dish_tool.step9 import recover_operation
-from test_dish_tool_step7_verification import TASK, make_app
+from tests.support.verification import TASK, make_app
 
 
 def _review(app, agent="codex", run="review"):

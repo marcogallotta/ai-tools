@@ -7,7 +7,7 @@ import dish_service.application as application_module
 from dish_service.backup import BackupManager
 from dish_service.leases import ServicePrincipal
 from dish_tool.database_schema import initialize_database
-from tests.test_dish_tool_r46_operational_hardening import _service
+from tests.support.operational import _service
 
 
 REQUEST_ID = "28000000-0000-4000-8000-000000000028"

@@ -5,8 +5,8 @@ from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
 from dish_service.openapi import action_openapi
 from dish_tool.releases import ResolvedRelease
-from tests.test_dish_tool_r27_r29_readiness import _approve_and_submit
-from tests.test_dish_tool_step7_verification import make_app
+from tests.support.readiness import _approve_and_submit
+from tests.support.verification import make_app
 
 
 def test_action_schema_exposes_forced_material_reason_contract():

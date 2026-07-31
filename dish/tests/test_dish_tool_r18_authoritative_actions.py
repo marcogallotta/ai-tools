@@ -6,7 +6,7 @@ TESTS = Path(__file__).resolve().parent
 sys.path[:0] = [str(BIN), str(TESTS)]
 
 from dish_tool.task_document import parse_task_document, validate_task_document
-from test_dish_tool_step7_verification import TASK, make_app
+from tests.support.verification import TASK, make_app
 
 
 def test_approval_phase_response_and_inspect_agree(tmp_path):

@@ -7,9 +7,9 @@ import pytest
 
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements, initialize_database
-from tests.test_dish_tool_r43_service_leases import _service
-from tests.test_dish_tool_r46_operational_hardening import Clock
-from tests.test_dish_tool_step7_verification import Backend, TASK
+from tests.support.service_leases import _service
+from tests.support.operational import Clock
+from tests.support.verification import Backend, TASK
 
 
 def _principal(owner: str, run: str) -> ServicePrincipal:

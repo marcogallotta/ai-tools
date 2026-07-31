@@ -7,8 +7,8 @@ sys.path[:0] = [str(BIN), str(TESTS)]
 
 from dish_tool.admin import DishAdminApplication
 from dish_tool.cli import build_parser
-from test_dish_tool_step6_prepare import Backend as PlanningBackend, PLANNING, TASK as RESEARCH_TASK, app as planning_app, write
-from test_dish_tool_step7_verification import TASK, make_app
+from tests.support.planning import Backend as PlanningBackend, PLANNING, TASK as RESEARCH_TASK, app as planning_app, write
+from tests.support.verification import TASK, make_app
 
 
 def test_planning_handoff_allows_next_research_operation(tmp_path):

@@ -10,7 +10,7 @@ from dish_tool.database import (
     transition_operation,
 )
 from dish_tool.errors import DishRuleError
-from test_dish_tool_step7_verification import make_app
+from tests.support.verification import make_app
 
 
 def _second_connection(conn):

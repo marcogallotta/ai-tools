@@ -9,7 +9,9 @@ from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.governed_diff import explicit_material_reasons, require_small_scope
 from dish_tool.task_document import parse_task_document, validate_planning_brief, parse_planning_brief, finding_payload
 from dish_tool.errors import DishRuleError
-from tests.test_dish_tool_step7_verification import TASK
+from tests.support.verification import TASK
+from tests.support.verification import Backend
+from tests.support.verification import make_app
 
 
 def doc(text=TASK):
@@ -56,7 +58,6 @@ def test_two_pass_reset_rejects_future_target_without_replacement():
 
 
 def test_start_returns_environment_specific_runtime_context(tmp_path, monkeypatch):
-    from tests.test_dish_tool_step7_verification import Backend
     from dish_tool.commands import DishApplication
     from dish_tool.models import ResolvedRelease
     from dish_tool.database import initialize_database
@@ -78,7 +79,6 @@ def test_start_returns_environment_specific_runtime_context(tmp_path, monkeypatc
 
 
 def test_completed_evidence_and_consumed_authorization_are_immutable(tmp_path):
-    from tests.test_dish_tool_step7_verification import make_app
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="verify-run", independence_attestation="independent")
     inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
@@ -110,7 +110,6 @@ def test_completed_evidence_and_consumed_authorization_are_immutable(tmp_path):
 
 def test_audit_repair_fallback_is_imported_and_completed(monkeypatch, tmp_path):
     import dish_tool.invocation_audit as invocation_audit
-    from tests.test_dish_tool_step7_verification import make_app
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="verify-run", independence_attestation="independent")
     inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
@@ -179,7 +178,6 @@ def test_two_pass_reset_rejects_whitespace_disguised_retention():
 
 
 def test_database_reopens_with_timestamped_protocol_release(tmp_path):
-    from tests.test_dish_tool_step7_verification import make_app
     app, backend, operation_id, _ = make_app(tmp_path)
     app.conn.close()
     reopened = initialize_database(tmp_path / "dish.db")
@@ -188,7 +186,6 @@ def test_database_reopens_with_timestamped_protocol_release(tmp_path):
 
 
 def test_current_operation_placement_baseline_is_immutable(tmp_path):
-    from tests.test_dish_tool_step7_verification import Backend
     from dish_tool.commands import DishApplication
     from dish_tool.models import ResolvedRelease
     backend = Backend()
@@ -207,7 +204,6 @@ def test_current_operation_placement_baseline_is_immutable(tmp_path):
 
 
 def test_completed_persistence_evidence_is_fully_immutable(tmp_path):
-    from tests.test_dish_tool_step7_verification import make_app
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="verify-run", independence_attestation="independent")
     inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
@@ -235,7 +231,6 @@ def test_completed_persistence_evidence_is_fully_immutable(tmp_path):
 
 
 def test_current_invocation_audit_has_operation_and_result_fields(tmp_path):
-    from tests.test_dish_tool_step7_verification import make_app
     app, backend, operation_id, _ = make_app(tmp_path)
     row = app.conn.execute("SELECT operation_id,result_code,result_ok FROM audit_events WHERE event_type='dish.prepare' ORDER BY rowid DESC LIMIT 1").fetchone()
     assert row["operation_id"] == operation_id

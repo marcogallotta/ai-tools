@@ -7,7 +7,7 @@ from dish_service import backup as backup_module
 from dish_service.leases import ServicePrincipal
 from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database_schema import initialize_database
-from tests.test_dish_tool_r46_operational_hardening import _service
+from tests.support.operational import _service
 
 
 def _error(result: dict) -> dict:
