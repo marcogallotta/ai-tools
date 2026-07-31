@@ -99,16 +99,24 @@ def require_dish_uuid(value: Any, *, field: str) -> str:
 
 
 def validate_identifier_fields(
-    values: Mapping[str, Any], *, allow_null: bool = False
+    values: Mapping[str, Any],
+    *,
+    allow_null: bool = False,
+    skip_fields: frozenset[str] = frozenset(),
 ) -> None:
-    """Validate every recognized identifier present in one request mapping."""
+    """Validate every recognized identifier present in one request mapping.
+
+    `skip_fields` excludes fields whose format is ambiguous at this generic
+    boundary check (e.g. an admin target that may be an exact dish UUID or an
+    Asana task GID/URL) and is validated later, closer to its actual meaning.
+    """
     for field in _ASANA_GID_FIELDS:
-        if field in values:
+        if field in values and field not in skip_fields:
             if allow_null and values[field] is None:
                 continue
             require_asana_gid(values[field], field=field)
     for field in _DISH_UUID_FIELDS:
-        if field in values:
+        if field in values and field not in skip_fields:
             if allow_null and values[field] is None:
                 continue
             require_dish_uuid(values[field], field=field)

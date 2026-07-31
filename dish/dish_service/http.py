@@ -16,6 +16,7 @@ from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
 
 from .application import DishService
+from .application import _ADMIN_OPERATION_TARGET_COMMANDS
 from .auth import authenticate_bearer
 from .identifiers import require_asana_gid, require_dish_uuid, validate_identifier_fields
 from .leases import ServicePrincipal
@@ -413,7 +414,12 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 require_dish_uuid(request_id, field="client.request_id")
             arguments = request.get("arguments")
             if isinstance(arguments, dict):
-                validate_identifier_fields(arguments)
+                skip_fields: frozenset[str] = frozenset()
+                if surface == "admin" and command in _ADMIN_OPERATION_TARGET_COMMANDS:
+                    skip_fields = frozenset({"submission_id"})
+                elif surface == "admin" and command == "reconcile-abandonment":
+                    skip_fields = frozenset({"abandonment_id"})
+                validate_identifier_fields(arguments, skip_fields=skip_fields)
             context = request.get("context")
             if isinstance(context, dict):
                 validate_identifier_fields(context, allow_null=True)

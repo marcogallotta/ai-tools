@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import threading
 import uuid
 
 import pytest
 
 from dish_service.application import DishService
+from dish_service.client import DishAdminServiceClient
 from dish_service.config import ServiceConfig
+from dish_service.http import build_server
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.admin import DishAdminApplication
 from dish_tool.database import (
@@ -182,6 +185,49 @@ def test_service_execute_admin_task_gid_with_no_open_operation_fails_not_found(t
         item.get("rule") == "admin_operation_target_not_found"
         for item in result["errors"]
     )
+
+
+def test_real_http_admin_client_abandons_by_task_gid_with_no_lease_id(tmp_path, monkeypatch):
+    db_path = tmp_path / "dish.db"
+    conn = initialize_database(db_path)
+    backend = Backend(section="pi")
+    source = _numeric_task_source(conn, backend)
+    _released_actor_lease(conn, source["operation_id"])
+    conn.close()
+
+    service = DishService(
+        ServiceConfig(
+            db_path=db_path,
+            honest_root=tmp_path / "honest",
+            port=0,
+            agent_token="agent-secret",
+            admin_token="admin-secret",
+            action_token="action-secret",
+        ),
+        backend_factory=lambda: backend,
+    )
+    monkeypatch.setattr(service, "_assert_mutation_ready", lambda _backend: None)
+    server = build_server(service)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    host, port = server.server_address
+    client = DishAdminServiceClient(
+        f"http://{host}:{port}", token="admin-secret", run_id=str(uuid.uuid4())
+    )
+    try:
+        result = client.execute(
+            "abandon-operation",
+            submission_id=_NUMERIC_TASK_GID,
+            lease_id=None,
+            reason="the original conversation is permanently unavailable",
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert result["ok"], result
+    assert result["submission_id"] == source["operation_id"]
 
 
 def test_resolve_admin_operation_target_passes_through_exact_operation_id():
