@@ -2305,6 +2305,66 @@ def transition_operation(conn: sqlite3.Connection, operation_id: str, *, phase: 
     return updated
 
 
+def _admin_target_task_gid(raw: Any) -> str | None:
+    """Classify an admin CLI target as an Asana task GID/URL, or None if it is
+    already an exact dish identifier (operation/abandonment ID)."""
+    from dish_service.identifiers import require_asana_gid
+    from dish_service.task_urls import task_gid_from_url
+
+    clean = str(raw or "").strip()
+    if not clean:
+        return None
+    if clean.isdecimal():
+        return require_asana_gid(clean, field="task_gid")
+    if "://" in clean:
+        return task_gid_from_url(clean)
+    return None
+
+
+def resolve_admin_operation_target(conn: sqlite3.Connection, raw: Any) -> str:
+    """Resolve a submission_id admin argument that may be an Asana task GID
+    or task URL into the exact open operation ID for that task. An argument
+    that is not recognizable as a task GID/URL passes through unchanged, on
+    the assumption it is already an exact operation ID."""
+    clean = str(raw or "").strip()
+    task_gid = _admin_target_task_gid(clean)
+    if task_gid is None:
+        return clean
+    row = conn.execute(
+        "SELECT operation_id FROM operations WHERE task_gid=? AND status='open'",
+        (task_gid,),
+    ).fetchone()
+    if row is None:
+        raise DishRuleError(
+            "NOT_FOUND",
+            "no open operation for that task",
+            rule="admin_operation_target_not_found",
+            details={"task_gid": task_gid},
+        )
+    return str(row["operation_id"])
+
+
+def resolve_admin_abandonment_target(conn: sqlite3.Connection, raw: Any) -> str:
+    """Resolve an abandonment_id admin argument that may be an Asana task GID
+    or task URL into the exact non-completed abandonment ID for that task."""
+    clean = str(raw or "").strip()
+    task_gid = _admin_target_task_gid(clean)
+    if task_gid is None:
+        return clean
+    row = conn.execute(
+        "SELECT abandonment_id FROM abandonment_attempts WHERE task_gid=? AND status != 'completed'",
+        (task_gid,),
+    ).fetchone()
+    if row is None:
+        raise DishRuleError(
+            "NOT_FOUND",
+            "no active abandonment for that task",
+            rule="admin_abandonment_target_not_found",
+            details={"task_gid": task_gid},
+        )
+    return str(row["abandonment_id"])
+
+
 def legal_operation_actions(operation: Mapping[str, Any]) -> list[str]:
     if operation["status"] not in {"open", "uncertain"}:
         return []

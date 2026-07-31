@@ -45,11 +45,16 @@ def build_parser() -> JsonArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
+    _submission_target_help = (
+        "exact operation ID, task GID, or supported Asana task URL "
+        "(a task GID/URL resolves to that task's open operation)"
+    )
+
     recover = subparsers.add_parser(
         "recover",
         help="reconcile an interrupted write/movement against a fresh live Asana reread",
     )
-    recover.add_argument("submission_id")
+    recover.add_argument("submission_id", help=_submission_target_help)
     recover.add_argument(
         "--outcome",
         required=True,
@@ -62,20 +67,20 @@ def build_parser() -> JsonArgumentParser:
         "repair-destination",
         help="replace only the approved destination after an unrecoverable final movement failure",
     )
-    repair_destination.add_argument("submission_id")
+    repair_destination.add_argument("submission_id", help=_submission_target_help)
     repair_destination.add_argument("--destination-section-gid", required=True)
     repair_destination.add_argument("--reason", required=True)
     repair_destination.add_argument("--run-id")
 
     discard = subparsers.add_parser("discard", help="abandon a stale open operation without applying it")
-    discard.add_argument("submission_id")
+    discard.add_argument("submission_id", help=_submission_target_help)
     discard.add_argument("--reason", required=True)
 
     abandon = subparsers.add_parser(
         "abandon-operation",
         help="retire the latest expired or released actor attempt and prepare its safe continuation",
     )
-    abandon.add_argument("submission_id")
+    abandon.add_argument("submission_id", help=_submission_target_help)
     abandon.add_argument("--reason", required=True)
     abandon.add_argument(
         "--lease-id",
@@ -86,13 +91,19 @@ def build_parser() -> JsonArgumentParser:
         "reconcile-abandonment",
         help="reclassify a blocked or interrupted permanent-run abandonment",
     )
-    reconcile_abandonment.add_argument("abandonment_id")
+    reconcile_abandonment.add_argument(
+        "abandonment_id",
+        help=(
+            "exact abandonment ID, task GID, or supported Asana task URL "
+            "(a task GID/URL resolves to that task's active abandonment)"
+        ),
+    )
 
     reopen = subparsers.add_parser(
         "reopen",
         help="the only path out of the two-pass Verification Human Review hold",
     )
-    reopen.add_argument("submission_id")
+    reopen.add_argument("submission_id", help=_submission_target_help)
     reopen.add_argument(
         "--category",
         required=True,
@@ -153,7 +164,7 @@ def build_parser() -> JsonArgumentParser:
     authorize = subparsers.add_parser(
         "authorize-governed-change", help="authorize a single field change the tool would otherwise block"
     )
-    authorize.add_argument("submission_id")
+    authorize.add_argument("submission_id", help=_submission_target_help)
     authorize.add_argument("--field", required=True)
     authorize.add_argument("--before", required=True, type=json.loads, help="typed JSON value before the change")
     authorize.add_argument("--after", required=True, type=json.loads, help="typed JSON value after the change")
@@ -166,7 +177,7 @@ def build_parser() -> JsonArgumentParser:
     }
     for name, help_text in _hold_help.items():
         hold = subparsers.add_parser(name, help=help_text)
-        hold.add_argument("submission_id")
+        hold.add_argument("submission_id", help=_submission_target_help)
         hold.add_argument("--detail", required=True)
         hold.add_argument("--resume-status", required=True, choices=("pending-research", "pending-verification"))
         hold.add_argument("--file", dest="file_path")

@@ -171,6 +171,16 @@ claim a Planning operation: Marco must use `reopen-planning`, which records an e
 attempt and audit before the task becomes eligible. Add a new recovery route only when its durable facts and legal continuation
 cannot be represented by an existing route.
 
+Marco identifies admin targets by Asana task, not by internal ID. Every `submission_id`-targeted
+admin command (`recover`, `repair-destination`, `discard`, `abandon-operation`, `reopen`,
+`supply-evidence`, `record-human-decision`, `authorize-governed-change`) and `reconcile-abandonment`'s
+`abandonment_id` accept a task GID or supported Asana task URL in place of the exact ID; a decimal or
+URL-shaped value is resolved to that task's open operation (or, for `reconcile-abandonment`, its one
+non-completed abandonment) before dispatch, in the shared layer both the local and service-mode
+`DishAdminApplication.execute()` call, so resolution is identical regardless of transport. An
+already-exact ID is never reinterpreted. `expire-lease`'s task GID/URL target and `recover-lease`
+(a path-parameter, service-only route) are unchanged and out of scope for this resolution.
+
 ### Compatibility does not become a second engine
 
 The executable workflow supports the current Honest protocol/schema pair. Historical records may be

@@ -20,6 +20,8 @@ from .database import (
     immediate_persistence,
     process_command_audit_repairs,
     record_audit,
+    resolve_admin_abandonment_target,
+    resolve_admin_operation_target,
 )
 from .invocation_audit import record_invocation_audit
 from .errors import DishRuleError
@@ -79,6 +81,17 @@ class DishAdminApplication:
         trace = AdminTrace(submission_id=arguments.get("submission_id"))
         handler = CURRENT_ADMIN_COMMAND_HANDLERS.get(command)
         try:
+            if command in _OPERATION_TARGET_COMMANDS and arguments.get("submission_id"):
+                arguments = dict(arguments)
+                arguments["submission_id"] = resolve_admin_operation_target(
+                    self.conn, arguments["submission_id"]
+                )
+                trace.submission_id = arguments["submission_id"]
+            if command == "reconcile-abandonment" and arguments.get("abandonment_id"):
+                arguments = dict(arguments)
+                arguments["abandonment_id"] = resolve_admin_abandonment_target(
+                    self.conn, arguments["abandonment_id"]
+                )
             handler = self.validate_arguments(command, arguments)
             result = handler(self, trace=trace, **arguments)
         except DishRuleError as exc:
@@ -1089,6 +1102,12 @@ def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, r
         submission_id=operation_id, state=view["status"],
         allowed_actions=view["legal_actions"], data=data,
     )
+
+_OPERATION_TARGET_COMMANDS = {
+    "reopen", "recover", "repair-destination", "supply-evidence",
+    "record-human-decision", "authorize-governed-change", "discard",
+    "abandon-operation",
+}
 
 CURRENT_ADMIN_COMMAND_HANDLERS = {
     "migrate": _step5_admin_migrate,

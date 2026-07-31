@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from dish_tool.admin import DishAdminApplication
+from dish_tool.admin import _OPERATION_TARGET_COMMANDS as _ADMIN_OPERATION_TARGET_COMMANDS
 from dish_tool.backend import AsanaBackend
 from dish_tool.commands import DishApplication, expose_authoritative_view
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
@@ -24,6 +25,8 @@ from dish_tool.database import (
     initialize_database,
     planning_reopen_attempt_by_request,
     process_command_audit_repairs,
+    resolve_admin_abandonment_target,
+    resolve_admin_operation_target,
     unresolved_planning_reopen_attempts,
 )
 from dish_tool.errors import BackendFailure, DishRuleError
@@ -2881,6 +2884,11 @@ class DishService:
     ) -> _AdminExecutionState:
         prepared = dict(arguments)
         if command == "reconcile-abandonment":
+            raw_abandonment_id = str(prepared.get("abandonment_id") or "").strip()
+            if raw_abandonment_id:
+                prepared["abandonment_id"] = resolve_admin_abandonment_target(
+                    conn, raw_abandonment_id
+                )
             abandonment_id = str(prepared.get("abandonment_id") or "").strip()
             if abandonment_id:
                 abandonment = conn.execute(
@@ -2889,6 +2897,12 @@ class DishService:
                 ).fetchone()
                 if abandonment is not None:
                     requested_operation_id = str(abandonment["source_operation_id"])
+        if command in _ADMIN_OPERATION_TARGET_COMMANDS:
+            raw_submission_id = str(prepared.get("submission_id") or "").strip()
+            if raw_submission_id:
+                prepared["submission_id"] = resolve_admin_operation_target(
+                    conn, raw_submission_id
+                )
         supplied_run_id = str(prepared.get("run_id") or "").strip()
         if command in _RUN_ID_ADMIN_COMMANDS and not supplied_run_id:
             prepared["run_id"] = principal.run_id
@@ -3246,13 +3260,17 @@ class DishService:
                     _database_initialization_error(exc),
                     submission_id=requested_operation_id,
                 )
-            state = self._prepare_admin_execution_state(
-                conn,
-                command=command,
-                arguments=arguments,
-                principal=principal,
-                requested_operation_id=requested_operation_id,
-            )
+            try:
+                state = self._prepare_admin_execution_state(
+                    conn,
+                    command=command,
+                    arguments=arguments,
+                    principal=principal,
+                    requested_operation_id=requested_operation_id,
+                )
+            except DishRuleError as exc:
+                conn.close()
+                return error_envelope(command, exc, submission_id=requested_operation_id)
             try:
                 early = self._begin_admin_execution(
                     state, command=command, request_id=request_id
