@@ -39,6 +39,9 @@ SMOKE_TEST_FILES = {
     "test_dish_006_restore_database_mode.py",
     "test_dish_tool_r10_concurrency_constraints.py",
     "test_dish_admin_expire_lease.py",
+    "test_dish_035_abandonment_verification_successors.py",
+    "test_dish_036_abandonment_admin_workflow.py",
+    "test_dish_037_abandonment_review_fixes.py",
 }
 
 
