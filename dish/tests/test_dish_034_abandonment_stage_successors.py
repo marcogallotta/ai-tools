@@ -348,6 +348,83 @@ def test_resolving_abandoned_preconstruction_hold_creates_research_successor():
 
 
 
+def test_real_reject_route_hold_then_abandonment_creates_research_successor(tmp_path):
+    """Producer-contract companion to test_resolving_abandoned_preconstruction_hold_creates_research_successor.
+
+    Reaches the held_evidence phase through the real "start" + "reject" command
+    path (dish_tool.step8.reject_route -> _preconstruction_research_hold)
+    instead of hand-declaring the research_preconstruction_hold step, proving
+    the real producer leaves the shape the fabricated-state test assumes.
+    """
+    from dish_tool.commands import DishApplication
+    from test_dish_tool_step7_verification import TASK
+
+    lines = TASK.splitlines()
+    backend = Backend(
+        title=lines[0], notes="\n".join(lines[1:]) + "\n", section="rq"
+    )
+    honest = tmp_path / "honest"
+    honest.mkdir()
+
+    def release(role=None):
+        return _release(role or "research")
+
+    app = DishApplication(
+        initialize_database(tmp_path / "dish.db"), backend, release_loader=release
+    )
+    started = app.execute(
+        "start", agent="gpt", task_gid="task", kind="initial",
+        change_level=None, change_reason=None, run_id="constructor-run",
+    )
+    assert started["ok"]
+    operation_id = started["submission_id"]
+    held = app.execute(
+        "reject", agent="gpt", submission_id=operation_id, route="evidence",
+        reason="need supplier confirmation before construction",
+        resume_status="pending-research", run_id="constructor-run",
+    )
+    assert held["ok"]
+    assert app.conn.execute(
+        "SELECT phase FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()[0] == "held_evidence"
+
+    source = app.conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    _abandon(app.conn, source)
+    settled = settle_abandonment_frontier(
+        app.conn, backend, abandonment_id="abandonment", reason="gone"
+    )
+    assert settled["classification"]["outcome"] == "awaiting_hold_resolution"
+
+    resolved = resolve_hold(
+        app.conn,
+        backend,
+        operation_id=operation_id,
+        resolution_kind="evidence",
+        detail="Evidence supplied",
+        resume_status="pending-research",
+        honest_root=honest,
+    )
+
+    successor_id = resolved["operation_id"]
+    assert successor_id != operation_id
+    assert resolved["required_action"]["arguments"]["prepared_operation_id"] == successor_id
+    assert app.conn.execute(
+        "SELECT status,phase,terminal_outcome FROM operations WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()[:] == ("cancelled", "terminal", "agent_abandoned")
+    successor = app.conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (successor_id,)
+    ).fetchone()
+    assert successor["operation_kind"] == "initial"
+    assert successor["phase"] == "prepare_required"
+    assert successor["successor_claim_mode"] == "stage_actor"
+    assert app.conn.execute(
+        "SELECT status FROM abandonment_attempts WHERE abandonment_id='abandonment'"
+    ).fetchone()[0] == "awaiting_successor_claim"
+
+
 def test_service_claims_exact_prepared_successor_and_acquires_actor_lease(tmp_path, monkeypatch):
     db_path = tmp_path / "dish.db"
     conn = initialize_database(db_path)

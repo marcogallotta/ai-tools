@@ -132,25 +132,6 @@ The retry-safety question is resolved for writer contention. Keep only the histo
 parked; reconsider implementation work if ordinary live use makes the condition frequent or a
 future occurrence violates the confirmed fail-before-execution and exact-retry behavior.
 
-### abandonment-suite-fabricated-states
-
-Several abandonment tests construct database state directly (operation phase, Verification-cycle
-outcome, cycle/step creation, abandonment records) rather than through governed producers, then make
-workflow-level claims from that fabricated shape. Separately, some service-level abandonment tests
-patch `_assert_mutation_ready`, `_release`, and `settle_abandonment_frontier` — reasonable for
-narrow unit tests, but those tests cannot be read as full authority, compatibility, or
-service-boundary validation.
-
-This is a coverage-confidence gap, not a demonstrated runtime defect: a green run over hand-built
-state or heavily mocked authority does not prove a real producer creates the same evidence graph, or
-that the claimed authority check actually runs. Distinguish persistence-invariant tests (direct SQL
-is fine) from producer-contract tests (must use the real command path); the strongest task-fence,
-crash, and replay tests should use real release resolution and real service admission logic.
-
-Revisit if a live incident occurs in an area whose only coverage is hand-built or mocked, or when
-adding a new abandonment-adjacent authority check — give it at least one producer-contract test
-using the real command path before treating it as proven.
-
 ## Accepted for launch
 
 ### private-planning-reopen

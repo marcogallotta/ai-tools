@@ -18,7 +18,7 @@ from dish_tool.database import (
     declare_operation_step,
 )
 from dish_tool.database_schema import initialize_database
-from dish_tool.models import OperationActors
+from dish_tool.models import OperationActors, ResolvedRelease
 
 
 PLANNING_NOTES = """### Planning brief
@@ -286,6 +286,97 @@ def test_confirmed_planning_handoff_finishes_existing_recovery_suffix():
         "terminal",
         "planning_handoff_confirmed",
     )
+
+
+def test_real_planning_prepare_crash_before_terminal_preserves_committed_finalized_route(
+    tmp_path, monkeypatch
+):
+    """Producer-contract companion to test_confirmed_planning_handoff_finishes_existing_recovery_suffix.
+
+    Drives the real "start"+"prepare" command path (dish_tool.step6.prepare_live)
+    for a Planning handoff and crashes it at the exact same point (after the
+    planning_write/planning_handoff steps commit, before transition_operation
+    completes planning_terminal) instead of hand-declaring that step shape,
+    proving the real producer leaves the state the fabricated-state test assumes.
+    """
+    from dish_tool import step6
+    from dish_tool.commands import DishApplication
+
+    class WritableBackend(Backend):
+        def __init__(self):
+            super().__init__(title="Bare", notes="", section="pi")
+            self.writes = 0
+            self.moves = 0
+
+        def update_task_content(self, *, task_gid, title, notes):
+            self.writes += 1
+            self.title, self.notes = title, notes
+
+        def move_task_to_section(self, *, task_gid, section_gid):
+            self.moves += 1
+            self.section = section_gid
+
+    backend = WritableBackend()
+    honest = tmp_path / "honest"
+    honest.mkdir()
+
+    def release(role=None):
+        return ResolvedRelease(
+            version="test-release", commit="test", root=honest,
+            protocols={} if role is None else {role: f"{role} protocol"},
+            manifests={}, manifest_texts={}, schema_version="2", schema={},
+            schema_text="{}", requested_protocol_role=role,
+        )
+
+    app = DishApplication(
+        initialize_database(tmp_path / "dish.db"), backend, release_loader=release
+    )
+    started = app.execute(
+        "start", agent="gpt", task_gid="task", kind="planning",
+        change_level=None, change_reason=None, run_id="dead-run",
+    )
+    assert started["ok"]
+    operation_id = started["submission_id"]
+    candidate = tmp_path / "planning.txt"
+    candidate.write_text(PLANNING_NOTES)
+
+    original_transition = step6.transition_operation
+
+    def crash_before_terminal(*args, **kwargs):
+        raise RuntimeError("crash before planning terminal")
+
+    monkeypatch.setattr(step6, "transition_operation", crash_before_terminal)
+    failed = app.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=operation_id, file_path=str(candidate),
+    )
+    assert failed["code"] == "BACKEND_UNCERTAIN"
+    assert failed["data"]["failed_step"] == "planning_terminal"
+    monkeypatch.setattr(step6, "transition_operation", original_transition)
+
+    operation = app.conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    assert operation["status"] == "open"
+    _abandonment(app.conn, operation)
+
+    frontier = classify_abandonment_frontier(
+        app.conn, backend, abandonment_id="abandonment"
+    )
+    assert frontier.outcome == "committed_finalized"
+    assert frontier.recovery_required is True
+
+    result = settle_abandonment_frontier(
+        app.conn, backend, abandonment_id="abandonment",
+        reason="finish confirmed Planning handoff",
+    )
+
+    assert result["abandonment"]["outcome"] == "committed_finalized"
+    source = app.conn.execute(
+        "SELECT status,phase,terminal_outcome FROM operations WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()
+    assert tuple(source) == ("completed", "terminal", "planning_handoff_confirmed")
 
 
 def test_completed_recovery_is_bookkept_after_process_loss_without_repeating():
