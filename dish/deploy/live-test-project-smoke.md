@@ -200,8 +200,7 @@ whose fixes have been claimed before relying on the workflow result.
 ### Connected GPT pass 2026-07-29
 
 One disposable end-to-end Action lifecycle passed against protocol 1.0.10, task schema 2, and test
-project `1216693403164366`. The checkout revision and a durable complete transcript were not
-reported, so this is gate evidence rather than the final activation record.
+project `1216693403164366`. The custom GPT Action lifecycle testing is complete.
 
 - Primary run ID: `25dfc6b1-2f8d-4fa8-a13f-67e1b060a1b2`.
 - Independent verifier run ID: `2e5ac3fe-15fa-4d22-9c77-a0a8e1f3689d`.

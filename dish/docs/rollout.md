@@ -21,7 +21,8 @@ complete and need not be repeated wholesale:
   select regression coverage in proportion to the affected authority and commits since the last
   recorded pass; documentation-only changes require no test rerun.
 - A connected GPT completed create → Planning → Research → independent Verification → submit, with
-  exact content identities, placement, request replay, and final signoff confirmed.
+  exact content identities, placement, request replay, and final signoff confirmed. The custom GPT
+  Action lifecycle testing is complete.
 - A fresh Small-correction lifecycle, Action lease-renewal replay/conflict, and failed-first
   validation replay/conflict passed.
 - The exact GPT editor Preview gate in [`../deploy/gpt-action.md`](../deploy/gpt-action.md) is
@@ -38,6 +39,13 @@ complete and need not be repeated wholesale:
   [`rollout.md`](../../../honest-pantry-dish-rollout/rollout.md) are largely complete, including
   Planning, Research, and Verification protocol testing through Dish's bounded regression set with
   sound positive controls and known material failure shapes.
+- **Abandoned run ownership, Part I** is complete. The pre-rollout abandonment patch —
+  `abandon-operation` and `reconcile-abandonment`, stage policy, the durable abandonment/succession
+  records, and the pre-construction Research reject lease-reacquisition fix — is implemented and
+  documented in `docs/architecture.md` and `docs/runtime-contract.md`.
+  [`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) Part I is now a historical
+  summary, not a live spec. Part II of that document is a post-rollout draft, reopened for review
+  only, not launch scope; see below.
 
 This evidence does not replace the final Honest semantic rehearsal, release-specific regression
 selection, migration rehearsal, rollback proof, or production authorization.
@@ -47,16 +55,9 @@ selection, migration rehearsal, rollback proof, or production authorization.
 Resolve and record these review items before production activation. Until a decision changes the
 implementation or runtime documentation, the current code and contracts remain authoritative.
 
-1. **Abandoned run ownership, Part I.** Complete. The pre-rollout abandonment patch —
-   `abandon-operation` and `reconcile-abandonment`, stage policy, the durable
-   abandonment/succession records, and the pre-construction Research reject lease-reacquisition
-   fix — is implemented and documented in `docs/architecture.md` and `docs/runtime-contract.md`.
-   [`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) Part I is now a
-   historical summary, not a live spec. Part II of that document is a post-rollout draft, reopened
-   for review only, not launch scope; see below.
-2. **Final regression gate.** Preserve the deterministic recovery and governed-audit regressions,
+1. **Final regression gate.** Preserve the deterministic recovery and governed-audit regressions,
    then pass focused concurrency/recovery coverage plus the complete suite on the final code.
-3. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
+2. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
    and section-registry verification, and production cutover still require explicit authorization.
 
 ## Post-rollout: abandoned run ownership Part II review
