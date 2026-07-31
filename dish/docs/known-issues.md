@@ -38,15 +38,4 @@ clear workaround and revisit trigger. For every new or reconsidered issue, recor
 
 ## Known issues, ordered by priority
 
-### connected-request-status-inspection
-
-**Priority: p3.**
-
-A connected agent with a `request_id` has no read-only lookup for the request's authoritative
-state. Exact replay remains the recovery contract, while investigation otherwise depends on private
-tooling, logs, or inference from linked workflow records.
-
-A future bounded lookup could report request status, command name, owner/run match, linked task and
-operation identifiers, whether exact replay is safe, and any required private or human recovery.
-It should not expose full canonical arguments or stored results by default. This is non-blocking
-observability work; implement it only if post-launch response-loss investigations become frequent.
+None currently queued.
