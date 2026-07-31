@@ -157,7 +157,6 @@ def test_service_blocks_ordinary_start_before_backend_while_task_is_fenced(tmp_p
     [
         "blocked_manual_reconciliation",
         "awaiting_hold_resolution",
-        "awaiting_successor_claim",
     ],
 )
 def test_active_abandonment_fences_new_operation_across_all_active_states(
@@ -208,6 +207,38 @@ def test_active_abandonment_fences_new_operation_across_all_active_states(
     assert _count(check, "service_leases") == baseline_leases
     assert _count(check, "operation_actor_facts") == baseline_actor_facts
     check.close()
+
+
+def test_awaiting_successor_claim_lets_plain_start_through_to_resolve(tmp_path):
+    """A ready prepared successor is no longer a fence for a plain start.
+
+    Unlike the still-blocked states above, `awaiting_successor_claim` means a
+    successor is prepared and ready; a caller that names only the task_gid
+    passes the connected-surface fence and reaches ordinary Planning `start`
+    handling (here, its own two-call intent gate), which resolves the exact
+    prepared successor itself rather than requiring the caller to echo it.
+    """
+    db_path = tmp_path / "dish.db"
+    conn = initialize_database(db_path)
+    backend = Backend(section="pi")
+    _abandonment_in_state(conn, backend, target_status="awaiting_successor_claim")
+    conn.close()
+
+    service = DishService(
+        ServiceConfig(db_path=db_path, honest_root=tmp_path / "honest"),
+        backend_factory=lambda: (_ for _ in ()).throw(
+            AssertionError("Planning's own intent gate must run before backend construction")
+        ),
+    )
+    result = service.execute_agent(
+        "start",
+        {"task_gid": "task", "agent": "gpt", "kind": "planning"},
+        principal=ServicePrincipal("owner", "new-run"),
+        request_id=str(uuid.uuid4()),
+    )
+
+    assert result["code"] == "CONFIRMATION_REQUIRED"
+    assert result["errors"][0]["rule"] == "planning_intent_confirmation_required"
 
 
 def test_reconcile_finishes_execution_and_requests_after_post_settlement_crash(

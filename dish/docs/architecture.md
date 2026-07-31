@@ -409,7 +409,7 @@ an exact prepared successor. The successor owns a confirmed `successor_baseline`
 scoped persistence primitive refuses incomplete workflow steps or unresolved external-effect
 attempts, retires the exact source lease, and commits source terminalization, optional incomplete-
 cycle abandonment, successor operation/cycle creation, baseline transfer, lineage, and abandonment
-state together. Only `dish-admin abandon-operation` and `dish-admin reconcile-abandonment` may call this foundation, and both route through `CurrentWorkflowService` plus the existing operation-execution claim. Connected agents cannot select a transition, terminal outcome, source lease, or replacement target.
+state together. Only `dish-admin abandon-operation` and `dish-admin reconcile-abandonment` may call this foundation, and both route through `CurrentWorkflowService` plus the existing operation-execution claim. Connected agents cannot select a transition, terminal outcome, source lease, or replacement target; the successor is always resolved by the system from `task_gid`, never chosen by the caller.
 
 The abandonment frontier policy lives in `dish_tool.abandonment` and is routed only through
 `CurrentWorkflowService`. `abandon-operation` creates the durable exact-attempt record while holding the source operation execution claim; a crashed admin invocation is resumed by reclaiming that same linked execution rather than creating an unresolved execution chain. `reconcile-abandonment` is valid only for the recorded abandonment.
@@ -426,8 +426,14 @@ without repeating recovery.
 
 Clean Planning and Research frontiers now publish the immutable successor, successor-owned baseline,
 and exact `prepared_operation_id` start action. The successor remains unowned with
-`successor_claim_mode=stage_actor` until that exact target is claimed. Claiming binds the fresh
-planner, constructor, or material editor run, records its actor fact, clears the claim mode, and
+`successor_claim_mode=stage_actor` until that exact target is claimed. A connected `start` for the
+same task that omits `prepared_operation_id` is resolved automatically: because at most one
+non-completed abandonment can exist per task, the service reads the exact recorded
+`abandonment_attempts` row and, only while it is `awaiting_successor_claim` with a recorded
+`successor_operation_id`, substitutes that exact target into the same claim transaction the caller
+would otherwise have had to name. An explicitly supplied `prepared_operation_id` is still validated
+against that exact recorded value and rejected if it differs. Claiming binds the fresh planner,
+constructor, or material editor run, records its actor fact, clears the claim mode, and
 completes the abandonment; the abandoned run is ineligible. Because no stage work has started on
 the prepared successor, an exact claim that passes deployment-current live validation may also
 adopt the current schema version in that same claim transaction. This is the only permitted update
@@ -451,10 +457,14 @@ Every Verification start selected by an abandonment uses the same exact-target c
 an already-created cycle preserved after a committed Research handoff or rejection route. Ordinary
 Verification starts may still omit target IDs. A target pair is canonical request identity; one ID
 without the other is invalid, and a delayed target for an older cycle fails rather than selecting a
-later current cycle. The private operator surface returns the exact connected start target; it never transfers the abandoned actor identity.
+later current cycle. A connected start that omits both target IDs is resolved the same way as the
+Planning/Research case: while the exact recorded abandonment is `awaiting_successor_claim` with a
+recorded `target_operation_id`/`target_cycle_id` pair, the service substitutes that exact pair into
+the same claim; an explicitly supplied pair is still validated against it exactly. The private
+operator surface returns the exact connected start target; it never transfers the abandoned actor identity.
 
 
-While an abandonment is `started`, `blocked_manual_reconciliation`, `awaiting_hold_resolution`, or `awaiting_successor_claim`, it is also a task-level connected-mutation fence. Reads and inspection remain available, but no actor lease is acquired for an unrelated mutation. The service checks this fence before an ordinary `start` can construct a backend or select an operation, and `create_operation` rechecks it inside the operation-creation writer transaction. The sole exception is the exact prepared successor claim returned by the abandonment. Blocked results include a generated `reconcile-abandonment` command, a wait-for-confirmation relay, and an instruction to refresh the authoritative action afterward. Hold continuations that require human-authored detail include the generated command template directly in the relay text. A completed route-preserved Verification continuation remains exact-targeted in authoritative reads until its cycle is claimed.
+While an abandonment is `started`, `blocked_manual_reconciliation`, `awaiting_hold_resolution`, or `awaiting_successor_claim`, it is also a task-level connected-mutation fence. Reads and inspection remain available, but no actor lease is acquired for an unrelated mutation. The service checks this fence before an ordinary `start` can construct a backend or select an operation, and `create_operation` rechecks it inside the operation-creation writer transaction. The sole exception is the exact prepared successor claim returned by the abandonment, whether the caller supplies that exact target or omits it and lets the service resolve it from `task_gid`; the service-layer check permits pass-through only while `awaiting_successor_claim` and only for the exact recorded successor, so `started`, `blocked_manual_reconciliation`, and `awaiting_hold_resolution` remain hard-fenced exactly as before. Blocked results include a generated `reconcile-abandonment` command, a wait-for-confirmation relay, and an instruction to refresh the authoritative action afterward, so a connected agent hitting a still-blocked or wedged fence learns the exact command to relay for Marco to run rather than a raw internal identifier. Hold continuations that require human-authored detail include the generated command template directly in the relay text. A completed route-preserved Verification continuation remains exact-targeted in authoritative reads until its cycle is claimed.
 
 A prepared Planning/Research successor that drifts before claim does not remain in an unusable `awaiting_successor_claim` loop. The exact claim transaction atomically moves the abandonment to `blocked_manual_reconciliation` and returns the generated reconciliation command. `reconcile-abandonment` restores the successor-owned immutable baseline and expected placement through journaled successor write/movement attempts, then republishes the same exact prepared start. Contradictory or unrelated successor effects remain blocked. Immutable succession and baseline bindings are never rebased in place.
 

@@ -427,6 +427,63 @@ def test_real_reject_route_hold_then_abandonment_creates_research_successor(tmp_
     ).fetchone()[0] == "awaiting_successor_claim"
 
 
+def test_start_without_prepared_id_auto_claims_ready_successor(tmp_path):
+    """A plain `start` (no prepared_operation_id) auto-claims a ready successor.
+
+    Companion to test_prepared_planning_claim_rejects_abandoned_run_then_binds_fresh_run,
+    proving the caller no longer needs to echo the exact prepared_operation_id
+    back: dish resolves it from task_gid alone once the successor is ready.
+    """
+    from dish_tool.commands import DishApplication
+    from test_dish_tool_step7_verification import TASK
+
+    lines = TASK.splitlines()
+    backend = Backend(
+        title=lines[0], notes="\n".join(lines[1:]) + "\n", section="rq"
+    )
+
+    def release(role=None):
+        return _release(role or "research")
+
+    app = DishApplication(
+        initialize_database(":memory:"), backend, release_loader=release
+    )
+    conn = app.conn
+    started = app.execute(
+        "start", agent="gpt", task_gid="task", kind="initial",
+        change_level=None, change_reason=None, run_id="dead-run",
+    )
+    assert started["ok"]
+    source = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (started["submission_id"],)
+    ).fetchone()
+    _abandon(conn, source)
+    settled = settle_abandonment_frontier(
+        conn, backend, abandonment_id="abandonment", reason="gone"
+    )
+    successor_id = settled["successor_operation_id"]
+
+    old_run = app.execute(
+        "start", agent="gpt", task_gid="task", kind="initial",
+        change_level=None, change_reason=None, run_id="dead-run",
+    )
+    assert old_run["errors"][0]["rule"] == "abandoned_run_claim_forbidden"
+
+    claimed = app.execute(
+        "start", agent="gpt", task_gid="task", kind="initial",
+        change_level=None, change_reason=None, run_id="fresh-run",
+    )
+    assert claimed["ok"]
+    assert claimed["submission_id"] == successor_id
+    assert conn.execute(
+        "SELECT successor_claim_mode,run_id FROM operations WHERE operation_id=?",
+        (successor_id,),
+    ).fetchone()[:] == ("none", "fresh-run")
+    assert conn.execute(
+        "SELECT status,outcome FROM abandonment_attempts WHERE abandonment_id='abandonment'"
+    ).fetchone()[:] == ("completed", "restarted")
+
+
 def test_service_claims_exact_prepared_successor_and_acquires_actor_lease(tmp_path, monkeypatch):
     db_path = tmp_path / "dish.db"
     conn = initialize_database(db_path)

@@ -141,23 +141,23 @@ def test_clean_verification_abandonment_creates_exact_unbound_successor(tmp_path
     assert "verifier" not in roles
 
 
-def test_prepared_verification_requires_exact_target_and_fresh_run(tmp_path):
+def test_prepared_verification_resolves_target_and_requires_fresh_run(tmp_path):
     app, _backend, _source_id, _source_cycle_id, prepared = _prepared_verification(
         tmp_path
     )
     successor_id = prepared["successor_operation_id"]
     successor_cycle_id = prepared["successor_cycle_id"]
 
-    missing = app.execute(
+    old_run = app.execute(
         "start",
         agent="codex",
         task_gid="t",
         kind="verification",
-        run_id="fresh-verifier-run",
+        run_id="dead-verifier-run",
         independence_attestation="independent",
     )
-    assert missing["code"] == "WRONG_STATE"
-    assert missing["errors"][0]["rule"] == "verification_start_target_required"
+    assert old_run["code"] == "AGENT_MISMATCH"
+    assert old_run["errors"][0]["rule"] == "abandoned_run_claim_forbidden"
 
     stale = app.execute(
         "start",
@@ -172,19 +172,6 @@ def test_prepared_verification_requires_exact_target_and_fresh_run(tmp_path):
     assert stale["code"] == "WRONG_STATE"
     assert stale["errors"][0]["rule"] == "verification_start_target_stale"
 
-    old_run = app.execute(
-        "start",
-        agent="codex",
-        task_gid="t",
-        kind="verification",
-        run_id="dead-verifier-run",
-        independence_attestation="independent",
-        target_operation_id=successor_id,
-        target_cycle_id=successor_cycle_id,
-    )
-    assert old_run["code"] == "AGENT_MISMATCH"
-    assert old_run["errors"][0]["rule"] == "abandoned_run_claim_forbidden"
-
     claimed = app.execute(
         "start",
         agent="codex",
@@ -192,8 +179,6 @@ def test_prepared_verification_requires_exact_target_and_fresh_run(tmp_path):
         kind="verification",
         run_id="fresh-verifier-run",
         independence_attestation="independent",
-        target_operation_id=successor_id,
-        target_cycle_id=successor_cycle_id,
     )
     assert claimed["ok"]
     assert claimed["submission_id"] == successor_id
@@ -267,6 +252,84 @@ def test_service_claims_exact_verification_target_and_binds_lease_cycle(
     check.close()
 
 
+def test_route_preserved_verification_continuation_resolves_omitted_target(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review = app.execute(
+        "start",
+        agent="codex",
+        task_gid="t",
+        kind="verification",
+        run_id="dead-verifier-run",
+        independence_attestation="independent",
+    )
+    old_cycle_id = review["data"]["cycle_id"]
+    protocol_release = app.conn.execute(
+        "SELECT protocol_release FROM verification_cycles WHERE cycle_id=?",
+        (old_cycle_id,),
+    ).fetchone()["protocol_release"]
+    app.conn.execute(
+        """UPDATE verification_cycles
+              SET outcome='rejected', correction_class='large', completed_at='now'
+            WHERE cycle_id=?""",
+        (old_cycle_id,),
+    )
+    next_cycle = create_verification_cycle(
+        app.conn,
+        operation_id=operation_id,
+        task_gid="t",
+        cycle_number=2,
+        protocol_release=protocol_release,
+        protocol_text="# Exact frozen Verification protocol\n",
+    )
+    lease = LeaseManager(app.conn).acquire(
+        operation_id,
+        ServicePrincipal("owner", "dead-verifier-run"),
+        context_cycle_id=old_cycle_id,
+    )
+    LeaseManager(app.conn).release(
+        operation_id, None, reason="stale verifier released", admin=True
+    )
+    app.conn.execute("BEGIN IMMEDIATE")
+    create_abandonment_attempt_in_transaction(
+        app.conn,
+        abandonment_id="abandonment",
+        task_gid="t",
+        source_operation_id=operation_id,
+        source_lease_id=lease["lease_id"],
+        abandoned_owner_id="owner",
+        abandoned_run_id="dead-verifier-run",
+        attempt_cycle_id=old_cycle_id,
+        reason="conversation permanently unavailable",
+    )
+    app.conn.execute("COMMIT")
+
+    settle_abandonment_frontier(
+        app.conn, backend, abandonment_id="abandonment", reason="preserve route"
+    )
+
+    old_run = app.execute(
+        "start",
+        agent="gpt",
+        task_gid="t",
+        kind="verification",
+        run_id="dead-verifier-run",
+        independence_attestation="independent",
+    )
+    assert old_run["errors"][0]["rule"] == "abandoned_run_claim_forbidden"
+
+    claimed = app.execute(
+        "start",
+        agent="gpt",
+        task_gid="t",
+        kind="verification",
+        run_id="fresh-run",
+        independence_attestation="independent",
+    )
+    assert claimed["ok"]
+    assert claimed["submission_id"] == operation_id
+    assert claimed["data"]["cycle_id"] == next_cycle["cycle_id"]
+
+
 def test_route_preserved_verification_continuation_is_exact_targeted(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review = app.execute(
@@ -323,16 +386,6 @@ def test_route_preserved_verification_continuation_is_exact_targeted(tmp_path):
         "target_operation_id": operation_id,
         "target_cycle_id": next_cycle["cycle_id"],
     }
-
-    missing = app.execute(
-        "start",
-        agent="gpt",
-        task_gid="t",
-        kind="verification",
-        run_id="fresh-run",
-        independence_attestation="independent",
-    )
-    assert missing["errors"][0]["rule"] == "verification_start_target_required"
 
     app.conn.execute(
         "UPDATE verification_cycles SET outcome='rejected', completed_at='later' WHERE cycle_id=?",

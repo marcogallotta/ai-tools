@@ -156,16 +156,6 @@ def resolve_verification_start_target(
     authority = verification_start_abandonment_authority(
         conn, operation_id=op["operation_id"], cycle_id=cycle["cycle_id"]
     )
-    if authority is not None and clean_operation is None:
-        raise DishRuleError(
-            "WRONG_STATE",
-            "this Verification continuation requires the exact abandonment target",
-            rule="verification_start_target_required",
-            details={
-                "target_operation_id": op["operation_id"],
-                "target_cycle_id": cycle["cycle_id"],
-            },
-        )
     return op, cycle, authority
 
 
@@ -299,16 +289,6 @@ def verification_read(
         conn, operation_id=operation_id, cycle_id=cycle["cycle_id"]
     )
     if abandonment is not None:
-        if target_operation_id is None or target_cycle_id is None:
-            raise DishRuleError(
-                "WRONG_STATE",
-                "this Verification continuation requires the exact abandonment target",
-                rule="verification_start_target_required",
-                details={
-                    "target_operation_id": operation_id,
-                    "target_cycle_id": cycle["cycle_id"],
-                },
-            )
         if str(run_id or "").strip() == str(abandonment["abandoned_run_id"] or "").strip():
             raise DishRuleError(
                 "AGENT_MISMATCH",

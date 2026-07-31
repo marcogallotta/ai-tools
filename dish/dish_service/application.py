@@ -1204,9 +1204,22 @@ class DishService:
         abandonment = self._active_abandonment_for_task(conn, task_gid)
         if abandonment is None:
             return
-        exact_claim = bool(
+        ready_to_claim = bool(
             abandonment["status"] == "awaiting_successor_claim"
             and abandonment["successor_operation_id"]
+        )
+        has_explicit_target = bool(
+            arguments.get("prepared_operation_id")
+            or arguments.get("target_operation_id")
+            or arguments.get("target_cycle_id")
+        )
+        if ready_to_claim and not has_explicit_target:
+            # The caller named only the task; dish resolves the exact prepared
+            # successor itself further down instead of requiring it be echoed
+            # back. An explicitly supplied target is still checked below.
+            return
+        exact_claim = bool(
+            ready_to_claim
             and (
                 arguments.get("prepared_operation_id")
                 == abandonment["successor_operation_id"]

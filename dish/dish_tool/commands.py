@@ -741,37 +741,75 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
                     details=details,
                 ) from exc
             raise
-        if exc.rule != "open_operation_exists" or prepared_operation_id is not None:
-            raise
-        existing = self.conn.execute(
-            """SELECT operation_id FROM operations
-                 WHERE task_gid=? AND status IN ('open','uncertain')
-                 ORDER BY created_at DESC LIMIT 1""",
-            (task_gid,),
-        ).fetchone()
-        if existing is None:
-            raise
-        existing_id = existing["operation_id"]
-        view = _exposed_view(
-            self.operation_service.authoritative_view(
-                existing_id, schema=release.schema
+        if exc.rule == "abandonment_fence_active" and prepared_operation_id is None:
+            successor_operation_id = exc.details.get("successor_operation_id")
+            if (
+                not successor_operation_id
+                or exc.details.get("abandonment_status") != "awaiting_successor_claim"
+            ):
+                admin_command = exc.details.get("admin_command")
+                raise DishRuleError(
+                    exc.code,
+                    str(exc),
+                    rule=exc.rule,
+                    retryable=exc.retryable,
+                    details={
+                        **exc.details,
+                        "resolver": _admin_resolver(
+                            exc.details.get("required_admin_action")
+                        ),
+                        "directive": (
+                            f"Tell the human to run: {admin_command}\n"
+                            "Then wait for confirmation it succeeded before "
+                            "retrying start with a fresh client.request_id."
+                        ),
+                    },
+                ) from exc
+            op = self.operation_service.current.start_operation(
+                lambda: claim_prepared_stage_successor(
+                    self.conn,
+                    live=live,
+                    release=release,
+                    kind=kind,
+                    agent=agent,
+                    run_id=run_id,
+                    prepared_operation_id=successor_operation_id,
+                    change_level=change_level,
+                    change_reason=change_reason,
+                )
             )
-        )
-        required_admin_action = view.get("required_admin_action")
-        trace.submission_id = existing_id
-        trace.state = str(view.get("status") or "") or None
-        raise DishRuleError(
-            "CONFLICT",
-            "task already has an open operation",
-            rule="open_operation_exists",
-            details={
-                "existing_submission_id": existing_id,
-                "phase": view.get("phase"),
-                "required_admin_action": required_admin_action,
-                "resolver": _admin_resolver(required_admin_action),
-                **_evidence_hold_continuation(self.conn, existing_id, view),
-            },
-        ) from exc
+        elif exc.rule != "open_operation_exists" or prepared_operation_id is not None:
+            raise
+        else:
+            existing = self.conn.execute(
+                """SELECT operation_id FROM operations
+                     WHERE task_gid=? AND status IN ('open','uncertain')
+                     ORDER BY created_at DESC LIMIT 1""",
+                (task_gid,),
+            ).fetchone()
+            if existing is None:
+                raise
+            existing_id = existing["operation_id"]
+            view = _exposed_view(
+                self.operation_service.authoritative_view(
+                    existing_id, schema=release.schema
+                )
+            )
+            required_admin_action = view.get("required_admin_action")
+            trace.submission_id = existing_id
+            trace.state = str(view.get("status") or "") or None
+            raise DishRuleError(
+                "CONFLICT",
+                "task already has an open operation",
+                rule="open_operation_exists",
+                details={
+                    "existing_submission_id": existing_id,
+                    "phase": view.get("phase"),
+                    "required_admin_action": required_admin_action,
+                    "resolver": _admin_resolver(required_admin_action),
+                    **_evidence_hold_continuation(self.conn, existing_id, view),
+                },
+            ) from exc
     trace.submission_id = op["operation_id"]
     trace.state = op["status"]
     return result_envelope(
@@ -878,6 +916,7 @@ def _step7_start(
         target_cycle_id=target_cycle_id,
     )
     operation_id = operation["operation_id"]
+    cycle_id = cycle["cycle_id"]
     release = self._load_release("verification")
     data, view = self.operation_service.current.start_verification(
         operation_id,
@@ -885,8 +924,8 @@ def _step7_start(
             self.conn, self.backend, operation_id=operation_id, agent=agent,
             honest_root=release.root, run_id=run_id,
             independence_attestation=clean_attestation, schema=release.schema,
-            target_operation_id=target_operation_id,
-            target_cycle_id=target_cycle_id,
+            target_operation_id=operation_id,
+            target_cycle_id=cycle_id,
         ),
         schema=release.schema,
     )
