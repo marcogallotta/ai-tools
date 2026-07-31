@@ -1208,30 +1208,14 @@ class DishService:
             abandonment["status"] == "awaiting_successor_claim"
             and abandonment["successor_operation_id"]
         )
-        has_explicit_target = bool(
-            arguments.get("prepared_operation_id")
-            or arguments.get("target_operation_id")
-            or arguments.get("target_cycle_id")
-        )
-        if ready_to_claim and not has_explicit_target:
-            # The caller named only the task; dish resolves the exact prepared
-            # successor itself further down instead of requiring it be echoed
-            # back. An explicitly supplied target is still checked below.
-            return
-        exact_claim = bool(
-            ready_to_claim
-            and (
-                arguments.get("prepared_operation_id")
-                == abandonment["successor_operation_id"]
-                or (
-                    arguments.get("target_operation_id")
-                    == abandonment["successor_operation_id"]
-                    and arguments.get("target_cycle_id")
-                    == abandonment["successor_cycle_id"]
-                )
-            )
-        )
-        if exact_claim:
+        if ready_to_claim:
+            # A successor is prepared and ready. Whether the caller names no
+            # target, the exact current target, or a stale one, ordinary start
+            # handling resolves and validates the exact target itself further
+            # down (see resolve_verification_start_target and
+            # claim_prepared_stage_successor) and reports a self-correctable
+            # error there. Only a still-blocked abandonment needs the human to
+            # run admin reconciliation.
             return
         command_text = (
             f'dish-admin reconcile-abandonment {abandonment["abandonment_id"]}'
@@ -1268,16 +1252,12 @@ class DishService:
             command == "start"
             and abandonment["status"] == "awaiting_successor_claim"
             and abandonment["successor_operation_id"] == operation_id
-            and (
-                arguments.get("prepared_operation_id") == operation_id
-                or (
-                    arguments.get("target_operation_id") == operation_id
-                    and arguments.get("target_cycle_id")
-                    == abandonment["successor_cycle_id"]
-                )
-            )
         )
         if prepared_claim:
+            # By this point operation_id was already resolved and validated
+            # against the abandonment's exact prepared successor (see
+            # resolve_verification_start_target and _resolve_agent_operation),
+            # so no further argument echo is required here.
             return
         command_text = (
             f'dish-admin reconcile-abandonment {abandonment["abandonment_id"]}'
