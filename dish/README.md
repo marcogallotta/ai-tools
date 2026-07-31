@@ -79,6 +79,11 @@ workflow commands, so edits to those assets do not require a service restart. Re
 `dish-service` after changing its environment or Python code. Verification cycles already in
 progress remain bound to their recorded Verification protocol release.
 
+The unit is `Type=notify`: the process sends systemd a `READY=1` notification only once both
+listeners are bound and their serve loops are running, so `sudo systemctl restart dish-service`
+blocks until the new process is actually ready to take requests — no race where a command issued
+right after `restart` returns hits the old process mid-shutdown.
+
 The service binds two loopback listeners:
 
 - private CLI/admin listener on `127.0.0.1:8765`;

@@ -15,6 +15,7 @@ from .config import ServiceConfig
 from .database_ownership import ServiceDatabaseOwnership, service_process_lock_path
 from .http import DishHTTPServer, build_action_server, build_private_server
 from .process_lock import ServiceProcessLock
+from .sd_notify import notify as sd_notify
 from dish_tool.errors import DishRuleError
 
 LOG = logging.getLogger("dish.service")
@@ -109,6 +110,7 @@ def _run_servers(
         stop.set()
     try:
         if started_count == len(threads):
+            sd_notify("READY=1")
             stop.wait()
     except KeyboardInterrupt:
         stop.set()

@@ -4,7 +4,7 @@ After=network-online.target tailscaled.service
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
 User=marco
 WorkingDirectory=/home/marco/ai-tools/dish
 EnvironmentFile=/home/marco/.config/dish-service/service.env
