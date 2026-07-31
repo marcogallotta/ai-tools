@@ -38,32 +38,6 @@ clear workaround and revisit trigger. For every new or reconsidered issue, recor
 
 ## Known issues, ordered by priority
 
-### execution-recovery-audit-misattribution
-
-**Priority: p2.**
-
-`execution_recovery_state()` reconstructs durable effects it attributes to one execution, but has no
-positive provenance for audit rows: it takes the operation-wide max audit row ID at execution start
-and treats every newer row as execution evidence, except a fixed event-name prefix denylist
-(`write_attempt.`, `movement_attempt.`, `dish.`, `dish-admin.`). A concurrent `marco.authorization`
-grant, or a real verifier `inspect` committing `verification.inspected`/`dish_inspect_facts`, gets
-attributed to an unrelated, unconnected execution that failed before any effect.
-
-This is demonstrated by deterministic probe, not hypothetical, for both interleavings. The worst
-effect is a false `BACKEND_UNCERTAIN`: recovery is reported required, retry is blocked, and the
-agent is directed to run `dish-admin recover --outcome applied`, which is safe but a no-op. This is
-fail-closed operator toil, not corruption — no duplicate or wrong effect occurs, and Marco's
-recovery is one documented command needing no private knowledge. Recurrence needs a narrow race
-(concurrent authorization or inspection against a failing execution), but any newly introduced audit
-event type can silently reintroduce it by evading the denylist.
-
-Fix with real provenance (e.g. an `operation_execution_id` column on relevant audit rows, or a
-durable list of evidence IDs the execution produced) rather than extending the exclusion list.
-Reconsider priority on any live false-recovery incident, or once authorization/inspection commands
-routinely overlap live executions. Add regression coverage using real `authorize-governed-change`
-and real verifier `inspect` commands racing a no-effect execution failure, rather than a synthetic
-audit row — the existing synthetic test only re-asserts the current heuristic.
-
 ### connected-request-status-inspection
 
 **Priority: p3.**

@@ -123,6 +123,12 @@ reuse the challenge. Supplying an intent basis on the first request cannot bypas
 Every multi-step workflow mutation routed through the operation service has a request-scoped
 `operation_executions` baseline. Failure reconstruction may attribute only evidence created or
 changed by that execution; older operation history cannot be presented as the failed call's work.
+Workflow audit rows written inside the claimed executor carry the exact durable
+`audit_events.operation_execution_id`. Recovery selects those positively bound rows rather than
+inferring ownership from operation-wide row order or event names. Concurrent invocation audits,
+verifier inspection facts, and Marco authorization grants remain unbound to the unrelated execution
+that happened to be active. A pre-schema-35 execution whose immutable baseline predates this field
+retains the conservative row-order fallback only until that already-in-flight execution resolves.
 
 ### Committed success stays success
 
@@ -309,7 +315,7 @@ cannot silently create separate live authorities.
 | execution and ownership | `operation_executions`, `operation_execution_claims`, `service_leases` |
 | request replay | `service_requests`; sibling identity, checkpoint, and result journal for `backup-restore` |
 | Planning intent confirmation | `planning_intent_challenges` |
-| audit and repair | `audit_events`, `command_audit_repairs` |
+| audit and repair | `audit_events` with optional exact `operation_execution_id`, `command_audit_repairs` |
 | historical quarantine | `legacy_submission_quarantine` and read-only legacy records |
 
 Triggers enforce append-only or monotonic evidence where recovery depends on history. Workflow state

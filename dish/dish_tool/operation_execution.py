@@ -144,6 +144,7 @@ def _execution_baseline(conn: sqlite3.Connection, operation_id: str) -> dict[str
         "content_rowid": _max_rowid(conn, "content_versions", operation_id),
         "actor_rowid": _max_rowid(conn, "operation_actor_facts", operation_id),
         "audit_rowid": _max_rowid(conn, "audit_events", operation_id),
+        "audit_provenance_version": 1,
         "task_gid": operation["task_gid"],
         "task_identity": (
             operation["expected_identity"]
@@ -918,9 +919,27 @@ def _execution_changes(
     changed_steps, step_scope = _execution_step_scope(
         command=row["command"], current=current_steps, baseline=baseline["steps"]
     )
-    audits = _rows_after(
-        conn, "audit_events", operation_id, int(baseline["audit_rowid"])
-    )
+    if int(baseline.get("audit_provenance_version") or 0) >= 1:
+        workflow_audits = conn.execute(
+            """SELECT rowid AS evidence_rowid,*
+                 FROM audit_events
+                WHERE operation_execution_id=?
+                ORDER BY rowid""",
+            (row["execution_id"],),
+        ).fetchall()
+    else:
+        # Pre-provenance executions retain the conservative historical fallback
+        # so migration cannot erase recovery evidence already in flight.
+        audits = _rows_after(
+            conn, "audit_events", operation_id, int(baseline["audit_rowid"])
+        )
+        workflow_audits = [
+            audit
+            for audit in audits
+            if not str(audit["event_type"]).startswith(
+                ("write_attempt.", "movement_attempt.", "dish.", "dish-admin.")
+            )
+        ]
     return {
         "writes": writes,
         "movements": movements,
@@ -942,13 +961,12 @@ def _execution_changes(
             operation_id,
             int(baseline["actor_rowid"]),
         ),
-        "workflow_audits": [
-            audit
-            for audit in audits
-            if not str(audit["event_type"]).startswith(
-                ("write_attempt.", "movement_attempt.", "dish.", "dish-admin.")
-            )
-        ],
+        "workflow_audits": workflow_audits,
+        "audit_provenance": (
+            "operation_execution_id"
+            if int(baseline.get("audit_provenance_version") or 0) >= 1
+            else "legacy_operation_rowid"
+        ),
     }
 
 
@@ -1032,6 +1050,7 @@ def _execution_recovery_classification(
         "committed_effects": committed_effects,
         "recovery_required": recovery_required,
         "required_outcome": required_outcome,
+        "audit_provenance": changes["audit_provenance"],
     }
 
 

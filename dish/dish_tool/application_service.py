@@ -8,6 +8,7 @@ from typing import Callable, TypeVar
 
 from .database_schema import _validate_semantic_evidence
 from .errors import DishRuleError
+from .execution_provenance import operation_execution_provenance
 from .legacy_adapter import LegacyReadOnlyAdapter
 from .operation_execution import (
     claim_abandonment_execution,
@@ -620,7 +621,12 @@ class CurrentWorkflowService:
         try:
             if assert_action and not claim.resuming_uncertain:
                 self.assert_action(operation_id, command, schema=schema)
-            result = executor()
+            with operation_execution_provenance(
+                self.conn,
+                execution_id=claim.execution_id,
+                operation_id=operation_id,
+            ):
+                result = executor()
             recovered_small_signoff = bool(
                 command == "recover"
                 and isinstance(result, dict)

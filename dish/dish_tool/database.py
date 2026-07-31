@@ -13,6 +13,7 @@ from .audit_repair_sidecar import fsync_parent, locked_audit_repair_sidecar
 from .constants import SUBMISSION_STATES
 from .database_schema import MIGRATIONS, initialize_database, migrate_database
 from .errors import DishRuleError
+from .execution_provenance import current_operation_execution_id
 from .models import ContentIdentity, OperationActors, agent_family, utc_now
 from .transactions import immediate_transaction, savepoint_transaction
 
@@ -92,13 +93,14 @@ def record_audit(
         "source": actor_source,
     }
     event_id = str(uuid.uuid4())
+    operation_execution_id = current_operation_execution_id(conn, operation_id=operation_id)
     conn.execute(
         """
         INSERT INTO audit_events (
             event_id, submission_id, task_gid, event_type, actor_agent, details,
             created_at, operation_id, result_code, result_ok, governed_kind,
-            before_state, after_state, actor_provenance
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            before_state, after_state, actor_provenance, operation_execution_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event_id, submission_id, task_gid, event_type, actor_agent,
@@ -108,6 +110,7 @@ def record_audit(
             None if before_state is None else json.dumps(dict(before_state), sort_keys=True, separators=(",", ":")),
             None if after_state is None else json.dumps(dict(after_state), sort_keys=True, separators=(",", ":")),
             json.dumps(provenance, sort_keys=True, separators=(",", ":")),
+            operation_execution_id,
         ),
     )
     return event_id

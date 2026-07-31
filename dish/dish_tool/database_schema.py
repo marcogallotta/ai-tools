@@ -2271,8 +2271,27 @@ BEFORE DELETE ON planning_intent_challenges
 BEGIN SELECT RAISE(ABORT, 'Planning intent challenges are append-only'); END;
 """
 
+_MIGRATION_35 = """
+ALTER TABLE audit_events ADD COLUMN operation_execution_id TEXT
+    REFERENCES operation_executions(execution_id);
+CREATE INDEX audit_events_operation_execution_idx
+    ON audit_events(operation_execution_id);
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34}
+CREATE TRIGGER audit_events_execution_binding_insert
+BEFORE INSERT ON audit_events
+WHEN NEW.operation_execution_id IS NOT NULL
+ AND (
+      NEW.operation_id IS NULL
+      OR NOT EXISTS (
+          SELECT 1 FROM operation_executions
+           WHERE execution_id=NEW.operation_execution_id
+             AND operation_id=NEW.operation_id
+      )
+ )
+BEGIN SELECT RAISE(ABORT, 'audit execution binding is invalid'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -3364,6 +3383,26 @@ def _validate_execution_and_lease_evidence(
                     "operation_executions",
                     row["execution_id"],
                 ))
+    for row in conn.execute(
+        """SELECT audit.event_id,audit.operation_id,audit.operation_execution_id,
+                  execution.operation_id AS execution_operation_id
+             FROM audit_events AS audit
+             LEFT JOIN operation_executions AS execution
+               ON execution.execution_id=audit.operation_execution_id
+            WHERE audit.operation_execution_id IS NOT NULL"""
+    ):
+        if (
+            row["execution_operation_id"] is None
+            or row["operation_id"] != row["execution_operation_id"]
+        ):
+            problems.append(_semantic_problem(
+                conn,
+                "audit_operation_execution_binding",
+                "audit_events",
+                row["event_id"],
+                related_record_type="operation_executions",
+                related_record_id=row["operation_execution_id"],
+            ))
 
 def _validate_planning_intent_evidence(
     conn: sqlite3.Connection, problems: list[dict[str, Any]]
