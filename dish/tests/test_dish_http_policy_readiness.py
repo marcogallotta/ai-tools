@@ -11,10 +11,10 @@ import pytest
 from dish_service import application as application_module
 from dish_tool import database_schema as database_schema_module
 from dish_tool.database import initialize_database
-from tests.test_dish_tool_r54_hard_request_identity import (
+from tests._service_test_helpers import (
     REQUEST_ID,
     RUN_ID,
-    _running,
+    running as _running,
 )
 
 OTHER_RUN_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"

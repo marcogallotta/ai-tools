@@ -20,7 +20,7 @@ from dish_tool.constants import (
 )
 from dish_tool.errors import DishRuleError
 from tests.test_dish_tool_r45_action_surface import _running as _running_action, _stop
-from tests.test_dish_tool_r54_hard_request_identity import _post, _running
+from tests._service_test_helpers import post as _post, running as _running
 
 RUN_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 REQUEST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"

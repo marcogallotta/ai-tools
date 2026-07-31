@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from dish_tool.admin import DishAdminApplication
-from tests.test_dish_tool_r54_hard_request_identity import RUN_ID, _post, _running
+from tests._service_test_helpers import RUN_ID, post as _post, running as _running
 
 
 @pytest.mark.parametrize(

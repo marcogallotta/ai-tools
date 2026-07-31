@@ -174,104 +174,75 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
     assert verification["allowed_actions"] == ["inspect"]
 
 
-def test_research_prepare_rejects_empty_recognition_before_write(tmp_path):
-    candidate = TASK.replace(
-        "A compact side dish for testing texture.",
-        "",
-        1,
-    )
+_DUPLICATE_SCHEMA_CANDIDATE = TASK.replace(
+    "Schema version: 2\n",
+    "Schema version: 2\nSchema version: 2\n",
+    1,
+)
+
+
+@pytest.mark.parametrize(
+    ("candidate", "filename", "expected_error"),
+    [
+        (
+            TASK.replace("A compact side dish for testing texture.", "", 1),
+            "empty-recognition.txt",
+            {
+                "rule": "document.recognition-empty",
+                "kind": "syntax",
+                "message": "recognition line requires non-empty text",
+                "location": "recognition",
+            },
+        ),
+        (
+            TASK.replace("Portions: one sitting\n", "", 1),
+            "missing-portions.txt",
+            {
+                "rule": "quantities.portions-required",
+                "kind": "syntax",
+                "message": "QUANTITIES requires a non-empty Portions: line",
+                "location": "QUANTITIES",
+            },
+        ),
+        (
+            _DUPLICATE_SCHEMA_CANDIDATE,
+            "duplicate-schema-version.txt",
+            {
+                "rule": "schema_version_duplicate",
+                "message": "duplicate closing Schema version",
+                "occurrences": 2,
+                "lines": [
+                    index
+                    for index, line in enumerate(
+                        _DUPLICATE_SCHEMA_CANDIDATE.splitlines(), start=1
+                    )
+                    if line == "Schema version: 2"
+                ],
+            },
+        ),
+    ],
+)
+def test_research_prepare_rejects_invalid_document_before_write(
+    tmp_path, candidate, filename, expected_error
+):
     lines = TASK.splitlines()
-    b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
-    a = app(tmp_path, b)
-    started = a.execute(
+    backend = Backend(lines[0], "\n".join(lines[1:]) + "\n")
+    application = app(tmp_path, backend)
+    started = application.execute(
         "start", agent="gpt", task_gid="t", kind="initial",
         change_level=None, change_reason=None,
     )
 
-    result = a.execute(
+    result = application.execute(
         "prepare", agent="gpt", model="gpt-5.6-sol",
         submission_id=started["submission_id"],
-        file_path=write(tmp_path, "empty-recognition.txt", candidate),
+        file_path=write(tmp_path, filename, candidate),
     )
 
     assert result["code"] == "VALIDATION_FAILED"
-    assert result["errors"] == [
-        {
-            "rule": "document.recognition-empty",
-            "kind": "syntax",
-            "message": "recognition line requires non-empty text",
-            "location": "recognition",
-        }
-    ]
-    assert b.writes == 0
-    assert b.moves == 0
-
-
-def test_research_prepare_rejects_missing_portions_before_write(tmp_path):
-    candidate = TASK.replace("Portions: one sitting\n", "", 1)
-    lines = TASK.splitlines()
-    b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
-    a = app(tmp_path, b)
-    started = a.execute(
-        "start", agent="gpt", task_gid="t", kind="initial",
-        change_level=None, change_reason=None,
-    )
-
-    result = a.execute(
-        "prepare", agent="gpt", model="gpt-5.6-sol",
-        submission_id=started["submission_id"],
-        file_path=write(tmp_path, "missing-portions.txt", candidate),
-    )
-
-    assert result["code"] == "VALIDATION_FAILED"
-    assert result["errors"] == [
-        {
-            "rule": "quantities.portions-required",
-            "kind": "syntax",
-            "message": "QUANTITIES requires a non-empty Portions: line",
-            "location": "QUANTITIES",
-        }
-    ]
-    assert b.writes == 0
-    assert b.moves == 0
-
-
-def test_research_prepare_rejects_duplicate_schema_version_before_write(tmp_path):
-    candidate = TASK.replace(
-        "Schema version: 2\n",
-        "Schema version: 2\nSchema version: 2\n",
-        1,
-    )
-    schema_lines = [
-        index
-        for index, line in enumerate(candidate.splitlines(), start=1)
-        if line == "Schema version: 2"
-    ]
-    lines = TASK.splitlines()
-    b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
-    a = app(tmp_path, b)
-    started = a.execute(
-        "start", agent="gpt", task_gid="t", kind="initial",
-        change_level=None, change_reason=None,
-    )
-
-    result = a.execute(
-        "prepare", agent="gpt", model="gpt-5.6-sol",
-        submission_id=started["submission_id"],
-        file_path=write(tmp_path, "duplicate-schema-version.txt", candidate),
-    )
-
-    assert result["code"] == "VALIDATION_FAILED"
-    assert result["errors"] == [
-        {
-            "rule": "schema_version_duplicate",
-            "message": "duplicate closing Schema version",
-            "occurrences": 2,
-            "lines": schema_lines,
-        }
-    ]
-    assert b.writes == 0
-    assert b.moves == 0
+    assert result["errors"] == [expected_error]
+    assert backend.writes == 0
+    assert backend.moves == 0
 
 
 def test_planning_prepare_reports_every_missing_field_and_required_label(tmp_path):
@@ -395,102 +366,96 @@ def test_planning_prepare_rejects_unsupported_exemption_before_write(tmp_path):
     assert b.writes == 0
 
 
-def test_initial_start_rejects_empty_planning_purpose_before_operation(tmp_path):
-    candidate = TASK.replace("Purpose: Compare texture", "Purpose:")
-    lines = candidate.splitlines()
-    b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
-    a = app(tmp_path, b)
-    result = a.execute(
-        "start", agent="gpt", task_gid="t", kind="initial",
-        change_level=None, change_reason=None,
-    )
-
-    assert result["code"] == "VALIDATION_FAILED"
-    assert any(
-        error.get("rule") == "planning.field-empty"
-        and error.get("location") == "Purpose"
-        for error in result["errors"]
-    )
-    assert result["submission_id"] is None
-    assert b.writes == 0
-    assert b.moves == 0
-
-
-def test_initial_start_rejects_unsupported_exemption_before_operation(tmp_path):
-    candidate = TASK.replace(
-        "Exemptions: None",
-        "Exemptions: [nutrition-sodium] — Marco approved for this dish",
-    )
-    lines = candidate.splitlines()
-    b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
-    a = app(tmp_path, b)
-
-    result = a.execute(
-        "start", agent="gpt", task_gid="t", kind="initial",
-        change_level=None, change_reason=None,
-    )
-
-    assert result["code"] == "VALIDATION_FAILED"
-    assert any(
-        error.get("rule") == "planning.exemption-tag-unsupported"
-        and error.get("location") == "Exemptions"
-        for error in result["errors"]
-    )
-    assert result["submission_id"] is None
-    assert b.writes == 0
-    assert b.moves == 0
-
-
-def test_initial_start_rejects_unsupported_planning_field_before_operation(
-    tmp_path,
-):
-    candidate = TASK.replace(
-        "Destination section: Sichuan — 12345",
+@pytest.mark.parametrize(
+    ("candidate", "expected_rule", "expected_location", "expected_field"),
+    [
         (
-            "Destination section: Sichuan — 12345\n"
-            "Serving note: hidden unsupported field"
+            TASK.replace("Purpose: Compare texture", "Purpose:"),
+            "planning.field-empty",
+            "Purpose",
+            None,
         ),
-    )
+        (
+            TASK.replace(
+                "Exemptions: None",
+                "Exemptions: [nutrition-sodium] — Marco approved for this dish",
+            ),
+            "planning.exemption-tag-unsupported",
+            "Exemptions",
+            None,
+        ),
+        (
+            TASK.replace(
+                "Destination section: Sichuan — 12345",
+                "Destination section: Sichuan — 12345\n"
+                "Serving note: hidden unsupported field",
+            ),
+            "planning_field_unknown",
+            None,
+            "Serving note",
+        ),
+    ],
+)
+def test_initial_start_rejects_invalid_planning_brief_before_operation(
+    tmp_path, candidate, expected_rule, expected_location, expected_field
+):
     lines = candidate.splitlines()
-    b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
-    a = app(tmp_path, b)
+    backend = Backend(lines[0], "\n".join(lines[1:]) + "\n")
+    application = app(tmp_path, backend)
 
-    result = a.execute(
+    result = application.execute(
         "start", agent="gpt", task_gid="t", kind="initial",
         change_level=None, change_reason=None,
     )
 
     assert result["code"] == "VALIDATION_FAILED"
-    assert result["errors"][0]["rule"] == "planning_field_unknown"
-    assert result["errors"][0]["field"] == "Serving note"
+    matching = [error for error in result["errors"] if error.get("rule") == expected_rule]
+    assert matching
+    if expected_location is not None:
+        assert matching[0].get("location") == expected_location
+    if expected_field is not None:
+        assert matching[0].get("field") == expected_field
     assert result["submission_id"] is None
-    assert b.writes == 0
-    assert b.moves == 0
+    assert backend.writes == 0
+    assert backend.moves == 0
 
 
-def test_initial_prepare_requires_model(tmp_path):
-    lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
-    started=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
-    result=a.execute("prepare", agent="gpt",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
-    assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_required"
-    assert result["data"]["validation_scope"] == [
-        "structural-only", "transition-state", "exact-content-identity",
-    ]
-    assert b.writes == 0
+@pytest.mark.parametrize(
+    ("model", "expected_rule", "expects_validation_scope"),
+    [
+        (None, "model_required", True),
+        ("gpt — 5.6", "model_invalid_characters", False),
+        ("gpt-5.6, sol", "model_invalid_characters", False),
+    ],
+)
+def test_initial_prepare_rejects_missing_or_invalid_model(
+    tmp_path, model, expected_rule, expects_validation_scope
+):
+    lines = TASK.splitlines()
+    backend = Backend(lines[0], "\n".join(lines[1:]) + "\n")
+    application = app(tmp_path, backend)
+    started = application.execute(
+        "start", agent="gpt", task_gid="t", kind="initial",
+        change_level=None, change_reason=None,
+    )
+    arguments = {
+        "agent": "gpt",
+        "submission_id": started["submission_id"],
+        "file_path": write(tmp_path, "c.txt", TASK),
+    }
+    if model is not None:
+        arguments["model"] = model
 
-def test_initial_prepare_rejects_model_with_em_dash(tmp_path):
-    lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
-    started=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
-    result=a.execute("prepare", agent="gpt",model="gpt — 5.6",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
-    assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_invalid_characters"
-    assert b.writes == 0
+    result = application.execute("prepare", **arguments)
 
-def test_initial_prepare_rejects_model_with_comma(tmp_path):
-    lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)
-    started=a.execute("start",agent="gpt",task_gid="t",kind="initial",change_level=None,change_reason=None)
-    result=a.execute("prepare", agent="gpt",model="gpt-5.6, sol",submission_id=started["submission_id"],file_path=write(tmp_path,"c.txt",TASK))
-    assert result["code"] == "INVALID_ARGUMENT" and result["errors"][0]["rule"] == "model_invalid_characters"
-    assert b.writes == 0
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"][0]["rule"] == expected_rule
+    if expects_validation_scope:
+        assert result["data"]["validation_scope"] == [
+            "structural-only", "transition-state", "exact-content-identity",
+        ]
+    assert backend.writes == 0
+
 
 def test_stale_baseline_blocks_before_write(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)

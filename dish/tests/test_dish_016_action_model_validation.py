@@ -5,10 +5,10 @@ import threading
 from dish_service.http import build_server
 from dish_service.leases import ServicePrincipal
 from dish_tool.database import initialize_database
-from tests.test_dish_tool_r54_hard_request_identity import (
-    _complete_service_submission,
-    _post,
-    _service,
+from tests._service_test_helpers import (
+    complete_service_submission as _complete_service_submission,
+    post as _post,
+    service as _service,
 )
 
 
