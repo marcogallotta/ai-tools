@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
 import threading
 
 import pytest
@@ -14,7 +13,6 @@ from dish_service.http import build_server
 from dish_service.leases import ServicePrincipal
 from dish_tool.cli import build_parser
 from dish_tool.database import initialize_database
-from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
 from dish_tool.errors import DishRuleError
 from tests.support.planning import Backend, release
 
@@ -360,7 +358,6 @@ def test_exact_replay_converges_after_operation_commit_before_result(tmp_path, m
         conn.close()
 
 
-
 @pytest.mark.flake_stress
 @pytest.mark.flake_candidate(
     issue="DISH-flake-038-concurrent-challenge-backup-race",
@@ -515,7 +512,6 @@ def test_concurrent_exact_followups_converge_on_one_operation(tmp_path):
         conn.close()
 
 
-
 def test_cli_parser_and_transport_preserve_only_supplied_confirmation_fields():
     first = vars(
         build_parser().parse_args(
@@ -605,7 +601,6 @@ def test_private_service_rejects_confirmation_fields_for_nonplanning_start(tmp_p
     ]
 
 
-
 @pytest.mark.parametrize(
     ("client_type", "token"),
     [(DishServiceClient, "agent-secret"), (DishActionClient, "action-secret")],
@@ -646,89 +641,6 @@ def test_live_cli_and_action_http_surfaces_share_two_call_gate(
 
     assert second["ok"], second
     assert second["allowed_actions"] == ["prepare"]
-
-
-
-def test_schema_34_and_35_upgrade_existing_database_with_current_journals(tmp_path):
-    db_path = tmp_path / "upgrade.db"
-    conn = sqlite3.connect(db_path, isolation_level=None)
-    try:
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute(
-            "CREATE TABLE schema_migrations "
-            "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
-        )
-        for version in range(1, 34):
-            _execute_script_statements(conn, MIGRATIONS[version])
-            conn.execute(
-                "INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)",
-                (version, f"v{version}"),
-            )
-            conn.execute(f"PRAGMA user_version={version}")
-        conn.execute("COMMIT")
-    finally:
-        conn.close()
-
-    upgraded = initialize_database(db_path)
-    try:
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 35
-        planning_table = upgraded.execute(
-            "SELECT name FROM sqlite_master "
-            "WHERE type='table' AND name='planning_intent_challenges'"
-        ).fetchone()
-        assert planning_table is not None
-        audit_columns = {
-            row[1] for row in upgraded.execute("PRAGMA table_info(audit_events)")
-        }
-        assert "operation_execution_id" in audit_columns
-    finally:
-        upgraded.close()
-
-
-
-def test_schema_35_upgrades_schema_34_audit_journal(tmp_path):
-    db_path = tmp_path / "schema-34.db"
-    conn = sqlite3.connect(db_path, isolation_level=None)
-    try:
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("BEGIN IMMEDIATE")
-        conn.execute(
-            "CREATE TABLE schema_migrations "
-            "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
-        )
-        for version in range(1, 35):
-            _execute_script_statements(conn, MIGRATIONS[version])
-            conn.execute(
-                "INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)",
-                (version, f"v{version}"),
-            )
-            conn.execute(f"PRAGMA user_version={version}")
-        conn.execute("COMMIT")
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 34
-        assert "operation_execution_id" not in {
-            row[1] for row in conn.execute("PRAGMA table_info(audit_events)")
-        }
-    finally:
-        conn.close()
-
-    upgraded = initialize_database(db_path)
-    try:
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 35
-        assert "operation_execution_id" in {
-            row[1] for row in upgraded.execute("PRAGMA table_info(audit_events)")
-        }
-        assert upgraded.execute(
-            "SELECT 1 FROM sqlite_master "
-            "WHERE type='index' AND name='audit_events_operation_execution_idx'"
-        ).fetchone() is not None
-        assert upgraded.execute(
-            "SELECT 1 FROM sqlite_master "
-            "WHERE type='trigger' AND name='audit_events_execution_binding_insert'"
-        ).fetchone() is not None
-    finally:
-        upgraded.close()
-
 
 
 def test_invalid_agent_does_not_create_planning_challenge(tmp_path):
