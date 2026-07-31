@@ -61,7 +61,7 @@ def build_parser() -> JsonArgumentParser:
         choices=("not-applied", "applied"),
         help="record only what the live reread proves; a contradictory outcome fails closed",
     )
-    recover.add_argument("--reason", required=True)
+    recover.add_argument("--reason", default="no reason given")
 
     repair_destination = subparsers.add_parser(
         "repair-destination",
@@ -69,19 +69,19 @@ def build_parser() -> JsonArgumentParser:
     )
     repair_destination.add_argument("submission_id", help=_submission_target_help)
     repair_destination.add_argument("--destination-section-gid", required=True)
-    repair_destination.add_argument("--reason", required=True)
+    repair_destination.add_argument("--reason", default="no reason given")
     repair_destination.add_argument("--run-id")
 
     discard = subparsers.add_parser("discard", help="abandon a stale open operation without applying it")
     discard.add_argument("submission_id", help=_submission_target_help)
-    discard.add_argument("--reason", required=True)
+    discard.add_argument("--reason", default="no reason given")
 
     abandon = subparsers.add_parser(
         "abandon-operation",
         help="retire the latest expired or released actor attempt and prepare its safe continuation",
     )
     abandon.add_argument("submission_id", help=_submission_target_help)
-    abandon.add_argument("--reason", required=True)
+    abandon.add_argument("--reason", default="no reason given")
     abandon.add_argument(
         "--lease-id",
         help="exact actor lease; may be omitted only when one eligible latest attempt exists",
@@ -128,7 +128,7 @@ def build_parser() -> JsonArgumentParser:
         help="explicitly reopen one completed bare task before a new Planning operation",
     )
     reopen_planning.add_argument("task_gid")
-    reopen_planning.add_argument("--reason", required=True)
+    reopen_planning.add_argument("--reason", default="no reason given")
     reopen_planning.add_argument(
         "--request-id",
         help="replay the exact interrupted service request UUID",
@@ -138,14 +138,14 @@ def build_parser() -> JsonArgumentParser:
         "recover-lease", help="reclaim an expired service lease before an admin operation"
     )
     recover_lease.add_argument("submission_id")
-    recover_lease.add_argument("--reason", required=True)
+    recover_lease.add_argument("--reason", default="no reason given")
 
     expire_lease = subparsers.add_parser(
         "expire-lease",
         help="release an active service lease by lease ID, task GID, or supported Asana task URL",
     )
     expire_lease.add_argument("target")
-    expire_lease.add_argument("--reason", required=True)
+    expire_lease.add_argument("--reason", default="no reason given")
     expire_lease.add_argument(
         "--request-id",
         help="replay the exact lease-expiry request UUID after an ambiguous response",
@@ -168,7 +168,7 @@ def build_parser() -> JsonArgumentParser:
     authorize.add_argument("--field", required=True)
     authorize.add_argument("--before", required=True, type=json.loads, help="typed JSON value before the change")
     authorize.add_argument("--after", required=True, type=json.loads, help="typed JSON value after the change")
-    authorize.add_argument("--reason", required=True)
+    authorize.add_argument("--reason", default="no reason given")
     authorize.add_argument("--run-id")
 
     _hold_help = {
