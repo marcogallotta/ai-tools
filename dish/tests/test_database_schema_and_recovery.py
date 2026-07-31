@@ -191,6 +191,15 @@ def test_partial_unique_index_releases_for_terminal_states(tmp_path):
         task_gid = f"terminal-{index}"
         insert_submission(conn, f"old-{index}", task_gid, status)
         insert_submission(conn, f"new-{index}", task_gid, "drafting")
+        rows = conn.execute(
+            "SELECT submission_id, status FROM submissions "
+            "WHERE task_gid=? ORDER BY submission_id",
+            (task_gid,),
+        ).fetchall()
+        assert [(row[0], row[1]) for row in rows] == [
+            (f"new-{index}", "drafting"),
+            (f"old-{index}", status),
+        ]
 
 
 @pytest.mark.smoke

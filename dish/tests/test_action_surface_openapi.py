@@ -149,4 +149,4 @@ def test_generated_and_checked_in_openapi_satisfy_independent_action_contract():
         (Path(__file__).parent.parent / "openapi" / "dish-action.openapi.json").read_text()
     )
     for document in (action_openapi(), checked):
-        assert_independent_action_openapi_contract(document)
+        assert assert_independent_action_openapi_contract(document) is None

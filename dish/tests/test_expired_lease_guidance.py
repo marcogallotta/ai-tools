@@ -95,6 +95,8 @@ def test_expired_inspect_and_read_separate_current_from_post_recovery_actions(tm
         {"agent": "codex", "submission_id": operation_id},
         principal=verifier,
     )
+    assert inspected["ok"] is True
+    assert inspected["code"] == "OK"
     _assert_expired_guidance(
         inspected, operation_id, view_path=("authoritative_view",)
     )
@@ -104,6 +106,8 @@ def test_expired_inspect_and_read_separate_current_from_post_recovery_actions(tm
         {"agent": "codex", "task_gid": "t"},
         principal=verifier,
     )
+    assert read["ok"] is True
+    assert read["code"] == "OK"
     _assert_expired_guidance(
         read,
         operation_id,

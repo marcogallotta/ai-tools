@@ -15,11 +15,21 @@ BASE = {
 
 
 def test_legal_protocol_transitions_are_explicit():
-    assert_transition(action="research_handoff", before="pending-research", after="pending-verification")
-    assert_transition(action="approve", before="pending-verification", after="ready")
-    assert_transition(action="material_edit", before="ready", after="pending-verification")
-    assert_transition(action="non_material_edit", before="ready", after="ready")
-    assert_transition(action="submit", before="ready", after="ready")
+    expected = [
+        ("research_handoff", "pending-research", "pending-verification"),
+        ("approve", "pending-verification", "ready"),
+        ("material_edit", "ready", "pending-verification"),
+        ("non_material_edit", "ready", "ready"),
+        ("submit", "ready", "ready"),
+    ]
+    transitions = [
+        assert_transition(action=action, before=source, after=target)
+        for action, source, target in expected
+    ]
+    assert [
+        (transition.action, transition.source, transition.target)
+        for transition in transitions
+    ] == expected
 
 
 def test_illegal_jump_fails_closed():

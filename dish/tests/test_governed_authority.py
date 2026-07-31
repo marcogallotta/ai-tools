@@ -56,10 +56,13 @@ def test_constructor_run_from_prior_operation_can_verify_later_operation(tmp_pat
         schema_version="2",
         actors=OperationActors(editor_agent="codex", run_id="later-editor"),
     )
-    assert_fresh_verifier(
-        app.conn,
-        operation_id=op2["operation_id"],
-        agent="gpt",
-        run_id="constructor-run",
-        independence_attestation=None,
+    assert (
+        assert_fresh_verifier(
+            app.conn,
+            operation_id=op2["operation_id"],
+            agent="gpt",
+            run_id="constructor-run",
+            independence_attestation=None,
+        )
+        is None
     )

@@ -143,6 +143,26 @@ def test_backend_movement_confirms_cooking_membership_not_first_membership(monke
             },
         ]
     )
-    monkeypatch.setattr(backend, "read_task", lambda _gid: next(reads))
-    monkeypatch.setattr(backend, "call", lambda *args, **kwargs: {})
-    backend.move_task_to_section(task_gid="t", section_gid="new")
+    read_count = 0
+    calls: list[tuple[tuple, dict]] = []
+
+    def read_task(_gid):
+        nonlocal read_count
+        read_count += 1
+        return next(reads)
+
+    def record_call(*args, **kwargs):
+        calls.append((args, kwargs))
+        return {}
+
+    monkeypatch.setattr(backend, "read_task", read_task)
+    monkeypatch.setattr(backend, "call", record_call)
+
+    result = backend.move_task_to_section(task_gid="t", section_gid="new")
+
+    assert result is None
+    assert read_count == 2
+    assert len(calls) == 1
+    args, kwargs = calls[0]
+    assert args[1:] == ("new", {"body": {"data": {"task": "t"}}})
+    assert kwargs == {"context": "section new"}

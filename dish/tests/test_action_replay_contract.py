@@ -129,7 +129,7 @@ def test_every_run_and_request_id_openapi_occurrence_uses_independent_uuid_contr
 def test_generated_and_checked_in_openapi_match_independent_action_contract():
     checked = json.loads((ROOT / "openapi" / "dish-action.openapi.json").read_text())
     for document in (action_openapi(), checked):
-        assert_independent_action_openapi_contract(document)
+        assert assert_independent_action_openapi_contract(document) is None
 
 
 
@@ -153,7 +153,7 @@ def test_independent_action_contract_rejects_plausible_generator_regressions(mut
     mutate(document)
 
     with pytest.raises(AssertionError):
-        assert_independent_action_openapi_contract(document)
+        assert assert_independent_action_openapi_contract(document) is None
 
 def test_connected_uuid_acceptance_remains_explicitly_reimport_gated():
     action_guide = " ".join(

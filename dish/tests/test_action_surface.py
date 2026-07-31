@@ -339,7 +339,7 @@ def test_inaccessible_backend_identifier_is_distinct_and_non_retryable():
 @pytest.mark.smoke
 def test_canonical_operation_uuid_is_accepted_by_boundary_validator():
     operation_id = str(uuid.uuid4())
-    validate_identifier_fields({"submission_id": operation_id})
+    assert validate_identifier_fields({"submission_id": operation_id}) is None
 
 
 @pytest.mark.smoke

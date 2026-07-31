@@ -359,10 +359,12 @@ def test_exact_replay_converges_after_operation_commit_before_result(tmp_path, m
 
 
 @pytest.mark.flake_stress
-@pytest.mark.flake_candidate(
+@pytest.mark.quarantined(
     issue="DISH-flake-038-concurrent-challenge-backup-race",
     owner="Marco",
     first_seen="2026-07-31",
+    quarantined_on="2026-07-31",
+    expires="2026-08-07",
     signature="sqlite3.DatabaseError: legacy backup schema version mismatch racing "
     "concurrent initialize_database calls in _backup_legacy_database",
 )

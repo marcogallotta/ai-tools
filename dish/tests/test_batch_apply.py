@@ -261,15 +261,20 @@ def test_unexpected_exception_reports_created_before_propagating(cli, monkeypatc
 
 
 def test_all_operations_succeed_reports_full_success(cli, monkeypatch, tmp_path, capsys):
-    monkeypatch.setattr(
-        asana.TasksApi, "update_task",
-        lambda self, body, task_gid, opts, **kw: {"data": {"gid": task_gid}},
-    )
+    calls: list[str] = []
+
+    def successful_update(self, body, task_gid, opts, **kw):
+        calls.append(task_gid)
+        return {"data": {"gid": task_gid}}
+
+    monkeypatch.setattr(asana.TasksApi, "update_task", successful_update)
 
     plan_path = _write_plan(tmp_path, [_op("1", "A"), _op("2", "B"), _op("3", "C")])
 
-    cli.c_batch_apply(plan_path)  # must not raise
+    result = cli.c_batch_apply(plan_path)
 
+    assert result is None
+    assert calls == ["1", "2", "3"]
     out = capsys.readouterr().out
-    for gid in ("1", "2", "3"):
+    for gid in calls:
         _assert_reported(out, gid, SUCCESS_WORDS)
