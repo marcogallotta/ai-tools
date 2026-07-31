@@ -48,6 +48,44 @@ A later agent review is not authority to reopen these decisions by itself.
    history. Unapproved, redundant, or retired dishes use the governed archive direction already
    described in [`future.md`](future.md). Exceptional data purging, if ever required, is a separate
    administrative and policy design.
+8. **Preferred PostgreSQL application stack.** Use SQLAlchemy 2.0.50 for ORM/database access,
+   Alembic 1.18.4 for every schema migration, `psycopg[binary]` 3.3.4 as the PostgreSQL driver, and
+   Pydantic alongside SQLAlchemy for command, API, and domain validation. Pydantic is not the ORM.
+   An implementation agent may propose a change only for a concrete compatibility, security, or
+   operational reason and must not substitute a different stack merely by preference.
+
+## Approved database implementation conventions
+
+These conventions are approved defaults for Stage A unless Dish-specific evidence justifies a
+narrow exception:
+
+- Use SQLAlchemy 2 declarative models with `DeclarativeBase`, `Mapped`, and `mapped_column`.
+- Alembic owns every schema change. Production and normal test setup must not use
+  `Base.metadata.create_all()` as a migration substitute.
+- Keep migrations ordered, clearly named, reversible where safely possible, and exercised from an
+  empty database through `alembic upgrade head` in CI.
+- Read `DATABASE_URL` from environment configuration. Avoid opening PostgreSQL connections at module
+  import time; initialize engines and session factories lazily.
+- FastAPI database access should use an injectable session dependency such as `get_db()` so tests,
+  scripts, and workers can supply explicitly owned sessions.
+- The application/service operation owns commit and rollback. Lower-level repository and helper
+  functions may `flush()` but must not perform surprising commits.
+- Enforce durable invariants with PostgreSQL foreign keys, unique constraints, partial indexes,
+  checks, exclusion constraints, or triggers where appropriate—not only Python validation.
+- Use explicit PostgreSQL concurrency behavior, including `ON CONFLICT`, row locks, stable lock
+  ordering, and handling of `IntegrityError`, serialization failures, and deadlocks through exact
+  request replay.
+- Store instants as offset-aware PostgreSQL `TIMESTAMPTZ`, normalized to UTC. Domain wall-clock
+  values, where ever required, must be modeled separately and explicitly.
+- Define foreign-key deletion behavior deliberately (`RESTRICT`, `CASCADE`, `SET NULL`, or governed
+  archival behavior). Do not rely on implicit defaults.
+- Maintain a separate test PostgreSQL database and isolated container/project environment, with a
+  hard guard that refuses destructive test setup against development or production databases.
+- Tests must run the real Alembic migration chain. Tests may commit normally; isolation may be
+  restored by truncating governed test tables between tests rather than masking transaction behavior
+  behind a permanent rollback fixture.
+- Future mutations may require ordinary Alembic migrations for new tables, columns, constraints, or
+  indexes. That is expected application evolution, not an architectural redesign.
 
 ## Decision summary
 
@@ -1578,16 +1616,24 @@ small, concrete choice.
 
 ### Before Stage A production cutover
 
-1. **Human mutation coverage.** Which actions Marco must still perform once Asana is read-only, and
-   which narrow Dish command or temporary interface supplies each action. Engineering must first
-   inventory actual current Asana mutations and present only gaps.
-2. **Historical corpus scope.** Whether Stage A imports all completed Cooking history and whether
-   Sourcing/Reference records enter PostgreSQL or remain only in immutable source snapshots.
-3. **Cutover, open-operation, rollback, and battle-hardening gate.** Whether every operation must
-   be closed before the flip or an exact journaled operation may migrate; the concrete acceptance
-   evidence, observation duration, rollback point, and operating period required before the
-   authority flip and before Stage B may begin. Engineering must propose measurable criteria rather
-   than ask Marco to design the test programme.
+1. **Initial mutation coverage.** Do not require Marco to define the complete future human-mutation
+   surface in advance. Engineering must inventory current real Asana mutations, implement the
+   smallest safe Stage A command set, and keep the mutation layer extensible so missing commands are
+   ordinary application work. The shadow and battle-hardening periods are explicitly used to
+   discover additional needs. Known likely needs include location changes, governed archive, and
+   later agent-driven revision/re-Verification workflows, but their complete product contract is
+   not yet approved.
+2. **Historical corpus scope and exceptions.** Whether Stage A imports all completed Cooking history
+   and whether Sourcing/Reference records enter PostgreSQL or remain only in immutable source
+   snapshots. No task may be silently discarded. Problematic historical tasks are surfaced and
+   reconciled case by case with exact source evidence and human/agent assistance when the migration
+   reaches them.
+3. **Cutover and operational-confidence gate.** The final open-operation rule, authority-flip point,
+   and rollback boundary are chosen near cutover using observed system behavior and Marco's
+   infrastructure judgment. Battle-hardening has no fixed duration or arbitrary pass count: it is
+   based on failure frequency, recoverability, time to diagnose and repair, projection correctness,
+   backup/restore confidence, and operational burden. Engineering must present current evidence and
+   a small concrete recommendation rather than ask Marco to design the programme in advance.
 4. **Asana projection topology.** Whether the read-only projection safely reuses the existing Asana
    project or uses a separately labeled mirror project. The proposal must prioritize Marco's normal
    usability while proving that no projection credential can act as authority.
@@ -1638,6 +1684,16 @@ The implementation plan must conform to these settled defaults:
 13. A private frontend is optional and later. Stage A must instead provide narrow commands for every
     required human mutation after Asana becomes read-only.
 14. Ordinary commands archive rather than hard-delete; exceptional purge is outside this design.
+15. Use SQLAlchemy 2.0.50, Alembic 1.18.4, `psycopg[binary]` 3.3.4, and Pydantic as the default
+    PostgreSQL application stack, following the approved transaction, migration, constraint,
+    timestamp, connection-lifecycle, and test-isolation conventions above.
+16. The Stage A mutation surface is intentionally progressive. Adding a later mutation may require
+    ordinary Alembic migrations and new constraints or indexes, but must not require replacing the
+    task/version authority architecture.
+17. Historical import exceptions are never silently dropped and do not require one universal policy
+    now; they are quarantined or reconciled case by case from exact source evidence.
+18. Battle-hardening and cutover are evidence-based decisions made near the relevant phase, not
+    fixed-duration gates inferred by implementation agents.
 
 Table names, PostgreSQL constraint forms, lock primitives, transaction isolation, outbox worker
 implementation, migration tooling, and API-internal naming are engineering decisions. They return to
