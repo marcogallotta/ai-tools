@@ -31,7 +31,7 @@ clear workaround and revisit trigger. For every new or reconsidered issue, recor
 
 ## Post-rollout candidates
 
-### DESIGN-005 — explicit Planning-intent confirmation
+### planning-intent-confirmation
 
 **Priority: highest post-rollout candidate; not launch-blocking.**
 
@@ -54,7 +54,7 @@ Implement this before lower-priority post-rollout candidates unless rollout evid
 priority. Reconsider launch blocking only if another pre-rollout occurrence causes unwanted live
 content or repeated operator cleanup.
 
-### COMPLEX-001 — transaction ownership distributed across many modules
+### distributed-transaction-ownership
 
 **Priority: high post-rollout candidate; not launch-blocking.**
 
@@ -65,8 +65,9 @@ written, but no single place owns cross-transaction invariants, which makes them
 together.
 
 This is not itself a demonstrated defect, but it is strongly correlated with the repeated "state
-committed, envelope unfinished" recovery bugs found across audits, including RECOVERY-001. The
-worst effect is indirect: harder review makes future concurrency/recovery defects more likely and
+committed, envelope unfinished" recovery bugs found across audits, including
+`execution-recovery-audit-misattribution` below. The worst effect is indirect: harder review makes
+future concurrency/recovery defects more likely and
 slower to find, not a specific reproducible failure today. No agent-facing guidance gap exists
 because the symptom, when it occurs, surfaces as a normal recovery-required response.
 
@@ -76,7 +77,7 @@ Reconsider priority downward only if a full audit shows the current distribution
 implicated in new defects; reconsider upward on any new recovery bug traceable to an overlapping or
 misowned transaction.
 
-### COMPLEX-002 — oversized, high-branch functions in recovery-critical paths
+### oversized-recovery-functions
 
 **Priority: high post-rollout candidate; not launch-blocking.**
 
@@ -89,15 +90,15 @@ Several functions central to validation, recovery, and execution are large and b
 
 This is not itself a demonstrated defect. It is a maintainability signal: these are also the exact
 functions where recovery and concurrency bugs have repeatedly emerged (four launch blockers plus
-RECOVERY-001), so their size and branch count make each new change harder to reason about safely and
-review thoroughly.
+`execution-recovery-audit-misattribution` below), so their size and branch count make each new
+change harder to reason about safely and review thoroughly.
 
 Break these functions down along their existing conceptual seams (e.g. one branch family per
 function) as they are next touched, rather than as a standalone rewrite. Reconsider priority upward
 on any new defect traced to one of these functions; reconsider downward if a closer read shows the
 branch count is inherent to the domain rather than reducible.
 
-### DESIGN-003 — connected request-status inspection
+### connected-request-status-inspection
 
 A connected agent with a `request_id` has no read-only lookup for the request's authoritative
 state. Exact replay remains the recovery contract, while investigation otherwise depends on private
@@ -108,7 +109,7 @@ operation identifiers, whether exact replay is safe, and any required private or
 It should not expose full canonical arguments or stored results by default. This is non-blocking
 observability work; implement it only if post-launch response-loss investigations become frequent.
 
-### RECOVERY-001 — execution-recovery evidence misattributed from concurrent audits
+### execution-recovery-audit-misattribution
 
 `execution_recovery_state()` reconstructs durable effects it attributes to one execution, but has no
 positive provenance for audit rows: it takes the operation-wide max audit row ID at execution start
@@ -134,7 +135,7 @@ audit row — the existing synthetic test only re-asserts the current heuristic.
 
 ## Testing boundaries
 
-### REPRO-001 / TEST-001 — connected reproduction and local fault injection
+### connected-reproduction-fault-injection
 
 The Action surface cannot safely inject pending or uncertain effects, inspect private journals, or
 invoke administrative recovery, so a GPT-only live test cannot exercise repair/replay consistency
@@ -142,13 +143,13 @@ end to end. Local fake backends, targeted failure injection, restart fixtures, a
 tooling are the authoritative validation surfaces for pending requests, uncertain outcomes,
 failed-first mutations, replay, recovery, and audit repair.
 
-This coverage satisfies TEST-001 without adding a runtime fault-injection mechanism. The remaining
+This coverage satisfies the gap without adding a runtime fault-injection mechanism. The remaining
 connected-reproduction gap is a maintainer-confidence limitation, not a user-facing workflow
 defect. Do not expose a production Action that deliberately fails or corrupts mutations. Add a new
 test mechanism only when a concrete recovery scenario cannot be exercised safely by the existing
 local harness.
 
-### TEST-002 — real-schema generated-SDK lifecycle coverage
+### generated-sdk-real-schema-coverage
 
 The generated Asana SDK lifecycle test exercises `DishApplication` → `AsanaBackend` → generated SDK
 → stateful fake HTTP transport, while its release fixture uses `schema={}`. Real Honest schema
@@ -159,7 +160,7 @@ This is a low-risk test-composition gap, not evidence of a runtime defect or a r
 Revisit if the SDK/schema boundary changes, a failure implicates their integration, or maintaining
 the separate coverage becomes unreliable.
 
-### VERIFY-001 — transient `service_database_unavailable` attribution
+### service-database-unavailable-attribution
 
 Controlled SQLite writer contention now reproduces `service_database_unavailable` safely before
 execution or request consumption. After the writer releases, exact same-UUID retry succeeds with
@@ -171,7 +172,7 @@ The retry-safety question is resolved for writer contention. Keep only the histo
 parked; reconsider implementation work if ordinary live use makes the condition frequent or a
 future occurrence violates the confirmed fail-before-execution and exact-retry behavior.
 
-### VERIFY-002 — transient non-material terminalization failure
+### non-material-terminalization-transient-failure
 
 SQLite writer contention now reproduces the test-project failure at `non_material_terminal` after
 the candidate write and handoff validation commit. Dish preserves the confirmed write, prohibits
@@ -183,7 +184,7 @@ is diagnostic: durable evidence keeps only `OperationalError` rather than the av
 Keep exact SQLite-category retention as post-rollout diagnostic work. Reconsider on another live
 occurrence or if the category is not a normalized writer-lock condition.
 
-### TEST-003 — abandonment-suite fabricated states and mocked authority understate coverage
+### abandonment-suite-fabricated-states
 
 Several abandonment tests construct database state directly (operation phase, Verification-cycle
 outcome, cycle/step creation, abandonment records) rather than through governed producers, then make
@@ -204,7 +205,7 @@ using the real command path before treating it as proven.
 
 ## Accepted for launch
 
-### DESIGN-004 — private Planning reopen
+### private-planning-reopen
 
 Reopening a completed bare task for Planning has no connected Action. Dish identifies the required
 private continuation and Marco runs `dish-admin reopen-planning`; the agent can then start Planning.
@@ -215,7 +216,7 @@ little operational benefit. Revisit only if manual Planning reopens become frequ
 frontend could expose the existing private operation without granting ordinary agents that
 authority.
 
-### DISH-003 — connected UUID schema visibility
+### connected-uuid-schema-visibility
 
 The generated and served OpenAPI marks UUID fields with `format: uuid`, a canonical
 lowercase/non-nil `pattern`, and exact length bounds. The GPT Action importer may expose only the
@@ -226,7 +227,7 @@ Backend UUID validation remains authoritative. The late feedback has low-to-mode
 creates no workflow or replay state. Consider a future UUID representation redesign only if live
 usage shows that connected-side validation would materially improve the experience.
 
-### DISH-014 — expired leases versus permanently unavailable runs
+### expired-lease-vs-permanent-abandonment
 
 Expired lease recovery and permanent run abandonment are separate authorities. `dish-admin
 recover-lease` releases only lease liveness and is correct when the same durable run will return. It
@@ -241,7 +242,7 @@ return the exact admin command and relay instruction. After Marco confirms succe
 refresh the authoritative Dish action and follow the exact continuation returned. Partial, uncertain,
 or contradictory external effects remain fenced rather than being guessed or compensated.
 
-### DISH-015 — private Evidence and Human Review resolution
+### private-evidence-human-review-resolution
 
 Evidence and Human Review holds deliberately have no connected recovery Actions. The connected
 agent stops and identifies the required Marco/admin continuation. Marco resolves the hold through
@@ -253,7 +254,7 @@ This is accepted as won't-fix for launch: the human checkpoint is intentional, t
 is simple, and the expected operational impact is low. Revisit only if real post-launch holds create
 meaningful recurring operator friction.
 
-### DISH-018 — pending task creation recovery
+### pending-task-creation-recovery
 
 If the service loses the authoritative result between Asana task creation, Research Queue
 placement, and request completion, the connected caller cannot prove whether that pending create
