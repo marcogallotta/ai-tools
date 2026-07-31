@@ -313,10 +313,13 @@ python3 -m venv .venv
 Use the curated smoke suite for rapid confidence during normal iteration, then run the complete
 suite before handing work back. Smoke membership is an explicit per-test contract, so moving or
 splitting a test module cannot silently remove a critical test from the gate. Collection also checks
-that the gate retains representative coverage of each required launch-critical invariant:
+that the gate retains representative coverage of each required launch-critical invariant. The
+separate database-boundary lane disables the fast schema-clone shortcut and filesystem-sync
+override for tests that must exercise real bootstrap, migration, locking, and durability behavior:
 
 ```sh
 .venv/bin/python -m pytest --smoke
+.venv/bin/python -m pytest --database-boundary
 .venv/bin/python -m pytest
 ```
 

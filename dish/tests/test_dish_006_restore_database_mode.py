@@ -13,6 +13,9 @@ def _mode(path: Path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
 
+@pytest.mark.database_boundary
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_durability
 @pytest.mark.invariant_backup_restore
 @pytest.mark.smoke
 def test_successful_restore_installs_live_database_owner_only(tmp_path):
@@ -30,6 +33,9 @@ def test_successful_restore_installs_live_database_owner_only(tmp_path):
     assert _mode(live) == 0o600
 
 
+@pytest.mark.database_boundary
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_durability
 @pytest.mark.smoke
 def test_recovery_reasserts_owner_only_mode_after_committed_replacement(tmp_path):
     live = tmp_path / "dish.db"

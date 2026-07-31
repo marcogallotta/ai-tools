@@ -46,13 +46,15 @@ cd ai-tools/dish
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-test.txt
 .venv/bin/python -m pytest --smoke
+.venv/bin/python -m pytest --database-boundary
 ```
 
-Use `pytest --smoke` for rapid confidence while iterating. Smoke membership is attached to each
-test with an explicit marker rather than inferred from its filename, and collection fails if the
-gate loses representative coverage of a required launch-critical invariant. Before handing back
-code or staged archives, run the complete `.venv/bin/python -m pytest` suite. Never package
-`.venv` in a patch or archive.
+Use `pytest --smoke` for rapid confidence while iterating. The smoke gate is selected by explicit
+per-test markers and enforces representative coverage of the launch-critical invariants. Run
+`pytest --database-boundary` before handoff to exercise real empty-database bootstrap, historical
+schema migration, SQLite concurrency, and backup/restore with production synchronization pragmas.
+Before handing back code or staged archives, also run the complete `.venv/bin/python -m pytest`
+suite. Never package `.venv` in a patch or archive.
 
 ## Live Dish smoke-test credentials
 

@@ -62,6 +62,9 @@ finally:
 """
 
 
+@pytest.mark.database_boundary
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_concurrency
 @pytest.mark.boundary
 def test_held_writer_returns_structured_retryable_error(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(database_schema, "MIGRATION_BUSY_TIMEOUT_MS", 10)

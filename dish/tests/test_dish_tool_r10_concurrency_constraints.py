@@ -32,6 +32,10 @@ def _make_v2(path: Path) -> None:
         conn.close()
 
 
+@pytest.mark.database_boundary
+@pytest.mark.real_database_bootstrap
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_concurrency
 @pytest.mark.smoke
 def test_concurrent_initializers_serialize_migrations(tmp_path: Path) -> None:
     db_path = tmp_path / "concurrent-v2.sqlite"
@@ -187,6 +191,10 @@ def test_database_rejects_stronger_impossible_states(tmp_path: Path) -> None:
         conn.close()
 
 
+@pytest.mark.database_boundary
+@pytest.mark.real_database_bootstrap
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_concurrency
 @pytest.mark.smoke
 def test_many_concurrent_initializers_all_converge(tmp_path: Path) -> None:
     db_path = tmp_path / "concurrent-many-v2.sqlite"

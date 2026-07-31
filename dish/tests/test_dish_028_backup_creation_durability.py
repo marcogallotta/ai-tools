@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 import sqlite3
 
 import dish_service.application as application_module
@@ -17,6 +18,9 @@ def _principal() -> ServicePrincipal:
     return ServicePrincipal(owner_id="admin", run_id=RUN_ID)
 
 
+@pytest.mark.database_boundary
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_durability
 def test_backup_identity_is_durable_before_snapshot_creation(monkeypatch, tmp_path):
     service, _backend = _service(tmp_path)
     real_create = BackupManager.create
@@ -45,6 +49,9 @@ def test_backup_identity_is_durable_before_snapshot_creation(monkeypatch, tmp_pa
     assert observed["completed_at"] is None
 
 
+@pytest.mark.database_boundary
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_durability
 def test_interrupted_result_persistence_reconciles_exact_reserved_backup(
     monkeypatch, tmp_path
 ):

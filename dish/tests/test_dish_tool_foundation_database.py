@@ -44,6 +44,10 @@ def insert_submission(conn, submission_id, task_gid, status):
     conn.commit()
 
 
+@pytest.mark.database_boundary
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_bootstrap
+@pytest.mark.invariant_database_bootstrap
 @pytest.mark.smoke
 @pytest.mark.real_database_bootstrap
 def test_schema_creation_and_migration_are_idempotent(tmp_path):
@@ -82,6 +86,9 @@ def test_schema_creation_and_migration_are_idempotent(tmp_path):
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
 
 
+@pytest.mark.database_boundary
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_upgrade
 @pytest.mark.smoke
 def test_schema_34_and_35_upgrade_existing_database_with_current_journals(tmp_path):
     db_path = tmp_path / "upgrade.db"
@@ -120,6 +127,9 @@ def test_schema_34_and_35_upgrade_existing_database_with_current_journals(tmp_pa
         upgraded.close()
 
 
+@pytest.mark.database_boundary
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_upgrade
 @pytest.mark.smoke
 def test_schema_35_upgrades_schema_34_audit_journal(tmp_path):
     db_path = tmp_path / "schema-34.db"

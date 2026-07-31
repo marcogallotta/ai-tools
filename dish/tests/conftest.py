@@ -16,6 +16,13 @@ import pytest
 
 CLI_PATH = pathlib.Path(__file__).resolve().parent.parent.parent / "tools" / "asana"
 
+REQUIRED_DATABASE_BOUNDARY_CATEGORIES = {
+    "database_boundary_bootstrap",
+    "database_boundary_upgrade",
+    "database_boundary_concurrency",
+    "database_boundary_durability",
+}
+
 REQUIRED_SMOKE_INVARIANTS = {
     "invariant_request_replay",
     "invariant_lease_authority",
@@ -25,6 +32,7 @@ REQUIRED_SMOKE_INVARIANTS = {
     "invariant_authorization",
     "invariant_planning_intent",
     "invariant_abandonment",
+    "invariant_database_bootstrap",
     "invariant_backup_restore",
 }
 
@@ -34,36 +42,67 @@ def pytest_addoption(parser):
         "--smoke",
         action="store_true",
         default=False,
-        help="run only the curated smoke tests",
+        help="run only tests explicitly marked as smoke",
+    )
+    parser.addoption(
+        "--database-boundary",
+        action="store_true",
+        default=False,
+        help="run the real SQLite bootstrap, migration, concurrency, and durability lane",
     )
 
 
 def pytest_collection_modifyitems(config, items):
-    if not config.getoption("--smoke"):
+    smoke_requested = config.getoption("--smoke")
+    database_boundary_requested = config.getoption("--database-boundary")
+    if smoke_requested and database_boundary_requested:
+        raise pytest.UsageError(
+            "--smoke and --database-boundary are separate test lanes"
+        )
+    if not smoke_requested and not database_boundary_requested:
         return
 
-    smoke_items = [
-        item
-        for item in items
-        if item.get_closest_marker("smoke") is not None
-        and item.get_closest_marker("full_suite_only") is None
-    ]
-    covered_invariants = {
-        marker
-        for item in smoke_items
-        for marker in REQUIRED_SMOKE_INVARIANTS
-        if item.get_closest_marker(marker) is not None
-    }
-    missing_invariants = REQUIRED_SMOKE_INVARIANTS - covered_invariants
-    if missing_invariants:
-        raise pytest.UsageError(
-            "smoke suite lacks required invariant coverage: "
-            + ", ".join(sorted(missing_invariants))
-        )
+    if smoke_requested:
+        selected = [
+            item
+            for item in items
+            if item.get_closest_marker("smoke") is not None
+            and item.get_closest_marker("full_suite_only") is None
+        ]
+        covered = {
+            marker
+            for item in selected
+            for marker in REQUIRED_SMOKE_INVARIANTS
+            if item.get_closest_marker(marker) is not None
+        }
+        missing = REQUIRED_SMOKE_INVARIANTS - covered
+        if missing:
+            raise pytest.UsageError(
+                "smoke suite lacks required invariant coverage: "
+                + ", ".join(sorted(missing))
+            )
+    else:
+        selected = [
+            item
+            for item in items
+            if item.get_closest_marker("database_boundary") is not None
+        ]
+        covered = {
+            marker
+            for item in selected
+            for marker in REQUIRED_DATABASE_BOUNDARY_CATEGORIES
+            if item.get_closest_marker(marker) is not None
+        }
+        missing = REQUIRED_DATABASE_BOUNDARY_CATEGORIES - covered
+        if missing:
+            raise pytest.UsageError(
+                "database-boundary lane lacks required coverage: "
+                + ", ".join(sorted(missing))
+            )
 
-    selected_set = set(smoke_items)
+    selected_set = set(selected)
     deselected = [item for item in items if item not in selected_set]
-    items[:] = smoke_items
+    items[:] = selected
     config.hook.pytest_deselected(items=deselected)
 
 
@@ -140,14 +179,19 @@ def close_sqlite_connections(monkeypatch, request, current_database_template):
     real_migrate = database_schema.migrate_database
     opened = []
 
+    uses_production_pragmas = (
+        request.node.get_closest_marker("production_sqlite_pragmas") is not None
+    )
+
     def tracked_connect(*args, **kwargs):
         conn = real_connect(*args, **kwargs)
         opened.append(conn)
         try:
-            # Unit and integration tests exercise logical transaction, recovery,
-            # locking, and schema behavior; they do not simulate power loss. Avoid
-            # filesystem sync latency while preserving SQLite's transactional rules.
-            conn.execute("PRAGMA synchronous = OFF")
+            if not uses_production_pragmas:
+                # Fast logical lane: preserve SQLite transaction and locking rules
+                # without paying filesystem synchronization latency. Tests marked
+                # ``production_sqlite_pragmas`` retain the production setting.
+                conn.execute("PRAGMA synchronous = OFF")
         except Exception:
             opened.remove(conn)
             conn.close()
