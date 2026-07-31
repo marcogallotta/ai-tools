@@ -19,13 +19,18 @@ from .constants import COOKING_PROJECT_GID
 from .database import (
     apply_operation_abandonment_succession_in_transaction,
     complete_abandonment_in_transaction,
+    finalize_confirmed_movement_attempt,
+    finalize_confirmed_write_attempt,
+    finalize_not_applied_movement_attempt,
+    finalize_not_applied_write_attempt,
     get_abandonment_attempt,
     mark_abandonment_awaiting_hold_in_transaction,
     mark_abandonment_blocked_in_transaction,
+    record_audit,
 )
 from .errors import DishRuleError
-from .models import SectionRegistry
-from .task_store import LiveTask, read_complete_task
+from .models import SectionRegistry, utc_now
+from .task_store import LiveTask, move_exact, read_complete_task, write_exact_content
 
 
 @dataclass(frozen=True)
@@ -930,6 +935,358 @@ def resolve_preconstruction_hold_to_successor(
     return result
 
 
+
+def _prepared_stage_start_action(successor: sqlite3.Row) -> dict[str, Any]:
+    kind = successor["operation_kind"]
+    return {
+        "surface": "connected-agent",
+        "command": "start",
+        "arguments": {
+            "task_gid": successor["task_gid"],
+            "kind": kind,
+            "prepared_operation_id": successor["operation_id"],
+        },
+    }
+
+
+def _post_succession_block_result(
+    abandonment: sqlite3.Row,
+    *,
+    reason: str,
+    details: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    command = f'dish-admin reconcile-abandonment {abandonment["abandonment_id"]}'
+    return {
+        "abandonment_id": abandonment["abandonment_id"],
+        "classification": {
+            "outcome": "blocked_manual_reconciliation",
+            "stage": str((details or {}).get("stage") or (
+                "verification" if abandonment["attempt_cycle_id"] is not None else "research"
+            )),
+            "reason": reason,
+            "details": {
+                key: value for key, value in dict(details or {}).items()
+                if key != "stage"
+            },
+        },
+        "required_action": {
+            "surface": "private-admin",
+            "command": "reconcile-abandonment",
+            "arguments": {"abandonment_id": abandonment["abandonment_id"]},
+            "admin_command": command,
+            "relay_text": (
+                f"Tell the human to run: {command}\n"
+                "Then wait for confirmation it succeeded and refresh the "
+                "authoritative Dish action."
+            ),
+            "after_success": {
+                "start_new_operation": False,
+                "instruction": (
+                    "Refresh the authoritative Dish action, then follow the exact "
+                    "continuation returned."
+                ),
+            },
+        },
+    }
+
+
+def _mark_post_succession_blocked(
+    conn: sqlite3.Connection,
+    *,
+    abandonment_id: str,
+    reason: str,
+    details: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    abandonment = get_abandonment_attempt(conn, abandonment_id)
+    result = _post_succession_block_result(
+        abandonment, reason=reason, details=details
+    )
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        row = mark_abandonment_blocked_in_transaction(
+            conn, abandonment_id=abandonment_id, result=result
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    result["abandonment"] = {key: row[key] for key in row.keys()}
+    return result
+
+
+def _reconcile_existing_successor_write(
+    conn: sqlite3.Connection,
+    *,
+    successor: sqlite3.Row,
+    baseline: sqlite3.Row,
+    live: LiveTask,
+) -> LiveTask:
+    attempt = conn.execute(
+        """SELECT * FROM write_attempts
+             WHERE operation_id=? AND outcome IN ('started','uncertain')
+             ORDER BY started_at LIMIT 1""",
+        (successor["operation_id"],),
+    ).fetchone()
+    if attempt is None:
+        return live
+    if (
+        attempt["purpose"] != "abandonment_successor_restore_content"
+        or attempt["intended_identity"] != baseline["identity"]
+        or attempt["intended_title"] != baseline["title"]
+        or attempt["intended_notes"] != baseline["notes"]
+    ):
+        raise DishRuleError(
+            "BACKEND_UNCERTAIN",
+            "prepared successor has an unrelated unresolved content effect",
+            rule="prepared_successor_reconciliation_effect_conflict",
+            retryable=False,
+            details={"attempt_id": attempt["attempt_id"]},
+        )
+    if (
+        live.identity == baseline["identity"]
+        and live.title == baseline["title"]
+        and live.notes == baseline["notes"]
+    ):
+        finalize_confirmed_write_attempt(
+            conn,
+            attempt_id=attempt["attempt_id"],
+            task_gid=successor["task_gid"],
+            title=live.title,
+            notes=live.notes,
+            schema_version=successor["schema_version"],
+        )
+        return live
+    if live.identity == attempt["expected_identity"]:
+        finalize_not_applied_write_attempt(conn, attempt_id=attempt["attempt_id"])
+        return live
+    raise DishRuleError(
+        "BACKEND_UNCERTAIN",
+        "prepared successor content effect is contradictory",
+        rule="prepared_successor_reconciliation_content_contradictory",
+        retryable=False,
+        details={
+            "attempt_id": attempt["attempt_id"],
+            "actual_identity": live.identity,
+        },
+    )
+
+
+def _reconcile_existing_successor_movement(
+    conn: sqlite3.Connection,
+    *,
+    successor: sqlite3.Row,
+    live: LiveTask,
+) -> LiveTask:
+    attempt = conn.execute(
+        """SELECT * FROM movement_attempts
+             WHERE operation_id=? AND outcome IN ('started','uncertain')
+             ORDER BY started_at LIMIT 1""",
+        (successor["operation_id"],),
+    ).fetchone()
+    if attempt is None:
+        return live
+    if (
+        attempt["purpose"] != "abandonment_successor_restore_placement"
+        or attempt["intended_section_gid"] != successor["expected_section_gid"]
+    ):
+        raise DishRuleError(
+            "BACKEND_UNCERTAIN",
+            "prepared successor has an unrelated unresolved movement effect",
+            rule="prepared_successor_reconciliation_effect_conflict",
+            retryable=False,
+            details={"attempt_id": attempt["attempt_id"]},
+        )
+    if live.section_gid == successor["expected_section_gid"]:
+        finalize_confirmed_movement_attempt(
+            conn,
+            attempt_id=attempt["attempt_id"],
+            live_section_gid=live.section_gid,
+        )
+        return live
+    if live.section_gid == attempt["expected_section_gid"]:
+        finalize_not_applied_movement_attempt(conn, attempt_id=attempt["attempt_id"])
+        return live
+    raise DishRuleError(
+        "BACKEND_UNCERTAIN",
+        "prepared successor movement effect is contradictory",
+        rule="prepared_successor_reconciliation_placement_contradictory",
+        retryable=False,
+        details={
+            "attempt_id": attempt["attempt_id"],
+            "actual_section_gid": live.section_gid,
+        },
+    )
+
+
+def _reconcile_prepared_stage_successor(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    abandonment_id: str,
+) -> dict[str, Any] | None:
+    """Restore one unclaimed stage successor to its immutable baseline/placement."""
+
+    abandonment = get_abandonment_attempt(conn, abandonment_id)
+    successor_id = abandonment["successor_operation_id"]
+    if abandonment["status"] != "started" or not successor_id:
+        return None
+    successor = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (successor_id,)
+    ).fetchone()
+    succession = conn.execute(
+        "SELECT * FROM operation_successions WHERE abandonment_id=?",
+        (abandonment_id,),
+    ).fetchone()
+    if (
+        successor is None
+        or succession is None
+        or successor["successor_claim_mode"] != "stage_actor"
+        or successor["status"] != "open"
+        or successor["phase"] != "prepare_required"
+        or successor["run_id"] is not None
+    ):
+        return None
+    baseline = conn.execute(
+        "SELECT * FROM content_versions WHERE content_version_id=?",
+        (succession["successor_content_version_id"],),
+    ).fetchone()
+    if (
+        baseline is None
+        or baseline["operation_id"] != successor_id
+        or baseline["boundary"] != "successor_baseline"
+        or baseline["confirmed"] != 1
+        or baseline["identity"] != successor["expected_identity"]
+    ):
+        return _mark_post_succession_blocked(
+            conn,
+            abandonment_id=abandonment_id,
+            reason="prepared successor baseline binding is corrupt",
+            details={
+                "stage": "planning" if successor["operation_kind"] == "planning" else "research",
+                "successor_operation_id": successor_id,
+            },
+        )
+
+    try:
+        live = read_complete_task(
+            backend, task_gid=successor["task_gid"], project_gid=COOKING_PROJECT_GID
+        )
+        live = _reconcile_existing_successor_write(
+            conn, successor=successor, baseline=baseline, live=live
+        )
+        if live.identity != baseline["identity"]:
+            live = write_exact_content(
+                conn,
+                backend,
+                operation_id=successor_id,
+                task_gid=successor["task_gid"],
+                project_gid=COOKING_PROJECT_GID,
+                expected_identity=live.identity,
+                expected_section_gid=live.section_gid,
+                title=baseline["title"],
+                notes=baseline["notes"],
+                schema_version=successor["schema_version"],
+                purpose="abandonment_successor_restore_content",
+                context={
+                    "abandonment_id": abandonment_id,
+                    "admin_execution_id": abandonment["current_execution_id"],
+                },
+            )
+        live = _reconcile_existing_successor_movement(
+            conn, successor=successor, live=live
+        )
+        if live.section_gid != successor["expected_section_gid"]:
+            live = move_exact(
+                conn,
+                backend,
+                operation_id=successor_id,
+                task_gid=successor["task_gid"],
+                project_gid=COOKING_PROJECT_GID,
+                expected_identity=baseline["identity"],
+                expected_section_gid=live.section_gid,
+                intended_section_gid=successor["expected_section_gid"],
+                purpose="abandonment_successor_restore_placement",
+            )
+        if (
+            live.identity != baseline["identity"]
+            or live.title != baseline["title"]
+            or live.notes != baseline["notes"]
+            or live.section_gid != successor["expected_section_gid"]
+        ):
+            raise DishRuleError(
+                "BACKEND_UNCERTAIN",
+                "prepared successor reconciliation did not restore the exact target",
+                rule="prepared_successor_reconciliation_incomplete",
+                retryable=False,
+            )
+    except DishRuleError as exc:
+        return _mark_post_succession_blocked(
+            conn,
+            abandonment_id=abandonment_id,
+            reason="prepared successor reconciliation remains blocked",
+            details={
+                "stage": "planning" if successor["operation_kind"] == "planning" else "research",
+                "rule": exc.rule,
+                **dict(exc.details or {}),
+            },
+        )
+
+    action = _prepared_stage_start_action(successor)
+    result = {
+        "abandonment_id": abandonment_id,
+        "classification": {
+            "outcome": "restart_prepared",
+            "stage": "planning" if successor["operation_kind"] == "planning" else "research",
+            "reason": "prepared successor baseline and placement restored",
+            "details": {"successor_operation_id": successor_id},
+        },
+        "successor_operation_id": successor_id,
+        "required_action": action,
+    }
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        current = get_abandonment_attempt(conn, abandonment_id)
+        if current["status"] != "started" or current["successor_operation_id"] != successor_id:
+            raise DishRuleError(
+                "CONFLICT",
+                "prepared successor reconciliation authority changed",
+                rule="prepared_successor_reconciliation_stale",
+            )
+        conn.execute(
+            """UPDATE abandonment_attempts
+                  SET status='awaiting_successor_claim', outcome='restart_prepared',
+                      current_execution_id=NULL, latest_result_json=?, updated_at=?
+                WHERE abandonment_id=?""",
+            (
+                json.dumps(result, sort_keys=True, separators=(",", ":")),
+                utc_now(),
+                abandonment_id,
+            ),
+        )
+        record_audit(
+            conn,
+            submission_id=None,
+            task_gid=successor["task_gid"],
+            operation_id=successor_id,
+            event_type="operation.successor_reconciled",
+            actor_agent=None,
+            details={
+                "abandonment_id": abandonment_id,
+                "expected_identity": baseline["identity"],
+                "expected_section_gid": successor["expected_section_gid"],
+            },
+            result_code="OK",
+            result_ok=True,
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    return result
+
+
 def settle_abandonment_frontier(
     conn: sqlite3.Connection,
     backend: Any,
@@ -939,8 +1296,16 @@ def settle_abandonment_frontier(
 ) -> dict[str, Any]:
     """Persist a safe frontier and create clean stage successors.
 
-    This function performs no compensating external write or movement.
+    Restoring an unclaimed prepared stage successor's baseline and placement
+    is the sole compensating external write/movement this function performs;
+    it never mutates or rebases the immutable succession edge itself.
     """
+
+    prepared_reconciliation = _reconcile_prepared_stage_successor(
+        conn, backend, abandonment_id=abandonment_id
+    )
+    if prepared_reconciliation is not None:
+        return prepared_reconciliation
 
     frontier = classify_abandonment_frontier(
         conn, backend, abandonment_id=abandonment_id

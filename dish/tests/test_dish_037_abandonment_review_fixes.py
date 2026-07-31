@@ -403,3 +403,84 @@ def test_abandoned_human_review_hold_relay_includes_generated_command_template()
     assert "--resume-status pending-research" in template
     assert template in action["relay_text"]
     assert "replacing the angle-bracketed detail text" in action["relay_text"]
+
+
+class RepairBackend(Backend):
+    def update_task_content(self, *, task_gid, title, notes):
+        assert task_gid == "task"
+        self.title = title
+        self.notes = notes
+
+    def move_task_to_section(self, *, task_gid, section_gid):
+        assert task_gid == "task"
+        self.section = section_gid
+
+
+@pytest.mark.parametrize(
+    ("drift_content", "drift_section"),
+    [(True, False), (False, True), (True, True)],
+)
+def test_prepared_stage_drift_blocks_then_reconcile_restores_exact_target(
+    drift_content, drift_section
+):
+    conn = initialize_database(":memory:")
+    backend = RepairBackend(title="Original", notes="baseline", section="pi")
+    source = _source(conn, backend, kind="planning")
+    _abandon(conn, source)
+    prepared = CurrentWorkflowService(conn, backend).settle_abandonment_frontier(
+        "abandonment", reason="conversation permanently unavailable"
+    )
+    successor_id = prepared["successor_operation_id"]
+
+    if drift_content:
+        backend.title = "Externally edited"
+        backend.notes = "different live content"
+    if drift_section:
+        backend.section = "rq"
+
+    with pytest.raises(DishRuleError) as raised:
+        claim_prepared_stage_successor(
+            conn,
+            live=_live(backend),
+            release=_release("planning"),
+            kind="planning",
+            agent="gpt",
+            run_id="fresh-run",
+            prepared_operation_id=successor_id,
+        )
+
+    assert raised.value.rule == "prepared_successor_drift"
+    blocked = conn.execute(
+        "SELECT * FROM abandonment_attempts WHERE abandonment_id='abandonment'"
+    ).fetchone()
+    assert blocked["status"] == "blocked_manual_reconciliation"
+    assert blocked["successor_operation_id"] == successor_id
+
+    reconciled = DishAdminApplication(conn, backend=backend).execute(
+        "reconcile-abandonment", abandonment_id="abandonment"
+    )
+    assert reconciled["ok"], reconciled
+    action = reconciled["data"]["required_action"]
+    assert action["command"] == "start"
+    assert action["arguments"]["prepared_operation_id"] == successor_id
+    assert backend.title == "Original"
+    assert backend.notes == "baseline"
+    assert backend.section == "pi"
+    awaiting = conn.execute(
+        "SELECT * FROM abandonment_attempts WHERE abandonment_id='abandonment'"
+    ).fetchone()
+    assert awaiting["status"] == "awaiting_successor_claim"
+
+    claimed = claim_prepared_stage_successor(
+        conn,
+        live=_live(backend),
+        release=_release("planning"),
+        kind="planning",
+        agent="gpt",
+        run_id="fresh-run",
+        prepared_operation_id=successor_id,
+    )
+    assert claimed["run_id"] == "fresh-run"
+    assert conn.execute(
+        "SELECT status FROM abandonment_attempts WHERE abandonment_id='abandonment'"
+    ).fetchone()[0] == "completed"

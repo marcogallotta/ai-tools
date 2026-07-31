@@ -1501,15 +1501,54 @@ def claim_prepared_stage_successor_in_transaction(
             rule="abandoned_run_claim_forbidden",
         )
     if row["expected_identity"] != live_identity or row["expected_section_gid"] != live_section_gid:
+        drift = {
+            "expected_identity": row["expected_identity"],
+            "actual_identity": live_identity,
+            "expected_section_gid": row["expected_section_gid"],
+            "actual_section_gid": live_section_gid,
+        }
+        command = f'dish-admin reconcile-abandonment {row["abandonment_id"]}'
+        blocked_result = {
+            "abandonment_id": row["abandonment_id"],
+            "classification": {
+                "outcome": "blocked_manual_reconciliation",
+                "stage": "planning" if operation_kind == "planning" else "research",
+                "reason": "prepared successor baseline or placement drifted before claim",
+                "details": drift,
+            },
+            "required_action": {
+                "surface": "private-admin",
+                "command": "reconcile-abandonment",
+                "arguments": {"abandonment_id": row["abandonment_id"]},
+                "admin_command": command,
+                "relay_text": (
+                    f"Tell the human to run: {command}\n"
+                    "Then wait for confirmation it succeeded and refresh the "
+                    "authoritative Dish action."
+                ),
+                "after_success": {
+                    "start_new_operation": False,
+                    "instruction": (
+                        "Refresh the authoritative Dish action, then follow the "
+                        "exact continuation returned."
+                    ),
+                },
+            },
+        }
+        mark_abandonment_blocked_in_transaction(
+            conn,
+            abandonment_id=row["abandonment_id"],
+            result=blocked_result,
+        )
         raise DishRuleError(
             "CONFLICT",
             "prepared successor baseline or placement changed",
             rule="prepared_successor_drift",
             details={
-                "expected_identity": row["expected_identity"],
-                "actual_identity": live_identity,
-                "expected_section_gid": row["expected_section_gid"],
-                "actual_section_gid": live_section_gid,
+                **drift,
+                "abandonment_id": row["abandonment_id"],
+                "required_admin_action": "reconcile-abandonment",
+                "admin_command": command,
             },
         )
     prior_schema_version = row["schema_version"]

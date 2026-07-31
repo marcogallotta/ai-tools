@@ -91,6 +91,8 @@ The durable `operations` constraint is the one-active-operation-per-task lock. A
 
 `dish-admin recover-lease` and `dish-admin abandon-operation` are deliberately different. Recovery releases an expired lease so the same durably bound run may continue; `ownership_transferred` remains false. Permanent abandonment names the latest classified actor lease and asserts that its owner/run will not return. It is accepted only for an expired or administratively released lease. Dish then selects one bounded result from exact durable and live evidence: a clean prepared successor, an already-committed finalization/continuation, a preserved pre-construction hold, or `blocked_manual_reconciliation`. It performs no launch-time compensation across partial or uncertain effects.
 
+If a prepared Planning/Research successor's live content or section changes before claim, `start` returns `prepared_successor_drift` only after durably changing the abandonment to `blocked_manual_reconciliation`. Marco runs the returned `reconcile-abandonment` command; Dish restores the immutable successor baseline and expected placement using successor-owned journaled effects, then the agent refreshes the authoritative action and retries the exact prepared start. A corrupt baseline binding or contradictory effect remains blocked and is never silently rebased.
+
 The same original Initial Research run may also reacquire a missing lease when retrying a
 pre-construction Evidence or Human Review `reject`. That command is still Research stage-actor work,
 so the replacement lease has no Verification cycle context. A fresh run cannot use this route to

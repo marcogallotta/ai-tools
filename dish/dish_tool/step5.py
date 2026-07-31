@@ -208,6 +208,13 @@ def claim_prepared_stage_successor(
             result=result,
         )
         conn.execute("COMMIT")
+    except DishRuleError as exc:
+        if conn.in_transaction:
+            if exc.rule == "prepared_successor_drift":
+                conn.execute("COMMIT")
+            else:
+                conn.execute("ROLLBACK")
+        raise
     except Exception:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
