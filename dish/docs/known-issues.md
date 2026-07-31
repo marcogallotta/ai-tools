@@ -54,6 +54,49 @@ Implement this before lower-priority post-rollout candidates unless rollout evid
 priority. Reconsider launch blocking only if another pre-rollout occurrence causes unwanted live
 content or repeated operator cleanup.
 
+### COMPLEX-001 — transaction ownership distributed across many modules
+
+**Priority: high post-rollout candidate; not launch-blocking.**
+
+The source has roughly 47 explicit `BEGIN IMMEDIATE` sites, 58 commits, and 53 rollbacks, spread
+across service orchestration, application services, workflow steps, database helpers, lease
+management, abandonment, recovery, and request replay. Individual transactions are often carefully
+written, but no single place owns cross-transaction invariants, which makes them hard to review
+together.
+
+This is not itself a demonstrated defect, but it is strongly correlated with the repeated "state
+committed, envelope unfinished" recovery bugs found across audits, including RECOVERY-001. The
+worst effect is indirect: harder review makes future concurrency/recovery defects more likely and
+slower to find, not a specific reproducible failure today. No agent-facing guidance gap exists
+because the symptom, when it occurs, surfaces as a normal recovery-required response.
+
+Consolidate transaction ownership toward fewer, clearer boundaries (e.g. one writer-transaction
+entry point per workflow mutation) rather than patching individual sites as new bugs appear.
+Reconsider priority downward only if a full audit shows the current distribution is not actually
+implicated in new defects; reconsider upward on any new recovery bug traceable to an overlapping or
+misowned transaction.
+
+### COMPLEX-002 — oversized, high-branch functions in recovery-critical paths
+
+**Priority: high post-rollout candidate; not launch-blocking.**
+
+Several functions central to validation, recovery, and execution are large and branch-heavy:
+`_validate_semantic_evidence` (695 lines, ~134 branches), `recover_operation` (467 lines, ~104),
+`execute_agent` (365 lines, ~77), `execute_admin` (296 lines, ~60),
+`apply_operation_abandonment_succession_in_transaction` (289 lines, ~20),
+`classify_abandonment_frontier` (252 lines, ~35), `claim_operation_execution` (245 lines, ~27), and
+`execution_recovery_state` (216 lines, ~28).
+
+This is not itself a demonstrated defect. It is a maintainability signal: these are also the exact
+functions where recovery and concurrency bugs have repeatedly emerged (four launch blockers plus
+RECOVERY-001), so their size and branch count make each new change harder to reason about safely and
+review thoroughly.
+
+Break these functions down along their existing conceptual seams (e.g. one branch family per
+function) as they are next touched, rather than as a standalone rewrite. Reconsider priority upward
+on any new defect traced to one of these functions; reconsider downward if a closer read shows the
+branch count is inherent to the domain rather than reducible.
+
 ### DESIGN-003 — connected request-status inspection
 
 A connected agent with a `request_id` has no read-only lookup for the request's authoritative
@@ -64,6 +107,30 @@ A future bounded lookup could report request status, command name, owner/run mat
 operation identifiers, whether exact replay is safe, and any required private or human recovery.
 It should not expose full canonical arguments or stored results by default. This is non-blocking
 observability work; implement it only if post-launch response-loss investigations become frequent.
+
+### RECOVERY-001 — execution-recovery evidence misattributed from concurrent audits
+
+`execution_recovery_state()` reconstructs durable effects it attributes to one execution, but has no
+positive provenance for audit rows: it takes the operation-wide max audit row ID at execution start
+and treats every newer row as execution evidence, except a fixed event-name prefix denylist
+(`write_attempt.`, `movement_attempt.`, `dish.`, `dish-admin.`). A concurrent `marco.authorization`
+grant, or a real verifier `inspect` committing `verification.inspected`/`dish_inspect_facts`, gets
+attributed to an unrelated, unconnected execution that failed before any effect.
+
+This is demonstrated by deterministic probe, not hypothetical, for both interleavings. The worst
+effect is a false `BACKEND_UNCERTAIN`: recovery is reported required, retry is blocked, and the
+agent is directed to run `dish-admin recover --outcome applied`, which is safe but a no-op. This is
+fail-closed operator toil, not corruption — no duplicate or wrong effect occurs, and Marco's
+recovery is one documented command needing no private knowledge. Recurrence needs a narrow race
+(concurrent authorization or inspection against a failing execution), but any newly introduced audit
+event type can silently reintroduce it by evading the denylist.
+
+Fix with real provenance (e.g. an `operation_execution_id` column on relevant audit rows, or a
+durable list of evidence IDs the execution produced) rather than extending the exclusion list.
+Reconsider priority on any live false-recovery incident, or once authorization/inspection commands
+routinely overlap live executions. Add regression coverage using real `authorize-governed-change`
+and real verifier `inspect` commands racing a no-effect execution failure, rather than a synthetic
+audit row — the existing synthetic test only re-asserts the current heuristic.
 
 ## Testing boundaries
 
@@ -115,6 +182,25 @@ is diagnostic: durable evidence keeps only `OperationalError` rather than the av
 
 Keep exact SQLite-category retention as post-rollout diagnostic work. Reconsider on another live
 occurrence or if the category is not a normalized writer-lock condition.
+
+### TEST-003 — abandonment-suite fabricated states and mocked authority understate coverage
+
+Several abandonment tests construct database state directly (operation phase, Verification-cycle
+outcome, cycle/step creation, abandonment records) rather than through governed producers, then make
+workflow-level claims from that fabricated shape. Separately, some service-level abandonment tests
+patch `_assert_mutation_ready`, `_release`, and `settle_abandonment_frontier` — reasonable for
+narrow unit tests, but those tests cannot be read as full authority, compatibility, or
+service-boundary validation.
+
+This is a coverage-confidence gap, not a demonstrated runtime defect: a green run over hand-built
+state or heavily mocked authority does not prove a real producer creates the same evidence graph, or
+that the claimed authority check actually runs. Distinguish persistence-invariant tests (direct SQL
+is fine) from producer-contract tests (must use the real command path); the strongest task-fence,
+crash, and replay tests should use real release resolution and real service admission logic.
+
+Revisit if a live incident occurs in an area whose only coverage is hand-built or mocked, or when
+adding a new abandonment-adjacent authority check — give it at least one producer-contract test
+using the real command path before treating it as proven.
 
 ## Accepted for launch
 
