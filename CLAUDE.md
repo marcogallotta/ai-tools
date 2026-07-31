@@ -44,7 +44,7 @@ assume an uploaded or host-global environment is runnable on the current Python 
 ```sh
 cd ai-tools/dish
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements-test.txt
 .venv/bin/python -m pytest --smoke
 ```
 

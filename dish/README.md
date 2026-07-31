@@ -301,11 +301,13 @@ lease handling, and token rotation.
 
 ## Tests
 
-Each checkout or agent session creates its own repository-local environment from `dish/requirements.txt`:
+Each checkout or agent session creates its own repository-local test environment from
+`dish/requirements-test.txt`. Runtime installation remains defined separately by
+`dish/requirements.txt`:
 
 ```sh
 python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements-test.txt
 ```
 
 Use the curated smoke suite for rapid confidence during normal iteration, then run the complete
