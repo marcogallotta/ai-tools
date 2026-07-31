@@ -66,7 +66,7 @@ together.
 
 This is not itself a demonstrated defect, but it is strongly correlated with the repeated "state
 committed, envelope unfinished" recovery bugs found across audits, including
-`execution-recovery-audit-misattribution`. The worst effect is indirect: harder review makes
+`execution-recovery-audit-misattribution` below. The worst effect is indirect: harder review makes
 future concurrency/recovery defects more likely and
 slower to find, not a specific reproducible failure today. No agent-facing guidance gap exists
 because the symptom, when it occurs, surfaces as a normal recovery-required response.
@@ -79,24 +79,33 @@ misowned transaction.
 
 ### oversized-recovery-functions
 
-**Priority: p2; not launch-blocking.**
+**Resolved in the current base.**
 
-Several functions central to validation, recovery, and execution are large and branch-heavy:
-`_validate_semantic_evidence` (695 lines, ~134 branches), `recover_operation` (467 lines, ~104),
-`execute_agent` (365 lines, ~77), `execute_admin` (296 lines, ~60),
-`apply_operation_abandonment_succession_in_transaction` (289 lines, ~20),
-`classify_abandonment_frontier` (252 lines, ~35), `claim_operation_execution` (245 lines, ~27), and
-`execution_recovery_state` (216 lines, ~28).
+The eight audited hotspots were decomposed without changing their public behavior or transaction
+boundaries: `_validate_semantic_evidence`, `recover_operation`, `execute_agent`, `execute_admin`,
+`apply_operation_abandonment_succession_in_transaction`, `classify_abandonment_frontier`,
+`claim_operation_execution`, and `execution_recovery_state`. Each is now a coordinator of less than
+100 lines, with named helpers separating classification, validation, persistence, dispatch, and
+result construction.
 
-This is not itself a demonstrated defect. It is a maintainability signal: these are also the exact
-functions where recovery and concurrency bugs have repeatedly emerged (four launch blockers plus
-`execution-recovery-audit-misattribution`), so their size and branch count make each new
-change harder to reason about safely and review thoroughly.
+The refactor deliberately retained validation/error ordering, fault-injection seams, monkeypatch
+surfaces used by recovery tests, and caller-owned transaction units. Focused concurrency,
+recovery, service/admin, abandonment, schema, and database suites plus the complete test suite
+remain the behavior authority; no test asserts helper layout as a substitute for workflow
+invariants.
 
-Break these functions down along their existing conceptual seams (e.g. one branch family per
-function) as they are next touched, rather than as a standalone rewrite. Reconsider priority upward
-on any new defect traced to one of these functions; reconsider downward if a closer read shows the
-branch count is inherent to the domain rather than reducible.
+### connected-request-status-inspection
+
+**Priority: p3; not launch-blocking.**
+
+A connected agent with a `request_id` has no read-only lookup for the request's authoritative
+state. Exact replay remains the recovery contract, while investigation otherwise depends on private
+tooling, logs, or inference from linked workflow records.
+
+A future bounded lookup could report request status, command name, owner/run match, linked task and
+operation identifiers, whether exact replay is safe, and any required private or human recovery.
+It should not expose full canonical arguments or stored results by default. This is non-blocking
+observability work; implement it only if post-launch response-loss investigations become frequent.
 
 ### execution-recovery-audit-misattribution
 
@@ -123,19 +132,6 @@ Reconsider priority on any live false-recovery incident, or once authorization/i
 routinely overlap live executions. Add regression coverage using real `authorize-governed-change`
 and real verifier `inspect` commands racing a no-effect execution failure, rather than a synthetic
 audit row — the existing synthetic test only re-asserts the current heuristic.
-
-### connected-request-status-inspection
-
-**Priority: p3; not launch-blocking.**
-
-A connected agent with a `request_id` has no read-only lookup for the request's authoritative
-state. Exact replay remains the recovery contract, while investigation otherwise depends on private
-tooling, logs, or inference from linked workflow records.
-
-A future bounded lookup could report request status, command name, owner/run match, linked task and
-operation identifiers, whether exact replay is safe, and any required private or human recovery.
-It should not expose full canonical arguments or stored results by default. This is non-blocking
-observability work; implement it only if post-launch response-loss investigations become frequent.
 
 ## Testing boundaries
 

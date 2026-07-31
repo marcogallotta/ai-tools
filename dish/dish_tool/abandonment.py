@@ -328,224 +328,238 @@ def _committed_recovery_supported(
     return all(_step_intent_matches_live(step, live) for step in required_evidence)
 
 
-def classify_abandonment_frontier(
+
+def _abandonment_stage(abandonment, operation) -> str:
+    if operation["operation_kind"] == "planning":
+        return "planning"
+    return "verification" if abandonment["attempt_cycle_id"] is not None else "research"
+
+
+def _terminal_abandonment_frontier(
+    *, abandonment, operation, stage: str
+) -> AbandonmentFrontier | None:
+    if operation["status"] != "completed" or operation["phase"] != "terminal":
+        return None
+    return AbandonmentFrontier(
+        outcome="committed_finalized",
+        stage=stage,
+        source_operation_id=operation["operation_id"],
+        source_cycle_id=abandonment["attempt_cycle_id"],
+        completion_outcome="committed_finalized",
+        reason="source route was already durably finalized",
+        details={"terminal_outcome": operation["terminal_outcome"]},
+    )
+
+
+def _preconstruction_hold_frontier(
     conn: sqlite3.Connection,
-    backend: Any,
     *,
-    abandonment_id: str,
+    operation,
+    live,
+    stage: str,
+    steps,
+    effects,
 ) -> AbandonmentFrontier:
-    """Classify one persisted abandonment without changing durable state."""
-
-    abandonment = get_abandonment_attempt(conn, abandonment_id)
-    if abandonment["status"] not in {
-        "started",
-        "blocked_manual_reconciliation",
-        "awaiting_hold_resolution",
-    }:
-        raise DishRuleError(
-            "WRONG_STATE",
-            "abandonment is not at a classifiable frontier",
-            rule="abandonment_not_classifiable",
-            details={"status": abandonment["status"]},
-        )
-    operation, _lease = _assert_current_abandonment_authority(conn, abandonment)
-    live = read_complete_task(
-        backend, task_gid=operation["task_gid"], project_gid=COOKING_PROJECT_GID
-    )
-    registry = SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
-    steps = _pending_steps(conn, operation["operation_id"])
-    effects = _unresolved_effects(conn, operation["operation_id"])
-
-    stage = (
-        "planning"
-        if operation["operation_kind"] == "planning"
-        else "verification"
-        if abandonment["attempt_cycle_id"] is not None
-        else "research"
-    )
-
-    # Existing committed recovery can finish before the abandonment command
-    # records its own result (for example after process loss between the two
-    # local commits).  Treat the already-terminal source as committed success,
-    # not as an authority mismatch or a reason to repeat recovery.
-    if operation["status"] == "completed" and operation["phase"] == "terminal":
-        return AbandonmentFrontier(
-            outcome="committed_finalized",
-            stage=stage,
-            source_operation_id=operation["operation_id"],
-            source_cycle_id=abandonment["attempt_cycle_id"],
-            completion_outcome="committed_finalized",
-            reason="source route was already durably finalized",
-            details={"terminal_outcome": operation["terminal_outcome"]},
-        )
-
-    if stage == "research" and _preconstruction_hold(conn, operation):
-        if effects or steps:
-            return _blocked(
-                stage=stage,
-                operation=operation,
-                cycle_id=None,
-                reason="pre-construction hold has unresolved local or external work",
-                details={
-                    "pending_steps": [row["step_name"] for row in steps],
-                    "unresolved_effects": [row["attempt_id"] for row in effects],
-                },
-            )
-        if (
-            live.identity == operation["expected_identity"]
-            and live.section_gid == operation["expected_section_gid"]
-        ):
-            version = _confirmed_version_for_identity(
-                conn,
-                task_gid=operation["task_gid"],
-                identity=live.identity,
-            )
-            return AbandonmentFrontier(
-                outcome="awaiting_hold_resolution",
-                stage=stage,
-                source_operation_id=operation["operation_id"],
-                source_content_version_id=(
-                    None if version is None else version["content_version_id"]
-                ),
-                reason="pre-construction Research hold remains authoritative",
-            )
+    if effects or steps:
         return _blocked(
             stage=stage,
             operation=operation,
             cycle_id=None,
-            reason="pre-construction hold baseline or placement changed",
+            reason="pre-construction hold has unresolved local or external work",
+            details={
+                "pending_steps": [row["step_name"] for row in steps],
+                "unresolved_effects": [row["attempt_id"] for row in effects],
+            },
         )
+    if (
+        live.identity == operation["expected_identity"]
+        and live.section_gid == operation["expected_section_gid"]
+    ):
+        version = _confirmed_version_for_identity(
+            conn, task_gid=operation["task_gid"], identity=live.identity
+        )
+        return AbandonmentFrontier(
+            outcome="awaiting_hold_resolution",
+            stage=stage,
+            source_operation_id=operation["operation_id"],
+            source_content_version_id=(
+                None if version is None else version["content_version_id"]
+            ),
+            reason="pre-construction Research hold remains authoritative",
+        )
+    return _blocked(
+        stage=stage,
+        operation=operation,
+        cycle_id=None,
+        reason="pre-construction hold baseline or placement changed",
+    )
 
-    if stage == "research" and operation["phase"] == "await_verification":
-        continuation = conn.execute(
-            """SELECT * FROM verification_cycles
-                 WHERE operation_id=? AND completed_at IS NULL
-                 ORDER BY cycle_number DESC LIMIT 1""",
-            (operation["operation_id"],),
-        ).fetchone()
+
+def _research_handoff_frontier(
+    conn: sqlite3.Connection,
+    *,
+    operation,
+    live,
+    registry: SectionRegistry,
+    steps,
+    effects,
+) -> AbandonmentFrontier | None:
+    if operation["phase"] != "await_verification":
+        return None
+    continuation = conn.execute(
+        """SELECT * FROM verification_cycles
+             WHERE operation_id=? AND completed_at IS NULL
+             ORDER BY cycle_number DESC LIMIT 1""",
+        (operation["operation_id"],),
+    ).fetchone()
+    head = conn.execute(
+        "SELECT last_confirmed_identity FROM task_content_state WHERE task_gid=?",
+        (operation["task_gid"],),
+    ).fetchone()
+    if not (
+        continuation is not None
+        and continuation["run_id"] is None
+        and not steps
+        and not effects
+        and head is not None
+        and live.identity == head["last_confirmed_identity"]
+        and live.section_gid == registry.verification_queue_gid
+    ):
+        return None
+    return AbandonmentFrontier(
+        outcome="committed_finalized",
+        stage="research",
+        source_operation_id=operation["operation_id"],
+        completion_outcome="route_preserved",
+        continuation_operation_id=operation["operation_id"],
+        continuation_cycle_id=continuation["cycle_id"],
+        reason="confirmed Research handoff already exposes an independent Verification continuation",
+    )
+
+
+def _completed_verification_frontier(
+    *,
+    operation,
+    live,
+    cycle,
+    current_cycle,
+    steps,
+    effects,
+) -> AbandonmentFrontier | None:
+    if cycle["completed_at"] is None:
+        return None
+    if cycle["outcome"] in {"rejected", "two-pass-hold"}:
+        if cycle["hold_identity"] is not None:
+            if (
+                live.identity != cycle["hold_identity"]
+                or live.section_gid != cycle["hold_section_gid"]
+            ):
+                return _blocked(
+                    stage="verification",
+                    operation=operation,
+                    cycle_id=cycle["cycle_id"],
+                    reason="committed hold route no longer matches live state",
+                )
+            return AbandonmentFrontier(
+                outcome="committed_finalized",
+                stage="verification",
+                source_operation_id=operation["operation_id"],
+                source_cycle_id=cycle["cycle_id"],
+                completion_outcome="route_preserved",
+                reason="committed Verification hold route is preserved",
+            )
+        if current_cycle is not None and not steps and not effects:
+            return AbandonmentFrontier(
+                outcome="committed_finalized",
+                stage="verification",
+                source_operation_id=operation["operation_id"],
+                source_cycle_id=cycle["cycle_id"],
+                completion_outcome="route_preserved",
+                continuation_operation_id=operation["operation_id"],
+                continuation_cycle_id=current_cycle["cycle_id"],
+                reason="committed rejection route already created its continuation cycle",
+            )
+    return _blocked(
+        stage="verification",
+        operation=operation,
+        cycle_id=cycle["cycle_id"],
+        reason="completed Verification decision has no safe launch continuation",
+        details={"cycle_outcome": cycle["outcome"]},
+    )
+
+
+def _clean_restart_frontier(
+    conn: sqlite3.Connection,
+    *,
+    operation,
+    live,
+    registry: SectionRegistry,
+    stage: str,
+    cycle,
+) -> AbandonmentFrontier | None:
+    if stage in {"planning", "research"}:
+        clean = (
+            operation["phase"] == "prepare_required"
+            and live.identity == operation["expected_identity"]
+            and live.section_gid == operation["expected_section_gid"]
+        )
+        identity = operation["expected_identity"]
+    else:
+        assert cycle is not None
         head = conn.execute(
             "SELECT last_confirmed_identity FROM task_content_state WHERE task_gid=?",
             (operation["task_gid"],),
         ).fetchone()
-        if (
-            continuation is not None
-            and continuation["run_id"] is None
-            and not steps
-            and not effects
-            and head is not None
-            and live.identity == head["last_confirmed_identity"]
+        candidate = cycle["reviewed_identity"] or head[0]
+        decision_steps = conn.execute(
+            """SELECT 1 FROM operation_steps
+                 WHERE operation_id=? AND (
+                     step_name LIKE 'small_%'
+                     OR step_name LIKE 'route_%'
+                     OR step_name IN ('signoff_write','signoff_finalize')
+                 ) LIMIT 1""",
+            (operation["operation_id"],),
+        ).fetchone()
+        clean = (
+            cycle["completed_at"] is None
+            and operation["phase"] == "await_verification"
+            and decision_steps is None
+            and live.identity == candidate
             and live.section_gid == registry.verification_queue_gid
-        ):
-            return AbandonmentFrontier(
-                outcome="committed_finalized",
-                stage=stage,
-                source_operation_id=operation["operation_id"],
-                completion_outcome="route_preserved",
-                continuation_operation_id=operation["operation_id"],
-                continuation_cycle_id=continuation["cycle_id"],
-                reason="confirmed Research handoff already exposes an independent Verification continuation",
-            )
-
-    cycle = None
-    current_cycle = None
-    if stage == "verification":
-        cycle, current_cycle = _verification_stage(
-            conn, abandonment=abandonment, operation=operation
         )
-        if cycle["completed_at"] is not None:
-            if cycle["outcome"] in {"rejected", "two-pass-hold"}:
-                if cycle["hold_identity"] is not None:
-                    if (
-                        live.identity != cycle["hold_identity"]
-                        or live.section_gid != cycle["hold_section_gid"]
-                    ):
-                        return _blocked(
-                            stage=stage,
-                            operation=operation,
-                            cycle_id=cycle["cycle_id"],
-                            reason="committed hold route no longer matches live state",
-                        )
-                    return AbandonmentFrontier(
-                        outcome="committed_finalized",
-                        stage=stage,
-                        source_operation_id=operation["operation_id"],
-                        source_cycle_id=cycle["cycle_id"],
-                        completion_outcome="route_preserved",
-                        reason="committed Verification hold route is preserved",
-                    )
-                if current_cycle is not None and not steps and not effects:
-                    return AbandonmentFrontier(
-                        outcome="committed_finalized",
-                        stage=stage,
-                        source_operation_id=operation["operation_id"],
-                        source_cycle_id=cycle["cycle_id"],
-                        completion_outcome="route_preserved",
-                        continuation_operation_id=operation["operation_id"],
-                        continuation_cycle_id=current_cycle["cycle_id"],
-                        reason="committed rejection route already created its continuation cycle",
-                    )
-            return _blocked(
-                stage=stage,
-                operation=operation,
-                cycle_id=cycle["cycle_id"],
-                reason="completed Verification decision has no safe launch continuation",
-                details={"cycle_outcome": cycle["outcome"]},
-            )
+        identity = candidate
+    if not clean:
+        return None
+    version = _confirmed_version_for_identity(
+        conn, task_gid=operation["task_gid"], identity=identity
+    )
+    if version is None:
+        return _blocked(
+            stage=stage,
+            operation=operation,
+            cycle_id=None if cycle is None else cycle["cycle_id"],
+            reason="safe live frontier lacks a confirmed content version",
+        )
+    return AbandonmentFrontier(
+        outcome="restart_prepared",
+        stage=stage,
+        source_operation_id=operation["operation_id"],
+        source_cycle_id=None if cycle is None else cycle["cycle_id"],
+        source_content_version_id=version["content_version_id"],
+        reason="live task matches the exact clean restart frontier",
+    )
 
-    if not steps and not effects:
-        if stage in {"planning", "research"}:
-            clean = (
-                operation["phase"] == "prepare_required"
-                and live.identity == operation["expected_identity"]
-                and live.section_gid == operation["expected_section_gid"]
-            )
-            identity = operation["expected_identity"]
-        else:
-            assert cycle is not None
-            candidate = (
-                cycle["reviewed_identity"]
-                or conn.execute(
-                    "SELECT last_confirmed_identity FROM task_content_state WHERE task_gid=?",
-                    (operation["task_gid"],),
-                ).fetchone()[0]
-            )
-            decision_steps = conn.execute(
-                """SELECT 1 FROM operation_steps
-                     WHERE operation_id=? AND (
-                         step_name LIKE 'small_%'
-                         OR step_name LIKE 'route_%'
-                         OR step_name IN ('signoff_write','signoff_finalize')
-                     ) LIMIT 1""",
-                (operation["operation_id"],),
-            ).fetchone()
-            clean = (
-                cycle["completed_at"] is None
-                and operation["phase"] == "await_verification"
-                and decision_steps is None
-                and live.identity == candidate
-                and live.section_gid == registry.verification_queue_gid
-            )
-            identity = candidate
-        if clean:
-            version = _confirmed_version_for_identity(
-                conn, task_gid=operation["task_gid"], identity=identity
-            )
-            if version is None:
-                return _blocked(
-                    stage=stage,
-                    operation=operation,
-                    cycle_id=None if cycle is None else cycle["cycle_id"],
-                    reason="safe live frontier lacks a confirmed content version",
-                )
-            return AbandonmentFrontier(
-                outcome="restart_prepared",
-                stage=stage,
-                source_operation_id=operation["operation_id"],
-                source_cycle_id=None if cycle is None else cycle["cycle_id"],
-                source_content_version_id=version["content_version_id"],
-                reason="live task matches the exact clean restart frontier",
-            )
 
+def _committed_or_blocked_frontier(
+    conn: sqlite3.Connection,
+    *,
+    operation,
+    live,
+    stage: str,
+    cycle,
+    steps,
+    effects,
+) -> AbandonmentFrontier:
     if _committed_recovery_supported(
         conn,
         operation_id=operation["operation_id"],
@@ -564,7 +578,6 @@ def classify_abandonment_frontier(
             reason="exact live evidence proves the existing committed recovery suffix",
             details={"pending_steps": [row["step_name"] for row in steps]},
         )
-
     return _blocked(
         stage=stage,
         operation=operation,
@@ -580,6 +593,100 @@ def classify_abandonment_frontier(
             "live_section_gid": live.section_gid,
         },
     )
+
+
+def classify_abandonment_frontier(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    abandonment_id: str,
+) -> AbandonmentFrontier:
+    """Classify one persisted abandonment without changing durable state."""
+    abandonment = get_abandonment_attempt(conn, abandonment_id)
+    if abandonment["status"] not in {
+        "started",
+        "blocked_manual_reconciliation",
+        "awaiting_hold_resolution",
+    }:
+        raise DishRuleError(
+            "WRONG_STATE",
+            "abandonment is not at a classifiable frontier",
+            rule="abandonment_not_classifiable",
+            details={"status": abandonment["status"]},
+        )
+    operation, _lease = _assert_current_abandonment_authority(conn, abandonment)
+    live = read_complete_task(
+        backend, task_gid=operation["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    registry = SectionRegistry.from_sections(
+        backend.list_sections(COOKING_PROJECT_GID)
+    )
+    steps = _pending_steps(conn, operation["operation_id"])
+    effects = _unresolved_effects(conn, operation["operation_id"])
+    stage = _abandonment_stage(abandonment, operation)
+
+    terminal = _terminal_abandonment_frontier(
+        abandonment=abandonment, operation=operation, stage=stage
+    )
+    if terminal is not None:
+        return terminal
+    if stage == "research" and _preconstruction_hold(conn, operation):
+        return _preconstruction_hold_frontier(
+            conn,
+            operation=operation,
+            live=live,
+            stage=stage,
+            steps=steps,
+            effects=effects,
+        )
+    if stage == "research":
+        handoff = _research_handoff_frontier(
+            conn,
+            operation=operation,
+            live=live,
+            registry=registry,
+            steps=steps,
+            effects=effects,
+        )
+        if handoff is not None:
+            return handoff
+
+    cycle = None
+    if stage == "verification":
+        cycle, current_cycle = _verification_stage(
+            conn, abandonment=abandonment, operation=operation
+        )
+        completed = _completed_verification_frontier(
+            operation=operation,
+            live=live,
+            cycle=cycle,
+            current_cycle=current_cycle,
+            steps=steps,
+            effects=effects,
+        )
+        if completed is not None:
+            return completed
+    if not steps and not effects:
+        clean = _clean_restart_frontier(
+            conn,
+            operation=operation,
+            live=live,
+            registry=registry,
+            stage=stage,
+            cycle=cycle,
+        )
+        if clean is not None:
+            return clean
+    return _committed_or_blocked_frontier(
+        conn,
+        operation=operation,
+        live=live,
+        stage=stage,
+        cycle=cycle,
+        steps=steps,
+        effects=effects,
+    )
+
 
 
 def _completed_change_intent(

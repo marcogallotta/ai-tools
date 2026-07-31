@@ -9,7 +9,18 @@ import sqlite3
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import atomic_persistence, content_identity, finalize_confirmed_movement_attempt, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step
+from .database import (
+    atomic_persistence,
+    complete_operation_step,
+    content_identity,
+    create_verification_cycle,
+    declare_operation_step,
+    finalize_confirmed_movement_attempt,
+    pending_operation_steps,
+    record_actor_fact,
+    record_audit,
+    transition_operation,
+)
 from .errors import DishRuleError
 from .lifecycle import assert_transition, require_status
 from .models import SectionRegistry, resolve_destination, utc_now
@@ -1020,6 +1031,529 @@ def _assert_recoverable_planning_content(notes: str) -> None:
         )
 
 
+
+def _latest_recovery_attempt(
+    conn: sqlite3.Connection, *, table: str, operation_id: str
+):
+    if table not in {"write_attempts", "movement_attempts"}:
+        raise ValueError("unsupported recovery attempt table")
+    return conn.execute(
+        f"SELECT * FROM {table} WHERE operation_id=? "
+        "ORDER BY started_at DESC, rowid DESC LIMIT 1",
+        (operation_id,),
+    ).fetchone()
+
+
+def _recover_content_attempt(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    op,
+    live,
+    requested_outcome: str,
+    actions: list[dict[str, Any]],
+) -> tuple[str, Any]:
+    from .database import (
+        finalize_confirmed_write_attempt,
+        finalize_not_applied_write_attempt,
+    )
+
+    attempt = _latest_recovery_attempt(
+        conn, table="write_attempts", operation_id=operation_id
+    )
+    state = "no_incomplete_content_write"
+    incomplete = attempt is not None and (
+        attempt["outcome"] in {"started", "uncertain"}
+        or (
+            attempt["outcome"] == "confirmed"
+            and not attempt["confirmed_content_version_id"]
+        )
+    )
+    if not incomplete:
+        return (
+            "confirmed_signoff" if op["signoff_completed_at"] else state,
+            attempt,
+        )
+    intended_exact = (
+        attempt["intended_title"] is not None
+        and attempt["intended_notes"] is not None
+        and live.title == attempt["intended_title"]
+        and live.notes == attempt["intended_notes"]
+    )
+    if live.identity == attempt["intended_identity"] and intended_exact:
+        state = "confirmed_content_write"
+        if requested_outcome == "inspect":
+            return state, attempt
+        if requested_outcome != "applied":
+            raise DishRuleError(
+                "CONFLICT",
+                "requested outcome contradicts live write evidence",
+                rule="recovery_outcome_mismatch",
+            )
+        if op["operation_kind"] == "planning":
+            _assert_recoverable_planning_content(live.notes)
+        version = finalize_confirmed_write_attempt(
+            conn,
+            attempt_id=attempt["attempt_id"],
+            task_gid=op["task_gid"],
+            title=live.title,
+            notes=live.notes,
+            schema_version=attempt["schema_version"] or op["schema_version"],
+        )
+        actions.append(
+            {
+                "kind": "content_write",
+                "outcome": "confirmed",
+                "content_version_id": version["content_version_id"],
+            }
+        )
+        return "reconciled_confirmed_content_write", attempt
+    if live.identity == attempt["expected_identity"]:
+        state = "confirmed_content_write_not_applied"
+        if requested_outcome == "inspect":
+            return state, attempt
+        if requested_outcome != "not-applied":
+            raise DishRuleError(
+                "CONFLICT",
+                "requested outcome contradicts live write evidence",
+                rule="recovery_outcome_mismatch",
+            )
+        finalize_not_applied_write_attempt(conn, attempt_id=attempt["attempt_id"])
+        actions.append({"kind": "content_write", "outcome": "not_applied"})
+        if attempt["purpose"] == "destination_repair":
+            context = json.loads(attempt["context_json"] or "{}")
+            repair_step = str(context.get("repair_step") or "")
+            if repair_step:
+                pending = conn.execute(
+                    "SELECT completed_at FROM operation_steps "
+                    "WHERE operation_id=? AND step_name=?",
+                    (operation_id, repair_step),
+                ).fetchone()
+                if pending is not None and pending["completed_at"] is None:
+                    complete_operation_step(conn, operation_id, repair_step)
+                    actions.append(
+                        {
+                            "kind": "workflow_step",
+                            "step": repair_step,
+                            "outcome": "not_applied",
+                        }
+                    )
+        return "reconciled_not_applied_content_write", attempt
+    if requested_outcome != "inspect":
+        raise DishRuleError(
+            "CONFLICT",
+            "live task does not prove whether the write applied",
+            rule="recovery_evidence_ambiguous",
+            retryable=False,
+        )
+    return "unresolved_content_write", attempt
+
+
+def _recover_movement_attempt(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    op,
+    live,
+    requested_outcome: str,
+    actions: list[dict[str, Any]],
+) -> tuple[str, Any]:
+    from .database import (
+        finalize_confirmed_movement_attempt,
+        finalize_not_applied_movement_attempt,
+    )
+
+    attempt = _latest_recovery_attempt(
+        conn, table="movement_attempts", operation_id=operation_id
+    )
+    state = "no_incomplete_movement"
+    incomplete = attempt is not None and (
+        attempt["outcome"] in {"started", "uncertain"}
+        or (
+            attempt["outcome"] == "confirmed"
+            and attempt["purpose"] == "destination_submission"
+            and op["destination_movement_attempt_id"] != attempt["attempt_id"]
+        )
+    )
+    if not incomplete:
+        if op["signoff_completed_at"] and op["movement_completed_at"] is None:
+            state = "confirmed_signoff_incomplete_movement"
+        return state, attempt
+    if live.section_gid == attempt["intended_section_gid"]:
+        state = "confirmed_movement"
+        if requested_outcome == "inspect":
+            return state, attempt
+        if requested_outcome != "applied":
+            raise DishRuleError(
+                "CONFLICT",
+                "requested outcome contradicts live movement evidence",
+                rule="recovery_outcome_mismatch",
+            )
+        if (
+            op["operation_kind"] == "planning"
+            and attempt["purpose"] == "planning_handoff"
+        ):
+            _assert_recoverable_planning_content(live.notes)
+        finalized = finalize_confirmed_movement_attempt(
+            conn,
+            attempt_id=attempt["attempt_id"],
+            live_section_gid=live.section_gid,
+        )
+        actions.append(
+            {
+                "kind": "movement",
+                "outcome": "confirmed",
+                "purpose": finalized["purpose"],
+            }
+        )
+        return "reconciled_confirmed_movement", attempt
+    if live.section_gid == attempt["expected_section_gid"]:
+        state = "confirmed_movement_not_applied"
+        if requested_outcome == "inspect":
+            return state, attempt
+        if requested_outcome != "not-applied":
+            raise DishRuleError(
+                "CONFLICT",
+                "requested outcome contradicts live movement evidence",
+                rule="recovery_outcome_mismatch",
+            )
+        finalize_not_applied_movement_attempt(
+            conn, attempt_id=attempt["attempt_id"]
+        )
+        actions.append(
+            {
+                "kind": "movement",
+                "outcome": "not_applied",
+                "purpose": attempt["purpose"],
+            }
+        )
+        return "reconciled_not_applied_movement", attempt
+    if requested_outcome != "inspect":
+        raise DishRuleError(
+            "CONFLICT",
+            "live placement does not prove whether movement applied",
+            rule="recovery_evidence_ambiguous",
+            retryable=False,
+        )
+    return "unresolved_movement", attempt
+def _recover_workflow_step_group_1(
+    conn: sqlite3.Connection,
+    *,
+    backend: Any,
+    operation_id: str,
+    op,
+    live,
+    step,
+    intended: dict[str, Any],
+    actions: list[dict[str, Any]],
+) -> tuple[bool, Any]:
+    if step['step_name'].startswith('destination_repair:'):
+        if live.title != intended.get('title') or live.notes != intended.get('notes'):
+            raise DishRuleError('CONFLICT', 'live content does not satisfy destination-repair intent', rule='workflow_step_evidence_mismatch')
+        _complete_destination_repair_step(conn, operation_id=operation_id, step_name=step['step_name'], context=intended, repaired_identity=live.identity, recovered=True)
+        actions.append({'kind': 'workflow_step', 'step': step['step_name'], 'outcome': 'confirmed'})
+        return True, live
+    if step['step_name'] == 'candidate_write':
+        if live.title == intended.get('title') and live.notes == intended.get('notes'):
+            complete_operation_step(conn, operation_id, 'candidate_write')
+            actions.append({'kind': 'workflow_step', 'step': 'candidate_write', 'outcome': 'confirmed'})
+        else:
+            raise DishRuleError('CONFLICT', 'live content does not satisfy candidate-write intent', rule='workflow_step_evidence_mismatch')
+        return True, live
+    if step['step_name'] == 'handoff_validation':
+        if live.title != intended.get('title') or live.notes != intended.get('notes'):
+            raise DishRuleError('CONFLICT', 'live content does not satisfy handoff-validation intent', rule='workflow_step_evidence_mismatch')
+        exact = parse_task_document(f'{live.title}\n{live.notes}')
+        validation = validate_task_document(exact, expected_schema_version=intended['schema_version'], schema=intended.get('schema'))
+        if not validation.ok:
+            raise DishRuleError('CONFLICT', 'confirmed candidate still fails deterministic handoff validation', rule='handoff_validation_failed')
+        complete_operation_step(conn, operation_id, 'handoff_validation')
+        actions.append({'kind': 'workflow_step', 'step': 'handoff_validation', 'outcome': 'confirmed'})
+        return True, live
+    if step['step_name'] == 'verification_cycle':
+        existing = conn.execute('SELECT cycle_id FROM verification_cycles WHERE operation_id=? AND completed_at IS NULL ORDER BY cycle_number DESC LIMIT 1', (operation_id,)).fetchone()
+        if existing is None:
+            number = conn.execute('SELECT COALESCE(MAX(cycle_number),0)+1 FROM verification_cycles WHERE task_gid=?', (op['task_gid'],)).fetchone()[0]
+            existing = create_verification_cycle(conn, operation_id=operation_id, task_gid=op['task_gid'], cycle_number=number, protocol_release=intended['protocol_release'], protocol_text=intended.get('protocol_text'))
+        complete_operation_step(conn, operation_id, 'verification_cycle')
+        actions.append({'kind': 'workflow_step', 'step': 'verification_cycle', 'outcome': 'confirmed'})
+        return True, live
+    return False, live
+
+
+def _recover_workflow_step_group_2(
+    conn: sqlite3.Connection,
+    *,
+    backend: Any,
+    operation_id: str,
+    op,
+    live,
+    step,
+    intended: dict[str, Any],
+    actions: list[dict[str, Any]],
+) -> tuple[bool, Any]:
+    if step['step_name'] in {'planning_write', 'migration_write', 'small_corrected_write', 'hold_write', 'large_write', 'reopen_write', 'hold_resolution_write', 'signoff_write'} or step['step_name'].startswith('route_write:'):
+        if step['step_name'] == 'planning_write':
+            _assert_recoverable_planning_content(live.notes)
+        if live.title == intended.get('title') and live.notes == intended.get('notes'):
+            complete_operation_step(conn, operation_id, step['step_name'])
+            actions.append({'kind': 'workflow_step', 'step': step['step_name'], 'outcome': 'confirmed'})
+        else:
+            raise DishRuleError('CONFLICT', 'live content does not satisfy workflow write intent', rule='workflow_step_evidence_mismatch')
+        return True, live
+    if step['step_name'] in {'verification_handoff', 'planning_handoff'}:
+        target = intended['section_gid']
+        purpose = 'verification_handoff' if step['step_name'] == 'verification_handoff' else 'planning_handoff'
+        if step['step_name'] == 'planning_handoff':
+            _assert_recoverable_planning_content(live.notes)
+        if live.section_gid != target:
+            live = move_exact(conn, backend, operation_id=operation_id, task_gid=op['task_gid'], project_gid=COOKING_PROJECT_GID, expected_identity=live.identity, expected_section_gid=live.section_gid, intended_section_gid=target, purpose=purpose)
+        complete_operation_step(conn, operation_id, step['step_name'])
+        if step['step_name'] == 'verification_handoff':
+            transition_operation(conn, operation_id, phase='await_verification')
+        actions.append({'kind': 'workflow_step', 'step': step['step_name'], 'outcome': 'confirmed'})
+        return True, live
+    if step['step_name'] == 'small_review_binding':
+        from .step8 import _assert_small_correction_write_lineage
+        cycle = conn.execute('SELECT * FROM verification_cycles WHERE cycle_id=?', (intended['cycle_id'],)).fetchone()
+        if cycle is None:
+            raise DishRuleError('CONFLICT', 'Small-correction cycle is missing', rule='workflow_cycle_missing')
+        reviewed_identity = intended.get('reviewed_identity') or cycle['reviewed_identity']
+        corrected_identity = intended.get('corrected_identity') or intended.get('identity')
+        if cycle['reviewed_identity'] != reviewed_identity:
+            raise DishRuleError('CONFLICT', 'Small-correction review binding no longer matches its inspected candidate', rule='workflow_step_evidence_mismatch')
+        if live.identity != corrected_identity:
+            raise DishRuleError('CONFLICT', 'live correction does not match review-binding intent', rule='workflow_step_evidence_mismatch')
+        _assert_small_correction_write_lineage(conn, cycle=cycle, corrected_identity=corrected_identity)
+        complete_operation_step(conn, operation_id, 'small_review_binding')
+        actions.append({'kind': 'workflow_step', 'step': 'small_review_binding', 'outcome': 'confirmed'})
+        return True, live
+    if step['step_name'] == 'reopen_reset':
+        if live.identity != intended['candidate_identity']:
+            raise DishRuleError('CONFLICT', 'live reopen candidate does not match reset intent', rule='workflow_step_evidence_mismatch')
+        import uuid
+        conn.execute('INSERT OR IGNORE INTO two_pass_resets(\n                           reset_id, operation_id, source_cycle_id, candidate_identity,\n                           canonical_path, category, before_json, after_json, created_at\n                       ) VALUES(?,?,?,?,?,?,?,?,?)', (str(uuid.uuid4()), operation_id, intended['source_cycle_id'], intended['candidate_identity'], intended['canonical_path'], intended['category'], json.dumps(intended['before']), json.dumps(intended['after']), utc_now()))
+        complete_operation_step(conn, operation_id, 'reopen_reset')
+        actions.append({'kind': 'workflow_step', 'step': 'reopen_reset', 'outcome': 'confirmed'})
+        return True, live
+    return False, live
+
+
+def _recover_workflow_step_group_3(
+    conn: sqlite3.Connection,
+    *,
+    backend: Any,
+    operation_id: str,
+    op,
+    live,
+    step,
+    intended: dict[str, Any],
+    actions: list[dict[str, Any]],
+) -> tuple[bool, Any]:
+    if step['step_name'] == 'small_signoff':
+        cycle = conn.execute('SELECT * FROM verification_cycles WHERE cycle_id=?', (intended['cycle_id'],)).fetchone()
+        if cycle is not None and cycle['outcome'] == 'approved':
+            complete_operation_step(conn, operation_id, 'small_signoff')
+        else:
+            from .step7 import approve_live
+            if cycle is None:
+                raise DishRuleError('CONFLICT', 'Small-correction cycle is missing', rule='workflow_cycle_missing')
+            reviewed_identity = intended.get('reviewed_identity') or cycle['reviewed_identity']
+            corrected_identity = intended.get('corrected_identity') or live.identity
+            result = approve_live(conn, backend, operation_id=operation_id, agent=intended['agent'], model=intended.get('model'), reviewed_identity=reviewed_identity, approval_candidate_identity=corrected_identity, semantic_review_complete=True, provenance_complete=True, correction_class='small', run_id=intended.get('run_id'))
+            live = read_complete_task(backend, task_gid=op['task_gid'], project_gid=COOKING_PROJECT_GID)
+            complete_operation_step(conn, operation_id, 'small_signoff')
+        actions.append({'kind': 'workflow_step', 'step': 'small_signoff', 'outcome': 'confirmed'})
+        return True, live
+    if step['step_name'].startswith('route_cycle_finalize:'):
+        cycle = conn.execute('SELECT * FROM verification_cycles WHERE cycle_id=?', (intended['cycle_id'],)).fetchone()
+        if cycle is None:
+            raise DishRuleError('CONFLICT', 'route cycle is missing', rule='workflow_cycle_missing')
+        if cycle['completed_at'] is None:
+            hold_version_id = None
+            hold_identity = intended.get('hold_identity')
+            hold_section_gid = intended.get('hold_section_gid')
+            if hold_identity:
+                hold_version = conn.execute('SELECT content_version_id FROM content_versions\n                                 WHERE operation_id=? AND task_gid=? AND identity=? AND confirmed=1\n                                 ORDER BY created_at DESC, rowid DESC LIMIT 1', (operation_id, op['task_gid'], hold_identity)).fetchone()
+                if hold_version is None:
+                    raise DishRuleError('CONFLICT', 'hold write lacks confirmed content evidence', rule='workflow_step_evidence_mismatch')
+                hold_version_id = hold_version['content_version_id']
+            conn.execute('UPDATE verification_cycles\n                              SET correction_class=?, outcome=?, route=?, resume_state=?, completed_at=?,\n                                  hold_content_version_id=?, hold_identity=?, hold_section_gid=?\n                            WHERE cycle_id=?', (intended.get('correction_class'), intended['outcome'], intended.get('route'), intended.get('resume_state'), utc_now(), hold_version_id, hold_identity, hold_section_gid, intended['cycle_id']))
+        complete_operation_step(conn, operation_id, step['step_name'])
+        actions.append({'kind': 'workflow_step', 'step': 'route_cycle_finalize', 'outcome': 'confirmed'})
+        return True, live
+    if step['step_name'] in {'reopen_actor', 'hold_resolution_actor'} or step['step_name'].startswith('route_actor:'):
+        if live.identity != intended['candidate_identity']:
+            raise DishRuleError('CONFLICT', 'live candidate does not match actor-lineage intent', rule='workflow_step_evidence_mismatch')
+        record_actor_fact(conn, operation_id=operation_id, task_gid=op['task_gid'], role=intended['role'], agent=intended['agent'], run_id=intended.get('run_id'), independence_attestation=intended.get('independence_attestation'), candidate_identity=intended['candidate_identity'], source_cycle_id=intended.get('source_cycle_id'))
+        complete_operation_step(conn, operation_id, step['step_name'])
+        actions.append({'kind': 'workflow_step', 'step': step['step_name'], 'outcome': 'confirmed'})
+        return True, live
+    if step['step_name'] in {'reopen_cycle', 'hold_resolution_cycle'} or step['step_name'].startswith('route_new_cycle:'):
+        existing = conn.execute('SELECT cycle_id FROM verification_cycles WHERE operation_id=? AND completed_at IS NULL AND protocol_release=? ORDER BY cycle_number DESC LIMIT 1', (operation_id, intended['protocol_release'])).fetchone()
+        if existing is None:
+            number = conn.execute('SELECT COALESCE(MAX(cycle_number),0)+1 FROM verification_cycles WHERE task_gid=?', (op['task_gid'],)).fetchone()[0]
+            existing = create_verification_cycle(conn, operation_id=operation_id, task_gid=op['task_gid'], cycle_number=number, protocol_release=intended['protocol_release'], protocol_text=intended.get('protocol_text'))
+        complete_operation_step(conn, operation_id, step['step_name'])
+        actions.append({'kind': 'workflow_step', 'step': step['step_name'], 'outcome': 'confirmed', 'cycle_id': existing['cycle_id']})
+        return True, live
+    return False, live
+
+
+def _recover_workflow_step_group_4(
+    conn: sqlite3.Connection,
+    *,
+    backend: Any,
+    operation_id: str,
+    op,
+    live,
+    step,
+    intended: dict[str, Any],
+    actions: list[dict[str, Any]],
+) -> tuple[bool, Any]:
+    if step['step_name'] == 'research_preconstruction_hold_resolution':
+        refreshed_op = conn.execute('SELECT * FROM operations WHERE operation_id=?', (operation_id,)).fetchone()
+        expected_phase = 'held_evidence' if intended.get('resolution_kind') == 'evidence' else 'held_human'
+        if live.identity != refreshed_op['expected_identity']:
+            raise DishRuleError('CONFLICT', 'live task changed while the pre-construction hold resolution was interrupted', rule='workflow_step_evidence_mismatch')
+        if refreshed_op['phase'] == expected_phase:
+            transition_operation(conn, operation_id, phase='prepare_required', status='open')
+        elif refreshed_op['phase'] != 'prepare_required':
+            raise DishRuleError('CONFLICT', 'operation phase does not match the pre-construction hold resolution intent', rule='workflow_step_evidence_mismatch', details={'expected_phases': [expected_phase, 'prepare_required'], 'actual_phase': refreshed_op['phase']})
+        prior = conn.execute("SELECT 1 FROM audit_events WHERE operation_id=? AND event_type='research.preconstruction_resolved' LIMIT 1", (operation_id,)).fetchone()
+        if prior is None:
+            record_audit(conn, submission_id=None, task_gid=op['task_gid'], operation_id=operation_id, event_type='research.preconstruction_resolved', actor_agent=None, details=dict(intended), result_code='OK', result_ok=True, governed_kind='decision', before_state={'phase': expected_phase, 'candidate_content_existed': False}, after_state={'phase': 'prepare_required', 'resume_status': 'pending-research'}, actor_source='recovery')
+        complete_operation_step(conn, operation_id, 'research_preconstruction_hold_resolution')
+        actions.append({'kind': 'workflow_step', 'step': 'research_preconstruction_hold_resolution', 'outcome': 'confirmed'})
+        return True, live
+    if step['step_name'] == 'hold_resolution_decision':
+        prior = conn.execute("SELECT 1 FROM audit_events WHERE operation_id=? AND event_type='hold.resolved' LIMIT 1", (operation_id,)).fetchone()
+        if prior is None:
+            record_audit(conn, submission_id=None, task_gid=op['task_gid'], operation_id=operation_id, event_type='hold.resolved', actor_agent=None, details=dict(intended), result_code='OK', result_ok=True, governed_kind='decision', actor_source='recovery')
+        complete_operation_step(conn, operation_id, 'hold_resolution_decision')
+        actions.append({'kind': 'workflow_step', 'step': 'hold_resolution_decision', 'outcome': 'confirmed'})
+        return True, live
+    if step['step_name'] == 'signoff_finalize':
+        refreshed_op = conn.execute('SELECT * FROM operations WHERE operation_id=?', (operation_id,)).fetchone()
+        cycle = conn.execute('SELECT * FROM verification_cycles WHERE cycle_id=?', (intended['cycle_id'],)).fetchone()
+        if refreshed_op['signoff_completed_at'] is None or cycle is None or cycle['outcome'] != 'approved':
+            raise DishRuleError('CONFLICT', 'signoff evidence is incomplete', rule='workflow_signoff_incomplete')
+        transition_operation(conn, operation_id, phase='await_submission')
+        complete_operation_step(conn, operation_id, 'signoff_finalize')
+        actions.append({'kind': 'workflow_step', 'step': 'signoff_finalize', 'outcome': 'confirmed'})
+        return True, live
+    if step['step_name'] in {'reopen_phase', 'hold_resolution_phase', 'submission_terminal_intent', 'submission_terminal', 'planning_terminal', 'migration_terminal', 'verification_phase', 'non_material_terminal'} or step['step_name'].startswith('route_phase:'):
+        if step['step_name'] == 'planning_terminal':
+            _assert_recoverable_planning_content(live.notes)
+        if step['step_name'] in {'submission_terminal_intent', 'submission_terminal'}:
+            if live.identity != intended.get('effective_identity') or live.section_gid != intended.get('section_gid'):
+                raise DishRuleError('CONFLICT', 'live task does not satisfy submission terminal intent', rule='workflow_step_evidence_mismatch')
+            _finalize_submission_terminal(conn, operation_id=operation_id, intended=intended, recovered=True)
+        else:
+            transition_operation(conn, operation_id, phase=intended.get('phase', 'terminal'), status=intended.get('status'), terminal_outcome=intended.get('terminal_outcome'), inherited_signoff_cycle_id=intended.get('inherited_signoff_cycle_id'))
+            complete_operation_step(conn, operation_id, step['step_name'])
+        actions.append({'kind': 'workflow_step', 'step': step['step_name'], 'outcome': 'confirmed'})
+        return True, live
+    return False, live
+
+
+
+def _recover_pending_workflow_steps(
+    conn: sqlite3.Connection,
+    *,
+    backend: Any,
+    operation_id: str,
+    op,
+    live,
+    requested_outcome: str,
+    actions: list[dict[str, Any]],
+):
+    if requested_outcome != "applied":
+        return live
+    for step in pending_operation_steps(conn, operation_id):
+        intended = json.loads(step["intended_json"])
+        for handler in (
+            _recover_workflow_step_group_1,
+            _recover_workflow_step_group_2,
+            _recover_workflow_step_group_3,
+            _recover_workflow_step_group_4,
+        ):
+            handled, live = handler(
+                conn,
+                backend=backend,
+                operation_id=operation_id,
+                op=op,
+                live=live,
+                step=step,
+                intended=intended,
+                actions=actions,
+            )
+            if handled:
+                break
+    return live
+
+
+def _finish_operation_recovery(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    op,
+    live,
+    requested_outcome: str,
+    reason: str,
+    actions: list[dict[str, Any]],
+    content_state: str,
+    movement_state: str,
+    write_attempt,
+    movement_attempt,
+) -> dict[str, Any]:
+    refreshed = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    record_audit(
+        conn,
+        submission_id=None,
+        task_gid=op["task_gid"],
+        operation_id=operation_id,
+        event_type="operation.recovery",
+        actor_agent=None,
+        details={
+            "requested_outcome": requested_outcome,
+            "reason": reason,
+            "actions": actions,
+            "content_state": content_state,
+            "movement_state": movement_state,
+        },
+        result_code="OK",
+        result_ok=True,
+    )
+    from .operation_execution import resolve_recovered_unclaimed_local_executions
+
+    resolved = resolve_recovered_unclaimed_local_executions(
+        conn, operation_id=operation_id
+    )
+    return {
+        "operation_id": operation_id,
+        "live_identity": live.identity,
+        "live_section_gid": live.section_gid,
+        "content_recovery_state": content_state,
+        "movement_recovery_state": movement_state,
+        "actions": actions,
+        "operation_status": refreshed["status"],
+        "resolved_local_execution_ids": resolved,
+        "write_attempt": (
+            None
+            if write_attempt is None
+            else {key: write_attempt[key] for key in write_attempt.keys()}
+        ),
+        "movement_attempt": (
+            None
+            if movement_attempt is None
+            else {key: movement_attempt[key] for key in movement_attempt.keys()}
+        ),
+    }
+
+
 def recover_operation(
     conn: sqlite3.Connection,
     backend: Any,
@@ -1029,461 +1563,55 @@ def recover_operation(
     reason: str = "live evidence reconciliation",
 ) -> dict[str, Any]:
     """Reconcile interrupted mutation intents from exact live task evidence."""
-    from .database import (
-        finalize_confirmed_movement_attempt, finalize_confirmed_write_attempt,
-        finalize_not_applied_movement_attempt, finalize_not_applied_write_attempt,
-    )
-    op = conn.execute("SELECT * FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
+    op = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
     if op is None:
-        raise DishRuleError("NOT_FOUND", f"operation not found: {operation_id}", rule="operation_not_found")
-    live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
-    actions: list[dict[str, Any]] = []
-
-    write_attempt = conn.execute(
-        """SELECT * FROM write_attempts WHERE operation_id = ?
-             ORDER BY started_at DESC, rowid DESC LIMIT 1""", (operation_id,)
-    ).fetchone()
-    content_state = "no_incomplete_content_write"
-    if write_attempt is not None and (
-        write_attempt["outcome"] in {"started", "uncertain"}
-        or (write_attempt["outcome"] == "confirmed" and not write_attempt["confirmed_content_version_id"])
-    ):
-        intended_exact = (write_attempt["intended_title"] is not None and write_attempt["intended_notes"] is not None
-                          and live.title == write_attempt["intended_title"] and live.notes == write_attempt["intended_notes"])
-        if live.identity == write_attempt["intended_identity"] and intended_exact:
-            evidence = "applied"
-            content_state = "confirmed_content_write"
-            if requested_outcome != "inspect":
-                if requested_outcome != "applied":
-                    raise DishRuleError("CONFLICT", "requested outcome contradicts live write evidence", rule="recovery_outcome_mismatch")
-                if op["operation_kind"] == "planning":
-                    _assert_recoverable_planning_content(live.notes)
-                version = finalize_confirmed_write_attempt(
-                    conn, attempt_id=write_attempt["attempt_id"], task_gid=op["task_gid"],
-                    title=live.title, notes=live.notes, schema_version=write_attempt["schema_version"] or op["schema_version"],
-                )
-                actions.append({"kind": "content_write", "outcome": "confirmed", "content_version_id": version["content_version_id"]})
-                content_state = "reconciled_confirmed_content_write"
-        elif live.identity == write_attempt["expected_identity"]:
-            evidence = "not-applied"
-            content_state = "confirmed_content_write_not_applied"
-            if requested_outcome != "inspect":
-                if requested_outcome != "not-applied":
-                    raise DishRuleError("CONFLICT", "requested outcome contradicts live write evidence", rule="recovery_outcome_mismatch")
-                finalize_not_applied_write_attempt(conn, attempt_id=write_attempt["attempt_id"])
-                actions.append({"kind": "content_write", "outcome": "not_applied"})
-                if write_attempt["purpose"] == "destination_repair":
-                    context = json.loads(write_attempt["context_json"] or "{}")
-                    repair_step = str(context.get("repair_step") or "")
-                    if repair_step:
-                        pending = conn.execute(
-                            "SELECT completed_at FROM operation_steps WHERE operation_id=? AND step_name=?",
-                            (operation_id, repair_step),
-                        ).fetchone()
-                        if pending is not None and pending["completed_at"] is None:
-                            complete_operation_step(conn, operation_id, repair_step)
-                            actions.append({
-                                "kind": "workflow_step",
-                                "step": repair_step,
-                                "outcome": "not_applied",
-                            })
-                content_state = "reconciled_not_applied_content_write"
-        else:
-            evidence = "unresolved"
-            content_state = "unresolved_content_write"
-            if requested_outcome != "inspect":
-                raise DishRuleError("CONFLICT", "live task does not prove whether the write applied", rule="recovery_evidence_ambiguous", retryable=False)
-    elif op["signoff_completed_at"]:
-        content_state = "confirmed_signoff"
-
-    movement_attempt = conn.execute(
-        """SELECT * FROM movement_attempts WHERE operation_id = ?
-             ORDER BY started_at DESC, rowid DESC LIMIT 1""", (operation_id,)
-    ).fetchone()
-    movement_state = "no_incomplete_movement"
-    if movement_attempt is not None and (
-        movement_attempt["outcome"] in {"started", "uncertain"}
-        or (movement_attempt["outcome"] == "confirmed"
-            and movement_attempt["purpose"] == "destination_submission"
-            and op["destination_movement_attempt_id"] != movement_attempt["attempt_id"])
-    ):
-        if live.section_gid == movement_attempt["intended_section_gid"]:
-            movement_state = "confirmed_movement"
-            if requested_outcome != "inspect":
-                if requested_outcome != "applied":
-                    raise DishRuleError("CONFLICT", "requested outcome contradicts live movement evidence", rule="recovery_outcome_mismatch")
-                if (
-                    op["operation_kind"] == "planning"
-                    and movement_attempt["purpose"] == "planning_handoff"
-                ):
-                    _assert_recoverable_planning_content(live.notes)
-                finalized = finalize_confirmed_movement_attempt(conn, attempt_id=movement_attempt["attempt_id"], live_section_gid=live.section_gid)
-                actions.append({"kind": "movement", "outcome": "confirmed", "purpose": finalized["purpose"]})
-                movement_state = "reconciled_confirmed_movement"
-        elif live.section_gid == movement_attempt["expected_section_gid"]:
-            movement_state = "confirmed_movement_not_applied"
-            if requested_outcome != "inspect":
-                if requested_outcome != "not-applied":
-                    raise DishRuleError("CONFLICT", "requested outcome contradicts live movement evidence", rule="recovery_outcome_mismatch")
-                finalize_not_applied_movement_attempt(conn, attempt_id=movement_attempt["attempt_id"])
-                actions.append({"kind": "movement", "outcome": "not_applied", "purpose": movement_attempt["purpose"]})
-                movement_state = "reconciled_not_applied_movement"
-        else:
-            movement_state = "unresolved_movement"
-            if requested_outcome != "inspect":
-                raise DishRuleError("CONFLICT", "live placement does not prove whether movement applied", rule="recovery_evidence_ambiguous", retryable=False)
-    elif op["signoff_completed_at"] and op["movement_completed_at"] is None:
-        movement_state = "confirmed_signoff_incomplete_movement"
-
-    # Resume only the missing suffix of a declared high-level workflow.
-    from .database import complete_operation_step, create_verification_cycle, pending_operation_steps, transition_operation
-    pending_steps = pending_operation_steps(conn, operation_id)
-    if requested_outcome == "applied":
-        for step in pending_steps:
-            intended = json.loads(step["intended_json"])
-            if step["step_name"].startswith("destination_repair:"):
-                if live.title != intended.get("title") or live.notes != intended.get("notes"):
-                    raise DishRuleError(
-                        "CONFLICT",
-                        "live content does not satisfy destination-repair intent",
-                        rule="workflow_step_evidence_mismatch",
-                    )
-                _complete_destination_repair_step(
-                    conn,
-                    operation_id=operation_id,
-                    step_name=step["step_name"],
-                    context=intended,
-                    repaired_identity=live.identity,
-                    recovered=True,
-                )
-                actions.append({
-                    "kind": "workflow_step",
-                    "step": step["step_name"],
-                    "outcome": "confirmed",
-                })
-            elif step["step_name"] == "candidate_write":
-                if live.title == intended.get("title") and live.notes == intended.get("notes"):
-                    complete_operation_step(conn, operation_id, "candidate_write")
-                    actions.append({"kind": "workflow_step", "step": "candidate_write", "outcome": "confirmed"})
-                else:
-                    raise DishRuleError("CONFLICT", "live content does not satisfy candidate-write intent", rule="workflow_step_evidence_mismatch")
-            elif step["step_name"] == "handoff_validation":
-                if live.title != intended.get("title") or live.notes != intended.get("notes"):
-                    raise DishRuleError(
-                        "CONFLICT",
-                        "live content does not satisfy handoff-validation intent",
-                        rule="workflow_step_evidence_mismatch",
-                    )
-                exact = parse_task_document(f"{live.title}\n{live.notes}")
-                validation = validate_task_document(
-                    exact,
-                    expected_schema_version=intended["schema_version"],
-                    schema=intended.get("schema"),
-                )
-                if not validation.ok:
-                    raise DishRuleError(
-                        "CONFLICT",
-                        "confirmed candidate still fails deterministic handoff validation",
-                        rule="handoff_validation_failed",
-                    )
-                complete_operation_step(conn, operation_id, "handoff_validation")
-                actions.append({
-                    "kind": "workflow_step",
-                    "step": "handoff_validation",
-                    "outcome": "confirmed",
-                })
-            elif step["step_name"] == "verification_cycle":
-                existing = conn.execute("SELECT cycle_id FROM verification_cycles WHERE operation_id=? AND completed_at IS NULL ORDER BY cycle_number DESC LIMIT 1", (operation_id,)).fetchone()
-                if existing is None:
-                    number = conn.execute("SELECT COALESCE(MAX(cycle_number),0)+1 FROM verification_cycles WHERE task_gid=?", (op["task_gid"],)).fetchone()[0]
-                    existing = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number, protocol_release=intended["protocol_release"], protocol_text=intended.get("protocol_text"))
-                complete_operation_step(conn, operation_id, "verification_cycle")
-                actions.append({"kind": "workflow_step", "step": "verification_cycle", "outcome": "confirmed"})
-            elif step["step_name"] in {"planning_write", "migration_write", "small_corrected_write", "hold_write", "large_write", "reopen_write", "hold_resolution_write", "signoff_write"} or step["step_name"].startswith("route_write:"):
-                if step["step_name"] == "planning_write":
-                    _assert_recoverable_planning_content(live.notes)
-                if live.title == intended.get("title") and live.notes == intended.get("notes"):
-                    complete_operation_step(conn, operation_id, step["step_name"])
-                    actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
-                else:
-                    raise DishRuleError("CONFLICT", "live content does not satisfy workflow write intent", rule="workflow_step_evidence_mismatch")
-            elif step["step_name"] in {"verification_handoff", "planning_handoff"}:
-                target = intended["section_gid"]
-                purpose = "verification_handoff" if step["step_name"] == "verification_handoff" else "planning_handoff"
-                if step["step_name"] == "planning_handoff":
-                    _assert_recoverable_planning_content(live.notes)
-                if live.section_gid != target:
-                    live = move_exact(conn, backend, operation_id=operation_id, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID, expected_identity=live.identity, expected_section_gid=live.section_gid, intended_section_gid=target, purpose=purpose)
-                complete_operation_step(conn, operation_id, step["step_name"])
-                if step["step_name"] == "verification_handoff":
-                    transition_operation(conn, operation_id, phase="await_verification")
-                actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
-            elif step["step_name"] == "small_review_binding":
-                from .step8 import _assert_small_correction_write_lineage
-                cycle = conn.execute(
-                    "SELECT * FROM verification_cycles WHERE cycle_id=?",
-                    (intended["cycle_id"],),
-                ).fetchone()
-                if cycle is None:
-                    raise DishRuleError(
-                        "CONFLICT",
-                        "Small-correction cycle is missing",
-                        rule="workflow_cycle_missing",
-                    )
-                reviewed_identity = (
-                    intended.get("reviewed_identity") or cycle["reviewed_identity"]
-                )
-                corrected_identity = (
-                    intended.get("corrected_identity")
-                    or intended.get("identity")
-                )
-                if cycle["reviewed_identity"] != reviewed_identity:
-                    raise DishRuleError(
-                        "CONFLICT",
-                        "Small-correction review binding no longer matches its inspected candidate",
-                        rule="workflow_step_evidence_mismatch",
-                    )
-                if live.identity != corrected_identity:
-                    raise DishRuleError("CONFLICT", "live correction does not match review-binding intent", rule="workflow_step_evidence_mismatch")
-                _assert_small_correction_write_lineage(
-                    conn, cycle=cycle, corrected_identity=corrected_identity,
-                )
-                complete_operation_step(conn, operation_id, "small_review_binding")
-                actions.append({"kind": "workflow_step", "step": "small_review_binding", "outcome": "confirmed"})
-            elif step["step_name"] == "reopen_reset":
-                if live.identity != intended["candidate_identity"]:
-                    raise DishRuleError("CONFLICT", "live reopen candidate does not match reset intent", rule="workflow_step_evidence_mismatch")
-                import uuid
-                conn.execute(
-                    """INSERT OR IGNORE INTO two_pass_resets(
-                           reset_id, operation_id, source_cycle_id, candidate_identity,
-                           canonical_path, category, before_json, after_json, created_at
-                       ) VALUES(?,?,?,?,?,?,?,?,?)""",
-                    (
-                        str(uuid.uuid4()), operation_id, intended["source_cycle_id"],
-                        intended["candidate_identity"], intended["canonical_path"],
-                        intended["category"], json.dumps(intended["before"]),
-                        json.dumps(intended["after"]), utc_now(),
-                    ),
-                )
-                complete_operation_step(conn, operation_id, "reopen_reset")
-                actions.append({"kind": "workflow_step", "step": "reopen_reset", "outcome": "confirmed"})
-            elif step["step_name"] == "small_signoff":
-                cycle = conn.execute("SELECT * FROM verification_cycles WHERE cycle_id=?", (intended["cycle_id"],)).fetchone()
-                if cycle is not None and cycle["outcome"] == "approved":
-                    complete_operation_step(conn, operation_id, "small_signoff")
-                else:
-                    from .step7 import approve_live
-                    if cycle is None:
-                        raise DishRuleError(
-                            "CONFLICT",
-                            "Small-correction cycle is missing",
-                            rule="workflow_cycle_missing",
-                        )
-                    reviewed_identity = (
-                        intended.get("reviewed_identity") or cycle["reviewed_identity"]
-                    )
-                    corrected_identity = (
-                        intended.get("corrected_identity") or live.identity
-                    )
-                    result = approve_live(
-                        conn,
-                        backend,
-                        operation_id=operation_id,
-                        agent=intended["agent"],
-                        model=intended.get("model"),
-                        reviewed_identity=reviewed_identity,
-                        approval_candidate_identity=corrected_identity,
-                        semantic_review_complete=True,
-                        provenance_complete=True,
-                        correction_class="small",
-                        run_id=intended.get("run_id"),
-                    )
-                    live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
-                    complete_operation_step(conn, operation_id, "small_signoff")
-                actions.append({"kind": "workflow_step", "step": "small_signoff", "outcome": "confirmed"})
-            elif step["step_name"].startswith("route_cycle_finalize:"):
-                cycle = conn.execute("SELECT * FROM verification_cycles WHERE cycle_id=?", (intended["cycle_id"],)).fetchone()
-                if cycle is None:
-                    raise DishRuleError("CONFLICT", "route cycle is missing", rule="workflow_cycle_missing")
-                if cycle["completed_at"] is None:
-                    hold_version_id = None
-                    hold_identity = intended.get("hold_identity")
-                    hold_section_gid = intended.get("hold_section_gid")
-                    if hold_identity:
-                        hold_version = conn.execute(
-                            """SELECT content_version_id FROM content_versions
-                                 WHERE operation_id=? AND task_gid=? AND identity=? AND confirmed=1
-                                 ORDER BY created_at DESC, rowid DESC LIMIT 1""",
-                            (operation_id, op["task_gid"], hold_identity),
-                        ).fetchone()
-                        if hold_version is None:
-                            raise DishRuleError(
-                                "CONFLICT", "hold write lacks confirmed content evidence",
-                                rule="workflow_step_evidence_mismatch",
-                            )
-                        hold_version_id = hold_version["content_version_id"]
-                    conn.execute(
-                        """UPDATE verification_cycles
-                              SET correction_class=?, outcome=?, route=?, resume_state=?, completed_at=?,
-                                  hold_content_version_id=?, hold_identity=?, hold_section_gid=?
-                            WHERE cycle_id=?""",
-                        (
-                            intended.get("correction_class"), intended["outcome"], intended.get("route"),
-                            intended.get("resume_state"), utc_now(), hold_version_id, hold_identity,
-                            hold_section_gid, intended["cycle_id"],
-                        ),
-                    )
-                complete_operation_step(conn, operation_id, step["step_name"])
-                actions.append({"kind": "workflow_step", "step": "route_cycle_finalize", "outcome": "confirmed"})
-            elif step["step_name"] in {"reopen_actor", "hold_resolution_actor"} or step["step_name"].startswith("route_actor:"):
-                if live.identity != intended["candidate_identity"]:
-                    raise DishRuleError("CONFLICT", "live candidate does not match actor-lineage intent", rule="workflow_step_evidence_mismatch")
-                record_actor_fact(
-                    conn, operation_id=operation_id, task_gid=op["task_gid"],
-                    role=intended["role"], agent=intended["agent"],
-                    run_id=intended.get("run_id"), independence_attestation=intended.get("independence_attestation"),
-                    candidate_identity=intended["candidate_identity"], source_cycle_id=intended.get("source_cycle_id"),
-                )
-                complete_operation_step(conn, operation_id, step["step_name"])
-                actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
-            elif step["step_name"] in {"reopen_cycle", "hold_resolution_cycle"} or step["step_name"].startswith("route_new_cycle:"):
-                existing = conn.execute(
-                    "SELECT cycle_id FROM verification_cycles WHERE operation_id=? AND completed_at IS NULL AND protocol_release=? ORDER BY cycle_number DESC LIMIT 1",
-                    (operation_id, intended["protocol_release"]),
-                ).fetchone()
-                if existing is None:
-                    number = conn.execute("SELECT COALESCE(MAX(cycle_number),0)+1 FROM verification_cycles WHERE task_gid=?", (op["task_gid"],)).fetchone()[0]
-                    existing = create_verification_cycle(
-                        conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number,
-                        protocol_release=intended["protocol_release"], protocol_text=intended.get("protocol_text"),
-                    )
-                complete_operation_step(conn, operation_id, step["step_name"])
-                actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed", "cycle_id": existing["cycle_id"]})
-            elif step["step_name"] == "research_preconstruction_hold_resolution":
-                refreshed_op = conn.execute(
-                    "SELECT * FROM operations WHERE operation_id=?",
-                    (operation_id,),
-                ).fetchone()
-                expected_phase = (
-                    "held_evidence"
-                    if intended.get("resolution_kind") == "evidence"
-                    else "held_human"
-                )
-                if live.identity != refreshed_op["expected_identity"]:
-                    raise DishRuleError(
-                        "CONFLICT",
-                        "live task changed while the pre-construction hold resolution was interrupted",
-                        rule="workflow_step_evidence_mismatch",
-                    )
-                if refreshed_op["phase"] == expected_phase:
-                    transition_operation(
-                        conn, operation_id, phase="prepare_required", status="open"
-                    )
-                elif refreshed_op["phase"] != "prepare_required":
-                    raise DishRuleError(
-                        "CONFLICT",
-                        "operation phase does not match the pre-construction hold resolution intent",
-                        rule="workflow_step_evidence_mismatch",
-                        details={
-                            "expected_phases": [expected_phase, "prepare_required"],
-                            "actual_phase": refreshed_op["phase"],
-                        },
-                    )
-                prior = conn.execute(
-                    "SELECT 1 FROM audit_events "
-                    "WHERE operation_id=? AND event_type='research.preconstruction_resolved' "
-                    "LIMIT 1",
-                    (operation_id,),
-                ).fetchone()
-                if prior is None:
-                    record_audit(
-                        conn,
-                        submission_id=None,
-                        task_gid=op["task_gid"],
-                        operation_id=operation_id,
-                        event_type="research.preconstruction_resolved",
-                        actor_agent=None,
-                        details=dict(intended),
-                        result_code="OK",
-                        result_ok=True,
-                        governed_kind="decision",
-                        before_state={
-                            "phase": expected_phase,
-                            "candidate_content_existed": False,
-                        },
-                        after_state={
-                            "phase": "prepare_required",
-                            "resume_status": "pending-research",
-                        },
-                        actor_source="recovery",
-                    )
-                complete_operation_step(
-                    conn, operation_id, "research_preconstruction_hold_resolution"
-                )
-                actions.append({
-                    "kind": "workflow_step",
-                    "step": "research_preconstruction_hold_resolution",
-                    "outcome": "confirmed",
-                })
-            elif step["step_name"] == "hold_resolution_decision":
-                prior = conn.execute(
-                    "SELECT 1 FROM audit_events WHERE operation_id=? AND event_type='hold.resolved' LIMIT 1",
-                    (operation_id,),
-                ).fetchone()
-                if prior is None:
-                    record_audit(
-                        conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
-                        event_type="hold.resolved", actor_agent=None, details=dict(intended),
-                        result_code="OK", result_ok=True, governed_kind="decision", actor_source="recovery",
-                    )
-                complete_operation_step(conn, operation_id, "hold_resolution_decision")
-                actions.append({"kind": "workflow_step", "step": "hold_resolution_decision", "outcome": "confirmed"})
-            elif step["step_name"] == "signoff_finalize":
-                refreshed_op = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
-                cycle = conn.execute("SELECT * FROM verification_cycles WHERE cycle_id=?", (intended["cycle_id"],)).fetchone()
-                if refreshed_op["signoff_completed_at"] is None or cycle is None or cycle["outcome"] != "approved":
-                    raise DishRuleError("CONFLICT", "signoff evidence is incomplete", rule="workflow_signoff_incomplete")
-                transition_operation(conn, operation_id, phase="await_submission")
-                complete_operation_step(conn, operation_id, "signoff_finalize")
-                actions.append({"kind": "workflow_step", "step": "signoff_finalize", "outcome": "confirmed"})
-            elif step["step_name"] in {"reopen_phase", "hold_resolution_phase", "submission_terminal_intent", "submission_terminal", "planning_terminal", "migration_terminal", "verification_phase", "non_material_terminal"} or step["step_name"].startswith("route_phase:"):
-                if step["step_name"] == "planning_terminal":
-                    _assert_recoverable_planning_content(live.notes)
-                if step["step_name"] in {"submission_terminal_intent", "submission_terminal"}:
-                    if live.identity != intended.get("effective_identity") or live.section_gid != intended.get("section_gid"):
-                        raise DishRuleError(
-                            "CONFLICT",
-                            "live task does not satisfy submission terminal intent",
-                            rule="workflow_step_evidence_mismatch",
-                        )
-                    _finalize_submission_terminal(
-                        conn, operation_id=operation_id, intended=intended, recovered=True
-                    )
-                else:
-                    transition_operation(
-                        conn, operation_id, phase=intended.get("phase", "terminal"),
-                        status=intended.get("status"), terminal_outcome=intended.get("terminal_outcome"),
-                        inherited_signoff_cycle_id=intended.get("inherited_signoff_cycle_id"),
-                    )
-                    complete_operation_step(conn, operation_id, step["step_name"])
-                actions.append({"kind": "workflow_step", "step": step["step_name"], "outcome": "confirmed"})
-
-    refreshed = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
-    record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
-                 event_type="operation.recovery", actor_agent=None,
-                 details={"requested_outcome": requested_outcome, "reason": reason, "actions": actions,
-                          "content_state": content_state, "movement_state": movement_state},
-                 result_code="OK", result_ok=True)
-    from .operation_execution import resolve_recovered_unclaimed_local_executions
-    resolved_local_executions = resolve_recovered_unclaimed_local_executions(
-        conn, operation_id=operation_id
+        raise DishRuleError(
+            "NOT_FOUND",
+            f"operation not found: {operation_id}",
+            rule="operation_not_found",
+        )
+    live = read_complete_task(
+        backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
     )
-    return {
-        "operation_id": operation_id, "live_identity": live.identity, "live_section_gid": live.section_gid,
-        "content_recovery_state": content_state, "movement_recovery_state": movement_state,
-        "actions": actions, "operation_status": refreshed["status"],
-        "resolved_local_execution_ids": resolved_local_executions,
-        "write_attempt": None if write_attempt is None else {k: write_attempt[k] for k in write_attempt.keys()},
-        "movement_attempt": None if movement_attempt is None else {k: movement_attempt[k] for k in movement_attempt.keys()},
-    }
+    actions: list[dict[str, Any]] = []
+    content_state, write_attempt = _recover_content_attempt(
+        conn,
+        operation_id=operation_id,
+        op=op,
+        live=live,
+        requested_outcome=requested_outcome,
+        actions=actions,
+    )
+    movement_state, movement_attempt = _recover_movement_attempt(
+        conn,
+        operation_id=operation_id,
+        op=op,
+        live=live,
+        requested_outcome=requested_outcome,
+        actions=actions,
+    )
+    live = _recover_pending_workflow_steps(
+        conn,
+        backend=backend,
+        operation_id=operation_id,
+        op=op,
+        live=live,
+        requested_outcome=requested_outcome,
+        actions=actions,
+    )
+    return _finish_operation_recovery(
+        conn,
+        operation_id=operation_id,
+        op=op,
+        live=live,
+        requested_outcome=requested_outcome,
+        reason=reason,
+        actions=actions,
+        content_state=content_state,
+        movement_state=movement_state,
+        write_attempt=write_attempt,
+        movement_attempt=movement_attempt,
+    )
+

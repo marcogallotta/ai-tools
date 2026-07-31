@@ -8,6 +8,7 @@ import logging
 import sqlite3
 import tempfile
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -81,6 +82,38 @@ _OPERATION_ADMIN_COMMANDS = {
 _LEASE_FREE_ADMIN_COMMANDS = {"authorize-governed-change", "abandon-operation", "reconcile-abandonment"}
 
 LOG = logging.getLogger("dish.service.application")
+
+
+@dataclass
+class _AgentExecutionState:
+    conn: sqlite3.Connection
+    principal: ServicePrincipal
+    leases: LeaseManager
+    invocation_run_id: str | None
+    prepared_arguments: dict[str, Any]
+    backend: Any = None
+    app: DishApplication | None = None
+    request_row: Any = None
+    operation_id: str | None = None
+    verification_start_cycle_id: str | None = None
+    replay_started: bool = False
+    acquired_for_request: bool = False
+    completed_submit: bool = False
+
+
+@dataclass
+class _AdminExecutionState:
+    conn: sqlite3.Connection
+    principal: ServicePrincipal
+    leases: LeaseManager
+    prepared_arguments: dict[str, Any]
+    operation_id: str | None
+    supplied_run_id: str
+    backend: Any = None
+    replay_started: bool = False
+    acquired_for_request: bool = False
+    exact_recovery_execution_id: str | None = None
+    exact_recovery_lease_id: str | None = None
 
 
 def _lease_recovery_details(
@@ -1745,6 +1778,379 @@ class DishService:
         complete_request(conn, request_id=request_id, result=result)
         return result
 
+
+    def _begin_agent_execution(
+        self,
+        state: _AgentExecutionState,
+        *,
+        command: str,
+        request_id: str | None,
+    ) -> dict[str, Any] | None:
+        prepared = state.prepared_arguments
+        if command in _MUTATING_AGENT_COMMANDS and request_id:
+            state.request_row, state.replay_started = begin_request(
+                state.conn,
+                request_id=request_id,
+                owner_id=state.principal.owner_id,
+                run_id=state.principal.run_id,
+                command=command,
+                arguments=prepared,
+            )
+            prior = stored_result(
+                state.request_row,
+                permit_uncertain_resume=command in {"approve", "reject", "submit"},
+            )
+            if prior is not None:
+                return prior
+            if (
+                not state.replay_started
+                and command != "start"
+                and state.request_row["status"] != "uncertain"
+            ):
+                reconciled = self._reconcile_pending_operation_request(
+                    conn=state.conn, command=command, request_id=request_id
+                )
+                if reconciled is not None:
+                    return reconciled
+        if command == "reject":
+            prepared["reason"] = validate_rejection_reason(prepared.get("reason"))
+        self._assert_connected_task_abandonment_access(
+            state.conn, command=command, arguments=prepared
+        )
+        return None
+
+    def _build_agent_application(
+        self,
+        state: _AgentExecutionState,
+        *,
+        command: str,
+        request_id: str | None,
+    ) -> None:
+        state.backend = self.backend_factory()
+        if command not in _READ_ONLY_AGENT_COMMANDS:
+            self._assert_mutation_ready(state.backend)
+        state.app = DishApplication(
+            state.conn,
+            state.backend,
+            release_loader=lambda role=None: self._release(role),
+            invocation_run_id=state.invocation_run_id,
+            invocation_request_id=request_id,
+        )
+
+    def _resolve_agent_operation(
+        self,
+        state: _AgentExecutionState,
+        *,
+        command: str,
+    ) -> None:
+        prepared = state.prepared_arguments
+        state.operation_id = self._operation_for_request(
+            state.conn, command, prepared
+        )
+        if command == "start" and prepared.get("prepared_operation_id"):
+            authority = state.conn.execute(
+                """SELECT abandonment.abandoned_owner_id, abandonment.abandoned_run_id
+                     FROM operation_successions AS succession
+                     JOIN abandonment_attempts AS abandonment
+                       ON abandonment.abandonment_id=succession.abandonment_id
+                    WHERE succession.successor_operation_id=?""",
+                (state.operation_id,),
+            ).fetchone()
+            if (
+                authority is not None
+                and authority["abandoned_owner_id"] == state.principal.owner_id
+                and authority["abandoned_run_id"] == state.principal.run_id
+            ):
+                raise DishRuleError(
+                    "AGENT_MISMATCH",
+                    "the abandoned client run cannot claim its replacement attempt",
+                    rule="abandoned_run_claim_forbidden",
+                )
+        if command == "start" and prepared.get("kind") == "verification":
+            from dish_tool.step7 import resolve_verification_start_target
+
+            target_operation, target_cycle, authority = resolve_verification_start_target(
+                state.conn,
+                task_gid=str(prepared.get("task_gid") or "").strip(),
+                target_operation_id=prepared.get("target_operation_id"),
+                target_cycle_id=prepared.get("target_cycle_id"),
+            )
+            state.operation_id = str(target_operation["operation_id"])
+            state.verification_start_cycle_id = str(target_cycle["cycle_id"])
+            if (
+                authority is not None
+                and authority["abandoned_owner_id"] == state.principal.owner_id
+                and authority["abandoned_run_id"] == state.principal.run_id
+            ):
+                raise DishRuleError(
+                    "AGENT_MISMATCH",
+                    "the abandoned client run cannot claim its replacement Verification attempt",
+                    rule="abandoned_run_claim_forbidden",
+                )
+        if state.operation_id and command in _MUTATING_AGENT_COMMANDS:
+            self._assert_connected_abandonment_access(
+                state.conn,
+                command=command,
+                arguments=prepared,
+                operation_id=state.operation_id,
+            )
+
+    def _acquire_agent_lease(
+        self,
+        state: _AgentExecutionState,
+        *,
+        command: str,
+    ) -> None:
+        prepared = state.prepared_arguments
+        operation_id = state.operation_id
+        if command in _LEASED_AGENT_COMMANDS:
+            if not operation_id:
+                raise DishRuleError(
+                    "NOT_FOUND", "operation not found", rule="operation_not_found"
+                )
+            operation = self._operation_row(state.conn, operation_id)
+            if operation is None:
+                raise DishRuleError(
+                    "NOT_FOUND", "operation not found", rule="operation_not_found"
+                )
+            state.completed_submit = bool(
+                command == "submit"
+                and operation["status"] == "completed"
+                and operation["terminal_outcome"] == "destination_handled"
+            )
+            if operation["status"] != "open" and not state.completed_submit:
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "operation is not open",
+                    rule="operation_not_open",
+                    details={"actual": operation["status"]},
+                )
+            active = state.leases.active_for_operation(operation_id)
+            if state.completed_submit:
+                return
+            if active is None:
+                if not self._may_claim_missing_lease(
+                    state.conn, operation_id, state.principal, command
+                ):
+                    raise DishRuleError(
+                        "AGENT_MISMATCH",
+                        "operation has no lease and this run has no durable workflow ownership",
+                        rule="service_lease_claim_forbidden",
+                        details={
+                            "operation_id": operation_id,
+                            "run_id": state.principal.run_id,
+                        },
+                    )
+                cycle_id = self._reclaimed_lease_cycle_id(
+                    state.conn, operation_id, state.principal, command
+                )
+                state.leases.acquire(
+                    operation_id, state.principal, context_cycle_id=cycle_id
+                )
+                state.acquired_for_request = True
+            else:
+                state.leases.assert_owned(operation_id, state.principal)
+            return
+        if command == "start" and prepared.get("kind") == "verification":
+            if not operation_id:
+                raise DishRuleError(
+                    "NOT_FOUND",
+                    "task has no open operation",
+                    rule="open_operation_missing",
+                )
+            active = state.leases.active_for_operation(operation_id)
+            if active is None:
+                state.leases.acquire(
+                    operation_id,
+                    state.principal,
+                    context_cycle_id=(
+                        state.verification_start_cycle_id
+                        or self._verification_lease_cycle_id(
+                            state.conn,
+                            operation_id,
+                            state.principal,
+                            pending_first=True,
+                        )
+                    ),
+                )
+                state.acquired_for_request = True
+            else:
+                state.leases.assert_owned(operation_id, state.principal)
+
+    def _dispatch_agent_command(
+        self,
+        state: _AgentExecutionState,
+        *,
+        command: str,
+    ) -> dict[str, Any]:
+        if state.completed_submit:
+            from dish_tool.step9 import completed_submit_live
+
+            operation = self._operation_row(state.conn, str(state.operation_id))
+            release = self._release("verification")
+            data = completed_submit_live(
+                state.conn,
+                state.backend,
+                operation_id=state.operation_id,
+                schema=release.schema,
+            )
+            view = state.app.operation_service.authoritative_view(
+                state.operation_id, schema=release.schema
+            )
+            return result_envelope(
+                command="submit",
+                task_gid=operation["task_gid"],
+                submission_id=state.operation_id,
+                state=view["status"],
+                allowed_actions=view["legal_actions"],
+                data={**data, "authoritative_view": view},
+                validation_scope=scope_for_command("submit"),
+            )
+        with self._candidate_file(state.prepared_arguments) as prepared:
+            return state.app.execute(command, **prepared)
+
+    def _finish_agent_result(
+        self,
+        state: _AgentExecutionState,
+        *,
+        command: str,
+        request_id: str | None,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = _preserve_semantic_evidence_result(
+            result,
+            execution_occurred=True,
+            request_id_consumed=bool(request_id and state.replay_started),
+        )
+        prepared = state.prepared_arguments
+        if (
+            command == "start"
+            and prepared.get("kind") != "verification"
+            and result.get("ok")
+        ):
+            state.operation_id = result.get("submission_id")
+            if state.operation_id:
+                try:
+                    state.leases.acquire(state.operation_id, state.principal)
+                    state.acquired_for_request = True
+                except Exception as exc:
+                    data = result.setdefault("data", {})
+                    data["service_recovery_required"] = True
+                    data["service_recovery"] = {
+                        "kind": "lease_acquisition",
+                        "operation_id": state.operation_id,
+                        "error_type": type(exc).__name__,
+                        "do_not_retry_command": True,
+                    }
+                    result["allowed_actions"] = []
+                    result["retryable"] = False
+        result_operation_id = state.operation_id or result.get("submission_id")
+        if result.get("ok") and result_operation_id and command in _MUTATING_AGENT_COMMANDS:
+            result = self._finalize_successful_lease(
+                result=result,
+                conn=state.conn,
+                leases=state.leases,
+                operation_id=result_operation_id,
+                principal=state.principal,
+                command=command,
+            )
+        elif not result.get("ok") and state.acquired_for_request and state.operation_id:
+            if command == "start" and prepared.get("kind") == "verification":
+                state.leases.release(
+                    state.operation_id,
+                    state.principal,
+                    reason="verification_start_failed",
+                )
+            elif command in _LEASED_AGENT_COMMANDS:
+                state.leases.release(
+                    state.operation_id,
+                    state.principal,
+                    reason="reclaimed_command_rejected",
+                )
+        result = self._apply_principal_access(
+            result,
+            conn=state.conn,
+            leases=state.leases,
+            operation_id=result_operation_id,
+            principal=state.principal,
+            agent=str(prepared.get("agent") or "") or None,
+        )
+        if result.get("data", {}).get("service_recovery_required"):
+            result["allowed_actions"] = []
+        if request_id and command in _MUTATING_AGENT_COMMANDS:
+            result.setdefault("data", {})["request_id"] = request_id
+            complete_request(state.conn, request_id=request_id, result=result)
+        return result
+
+    def _agent_rule_error_result(
+        self,
+        state: _AgentExecutionState,
+        *,
+        command: str,
+        arguments: Mapping[str, Any],
+        request_id: str | None,
+        error: DishRuleError,
+    ) -> dict[str, Any]:
+        error = _preserve_semantic_evidence_error(
+            error,
+            execution_occurred=True,
+            request_id_consumed=bool(request_id and state.replay_started),
+        )
+        if state.acquired_for_request and state.operation_id:
+            try:
+                state.leases.release(
+                    state.operation_id,
+                    state.principal,
+                    reason="service_command_rejected",
+                )
+            except Exception:
+                pass
+        operation_id = state.operation_id or (
+            str(arguments.get("submission_id") or "").strip() or None
+        )
+        operation_kind = None
+        task_gid = None
+        if operation_id:
+            row = state.conn.execute(
+                "SELECT operation_kind, task_gid FROM operations WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+            if row is not None:
+                operation_kind = row["operation_kind"]
+                task_gid = row["task_gid"]
+        validation_scope = (
+            scope_for_command(command, operation_kind=operation_kind)
+            if operation_id
+            else ()
+        )
+        result = error_envelope(
+            command,
+            error,
+            task_gid=task_gid,
+            submission_id=operation_id,
+            validation_scope=validation_scope,
+        )
+        if error.rule == "service_lease_expired":
+            view = (
+                self._exposed_operation_view(
+                    state.conn, operation_id, app=state.app
+                )
+                if operation_id
+                else None
+            )
+            result = self._apply_expired_lease_guidance(
+                result,
+                operation_id=operation_id or "unknown",
+                after_recovery_actions=(
+                    list(view.get("legal_actions") or []) if view is not None else []
+                ),
+                authoritative_view=view,
+            )
+        if request_id and command in _MUTATING_AGENT_COMMANDS and state.replay_started:
+            result.setdefault("data", {})["request_id"] = request_id
+            complete_request(state.conn, request_id=request_id, result=result)
+        return result
+
     def execute_agent(
         self,
         command: str,
@@ -1776,346 +2182,62 @@ class DishService:
                     task_gid=task_gid,
                     submission_id=requested_operation_id,
                 )
-            backend = None
-            app = None
-            acquired_for_request = False
-            operation_id = None
-            replay_started = False
-            completed_submit = False
             invocation_run_id = (
                 principal.run_id
                 if explicit_principal
                 else str(arguments.get("run_id") or "").strip() or None
             )
-            leases = self._lease_manager(conn)
+            state = _AgentExecutionState(
+                conn=conn,
+                principal=principal,
+                leases=self._lease_manager(conn),
+                invocation_run_id=invocation_run_id,
+                prepared_arguments={},
+            )
             try:
-                prepared_arguments = self._arguments_for_principal(
-                    command, arguments, run_id=invocation_run_id,
+                state.prepared_arguments = self._arguments_for_principal(
+                    command, arguments, run_id=invocation_run_id
                 )
-
-                request_row = None
-                if command in {"create", "start", "prepare", "approve", "reject", "submit"} and request_id:
-                    request_row, replay_started = begin_request(
-                        conn,
-                        request_id=request_id,
-                        owner_id=principal.owner_id,
-                        run_id=principal.run_id,
-                        command=command,
-                        arguments=prepared_arguments,
-                    )
-                    prior = stored_result(
-                        request_row,
-                        permit_uncertain_resume=command in {"approve", "reject", "submit"},
-                    )
-                    if prior is not None:
-                        return prior
-                    if (
-                        not replay_started
-                        and command != "start"
-                        and request_row["status"] != "uncertain"
-                    ):
-                        reconciled = self._reconcile_pending_operation_request(
-                            conn=conn, command=command, request_id=request_id
-                        )
-                        if reconciled is not None:
-                            return reconciled
-
-                # Reject reasons become line-oriented Material-change evidence.
-                # Journal the request first so an invalid call replays exactly,
-                # then reject unsafe text before backend creation, lease changes,
-                # workflow execution claims, or task/evidence mutation.
-                if command == "reject":
-                    prepared_arguments["reason"] = validate_rejection_reason(
-                        prepared_arguments.get("reason")
-                    )
-
-                self._assert_connected_task_abandonment_access(
-                    conn,
-                    command=command,
-                    arguments=prepared_arguments,
+                early = self._begin_agent_execution(
+                    state, command=command, request_id=request_id
                 )
-
-                backend = self.backend_factory()
-                if command not in _READ_ONLY_AGENT_COMMANDS:
-                    self._assert_mutation_ready(backend)
-                app = DishApplication(
-                    conn,
-                    backend,
-                    release_loader=lambda role=None: self._release(role),
-                    invocation_run_id=invocation_run_id,
-                    invocation_request_id=request_id,
+                if early is not None:
+                    return early
+                self._build_agent_application(
+                    state, command=command, request_id=request_id
                 )
-
-                # A prior process may have committed start before it could persist
-                # the result envelope. Reconcile only from exact durable workflow
-                # and live-state evidence; otherwise fail uncertain.
                 if (
-                    request_row is not None
-                    and not replay_started
+                    state.request_row is not None
+                    and not state.replay_started
                     and command == "start"
                 ):
                     return self._reconcile_pending_start(
-                        conn=conn, backend=backend, app=app, leases=leases,
-                        principal=principal, arguments=prepared_arguments,
-                        request_id=request_id,
+                        conn=state.conn,
+                        backend=state.backend,
+                        app=state.app,
+                        leases=state.leases,
+                        principal=state.principal,
+                        arguments=state.prepared_arguments,
+                        request_id=str(request_id),
                     )
-
-                operation_id = self._operation_for_request(
-                    conn, command, prepared_arguments,
+                self._resolve_agent_operation(state, command=command)
+                self._acquire_agent_lease(state, command=command)
+                result = self._dispatch_agent_command(state, command=command)
+                return self._finish_agent_result(
+                    state, command=command, request_id=request_id, result=result
                 )
-                if command == "start" and prepared_arguments.get("prepared_operation_id"):
-                    authority = conn.execute(
-                        """SELECT abandonment.abandoned_owner_id, abandonment.abandoned_run_id
-                             FROM operation_successions AS succession
-                             JOIN abandonment_attempts AS abandonment
-                               ON abandonment.abandonment_id=succession.abandonment_id
-                            WHERE succession.successor_operation_id=?""",
-                        (operation_id,),
-                    ).fetchone()
-                    if (
-                        authority is not None
-                        and authority["abandoned_owner_id"] == principal.owner_id
-                        and authority["abandoned_run_id"] == principal.run_id
-                    ):
-                        raise DishRuleError(
-                            "AGENT_MISMATCH",
-                            "the abandoned client run cannot claim its replacement attempt",
-                            rule="abandoned_run_claim_forbidden",
-                        )
-                verification_start_cycle_id = None
-                if command == "start" and prepared_arguments.get("kind") == "verification":
-                    from dish_tool.step7 import resolve_verification_start_target
-
-                    target_operation, target_cycle, authority = resolve_verification_start_target(
-                        conn,
-                        task_gid=str(prepared_arguments.get("task_gid") or "").strip(),
-                        target_operation_id=prepared_arguments.get("target_operation_id"),
-                        target_cycle_id=prepared_arguments.get("target_cycle_id"),
-                    )
-                    operation_id = str(target_operation["operation_id"])
-                    verification_start_cycle_id = str(target_cycle["cycle_id"])
-                    if (
-                        authority is not None
-                        and authority["abandoned_owner_id"] == principal.owner_id
-                        and authority["abandoned_run_id"] == principal.run_id
-                    ):
-                        raise DishRuleError(
-                            "AGENT_MISMATCH",
-                            "the abandoned client run cannot claim its replacement Verification attempt",
-                            rule="abandoned_run_claim_forbidden",
-                        )
-                if operation_id and command in _MUTATING_AGENT_COMMANDS:
-                    self._assert_connected_abandonment_access(
-                        conn,
-                        command=command,
-                        arguments=prepared_arguments,
-                        operation_id=operation_id,
-                    )
-                if command in _LEASED_AGENT_COMMANDS:
-                    if not operation_id:
-                        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
-                    operation = self._operation_row(conn, operation_id)
-                    if operation is None:
-                        raise DishRuleError(
-                            "NOT_FOUND",
-                            "operation not found",
-                            rule="operation_not_found",
-                        )
-                    completed_submit = bool(
-                        command == "submit"
-                        and operation is not None
-                        and operation["status"] == "completed"
-                        and operation["terminal_outcome"] == "destination_handled"
-                    )
-                    if operation is not None and operation["status"] != "open" and not completed_submit:
-                        raise DishRuleError(
-                            "WRONG_STATE",
-                            "operation is not open",
-                            rule="operation_not_open",
-                            details={"actual": operation["status"]},
-                        )
-                    active = leases.active_for_operation(operation_id)
-                    if completed_submit:
-                        # A fresh request after a lost response proves the
-                        # durable terminal result and must not reacquire an
-                        # actor lease or repeat the external move.
-                        pass
-                    elif active is None:
-                        if not self._may_claim_missing_lease(
-                            conn, operation_id, principal, command
-                        ):
-                            raise DishRuleError(
-                                "AGENT_MISMATCH",
-                                "operation has no lease and this run has no durable workflow ownership",
-                                rule="service_lease_claim_forbidden",
-                                details={"operation_id": operation_id, "run_id": principal.run_id},
-                            )
-                        cycle_id = self._reclaimed_lease_cycle_id(
-                            conn, operation_id, principal, command
-                        )
-                        leases.acquire(
-                            operation_id, principal, context_cycle_id=cycle_id
-                        )
-                        acquired_for_request = True
-                    else:
-                        leases.assert_owned(operation_id, principal)
-                elif command == "start" and prepared_arguments.get("kind") == "verification":
-                    if not operation_id:
-                        raise DishRuleError("NOT_FOUND", "task has no open operation", rule="open_operation_missing")
-                    active = leases.active_for_operation(operation_id)
-                    if active is None:
-                        leases.acquire(
-                            operation_id,
-                            principal,
-                            context_cycle_id=(
-                                verification_start_cycle_id
-                                or self._verification_lease_cycle_id(
-                                    conn, operation_id, principal, pending_first=True
-                                )
-                            ),
-                        )
-                        acquired_for_request = True
-                    else:
-                        leases.assert_owned(operation_id, principal)
-
-                if completed_submit:
-                    from dish_tool.step9 import completed_submit_live
-
-                    release = self._release("verification")
-                    data = completed_submit_live(
-                        conn,
-                        backend,
-                        operation_id=operation_id,
-                        schema=release.schema,
-                    )
-                    view = app.operation_service.authoritative_view(
-                        operation_id, schema=release.schema
-                    )
-                    result = result_envelope(
-                        command="submit",
-                        task_gid=operation["task_gid"],
-                        submission_id=operation_id,
-                        state=view["status"],
-                        allowed_actions=view["legal_actions"],
-                        data={**data, "authoritative_view": view},
-                        validation_scope=scope_for_command("submit"),
-                    )
-                else:
-                    with self._candidate_file(prepared_arguments) as prepared:
-                        result = app.execute(command, **prepared)
-                result = _preserve_semantic_evidence_result(
-                    result,
-                    execution_occurred=True,
-                    request_id_consumed=bool(request_id and replay_started),
-                )
-
-                if command == "start" and prepared_arguments.get("kind") != "verification" and result.get("ok"):
-                    operation_id = result.get("submission_id")
-                    if operation_id:
-                        try:
-                            leases.acquire(operation_id, principal)
-                            acquired_for_request = True
-                        except Exception as exc:
-                            data = result.setdefault("data", {})
-                            data["service_recovery_required"] = True
-                            data["service_recovery"] = {
-                                "kind": "lease_acquisition",
-                                "operation_id": operation_id,
-                                "error_type": type(exc).__name__,
-                                "do_not_retry_command": True,
-                            }
-                            result["allowed_actions"] = []
-                            result["retryable"] = False
-
-                result_operation_id = operation_id or result.get("submission_id")
-                if result.get("ok") and result_operation_id and command in _MUTATING_AGENT_COMMANDS:
-                    result = self._finalize_successful_lease(
-                        result=result,
-                        conn=conn,
-                        leases=leases,
-                        operation_id=result_operation_id,
-                        principal=principal,
-                        command=command,
-                    )
-                elif not result.get("ok") and acquired_for_request and operation_id:
-                    if command == "start" and prepared_arguments.get("kind") == "verification":
-                        leases.release(operation_id, principal, reason="verification_start_failed")
-                    elif command in _LEASED_AGENT_COMMANDS:
-                        leases.release(operation_id, principal, reason="reclaimed_command_rejected")
-                result = self._apply_principal_access(
-                    result,
-                    conn=conn,
-                    leases=leases,
-                    operation_id=result_operation_id,
-                    principal=principal,
-                    agent=str(prepared_arguments.get("agent") or "") or None,
-                )
-                if result.get("data", {}).get("service_recovery_required"):
-                    result["allowed_actions"] = []
-                if request_id and command in {"create", "start", "prepare", "approve", "reject", "submit"}:
-                    result.setdefault("data", {})["request_id"] = request_id
-                    complete_request(conn, request_id=request_id, result=result)
-                return result
             except DishRuleError as exc:
-                exc = _preserve_semantic_evidence_error(
-                    exc,
-                    execution_occurred=True,
-                    request_id_consumed=bool(request_id and replay_started),
+                return self._agent_rule_error_result(
+                    state,
+                    command=command,
+                    arguments=arguments,
+                    request_id=request_id,
+                    error=exc,
                 )
-                if acquired_for_request and operation_id:
-                    try:
-                        leases.release(operation_id, principal, reason="service_command_rejected")
-                    except Exception:
-                        pass
-                if operation_id is None:
-                    operation_id = str(arguments.get("submission_id") or "").strip() or None
-                operation_kind = None
-                task_gid = None
-                if operation_id:
-                    row = conn.execute(
-                        "SELECT operation_kind, task_gid FROM operations WHERE operation_id=?",
-                        (operation_id,),
-                    ).fetchone()
-                    if row is not None:
-                        operation_kind = row["operation_kind"]
-                        task_gid = row["task_gid"]
-                validation_scope = (
-                    scope_for_command(command, operation_kind=operation_kind)
-                    if operation_id
-                    else ()
-                )
-                result = error_envelope(
-                    command,
-                    exc,
-                    task_gid=task_gid,
-                    submission_id=operation_id,
-                    validation_scope=validation_scope,
-                )
-                if exc.rule == "service_lease_expired":
-                    view = (
-                        self._exposed_operation_view(
-                            conn, operation_id, app=app
-                        )
-                        if operation_id
-                        else None
-                    )
-                    result = self._apply_expired_lease_guidance(
-                        result,
-                        operation_id=operation_id or "unknown",
-                        after_recovery_actions=(
-                            list(view.get("legal_actions") or [])
-                            if view is not None
-                            else []
-                        ),
-                        authoritative_view=view,
-                    )
-                if request_id and command in {"create", "start", "prepare", "approve", "reject", "submit"} and replay_started:
-                    result.setdefault("data", {})["request_id"] = request_id
-                    complete_request(conn, request_id=request_id, result=result)
-                return result
             finally:
-                self._close_backend(backend)
+                self._close_backend(state.backend)
                 conn.close()
+
 
     def record_replay_validation_failure(
         self,
@@ -2676,6 +2798,356 @@ class DishService:
                 self._close_backend(backend)
                 conn.close()
 
+
+    def _prepare_admin_execution_state(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        command: str,
+        arguments: Mapping[str, Any],
+        principal: ServicePrincipal,
+        requested_operation_id: str | None,
+    ) -> _AdminExecutionState:
+        prepared = dict(arguments)
+        if command == "reconcile-abandonment":
+            abandonment_id = str(prepared.get("abandonment_id") or "").strip()
+            if abandonment_id:
+                abandonment = conn.execute(
+                    "SELECT source_operation_id FROM abandonment_attempts WHERE abandonment_id=?",
+                    (abandonment_id,),
+                ).fetchone()
+                if abandonment is not None:
+                    requested_operation_id = str(abandonment["source_operation_id"])
+        supplied_run_id = str(prepared.get("run_id") or "").strip()
+        if command in _RUN_ID_ADMIN_COMMANDS and not supplied_run_id:
+            prepared["run_id"] = principal.run_id
+        operation_id = (
+            str(prepared.get("submission_id") or "").strip()
+            or requested_operation_id
+            or None
+        )
+        return _AdminExecutionState(
+            conn=conn,
+            principal=principal,
+            leases=self._lease_manager(conn),
+            prepared_arguments=prepared,
+            operation_id=operation_id,
+            supplied_run_id=supplied_run_id,
+        )
+
+    def _begin_admin_execution(
+        self,
+        state: _AdminExecutionState,
+        *,
+        command: str,
+        request_id: str | None,
+    ) -> dict[str, Any] | None:
+        if request_id:
+            request_row, state.replay_started = begin_request(
+                state.conn,
+                request_id=request_id,
+                owner_id=state.principal.owner_id,
+                run_id=state.principal.run_id,
+                command=command,
+                arguments=state.prepared_arguments,
+            )
+            prior = stored_result(
+                request_row,
+                permit_uncertain_resume=command
+                in {
+                    "repair-destination",
+                    "discard",
+                    "abandon-operation",
+                    "reconcile-abandonment",
+                },
+            )
+            if prior is not None:
+                return prior
+            if (
+                not state.replay_started
+                and request_row["status"] != "uncertain"
+                and command != "reopen-planning"
+            ):
+                reconciled = self._reconcile_pending_operation_request(
+                    conn=state.conn, command=command, request_id=request_id
+                )
+                if reconciled is not None:
+                    return reconciled
+        if (
+            command in _RUN_ID_ADMIN_COMMANDS
+            and state.supplied_run_id
+            and state.supplied_run_id != state.principal.run_id
+        ):
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "command run identity conflicts with the authenticated admin run",
+                rule="service_run_id_conflict",
+                details={
+                    "client_run_id": state.principal.run_id,
+                    "command_run_id": state.supplied_run_id,
+                },
+            )
+        self._capture_exact_admin_recovery_authority(state, command=command)
+        return self._validate_admin_execution_arguments(
+            state, command=command, request_id=request_id
+        )
+
+    def _capture_exact_admin_recovery_authority(
+        self,
+        state: _AdminExecutionState,
+        *,
+        command: str,
+    ) -> None:
+        if (
+            command not in _OPERATION_ADMIN_COMMANDS
+            or command in _LEASE_FREE_ADMIN_COMMANDS
+            or not state.operation_id
+        ):
+            return
+        existing = state.leases.active_for_operation(state.operation_id)
+        if existing is None or state.leases.is_owned_by(existing, state.principal):
+            return
+        recovery = _assert_existing_admin_lease_access(
+            state.conn,
+            state.leases,
+            command=command,
+            operation_id=state.operation_id,
+            principal=state.principal,
+            existing=existing,
+        )
+        if recovery is not None:
+            state.exact_recovery_execution_id = str(recovery["execution_id"])
+            state.exact_recovery_lease_id = str(existing["lease_id"])
+
+    def _validate_admin_execution_arguments(
+        self,
+        state: _AdminExecutionState,
+        *,
+        command: str,
+        request_id: str | None,
+    ) -> dict[str, Any] | None:
+        app = DishAdminApplication(
+            state.conn,
+            invocation_request_id=request_id,
+            invocation_run_id=state.principal.run_id,
+        )
+        try:
+            app.validate_arguments(command, state.prepared_arguments)
+        except DishRuleError as exc:
+            result = app.record_argument_failure(
+                command, exc, submission_id=state.operation_id
+            )
+            if request_id:
+                result.setdefault("data", {})["request_id"] = request_id
+                complete_request(state.conn, request_id=request_id, result=result)
+            return result
+        if request_id and not state.replay_started and command == "reopen-planning":
+            return self._complete_terminal_planning_reopen_request(
+                conn=state.conn, request_id=request_id
+            )
+        return None
+
+    def _build_admin_backend(
+        self,
+        state: _AdminExecutionState,
+        *,
+        command: str,
+        request_id: str | None,
+    ) -> dict[str, Any] | None:
+        state.backend = self.backend_factory()
+        self._assert_mutation_ready(state.backend)
+        if request_id and not state.replay_started and command == "reopen-planning":
+            return self._reconcile_pending_planning_reopen_request(
+                conn=state.conn, backend=state.backend, request_id=request_id
+            )
+        return None
+
+    def _acquire_admin_execution_lease(
+        self,
+        state: _AdminExecutionState,
+        *,
+        command: str,
+    ) -> None:
+        if (
+            command not in _OPERATION_ADMIN_COMMANDS
+            or command in _LEASE_FREE_ADMIN_COMMANDS
+            or not state.operation_id
+        ):
+            return
+        existing = state.leases.active_for_operation(state.operation_id)
+        if existing is None:
+            state.leases.acquire(
+                state.operation_id, state.principal, lease_kind="admin_request"
+            )
+            state.acquired_for_request = True
+            return
+        recovery = _assert_existing_admin_lease_access(
+            state.conn,
+            state.leases,
+            command=command,
+            operation_id=state.operation_id,
+            principal=state.principal,
+            existing=existing,
+        )
+        if recovery is None:
+            return
+        current_execution_id = str(recovery["execution_id"])
+        current_lease_id = str(existing["lease_id"])
+        execution_changed = (
+            state.exact_recovery_execution_id is not None
+            and state.exact_recovery_execution_id != current_execution_id
+        )
+        lease_changed = (
+            state.exact_recovery_lease_id is not None
+            and state.exact_recovery_lease_id != current_lease_id
+        )
+        if execution_changed or lease_changed:
+            raise DishRuleError(
+                "CONFLICT",
+                "exact recovery lease authority changed before execution",
+                rule="service_lease_conflict",
+                details={"operation_id": state.operation_id},
+            )
+        state.exact_recovery_execution_id = current_execution_id
+        state.exact_recovery_lease_id = current_lease_id
+
+    def _dispatch_admin_command(
+        self,
+        state: _AdminExecutionState,
+        *,
+        command: str,
+        request_id: str | None,
+    ) -> dict[str, Any]:
+        app = DishAdminApplication(
+            state.conn,
+            backend=state.backend,
+            release_loader=lambda: self._release(None, include_migrations=True),
+            invocation_request_id=request_id,
+            invocation_run_id=state.principal.run_id,
+        )
+        with self._candidate_file(state.prepared_arguments) as prepared:
+            return app.execute(command, **prepared)
+
+    def _complete_resumed_admin_request(
+        self,
+        state: _AdminExecutionState,
+        *,
+        request_id: str | None,
+        result: dict[str, Any],
+    ) -> None:
+        data = result.get("data")
+        resumed = data.pop("resumed_admin_execution", None) if isinstance(data, dict) else None
+        if (
+            not result.get("ok")
+            or not isinstance(resumed, dict)
+            or not resumed.get("request_id")
+            or resumed.get("request_id") == request_id
+        ):
+            return
+        original_result = json.loads(json.dumps(result))
+        original_result["command"] = str(resumed["command"])
+        complete_request(
+            state.conn,
+            request_id=str(resumed["request_id"]),
+            result=original_result,
+        )
+
+    def _finish_admin_result(
+        self,
+        state: _AdminExecutionState,
+        *,
+        command: str,
+        request_id: str | None,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        self._complete_resumed_admin_request(
+            state, request_id=request_id, result=result
+        )
+        result = _preserve_semantic_evidence_result(
+            result,
+            execution_occurred=True,
+            request_id_consumed=bool(request_id and state.replay_started),
+        )
+        if result.get("ok") and state.operation_id:
+            result = self._finalize_successful_lease(
+                result=result,
+                conn=state.conn,
+                leases=state.leases,
+                operation_id=state.operation_id,
+                principal=state.principal,
+                command=command,
+                admin=True,
+                exact_recovery_execution_id=state.exact_recovery_execution_id,
+                exact_recovery_lease_id=state.exact_recovery_lease_id,
+            )
+            result = self._release_admin_request_lease(
+                result=result,
+                conn=state.conn,
+                leases=state.leases,
+                operation_id=state.operation_id,
+                principal=state.principal,
+                command=command,
+            )
+        elif not result.get("ok") and state.acquired_for_request and state.operation_id:
+            state.leases.release(
+                state.operation_id,
+                state.principal,
+                reason="admin_command_rejected",
+            )
+        if request_id:
+            result.setdefault("data", {})["request_id"] = request_id
+            unresolved_reopen = (
+                command == "reopen-planning"
+                and result.get("code") == "BACKEND_UNCERTAIN"
+                and planning_reopen_attempt_by_request(
+                    state.conn, request_id=request_id
+                )
+                is not None
+            )
+            if not unresolved_reopen:
+                complete_request(state.conn, request_id=request_id, result=result)
+        return result
+
+    def _admin_rule_error_result(
+        self,
+        state: _AdminExecutionState,
+        *,
+        command: str,
+        request_id: str | None,
+        error: DishRuleError,
+    ) -> dict[str, Any]:
+        error = _preserve_semantic_evidence_error(
+            error,
+            execution_occurred=True,
+            request_id_consumed=bool(request_id and state.replay_started),
+        )
+        if state.acquired_for_request and state.operation_id:
+            try:
+                state.leases.release(
+                    state.operation_id,
+                    state.principal,
+                    reason="admin_command_rejected",
+                )
+            except Exception:
+                pass
+        task_gid = None
+        if state.operation_id:
+            row = state.conn.execute(
+                "SELECT task_gid FROM operations WHERE operation_id=?",
+                (state.operation_id,),
+            ).fetchone()
+            task_gid = None if row is None else row["task_gid"]
+        result = error_envelope(
+            command,
+            error,
+            task_gid=task_gid,
+            submission_id=state.operation_id,
+        )
+        if request_id and state.replay_started:
+            result.setdefault("data", {})["request_id"] = request_id
+            complete_request(state.conn, request_id=request_id, result=result)
+        return result
+
     def execute_admin(
         self,
         command: str,
@@ -2703,275 +3175,42 @@ class DishService:
                     _database_initialization_error(exc),
                     submission_id=requested_operation_id,
                 )
-            backend = None
-            prepared_arguments = dict(arguments)
-            if command == "reconcile-abandonment":
-                abandonment_id = str(
-                    prepared_arguments.get("abandonment_id") or ""
-                ).strip()
-                if abandonment_id:
-                    abandonment_row = conn.execute(
-                        "SELECT source_operation_id FROM abandonment_attempts WHERE abandonment_id=?",
-                        (abandonment_id,),
-                    ).fetchone()
-                    if abandonment_row is not None:
-                        requested_operation_id = str(
-                            abandonment_row["source_operation_id"]
-                        )
-            supplied_run_id = str(prepared_arguments.get("run_id") or "").strip()
-            if command in _RUN_ID_ADMIN_COMMANDS and not supplied_run_id:
-                prepared_arguments["run_id"] = principal.run_id
-            operation_id = (
-                str(prepared_arguments.get("submission_id") or "").strip()
-                or requested_operation_id
-                or None
+            state = self._prepare_admin_execution_state(
+                conn,
+                command=command,
+                arguments=arguments,
+                principal=principal,
+                requested_operation_id=requested_operation_id,
             )
-            acquired_for_request = False
-            exact_recovery_execution_id: str | None = None
-            exact_recovery_lease_id: str | None = None
-            leases = self._lease_manager(conn)
-            replay_started = False
             try:
-                if request_id:
-                    request_row, replay_started = begin_request(
-                        conn,
-                        request_id=request_id,
-                        owner_id=principal.owner_id,
-                        run_id=principal.run_id,
-                        command=command,
-                        arguments=prepared_arguments,
-                    )
-                    prior = stored_result(
-                        request_row,
-                        permit_uncertain_resume=command in {
-                            "repair-destination",
-                            "discard",
-                            "abandon-operation",
-                            "reconcile-abandonment",
-                        },
-                    )
-                    if prior is not None:
-                        return prior
-                    if (
-                        not replay_started
-                        and request_row["status"] != "uncertain"
-                        and command != "reopen-planning"
-                    ):
-                        reconciled = self._reconcile_pending_operation_request(
-                            conn=conn, command=command, request_id=request_id
-                        )
-                        if reconciled is not None:
-                            return reconciled
-                if (
-                    command in _RUN_ID_ADMIN_COMMANDS
-                    and supplied_run_id
-                    and supplied_run_id != principal.run_id
-                ):
-                    raise DishRuleError(
-                        "AGENT_MISMATCH",
-                        "command run identity conflicts with the authenticated admin run",
-                        rule="service_run_id_conflict",
-                        details={
-                            "client_run_id": principal.run_id,
-                            "command_run_id": supplied_run_id,
-                        },
-                    )
-                if (
-                    command in _OPERATION_ADMIN_COMMANDS
-                    and command not in _LEASE_FREE_ADMIN_COMMANDS
-                    and operation_id
-                ):
-                    existing = leases.active_for_operation(operation_id)
-                    if existing is not None and not leases.is_owned_by(
-                        existing, principal
-                    ):
-                        recovery = _assert_existing_admin_lease_access(
-                            conn,
-                            leases,
-                            command=command,
-                            operation_id=operation_id,
-                            principal=principal,
-                            existing=existing,
-                        )
-                        if recovery is not None:
-                            exact_recovery_execution_id = str(
-                                recovery["execution_id"]
-                            )
-                            exact_recovery_lease_id = str(existing["lease_id"])
-                argument_app = DishAdminApplication(
-                    conn,
-                    invocation_request_id=request_id,
-                    invocation_run_id=principal.run_id,
+                early = self._begin_admin_execution(
+                    state, command=command, request_id=request_id
                 )
-                try:
-                    argument_app.validate_arguments(command, prepared_arguments)
-                except DishRuleError as exc:
-                    result = argument_app.record_argument_failure(
-                        command, exc, submission_id=operation_id,
-                    )
-                    if request_id:
-                        result.setdefault("data", {})["request_id"] = request_id
-                        complete_request(conn, request_id=request_id, result=result)
-                    return result
-                if (
-                    request_id
-                    and not replay_started
-                    and command == "reopen-planning"
-                ):
-                    terminal = self._complete_terminal_planning_reopen_request(
-                        conn=conn, request_id=request_id
-                    )
-                    if terminal is not None:
-                        return terminal
-                backend = self.backend_factory()
-                self._assert_mutation_ready(backend)
-                if (
-                    request_id
-                    and not replay_started
-                    and command == "reopen-planning"
-                ):
-                    reconciled = self._reconcile_pending_planning_reopen_request(
-                        conn=conn, backend=backend, request_id=request_id
-                    )
-                    if reconciled is not None:
-                        return reconciled
-                if (
-                    command in _OPERATION_ADMIN_COMMANDS
-                    and command not in _LEASE_FREE_ADMIN_COMMANDS
-                    and operation_id
-                ):
-                    existing = leases.active_for_operation(operation_id)
-                    if existing is None:
-                        leases.acquire(
-                            operation_id, principal, lease_kind="admin_request"
-                        )
-                        acquired_for_request = True
-                    else:
-                        # Ordinary admin continuations never steal a live actor
-                        # lease. The only exception is the exact unresolved
-                        # execution that itself advertised Marco/admin recover.
-                        recovery = _assert_existing_admin_lease_access(
-                            conn,
-                            leases,
-                            command=command,
-                            operation_id=operation_id,
-                            principal=principal,
-                            existing=existing,
-                        )
-                        if recovery is not None:
-                            current_execution_id = str(recovery["execution_id"])
-                            current_lease_id = str(existing["lease_id"])
-                            if (
-                                exact_recovery_execution_id is not None
-                                and exact_recovery_execution_id
-                                != current_execution_id
-                            ) or (
-                                exact_recovery_lease_id is not None
-                                and exact_recovery_lease_id != current_lease_id
-                            ):
-                                raise DishRuleError(
-                                    "CONFLICT",
-                                    "exact recovery lease authority changed before execution",
-                                    rule="service_lease_conflict",
-                                    details={"operation_id": operation_id},
-                                )
-                            exact_recovery_execution_id = current_execution_id
-                            exact_recovery_lease_id = current_lease_id
-                app = DishAdminApplication(
-                    conn,
-                    backend=backend,
-                    release_loader=lambda: self._release(None, include_migrations=True),
-                    invocation_request_id=request_id,
-                    invocation_run_id=principal.run_id,
+                if early is not None:
+                    return early
+                early = self._build_admin_backend(
+                    state, command=command, request_id=request_id
                 )
-                with self._candidate_file(prepared_arguments) as prepared:
-                    result = app.execute(command, **prepared)
-                resumed_admin = None
-                data = result.get("data")
-                if isinstance(data, dict):
-                    resumed_admin = data.pop("resumed_admin_execution", None)
-                if (
-                    result.get("ok")
-                    and isinstance(resumed_admin, dict)
-                    and resumed_admin.get("request_id")
-                    and resumed_admin.get("request_id") != request_id
-                ):
-                    original_result = json.loads(json.dumps(result))
-                    original_result["command"] = str(resumed_admin["command"])
-                    complete_request(
-                        conn,
-                        request_id=str(resumed_admin["request_id"]),
-                        result=original_result,
-                    )
-                result = _preserve_semantic_evidence_result(
-                    result,
-                    execution_occurred=True,
-                    request_id_consumed=bool(request_id and replay_started),
+                if early is not None:
+                    return early
+                self._acquire_admin_execution_lease(state, command=command)
+                result = self._dispatch_admin_command(
+                    state, command=command, request_id=request_id
                 )
-                if result.get("ok") and operation_id:
-                    result = self._finalize_successful_lease(
-                        result=result,
-                        conn=conn,
-                        leases=leases,
-                        operation_id=operation_id,
-                        principal=principal,
-                        command=command,
-                        admin=True,
-                        exact_recovery_execution_id=exact_recovery_execution_id,
-                        exact_recovery_lease_id=exact_recovery_lease_id,
-                    )
-                    # Admin ownership is request-scoped. Cleanup failure after
-                    # a committed continuation must not reverse the success.
-                    result = self._release_admin_request_lease(
-                        result=result,
-                        conn=conn,
-                        leases=leases,
-                        operation_id=operation_id,
-                        principal=principal,
-                        command=command,
-                    )
-                elif not result.get("ok") and acquired_for_request and operation_id:
-                    leases.release(operation_id, principal, reason="admin_command_rejected")
-                if request_id:
-                    result.setdefault("data", {})["request_id"] = request_id
-                    unresolved_reopen = (
-                        command == "reopen-planning"
-                        and result.get("code") == "BACKEND_UNCERTAIN"
-                        and planning_reopen_attempt_by_request(
-                            conn, request_id=request_id
-                        ) is not None
-                    )
-                    if not unresolved_reopen:
-                        complete_request(conn, request_id=request_id, result=result)
-                return result
+                return self._finish_admin_result(
+                    state, command=command, request_id=request_id, result=result
+                )
             except DishRuleError as exc:
-                exc = _preserve_semantic_evidence_error(
-                    exc,
-                    execution_occurred=True,
-                    request_id_consumed=bool(request_id and replay_started),
+                return self._admin_rule_error_result(
+                    state,
+                    command=command,
+                    request_id=request_id,
+                    error=exc,
                 )
-                if acquired_for_request and operation_id:
-                    try:
-                        leases.release(operation_id, principal, reason="admin_command_rejected")
-                    except Exception:
-                        pass
-                task_gid = None
-                if operation_id:
-                    row = conn.execute(
-                        "SELECT task_gid FROM operations WHERE operation_id=?",
-                        (operation_id,),
-                    ).fetchone()
-                    task_gid = None if row is None else row["task_gid"]
-                result = error_envelope(
-                    command, exc, task_gid=task_gid, submission_id=operation_id,
-                )
-                if request_id and replay_started:
-                    result.setdefault("data", {})["request_id"] = request_id
-                    complete_request(conn, request_id=request_id, result=result)
-                return result
             finally:
-                self._close_backend(backend)
+                self._close_backend(state.backend)
                 conn.close()
+
 
     @staticmethod
     def _backup_result_matches_record(

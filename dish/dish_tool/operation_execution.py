@@ -355,6 +355,267 @@ def claim_abandonment_execution(
         raise
 
 
+
+def _request_matches_execution(
+    row: Mapping[str, Any] | None,
+    *,
+    command: str,
+    request_id: str | None,
+) -> bool:
+    if row is None or row["command"] != command:
+        return False
+    recorded = row["request_id"]
+    return (request_id is not None and recorded == request_id) or (
+        request_id is None and recorded is None
+    )
+
+
+def _insert_execution_claim(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    claim_id: str,
+    execution_id: str,
+    command: str,
+    request_id: str | None,
+    identity: ProcessIdentity,
+    resuming_uncertain: bool = False,
+) -> OperationExecutionClaim:
+    conn.execute(
+        """INSERT INTO operation_execution_claims(
+               operation_id,claim_id,command,hostname,pid,process_start,
+               acquired_at,execution_id
+           ) VALUES(?,?,?,?,?,?,?,?)""",
+        (
+            operation_id,
+            claim_id,
+            command,
+            identity.hostname,
+            identity.pid,
+            identity.process_start,
+            utc_now(),
+            execution_id,
+        ),
+    )
+    return OperationExecutionClaim(
+        operation_id=operation_id,
+        claim_id=claim_id,
+        execution_id=execution_id,
+        command=command,
+        request_id=request_id,
+        resuming_uncertain=resuming_uncertain,
+    )
+
+
+def _raise_live_execution_conflict(existing: Mapping[str, Any]) -> None:
+    raise DishRuleError(
+        "CONFLICT",
+        "another mutation is already executing for this operation",
+        rule="operation_mutation_in_progress",
+        retryable=True,
+        details={
+            "operation_id": existing["operation_id"],
+            "command": existing["command"],
+            "acquired_at": existing["acquired_at"],
+        },
+    )
+
+
+def _stale_claim_recovery(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    existing: Mapping[str, Any],
+    command: str,
+    request_id: str | None,
+    claim_id: str,
+    identity: ProcessIdentity,
+) -> OperationExecutionClaim | None:
+    if process_identity_is_live(_identity(existing)):
+        _raise_live_execution_conflict(existing)
+
+    execution_id = existing["execution_id"]
+    prior_recovery = (
+        None
+        if not execution_id
+        else execution_recovery_state(
+            conn, execution_id=execution_id, failure_rule="process_terminated"
+        )
+    )
+    prior_execution = (
+        None
+        if not execution_id
+        else conn.execute(
+            "SELECT * FROM operation_executions WHERE execution_id=?",
+            (execution_id,),
+        ).fetchone()
+    )
+    exact_resume = _request_matches_execution(
+        prior_execution, command=command, request_id=request_id
+    )
+    recovery_required = (
+        _recovery_pending(conn, operation_id)
+        if prior_recovery is None
+        else bool(prior_recovery["recovery_required"])
+    )
+    if recovery_required:
+        if command != "recover":
+            details = dict(prior_recovery or {})
+            details.update(
+                {
+                    "operation_id": operation_id,
+                    "command": existing["command"],
+                    "execution_id": execution_id,
+                    "required_admin_action": "recover",
+                    **_recover_command_guidance(operation_id),
+                }
+            )
+            raise DishRuleError(
+                "CONFLICT",
+                "a crashed operation mutation requires recovery before another mutation",
+                rule="operation_mutation_recovery_required",
+                retryable=False,
+                details=details,
+            )
+        if execution_id and prior_recovery is not None:
+            conn.execute(
+                """UPDATE operation_executions
+                      SET status='uncertain', evidence_json=?, completed_at=?
+                    WHERE execution_id=? AND status='started'""",
+                (
+                    json.dumps(
+                        prior_recovery, sort_keys=True, separators=(",", ":")
+                    ),
+                    utc_now(),
+                    execution_id,
+                ),
+            )
+    elif exact_resume:
+        conn.execute(
+            "DELETE FROM operation_execution_claims WHERE operation_id=? AND claim_id=?",
+            (operation_id, existing["claim_id"]),
+        )
+        return _insert_execution_claim(
+            conn,
+            operation_id=operation_id,
+            claim_id=claim_id,
+            execution_id=str(prior_execution["execution_id"]),
+            command=command,
+            request_id=request_id,
+            identity=identity,
+        )
+    else:
+        _complete_abandoned_execution(conn, execution_id)
+
+    conn.execute(
+        "DELETE FROM operation_execution_claims WHERE operation_id=? AND claim_id=?",
+        (operation_id, existing["claim_id"]),
+    )
+    return None
+
+
+def _claim_unresolved_execution(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    command: str,
+    request_id: str | None,
+    claim_id: str,
+    identity: ProcessIdentity,
+) -> OperationExecutionClaim | None:
+    unresolved = conn.execute(
+        """SELECT * FROM operation_executions
+             WHERE operation_id=? AND status='uncertain' AND resolved_at IS NULL
+             ORDER BY created_at, rowid""",
+        (operation_id,),
+    ).fetchall()
+    if not unresolved:
+        return None
+    if len(unresolved) != 1:
+        raise DishRuleError(
+            "CONFLICT",
+            "multiple unresolved operation executions require operator review",
+            rule="operation_execution_recovery_ambiguous",
+            retryable=False,
+            details={
+                "operation_id": operation_id,
+                "execution_ids": [row["execution_id"] for row in unresolved],
+                "required_admin_action": "recover",
+                **_recover_command_guidance(operation_id),
+            },
+        )
+
+    prior = unresolved[0]
+    exact_resume = _request_matches_execution(
+        prior, command=command, request_id=request_id
+    )
+    if not exact_resume and command != "recover":
+        recovery = json.loads(prior["evidence_json"] or "{}")
+        details = dict(recovery) if isinstance(recovery, dict) else {}
+        details.update(
+            {
+                "operation_id": operation_id,
+                "command": prior["command"],
+                "execution_id": prior["execution_id"],
+                "request_id": prior["request_id"],
+                "required_admin_action": "recover",
+            }
+        )
+        raise DishRuleError(
+            "CONFLICT",
+            "an unresolved uncertain mutation must be reconciled before another mutation",
+            rule="operation_mutation_recovery_required",
+            retryable=False,
+            details=details,
+        )
+    return _insert_execution_claim(
+        conn,
+        operation_id=operation_id,
+        claim_id=claim_id,
+        execution_id=str(prior["execution_id"]),
+        command=command,
+        request_id=request_id,
+        identity=identity,
+        resuming_uncertain=True,
+    )
+
+
+def _create_operation_execution(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    command: str,
+    request_id: str | None,
+    claim_id: str,
+    execution_id: str,
+    identity: ProcessIdentity,
+) -> OperationExecutionClaim:
+    baseline = _execution_baseline(conn, operation_id)
+    conn.execute(
+        """INSERT INTO operation_executions(
+               execution_id,operation_id,request_id,command,baseline_json,
+               status,created_at
+           ) VALUES(?,?,?,?,?,'started',?)""",
+        (
+            execution_id,
+            operation_id,
+            request_id,
+            command,
+            json.dumps(baseline, sort_keys=True, separators=(",", ":")),
+            utc_now(),
+        ),
+    )
+    return _insert_execution_claim(
+        conn,
+        operation_id=operation_id,
+        claim_id=claim_id,
+        execution_id=execution_id,
+        command=command,
+        request_id=request_id,
+        identity=identity,
+    )
+
+
 def claim_operation_execution(
     conn: sqlite3.Connection,
     *,
@@ -381,225 +642,43 @@ def claim_operation_execution(
             "SELECT * FROM operation_execution_claims WHERE operation_id=?",
             (operation_id,),
         ).fetchone()
+        claim = None
         if existing is not None:
-            if process_identity_is_live(_identity(existing)):
-                raise DishRuleError(
-                    "CONFLICT",
-                    "another mutation is already executing for this operation",
-                    rule="operation_mutation_in_progress",
-                    retryable=True,
-                    details={
-                        "operation_id": operation_id,
-                        "command": existing["command"],
-                        "acquired_at": existing["acquired_at"],
-                    },
-                )
-            prior_recovery = (
-                None
-                if not existing["execution_id"]
-                else execution_recovery_state(
-                    conn,
-                    execution_id=existing["execution_id"],
-                    failure_rule="process_terminated",
-                )
+            claim = _stale_claim_recovery(
+                conn,
+                operation_id=operation_id,
+                existing=existing,
+                command=clean_command,
+                request_id=clean_request,
+                claim_id=claim_id,
+                identity=identity,
             )
-            prior_execution = (
-                None
-                if not existing["execution_id"]
-                else conn.execute(
-                    "SELECT * FROM operation_executions WHERE execution_id=?",
-                    (existing["execution_id"],),
-                ).fetchone()
+        if claim is None:
+            claim = _claim_unresolved_execution(
+                conn,
+                operation_id=operation_id,
+                command=clean_command,
+                request_id=clean_request,
+                claim_id=claim_id,
+                identity=identity,
             )
-            exact_resume = bool(
-                prior_execution is not None
-                and prior_execution["command"] == clean_command
-                and (
-                    (clean_request is not None and prior_execution["request_id"] == clean_request)
-                    or (clean_request is None and prior_execution["request_id"] is None)
-                )
+        if claim is None:
+            claim = _create_operation_execution(
+                conn,
+                operation_id=operation_id,
+                command=clean_command,
+                request_id=clean_request,
+                claim_id=claim_id,
+                execution_id=execution_id,
+                identity=identity,
             )
-            recovery_required = (
-                _recovery_pending(conn, operation_id)
-                if prior_recovery is None
-                else bool(prior_recovery["recovery_required"])
-            )
-            if recovery_required:
-                if clean_command != "recover":
-                    details = dict(prior_recovery or {})
-                    details.update({
-                        "operation_id": operation_id,
-                        "command": existing["command"],
-                        "execution_id": existing["execution_id"],
-                        "required_admin_action": "recover",
-                        **_recover_command_guidance(operation_id),
-                    })
-                    raise DishRuleError(
-                        "CONFLICT",
-                        "a crashed operation mutation requires recovery before another mutation",
-                        rule="operation_mutation_recovery_required",
-                        retryable=False,
-                        details=details,
-                    )
-                if existing["execution_id"] and prior_recovery is not None:
-                    conn.execute(
-                        """UPDATE operation_executions
-                              SET status='uncertain', evidence_json=?, completed_at=?
-                            WHERE execution_id=? AND status='started'""",
-                        (
-                            json.dumps(
-                                prior_recovery,
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            ),
-                            utc_now(),
-                            existing["execution_id"],
-                        ),
-                    )
-            else:
-                if exact_resume:
-                    conn.execute(
-                        "DELETE FROM operation_execution_claims "
-                        "WHERE operation_id=? AND claim_id=?",
-                        (operation_id, existing["claim_id"]),
-                    )
-                    conn.execute(
-                        """INSERT INTO operation_execution_claims(
-                               operation_id,claim_id,command,hostname,pid,process_start,
-                               acquired_at,execution_id
-                           ) VALUES(?,?,?,?,?,?,?,?)""",
-                        (
-                            operation_id,
-                            claim_id,
-                            clean_command,
-                            identity.hostname,
-                            identity.pid,
-                            identity.process_start,
-                            utc_now(),
-                            prior_execution["execution_id"],
-                        ),
-                    )
-                    conn.execute("COMMIT")
-                    return OperationExecutionClaim(
-                        operation_id=operation_id,
-                        claim_id=claim_id,
-                        execution_id=prior_execution["execution_id"],
-                        command=clean_command,
-                        request_id=clean_request,
-                    )
-                _complete_abandoned_execution(conn, existing["execution_id"])
-            conn.execute(
-                "DELETE FROM operation_execution_claims WHERE operation_id=? AND claim_id=?",
-                (operation_id, existing["claim_id"]),
-            )
-
-        unresolved = conn.execute(
-            """SELECT * FROM operation_executions
-                 WHERE operation_id=? AND status='uncertain'
-                   AND resolved_at IS NULL
-                 ORDER BY created_at, rowid""",
-            (operation_id,),
-        ).fetchall()
-        if unresolved:
-            if len(unresolved) != 1:
-                raise DishRuleError(
-                    "CONFLICT",
-                    "multiple unresolved operation executions require operator review",
-                    rule="operation_execution_recovery_ambiguous",
-                    retryable=False,
-                    details={
-                        "operation_id": operation_id,
-                        "execution_ids": [row["execution_id"] for row in unresolved],
-                        "required_admin_action": "recover",
-                        **_recover_command_guidance(operation_id),
-                    },
-                )
-            prior = unresolved[0]
-            exact_resume = bool(
-                prior["command"] == clean_command
-                and (
-                    (clean_request is not None and prior["request_id"] == clean_request)
-                    or (clean_request is None and prior["request_id"] is None)
-                )
-            )
-            if not exact_resume and clean_command != "recover":
-                recovery = json.loads(prior["evidence_json"] or "{}")
-                details = dict(recovery) if isinstance(recovery, dict) else {}
-                details.update({
-                    "operation_id": operation_id,
-                    "command": prior["command"],
-                    "execution_id": prior["execution_id"],
-                    "request_id": prior["request_id"],
-                    "required_admin_action": "recover",
-                })
-                raise DishRuleError(
-                    "CONFLICT",
-                    "an unresolved uncertain mutation must be reconciled before another mutation",
-                    rule="operation_mutation_recovery_required",
-                    retryable=False,
-                    details=details,
-                )
-            conn.execute(
-                """INSERT INTO operation_execution_claims(
-                       operation_id,claim_id,command,hostname,pid,process_start,
-                       acquired_at,execution_id
-                   ) VALUES(?,?,?,?,?,?,?,?)""",
-                (
-                    operation_id, claim_id, clean_command, identity.hostname,
-                    identity.pid, identity.process_start, utc_now(),
-                    prior["execution_id"],
-                ),
-            )
-            conn.execute("COMMIT")
-            return OperationExecutionClaim(
-                operation_id=operation_id, claim_id=claim_id,
-                execution_id=prior["execution_id"], command=clean_command,
-                request_id=clean_request, resuming_uncertain=True,
-            )
-
-        baseline = _execution_baseline(conn, operation_id)
-        conn.execute(
-            """INSERT INTO operation_executions(
-                   execution_id,operation_id,request_id,command,baseline_json,
-                   status,created_at
-               ) VALUES(?,?,?,?,?,'started',?)""",
-            (
-                execution_id,
-                operation_id,
-                clean_request,
-                clean_command,
-                json.dumps(baseline, sort_keys=True, separators=(",", ":")),
-                utc_now(),
-            ),
-        )
-        conn.execute(
-            """INSERT INTO operation_execution_claims(
-                   operation_id,claim_id,command,hostname,pid,process_start,
-                   acquired_at,execution_id
-               ) VALUES(?,?,?,?,?,?,?,?)""",
-            (
-                operation_id,
-                claim_id,
-                clean_command,
-                identity.hostname,
-                identity.pid,
-                identity.process_start,
-                utc_now(),
-                execution_id,
-            ),
-        )
         conn.execute("COMMIT")
-        return OperationExecutionClaim(
-            operation_id=operation_id,
-            claim_id=claim_id,
-            execution_id=execution_id,
-            command=clean_command,
-            request_id=clean_request,
-        )
+        return claim
     except Exception:
         if conn.in_transaction:
             conn.execute("ROLLBACK")
         raise
+
 
 
 def _rows_after(
@@ -770,38 +849,34 @@ def _failure_step(
     return "response_persistence"
 
 
-def execution_recovery_state(
+
+def _execution_row_for_recovery(
     conn: sqlite3.Connection,
     *,
-    execution_id: str | None = None,
-    request_id: str | None = None,
-    failure_rule: str | None = None,
-    include_completed: bool = False,
-    refresh: bool = False,
-) -> dict[str, Any] | None:
-    """Reconstruct only durable effects caused by one exact execution."""
+    execution_id: str | None,
+    request_id: str | None,
+    include_completed: bool,
+):
     if execution_id:
-        row = conn.execute(
+        return conn.execute(
             "SELECT * FROM operation_executions WHERE execution_id=?",
             (execution_id,),
         ).fetchone()
-    elif request_id:
+    if request_id:
         status_filter = "" if include_completed else " AND status<>'completed'"
-        row = conn.execute(
-            "SELECT * FROM operation_executions "
-            "WHERE request_id=?" + status_filter +
-            " ORDER BY created_at DESC, rowid DESC LIMIT 1",
+        return conn.execute(
+            "SELECT * FROM operation_executions WHERE request_id=?"
+            + status_filter
+            + " ORDER BY created_at DESC, rowid DESC LIMIT 1",
             (request_id,),
         ).fetchone()
-    else:
-        raise ValueError("execution_id or request_id is required")
-    if row is None:
-        return None
-    if row["status"] == "completed":
-        if not include_completed:
-            return None
-        evidence = json.loads(row["evidence_json"] or "{}")
-        evidence.update({
+    raise ValueError("execution_id or request_id is required")
+
+
+def _completed_execution_recovery(row: Mapping[str, Any]) -> dict[str, Any]:
+    evidence = json.loads(row["evidence_json"] or "{}")
+    evidence.update(
+        {
             "execution_id": row["execution_id"],
             "operation_id": row["operation_id"],
             "request_id": row["request_id"],
@@ -814,12 +889,17 @@ def execution_recovery_state(
             "required_next_action": "inspect",
             "safe_to_retry": False,
             "recovery_required": False,
-        })
-        return evidence
-    if row["evidence_json"] and not refresh:
-        return json.loads(row["evidence_json"])
+        }
+    )
+    return evidence
 
-    baseline = json.loads(row["baseline_json"])
+
+def _execution_changes(
+    conn: sqlite3.Connection,
+    *,
+    row: Mapping[str, Any],
+    baseline: Mapping[str, Any],
+) -> dict[str, Any]:
     operation_id = row["operation_id"]
     writes = _changed_rows(
         conn,
@@ -845,54 +925,68 @@ def execution_recovery_state(
         fields=_CYCLE_FIELDS,
         baseline=baseline["cycles"],
     )
-    new_cycles = [
-        cycle for cycle in cycles if cycle["cycle_id"] not in baseline["cycles"]
-    ]
     current_steps = _current_steps(conn, operation_id)
     changed_steps, step_scope = _execution_step_scope(
         command=row["command"], current=current_steps, baseline=baseline["steps"]
     )
-    versions = _rows_after(
-        conn, "content_versions", operation_id, int(baseline["content_rowid"])
-    )
-    actors = _rows_after(
-        conn, "operation_actor_facts", operation_id, int(baseline["actor_rowid"])
-    )
     audits = _rows_after(
         conn, "audit_events", operation_id, int(baseline["audit_rowid"])
     )
-    # Operation recovery is execution-scoped, not merely operation-scoped.
-    # The operation execution claim serializes workflow mutations, but read-only
-    # commands such as ``inspect`` may still append their invocation audit while
-    # a failing mutation is rolling back.  Those transport-level audit records
-    # describe another request; they are not durable workflow effects of this
-    # execution and must never turn an exact-replayable no-effect failure into
-    # an admin-recovery incident.
-    workflow_audits = [
-        audit
-        for audit in audits
-        if not str(audit["event_type"]).startswith(
-            ("write_attempt.", "movement_attempt.", "dish.", "dish-admin.")
-        )
-    ]
-    operation = conn.execute(
-        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
-    ).fetchone()
-    if operation is None:
-        raise DishRuleError(
-            "CONFLICT",
-            "operation execution lost its operation",
-            rule="operation_execution_binding_invalid",
-            details={"execution_id": row["execution_id"]},
-        )
+    return {
+        "writes": writes,
+        "movements": movements,
+        "cycles": cycles,
+        "new_cycles": [
+            cycle for cycle in cycles if cycle["cycle_id"] not in baseline["cycles"]
+        ],
+        "changed_steps": changed_steps,
+        "step_scope": step_scope,
+        "versions": _rows_after(
+            conn,
+            "content_versions",
+            operation_id,
+            int(baseline["content_rowid"]),
+        ),
+        "actors": _rows_after(
+            conn,
+            "operation_actor_facts",
+            operation_id,
+            int(baseline["actor_rowid"]),
+        ),
+        "workflow_audits": [
+            audit
+            for audit in audits
+            if not str(audit["event_type"]).startswith(
+                ("write_attempt.", "movement_attempt.", "dish.", "dish-admin.")
+            )
+        ],
+    }
 
+
+def _execution_recovery_classification(
+    conn: sqlite3.Connection,
+    *,
+    operation: Mapping[str, Any],
+    baseline: Mapping[str, Any],
+    changes: Mapping[str, Any],
+) -> dict[str, Any]:
+    writes = changes["writes"]
+    movements = changes["movements"]
+    cycles = changes["cycles"]
+    changed_steps = changes["changed_steps"]
+    step_scope = changes["step_scope"]
+    versions = changes["versions"]
+    actors = changes["actors"]
+    workflow_audits = changes["workflow_audits"]
     write_committed, write_state = _attempt_state(writes)
     move_committed, movement_state = _attempt_state(movements)
     pending_steps = [
         step["step_name"] for step in step_scope if step["completed_at"] is None
     ]
     committed_steps = [
-        step["step_name"] for step in changed_steps if step["completed_at"] is not None
+        step["step_name"]
+        for step in changed_steps
+        if step["completed_at"] is not None
     ]
     authoritative_identity, identity_source, content_version_id = (
         _confirmed_identity_from_execution(
@@ -924,68 +1018,147 @@ def execution_recovery_state(
     proven_not_applied = any(
         attempt["outcome"] == "not_applied" for attempt in [*writes, *movements]
     )
-    if unresolved:
-        required_outcome = "inspect"
-    elif proven_not_applied:
-        # A confirmed non-application must not be turned into an instruction to
-        # finalize the workflow as applied merely because declared suffix steps
-        # remain pending. Recovery clears the dead execution; the normal command
-        # may then retry the exact external effect.
-        required_outcome = "not-applied"
-    elif recovery_required:
-        required_outcome = "applied"
-    else:
-        required_outcome = None
-
-    state = {
-        "execution_id": row["execution_id"],
-        "operation_id": operation_id,
-        "request_id": row["request_id"],
-        "command": row["command"],
+    required_outcome = (
+        "inspect"
+        if unresolved
+        else "not-applied"
+        if proven_not_applied
+        else "applied"
+        if recovery_required
+        else None
+    )
+    return {
         "write_committed": write_committed,
         "write_state": write_state,
         "move_committed": move_committed,
         "movement_state": movement_state,
-        "cycle_created": bool(new_cycles),
-        "cycle_ids": [cycle["cycle_id"] for cycle in new_cycles],
+        "pending_steps": pending_steps,
+        "committed_steps": committed_steps,
+        "authoritative_identity": authoritative_identity,
+        "identity_source": identity_source,
+        "content_version_id": content_version_id,
+        "operation_changed": operation_changed,
+        "effects_observed": effects_observed,
+        "workflow_evidence_committed": workflow_evidence_committed,
+        "committed_effects": committed_effects,
+        "recovery_required": recovery_required,
+        "required_outcome": required_outcome,
+    }
+
+
+def _build_execution_recovery_state(
+    *,
+    row: Mapping[str, Any],
+    changes: Mapping[str, Any],
+    classification: Mapping[str, Any],
+    failure_rule: str | None,
+) -> dict[str, Any]:
+    writes = changes["writes"]
+    movements = changes["movements"]
+    cycles = changes["cycles"]
+    changed_steps = changes["changed_steps"]
+    versions = changes["versions"]
+    actors = changes["actors"]
+    workflow_audits = changes["workflow_audits"]
+    recovery_required = bool(classification["recovery_required"])
+    state = {
+        "execution_id": row["execution_id"],
+        "operation_id": row["operation_id"],
+        "request_id": row["request_id"],
+        "command": row["command"],
+        "write_committed": classification["write_committed"],
+        "write_state": classification["write_state"],
+        "move_committed": classification["move_committed"],
+        "movement_state": classification["movement_state"],
+        "cycle_created": bool(changes["new_cycles"]),
+        "cycle_ids": [cycle["cycle_id"] for cycle in changes["new_cycles"]],
         "cycle_changed": bool(cycles),
         "changed_cycle_ids": [cycle["cycle_id"] for cycle in cycles],
-        "committed_steps": committed_steps,
-        "pending_steps": pending_steps,
+        "committed_steps": classification["committed_steps"],
+        "pending_steps": classification["pending_steps"],
         "local_state_committed": bool(
             cycles
             or changed_steps
             or versions
             or actors
             or workflow_audits
-            or operation_changed
+            or classification["operation_changed"]
         ),
         "failed_step": _failure_step(
-            pending_steps=pending_steps,
+            pending_steps=classification["pending_steps"],
             writes=writes,
             movements=movements,
             failure_rule=failure_rule,
         ),
-        "authoritative_task_identity": authoritative_identity,
-        "authoritative_content_version_id": content_version_id,
-        "authoritative_identity_source": identity_source,
+        "authoritative_task_identity": classification["authoritative_identity"],
+        "authoritative_content_version_id": classification["content_version_id"],
+        "authoritative_identity_source": classification["identity_source"],
         "write_attempt_ids": [attempt["attempt_id"] for attempt in writes],
         "movement_attempt_ids": [attempt["attempt_id"] for attempt in movements],
         "required_admin_action": "recover" if recovery_required else None,
-        "required_admin_outcome": required_outcome,
+        "required_admin_outcome": classification["required_outcome"],
         "admin_recovery_lease_scope": (
             "exact_uncertain_execution" if recovery_required else None
         ),
         "admin_recovery_immediately_executable": recovery_required,
         "safe_to_retry": not recovery_required,
-        "effects_observed": effects_observed,
-        "committed_effects": committed_effects,
-        "workflow_evidence_committed": workflow_evidence_committed,
+        "effects_observed": classification["effects_observed"],
+        "committed_effects": classification["committed_effects"],
+        "workflow_evidence_committed": classification[
+            "workflow_evidence_committed"
+        ],
         "recovery_required": recovery_required,
     }
     if failure_rule:
         state["original_failure_rule"] = failure_rule
     return state
+
+
+def execution_recovery_state(
+    conn: sqlite3.Connection,
+    *,
+    execution_id: str | None = None,
+    request_id: str | None = None,
+    failure_rule: str | None = None,
+    include_completed: bool = False,
+    refresh: bool = False,
+) -> dict[str, Any] | None:
+    """Reconstruct only durable effects caused by one exact execution."""
+    row = _execution_row_for_recovery(
+        conn,
+        execution_id=execution_id,
+        request_id=request_id,
+        include_completed=include_completed,
+    )
+    if row is None:
+        return None
+    if row["status"] == "completed":
+        return _completed_execution_recovery(row) if include_completed else None
+    if row["evidence_json"] and not refresh:
+        return json.loads(row["evidence_json"])
+
+    baseline = json.loads(row["baseline_json"])
+    operation = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (row["operation_id"],)
+    ).fetchone()
+    if operation is None:
+        raise DishRuleError(
+            "CONFLICT",
+            "operation execution lost its operation",
+            rule="operation_execution_binding_invalid",
+            details={"execution_id": row["execution_id"]},
+        )
+    changes = _execution_changes(conn, row=row, baseline=baseline)
+    classification = _execution_recovery_classification(
+        conn, operation=operation, baseline=baseline, changes=changes
+    )
+    return _build_execution_recovery_state(
+        row=row,
+        changes=changes,
+        classification=classification,
+        failure_rule=failure_rule,
+    )
+
 
 
 def finish_operation_execution(

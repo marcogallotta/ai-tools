@@ -2822,8 +2822,9 @@ def _semantic_problem(
     return problem
 
 
-def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
-    problems: list[dict[str, Any]] = []
+def _validate_content_and_cycle_evidence(
+    conn: sqlite3.Connection, problems: list[dict[str, Any]]
+) -> None:
     for row in conn.execute("SELECT * FROM content_versions WHERE confirmed=1"):
         if _content_digest(row["title"], row["notes"]) != row["identity"]:
             problems.append(_semantic_problem(conn,
@@ -2968,6 +2969,10 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             problems.append(_semantic_problem(conn,
                 "small_correction_lineage", "verification_cycles", row["cycle_id"],
             ))
+
+def _validate_operation_and_inspection_evidence(
+    conn: sqlite3.Connection, problems: list[dict[str, Any]]
+) -> None:
     for row in conn.execute("SELECT * FROM dish_inspect_facts"):
         cycle = conn.execute(
             """SELECT operation_id,task_gid,reviewed_content_version_id,reviewed_identity,
@@ -3109,6 +3114,10 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 problems.append(_semantic_problem(conn,
                     "operation_signoff_binding", "operations", row["operation_id"],
                 ))
+
+def _validate_execution_and_lease_evidence(
+    conn: sqlite3.Connection, problems: list[dict[str, Any]]
+) -> None:
     for table in ("write_attempts", "movement_attempts"):
         for row in conn.execute(
             f"""SELECT operation_id, COUNT(*) AS unresolved_count
@@ -3230,6 +3239,10 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                     "operation_executions",
                     row["execution_id"],
                 ))
+
+def _validate_backup_and_reset_evidence(
+    conn: sqlite3.Connection, problems: list[dict[str, Any]]
+) -> None:
     for row in conn.execute("SELECT * FROM backup_creations WHERE status='completed'"):
         request = conn.execute(
             "SELECT * FROM service_requests WHERE request_id=?", (row["request_id"],)
@@ -3286,6 +3299,10 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
             problems.append(_semantic_problem(conn,
                 "two_pass_reset_binding", "two_pass_resets", row["reset_id"],
             ))
+
+def _validate_abandonment_attempt_evidence(
+    conn: sqlite3.Connection, problems: list[dict[str, Any]]
+) -> None:
     for row in conn.execute("SELECT * FROM abandonment_attempts"):
         lease = conn.execute(
             "SELECT * FROM service_leases WHERE lease_id=?", (row["source_lease_id"],)
@@ -3382,6 +3399,9 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                     related_record_id=row["current_execution_id"],
                 ))
 
+def _validate_succession_evidence(
+    conn: sqlite3.Connection, problems: list[dict[str, Any]]
+) -> None:
     for row in conn.execute("SELECT * FROM operation_successions"):
         source = conn.execute(
             "SELECT * FROM operations WHERE operation_id=?", (row["source_operation_id"],)
@@ -3499,6 +3519,15 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
                 row["cycle_id"],
             ))
 
+
+def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
+    problems: list[dict[str, Any]] = []
+    _validate_content_and_cycle_evidence(conn, problems)
+    _validate_operation_and_inspection_evidence(conn, problems)
+    _validate_execution_and_lease_evidence(conn, problems)
+    _validate_backup_and_reset_evidence(conn, problems)
+    _validate_abandonment_attempt_evidence(conn, problems)
+    _validate_succession_evidence(conn, problems)
     if problems:
         raise DishRuleError(
             "VALIDATION_FAILED", "database durable evidence is semantically inconsistent",
