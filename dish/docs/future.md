@@ -262,15 +262,33 @@ design, including the task-state/action precedence table, `dish_find`'s exact/fu
 contract, and why duplicate prevention stays deliberately best-effort rather than adding reservation
 machinery. Implement any of this only if real recurring friction shows up, not on a schedule.
 
-## Shipped, with a long-term follow-on: abandoned-run recovery and long-term ownership
+## Shipped; long-term ownership redesign superseded and abandoned
 
 Part I of [`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md) — an explicit
 `abandon-operation`/`reconcile-abandonment` path for a permanently lost chat run stranding
-Planning, Research, or Verification — has shipped; it is no longer a deferred future item. Part II
-of that same document, a long-term attempt/session ownership redesign that would let a replacement
-session (potentially a different agent) continue an in-progress attempt instead of always forcing
-a fresh operation, is reopened for review comments but remains a post-rollout draft not ready for
-implementation: production evidence from Part I is still needed before it can be promoted.
+Planning, Research, or Verification — has shipped; it is no longer a deferred future item.
+
+Part II of that same document, a long-term trusted-connected-session/operation-authority-assignment
+redesign that would have let a replacement session (potentially a different agent) continue an
+in-progress attempt instead of always forcing a fresh operation, is **superseded and abandoned by
+human decision on 31 July 2026.** It is retained in that document only as historical context and
+must not be resumed, extended, reviewed, or implemented unless Marco explicitly reopens that exact
+design. The blocking reason was structural, not a fixable gap: the current GPT Action has no
+authenticated per-chat identity to build session/authority replacement on, and closing that gap
+would require a stateful broker Marco is not committing to build.
+
+Current direction instead:
+
+- Part I remains the supported recovery mechanism for as long as Asana is the authoritative task
+  backend.
+- [`database-backend-design.md`](database-backend-design.md) takes priority over any further
+  recovery/ownership redesign.
+- Future recovery design should be reconsidered only after that migration exists, and should build
+  from a checkpoint model — intermediate Planning/Research/Verification-round work is journaled
+  without changing canonical task content, canonical content advances only at a stage's or
+  Verification round's committed boundary, and a later agent recovers from the last committed
+  checkpoint and journaled evidence rather than requiring transfer of unfinished trusted authority
+  — instead of the abandoned session/authority-assignment approach.
 
 ## Later architectural options
 
