@@ -1,42 +1,84 @@
-# Database-backed task store: draft design
+# Database-backed task store: paused design snapshot
 
-Status: draft target architecture. This document is not implementation or cutover authorization.
-It describes two independently approvable projects: replacing Asana as Dish's live task authority,
-and later replacing document authority with structured dish authority. They may ship together only
-when both projects' evidence gates pass.
+Status: paused target-architecture snapshot after Marco's review on 31 July 2026. This document is
+not implementation or cutover authorization. The human-approved decisions below are binding design
+constraints until Marco explicitly changes them. Agents may identify conflicts or risks, but must
+not silently weaken, reinterpret, or overrule them.
 
 Current behavior remains defined by [`architecture.md`](architecture.md),
 [`runtime-contract.md`](runtime-contract.md), and [`rollout.md`](rollout.md). Until an explicitly
-authorized cutover completes, the live Asana task remains authoritative.
+authorized cutover completes, the live Asana task remains authoritative and the current SQLite
+store remains the legacy workflow/runtime database.
+
+## Human-approved architectural decisions
+
+When an implementation or review agent finds that one of these decisions creates a material
+problem, it must:
+
+1. state the exact conflict and cite the relevant code or design evidence;
+2. present the smallest viable alternatives and their consequences;
+3. stop and ask Marco before changing the approved direction.
+
+A later agent review is not authority to reopen these decisions by itself.
+
+1. **Target database — PostgreSQL.** The new authoritative task and workflow store uses PostgreSQL,
+   not SQLite. SQLite remains only the legacy store until the authority cutover. All task state and
+   workflow evidence that must commit atomically move into the same PostgreSQL transaction domain.
+2. **Staged delivery.** Stage A moves the existing title/body document authority to PostgreSQL.
+   After Stage A is live, there is an explicit real-world battle-hardening period before Stage B is
+   authorized. Stage A then remains the live production system while Stage B is developed and
+   tested. Stage A is not disposable scaffolding, and its task/version foundation must remain
+   representation-neutral.
+3. **Canonical commit boundaries.** Incomplete Planning, Research, and Verification-round work does
+   not advance canonical task content. Intermediate work is append-only journal evidence and/or
+   non-current candidate versions. Canonical task content advances only when the complete Planning
+   stage, Research stage, or one complete Verification round reaches its governed commit boundary.
+4. **One-way authority direction.** Before cutover, Asana is authoritative and confirmed Asana state
+   is mirrored into non-authoritative PostgreSQL shadow state. At cutover, authority flips once.
+   After cutover, PostgreSQL is authoritative and projects committed state one-way to Asana. There
+   is no bidirectional synchronization and never peer authority.
+5. **Asana remains Marco's human interface after cutover.** The post-cutover Asana copy is read-only
+   from the human and agent perspective. Direct edits in Asana never flow back into PostgreSQL.
+   A new private frontend is not a Stage A prerequisite and may be considered separately later.
+6. **Universal Dish task identity.** Every authoritative task has a Dish UUID. Imported Asana task
+   GIDs are immutable external aliases in a separate alias relation; they are never the internal
+   primary key. Compatibility APIs may resolve an Asana alias temporarily, but authoritative
+   responses and storage use the Dish UUID.
+7. **Archive, do not routinely delete.** Ordinary lifecycle commands never hard-delete a task or its
+   history. Unapproved, redundant, or retired dishes use the governed archive direction already
+   described in [`future.md`](future.md). Exceptional data purging, if ever required, is a separate
+   administrative and policy design.
 
 ## Decision summary
 
-Replace Asana's remaining live authority with a domain-native, versioned task store in Dish's
-existing SQLite database. The minimum safe authority migration stores immutable title/body
-documents. Independently, the target representation makes a dish typed data accepted and returned
-as versioned structured JSON, with documents and Asana notes as rendered views.
+Replace Asana's remaining live authority with a domain-native, versioned task store in PostgreSQL.
+Stage A stores immutable title/body documents and preserves the current content contract while
+moving task state, workflow evidence, replay, and mutation atomicity into PostgreSQL. Stage B later
+introduces versioned structured Planning and dish authority after Stage A has been battle-tested.
 
 Keep `dish-service` as the only live mutation authority and keep the current workflow,
-Verification, lease, replay, audit, backup, and recovery boundaries. Add a separate private human
-frontend that reads through bounded query APIs and mutates only through Dish commands.
+Verification, lease, replay, audit, and recovery boundaries unless this design explicitly changes
+them. The authoritative task revision, workflow transition, governed audit evidence, execution
+evidence, replay result, and any projection-outbox item commit in one PostgreSQL transaction.
 
 The replacement is not an Asana clone. It owns only:
 
-- immutable document and structured dish versions with representation-appropriate exact identities;
+- immutable document versions in Stage A and structured versions in Stage B, with
+  representation-appropriate exact identities;
 - exact imported source documents and generated human-readable renderings;
-- one current Dish location and completion state;
-- location history and completion history;
-- the existing workflow and verification evidence;
-- task creation, browsing, search, history, and Marco's narrow interventions;
-- lifecycle-authorized structured editing without a generic content-save bypass;
-- a bounded command for every current human Asana action that remains necessary;
-- future cook-log records when separately designed and approved.
+- one current Dish location, completion state, archive disposition, and immutable transition
+  history;
+- the existing workflow and Verification evidence;
+- task creation, browsing, search, and Marco's narrow governed interventions;
+- lifecycle-authorized editing without a generic content-save bypass;
+- a bounded command for every current human Asana mutation that remains necessary after Asana
+  becomes read-only;
+- future cook-log records only when separately designed and approved.
 
-Migration may be staged, but authority is singular in every stage. Before cutover, Asana remains
-authoritative and Dish records a one-way shadow only after confirmed rereads. After cutover, the
-database is authoritative. An Asana projection is an optional, non-default compatibility measure,
-not part of the minimum cutover. Production must never accept peer writes or choose backend
-authority per task.
+Authority is singular throughout the migration. Before cutover, production writes go to Asana and
+confirmed state is mirrored one-way into PostgreSQL shadow storage. After cutover, production writes
+commit to PostgreSQL and a transactional outbox updates Asana as Marco's read-only interface.
+Shadow or projection state never decides workflow legality.
 
 ## Why consider this after activation
 
@@ -45,117 +87,129 @@ Asana, rereads the task, and classifies the effect as `confirmed`, `not_applied`
 That protects production work but creates recovery states that exist only because the document and
 workflow evidence commit in different systems.
 
-A database-native task mutation can commit the new task revision, workflow transition, audit,
-execution evidence, and replay result together. A process failure before commit rolls the whole
-unit back; a response loss after commit is answered by exact request replay. This removes ordinary
-content writes, moves, completion changes, and task creation from the ambiguous external-effect
-model.
+A PostgreSQL-native task mutation can commit the new task revision, workflow transition, governed
+audit evidence, execution evidence, replay result, and projection-outbox item together. A process
+failure before commit rolls the whole unit back; a response loss after commit is answered by exact
+request replay. This removes ordinary content writes, moves, completion changes, archive changes,
+and task creation from the ambiguous external-effect model.
 
-Structured dish storage also removes repeated parse-and-reconstruct validation from the steady
+The human-approved canonical-boundary rule provides an additional recovery simplification:
+incomplete stage work remains journaled and non-current. A replacement execution starts from the
+last committed task version and may reuse journal material only as independently validated evidence;
+it does not need unfinished canonical content to be repaired or transferred.
+
+Structured dish storage later removes repeated parse-and-reconstruct validation from the steady
 state. Dish validates typed fields and relationships directly, hashes one canonical JSON
 representation for exact version identity, and renders documents for humans or compatibility
-surfaces. Parsing remains an import concern, not the long-term authority boundary.
+surfaces. Parsing remains an import and Stage B migration concern, not a Stage A authority boundary.
 
-These are different benefits with different risks. Moving task authority into SQLite removes
-cross-system uncertainty even if the authoritative content remains an immutable document. Moving
-from documents to structured dishes enables typed editing and queries, but also changes content
-identity, schema semantics, API payloads, and the object to which Verification binds.
-
-This safety gain does not by itself justify immediate implementation. Under the launch triage
-policy, activation evidence should determine priority. Reconsider this design when Asana ambiguity,
-rate limits, connectivity, manual recovery, or UI friction becomes recurring operator cost, or when
-cook-log and reading needs make a purpose-built store materially simpler than continued Asana use.
+These are different benefits with different risks. Moving task and workflow authority into
+PostgreSQL removes cross-system uncertainty while preserving the existing document contract.
+Moving from documents to structured dishes changes content identity, schema semantics, API
+payloads, editing, rendering, and the object to which Verification binds. The staged decision keeps
+those proof obligations separate.
 
 ## Independent project priority
 
-Treat the work as two projects with separate approval and readiness:
+The sequence is fixed:
 
-1. **Authority migration:** move exact task content, placement, completion, and mutations from
-   Asana to SQLite. Its minimum production representation is an immutable title/body document.
-2. **Representation migration:** define, validate, store, edit, and verify structured Planning and
-   dish versions.
+1. **Stage A — authority migration.** Mirror confirmed Asana state into PostgreSQL, prove the
+   document-compatible repository and workflow path, perform a separately authorized authority
+   flip, and run PostgreSQL with immutable title/body documents as the production authority.
+2. **Battle-hardening pause.** Operate Stage A in production long enough to expose real workflow,
+   recovery, projection, backup, and operator issues before authorizing Stage B.
+3. **Stage B — representation migration.** Keep Stage A live while defining, validating, storing,
+   editing, rendering, and verifying structured Planning and dish versions inside the already
+   authoritative PostgreSQL service.
 
-Structured modeling must never become a prerequisite imposed on an otherwise justified Asana exit.
-Direct structured cutover is permitted only when structured parity, identity lineage, and
-Verification treatment are already proven by the time authority migration is ready. The two
-projects may collapse into one release when both gates pass; otherwise authority moves first and
-representation follows as a separately governed migration inside the DB-backed service.
+Stage A must not embed title/body assumptions into task identity, workflow bindings, replay,
+location, archive, or transition APIs in a way that forces a second backend redesign. Stage B is a
+separately approved content-representation migration, not another authority cutover.
 
 ## Goals
 
-1. Make one SQLite transaction authoritative for a task mutation and its durable workflow result.
-2. Support immutable document versions as the minimum DB authority and immutable structured
-   versions as the separately gated target representation.
-3. Preserve exact imported source documents, independent Verification, run lineage, action
+1. Make one PostgreSQL transaction authoritative for a task mutation and its durable workflow
+   result.
+2. Support immutable title/body document versions as Stage A authority and immutable structured
+   versions as the separately gated Stage B representation.
+3. Journal incomplete Planning, Research, and Verification-round work without advancing canonical
+   task content.
+4. Preserve exact imported source documents, independent Verification, run lineage, action
    authority, request replay, leases, audits, backup, and restore.
-4. Remove out-of-band live task edits and Asana network uncertainty from normal workflow.
-5. Preserve stable Dish command lifecycle and response meaning wherever the backend change does not
+5. Remove out-of-band live task edits and Asana network uncertainty from normal workflow after
+   cutover.
+6. Preserve stable Dish command lifecycle and response meaning wherever the backend change does not
    require a deliberate identifier or recovery-contract revision.
-6. Give Marco a practical private interface for reading, finding, and intervening in tasks.
-7. Import the live corpus deterministically, quarantine exceptions, and retain exact source
+7. Keep Asana available as Marco's post-cutover read-only human interface through a transactional
+   projection outbox.
+8. Import the live corpus deterministically, quarantine exceptions, and retain exact source
    snapshots for acceptance.
-8. Permit a long-running Asana-authoritative shadow and an optional DB-authoritative Asana
-   projection without introducing dual authority.
-9. Delete the executable Asana authority path after acceptance.
-10. Replace Planning's read-only lookup of completed cooking history with a Dish query.
-11. Let a dish be found by its destination category independent of its current Research/Verification
-    Queue placement.
+9. Permit a long-running Asana-authoritative shadow period without introducing dual authority.
+10. Delete the executable Asana authority path after acceptance while retaining the isolated
+    read-only projector.
+11. Replace Planning's read-only lookup of completed cooking history with a Dish query.
+12. Let a dish be found by its destination category independent of its current
+    Research/Verification Queue placement.
 
 ## Non-goals
 
 - generic projects, memberships, teams, assignees, comments, notifications, or permissions;
-- a permanent title/body blob as the canonical dish model;
+- a permanent title/body blob as the final canonical dish model after Stage B;
 - dish-field editing that bypasses a lifecycle-authorized, revision-checked Dish command;
 - browser or CLI access to raw SQL or generic row CRUD;
 - multi-user or hostile-tenant authorization;
-- PostgreSQL, replication, multi-host failover, or continuous point-in-time recovery as a cutover
-  prerequisite;
+- multi-region, multi-primary, or automatic-failover architecture as a Stage A prerequisite;
+- a new private frontend as a Stage A prerequisite;
 - automatic semantic recipe judgment;
 - recursive dependency discovery;
-- simultaneous Asana and database authorities;
-- bidirectional synchronization or a writable Asana fallback after DB cutover;
-- a writable compatibility engine for historical Asana workflow states.
+- simultaneous Asana and PostgreSQL authorities;
+- bidirectional synchronization or a writable Asana fallback after PostgreSQL cutover;
+- a writable compatibility engine for historical Asana workflow states;
+- routine hard deletion of tasks or history.
 
 ## Target authority model
 
 After cutover, the three authorities become:
 
 1. **Current Honest assets** define the supported protocol release and canonical task schema.
-2. **Dish task storage** owns the current authoritative version—ultimately structured—plus location,
-   completion state, and immutable task revisions.
-3. **Dish workflow storage** owns operation intent, Verification evidence, actor/run lineage,
-   leases, request replay, recovery facts, and audit history.
+2. **Dish task storage in PostgreSQL** owns the current authoritative version—document-compatible in
+   Stage A and structured after Stage B—plus location, completion, archive disposition, immutable
+   task revisions, and stage-attempt journals.
+3. **Dish workflow storage in PostgreSQL** owns operation intent, Verification evidence, actor/run
+   lineage, leases, request replay, recovery facts, and audit history.
 
-The second and third authorities share one database and transaction manager, but remain separate
+The second and third authorities share one PostgreSQL transaction manager, but remain separate
 domain concepts. The current task row is not a substitute for append-only workflow evidence, and
 workflow phase is not a substitute for the current task revision.
 
 ```text
-private Dish frontend ──> private query/command routes ──┐
-private dish CLI ────────────────────────────────────────┤
-private dish-admin ──────────────────────────────────────┼─> DishService
-GPT Action ─────────────> bounded Action routes ─────────┘        |
-                                                                    v
-                                                     CurrentWorkflowService
-                                                       |          |
-                                                       v          v
-                                          versioned task store  workflow evidence
-                                                       \          /
-                                                        SQLite transaction
-                                                               |
-                                                               v
-                                                   projection outbox
-                                                               |
-                                                    optional read-only Asana
+private dish CLI / dish-admin ──────────────────────────┐
+GPT Action ─────────────> bounded Action routes ─────────┼─> DishService
+future private UI ──────> private query/command routes ─┘       |
+                                                                  v
+                                                   CurrentWorkflowService
+                                                     |          |
+                                                     v          v
+                                        versioned task store  workflow evidence
+                                                     \          /
+                                                  PostgreSQL transaction
+                                                           |
+                                                           v
+                                                projection outbox
+                                                           |
+                                                           v
+                                              read-only Asana interface
 ```
 
-The Action listener remains bounded. The human frontend exists only on the private surface. Neither
-surface receives the database path, and neither reconstructs legal actions independently.
+The Action listener remains bounded. Asana is the initial post-cutover human view; a future private
+UI is optional and must use bounded service APIs rather than database access. Neither surface
+receives database credentials or reconstructs legal actions independently.
 
-During shadow operation the top half remains Asana-backed: only a confirmed Asana reread is fed
-one-way into the separate shadow database. During DB authority the Asana projector is downstream
-of the committed outbox. Shadow records never influence live decisions before cutover, and Asana
-projection state never influences workflow legality afterward.
+During shadow operation, live authority remains Asana-backed. Only confirmed Asana rereads and
+periodic reconciliation observations feed one-way into structurally isolated PostgreSQL shadow
+state. During PostgreSQL authority, the Asana projector is downstream of the committed outbox.
+Shadow records never influence live decisions before cutover, and Asana projection state never
+influences workflow legality afterward.
 
 ## Stable interface and identifiers
 
@@ -164,19 +218,31 @@ The agent-facing command lifecycle remains `create`, `read`, `start`, `prepare`,
 recovery commands or fields are removed only after their historical and current callers have been
 accounted for.
 
-The public `task_gid` field should remain during the first cutover to avoid a simultaneous command
-rename. It becomes an opaque stable task identifier rather than an Asana claim:
+Every authoritative task receives a canonical non-nil Dish UUID at import or creation. Imported
+Asana GIDs are preserved only as immutable aliases:
 
-- imported tasks retain their exact Asana GID as their Dish identifier;
-- newly created tasks use a canonical non-nil Dish UUID;
-- validation accepts exactly those two forms;
-- a later API version may rename the field to `task_id`, but the backend migration does not require
-  that cosmetic break.
+```text
+task_external_aliases
+  alias_id
+  task_id
+  source_system            asana | future source
+  external_id
+  imported_at
+  source_batch_id          nullable
+```
 
-Section GIDs must not survive as invented database identifiers. Structured responses and new dish
-versions use stable Dish location identifiers. An imported Asana section GID may survive only as
-an immutable compatibility alias and provenance fact under the version-aware resolution rule
-below. It never becomes current location authority.
+`(source_system, external_id)` is unique and resolves to exactly one Dish task. Aliases are
+provenance and compatibility lookup keys, never task authority. New tasks do not receive an Asana
+GID until the downstream projector creates a mirror mapping.
+
+The public `task_gid` field may remain temporarily as a compatibility field, but internally it must
+resolve either a Dish UUID or an immutable Asana alias and then operate only on the Dish UUID.
+Authoritative responses should expose the Dish UUID, and a later API version should rename the
+field to `task_id` without changing identity.
+
+Section GIDs likewise survive only as immutable external aliases and provenance. Structured
+responses and new versions use stable Dish location identifiers. An imported Asana section GID
+never becomes current location authority.
 
 ## Structured command and query contract
 
@@ -237,9 +303,9 @@ ordered versus unordered collections, and any stable child identifiers. Every st
 stores its canonicalization version. A later canonicalizer may create a new version deliberately,
 but must never reinterpret or silently change an old identity.
 
-Simple invariants use SQLite types, foreign keys, uniqueness, and checks. Cross-field and
-release-specific rules remain centralized in Dish domain validation. Database constraints are not
-a second independently evolving recipe schema.
+Simple invariants use PostgreSQL data types, foreign keys, uniqueness, checks, and where useful
+deferrable or exclusion constraints. Cross-field and release-specific rules remain centralized in
+Dish domain validation. Database constraints are not a second independently evolving recipe schema.
 
 During migration, compatibility adapters may translate current title/body commands to or from the
 candidate structured model. They are explicit API versions and temporary versioned boundaries, not
@@ -255,27 +321,81 @@ The exact SQL belongs to an approved implementation plan. The conceptual model i
 One current row per task:
 
 ```text
-task_id                      opaque stable identifier
+task_id                      canonical non-nil Dish UUID
 current_version_id          exact immutable version currently authoritative
 current_location_id         controlled Dish location
-completed                   current lifecycle flag
+completed                   current cooked/completion flag
 revision                    monotonically increasing optimistic revision
 created_at
 modified_at
 ```
 
-`current_version_id`, `current_location_id`, `completed`, and `revision` change only in the
-same transaction as their workflow evidence and audit. `modified_at` is generated by Dish and is
-not mutation authority by itself.
+`current_version_id`, `current_location_id`, `completed`, and `revision` change only in the same
+transaction as their workflow evidence and audit. Archive is represented by the controlled current
+location whose role is `archive`, not by a second independently writable task flag. `modified_at`
+is generated by Dish and is not mutation authority by itself.
 
-Tasks are never hard-deleted through an ordinary command. Completion, exclusion, or a future
-explicit archival state preserves their identifiers, versions, and audit relationships.
+Tasks are never hard-deleted through an ordinary command. Completion, exclusion, or governed
+archive preserves their identifiers, versions, journals, workflow evidence, and audit relationships.
+The archive route follows the direction recorded in `future.md`: it must not move an active task out
+from under an open operation.
 
 The current version pointer replaces `task_content_state` as the authoritative current projection.
 There must not be two independently writable current-content tables. During database migration,
 `task_content_state` may be converted into a compatibility view or retired after every caller uses
 the task pointer and its version-specific schema and document-authority provenance has been
 migrated.
+
+### Stage attempts, journals, and canonical commit boundaries
+
+Each Planning stage, Research stage, and Verification round runs inside an explicit durable attempt.
+The exact schema belongs to implementation design, but it must preserve at least:
+
+```text
+stage_attempts
+  attempt_id
+  task_id
+  operation_id
+  stage_kind                 planning | research | verification_round
+  starting_version_id
+  starting_revision
+  status                     active | committed | abandoned | blocked
+  committed_version_id       nullable
+  started_at
+  finished_at                nullable
+
+stage_journal_entries
+  entry_id
+  attempt_id
+  sequence
+  entry_kind
+  payload_or_evidence
+  request_id                 nullable
+  execution_id               nullable
+  recorded_at
+```
+
+Journal entries are append-only. They may record candidate content, observations, validation,
+decisions, declared external effects, confirmed external-effect results, errors, and recovery
+evidence. They are not canonical task content merely because they are durable.
+
+Candidate versions may be complete immutable `task_versions` rows with `became_current_at IS NULL`,
+or an equivalently strict attempt-owned candidate representation. Creating or validating a
+candidate never changes `tasks.current_version_id`, task location, completion, or the Asana
+projection.
+
+The complete governed boundary commits once:
+
+- completed Planning commits its final Planning version and transition;
+- completed Research commits its final candidate/handoff version and transition;
+- one complete Verification round commits the exact round outcome, including any governed corrected
+  version and route transition.
+
+That transaction advances the canonical pointer only after all required stage/round evidence is
+present. A crash before commit leaves the previous canonical task unchanged. An abandoned attempt
+remains readable history but carries no unfinished canonical authority. A later execution starts
+from the last committed version and may reuse journal material only after independently validating
+it under the current workflow and release contract.
 
 ### Structured dish versions
 
@@ -338,9 +458,10 @@ prove that hashing it produces `task_versions.canonical_identity`, and prove tha
 canonicalizer version, and structured schema version. None is independently writable.
 Disagreement is corruption and blocks readiness.
 
-A transaction that creates a structured version inserts the complete pair, validates it, advances
-`tasks.current_version_id`, and records workflow lineage atomically. Partial or inconsistent
-version graphs never become current.
+A transaction may create and validate a complete structured candidate without making it current.
+Only the governed commit transaction for the complete Planning stage, Research stage, or Verification
+round advances `tasks.current_version_id` and records the required workflow lineage atomically.
+Partial, inconsistent, or incomplete-attempt version graphs never become current.
 
 An immutable version may become current at most once. `became_current_at` is set in the same
 transaction as its one pointer advancement and never changes. Revert, restoration of old content,
@@ -470,8 +591,7 @@ The source task GID must equal its observation's task GID, and the source-docume
 equal that observation's identity under the same scheme. `source_title` and `source_body` are the
 exact logical Unicode-string witness returned by Asana. The named identity scheme defines their
 UTF-8 encoding, field framing, normalization policy, and digest algorithm; implementations may
-additionally retain the exact framed preimage as a BLOB, but must not call two unspecified SQLite
-text values a byte witness. The observation carries the qualified identity into its corpus
+additionally retain the exact framed preimage as a BLOB, but must not call two unspecified database text values a byte witness. The observation carries the qualified identity into its corpus
 manifest.
 
 Parsing an embedded destination produces append-only resolution evidence:
@@ -515,14 +635,14 @@ structured version.
 
 ### Document-compatible DB authority
 
-If shadow evidence does not justify a direct structured cutover, Dish may first make an immutable
-title/body document version authoritative in SQLite. This is the minimum independently deployable
-authority migration and a legitimate production state, though structured data remains the target
-representation.
+Stage A makes an immutable title/body document version authoritative in PostgreSQL. This is the
+approved independently deployable authority migration and a legitimate production state. Structured
+data remains the Stage B target representation after Stage A has been battle-tested.
 
 Such a version uses a one-to-one `title_body_document_versions` row containing the exact body and
-applicable schema provenance. DB-native intermediate mutations create new immutable document
-versions; they do not overwrite imported source documents.
+applicable schema provenance. Stage attempts may create new immutable non-current candidate document
+versions, but only the complete governed stage or Verification-round commit advances the canonical
+pointer. Imported source documents are never overwritten.
 
 The document-compatible store must still use the same task pointer, transaction, replay, workflow,
 location, completion, audit, and rollback contracts. It preserves source documents and may attach
@@ -564,8 +684,8 @@ The default gradual route is:
 - let the next governed workflow create a structured version and obtain whatever new Verification
   that workflow requires.
 
-A direct structured cutover may instead use re-Verification or a separately approved privileged
-migration-equivalence attestation. Any attestation is append-only and records at least:
+During Stage B, a corpus-wide or progressive representation migration may use re-Verification or a
+separately approved privileged migration-equivalence attestation. Any attestation is append-only and records at least:
 
 ```text
 source_version_id
@@ -603,7 +723,7 @@ Replace the Asana section registry with controlled Dish locations:
 ```text
 location_id                 stable Dish identifier
 current_name                unique current display name
-role                        research_queue | verification_queue | destination | excluded
+role                        research_queue | verification_queue | destination | archive | excluded
 active                      whether new routing may target it
 display_order
 ```
@@ -637,8 +757,9 @@ the exact alias used for an embedded destination; `task_import_origins.placement
 the independently resolved current placement.
 
 Exactly one active Research Queue and Verification Queue are required. Sourcing and Reference
-import as excluded locations. Other approved Cooking sections import as destinations. Removing or
-repurposing a referenced location is prohibited; retire it instead.
+import as excluded locations. The governed Archived section imports as an archive location. Other
+approved Cooking sections import as destinations. Removing or repurposing a referenced location is
+prohibited; retire it instead.
 
 The destination resolver is version-aware:
 
@@ -830,9 +951,10 @@ The final schema and semantic validator must enforce:
 - location and completion projections match the import origin plus latest post-import transitions;
 - one committed current-state mutation advances the task revision exactly once.
 
-Use composite foreign keys, uniqueness constraints, checks, and triggers where SQLite cannot
-express these invariants directly. Semantic startup validation covers cross-table rules that
-constraints cannot.
+Use composite foreign keys, uniqueness constraints, checks, and declarative PostgreSQL
+constraints wherever possible. Use triggers only for invariants that cannot be expressed safely
+otherwise. Semantic startup validation covers release-specific or cross-table rules that the
+database cannot prove alone.
 
 Quarantine remains outside authoritative `tasks` and ordinary service reads. Promotion is a
 separately audited import action that inserts a proven task and its origin state; it is not a
@@ -914,8 +1036,8 @@ claim and required service lease.
 **Task/request-scoped mutations** have no claimable operation at admission. These include `create`,
 `start`, Marco's completion command, permitted bare-task title changes, and comparable lifecycle
 interventions. They use `request_execution_claims` with an owner token and expiry/recovery rules.
-Task-scoped mutations additionally serialize on and reread the task inside the SQLite writer
-transaction.
+Task-scoped mutations additionally lock and reread the task inside the PostgreSQL transaction,
+normally through row-level locking on the exact task and request/operation ownership rows.
 
 Where useful, reservation stores deterministic output identity before execution. In particular,
 `create` reserves its new task UUID on the replay-bound request. After acquiring request ownership,
@@ -928,7 +1050,7 @@ After admission, every database-native task mutation has one effect transaction:
 1. authenticate and validate the request envelope;
 2. reserve or match the replay-bound service request and any deterministic output identifiers;
 3. acquire the applicable operation-scoped or request-scoped execution ownership;
-4. begin the SQLite writer transaction;
+4. begin the PostgreSQL transaction;
 5. reread the pending request, ownership token, current task when one exists, and exact
    content/location/version expectations;
 6. assert the action through `CurrentWorkflowService`, including lifecycle-specific content
@@ -967,12 +1089,14 @@ canonical result. Its failure must not roll back or turn a committed workflow su
 signal. Moving that audit into the effect transaction would be a separate contract change and is
 not part of this design.
 
-Read commands use one consistent SQLite snapshot to build the authoritative task and workflow view.
+Read commands use one consistent PostgreSQL transaction snapshot to build the authoritative task and workflow view.
 They never update leases or read projections as a side effect.
 
-Filesystem backup and database restore remain external effects with their existing specialized
-journals. Future notifications or exports would also require their own classified effect protocol;
-moving task storage into SQLite does not justify weakening non-database effect handling.
+PostgreSQL backup, point-in-time recovery, snapshot retention, and restore are operational
+boundaries rather than ordinary task transactions. The existing SQLite file-backup implementation
+does not carry over unchanged. Future notifications or exports also require their own classified
+effect protocol; moving task storage into PostgreSQL does not justify weakening non-database effect
+handling.
 
 ## Workflow and recovery changes
 
@@ -993,15 +1117,16 @@ Normal DB-native content, placement, completion, and creation mutations no longe
 `BACKEND_UNCERTAIN`. A database availability or writer-lock failure before commit is safe to retry
 under the existing request identity rules. Semantic constraint failures remain fail-closed.
 
-If storage failure makes commit acknowledgement itself indeterminate, the service must stop
-mutation readiness, reopen and validate the database, and inspect the replay record and task
-revision before advising retry. It must not report rollback merely because the backend is local.
+If a connection failure makes commit acknowledgement indeterminate, the service must stop mutation
+readiness for the affected path, reconnect, and inspect the replay record and task revision before
+advising retry. It must not report rollback merely because PostgreSQL normally gives atomic
+transactions.
 
 Recovery must distinguish:
 
 - historical unresolved Asana effects preserved from before cutover;
 - database transactions that either committed or rolled back;
-- filesystem backup/restore effects;
+- PostgreSQL backup, point-in-time recovery, and restore operations;
 - workflow holds and expired leases, which remain real regardless of backend.
 
 Do not keep generic write/movement recovery executable for new DB-native transitions merely because
@@ -1011,150 +1136,69 @@ cutover; historical terminal evidence stays readable.
 Planning reopen becomes an ordinary transactional completion-state change. It remains Marco-only
 because that is a lifecycle authority decision, not because the update is technically uncertain.
 
-## Private frontend
+## Human interface
 
-The frontend should be delivered incrementally. The stages below are a product direction, not an
-approved interaction model or persistence schema. Each mutation stage needs separate design work
-before implementation, especially where a visual gesture could conceal a governed transition.
+### Stage A interface
 
-### Stage 1: reading and discovery
+Asana remains Marco's human-facing interface throughout Stage A:
 
-- list tasks and open the exact current authoritative version and its rendered view;
-- show basic search and filters by title, location, completion, and active-operation status;
-- filter by a dish's destination category independent of its current queue placement, so a dish in
-  Research or Verification Queue remains findable by where it's headed;
-- show content, location, operation, Verification, audit, and recovery history;
-- render structured dish fields and exact legacy source documents;
-- show allowed actions without making the read surface itself authoritative.
+- before cutover it is authoritative and writable under the existing governed model;
+- after cutover it is a read-only projection of PostgreSQL authority;
+- direct Asana edits after cutover are drift, never commands or imported authority;
+- projection lag and last applied PostgreSQL revision must be visible enough that stale display is
+  not mistaken for current authority.
 
-Search and filtering belong in the first useful read-only product rather than requiring a later
-editor. They may start narrowly and expand as the structured schema establishes useful fields.
+Because Asana becomes read-only after cutover, every human mutation Marco still needs must have a
+narrow Dish command or admin action before the authority flip. The exact list is a deferred human
+review item; it is not permission to build a generic editor.
 
-### Stage 2: structured editing and human actions
+### Future private interface
 
-- create a bare task with a title-only form;
-- offer structured forms only inside lifecycle-authorized commands;
-- use text or Markdown editor components only for fields whose approved type is long prose;
-- expose Marco's existing private interventions with their exact preconditions;
-- show backup health and cutover/import quarantine status;
-- later append cook logs through a separately designed command.
+A separate private list/search/read/history/action interface may be built later, including during
+Stage B development. It is not a Stage A implementation or cutover prerequisite. When built, it
+must read through bounded query APIs and mutate only through named Dish commands. It must not access
+raw PostgreSQL, impersonate an agent, invent run lineage, or expose private admin routes through the
+Action listener.
 
-### Stage 3: cooking planner
-
-A later board may organize dishes into concepts such as Cook Now, Cook Soon, Cook Later, and
-Unscheduled, with ordering or priority where useful. These names and their storage are
-illustrative, not an approved enum or table design. Design work must decide whether planning is a
-single horizon, an ordered queue, dates, independent flags, or some combination, and how it
-interacts with completion, locations, workflow ownership, and multiple UI sessions.
-
-Planning buckets are not workflow sections or canonical destinations. Dragging within or between
-them may become a convenient way to invoke a named, revision-checked planning command. Dragging
-must not directly patch rows, move a task through Research or Verification, change a canonical
-destination, invalidate signoff, or infer that any section-like UI column is lifecycle authority.
-The service returns whether the exact planning action is allowed and records whatever audit or
-transition evidence the approved planner design requires.
-
-Before implementing this stage, separately approve the planning concepts, ordering semantics,
-command contract, concurrency behavior, history requirements, and which actions are reversible.
-Do not add generic task-section movement merely to support a board interaction.
-
-Across these stages, the frontend preserves the distinction between task organization, workflow
-state, canonical destination, and completion. It derives mutation controls from the service's
-exact authoritative snapshot.
-
-The reusable frontend shell—list, search, read, history, status, and narrow action controls—may be
-built while Asana remains authoritative. It calls `dish-service`, not either store directly. A
-shadow-backed read view must expose its source snapshot and freshness, and it never authorizes a
-mutation; the service rechecks the live Asana task until cutover.
-
-Defer the complete dish editor until the structured command schema is stable. The target editor is
-a structured form over typed fields and collections. Established text or Markdown components may
-improve long prose fields such as instructions, but editor-specific state and a whole-document
-Markdown blob do not become canonical dish data.
-
-There is no generic canonical-content save command. Revision and exact-version checks protect
-concurrency, but they do not confer authority to create a new current structured version. Content
-legality is state-based:
-
-- a bare task is created title-only with empty body; a narrow command may change its title while it
-  remains bare;
-- a Planning brief is authored or changed only through the Planning workflow;
-- a governed canonical task is authored or changed only through the applicable Research, Change,
-  correction, or explicitly designed Marco lifecycle operation;
-- a signed or destination task has no ordinary save action; changing it starts Change or another
-  named lifecycle operation that invalidates or supersedes evidence explicitly;
-- a completed task must be reopened or cloned through a named command before content changes.
-
-The service derives these actions from the authoritative task and workflow snapshot. Merely having
-no active operation is not sufficient: an inactive task may still be signed, submitted,
-destination-placed, or completed. An edit control may therefore be read-only or absent even though
-the task has no current owner.
-
-When an authorized lifecycle command accepts edited fields, the browser loads the task identifier,
-exact structured version, monotonic revision, action identity, and any operation/run authority that
-command requires. It submits a complete versioned JSON candidate with those expectations and a
-fresh request UUID. `dish-service` reasserts lifecycle legality, validates the structured graph,
-rejects stale state without overwriting either version, appends the new immutable version, advances
-the task pointer, and records the required lineage, governed audit, and replay result in one
-transaction. The UI then renders the committed canonical result or presents the newer current
-version for explicit reconciliation. Silent last-write-wins and editor-level force-save behavior
-are prohibited.
-
-The frontend must not impersonate an agent or invent run lineage. Agent workflow actions remain on
-the authenticated agent surfaces. If a future UI hosts an authenticated agent session, it may
-render only the actions returned for that exact principal and run.
-
-Before cutover, inventory the human actions currently performed in Asana. At minimum, define how a
-bare task is created, how completed cooking history is searched, and how a cooked task is marked
-complete. Any required replacement is a narrow command with explicit preconditions and audit—not a
-generic row or content editor. Structured content is accepted only by the lifecycle command
-authorized for the current state. These commands, available through CLI/admin if necessary, are the
-frontend-independent prerequisite for DB authority.
-
-The browser never sends SQL, chooses arbitrary state transitions, patches task rows, or derives legal
-actions. State-changing UI controls call the same command applications as CLI/admin routes with
-fresh request UUIDs and render the canonical result envelope.
-
-The frontend is served only on the private listener or through a same-origin private companion.
-Marco's admin bearer credential must not be stored in frontend source, URLs, logs, or browser
-persistent storage. The chosen UI architecture must preserve the existing private-versus-Action
-credential boundary and must not make admin routes reachable from the Funnel listener.
+A future structured editor submits complete versioned candidates with exact task revision and
+expected-version preconditions. A cooking planner, scaling, prioritization, and other product ideas
+remain separately designed features rather than database-cutover requirements.
 
 ## Import and cutover
 
-### Phase 1: Asana-authoritative shadow
+### Phase 1: Asana-authoritative PostgreSQL shadow
 
 Keep all live reads, writes, workflow decisions, and human actions Asana-authoritative. After each
-confirmed Asana reread, feed a one-way shadow pipeline into a dedicated shadow SQLite database.
-That database contains periodic and command-triggered `asana_observation_batches`,
-`asana_task_observations`, source witnesses, and any `shadow_*` candidate graph. It has no
-foreign-key path into authoritative tasks, operations, or Verification, and the live repository
-does not open it or resolve its candidate identifiers. Store observations with purpose `shadow` or
-`reconciliation`, including:
+confirmed Asana reread, mirror the observed state one-way into structurally isolated PostgreSQL
+shadow storage. Periodic reconciliation also captures direct human Asana changes and missed mirror
+delivery.
 
-- the exact title/body, qualified content identity, section, completion state, and source
+The shadow may use the eventual PostgreSQL platform, but its schema and credentials must not provide
+a path into authoritative task, operation, or Verification rows. It contains periodic and
+command-triggered `asana_observation_batches`, `asana_task_observations`, source witnesses, and any
+`shadow_*` candidate graph. Store observations with purpose `shadow` or `reconciliation`, including:
+
+- the exact title/body, qualified content identity, section, completion/archive state, and source
   timestamps;
 - the corresponding operation/request when the observation followed a Dish command;
-- when the representation project is active, an attempted structured parse and its
-  validation/classification evidence, normalized candidate rows, deterministic candidate JSON
-  identity, and compatibility-rendering comparison.
+- when Stage B development begins, an attempted structured parse and its validation/classification
+  evidence, normalized candidate rows, deterministic candidate JSON identity, and compatibility
+  rendering comparison.
 
-A periodic corpus reconciliation captures out-of-band Asana changes and any shadow delivery gaps.
 Shadow persistence failure is visible but does not reinterpret a confirmed Asana mutation. Shadow
-rows are never read to authorize live work, written back to Asana, or treated as migration proof
-merely because they exist. Incomplete batches remain useful diagnostic evidence but cannot claim
-corpus completeness.
+rows are never read to authorize live work, written back to Asana, or treated as authoritative
+merely because they exist. Incomplete batches remain diagnostic evidence but cannot claim corpus
+completeness.
 
-The exact-document shadow battle-tests authority import and reconciliation. Optional structured
-candidate shadowing additionally tests schema coverage, deterministic identity, queries, and
-rendering. Neither proves DB-native execution ownership, crash atomicity, or recovery; those still
-require fault injection and rehearsal.
+The title/body shadow battle-tests import, identity, reconciliation, query behavior, and sustained
+parallel persistence. It does not prove PostgreSQL-native execution ownership, transaction crash
+atomicity, or recovery; those require direct fault injection and rehearsal.
 
-The cutover importer never promotes an ordinary shadow candidate row. Under the writer freeze it
-copies only the two closed cutover batches and their exact witnesses into isolated import staging,
-validates and approves the selected batch, then creates fresh authoritative task, version, and
-workflow records from that evidence. Candidate IDs from the shadow database are never valid
-authoritative IDs.
+At cutover, the system must reconcile the final frozen Asana state with the PostgreSQL candidate
+state and create or activate authoritative records only from approved complete evidence. It must not
+silently relabel an incomplete or contradictory shadow row as authority. The expected operational
+flip is small because the service and schema have already run in shadow, but the final authority
+proof remains explicit.
 
 ### Phase 2: shadow execution
 
@@ -1171,43 +1215,39 @@ Exercise concurrency, request claims, transaction interruption, restart, and rec
 against copied candidate databases. Long runtime supplies representative inputs, but elapsed shadow
 time alone is not proof of transactional safety.
 
-### Phase 3: reusable frontend
+### Phase 3: Stage A battle-hardening readiness
 
-The list, search, read, history, status, and narrow action shell may run before cutover through
-`dish-service`. Authoritative views and mutation preconditions still come from Asana. Candidate DB
-views may be exposed only with source/freshness labels and may not authorize actions.
+Before the authority flip, exercise PostgreSQL queries, transaction ownership, exact replay,
+journals, candidate handling, projection outbox behavior, backup/restore, and all current workflow
+routes against copied or shadow-derived data. Asana remains the only production authority during
+this phase.
 
-This phase is useful but optional. A polished frontend is not a cutover gate if equivalent narrow
-CLI/admin commands cover every required human mutation. Defer the full structured editor until the
-structured command schema is stable.
+A new private frontend is not part of this phase. Equivalent narrow Dish CLI/admin commands must
+cover every human mutation that will no longer be possible directly in Asana after cutover.
 
-### Cutover-target decision
+### Fixed cutover target
 
-Use accumulated shadow and rehearsal evidence to choose one of two targets:
+The first production cutover target is **document-compatible PostgreSQL authority**:
 
-1. **Direct structured cutover:** use when every active task converts deterministically, structured
-   and current validation agree, compatibility renderings reconcile where required, all workflow
-   commands pass against the structured repository, and every active signed or correction-lineage
-   version's exact structured occurrence has been reverified or covered by an explicitly approved
-   migration-equivalence attestation.
-2. **Document-compatible DB cutover:** use when those gates are incomplete but the versioned
-   title/body DB authority is proven. Remove Asana uncertainty first, then migrate to structured
-   versions inside the DB-backed service later.
+- imported and DB-native canonical content remains exact title/body document versions;
+- PostgreSQL owns the canonical task pointer, locations, completion/archive state, journals,
+  workflow evidence, replay, and mutation transactions;
+- Asana becomes the downstream read-only interface;
+- structured candidates may be shadowed, but cannot delay or silently alter Stage A authority.
 
-The document-compatible path is the minimum DB-authority migration and must remain independently
-deployable. Structured readiness must not delay an operationally justified Asana exit. Conversely,
-do not build the intermediate solely for architectural symmetry when direct structured parity,
-lineage, and Verification treatment are already proven.
+After a separate battle-hardening period and explicit approval, Stage B performs the governed
+representation migration inside PostgreSQL. It must resolve structured schema, rendering, editing,
+identity, lineage, and Verification treatment before any structured version becomes canonical.
 
 ### Import classes
 
 Import classes are:
 
 1. **Active or incomplete governed tasks:** reconcile exact current identity and location against
-   `task_content_state`, content versions, operation history, and applicable signoff. For a direct
-   structured cutover, require a complete valid structured version and preserve the exact source
-   relationship. For an intermediate cutover, preserve the authoritative document without
-   inventing structured validity.
+   `task_content_state`, content versions, operation history, and applicable signoff. Stage A
+   preserves the authoritative title/body document without inventing structured validity. Open or
+   unresolved mutation authority is completed, abandoned under the current contract, or
+   quarantined before import; it is not migrated by inference.
 2. **Tasks connected to unresolved or open evidence:** resolve the evidence or quarantine the task
    before cutover. No unresolved external effect becomes a local committed fact by inference.
 3. **Completed historical tasks:** import the exact source document and selected cutover
@@ -1225,22 +1265,28 @@ snapshot and writes only the staged database.
 
 ### Rehearsal
 
-1. Freeze the exact Dish and Honest revisions and chosen cutover target.
+> **Deferred human decision:** the exact writer freeze, open-operation policy, acceptance window, and
+> rollback boundary below remain a proposed mechanism, not an approved cutover contract. Engineering
+> must return with a concrete evidence-based recommendation before production authorization.
+
+1. Freeze the exact Dish and Honest revisions for the document-compatible Stage A target.
 2. Snapshot the complete Asana corpus, Dish database, shadow evidence, and configuration.
 3. Require no executing claims, unresolved effects, or uncompleted service requests.
-4. For the first production cutover, finish, discard, or explicitly quarantine every open
-   operation rather than migrating live mutation authority mid-operation.
+4. Rehearse the safest resolved-only route—finish, abandon under the current contract, or
+   quarantine every open operation—and separately characterize whether exact journaled open
+   operations could ever migrate safely. The production policy remains deferred to Marco.
 5. Import every in-scope task under its class into a copied database.
 6. Prove observation-batch closure, including one exact source-document witness per task,
    complete section coverage, matching linkage and qualified identities, and no duplicate external
    IDs;
-   then reconcile structured conversions where required, current pointers, location/completion
-   state, operation history, signoff, and provenance.
+   then reconcile current pointers, location/completion/archive state, operation history, signoff,
+   and provenance. Structured conversions are Stage B evidence and do not affect Stage A import.
 7. Quarantine mismatches that affect live authority; do not infer content, readiness, destination,
    validation, or signoff.
-8. Validate database semantics, queries, backup/restore, request ownership, and the full workflow
-   suite, plus structured JSON round trips and rendering only when rehearsing a structured target.
-9. Exercise the private frontend or equivalent CLI/admin commands against the imported copy.
+8. Validate PostgreSQL semantics, queries, backup/PITR/restore, request ownership, stage journals,
+   canonical commit boundaries, Asana projection, and the full document-compatible workflow suite.
+9. Exercise every required CLI/admin human mutation command and the read-only Asana projection
+   against the imported copy.
 10. Rehearse both pre-mutation rollback and DB-backed rollback after a simulated first mutation.
 
 ### Production cutover
@@ -1265,13 +1311,13 @@ After separate explicit authorization:
 7. append one immutable approval for the second matching complete manifest as the sole cutover
    import batch, and take final database, configuration, code, and source-export snapshots bound to
    it;
-8. import only observations from that approved batch into the production database under the
-   chosen target and quarantine any unapproved mismatch;
+8. import only observations from that approved batch into the production PostgreSQL database under
+   the document-compatible Stage A contract and quarantine any unapproved mismatch;
 9. activate the matching Dish code, schema, Honest revision, query/command surface, and human
    command coverage as one compatible set;
 10. remove Asana from live task reads, workflow decisions, and ordinary mutation credentials;
-11. if the read-only projection is enabled, grant only its dedicated worker credential and enqueue
-   projection from committed DB state;
+11. grant only the read-only projector's dedicated worker credential and enqueue projection from
+   committed PostgreSQL state;
 12. keep the approved manifest, its two observation batches, and the exact source export immutable
     during acceptance;
 13. admit DB-backed mutations only after identity, location, completion, request ownership,
@@ -1283,28 +1329,31 @@ is not released between import and activation. Because Marco is the sole human o
 short operational freeze rather than a synchronization product, but it is the closure proof for
 the authority transfer.
 
-There is no dual-write acceptance period. Before cutover, DB writes are non-authoritative shadow
-observations or shadow execution. After cutover, Asana writes are downstream projection effects.
-Only one store is writable as production authority at a time.
+A long parallel-persistence period is allowed and expected, but it is never dual authority. Before
+cutover, PostgreSQL writes are non-authoritative shadow observations or shadow execution derived from
+confirmed Asana state. After cutover, Asana writes are downstream projection effects derived from
+committed PostgreSQL state. Only one store is production authority at a time.
 
-### DB-authoritative Asana projection
+### DB-authoritative read-only Asana projection
 
-The projector is not part of the default initial cutover. Enable it only when an observed frontend
-gap justifies retaining Asana mutation credentials and mirror recovery. If enabled, use a clearly
-separate Asana project with unmistakable read-only and possible-staleness labeling:
+The projector is required for Stage A because Asana remains Marco's human-facing interface after
+PostgreSQL becomes authoritative. Every committed task mutation that affects the Asana view appends
+an outbox item in the same PostgreSQL transaction. A separate worker renders and applies it.
 
-- humans and agents do not edit the projected tasks directly;
-- projection freshness and last applied DB revision are visible;
-- projection failure never blocks or reverses a DB mutation;
-- out-of-band drift is flagged and overwritten from DB authority, never imported;
-- repair acts only on the projection mapping and exact committed version;
-- new-task ambiguity is reconciled as a mirror problem and cannot create another Dish task;
-- removal of the projector requires no authority migration.
+Required rules:
 
-The projector uses a dedicated credential and code path that is not shared with historical Asana
-authority operations. It can be exercised against a test project before cutover. Production
-projection from the live DB begins only after DB authority activates; otherwise it would be a
-second Asana writer whose output could be mistaken for current authority.
+- humans and agents do not edit projected tasks as an input to Dish;
+- projection freshness and last applied PostgreSQL revision are visible;
+- projection failure never blocks, rolls back, or reclassifies a PostgreSQL mutation;
+- out-of-band Asana drift is flagged and overwritten from PostgreSQL, never imported;
+- repair acts only on projection mappings and exact committed versions;
+- ambiguous mirror creation cannot create a second Dish task;
+- the projector uses a dedicated credential and code path that cannot execute historical Asana
+  authority operations.
+
+The exact project topology—reusing the current project or projecting into a separately labeled
+mirror—must be proposed during cutover planning based on safety and Marco's usability. Regardless of
+topology, Asana is never writable authority after the flip.
 
 ### Rollback boundary
 
@@ -1312,7 +1361,8 @@ Before the first DB-native production mutation, rollback may restore the complet
 code, database, configuration, and corpus authority.
 
 After the first DB-native mutation, Asana is stale. Ordinary rollback must restore a compatible
-DB-backed code, database, command surface, and optional frontend/projector set from managed backup.
+PostgreSQL-backed code, database, command surface, and required Asana projector from managed backup
+or point-in-time recovery.
 An apparently current Asana projection is not rollback authority. Returning authority to Asana
 would require a separately designed, rehearsed reverse migration that preserves every intervening
 task version, transition, request result, and audit fact; it is not part of this design.
@@ -1324,47 +1374,49 @@ opening mutations so rollback to Asana remains simple while it is still valid.
 
 1. Inventory every Asana-owned fact, canonical field, gateway call, identifier, health dependency,
    recovery branch, validator, test fixture, and required human action.
-2. Build the representation-neutral authority foundation: task/version envelope, immutable document
-   versions, observation batches and import origins, controlled locations and aliases,
-   common version ancestry, workflow-wide exact-occurrence bindings, completion/location history,
-   immutable request envelopes, request-scoped claims, transactional repository path, quarantine,
-   and narrow human commands.
-3. Rehearse a document-compatible DB authority cutover and keep it independently deployable.
-4. In the separate representation project, approve the structured Honest schema,
-   content-versus-workflow boundary, canonicalization and quantity rules, representation pair,
-   identifier compatibility, and migration-signoff policy.
-5. Implement exact source parsing, structurally separate shadow candidate storage, rendering, and
-   one-way Asana-authoritative shadow reconciliation.
-6. Add candidate shadow execution and run it against representative live inputs plus direct
-   crash/concurrency fault tests.
-7. Add the reusable frontend list/search/read/history/action shell; defer the complete structured
-   editor until its payload schema is stable and the cooking planner until its domain and command
-   contract are approved.
-8. Evaluate the two projects' documented gates and explicitly choose direct structured or
-   document-compatible DB cutover.
-9. Build the one-purpose importer, optional projection outbox/worker only if justified, and
-   rehearse production cutover and both rollback modes.
-10. Perform the separately authorized authority cutover.
-11. If the document-compatible target was used, perform the separately approved representation
-    migration after structured parity and identity/signoff lineage are proven.
-12. After acceptance, remove the Asana authority credential, SDK paths with no projection or
-    historical role, generic governed-task guard, and temporary compatibility adapters.
-13. Retire the optional Asana projector when the private frontend makes it unnecessary.
+2. Establish PostgreSQL deployment, migrations, connection ownership, managed backup, point-in-time
+   recovery, and rehearsed restore without changing production authority.
+3. Build the representation-neutral Stage A foundation: universal Dish UUIDs and external aliases,
+   task/version envelope, immutable title/body documents, stage attempts and journals, controlled
+   locations and archive state, exact workflow-version bindings, completion/location history,
+   immutable request envelopes, execution claims, transactional repository path, quarantine, and
+   projection outbox.
+4. Build one-way Asana-to-PostgreSQL observation mirroring and periodic reconciliation. Run it for a
+   sustained period with no production reads or authority from PostgreSQL.
+5. Add shadow execution and direct crash/concurrency fault testing against representative copied
+   data. Rehearse PostgreSQL backup, PITR, restore, and projection recovery.
+6. Implement every narrow human mutation command required once Asana becomes read-only. A private
+   frontend is not required.
+7. Rehearse the document-compatible production import, authority flip, pre-mutation rollback, and
+   PostgreSQL-backed rollback after a simulated first mutation.
+8. Perform the separately authorized Stage A cutover. PostgreSQL becomes authoritative; the isolated
+   Asana authority credential/path is removed; the read-only projector remains.
+9. Pause for battle-hardened production operation. Resolve Stage A defects without beginning a
+   representation migration merely to preserve schedule momentum.
+10. Separately approve and implement Stage B: structured Honest schema, canonicalization, parser,
+    renderer, structured editing, exact Verification/signoff migration, and governed pointer
+    advancement.
+11. Retire document-only compatibility adapters only after every real producer and preserved
+    historical requirement has been accounted for.
 
-During shadow development, production remains entirely Asana-authoritative. No production
-configuration may route different tasks to different authorities. After DB acceptance, do not
-retain an executable Asana authority or fallback mutation engine.
+At no point may production route different tasks to different authorities or accept peer writes
+from both Asana and PostgreSQL.
 
 ## Required proof
 
 Each implemented project must test the applicable items below. Structured schema, canonical JSON,
 typed-graph, parser, renderer, structured-editor, and representation-migration items are additional
-gates for direct structured cutover or the later representation migration; they do not gate a
-document-compatible authority cutover.
+gates for Stage B; they do not gate the document-compatible Stage A authority cutover.
 
-- fresh task creation and imported legacy identifiers;
+- fresh task creation with universal Dish UUIDs and exact resolution of immutable imported Asana aliases;
 - audited human task completion and completed-history lookup;
 - exact reads and consistent list/search snapshots;
+- incomplete Planning, Research, and Verification-round attempts that append journal evidence and
+  candidate versions without advancing the canonical task pointer or Asana projection;
+- atomic complete-stage and complete-round commits, with crash injection before and after the single
+  canonical pointer advancement;
+- abandonment or restart from the last committed version without treating journal material as
+  canonical or inherited authority;
 - deterministic structured JSON reconstruction, canonicalization, hashing, and round trip;
 - byte equality between stored canonical JSON and typed-graph reconstruction, with readiness
   blocked on disagreement, plus equality of the envelope title and identity;
@@ -1431,8 +1483,7 @@ document-compatible authority cutover.
 - immutable many-to-one location aliases, append-only retirement evidence, and interval resolution
   by durable batch sequence rather than batch UUID ordering;
 - shadow execution divergence reporting without production response influence;
-- explicit direct-structured and document-compatible cutover rehearsals where each remains a
-  candidate;
+- document-compatible Stage A cutover rehearsal and a separately gated Stage B representation-migration rehearsal;
 - historical terminal write/movement evidence, dedicated local transitions, and absence of
   fabricated database-backed attempt records;
 - atomic completion and reopen transitions, current completion projection, governed audit, and
@@ -1447,9 +1498,9 @@ document-compatible authority cutover.
   bindings, and specialized non-material signoff lineage;
 - composite task/version ownership, exactly-one representation, same-version child ownership,
   single revision advancement, and quarantine promotion constraints;
-- service restart, writer contention, backup creation, restore, and restore rollback;
-- private frontend isolation from the Action listener and command-only mutation;
-- stale shadow-backed frontend reads that cannot authorize pre-cutover mutations;
+- service restart, PostgreSQL lock contention/deadlock handling, managed backup, point-in-time recovery, restore, and restore rollback;
+- isolation of any future private interface from the Action listener and command-only mutation;
+- stale shadow reads and stale Asana projection views that cannot authorize production mutations;
 - DB-backed production with no Asana authority calls or credentials;
 - projection outbox replay, lag, out-of-band drift, update failure, and ambiguous mirror creation
   without changing DB workflow results;
@@ -1466,7 +1517,7 @@ repository transactions rather than mocking the task repository at the workflow 
 
 | Risk | Control |
 | --- | --- |
-| Two current-content authorities inside SQLite | One task pointer; retire or project `task_content_state` |
+| Two current-content authorities inside PostgreSQL | One task pointer; retire or project `task_content_state` |
 | Structured schema merely copies Markdown headings | Derive typed fields and relationships from approved Honest domain semantics |
 | Canonical JSON identity varies by serializer or domain ambiguity | Versioned canonicalization, exact quantity semantics, round-trip fixtures, and stored identity verification |
 | A digest is interpreted under the wrong representation rules | Immutable domain-separated identity scheme on every version |
@@ -1474,15 +1525,15 @@ repository transactions rather than mocking the task repository at the workflow 
 | Partial normalized graph becomes current | Insert, validate, hash, point, and evidence the complete representation pair in one transaction |
 | Envelope and structured metadata drift | Envelope owns title/identity; structured row owns JSON/canonicalizer/schema; validate equality atomically |
 | Generated rendering becomes a second authority | Structured version is canonical; rendering is versioned output or preserved source evidence |
-| Shadow state influences production | Separate shadow database, one-way post-reread feed, and no live authorization or write-back |
+| Shadow state influences production | Structurally isolated shadow schema/database, one-way post-reread feed, and no live authorization or write-back |
 | Ordinary shadow row becomes import authority | Batch observations by purpose; only one approved complete cutover manifest may establish origins |
-| “Double write” recreates uncertainty | Asana-authoritative shadow before cutover; optional DB-authoritative outbox projection afterward |
+| Parallel persistence recreates dual authority | One-way Asana-authoritative shadow before cutover; required one-way PostgreSQL-authoritative outbox projection afterward; never ingest the downstream copy |
 | Backend abstraction becomes a permanent second engine | Test-only selection before cutover; delete live Asana mutation after acceptance |
 | Frontend bypasses workflow legality | Query APIs for reads; existing command applications for every mutation |
 | Editor overwrites newer or governed content | State-specific lifecycle command plus exact version/revision; no generic save |
 | Frontend couples to intermediate blobs | Stable service views/actions; structured forms wait for the structured payload |
 | Drag-and-drop disguises an arbitrary state change | Approved planning model and named commands; never equate board columns with workflow sections |
-| Intermediate document store becomes permanent | Explicit parity gates and follow-on structured migration decision |
+| Stage A document authority silently becomes the final representation | Keep Stage B as a separately approved target, but do not start it until the battle-hardening gate passes |
 | Concurrent replay executes a non-operation mutation twice | Durable request execution ownership; deterministic reserved IDs; transactional ownership recheck |
 | Stored replay result describes pre-finalization state | Finalize claims and leases, reread, filter actions, then persist the result |
 | Retiring `task_content_state` loses provenance | Move version-specific kind, schema, source, time, and release facts onto immutable versions |
@@ -1507,120 +1558,88 @@ repository transactions rather than mocking the task repository at the workflow 
 | Expiring claim erases replay interpretation | Keep immutable request envelope separate; retire only the executor claim |
 | Pending request is reinterpreted after deployment | Persist contract, payload, adapter, schema, and canonicalization identity with the request |
 | Incidental audit failure reverses success | Governed evidence is transactional; invocation/transport audit remains success-preserving and repairable |
-| Identifier migration breaks agents | Preserve `task_gid` field initially; accept imported GIDs and new UUIDs explicitly |
+| Identifier migration breaks agents | Use Dish UUIDs universally; retain `task_gid` only as a compatibility resolver over immutable Asana aliases |
 | Historical evidence becomes unreadable | Preserve terminal attempts and provenance; migrate consumers before cleanup |
-| Single database loss | Managed validated backups, rehearsed restore, source snapshot, and sensible off-device copies |
+| PostgreSQL loss or corruption | Managed backups, continuous point-in-time recovery, rehearsed restore, source snapshots, and sensible off-account/off-device copies |
 | Cutover rollback loses DB-native work | Complete acceptance before mutation; use DB backup rollback after first DB write |
-| SQLite writer contention increases | Keep transactions local and bounded; measure real activation load before changing backend technology |
+| PostgreSQL lock contention or deadlocks | Keep transactions bounded, lock rows in a stable order, retry serialization/deadlock failures through exact request replay, and measure production load |
 | Import silently blesses drift | Exact snapshot reconciliation and quarantine; never infer missing facts |
 | Final Asana edit is omitted during cutover | Freeze every writer, compare two complete manifests, and import only the named matching batch |
-| Shadow candidate IDs leak into production | Separate shadow database; import creates fresh authoritative records from approved cutover evidence |
+| Shadow candidate IDs leak into production | Structurally isolated shadow schema/database; authoritative records are created or activated only from approved complete cutover evidence |
 | Source digest becomes ambiguous | Store and manifest the identity scheme with every observation and source witness |
 | Cutover batch is reopened or reapproved | Irreversible completion plus one append-only approval tied to an earlier matching complete batch |
 | Quarantine leaks into ordinary authority | Keep quarantine outside tasks; separately audited promotion only |
 
-## Needs human review
+## Outstanding human decisions
 
-Before an implementation plan is approved, Marco should review these policy and workflow choices.
-The technical mechanisms elsewhere in this draft support the recommended defaults but do not make
-these decisions on his behalf.
+No decision in this section is required now. Agents must not infer an answer from surrounding text.
+They should return to Marco only when the relevant implementation phase is close enough to present a
+small, concrete choice.
 
-1. **Structured dish boundary.** Review which current task facts are immutable dish data, workflow
-   state, location/completion state, or future cook-log data. Approve the structured JSON grammar
-   before normalized tables or a full editor are fixed. The recommended default is that stable
-   location IDs may be dish references, while current placement and completion remain task
-   lifecycle state.
-2. **Independent project priority.** Approve authority migration and representation migration as
-   separate projects that may share a release but cannot block one another. The recommended
-   default is to keep the document-compatible authority path independently deployable.
-3. **Verification migration.** Decide whether direct structured migration may ever transfer
-   workflow facts through a privileged equivalence attestation. The recommended default is no
-   automatic transfer: keep signed documents current until governed work naturally creates and
-   verifies a structured version; add attestation only if real migration cost justifies it.
-   Regardless of that policy choice, every content-bearing workflow fact binds to one exact
-   task/version occurrence and identity rather than every version that happens to share its digest.
-4. **Structured identity.** Approve canonical JSON as the immutable identity/API witness paired
-   atomically with consistency-checked typed rows, plus exact quantity, canonicalization, and
-   representation-specific identity-scheme rules.
-5. **Cutover target.** Decide whether the evidence gate, not a calendar commitment, may choose
-   direct structured or document-compatible DB authority. Direct cutover requires proven active-
-   corpus parity and an explicit disposition for every signed or correction-lineage version.
-6. **Asana projection lifetime.** Decide whether an observed frontend gap justifies a read-only
-   Asana mirror. The recommended default is disabled; if needed, use a separate labeled project,
-   dedicated credential, no edit ingestion, and retire it once the frontend is sufficient.
-7. **Frontend stages and cooking planner.** Approve the read/discovery, structured-editing, and
-   planner stages as product direction. Separately design what Cook Now, Cook Soon, Cook Later,
-   priority, and ordering mean; whether they are mutually exclusive; their history and concurrency
-   rules; and their relationship to completion. The recommended default is dedicated planning
-   metadata changed through named commands, never reuse of workflow sections or destinations.
-8. **Human lifecycle actions.** Approve the exact private commands Marco needs: title-only bare
-   rename, mark cooked, reopen Planning, start Change, and clone historical content. Decide which
-   require a reason and whether reopening or cloning is the normal way to reuse a completed task.
-   None of these choices creates a generic content editor.
-9. **Historical corpus scope.** Decide whether completed Cooking history is imported in full and
-   whether Sourcing or Reference records are needed for search, reading, or provenance. The
-   recommended default is exact read-only import of completed Cooking history and exclusion of
-   Sourcing/Reference unless a concrete use requires them.
-10. **Cutover freeze, acceptance, and rollback.** Approve a short full Asana writer freeze,
-   practical credential revocation, two matching complete corpus manifests, and import from the
-   named final batch. Also approve the acceptance period and the point at which DB-native mutations
-   may begin. Before the first mutation, Asana rollback remains valid; after it, rollback restores
-   the DB-backed system and returning to Asana requires a reverse migration.
-11. **Recipe scaling.** Decide whether crude linear scaling of ingredient quantities (never steps,
-   timing, or non-linear items such as leavening, spice, or pan-surface-area-dependent behavior) is
-   worth adding once typed quantities exist, and how non-linear items are flagged for human judgment
-   rather than silently scaled. The recommended default is no scaling until typed quantities are
-   proven, added as a separately reviewed feature rather than bundled into the base structured
-   schema.
+### Before Stage A production cutover
 
-## Decisions requiring approval before implementation
+1. **Human mutation coverage.** Which actions Marco must still perform once Asana is read-only, and
+   which narrow Dish command or temporary interface supplies each action. Engineering must first
+   inventory actual current Asana mutations and present only gaps.
+2. **Historical corpus scope.** Whether Stage A imports all completed Cooking history and whether
+   Sourcing/Reference records enter PostgreSQL or remain only in immutable source snapshots.
+3. **Cutover, open-operation, rollback, and battle-hardening gate.** Whether every operation must
+   be closed before the flip or an exact journaled operation may migrate; the concrete acceptance
+   evidence, observation duration, rollback point, and operating period required before the
+   authority flip and before Stage B may begin. Engineering must propose measurable criteria rather
+   than ask Marco to design the test programme.
+4. **Asana projection topology.** Whether the read-only projection safely reuses the existing Asana
+   project or uses a separately labeled mirror project. The proposal must prioritize Marco's normal
+   usability while proving that no projection credential can act as authority.
 
-The recommended defaults in this draft are:
+### Before Stage B
 
-1. keep SQLite and the existing service deployment;
-2. preserve `task_gid` as the first-version field while allowing UUIDs for new tasks;
-3. keep immutable document versions as the minimum DB-authority representation;
-4. make immutable structured dish versions, stored canonical JSON, and consistency-checked typed
-   rows the separately gated target representation;
-5. bind every content-bearing workflow fact to its exact task/version occurrence, identity scheme,
-   and identity; model non-material signoff inheritance through explicit predecessor/candidate
-   occurrence lineage; keep imported signoff on the exact imported title/body version by default,
-   and require re-Verification or a separately approved equivalence attestation before transferring
-   workflow facts;
-6. use controlled Dish locations rather than project/membership emulation, with imported section
-   GIDs represented by immutable many-to-one location-alias rows;
-7. separate batched shadow/reconciliation observations, the append-only approved cutover origin,
-   mandatory qualified source-document witnesses, current placement resolution, append-only
-   embedded-destination attempts, and the selected migration resolution;
-8. run one-way Asana-authoritative shadow ingestion and shadow execution in a structurally separate
-   database before cutover; create fresh authoritative records rather than promoting shadow rows;
-9. choose direct structured or document-compatible cutover from explicit parity and signoff
-   evidence without allowing structured work to delay a justified authority migration;
-10. stage the private frontend as read/discovery, structured editing/actions, then an explicitly
-   designed command-driven cooking planner, while allowing narrow CLI/admin commands to satisfy
-   the cutover gate;
-11. keep the DB-authoritative Asana projection disabled by default and allow it only through a
-    dedicated transactional outbox, credential, and labeled mirror project;
-12. require no open operations at the first production cutover;
-13. persist an immutable request/adapter/schema/canonicalization envelope for every mutation, and
-    add a separate expiring request execution claim for mutations that have no existing operation;
-14. use dedicated local location and completion transition evidence and never manufacture
-    database-backed Asana attempts;
-15. approve narrow replacements for every required human Asana action, including completion;
-16. import completed history without structured-schema or signoff claims until a named reopen or
-    clone;
-17. keep quarantine outside authoritative tasks and require an audited promotion;
-18. define one non-terminal live-request-claim response in the implementation's runtime contract;
-19. keep invocation/transport auditing success-preserving and repairable;
-20. make each version current at most once; revert, restoration, clone, and canonicalizer migration
-    create a new explicitly linked version;
-21. freeze Asana writers and require two matching complete corpus manifests, each closed over exact
-    qualified source-document witnesses and section observations without duplicate external IDs,
-    before importing only the named approved cutover batch;
-22. treat Asana rollback as valid only before the first DB-native production mutation;
-23. retain off-device backup as a sensible operational measure, not a replicated-database project.
+5. **Structured content boundary and schema.** The exact structured Planning and dish grammar,
+   including quantities, units, sensory stop conditions, shopping, equipment, storage, provenance,
+   and which facts remain workflow or lifecycle state.
+6. **Verification across representation migration.** Whether an existing signed title/body version
+   must remain current until ordinary governed work replaces it, or whether a narrowly defined
+   human-approved equivalence attestation may transfer specified facts to a structured occurrence.
+   No automatic digest- or rendering-based transfer is allowed.
+7. **Stage B activation scope.** Whether structured authority is migrated corpus-wide, only for
+   active tasks, or progressively when a task next undergoes governed work.
 
-Implementation needs Marco's explicit approval of those decisions, the structured schema and
-content/workflow boundary, the frontend trust model, the corpus scope, the cutover-target gate, the
-projection policy, the acceptance period, and the separately authorized rehearsal and production
-cutover.
+### Deferred product choices
+
+8. A future private frontend, cooking planner, scaling, priority, and cook-log editing remain
+   separate product decisions. They do not block Stage A.
+
+## Approved implementation direction
+
+The implementation plan must conform to these settled defaults:
+
+1. PostgreSQL is the sole target authoritative database; SQLite is legacy-only until cutover.
+2. Stage A is a document-compatible PostgreSQL authority migration followed by a battle-hardening
+   pause; Stage B is a later structured representation migration.
+3. Every task uses a Dish UUID; Asana task and section identifiers are external aliases only.
+4. Incomplete stage and Verification-round work remains journaled/non-current; canonical content
+   advances only at the complete governed boundary.
+5. Every content-bearing workflow fact binds to its exact task/version occurrence, identity scheme,
+   and identity; same digest does not transfer authority or Verification.
+6. Use controlled Dish locations, completion history, and governed archive rather than project
+   emulation or hard deletion.
+7. Before cutover, Asana-to-PostgreSQL mirroring is one-way and non-authoritative. After cutover,
+   PostgreSQL-to-Asana projection is one-way and read-only.
+8. The Asana projection is required for Stage A as Marco's human interface and uses an isolated
+   outbox worker and credential with no authority path.
+9. PostgreSQL task state, workflow evidence, request result, governed audit, journal commit, and
+   projection outbox share the required atomic transaction boundary.
+10. No open or unresolved mutation state may be silently inferred into the imported authority;
+    mismatches are reconciled or quarantined.
+11. The final cutover, open-operation, acceptance, and rollback boundaries remain explicitly
+    deferred; implementation must not treat the proposed mechanics as human-approved.
+12. Managed backup, continuous point-in-time recovery, and rehearsed restore are Stage A operational
+    requirements. Multi-region or automatic failover is not.
+13. A private frontend is optional and later. Stage A must instead provide narrow commands for every
+    required human mutation after Asana becomes read-only.
+14. Ordinary commands archive rather than hard-delete; exceptional purge is outside this design.
+
+Table names, PostgreSQL constraint forms, lock primitives, transaction isolation, outbox worker
+implementation, migration tooling, and API-internal naming are engineering decisions. They return to
+Marco only if evidence exposes a material product, safety, operational, or cost tradeoff not already
+settled above.
