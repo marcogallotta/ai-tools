@@ -23,6 +23,26 @@ from .workflow_repository import WorkflowRepository
 T = TypeVar("T")
 
 
+def _failure_rule_for_exception(exc: BaseException) -> str:
+    """Map an execution failure to a durable-evidence rule label.
+
+    A raw ``sqlite3.OperationalError`` collapses distinct writer-contention
+    conditions (SQLITE_BUSY/SQLITE_LOCKED) into one generic type name unless
+    the category is extracted here before it is discarded.
+    """
+    if isinstance(exc, DishRuleError):
+        return exc.rule
+    if isinstance(exc, sqlite3.OperationalError):
+        message = str(exc).lower()
+        error_code = getattr(exc, "sqlite_errorcode", None)
+        primary_code = None if error_code is None else error_code & 0xFF
+        if primary_code in {sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED} or (
+            "locked" in message or "busy" in message
+        ):
+            return "OperationalError:database_writer_lock"
+    return type(exc).__name__
+
+
 @dataclass(frozen=True)
 class RoutedTarget:
     generation: str
@@ -622,7 +642,7 @@ class CurrentWorkflowService:
             recovery = execution_recovery_state(
                 self.conn,
                 execution_id=claim.execution_id,
-                failure_rule=(exc.rule if isinstance(exc, DishRuleError) else type(exc).__name__),
+                failure_rule=_failure_rule_for_exception(exc),
                 refresh=claim.resuming_uncertain,
             )
             if claim.resuming_uncertain and recovery is not None:

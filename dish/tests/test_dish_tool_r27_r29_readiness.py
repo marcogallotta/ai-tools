@@ -161,6 +161,33 @@ def test_non_material_terminal_phase_recovers_after_confirmed_write(tmp_path, mo
     assert tuple(row) == ("completed", "terminal")
 
 
+def test_non_material_terminal_writer_lock_preserves_sqlite_category(tmp_path, monkeypatch):
+    app, backend, initial_operation, _ = make_app(tmp_path)
+    _approve_and_submit(app, initial_operation)
+    started = app.execute(
+        "start", agent="codex", task_gid="t", kind="change",
+        change_level="small", change_reason="wording", run_id="later-editor",
+    )
+    candidate = tmp_path / "non-material.txt"
+    candidate.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "1. Cook it.", "1. Cook it gently."
+        )
+    )
+
+    def crash_with_writer_lock(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(step6, "transition_operation", crash_with_writer_lock)
+    failed = app.execute(
+        "prepare", model="gpt-5.6-sol", agent="codex", submission_id=started["submission_id"],
+        file_path=str(candidate), material_classification="non-material",
+    )
+    assert failed["code"] == "BACKEND_UNCERTAIN"
+    assert failed["data"]["failed_step"] == "non_material_terminal"
+    assert failed["data"]["original_failure_rule"] == "OperationalError:database_writer_lock"
+
+
 def test_completed_research_handoff_step_cannot_be_regressed(tmp_path, monkeypatch):
     app, backend, operation_id, _ = make_app(tmp_path)
     with pytest.raises(sqlite3.IntegrityError):

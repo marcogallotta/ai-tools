@@ -132,18 +132,6 @@ The retry-safety question is resolved for writer contention. Keep only the histo
 parked; reconsider implementation work if ordinary live use makes the condition frequent or a
 future occurrence violates the confirmed fail-before-execution and exact-retry behavior.
 
-### non-material-terminalization-transient-failure
-
-SQLite writer contention now reproduces the test-project failure at `non_material_terminal` after
-the candidate write and handoff validation commit. Dish preserves the confirmed write, prohibits
-normal retry, does not duplicate content, and permits immediate recovery through the prescribed
-private admin action even while the originating Action lease remains live. The remaining limitation
-is diagnostic: durable evidence keeps only `OperationalError` rather than the available
-`SQLITE_BUSY` or `SQLITE_LOCKED` category.
-
-Keep exact SQLite-category retention as post-rollout diagnostic work. Reconsider on another live
-occurrence or if the category is not a normalized writer-lock condition.
-
 ### abandonment-suite-fabricated-states
 
 Several abandonment tests construct database state directly (operation phase, Verification-cycle
