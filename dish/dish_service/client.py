@@ -275,7 +275,7 @@ class DishServiceClient:
         file_path = prepared.pop("file_path", None)
         if file_path:
             prepared["file_text"] = Path(str(file_path)).read_text(encoding="utf-8")
-        for field in ("intent_challenge_id", "intent_basis", "override_reason"):
+        for field in ("intent_challenge_id", "intent_basis", "override_reason", "lease_id"):
             if prepared.get(field) is None:
                 prepared.pop(field, None)
         return prepared
