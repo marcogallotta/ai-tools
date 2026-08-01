@@ -8,7 +8,6 @@ from dish_tool.constants import COOKING_PROJECT_GID
 from dish_tool.errors import DishRuleError
 from dish_tool.governed_diff import explicit_material_reasons, require_small_scope
 from dish_tool.task_document import parse_task_document
-from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.planning import TASK
 
 
@@ -23,17 +22,6 @@ def test_quantity_change_is_always_material_and_not_small():
     with pytest.raises(DishRuleError) as exc:
         require_small_scope(before, after)
     assert exc.value.rule == "large_correction_required"
-
-
-def test_pending_steps_suppress_ordinary_actions():
-    snapshot = WorkflowSnapshot(
-        operation_status="open", operation_phase="await_verification",
-        persisted_actions=("verify",), live_status="pending-verification",
-        live_section_gid="vq", verification_queue_gid="vq", cycle_reviewed=False,
-        latest_cycle_outcome=None, latest_cycle_route=None, validation_rules=(),
-        pending_steps=("route_new_cycle",),
-    )
-    assert legal_actions(snapshot) == []
 
 
 def test_installed_asana_section_signature_matches_contract():

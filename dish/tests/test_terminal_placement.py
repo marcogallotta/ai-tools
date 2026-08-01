@@ -1,3 +1,5 @@
+import pytest
+
 from dish_tool.admin import DishAdminApplication
 from dish_tool.recovery import begin_movement_attempt, finish_movement_attempt
 from tests.support.verification import make_app
@@ -81,6 +83,8 @@ def test_completed_task_back_in_verification_queue_reports_destination_drift(tmp
     assert view["recovery_required"] is False
 
 
+@pytest.mark.invariant_workflow_action_authority
+@pytest.mark.smoke
 def test_uncertain_destination_movement_keeps_pre_recovery_requirement(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     _approve(app, operation_id)
@@ -101,6 +105,7 @@ def test_uncertain_destination_movement_keeps_pre_recovery_requirement(tmp_path)
     assert view["placement_matches"] is True
     assert view["recovery_required"] is True
     assert view["unresolved_attempts"] == [f"movement:{attempt_id}"]
+    assert view["legal_actions"] == []
 
 
 def test_recovered_destination_movement_becomes_required_placement(tmp_path):

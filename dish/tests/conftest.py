@@ -40,6 +40,7 @@ REQUIRED_SMOKE_INVARIANTS = {
     "invariant_abandonment",
     "invariant_database_bootstrap",
     "invariant_backup_restore",
+    "invariant_workflow_action_authority",
 }
 
 SMOKE_INVARIANT_OWNERS = {
@@ -80,6 +81,11 @@ SMOKE_INVARIANT_OWNERS = {
     },
     "invariant_backup_restore": {
         "tests/test_operational_recovery.py::test_backup_restore_preserves_open_signoff_lease_and_recovery_state",
+    },
+    "invariant_workflow_action_authority": {
+        "tests/test_workflow_policy_fail_closed.py::test_each_unsafe_authority_fact_suppresses_all_actions",
+        "tests/test_application_service.py::test_current_workflow_service_rejects_action_after_live_placement_drift",
+        "tests/test_terminal_placement.py::test_uncertain_destination_movement_keeps_pre_recovery_requirement",
     },
 }
 
