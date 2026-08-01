@@ -27,6 +27,8 @@ def _principal(name, run):
     return ServicePrincipal(owner_id=name, run_id=run)
 
 
+@pytest.mark.invariant_lease_authority
+@pytest.mark.smoke
 def test_two_clients_cannot_start_and_lease_same_task(tmp_path):
     backend = Backend()
     service = _service(tmp_path, backend)
@@ -64,6 +66,8 @@ def test_two_clients_cannot_start_and_lease_same_task(tmp_path):
         conn.close()
 
 
+@pytest.mark.invariant_lease_authority
+@pytest.mark.smoke
 def test_lease_owner_blocks_another_client_before_prepare_mutation(tmp_path):
     backend = Backend()
     service = _service(tmp_path, backend)

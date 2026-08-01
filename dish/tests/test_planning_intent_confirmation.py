@@ -44,7 +44,6 @@ from tests.support.planning_intent import (
 
 
 @pytest.mark.smoke
-@pytest.mark.invariant_planning_intent
 def test_first_planning_start_only_issues_durable_confirmation(tmp_path):
     backend_calls = 0
 
@@ -119,6 +118,8 @@ def test_exact_first_call_replay_returns_same_challenge(tmp_path):
         )
     finally:
         conn.close()
+@pytest.mark.invariant_planning_intent
+@pytest.mark.smoke
 def test_fresh_user_requested_confirmation_starts_and_consumes_challenge(tmp_path):
     service, _ = _service(tmp_path)
     challenge = _issue(service)
@@ -180,6 +181,8 @@ def test_agent_override_requires_and_persists_nonblank_reason(tmp_path):
         )
     finally:
         conn.close()
+@pytest.mark.invariant_planning_intent
+@pytest.mark.smoke
 def test_challenge_is_bound_to_exact_principal_task_and_single_followup(tmp_path):
     service, _ = _service(tmp_path)
     challenge = _issue(service)

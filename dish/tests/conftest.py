@@ -42,6 +42,42 @@ REQUIRED_SMOKE_INVARIANTS = {
     "invariant_backup_restore",
 }
 
+SMOKE_INVARIANT_OWNERS = {
+    "invariant_request_replay": {
+        "tests/test_request_replay_and_restore_durability.py::test_completed_create_request_replays_without_duplicate_task",
+    },
+    "invariant_lease_authority": {
+        "tests/test_service_leases.py::test_two_clients_cannot_start_and_lease_same_task",
+        "tests/test_service_leases.py::test_lease_owner_blocks_another_client_before_prepare_mutation",
+    },
+    "invariant_transaction_rollback": {
+        "tests/test_dish_transaction_ownership.py::test_immediate_transaction_rolls_back_errors_and_process_exit",
+    },
+    "invariant_partial_effect_recovery": {
+        "tests/test_dish_critical_partial_recovery.py::test_partial_failures_report_request_scoped_durable_evidence",
+    },
+    "invariant_submission_terminal_proof": {
+        "tests/test_submission_terminal_proof.py::test_submission_audit_failure_preserves_movement_and_exact_replay_finalizes_once",
+    },
+    "invariant_authorization": {
+        "tests/test_authorization_grant_races.py::test_authorization_is_not_reservable_before_grant_audit_commits",
+    },
+    "invariant_planning_intent": {
+        "tests/test_planning_intent_confirmation.py::test_fresh_user_requested_confirmation_starts_and_consumes_challenge",
+        "tests/test_planning_intent_confirmation.py::test_challenge_is_bound_to_exact_principal_task_and_single_followup",
+    },
+    "invariant_abandonment": {
+        "tests/test_abandonment_admin_workflow.py::test_admin_abandon_operation_creates_exact_planning_successor",
+        "tests/test_abandonment_admin_workflow.py::test_blocked_abandonment_returns_exact_private_relay_and_fences_agents",
+    },
+    "invariant_database_bootstrap": {
+        "tests/test_database_schema_and_recovery.py::test_schema_creation_and_migration_are_idempotent",
+    },
+    "invariant_backup_restore": {
+        "tests/test_operational_recovery.py::test_backup_restore_preserves_open_signoff_lease_and_recovery_state",
+    },
+}
+
 
 def pytest_addoption(parser):
     parser.addoption(
@@ -69,6 +105,28 @@ def pytest_addoption(parser):
         help="run only confirmed, time-bounded quarantined flaky tests",
     )
 
+
+
+def _base_nodeid(item):
+    return item.nodeid.split("[", 1)[0]
+
+
+def _smoke_invariant_owner_violations(items):
+    violations = []
+    for marker, expected in SMOKE_INVARIANT_OWNERS.items():
+        actual = {
+            _base_nodeid(item)
+            for item in items
+            if item.get_closest_marker(marker) is not None
+        }
+        if actual != expected:
+            violations.append(
+                f"{marker}: expected authoritative owners {sorted(expected)}, got {sorted(actual)}"
+            )
+        for item in items:
+            if _base_nodeid(item) in expected and item.get_closest_marker("smoke") is None:
+                violations.append(f"{item.nodeid}: authoritative invariant owner is not smoke-selected")
+    return violations
 
 def _flake_policy_violations(items):
     violations = []
@@ -178,6 +236,7 @@ def _select_items(config, items):
 
 def pytest_collection_modifyitems(config, items):
     violations = _flake_policy_violations(items)
+    violations.extend(_smoke_invariant_owner_violations(items))
     if violations:
         raise pytest.UsageError(
             "invalid flaky-test policy metadata:\n" + "\n".join(violations)

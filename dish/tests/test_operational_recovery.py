@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import threading
+
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from dish_service.application import DishService
@@ -32,6 +34,8 @@ from tests.support.operational import (
 
 
 
+@pytest.mark.invariant_backup_restore
+@pytest.mark.smoke
 def test_backup_restore_preserves_open_signoff_lease_and_recovery_state(tmp_path):
     service, _backend = _service(tmp_path)
     operation_id, verifier = _approved(service)

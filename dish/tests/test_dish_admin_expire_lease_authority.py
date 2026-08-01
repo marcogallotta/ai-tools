@@ -128,7 +128,6 @@ def test_request_identity_conflicts_on_principal_or_reason_change(
     )
     assert conflict["code"] == "CONFLICT"
     assert conflict["errors"][0]["rule"] == "service_request_identity_conflict"
-@pytest.mark.invariant_lease_authority
 @pytest.mark.smoke
 def test_duplicate_request_id_concurrency_returns_one_release_and_one_replay(tmp_path):
     service, _backend = _service(tmp_path)

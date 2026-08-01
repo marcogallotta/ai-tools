@@ -13,7 +13,6 @@ from tests.support.thread_teardown import join_thread, stop_server
 UNKNOWN_OPERATION = "99999999-9999-4999-8999-999999999999"
 
 
-@pytest.mark.invariant_request_replay
 @pytest.mark.smoke
 @pytest.mark.parametrize(
     ("path", "token", "body", "command"),

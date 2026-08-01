@@ -16,7 +16,6 @@ def _mode(path: Path) -> int:
 @pytest.mark.database_boundary
 @pytest.mark.production_sqlite_pragmas
 @pytest.mark.database_boundary_durability
-@pytest.mark.invariant_backup_restore
 @pytest.mark.smoke
 def test_successful_restore_installs_live_database_owner_only(tmp_path):
     live = tmp_path / "dish.db"

@@ -36,6 +36,8 @@ VERIFY_REQUEST = "33333333-3333-4333-8333-333333333333"
 
 
 
+@pytest.mark.invariant_request_replay
+@pytest.mark.smoke
 def test_completed_create_request_replays_without_duplicate_task(tmp_path):
     service, backend = _service(tmp_path)
     first = service.execute_agent(
