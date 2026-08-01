@@ -29,7 +29,7 @@ Future proposals should build on those mechanisms rather than reintroduce parall
 ### Sequencing relative to a database-backend move
 
 Most items below are built on the current Asana section/content-identity model that
-[`database-backend-design.md`](database-backend-design.md)'s authority migration replaces (Dish
+[`database-backend.md`](database-backend.md)'s authority migration replaces (Dish
 locations instead of section GIDs, `task_versions` instead of `content_versions`, restructured
 operation/lease facts). If that migration becomes a near-term priority, treat these as parked until
 its scope is decided rather than building against a model about to change:
@@ -56,7 +56,7 @@ sequencing.
 
 Independent of the backend-authority decision: add a small Dish-owned metadata layer (destination
 category/region tags, protein type, tier, and an explicit availability blocker) directly in Dish's
-own database, not Asana. None of this needs to wait on `database-backend-design.md`'s authority
+own database, not Asana. None of this needs to wait on `database-backend.md`'s authority
 migration, because it is new data with no existing Asana-side representation to migrate away from —
 unlike section placement or content identity, there is nothing here to throw away later.
 
@@ -77,7 +77,7 @@ lightweight tag layer gives agents a fast, structured, filterable answer instead
 Import or maintain Sourcing/Reference documents (e.g. halal seafood and meat sourcing docs) as a
 small structured catalog — item, category, source, price estimate, availability note — instead of
 free prose agents have to read in full. This is a concrete answer to the open historical-corpus-scope
-question in `database-backend-design.md` ("Needs human review" item 9): a real use for importing
+question in `database-backend.md`'s deferred decisions: a real use for importing
 these records is fast agent lookup, not just search/provenance completeness.
 
 ### Pending-order / expected-delivery tracking
@@ -281,7 +281,7 @@ Current direction instead:
 
 - Part I remains the supported recovery mechanism for as long as Asana is the authoritative task
   backend.
-- [`database-backend-design.md`](database-backend-design.md) takes priority over any further
+- [`database-backend.md`](database-backend.md) takes priority over any further
   recovery/ownership redesign.
 - Future recovery design should be reconsidered only after that migration exists, and should build
   from a checkpoint model — intermediate Planning/Research/Verification-round work is journaled
@@ -331,8 +331,10 @@ human frontend. Structured versioned data would become canonical, while Markdown
 would be rendered views. The stable Dish command lifecycle and service boundary should remain the
 agent interface so the backend change does not alter workflow semantics.
 
-See [`database-backend-design.md`](database-backend-design.md) for the current draft authority,
-storage, transaction, frontend, migration, and rollback design. It remains future design rather than
+See [`database-backend.md`](database-backend.md), with companion documents
+[`database-backend-imp.md`](database-backend-imp.md) and
+[`database-backend-migration.md`](database-backend-migration.md), for the current Stage A authority,
+storage, transaction, and migration design. It remains future design rather than
 implementation or cutover authorization.
 
 The draft permits an Asana-authoritative one-way shadow before cutover and an optional
