@@ -138,8 +138,15 @@ Narrow it when investigating one area:
 Every run uses a fresh process and a recorded seed. Reproduce one failure with:
 
 ```sh
-.venv-flake/bin/python -m pytest --randomly-seed=<recorded-seed>
+.venv-flake/bin/python -m pytest \
+  --randomly-seed=<recorded-seed> \
+  --randomly-dont-reset-seed
 ```
+
+The runner randomizes collection order but disables pytest-randomly's per-test reseeding. Some
+installed libraries register seed hooks that accept only unsigned 32-bit values; derived per-test
+seeds can exceed that range even when the recorded order seed is valid. Disabling the reset keeps
+the diagnostic signal focused on order dependence and preserves exact seed reproducibility.
 
 Explicit seeds can be supplied when repeating a known investigation:
 

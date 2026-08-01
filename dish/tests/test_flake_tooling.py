@@ -16,6 +16,13 @@ def test_explicit_random_seeds_must_match_requested_runs():
         raise AssertionError("mismatched seed count was accepted")
 
 
+def test_random_order_arguments_record_order_without_per_test_reseeding():
+    assert flake_runner._random_order_arguments(101) == [
+        "--randomly-seed=101",
+        "--randomly-dont-reset-seed",
+    ]
+
+
 def test_static_risk_scan_reports_candidate_signals_without_classifying_flakes(tmp_path):
     suite = tmp_path / "tests"
     suite.mkdir()
@@ -123,4 +130,5 @@ def test_stress_lane_uses_fresh_seeded_process_commands(tmp_path, monkeypatch):
         "-m",
         "flake_stress",
         "--randomly-seed=101",
+        "--randomly-dont-reset-seed",
     ]

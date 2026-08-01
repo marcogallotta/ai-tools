@@ -140,6 +140,15 @@ def _seeds(count: int, explicit: Sequence[int]) -> list[int]:
     return [secrets.randbelow(2**32) for _ in range(count)]
 
 
+def _random_order_arguments(seed: int) -> list[str]:
+    """Use one recorded seed for ordering without third-party per-test reseeding."""
+
+    return [
+        f"--randomly-seed={seed}",
+        "--randomly-dont-reset-seed",
+    ]
+
+
 def run_rerun_detect(args: argparse.Namespace) -> int:
     artifact_dir = _artifact_dir("rerun-detect", args.artifacts)
     pytest_args = _strip_separator(args.pytest_args)
@@ -170,7 +179,7 @@ def run_random_order(args: argparse.Namespace) -> int:
     results = [
         _run_command(
             label=f"random-{index:02d}-seed-{seed}",
-            arguments=[f"--randomly-seed={seed}", *pytest_args],
+            arguments=[*_random_order_arguments(seed), *pytest_args],
             artifact_dir=artifact_dir,
             seed=seed,
         )
@@ -191,7 +200,7 @@ def run_stress(args: argparse.Namespace) -> int:
             arguments=[
                 "-m",
                 args.marker,
-                f"--randomly-seed={seed}",
+                *_random_order_arguments(seed),
                 *pytest_args,
             ],
             artifact_dir=artifact_dir,
@@ -272,7 +281,11 @@ def run_quarantine(args: argparse.Namespace) -> int:
     results = [
         _run_command(
             label=f"quarantine-{index:02d}-seed-{seed}",
-            arguments=["--quarantine", f"--randomly-seed={seed}", *pytest_args],
+            arguments=[
+                "--quarantine",
+                *_random_order_arguments(seed),
+                *pytest_args,
+            ],
             artifact_dir=artifact_dir,
             seed=seed,
         )
