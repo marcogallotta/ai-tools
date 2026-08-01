@@ -59,11 +59,43 @@ def _section_gid(task: Mapping[str, Any], project_gid: str) -> str | None:
     memberships = task.get("memberships") or []
     if not isinstance(memberships, list):
         raise DishRuleError("VALIDATION_FAILED", "task memberships are malformed", rule="task_membership_malformed")
-    matching_memberships = [
-        item
-        for item in memberships
-        if isinstance(item, Mapping) and _gid(item.get("project")) == project_gid
-    ]
+    matching_memberships = []
+    for item in memberships:
+        if not isinstance(item, Mapping):
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "task membership entry is malformed",
+                rule="task_membership_malformed",
+            )
+        project = item.get("project")
+        if not isinstance(project, Mapping):
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "task membership project is malformed",
+                rule="task_membership_malformed",
+            )
+        membership_project_gid = _gid(project)
+        if membership_project_gid is None:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "task membership project is malformed",
+                rule="task_membership_malformed",
+            )
+        section = item.get("section")
+        if section is not None and not isinstance(section, Mapping):
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "task membership section is malformed",
+                rule="task_membership_malformed",
+            )
+        if section is not None and _gid(section) is None:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "task membership section is malformed",
+                rule="task_membership_malformed",
+            )
+        if membership_project_gid == project_gid:
+            matching_memberships.append(item)
     projects = task.get("projects") or []
     if not isinstance(projects, list):
         raise DishRuleError("VALIDATION_FAILED", "task projects are malformed", rule="task_projects_malformed")

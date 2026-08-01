@@ -351,15 +351,79 @@ class AsanaBackend:
         return dict(data)
 
     @staticmethod
-    def _section_for_project(task: Mapping[str, Any], project_gid: str | None = None) -> str | None:
-        for membership in task.get("memberships") or []:
+    def _section_for_project(
+        task: Mapping[str, Any],
+        project_gid: str | None = None,
+        *,
+        partial_application: str | None = None,
+    ) -> str | None:
+        base_details: dict[str, Any] = {
+            "task_gid": str(task.get("gid") or "").strip() or None,
+            "project_gid": project_gid,
+        }
+        if partial_application is not None:
+            base_details["partial_application"] = partial_application
+
+        def malformed(message: str, **details: Any) -> BackendFailure:
+            return BackendFailure(
+                "BACKEND_UNCERTAIN",
+                message,
+                phase=RequestPhase.RESPONSE_RECEIVED.value,
+                retryable=False,
+                details={**base_details, **details},
+            )
+
+        memberships = task.get("memberships") or []
+        if not isinstance(memberships, list):
+            raise malformed("Asana returned malformed task memberships")
+        matches: set[str] = set()
+        for membership in memberships:
+            if not isinstance(membership, Mapping):
+                raise malformed("Asana returned a malformed task membership")
             project = membership.get("project") or {}
-            section = membership.get("section") or {}
-            if project_gid is None or str(project.get("gid") or "") == str(project_gid):
-                gid = str(section.get("gid") or "").strip()
-                if gid:
-                    return gid
-        return None
+            section = membership.get("section")
+            if not isinstance(project, Mapping):
+                raise malformed("Asana returned a malformed membership project")
+            if project_gid is not None and str(project.get("gid") or "") != str(project_gid):
+                continue
+            if section is None:
+                continue
+            if not isinstance(section, Mapping):
+                raise malformed("Asana returned a malformed membership section")
+            gid = str(section.get("gid") or "").strip()
+            if gid:
+                matches.add(gid)
+        if len(matches) > 1:
+            raise malformed(
+                "Asana returned ambiguous task placement",
+                section_gids=sorted(matches),
+            )
+        return next(iter(matches), None)
+
+    @staticmethod
+    def _assert_response_task_gid(
+        task: Mapping[str, Any],
+        *,
+        expected_task_gid: str,
+        code: str,
+        partial_application: str | None = None,
+    ) -> None:
+        actual_task_gid = str(task.get("gid") or "").strip()
+        if actual_task_gid == expected_task_gid:
+            return
+        details = {
+            "expected_task_gid": expected_task_gid,
+            "actual_task_gid": actual_task_gid or None,
+        }
+        if partial_application is not None:
+            details["partial_application"] = partial_application
+        raise BackendFailure(
+            code,
+            "Asana returned the wrong task identity",
+            phase=RequestPhase.RESPONSE_RECEIVED.value,
+            retryable=False,
+            details=details,
+        )
 
     def create_bare_task(
         self, *, title: str, project_gid: str, section_gid: str
@@ -406,19 +470,36 @@ class AsanaBackend:
                 },
             ) from exc
         confirmed = self.read_task(task_gid)
-        if self._section_for_project(confirmed, project_gid) != section_gid:
+        self._assert_response_task_gid(
+            confirmed,
+            expected_task_gid=task_gid,
+            code="BACKEND_UNCERTAIN",
+            partial_application="task_created",
+        )
+        if self._section_for_project(
+            confirmed, project_gid, partial_application="task_created"
+        ) != section_gid:
             raise BackendFailure(
                 "BACKEND_UNCERTAIN",
                 "task creation succeeded but Research Queue placement was not confirmed",
+                phase=RequestPhase.RESPONSE_RECEIVED.value,
                 retryable=False,
-                details={"task_gid": task_gid, "expected_section_gid": section_gid},
+                details={
+                    "task_gid": task_gid,
+                    "expected_section_gid": section_gid,
+                    "partial_application": "task_created",
+                },
             )
         if str(confirmed.get("name") or "") != title or str(confirmed.get("notes") or "") not in {"", str(task.get("notes") or "")}:
             raise BackendFailure(
                 "BACKEND_UNCERTAIN",
                 "task changed unexpectedly during creation placement",
+                phase=RequestPhase.RESPONSE_RECEIVED.value,
                 retryable=False,
-                details={"task_gid": task_gid},
+                details={
+                    "task_gid": task_gid,
+                    "partial_application": "task_created",
+                },
             )
         return confirmed
 
@@ -459,7 +540,11 @@ class AsanaBackend:
                 "Asana returned malformed data after the title-and-notes write",
                 phase=RequestPhase.RESPONSE_RECEIVED.value,
                 retryable=False,
-                details={"expected_task_gid": task_gid, "actual_task_gid": response_gid},
+                details={
+                    "expected_task_gid": task_gid,
+                    "actual_task_gid": response_gid,
+                    "partial_application": "content_update_requested",
+                },
             )
 
     def update_task_completed(self, *, task_gid: str, completed: bool) -> None:
@@ -495,7 +580,11 @@ class AsanaBackend:
                 "Asana returned malformed data after the completion-state write",
                 phase=RequestPhase.RESPONSE_RECEIVED.value,
                 retryable=False,
-                details={"expected_task_gid": task_gid, "actual_task_gid": response_gid},
+                details={
+                    "expected_task_gid": task_gid,
+                    "actual_task_gid": response_gid,
+                    "partial_application": "completion_update_requested",
+                },
             )
 
     def move_task_to_section(self, *, task_gid: str, section_gid: str) -> None:
@@ -504,6 +593,9 @@ class AsanaBackend:
         import asana
 
         before = self.read_task(task_gid)
+        self._assert_response_task_gid(
+            before, expected_task_gid=task_gid, code="BACKEND_REJECTED"
+        )
         self.call(
             asana.SectionsApi(self.client()).add_task_for_section,
             section_gid,
@@ -511,17 +603,35 @@ class AsanaBackend:
             context=f"section {section_gid}",
         )
         after = self.read_task(task_gid)
-        if self._section_for_project(after, COOKING_PROJECT_GID) != section_gid:
+        self._assert_response_task_gid(
+            after,
+            expected_task_gid=task_gid,
+            code="BACKEND_UNCERTAIN",
+            partial_application="section_move_requested",
+        )
+        if self._section_for_project(
+            after, COOKING_PROJECT_GID, partial_application="section_move_requested"
+        ) != section_gid:
             raise BackendFailure(
                 "BACKEND_UNCERTAIN",
                 "section placement was not confirmed by exact reread",
+                phase=RequestPhase.RESPONSE_RECEIVED.value,
                 retryable=False,
-                details={"task_gid": task_gid, "expected_section_gid": section_gid},
+                details={
+                    "task_gid": task_gid,
+                    "expected_section_gid": section_gid,
+                    "partial_application": "section_move_requested",
+                },
             )
         if str(after.get("name") or "") != str(before.get("name") or "") or str(after.get("notes") or "") != str(before.get("notes") or ""):
             raise BackendFailure(
                 "BACKEND_UNCERTAIN",
                 "task content changed during section placement",
+                phase=RequestPhase.RESPONSE_RECEIVED.value,
                 retryable=False,
-                details={"task_gid": task_gid, "expected_section_gid": section_gid},
+                details={
+                    "task_gid": task_gid,
+                    "expected_section_gid": section_gid,
+                    "partial_application": "section_move_requested",
+                },
             )
