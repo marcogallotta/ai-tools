@@ -97,7 +97,7 @@ The initial matrix is:
 | `authorize-governed-change` | Marco-only admin mutation | Retain exact authorization grant semantics. |
 | `recover-lease` | Marco-only admin mutation | Retain narrow expired-lease recovery. |
 | `expire-lease` | Marco-only admin mutation | Retain exact lease release semantics; do not treat as run revocation. |
-| `migrate` | Marco-only legacy compatibility mutation | Conditional on the re-baselined corpus. Retain only for an identified live compatibility need; otherwise replace with migration-time reconciliation or isolation. |
+| `migrate` | Marco-only legacy compatibility mutation | Retain the bounded current schema-migration semantic for admitted older-schema tasks. Migration-time reconciliation may reduce how often it is needed but does not retire it without explicit architecture approval. |
 | `backup-create` | replay-bound admin mutation | Retire at authority cutover. Preserve historical requests, records, and artifacts. |
 | `backup-restore` | replay-bound admin mutation | Retire at authority cutover. Preserve historical journal and outcome evidence. |
 | Planning-intent settlement | new Marco-only admin mutation | Add one reason-bearing, terminal, non-reusable settlement route. Exact route name is an implementation choice. |
@@ -587,7 +587,7 @@ A blocking unknown makes projection readiness unhealthy. Isolation must be consp
 
 For mapped tasks, compare Asana observation with exact committed PostgreSQL projection state.
 
-Direct edits are logged and overwritten or reprojected according to policy. They are never imported as commands or canonical versions.
+Direct edits are logged and automatically corrected by reprojecting the exact committed PostgreSQL state. They are never imported as commands or canonical versions.
 
 ## 10. Service and repository structure
 
@@ -748,7 +748,7 @@ Implementation may be delivered incrementally, but no partial slice becomes prod
 - Service readiness distinguishes authoritative database health, mutation readiness, migration state, projection health, and recoverable administrative availability.
 - PostgreSQL outage fails governed mutations closed.
 - Asana outage affects projection freshness but not committed PostgreSQL authority.
-- The same authority model works on the intended self-managed AWS host.
+- The implementation contains no laptop-specific authority assumptions that would prevent later relocation to the intended self-managed AWS host. Actual AWS deployment is not a Stage A acceptance gate.
 
 ## 15. Out of implementation scope
 

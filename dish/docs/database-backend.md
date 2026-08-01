@@ -84,7 +84,7 @@ The systems are never peer authorities and there is no ordinary bidirectional me
 
 ### 3.5 Existing Asana projects remain the human interface
 
-After cutover, the existing in-scope Asana project set remains Marco's downstream human-facing interface. Direct Asana changes are non-authoritative drift and are never imported as Dish authority.
+After cutover, the existing in-scope Asana project set remains Marco's downstream human-facing interface. Direct Asana changes are non-authoritative drift and are never imported as Dish authority. Direct edits to mapped tasks are logged and automatically corrected by reprojecting the authoritative PostgreSQL state; unknown tasks are isolated or treated as blocking until classified.
 
 ### 3.6 Universal Dish identity
 
@@ -92,7 +92,7 @@ Every authoritative task has a Dish UUID. Asana GIDs and any later external iden
 
 ### 3.7 Initial deployment
 
-Stage A initially runs self-managed PostgreSQL through Docker Compose on Marco's laptop and remains portable to a self-managed AWS host. High availability and managed PostgreSQL are not Stage A requirements.
+Stage A initially runs self-managed PostgreSQL through Docker Compose on Marco's laptop and remains portable to a self-managed AWS host. Portability is a design constraint, not a requirement to deploy or test on AWS during Stage A. High availability and managed PostgreSQL are not Stage A requirements.
 
 ### 3.8 Resolved-only, one-way cutover
 
@@ -374,7 +374,7 @@ The service fails closed for governed mutations when authoritative PostgreSQL st
 
 Asana availability after cutover affects downstream freshness, not PostgreSQL task authority. Projection lag and unresolved projection effects are visible and auditable.
 
-The architecture remains portable to a self-managed AWS host without changing authority semantics.
+The architecture remains portable to a self-managed AWS host without changing authority semantics. Actual AWS deployment is not a Stage A acceptance gate.
 
 ## 10. Deferred decisions and later gates
 

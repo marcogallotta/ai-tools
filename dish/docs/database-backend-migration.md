@@ -702,7 +702,7 @@ Migration is complete when:
 - PostgreSQL authority is active and healthy;
 - old Asana-authoritative mutation paths are mechanically fenced;
 - rollback burn is durable;
-- all current commands use the coherent target protocol;
+- all retained current commands and approved new commands use the coherent target protocol, while retired commands have complete preservation and retirement evidence;
 - downstream projection and corpus closure are operating;
 - historical source and backup/restore evidence is preserved;
 - no migration tool retains hidden live mutation authority;
