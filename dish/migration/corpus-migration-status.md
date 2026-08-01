@@ -6,7 +6,7 @@ records current preparation, settled corpus routing, and open work. It is not a 
 an import specification, or authorization for Asana writes, production activation, or cutover.
 [`rollout.md`](../docs/rollout.md) remains the operational authority.
 
-Last updated: 2026-07-31.
+Last updated: 2026-08-01.
 
 ## Intended migration shape
 
@@ -101,7 +101,7 @@ ChatGPT must stop on a task when source facts are ambiguous, contradictory, or i
 Marco, who may relay technical questions to the implementation agent. Unrelated unambiguous tasks
 may continue.
 
-## Reviewed v3 batch
+## Reviewed v3 precursor batch
 
 The point-in-time working package is
 [`corpus-migration-pre-batch-002-v3.tgz`](corpus-migration-pre-batch-002-v3.tgz).
@@ -123,9 +123,9 @@ Review established that:
 - no held task has a transformed document;
 - no source or target Asana write was reported or performed.
 
-The archive is pre-flight data, not a completed source snapshot or transformation batch. All 88
-eligible tasks still have `source_capture_status: pending-live-capture`; no eligible task yet has an
-exact notes file, notes SHA-256, or Asana `modified_at`.
+At that point the archive was pre-flight data, not a completed source snapshot or transformation
+batch: all 88 eligible tasks still had `source_capture_status: pending-live-capture`. Items 2–4 below
+record the later completed capture and accepted Correction 4 transformation.
 
 ## Open decisions and work
 
@@ -136,8 +136,8 @@ exact notes file, notes SHA-256, or Asana `modified_at`.
 2. **Exact source capture — done for all 99 governed tasks (2026-07-31).** Captured via
    `migration/export_corpus_capture.py` against live Asana: all 99 (the original 88, plus the 5
    released Planned and 6 Korean) matched their expected name, section, and `modified_at` exactly;
-   results are in `migration/cooking-raw-capture/`. This is raw source capture only, not the
-   transformed Dish document format — item 3 is still open for every task, including the original 88.
+   results are in `migration/cooking-raw-capture/`. This raw capture remains the fidelity authority
+   for the completed item 3 transformation.
 3. **Offline transformation — done for all 99 governed tasks (2026-08-01).** ChatGPT produced one
    template per task from `migration/transformation-handoff.tgz`. The first pass blanket-flagged
    boilerplate questions on nearly every task; two correction rounds
@@ -147,37 +147,56 @@ exact notes file, notes SHA-256, or Asana `modified_at`.
    canonical-parser defect: a blank line between `---` and `## PROCESS RECORD` (all 99 templates), and
    legacy-preserved note prose reusing structural markers (`---`, `PROCESS RECORD`, or a bare `##`
    heading) that collided with Dish's real document structure (5 templates for the separator/heading
-   collision, 9 for a stray `##` body heading demoted to `###`). Final batch:
-   `migration/batch-002-correction-3.tgz`, 0 open exceptions. Independently verified (not just taken on
-   ChatGPT's report): re-ran `validate_batch_002.py` (99/99 pass) and called Dish's real
-   `parse_task_document` directly against all 99 corrected templates (0 failures).
+   collision, 9 for a stray `##` body heading demoted to `###`). Correction 4 then completed the
+   remaining content corrections with zero open exceptions; item 4 records its accepted archive and
+   independent verification.
 4. **Deterministic validation — done for the current batch (2026-08-01).** ChatGPT built
    `migration/validate_batch_002.py` from `migration/validator-request.md`'s spec (coverage, source
    fidelity, placeholder integrity, destination legality, Planning brief structure, no fabricated
    Research/Verification evidence, schema legality, Korean status guard). One scoping bug was found
    and fixed locally (a Status-field scan was catching preserved legacy note prose instead of only the
-   live record). Current result: 99/99 tasks pass against `batch-002-correction-3.tgz`. Note: this
-   validator checks content, not exact structural adjacency — it did not catch the parser-breaking
+   live record). This validator checks content, not exact structural adjacency — it did not catch the
+   parser-breaking
    formatting defect fixed in item 3's third correction round; real acceptance now also requires a
-   direct `parse_task_document` pass, not just this script. Re-run both over any future batch revision.
-5. **Dish durable-state initialization.** Decide and implement how imported `pending-research`,
-   `pending-verification`, and accepted-ready tasks acquire legal Dish durable state. Rendered legacy
-   provenance or Verification prose is not durable Dish evidence. This must be resolved before any
-   governed target task is ingested, and specifically before the Korean six (see "Korean hold,
-   revised" above).
+   direct `parse_task_document` pass, not just this script. Correction 4 is the accepted batch:
+   [`batch-002-correction-4-codex-verified.tgz`](batch-002-correction-4-codex-verified.tgz), SHA-256
+   `c3a2ce255fc50f2085e3bb9c03b658061bfbbfef4daf3ec6325296fc6454505f`. It passed the real parser,
+   schema-v2 validation, deterministic migration validation, source-note fidelity, destination-name,
+   and placeholder checks for all 99 tasks with zero findings. Re-run all three gates over any future
+   batch revision.
+5. **Dish durable-state initialization — implementation and test rehearsal complete (2026-08-01).**
+   [`import_migrated_durable_state.py`](import_migrated_durable_state.py) resolves the approved
+   placeholders, validates through Dish's parser and schema validator, and writes confirmed content
+   baselines plus explicit `migration-assigned` audit facts through Dish's persistence layer. It
+   fabricates no operation, Research evidence, Verification cycle, inspection fact, or signoff. A
+   fresh throwaway database rehearsal wrote and reread 99 target-GID baselines and passed semantic
+   validation. The production assignment file still requires the approved per-task statuses and
+   production target GIDs before ingestion.
 6. **Planned and Korean policy — resolved 2026-07-31.** Planned hold released (all 5 into the
    ordinary pipeline). Korean hold revised to ingest-now/govern-later, pending item 5.
-7. **Target project and importer.** Create/confirm the new section registry, define treatment of
-   comments, attachments, subtasks, dependencies, and cross-task links, then implement idempotent
-   creation, `source_gid -> target_gid` mapping, exact reread confirmation, and failure recovery.
-8. **Rehearsal and cutover.** Rehearse against an isolated project, prove rollback, then follow the
-   separately authorized joint cutover in [`rollout.md`](../docs/rollout.md). Do not activate a mixed
-   protocol/schema/tool/database/project state.
+7. **Target project and importer — side-data policy and test pass complete; production creation still
+   open.** The read-only 99-task side-data audit found 39 human comments on 26 tasks, 787 ordinary
+   system stories, 10 due dates, and no attachments, subtasks, task references, or human decisions.
+   Preserve one exact attributed legacy-comment block per affected target and the 10 due dates;
+   omit system history. [`prepare_asana_side_data_import.py`](prepare_asana_side_data_import.py)
+   validates all mappings and target baselines, fails on drift, and emits only the guarded Asana batch
+   needed to converge. The test-project pass applied 26 comment blocks and 10 dates; an exact reread
+   produced a zero-operation rerun plan. Still open: create the separate production target project
+   and section registry, retain the production-grade idempotent task-creation/mapping path, and bind
+   the final production assignments to its new GIDs.
+8. **Rehearsal and cutover — content, durable-state, and side-data test passes complete; rollback and
+   production cutover remain.** The isolated test project has 99 exact target tasks and an atomic
+   source-to-target mapping; Correction 4, the fresh offline durable database, and the side-data
+   convergence pass all verified 99/99 with an idempotent zero-write side-data rerun. Prove the final
+   production rollback inputs, then follow the separately authorized joint cutover in
+   [`rollout.md`](../docs/rollout.md). Do not activate a mixed protocol/schema/tool/database/project
+   state.
 
 ## Repo hygiene note
 
 `migration/` currently carries several committed binary blobs (`corpus-migration-pre-batch-002-v3.tgz`,
-`transformation-handoff.tgz`, and `cooking-raw-capture/`'s many small note files), which grow the repo.
+`transformation-handoff.tgz`, `batch-002-correction-4-codex-verified.tgz`, and
+`cooking-raw-capture/`'s many small note files), which grow the repo.
 Once the migration is accepted and cutover confirmed (item 8), remove or move these working artifacts
 out of version control rather than leaving them permanently committed.
 

@@ -149,6 +149,24 @@ class TestNormalizeCreateSubtask:
             cli._normalize_batch_op({"action": "create_subtask", "name": "n", "reason": "r"})
 
 
+class TestNormalizeAddComment:
+    def test_valid(self, cli):
+        assert cli._normalize_batch_op({
+            "action": "add_comment", "task": "1", "text": "legacy", "reason": "r",
+        }) == {
+            "action": "add_comment", "task": "1", "text": "legacy", "reason": "r",
+        }
+
+    @pytest.mark.parametrize("op", [
+        {"action": "add_comment", "text": "x", "reason": "r"},
+        {"action": "add_comment", "task": "1", "text": "", "reason": "r"},
+        {"action": "add_comment", "task": "1", "text": None, "reason": "r"},
+    ])
+    def test_missing_target_or_text(self, cli, op):
+        with pytest.raises(SystemExit, match="add_comment operations need task and non-empty text"):
+            cli._normalize_batch_op(op)
+
+
 def test_normalize_unknown_action(cli):
     with pytest.raises(SystemExit, match="unsupported batch action"):
         cli._normalize_batch_op({"action": "delete", "task": "1", "reason": "r"})

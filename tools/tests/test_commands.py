@@ -123,6 +123,25 @@ class TestBatchApply:
         assert tasks_api.update_task.call_count == 3
         assert "Asana batch applied: 3 operations." in out
 
+    def test_add_comment_uses_story_api_after_guard(self, cli, monkeypatch, tmp_path):
+        stories_api = fake_api(
+            monkeypatch, cli, "StoriesApi", create_story_for_task={"data": {"gid": "s1"}}
+        )
+        ops = [
+            {"action": "add_comment", "task": str(i), "text": f"comment {i}", "reason": "r"}
+            for i in range(1, 4)
+        ]
+        cli.c_batch_apply(self._write_plan(tmp_path, ops))
+        assert stories_api.create_story_for_task.call_count == 3
+        assert stories_api.create_story_for_task.call_args_list[0].args == (
+            {"data": {"text": "comment 1"}}, "1", {}
+        )
+        assert cli._test_guard.calls[0] == (
+            "before_task_mutation", ("1",), {
+                "command": "batch-apply", "fields": ("comments",), "operation": "add_comment",
+            },
+        )
+
     def test_stops_and_reports_created_on_failure(self, cli, monkeypatch, tmp_path, capsys):
         tasks_api = fake_api(monkeypatch, cli, "TasksApi", create_task={"data": {"gid": "111"}})
         tasks_api.update_task.side_effect = cli.ApiException(status=404, body="not found")

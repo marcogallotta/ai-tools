@@ -152,4 +152,4 @@ For a batch:
 
 Supported batch operations are documented by `~/.local/bin/asana help`. They include `update_task`
 for `name`, `notes`, `completed`, `due_on`, or `start_on`; exact `replace_notes`; `move`;
-`create_task`; and `create_subtask`.
+`create_task`; `create_subtask`; and `add_comment`.

@@ -454,6 +454,16 @@ def _normalize_batch_op(op):
             "reason": _op_reason(op),
         }
 
+    if action == "add_comment":
+        if not op.get("task") or not isinstance(op.get("text"), str) or not op["text"].strip():
+            sys.exit("add_comment operations need task and non-empty text")
+        return {
+            "action": "add_comment",
+            "task": op["task"],
+            "text": op["text"],
+            "reason": _op_reason(op),
+        }
+
     sys.exit("unsupported batch action: %s" % action)
 
 
@@ -485,6 +495,7 @@ def c_batch_apply(path):
         sys.exit("batch-apply requires at least 3 operations; use direct Asana commands for one or two writes")
     tasks_api = asana.TasksApi(client())
     sections_api = asana.SectionsApi(client())
+    stories_api = asana.StoriesApi(client())
     created = []
     for op in ops:
         action = op["action"]
@@ -548,6 +559,16 @@ def c_batch_apply(path):
                 t = tasks_api.create_subtask_for_task({"data": d}, op["parent"], {})["data"]
                 created.append(t["gid"])
                 created_this_op = t["gid"]
+            elif action == "add_comment":
+                _guard_task_mutation(
+                    op["task"],
+                    "batch-apply",
+                    fields=("comments",),
+                    operation="add_comment",
+                )
+                stories_api.create_story_for_task(
+                    {"data": {"text": op["text"]}}, op["task"], {}
+                )
         except ApiException as e:
             _batch_fail(label, created, created_this_op, _error_detail(e))
         except _BatchOpFailed as e:
@@ -663,6 +684,7 @@ batch plan shape:
     {"action":"move","task":"123","section":"456","reason":"why"},
     {"action":"create_task","project":"789","name":"Task name","section":"456","notes":"optional","reason":"why"},
     {"action":"create_subtask","parent":"123","name":"Subtask name","notes":"optional","reason":"why"}
+    {"action":"add_comment","task":"123","text":"Comment text","reason":"why"}
   ]}
 
 env overrides: ASANA_PAT, ASANA_ENV, ASANA_WORKSPACE
