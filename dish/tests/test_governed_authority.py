@@ -2,21 +2,12 @@ from pathlib import Path
 
 
 from dish_tool.database import record_marco_authorization
-from tests.support.verification import TASK, make_app
-
-
-def _review(app, run="review"):
-    result = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id=run, independence_attestation="independent")
-    assert result["ok"]
-    inspected = app.execute("inspect", agent="codex", submission_id=result["submission_id"])
-    assert inspected["ok"]
-    assert inspected["allowed_actions"] == ["approve", "reject"]
-    return result
+from tests.support.verification import TASK, make_app, review_and_inspect
 
 
 def test_small_lock_change_requires_large_before_embedded_decision_can_authorize(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    review = _review(app)
+    review = review_and_inspect(app)
     candidate = tmp_path / "small.txt"
     candidate.write_text(TASK.replace("Locks: Keep crisp", "Locks: Remove crispness constraint").replace(
         "Decisions:\nNone", "Decisions:\nHuman — Marco: Authorizes Locks change: remove crispness"

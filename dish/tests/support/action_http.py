@@ -32,6 +32,7 @@ from dish_tool.errors import BackendFailure, DishRuleError
 from dish_tool.models import RequestPhase
 
 from dish_tool.results import error_envelope
+from tests.support.thread_teardown import start_server_thread, stop_server
 from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend, TASK
 
@@ -55,15 +56,12 @@ def _running(tmp_path, *, max_body=2 * 1024 * 1024):
         release_loader=_release_loader(honest),
     )
     server = build_server(service)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, daemon=True, name="thread")
     host, port = server.server_address
     return backend, server, thread, f"http://{host}:{port}"
 
 def _stop(server, thread):
-    server.shutdown()
-    server.server_close()
-    thread.join(timeout=2)
+    stop_server(server, thread)
 
 def _raw_post(url, path, *, token, body):
     parsed = urlsplit(url)
@@ -83,3 +81,19 @@ def _raw_post(url, path, *, token, body):
         return response.status, response.getheader("Connection"), response.will_close, payload
     finally:
         connection.close()
+
+
+@pytest.fixture
+def running_server(tmp_path):
+    """Start action-surface servers and stop every instance after the test."""
+    active = []
+
+    def start(*, max_body=2 * 1024 * 1024):
+        running = _running(tmp_path, max_body=max_body)
+        active.append((running[1], running[2]))
+        return running
+
+    yield start
+
+    for server, thread in reversed(active):
+        _stop(server, thread)

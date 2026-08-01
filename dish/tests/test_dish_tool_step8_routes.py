@@ -3,22 +3,13 @@ from pathlib import Path
 
 
 from dish_tool.admin import DishAdminApplication
-from tests.support.verification import TASK, make_app
-
-
-def _review(app, agent, task="t", run="review"):
-    result = app.execute("start", agent=agent, task_gid=task, kind="verification", run_id=run, independence_attestation="independent")
-    assert result["ok"]
-    inspected = app.execute("inspect", agent=agent, submission_id=result["submission_id"])
-    assert inspected["ok"]
-    assert inspected["allowed_actions"] == ["approve", "reject"]
-    return result
+from tests.support.verification import TASK, make_app, review_and_inspect
 
 
 @pytest.mark.smoke
 def test_small_correction_is_written_rechecked_and_signed_same_pass(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    review = _review(app, "codex")
+    review = review_and_inspect(app, agent="codex")
     candidate = tmp_path / "small.txt"
     candidate.write_text(TASK.replace("1. Cook it.", "1. Cook it gently."))
     result = app.execute(
@@ -38,7 +29,7 @@ def test_small_correction_is_written_rechecked_and_signed_same_pass(tmp_path):
 @pytest.mark.smoke
 def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    _review(app, "codex", run="first")
+    review_and_inspect(app, agent="codex", run_id="first")
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK.replace("100 g", "120 g"))
     first = app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="method needs replacement", file_path=str(candidate), run_id="first")
     assert first["ok"] and first["data"]["new_cycle_id"]
@@ -46,7 +37,7 @@ def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
     assert first["data"]["required_start_kind"] == "verification"
     barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="first", independence_attestation="independent")
     assert barred["code"] == "AGENT_MISMATCH"
-    _review(app, "gpt", run="second")
+    review_and_inspect(app, agent="gpt", run_id="second")
     candidate.write_text(TASK.replace("100 g", "130 g"))
     second = app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="premise still unresolved", file_path=str(candidate), run_id="second")
     assert second["ok"] and second["data"]["two_pass_hold"]
@@ -59,7 +50,7 @@ def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
 @pytest.mark.smoke
 def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    _review(app, "codex")
+    review_and_inspect(app, agent="codex")
     bad = app.execute("reject", agent="codex", submission_id=operation_id, route="evidence", reason="missing source", resume_status=None, run_id="review")
     assert bad["code"] == "INVALID_ARGUMENT"
     good = app.execute("reject", agent="codex", submission_id=operation_id, route="evidence", reason="Marco must confirm the factual input", resume_status="pending-verification", run_id="review")
@@ -90,7 +81,7 @@ def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path)
 @pytest.mark.smoke
 def test_human_review_route_reports_private_continuation_without_exposing_it(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    _review(app, "codex", run="human-review")
+    review_and_inspect(app, agent="codex", run_id="human-review")
     result = app.execute(
         "reject", agent="codex", submission_id=operation_id,
         route="human-review", reason="Marco must choose between two valid serving formats.",
@@ -105,9 +96,9 @@ def test_human_review_route_reports_private_continuation_without_exposing_it(tmp
 def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     candidate = tmp_path / "large.txt"; candidate.write_text(TASK)
-    _review(app, "codex", run="one")
+    review_and_inspect(app, agent="codex", run_id="one")
     app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="first", file_path=str(candidate), run_id="one")
-    _review(app, "gpt", run="two")
+    review_and_inspect(app, agent="gpt", run_id="two")
     app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="second", file_path=str(candidate), run_id="two")
     admin = DishAdminApplication(app.conn, backend=backend)
     bad = admin.execute("reopen", submission_id=operation_id, category="hash", before="a", after="b", editor="codex", model="gpt-5.6-sol", run_id="reopen-run", file_path=str(candidate), date="2026-07-25")
@@ -133,7 +124,7 @@ def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
 @pytest.mark.smoke
 def test_small_correction_cannot_replace_unreviewed_live_content(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    review = _review(app, "codex", run="small-proof")
+    review = review_and_inspect(app, agent="codex", run_id="small-proof")
     backend.title = backend.title.replace("Test dish", "Externally changed dish")
     candidate = tmp_path / "small-unreviewed.txt"
     candidate.write_text(TASK.replace("1. Cook it.", "1. Cook it gently."))
@@ -149,7 +140,7 @@ def test_small_correction_cannot_replace_unreviewed_live_content(tmp_path):
 @pytest.mark.smoke
 def test_reject_requires_exact_verifier_run_proof(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    _review(app, "codex", run="reject-proof")
+    review_and_inspect(app, agent="codex", run_id="reject-proof")
     result = app.execute(
         "reject", agent="codex", submission_id=operation_id, route="evidence",
         reason="missing evidence", resume_status="pending-verification", run_id="wrong-run",

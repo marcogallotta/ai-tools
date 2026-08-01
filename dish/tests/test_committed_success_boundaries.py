@@ -6,21 +6,12 @@ from dish_tool.admin import DishAdminApplication
 from dish_tool.backend import AsanaBackend
 from dish_tool.constants import COOKING_PROJECT_GID
 from dish_tool.database import process_command_audit_repairs
-from tests.support.verification import make_app
-
-
-def _review(app, operation_id, *, run="review"):
-    result = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id=run, independence_attestation="independent")
-    assert result["ok"]
-    inspected = app.execute("inspect", agent="codex", submission_id=result["submission_id"])
-    assert inspected["ok"]
-    assert inspected["allowed_actions"] == ["approve", "reject"]
-    return result
+from tests.support.verification import make_app, review_and_inspect
 
 
 def test_post_success_view_failure_preserves_approval_success(monkeypatch, tmp_path):
     app, _backend, operation_id, _ = make_app(tmp_path)
-    review = _review(app, operation_id)
+    review = review_and_inspect(app, operation_id=operation_id)
     service = app.operation_service.current
     original = service.authoritative_view
     calls = {"count": 0}

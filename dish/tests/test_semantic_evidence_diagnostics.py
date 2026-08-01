@@ -18,29 +18,10 @@ from dish_tool import database_schema as database_schema_module
 from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.step7 import assert_verifier_authority
+from tests.support.thread_teardown import join_thread, managed_thread
+from tests.support.semantic_evidence import insert_operation as _insert_operation
 
 
-def _insert_operation(conn, operation_id="op", *, status="open", phase="prepare_required"):
-    conn.execute(
-        """INSERT INTO operations(
-               operation_id,task_gid,operation_kind,status,expected_identity,
-               schema_version,created_at,phase,expected_section_gid,
-               completed_at,terminal_outcome
-           ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            operation_id,
-            f"task-{operation_id}",
-            "initial",
-            status,
-            "identity",
-            "2",
-            "2026-07-28T00:00:00Z",
-            phase,
-            "research",
-            "2026-07-28T00:01:00Z" if status in {"completed", "cancelled"} else None,
-            "test" if status in {"completed", "cancelled"} else None,
-        ),
-    )
 
 def test_semantic_evidence_diagnostic_omits_raw_content_payload(tmp_path):
     db_path = tmp_path / "dish.db"
@@ -210,11 +191,11 @@ def test_concurrent_audit_repair_workers_emit_one_event(tmp_path):
         finally:
             worker_conn.close()
 
-    threads = [threading.Thread(target=worker) for _ in range(2)]
+    threads = [managed_thread(target=worker) for _ in range(2)]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=5)
+        join_thread(thread, timeout=5)
     assert all(not thread.is_alive() for thread in threads)
     assert sorted(results) == [0, 1]
 

@@ -3,16 +3,7 @@ from pathlib import Path
 
 from dish_tool.admin import DishAdminApplication
 from dish_tool import step7, step8
-from tests.support.verification import TASK, make_app
-
-
-def _review(app, agent, run):
-    result = app.execute("start", agent=agent, task_gid="t", kind="verification", run_id=run, independence_attestation="independent")
-    assert result["ok"]
-    inspected = app.execute("inspect", agent=agent, submission_id=result["submission_id"])
-    assert inspected["ok"]
-    assert inspected["allowed_actions"] == ["approve", "reject"]
-    return result
+from tests.support.verification import TASK, make_app, review_and_inspect
 
 
 def test_verification_read_local_facts_are_atomic(monkeypatch, tmp_path):
@@ -45,13 +36,13 @@ def test_verification_read_local_facts_are_atomic(monkeypatch, tmp_path):
     ).fetchone()[0] == 0
 
     monkeypatch.undo()
-    retry = _review(app, "codex", "review-run")
+    retry = review_and_inspect(app, agent="codex", run_id="review-run")
     assert retry["allowed_actions"] == ["inspect"]
 
 
 def test_large_route_actor_is_recoverable_before_cycle_is_usable(monkeypatch, tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    _review(app, "codex", "large-editor")
+    review_and_inspect(app, agent="codex", run_id="large-editor")
     candidate = tmp_path / "large.txt"
     candidate.write_text(TASK.replace("100 g", "120 g"))
 

@@ -24,99 +24,14 @@ from dish_tool.database_schema import (
 )
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
+from tests.support.abandonment_scenarios import (
+    persistence_source as _source,
+    start_abandonment as _start_abandonment,
+)
 
 
-def _source(
-    conn: sqlite3.Connection,
-    *,
-    task_gid: str = "task-1",
-    operation_kind: str = "initial",
-    owner_id: str = "owner-1",
-    run_id: str = "run-1",
-    phase: str = "prepare_required",
-    cycle: bool = False,
-):
-    identity = confirm_task_content(
-        conn,
-        task_gid=task_gid,
-        title=f"Dish {task_gid}",
-        notes=f"Notes {task_gid}",
-        schema_version="2",
-    )
-    operation = create_operation(
-        conn,
-        task_gid=task_gid,
-        operation_kind=operation_kind,
-        expected_identity=identity.digest,
-        schema_version="2",
-        expected_section_gid="section-1",
-        actors=OperationActors(
-            editor_agent="gpt",
-            researcher_agent="gpt",
-            run_id=run_id,
-        ),
-    )
-    if phase != "prepare_required":
-        conn.execute(
-            "UPDATE operations SET phase=? WHERE operation_id=?",
-            (phase, operation["operation_id"]),
-        )
-    cycle_row = None
-    context_cycle_id = None
-    if cycle:
-        cycle_row = create_verification_cycle(
-            conn,
-            operation_id=operation["operation_id"],
-            task_gid=task_gid,
-            cycle_number=1,
-            protocol_release="verification-v1",
-            protocol_text="protocol",
-            verifier_agent="claude",
-            run_id=run_id,
-            independence_attestation="independent",
-        )
-        context_cycle_id = cycle_row["cycle_id"]
-    lease = LeaseManager(conn).acquire(
-        operation["operation_id"],
-        ServicePrincipal(owner_id, run_id),
-        context_cycle_id=context_cycle_id,
-    )
-    source_version_id = conn.execute(
-        "SELECT last_confirmed_content_version_id FROM task_content_state WHERE task_gid=?",
-        (task_gid,),
-    ).fetchone()[0]
-    return operation, lease, cycle_row, source_version_id
 
 
-def _start_abandonment(
-    conn: sqlite3.Connection,
-    *,
-    operation,
-    lease,
-    cycle=None,
-    abandonment_id: str = "abandonment-1",
-):
-    if lease["released_at"] is None:
-        LeaseManager(conn).release(
-            operation["operation_id"], None, reason="stale actor released", admin=True
-        )
-        lease = conn.execute(
-            "SELECT * FROM service_leases WHERE lease_id=?", (lease["lease_id"],)
-        ).fetchone()
-    conn.execute("BEGIN IMMEDIATE")
-    row = create_abandonment_attempt_in_transaction(
-        conn,
-        abandonment_id=abandonment_id,
-        task_gid=operation["task_gid"],
-        source_operation_id=operation["operation_id"],
-        source_lease_id=lease["lease_id"],
-        abandoned_owner_id=lease["owner_id"],
-        abandoned_run_id=lease["run_id"],
-        attempt_cycle_id=None if cycle is None else cycle["cycle_id"],
-        reason="conversation permanently unavailable",
-    )
-    conn.execute("COMMIT")
-    return row
 
 def test_schema_33_adds_abandonment_lineage_and_prepared_claim_state():
     conn = initialize_database(":memory:")

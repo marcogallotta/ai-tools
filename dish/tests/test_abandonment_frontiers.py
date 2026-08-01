@@ -20,128 +20,20 @@ from dish_tool.database import (
 from dish_tool.database_schema import initialize_database
 from dish_tool.models import OperationActors, ResolvedRelease
 from tests.support.verification import TASK, make_app
+from tests.support.abandonment_scenarios import (
+    PLANNING_NOTES,
+    FrontierBackend as Backend,
+    frontier_abandonment as _abandonment,
+    frontier_operation as _operation,
+)
 
 
-PLANNING_NOTES = """### Planning brief
-Dish candidate: Test dish
-Purpose: Compare texture
-Role: non-main — small side for comparison
-Priors: None
-Locks: Keep crisp
-Exemptions: None
-Research emphasis: Compare two hydration levels
-Destination section: Sichuan — 12345
-"""
 
 
-class Backend:
-    def __init__(self, *, title: str, notes: str, section: str):
-        self.title = title
-        self.notes = notes
-        self.section = section
-        self.sections = [
-            {"gid": "pi", "name": "Planning (Incomplete)"},
-            {"gid": "rq", "name": "Research Queue"},
-            {"gid": "vq", "name": "Verification Queue"},
-            {"gid": "12345", "name": "Sichuan"},
-            {"gid": "src", "name": "Sourcing"},
-            {"gid": "ref", "name": "Reference"},
-        ]
-
-    def list_sections(self, project_gid):
-        assert project_gid == COOKING_PROJECT_GID
-        return self.sections
-
-    def read_task(self, gid):
-        return {
-            "gid": gid,
-            "name": self.title,
-            "notes": self.notes,
-            "completed": False,
-            "modified_at": "now",
-            "projects": [{"gid": COOKING_PROJECT_GID}],
-            "memberships": [
-                {
-                    "project": {"gid": COOKING_PROJECT_GID},
-                    "section": {"gid": self.section},
-                }
-            ],
-        }
-
-    def update_task_content(self, *, task_gid, title, notes):
-        raise AssertionError("Stage 4 must not perform an external content write")
-
-    def move_task_to_section(self, *, task_gid, section_gid):
-        raise AssertionError("Stage 4 must not perform an external movement")
 
 
-def _operation(
-    conn: sqlite3.Connection,
-    backend: Backend,
-    *,
-    kind: str,
-    phase: str = "prepare_required",
-    run_id: str = "dead-run",
-):
-    baseline = confirm_task_content(
-        conn,
-        task_gid="task",
-        title=backend.title,
-        notes=backend.notes,
-        schema_version="2",
-    )
-    row = create_operation(
-        conn,
-        task_gid="task",
-        operation_kind=kind,
-        expected_identity=baseline.digest,
-        schema_version="2",
-        expected_section_gid=backend.section,
-        actors=OperationActors(
-            editor_agent="gpt",
-            researcher_agent="gpt",
-            run_id=run_id,
-        ),
-    )
-    if phase != "prepare_required":
-        conn.execute(
-            "UPDATE operations SET phase=? WHERE operation_id=?",
-            (phase, row["operation_id"]),
-        )
-    return conn.execute(
-        "SELECT * FROM operations WHERE operation_id=?", (row["operation_id"],)
-    ).fetchone()
 
 
-def _abandonment(
-    conn: sqlite3.Connection,
-    operation: sqlite3.Row,
-    *,
-    cycle: sqlite3.Row | None = None,
-    abandonment_id: str = "abandonment",
-):
-    lease = LeaseManager(conn).acquire(
-        operation["operation_id"],
-        ServicePrincipal("owner", "dead-run"),
-        context_cycle_id=None if cycle is None else cycle["cycle_id"],
-    )
-    LeaseManager(conn).release(
-        operation["operation_id"], None, reason="stale actor released", admin=True
-    )
-    conn.execute("BEGIN IMMEDIATE")
-    row = create_abandonment_attempt_in_transaction(
-        conn,
-        abandonment_id=abandonment_id,
-        task_gid=operation["task_gid"],
-        source_operation_id=operation["operation_id"],
-        source_lease_id=lease["lease_id"],
-        abandoned_owner_id="owner",
-        abandoned_run_id="dead-run",
-        attempt_cycle_id=None if cycle is None else cycle["cycle_id"],
-        reason="chat permanently unavailable",
-    )
-    conn.execute("COMMIT")
-    return row
 
 def test_clean_planning_frontier_is_restart_prepared_without_mutation():
     conn = initialize_database(":memory:")

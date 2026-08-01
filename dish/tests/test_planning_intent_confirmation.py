@@ -15,83 +15,33 @@ from dish_tool.cli import build_parser
 from dish_tool.database import initialize_database
 from dish_tool.errors import DishRuleError
 from tests.support.planning import Backend, release
+from tests.support.planning_intent import (
+    FIRST_REQUEST,
+    RUN_ID,
+    SECOND_REQUEST,
+    TASK_GID,
+    THIRD_REQUEST,
+    confirm as _confirm,
+    connect as _connect,
+    issue as _issue,
+    planning_arguments as _planning_arguments,
+    principal as _principal,
+    service as _service,
+)
 
 
-TASK_GID = "123456789"
-RUN_ID = "11111111-1111-4111-8111-111111111111"
-FIRST_REQUEST = "22222222-2222-4222-8222-222222222222"
-SECOND_REQUEST = "33333333-3333-4333-8333-333333333333"
-THIRD_REQUEST = "44444444-4444-4444-8444-444444444444"
 
 
-def _service(tmp_path, backend=None, *, backend_factory=None):
-    honest = tmp_path / "honest"
-    honest.mkdir()
-    (honest / "dish-verification-protocol.md").write_text(
-        "verification protocol", encoding="utf-8"
-    )
-    selected_backend = backend or Backend()
-    return DishService(
-        ServiceConfig(
-            db_path=tmp_path / "dish.db",
-            honest_root=honest,
-            backup_dir=tmp_path / "backups",
-            port=0,
-            agent_token="agent-secret",
-            admin_token="admin-secret",
-            action_token="action-secret",
-        ),
-        backend_factory=backend_factory or (lambda: selected_backend),
-        release_loader=lambda role=None: release(honest, role),
-    ), selected_backend
 
 
-def _principal(owner_id="action", run_id=RUN_ID):
-    return ServicePrincipal(owner_id=owner_id, run_id=run_id)
 
 
-def _planning_arguments(**extra):
-    return {"agent": "gpt", "task_gid": TASK_GID, "kind": "planning", **extra}
 
 
-def _issue(service, *, arguments=None, request_id=FIRST_REQUEST, principal=None):
-    return service.execute_agent(
-        "start",
-        arguments or _planning_arguments(),
-        principal=principal or _principal(),
-        request_id=request_id,
-    )
 
 
-def _confirm(
-    service,
-    challenge,
-    *,
-    request_id=SECOND_REQUEST,
-    principal=None,
-    intent_basis="user_requested",
-    override_reason=None,
-    arguments=None,
-):
-    payload = dict(arguments or _planning_arguments())
-    payload.update(
-        {
-            "intent_challenge_id": challenge["data"]["intent_challenge_id"],
-            "intent_basis": intent_basis,
-        }
-    )
-    if override_reason is not None:
-        payload["override_reason"] = override_reason
-    return service.execute_agent(
-        "start",
-        payload,
-        principal=principal or _principal(),
-        request_id=request_id,
-    )
 
 
-def _connect(service):
-    return initialize_database(service.config.db_path)
 
 @pytest.mark.smoke
 @pytest.mark.invariant_planning_intent

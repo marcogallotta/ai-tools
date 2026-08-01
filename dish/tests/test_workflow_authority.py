@@ -6,28 +6,16 @@ from dish_tool.errors import DishRuleError
 from dish_tool.governed_diff import explicit_material_reasons
 from dish_tool.task_document import parse_task_document
 from tests.support.readiness import _approve_and_submit
-from tests.support.verification import TASK, make_app
+from tests.support.verification import TASK, make_app, review_and_inspect
 
 
 def _doc(text=TASK):
     return parse_task_document(text)
 
 
-def _review(app, *, run="review", agent="codex"):
-    result = app.execute(
-        "start", agent=agent, task_gid="t", kind="verification", run_id=run,
-        independence_attestation="independent",
-    )
-    assert result["ok"]
-    inspected = app.execute("inspect", agent=agent, submission_id=result["submission_id"])
-    assert inspected["ok"]
-    assert inspected["allowed_actions"] == ["approve", "reject"]
-    return result
-
-
 def test_evidence_hold_blocks_content_drift_before_resolution(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    _review(app)
+    review_and_inspect(app)
     held = app.execute(
         "reject", agent="codex", submission_id=operation_id, route="evidence",
         reason="confirm source", resume_status="pending-verification", run_id="review",
@@ -48,7 +36,7 @@ def test_evidence_hold_blocks_content_drift_before_resolution(tmp_path):
 
 def test_human_hold_blocks_placement_drift_before_resolution(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    _review(app)
+    review_and_inspect(app)
     held = app.execute(
         "reject", agent="codex", submission_id=operation_id, route="human-review",
         reason="Marco must decide", resume_status="pending-verification", run_id="review",
@@ -146,7 +134,7 @@ def test_non_material_checkin_requires_exact_local_signed_baseline(tmp_path):
     source_dir = tmp_path / "source"
     source_dir.mkdir()
     source_app, backend, source_operation, _ = make_app(source_dir)
-    review = _review(source_app, run="source-review")
+    review = review_and_inspect(source_app, run_id="source-review")
     approved = source_app.execute(
         "approve", agent="codex", model="gpt-5.6-sol", submission_id=source_operation,
         correction="none", reviewed_identity=review["data"]["reviewed_identity"],

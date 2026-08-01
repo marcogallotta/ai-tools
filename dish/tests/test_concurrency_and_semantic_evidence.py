@@ -18,29 +18,10 @@ from dish_tool import database_schema as database_schema_module
 from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.step7 import assert_verifier_authority
+from tests.support.thread_teardown import join_thread, managed_thread
+from tests.support.semantic_evidence import insert_operation as _insert_operation
 
 
-def _insert_operation(conn, operation_id="op", *, status="open", phase="prepare_required"):
-    conn.execute(
-        """INSERT INTO operations(
-               operation_id,task_gid,operation_kind,status,expected_identity,
-               schema_version,created_at,phase,expected_section_gid,
-               completed_at,terminal_outcome
-           ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-        (
-            operation_id,
-            f"task-{operation_id}",
-            "initial",
-            status,
-            "identity",
-            "2",
-            "2026-07-28T00:00:00Z",
-            phase,
-            "research",
-            "2026-07-28T00:01:00Z" if status in {"completed", "cancelled"} else None,
-            "test" if status in {"completed", "cancelled"} else None,
-        ),
-    )
 
 def test_only_one_operation_mutation_executor_can_run(tmp_path):
     db_path = tmp_path / "dish.db"
@@ -68,7 +49,7 @@ def test_only_one_operation_mutation_executor_can_run(tmp_path):
         finally:
             conn.close()
 
-    thread = threading.Thread(target=run_first)
+    thread = managed_thread(target=run_first)
     thread.start()
     assert first_entered.wait(5)
 
@@ -91,7 +72,7 @@ def test_only_one_operation_mutation_executor_can_run(tmp_path):
     second_conn.close()
 
     first_release.set()
-    thread.join(timeout=5)
+    join_thread(thread, timeout=5)
     assert not thread.is_alive()
     assert first_result and first_result[0][0] == {"ok": True}
 

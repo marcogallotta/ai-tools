@@ -17,31 +17,12 @@ from dish_tool.models import RequestPhase
 from dish_tool.results import error_envelope
 from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend, TASK
-from tests.support.action_http import (
-    _raw_post,
-    _running,
-    _stop,
-
-)
+from tests.support.action_http import _raw_post, running_server
 
 
 
 
 
-
-@pytest.fixture
-def running_server(tmp_path):
-    active = []
-
-    def start(*, max_body=2 * 1024 * 1024):
-        running = _running(tmp_path, max_body=max_body)
-        active.append((running[1], running[2]))
-        return running
-
-    yield start
-
-    for server, thread in reversed(active):
-        _stop(server, thread)
 
 @pytest.mark.smoke
 @pytest.mark.parametrize("submission_id", ["not-an-operation", "", " "])

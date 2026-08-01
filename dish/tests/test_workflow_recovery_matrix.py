@@ -4,21 +4,12 @@ import pytest
 
 from dish_tool import step7, step8
 from dish_tool.step9 import recover_operation
-from tests.support.verification import TASK, make_app
-
-
-def _review(app, agent="codex", run="review"):
-    result = app.execute("start", agent=agent, task_gid="t", kind="verification", run_id=run, independence_attestation="independent")
-    assert result["ok"]
-    inspected = app.execute("inspect", agent=agent, submission_id=result["submission_id"])
-    assert inspected["ok"]
-    assert inspected["allowed_actions"] == ["approve", "reject"]
-    return result
+from tests.support.verification import TASK, make_app, review_and_inspect
 
 
 def test_approval_crash_after_signoff_recovers_await_submission(tmp_path, monkeypatch):
     app, backend, operation_id, _ = make_app(tmp_path)
-    review = _review(app)
+    review = review_and_inspect(app)
     original_transition = step7.transition_operation
 
     def crash_before_phase(*args, **kwargs):
@@ -54,7 +45,7 @@ def test_approval_crash_after_signoff_recovers_await_submission(tmp_path, monkey
 
 def test_large_crash_before_new_cycle_recovers_missing_suffix(tmp_path, monkeypatch):
     app, backend, operation_id, _ = make_app(tmp_path)
-    _review(app, run="first")
+    review_and_inspect(app, run_id="first")
     candidate = tmp_path / "large.txt"
     candidate.write_text(TASK.replace("100 g", "120 g"))
     original_create = step8.create_verification_cycle

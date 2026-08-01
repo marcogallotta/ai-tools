@@ -17,34 +17,15 @@ from dish_tool.models import RequestPhase
 from dish_tool.results import error_envelope
 from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend, TASK
-from tests.support.action_http import (
-    _raw_post,
-    _running,
-    _stop,
-
-)
+from tests.support.action_http import _raw_post, running_server
 
 
 
 
 
-
-@pytest.fixture
-def running_server(tmp_path):
-    active = []
-
-    def start(*, max_body=2 * 1024 * 1024):
-        running = _running(tmp_path, max_body=max_body)
-        active.append((running[1], running[2]))
-        return running
-
-    yield start
-
-    for server, thread in reversed(active):
-        _stop(server, thread)
 
 @pytest.mark.smoke
-def test_cli_and_action_receive_identical_workflow_results(tmp_path, running_server):
+def test_cli_and_action_return_identical_sections_result(tmp_path, running_server):
     _backend, server, thread, url = running_server()
     cli = DishServiceClient(url, token="cli-secret", run_id="9940d276-a582-5787-b6d9-b4fba846e271")
     action = DishActionClient(url, token="action-secret", run_id="7b87f6d2-db66-5199-882f-07841e94589c")

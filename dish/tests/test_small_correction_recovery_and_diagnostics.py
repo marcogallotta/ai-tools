@@ -16,37 +16,17 @@ from dish_tool.errors import DishRuleError
 from dish_tool.models import utc_now
 from tests.support.service_foundation import _service
 from tests.support.verification import Backend, TASK, make_app
+from tests.support.small_correction import (
+    review_and_inspect as _review_and_inspect,
+    small_candidate as _small_candidate,
+    without_replay_marker as _without_replay_marker,
+)
 
 
-def _review_and_inspect(app, operation_id: str, *, run_id: str = "dish-020-review"):
-    review = app.execute(
-        "start",
-        agent="codex",
-        task_gid="t",
-        kind="verification",
-        run_id=run_id,
-        independence_attestation="independent",
-    )
-    assert review["ok"]
-    inspected = app.execute(
-        "inspect", agent="codex", submission_id=operation_id
-    )
-    assert inspected["ok"]
-    return review, inspected
 
 
-def _small_candidate(path: Path) -> Path:
-    candidate = path / "small-correction.txt"
-    candidate.write_text(
-        TASK.replace("1. Cook it.", "1. Cook it gently."), encoding="utf-8"
-    )
-    return candidate
 
 
-def _without_replay_marker(result):
-    normalized = copy.deepcopy(result)
-    normalized.get("data", {}).pop("request_replayed", None)
-    return normalized
 
 def test_restarted_small_signoff_recovery_uses_same_semantic_completion_gate(
     tmp_path, monkeypatch
@@ -187,7 +167,7 @@ def test_existing_bad_inspect_binding_is_diagnosed_precisely_without_repair(tmp_
     assert tuple(persisted_fact) == (
         fact["reviewed_content_version_id"], fact["reviewed_identity"]
     )
-def test_no_correction_large_rejection_and_stale_candidate_rules_remain_intact(tmp_path):
+def test_none_approval_large_rejection_and_stale_drift_keep_distinct_evidence(tmp_path):
     no_correction_dir = tmp_path / "none"
     no_correction_dir.mkdir()
     app, _backend, operation_id, _ = make_app(no_correction_dir)

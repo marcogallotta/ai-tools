@@ -14,8 +14,11 @@ from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend as WorkflowBackend
 from tests.support.request_restore import (
     Backend,
+    SimulatedSigkill,
     _service,
-
+    principal as _principal,
+    restart_service as _restart_service,
+    restore_source as _restore_source,
 )
 
 
@@ -28,31 +31,9 @@ VERIFY_REQUEST = "33333333-3333-4333-8333-333333333333"
 
 
 
-def _principal(run="run"):
-    return ServicePrincipal(owner_id="action", run_id=run)
 
-class SimulatedSigkill(BaseException):
-    pass
 
-def _restore_source(service):
-    initialize_database(service.config.db_path).close()
-    source = service.backup_manager.create(label="sigkill-source")
-    conn = initialize_database(service.config.db_path)
-    try:
-        conn.execute(
-            "UPDATE schema_migrations SET applied_at='2999-01-01T00:00:00Z' "
-            "WHERE version=(SELECT MAX(version) FROM schema_migrations)"
-        )
-    finally:
-        conn.close()
-    return source
 
-def _restart_service(service, backend):
-    return DishService(
-        service.config,
-        backend_factory=lambda: backend,
-        release_loader=service.release_loader,
-    )
 
 
 

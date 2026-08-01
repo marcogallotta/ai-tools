@@ -81,3 +81,31 @@ def make_app(tmp_path):
     prepared = app.execute("prepare", agent="gpt", model="gpt-5.6-sol", submission_id=start["submission_id"], file_path=str(candidate))
     assert prepared["ok"]
     return app, backend, start["submission_id"], verification_text
+
+
+def review_and_inspect(
+    app,
+    *,
+    agent="codex",
+    task_gid="t",
+    run_id="review",
+    operation_id=None,
+):
+    """Start a verification review and assert its public review surface."""
+    result = app.execute(
+        "start",
+        agent=agent,
+        task_gid=task_gid,
+        kind="verification",
+        run_id=run_id,
+        independence_attestation="independent",
+    )
+    assert result["ok"]
+    inspected = app.execute(
+        "inspect",
+        agent=agent,
+        submission_id=operation_id or result["submission_id"],
+    )
+    assert inspected["ok"]
+    assert inspected["allowed_actions"] == ["approve", "reject"]
+    return result

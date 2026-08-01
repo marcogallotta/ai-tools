@@ -49,3 +49,33 @@ def _service(tmp_path, backend=None):
         release_loader=_release_loader(honest),
     )
     return service, backend
+
+
+class SimulatedSigkill(BaseException):
+    pass
+
+
+def principal(run="run"):
+    return ServicePrincipal(owner_id="action", run_id=run)
+
+
+def restore_source(service):
+    initialize_database(service.config.db_path).close()
+    source = service.backup_manager.create(label="sigkill-source")
+    conn = initialize_database(service.config.db_path)
+    try:
+        conn.execute(
+            "UPDATE schema_migrations SET applied_at='2999-01-01T00:00:00Z' "
+            "WHERE version=(SELECT MAX(version) FROM schema_migrations)"
+        )
+    finally:
+        conn.close()
+    return source
+
+
+def restart_service(service, backend):
+    return DishService(
+        service.config,
+        backend_factory=lambda: backend,
+        release_loader=service.release_loader,
+    )
