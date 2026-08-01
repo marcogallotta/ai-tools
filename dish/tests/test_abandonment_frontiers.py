@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.abandonment import (
     classify_abandonment_frontier,
@@ -172,6 +174,7 @@ def test_confirmed_planning_handoff_finishes_existing_recovery_suffix():
         "terminal",
         "planning_handoff_confirmed",
     )
+@pytest.mark.producer_equivalence
 def test_real_planning_prepare_crash_before_terminal_preserves_committed_finalized_route(
     tmp_path, monkeypatch
 ):

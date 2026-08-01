@@ -3,16 +3,11 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from tests.support.ast_contracts import call_name
+
 
 TESTS_ROOT = Path(__file__).parent
 
-
-def _call_name(node: ast.Call) -> str | None:
-    if isinstance(node.func, ast.Name):
-        return node.func.id
-    if isinstance(node.func, ast.Attribute):
-        return node.func.attr
-    return None
 
 
 def test_thread_joins_use_the_asserting_teardown_helper():
@@ -71,7 +66,7 @@ def test_server_threads_use_the_managed_server_factory():
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
-            if _call_name(node) not in {"managed_thread", "start_thread"}:
+            if call_name(node) not in {"managed_thread", "start_thread"}:
                 continue
             target = next(
                 (keyword.value for keyword in node.keywords if keyword.arg == "target"),

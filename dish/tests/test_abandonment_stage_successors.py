@@ -234,6 +234,7 @@ def test_resolving_abandoned_preconstruction_hold_creates_research_successor():
 
 
 
+@pytest.mark.producer_equivalence
 def test_real_reject_route_hold_then_abandonment_creates_research_successor(tmp_path):
     """Producer-contract companion to test_resolving_abandoned_preconstruction_hold_creates_research_successor.
 

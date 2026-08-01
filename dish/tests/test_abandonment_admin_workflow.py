@@ -27,6 +27,7 @@ from tests.support.abandonment_admin import (
 
 @pytest.mark.invariant_abandonment
 @pytest.mark.smoke
+@pytest.mark.producer_equivalence
 def test_admin_abandon_operation_creates_exact_planning_successor():
     conn = initialize_database(":memory:")
     backend = Backend(section="pi")
