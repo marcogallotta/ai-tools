@@ -12,6 +12,10 @@ from dish_tool.database import content_identity, initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.step9 import recover_operation
 from tests.support.asana_backend import StatefulAsanaBackend
+from tests.support.recovery_fixture_contract import (
+    assert_database_matches_contract,
+    assert_sidecars_match_contract,
+)
 
 DB_NAME = "dish-tool-recovery-v12.sqlite"
 
@@ -56,6 +60,24 @@ def test_recovery_fixture_generator_is_reproducible(tmp_path):
     assert (tmp_path / "live-tasks.json").read_bytes() == (FIXTURES / "live-tasks.json").read_bytes()
     assert (tmp_path / "fixture-matrix.json").read_bytes() == (FIXTURES / "fixture-matrix.json").read_bytes()
 
+
+
+def test_checked_in_recovery_artifacts_match_independent_literal_contract():
+    assert assert_sidecars_match_contract(
+        FIXTURES / "live-tasks.json", FIXTURES / "fixture-matrix.json"
+    ) is None
+    assert assert_database_matches_contract(FIXTURES / DB_NAME) is None
+
+
+def test_generated_recovery_artifacts_match_independent_literal_contract(tmp_path):
+    import runpy
+
+    namespace = runpy.run_path(str(FIXTURES / "generate_recovery_fixtures.py"))
+    namespace["build"](tmp_path)
+    assert assert_sidecars_match_contract(
+        tmp_path / "live-tasks.json", tmp_path / "fixture-matrix.json"
+    ) is None
+    assert assert_database_matches_contract(tmp_path / DB_NAME) is None
 
 def test_recovery_fixture_identities_and_live_sidecars_are_truthful():
     conn = sqlite3.connect(FIXTURES / DB_NAME)
