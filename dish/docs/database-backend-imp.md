@@ -30,6 +30,8 @@ August 1, 2026 is the Stage A production-change control epoch. Production featur
 
 Maintain one append-only production-change ledger covering every commit merged or deployed on or after August 1, 2026, including commits already merged before this rule was added. Screen each commit when it is merged and again before each implementation, rehearsal, and cutover acceptance milestone.
 
+The version-controlled ledger lives at `database-backend-production-change-ledger.md`. Creating it and backfilling it from the real repository Git history through the selected implementation re-baseline is implementation work item 1. The ledger may not be reconstructed from an exported source archive that omits `.git`; commit identity, merge/deployment timing, and changed-file evidence must come from the authoritative repository history and deployment records.
+
 A commit is in scope when it changes or can change any of the following:
 
 - database schema, migrations, constraints, indexes with semantic effect, or durable sidecars;
@@ -789,26 +791,145 @@ The physical token format is implementation-specific. It is not the immutable re
 
 Projection freshness is reported separately and never changes legal PostgreSQL actions merely because Asana is stale.
 
-## 13. Implementation sequence
+The authoritative read model must support deriving each task's current legal next action entirely from local PostgreSQL state. It must also support bounded, paginated relational queries that select tasks by that derived legal action without per-task Asana reads, per-task application-service calls, a denormalized authoritative task-status column, or a second workflow-policy implementation. The query must correctly include tasks for which the next legal action exists even when no operation row has yet been opened for that next phase.
 
-1. Freeze current behavior characterization and complete the authority inventory.
-2. Complete and approve the normative command semantic-delta contract in §4; no unresolved route may drive target schema or planner work.
-3. Establish PostgreSQL project skeleton, SQLAlchemy session ownership, Alembic, and test database isolation.
-4. Implement authority generation, activation, migration provenance, Honest bindings, and service readiness foundations.
-5. Implement governed project/section registry, aliases, task identity, immutable document versions, activations, location, and completion.
-6. Implement request/run/execution/claim/fence and classified lease authority.
-7. Implement operations, steps, actor facts, Verification/inspection, authorizations, and Planning challenges.
-8. Implement named holds/recovery profiles and the abandonment/succession state machine.
-9. Implement governed audit, external repair journal, exact causality, and typed effect authority.
-10. Extract the shared planner/adjudicator while preserving the independent characterization oracle.
-11. Implement import provenance and shadow-envelope storage/delivery.
-12. Implement projection outbox, mappings, attempts, adjudication, and corpus reconciler.
-13. Prove Asana creation correlation; do not permit production cutover with current `create` unavailable unless Marco explicitly retires it.
-14. Implement the coherent target service/OpenAPI/Action protocol from the approved semantic-delta contract.
-15. Complete migration tooling and rehearsal support under `database-backend-migration.md`.
-16. Run implementation acceptance before any production cutover decision.
+## 13. Implementation sequence and commit stages
 
-Implementation may be delivered incrementally, but no partial slice becomes production authority without the full cutover gates. Throughout this sequence, continuously reconcile the August 1, 2026 production-change ledger. A newly merged in-scope commit may require re-characterization, semantic-matrix revision, target schema or service changes, migration updates, or renewed acceptance before the affected milestone remains valid.
+Implementation is organized into six top-level stages. Each stage is a reasonable review and commit milestone with one coherent completion condition. Agents may create smaller working commits within a stage, but those commits do not redefine the milestone and no intermediate stage becomes production authority.
+
+### Stage 1 — Baseline and executable contracts
+
+Purpose: freeze the exact system being implemented before target schema or command work begins.
+
+Includes:
+
+- create and backfill `database-backend-production-change-ledger.md` from August 1, 2026 through the exact implementation re-baseline using authoritative Git history and deployment evidence;
+- freeze current-behavior characterization and complete the authority inventory against that closed ledger range;
+- complete and approve the normative command semantic-delta contract in §4, with no unresolved command treatment;
+- establish the PostgreSQL project skeleton, SQLAlchemy session ownership, Alembic, and isolated test database.
+
+Commit result:
+
+> The source baseline is known, every current command and authority has one target treatment, and the target project can run migrations and tests.
+
+This stage is mandatory before target domain or command implementation. The ledger remains open after this commit and every later in-scope production change must be reconciled continuously.
+
+### Stage 2 — Core PostgreSQL authority model
+
+Purpose: establish the foundational authoritative data model without activating the full command surface.
+
+Includes:
+
+- authority generations, activation records, restore/bootstrap foundations, and migration provenance;
+- immutable Honest release, schema, migration, hash, and provenance bindings;
+- governed projects, sections, registry versions, and project/section aliases;
+- Dish task identity and Asana task aliases;
+- immutable title/body versions and activations;
+- logical project membership, section placement, and completion;
+- foundational constraints, repositories, and import-style activation support.
+
+Commit result:
+
+> PostgreSQL can represent the complete authoritative task document, identity, registry, placement, completion, release context, and authority generation, but it is not yet the production command authority.
+
+Acceptance at this stage covers migrations, constraints, aliases, registry legality, immutable versions, import activation, and generation isolation.
+
+### Stage 3 — Command execution and workflow authority
+
+Purpose: implement the complete authoritative domain and concurrency machinery required by retained commands.
+
+Includes:
+
+- immutable requests and stored outcomes;
+- runs, command executions, executor claims, and task/operation fences;
+- classified leases and actor-attempt sequencing;
+- operations, steps, and actor facts;
+- Planning challenges and Marco authorizations;
+- Verification cycles, exact inspection occurrences, correction lineage, and signoff;
+- named holds and route-specific recovery authorities;
+- abandonment and fresh-successor state machine;
+- governed audit, causality, invocation-audit obligations, and durable repair support;
+- shared transaction profiles and typed effect authority.
+
+Commit result:
+
+> PostgreSQL has the complete authoritative workflow, replay, recovery, and concurrency layer needed to execute retained commands safely.
+
+This stage must include concentrated two-, three-, and ten-way same-task contention tests. Independent-task work must remain legal without global serialization.
+
+### Stage 4 — Command and service port
+
+Purpose: connect the authoritative domain to the complete Dish command and read surface.
+
+Includes:
+
+- extract or finalize the shared planner and adjudicator while preserving the independent characterization oracle;
+- implement every retained agent and admin command against PostgreSQL using the approved §4 contract;
+- implement reads, current-view tokens, `sections`, and new listing/read features against the PostgreSQL registry;
+- preserve `discard` as authoritative cancellation of an exact provably unapplied operation;
+- preserve `migrate`, `reopen-planning`, recovery, lease, Verification, authorization, and abandonment semantics;
+- implement the coherent service, OpenAPI, and Action protocol;
+- run frozen characterization cases against the PostgreSQL implementation.
+
+Commit result:
+
+> The full retained command and read surface operates against PostgreSQL and matches approved current behavior in an isolated non-production environment.
+
+### Stage 5 — Import, shadow, and projection
+
+Purpose: implement the transition machinery and downstream Asana behavior without changing live authority prematurely.
+
+Includes:
+
+- complete source import with exact provenance;
+- shadow-envelope storage, asynchronous delivery, and independent parity comparison;
+- transactional projection outbox;
+- task, project, and section mappings;
+- projection attempts, observation, adjudication, and ordering;
+- direct-edit drift detection, automatic reprojection, and corpus reconciliation;
+- lost-response-safe Asana creation correlation;
+- reconciliation of every in-scope production change recorded after the Stage 1 baseline.
+
+Commit result:
+
+> The target can import the current system, shadow live behavior without affecting it, and project authoritative PostgreSQL state safely to Asana.
+
+The conditional Asana-create fallback becomes a human decision only if the required correlation proof fails. Production cutover remains blocked if current `create` would otherwise be unavailable.
+
+### Stage 6 — Rehearsal, acceptance, and cutover package
+
+Purpose: produce the complete evidence-backed release candidate and rollout package.
+
+Includes:
+
+- repeatable migration tooling and full rehearsal support under `database-backend-migration.md`;
+- final import and semantic validation;
+- all implementation acceptance in §14;
+- crash-boundary, fault-injection, destructive-restore, stale-generation, and ten-way same-task contention tests;
+- exact source commit and production-change ledger closure;
+- final Asana task, registry, alias, membership, placement, and completion closure;
+- old-writer fencing;
+- durable activation, rollback burn, and first-admission procedure;
+- operator runbooks and the final evidence bundle.
+
+Commit result:
+
+> A reproducible release candidate exists with all evidence required for Marco to authorize production cutover.
+
+The actual production activation is a controlled release event, not a seventh implementation stage.
+
+### Stage summary
+
+| Stage | Main purpose | Commit milestone |
+| --- | --- | --- |
+| 1 | Freeze source behavior and executable contracts | Baseline, ledger, semantic matrix, and project skeleton complete |
+| 2 | Build foundational PostgreSQL authority | Core schema, constraints, aliases, and repositories complete |
+| 3 | Build workflow, replay, recovery, and concurrency authority | Authoritative domain engine complete |
+| 4 | Port the full command and service surface | PostgreSQL application behavior functionally complete |
+| 5 | Add import, shadow, and downstream projection | Transition path technically complete |
+| 6 | Prove and package production cutover | Release candidate ready for Marco authorization |
+
+No partial stage becomes production authority. Throughout all six stages, continuously reconcile the August 1, 2026 production-change ledger. A newly merged or deployed in-scope commit may require renewed characterization, semantic-matrix revision, target schema or service changes, migration updates, or repeated acceptance before the affected stage remains complete.
 
 ## 14. Implementation acceptance
 
@@ -836,6 +957,7 @@ Implementation may be delivered incrementally, but no partial slice becomes prod
 - Planning first-call admission performs no task read, operation creation, or actor lease.
 - Completion/reopen, hold/recovery, authorization, abandonment, and successor cases pass.
 - Every command row in §4 is implemented with its selected profile, exact target authority, replay behavior, and retirement/import treatment.
+- A bounded PostgreSQL read-model query can select tasks by derived current legal next action without per-task external reads or per-task policy evaluation, including tasks with no operation yet opened for the next phase; its result matches the authoritative single-task legal-action computation.
 
 ### 14.4 Requests and concurrency
 
