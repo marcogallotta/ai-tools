@@ -37,11 +37,12 @@ DISH_CLIENT_RUN_ID=<non-nil canonical lowercase UUID for this run>
 ```
 
 The CLI uses `DISH_SERVICE_TOKEN_TEST` or `DISH_SERVICE_TOKEN_PROD` with the matching named profile.
-Agents also receive `DISH_ADMIN_TOKEN_TEST`; only Marco receives `DISH_ADMIN_TOKEN_PROD`. The
-`--profile` flag selects one invocation, `DISH_PROFILE` supplies the process default, and production
-is the fallback default. A named profile never falls back to a generic token. The GPT Action stores
-only `DISH_SERVICE_ACTION_TOKEN`; its Caddy route is independent of private client profiles. No
-client receives the service database path or Asana credential.
+Interactive agent shells receive both environment-specific admin tokens, but agents may use only
+`DISH_ADMIN_TOKEN_TEST`; production administration remains Marco-only. The `--profile` flag selects
+one invocation, `DISH_PROFILE` supplies the process default, and production is the fallback default.
+A named profile never falls back to a generic token. The GPT Action stores only
+`DISH_SERVICE_ACTION_TOKEN`; its Caddy route is independent of private client profiles. No client
+receives the service database path or Asana credential.
 
 Environment selection follows intent, not caution: genuine Dish work uses production. Test is only
 for experiments, rehearsals, destructive testing, or Marco's explicit request. An agent must not
@@ -430,7 +431,3 @@ During a fresh initial Research operation, `reject --route evidence|human-review
 7. For a `started` or `uncertain` write/movement, do not retry the backend mutation. Use `dish-admin recover` after a live reread; recovery must match persisted expected/intended evidence and records the reconciliation outcome durably. This includes an interrupted destination-repair content write.
 8. For an unrecoverable destination failure, use only the returned `repair-destination` admin action; do not reopen Verification or edit the task directly.
 9. For tool/protocol disagreement, preserve the task unchanged and report both the protocol clause and tool rule.
-
-The corpus migration rehearsal and live cutover remain separately authorized work. Passing this
-runtime contract does not itself authorize production Cooking-task activation; follow
-[`rollout.md`](rollout.md).

@@ -78,11 +78,10 @@ DISH_SERVICE_BACKUP_DIR=/home/marco/.local/state/dish/prod/backups
 # private/action ports: 8775/8776
 ```
 
-Starting the production instance on its loopback ports does not expose it through Funnel and is safe
-preparation. Do not initialize migrated state, admit production mutations, or select the production
-Action route until the separately authorized production cutover.
+The production corpus and durable baselines are live in the production instance. The public Action
+route normally selects production; test remains separately available for explicit test work.
 
-Install the two service units and Caddy router only during the controlled rollout:
+Install the two service units and Caddy router with:
 
 ```sh
 sudo apt-get install caddy
@@ -164,10 +163,10 @@ dish --profile test sections --agent claude
 ```
 
 Profiles select the matching URL and credential together; `--profile` overrides `DISH_PROFILE`,
-which overrides the production default. Agents receive `DISH_ADMIN_TOKEN_TEST` and may use
-`dish-admin --profile test`. They do not receive `DISH_ADMIN_TOKEN_PROD`; production administration
-remains Marco-only. Never place a CLI/admin token in the GPT Action configuration. GPT Action
-environment selection remains exclusively Caddy's public route and is unaffected by CLI profiles.
+which overrides the production default. Interactive shells load both admin credentials, but agents
+may use only `dish-admin --profile test`; production administration remains Marco-only. Never place
+a CLI/admin token in the GPT Action configuration. GPT Action environment selection remains
+exclusively Caddy's public route and is unaffected by CLI profiles.
 
 ## HTTP request boundary
 
@@ -379,9 +378,8 @@ backup/restore, operational health, and private/public surface separation.
 - `docs/architecture.md` — mandatory agent change map: authorities, invariants, owning layers, and routed reading.
 - `docs/testing.md` — authoritative test gates, flake detection, candidate/quarantine policy, and artifact handling.
 - `docs/runtime-contract.md` — JSON meanings, exit statuses, retry rules, and operational recovery.
-- `docs/rollout.md` — separately authorized test-project rehearsal, migration, production cutover, and rollback.
 - `docs/future.md` — only work that is not already implemented.
 
-The implementation does not itself authorize production activation. Follow
-[`docs/rollout.md`](docs/rollout.md) for the separately authorized migration rehearsal, live
-test-project smoke, cutover, and rollback.
+The production migration and cutover are complete. Git history preserves the retired migration
+tooling, evidence, and rollout runbook. Use the managed backup/restore commands above for recovery
+and require Marco's explicit authorization for any public Action route change.

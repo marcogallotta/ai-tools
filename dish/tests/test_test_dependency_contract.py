@@ -34,7 +34,7 @@ def _declared_requirements(path: Path, *, seen: set[Path] | None = None) -> set[
 
 
 def _direct_third_party_imports() -> set[str]:
-    local_modules = {"dish_service", "dish_tool", "migration", "tests"}
+    local_modules = {"dish_service", "dish_tool", "tests"}
     local_modules.update(path.stem for path in TESTS.glob("*.py"))
     local_modules.update(path.name for path in TESTS.iterdir() if path.is_dir())
     imported: set[str] = set()

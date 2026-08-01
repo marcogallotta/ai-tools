@@ -17,7 +17,6 @@ loading every Dish document.
 | post-rollout candidates, testing boundaries, and accepted launch limitations | [`known-issues.md`](known-issues.md) |
 | GPT Action exposure or editor configuration | [`../deploy/gpt-action.md`](../deploy/gpt-action.md) |
 | Tailscale Serve or Funnel | [`../deploy/tailscale/README.md`](../deploy/tailscale/README.md) |
-| test-project rehearsal, corpus migration, production cutover, or rollback | [`rollout.md`](rollout.md) |
 | the protocol's own structure, canonical fields, process records, or change classes | `~/honest-pantry/dish-docs-design.md` and the relevant current Honest assets |
 | work not yet implemented | [`future.md`](future.md) |
 

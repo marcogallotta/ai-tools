@@ -187,10 +187,9 @@ def test_admin_cli_exposes_backup_restore_and_stale_lease_recovery(capsys):
     ]
 
 
-def test_checked_in_contract_documents_current_access_and_rollout():
+def test_checked_in_contract_documents_current_access_and_deployment():
     runtime = (ROOT / "docs" / "runtime-contract.md").read_text()
     readme = (ROOT / "README.md").read_text()
-    rollout = (ROOT / "docs" / "rollout.md").read_text()
     tailscale = (ROOT / "deploy" / "tailscale" / "README.md").read_text()
     action_guide = (ROOT / "deploy" / "gpt-action.md").read_text()
     smoke = (ROOT / "deploy" / "live-test-project-smoke.md").read_text()
@@ -209,11 +208,8 @@ def test_checked_in_contract_documents_current_access_and_rollout():
     assert "No mutation endpoint is exempt from request identity" in runtime
     assert "DISH_LIVE_MODE=1" in runtime and "DISH_MODE=service" in runtime
     assert "Action listener, intended for Tailscale Funnel" in runtime
-    assert "does not itself authorize production activation" in readme
-    assert "docs/rollout.md" in readme
-    assert "coordinated rollout of both" in rollout
-    assert "Honest protocol/schema overhaul" in rollout
-    assert "a mixed production state is forbidden" in rollout
+    assert "production migration and cutover are complete" in readme
+    assert "explicit authorization for any public Action route change" in readme
     assert "--https=8444" in tailscale and "--https=443" in tailscale
     assert "port 443 is free" in tailscale and "do not overwrite" in tailscale
     assert "127.0.0.1:8765" in tailscale and "127.0.0.1:8766" in tailscale

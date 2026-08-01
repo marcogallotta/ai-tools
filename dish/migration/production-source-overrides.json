@@ -1,9 +1,0 @@
-{
-  "1216522297757193": {
-    "expected_modified_at": "2026-07-31T20:25:33.014Z",
-    "expected_section_name": "Eating",
-    "notes_sha256": "6dc66a8543eea49c985b8ae264471639d093762243e3cffe94d8d93b78c1147f",
-    "authority": "Marco-confirmed Canh chua cook and release on 2026-07-31.",
-    "reason": "The source moved from Planned to Eating after the governed capture; its captured notes remained byte-identical."
-  }
-}

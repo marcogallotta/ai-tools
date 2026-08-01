@@ -18,8 +18,6 @@ documentation roles are:
   launch limitations;
 - `dish/docs/runtime-contract.md` — response, exit-status, retry, and
   troubleshooting contract;
-- `dish/docs/rollout.md` — separately authorized test-project rehearsal,
-  migration, production cutover, and rollback;
 - `dish/docs/future.md` — broader future proposals not tracked as known issues.
 
 Older design and implementation plans were removed; use Git history when their exact text is
@@ -74,14 +72,13 @@ selects the public Action upstream. Environment files are
 `/home/marco/.config/dish-service/test.env` and `prod.env`; databases and backups remain under the
 matching `/home/marco/.local/state/dish/{test,prod}/` directory. Agent shells default to production;
 use `dish --profile test` for the test environment. Production private access uses `:8445`. Inspect
-the running public selection with `dish-action-route status`. Never
-switch it, initialize migrated production state, or enable production mutations without Marco's
-separate cutover authorization.
+the running public selection with `dish-action-route status`. Production is live; never change the
+public route without Marco's explicit authorization.
 
-Interactive `~/.bashrc` loads `DISH_SERVICE_TOKEN_TEST`, `DISH_SERVICE_TOKEN_PROD`, and
-`DISH_ADMIN_TOKEN_TEST` from the two owner-only service environment files. Claude and Codex inherit
-those tokens; their settings pin only non-secret URLs and the production default. Never print, log,
-or include any token value in a transcript or report.
+Interactive `~/.bashrc` loads the test and production service and admin tokens from the two
+owner-only service environment files. Claude and Codex inherit those tokens, but the production
+admin prohibition above still applies; their settings pin only non-secret URLs and the production
+default. Never print, log, or include any token value in a transcript or report.
 
 When architecture changes, update `architecture.md` in the same commit. Do not add
 executable legacy mutation paths, duplicate workflow authority in transports or CLIs, or
