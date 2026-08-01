@@ -49,6 +49,7 @@ CLIENT_REQUEST_ID_SCHEMA = {
 ACTION_COMMANDS = (
     "create",
     "sections",
+    "section-tasks",
     "read",
     "inspect",
     "start",
@@ -71,6 +72,13 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["agent"],
         "properties": {
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]}
+        },
+    },
+    "section-tasks": {
+        "required": ["section_gid", "agent"],
+        "properties": {
+            "section_gid": dict(ASANA_GID_SCHEMA),
+            "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
         },
     },
     "read": {

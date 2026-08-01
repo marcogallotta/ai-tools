@@ -31,6 +31,18 @@ def test_sections_and_create_are_scoped_and_bare(tmp_path):
 
 
 @pytest.mark.smoke
+def test_section_tasks_lists_only_tasks_placed_in_the_requested_section(tmp_path):
+    b = Backend(title="In queue", task_gid="in-rq", section="rq")
+    b.add_task(task_gid="in-vq", title="Elsewhere", notes="", section_gid="vq")
+    a = app(tmp_path, b)
+    result = a.execute("section-tasks", agent="claude", section_gid="rq")
+    assert result["data"] == {
+        "section_gid": "rq",
+        "tasks": [{"gid": "in-rq", "name": "In queue", "completed": False}],
+    }
+
+
+@pytest.mark.smoke
 @pytest.mark.parametrize("unsafe", ["\n", "\t", "\u2028", "\u2029", "\x00"])
 def test_create_rejects_unsafe_title_characters_before_external_creation(
     tmp_path, unsafe

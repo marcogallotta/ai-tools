@@ -14,6 +14,7 @@ from typing import Any
 EXPECTED_ACTION_COMMANDS = (
     "create",
     "sections",
+    "section-tasks",
     "read",
     "inspect",
     "start",
@@ -26,7 +27,7 @@ EXPECTED_ACTION_COMMANDS = (
 EXPECTED_REPLAY_SAFE_COMMANDS = frozenset(
     {"create", "start", "prepare", "approve", "reject", "submit", "renew-lease"}
 )
-EXPECTED_READ_ONLY_COMMANDS = frozenset({"sections", "read", "inspect"})
+EXPECTED_READ_ONLY_COMMANDS = frozenset({"sections", "section-tasks", "read", "inspect"})
 EXPECTED_CONSEQUENTIAL = {
     command: command in EXPECTED_REPLAY_SAFE_COMMANDS
     for command in EXPECTED_ACTION_COMMANDS

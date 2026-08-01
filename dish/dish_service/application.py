@@ -78,7 +78,7 @@ from .request_coordinators import (
 from .restore_fault import RestoreFaultMarker
 from .restore_request_journal import RestoreRequestJournal
 
-_READ_ONLY_AGENT_COMMANDS = {"sections", "read", "inspect"}
+_READ_ONLY_AGENT_COMMANDS = {"sections", "section-tasks", "read", "inspect"}
 _LEASED_AGENT_COMMANDS = {"prepare", "approve", "reject", "submit"}
 _MUTATING_AGENT_COMMANDS = {"create", "start", *_LEASED_AGENT_COMMANDS}
 _RUN_ID_AGENT_COMMANDS = {"start", "prepare", "approve", "reject"}

@@ -190,7 +190,7 @@ def test_current_dispatch_contract_is_explicit_and_complete():
     from dish_tool.commands import CURRENT_COMMAND_HANDLERS
 
     assert set(CURRENT_COMMAND_HANDLERS) == {
-        "sections", "create", "read", "inspect", "start",
+        "sections", "section-tasks", "create", "read", "inspect", "start",
         "prepare", "approve", "reject", "submit",
     }
     assert set(CURRENT_ADMIN_COMMAND_HANDLERS) == {

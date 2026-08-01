@@ -307,6 +307,50 @@ class AsanaBackend:
             options = {"opt_fields": "gid,name", "limit": 100, "offset": offset}
         return sections
 
+    def list_tasks_for_section(self, section_gid: str) -> list[dict[str, Any]]:
+        import asana
+
+        function = asana.TasksApi(self.client()).get_tasks_for_section
+        options: dict[str, Any] = {"opt_fields": "gid,name,completed", "limit": 100}
+        tasks: list[dict[str, Any]] = []
+        seen_offsets: set[str] = set()
+        while True:
+            envelope = self.call_envelope(
+                function,
+                section_gid,
+                options,
+                context=f"section {section_gid} tasks",
+            )
+            data = envelope["data"]
+            if not isinstance(data, list) or not all(isinstance(item, Mapping) for item in data):
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "Asana returned malformed section task data",
+                    rule="backend_response_malformed",
+                )
+            tasks.extend(dict(item) for item in data)
+            next_page = envelope.get("next_page")
+            if next_page is None:
+                break
+            if not isinstance(next_page, Mapping):
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "Asana returned malformed section task pagination data",
+                    rule="backend_response_malformed",
+                )
+            offset = str(next_page.get("offset") or "").strip()
+            if not offset:
+                break
+            if offset in seen_offsets:
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "Asana repeated a section task pagination offset",
+                    rule="backend_pagination_loop",
+                )
+            seen_offsets.add(offset)
+            options = {"opt_fields": "gid,name,completed", "limit": 100, "offset": offset}
+        return tasks
+
     def read_task(self, task_gid: str) -> dict[str, Any]:
         import asana
 

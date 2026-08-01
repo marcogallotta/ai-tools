@@ -14,6 +14,7 @@ Before opening the GPT editor for the test rehearsal:
 4. Confirm the public listener through Caddy returns 404 for health, CLI, admin, backup, migration,
    and recovery routes.
 5. Confirm only the Action token succeeds on public `/v1/action/sections`.
+6. Confirm only the Action token succeeds on public `/v1/action/section-tasks`.
 
 ## Editor configuration
 
@@ -49,16 +50,22 @@ Add an operating instruction with all of these requirements:
   it for every Action call and lease renewal in that run. A genuinely new run uses a new UUID.
 - Before every mutation—`create`, `start`, `prepare`, `approve`, `reject`, `submit`, and lease
   renewal—create a new non-nil canonical lowercase UUID as `client.request_id` and preserve it with
-  the attempted call. Read-only `sections`, `read`, and `inspect` do not accept a request ID. Dish
-  binds the first authoritative success or expected failure to the exact command, canonical
+  the attempted call. Read-only `sections`, `section-tasks`, `read`, and `inspect` do not accept a
+  request ID. Dish binds the first authoritative success or expected failure to the exact command, canonical
   arguments, authenticated owner, and run. If the response is lost, repeat only that exact call with
   the same UUID; a completed replay returns the stored result with `data.request_replayed: true`.
   Reusing the UUID for different work conflicts. A matching pending or uncertain request is not
   executed again, so never generate a new UUID merely to bypass that outcome.
-- If read-only `sections`, `read`, or `inspect` returns no Dish JSON envelope because of a
+- If read-only `sections`, `section-tasks`, `read`, or `inspect` returns no Dish JSON envelope because of a
   transport-level client error, retry the exact same read up to two times. If it still fails, stop
   and report the error. This bounded read retry does not apply to mutations; after a lost mutation
   response, replay only the exact call with its original `client.request_id`.
+- To find a `task_gid` to act on without one already in hand, call `sections` to resolve the
+  Research Queue or Verification Queue GID, then call `section-tasks` with that `section_gid` to
+  list the tasks currently placed there. Asana section placement is a display convenience only,
+  not workflow authority: it can lag or be moved by hand, so it never substitutes for the task's own
+  recorded status. Confirm eligibility from the task returned by `read`/`start`, not from its
+  presence in a `section-tasks` listing.
 - The authenticated `client.run_id` is both lease ownership and the durable agent-run identity. The
   service applies it to `start`, `prepare`, `approve`, and `reject`; do not invent a separate
   workflow run ID. A redundant `arguments.run_id`, when supplied, must match it exactly.

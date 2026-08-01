@@ -38,7 +38,7 @@ from .validation_scope import scope_for_command
 
 _AGENT_EXPOSED_ACTIONS = {
     "approve", "create", "inspect", "prepare", "read", "reject",
-    "sections", "start", "submit",
+    "section-tasks", "sections", "start", "submit",
 }
 _ADMIN_ONLY_ACTIONS = {
     "record-human-decision", "reconcile-abandonment", "reopen",
@@ -495,6 +495,20 @@ def _step5_sections(self, *, trace: CommandTrace, agent: str) -> dict[str, Any]:
     sections = self.backend.list_sections(COOKING_PROJECT_GID)
     clean = [{"gid": _gid(item), "name": str(item.get("name") or "")} for item in sections]
     return result_envelope(command="sections", data={"project_gid": COOKING_PROJECT_GID, "sections": clean})
+
+
+def _step5_section_tasks(self, *, trace: CommandTrace, agent: str, section_gid: str) -> dict[str, Any]:
+    agent_family(agent)
+    section_gid = _clean_required(section_gid, rule="section_gid_required", label="section GID")
+    tasks = self.backend.list_tasks_for_section(section_gid)
+    clean = [
+        {"gid": _gid(item), "name": str(item.get("name") or ""), "completed": bool(item.get("completed"))}
+        for item in tasks
+    ]
+    return result_envelope(
+        command="section-tasks",
+        data={"section_gid": section_gid, "tasks": clean},
+    )
 
 
 def _step5_create(self, *, trace: CommandTrace, agent: str, title: str) -> dict[str, Any]:
@@ -1123,6 +1137,7 @@ def _step9_submit(self, *, trace: CommandTrace, submission_id: str) -> dict[str,
 
 CURRENT_COMMAND_HANDLERS = {
     "sections": _step5_sections,
+    "section-tasks": _step5_section_tasks,
     "create": _step5_create,
     "read": _step5_read,
     "inspect": _step5_inspect,

@@ -159,6 +159,7 @@ changing the process environment:
 
 ```sh
 dish sections --agent claude
+dish section-tasks SECTION_GID --agent claude
 dish --profile test sections --agent claude
 ```
 
@@ -208,7 +209,8 @@ start initial/change
 → submit after approval
 ```
 
-The bounded agent surface contains discovery/read commands (`sections`, `read`, `inspect`) and
+The bounded agent surface contains discovery/read commands (`sections`, `section-tasks`, `read`,
+`inspect`) and
 governed mutations (`create`, `start`, `prepare`, `approve`, `reject`, `submit`). `create` is a
 mutation even though it starts from a bare task. In service mode, every agent, admin, lease, and
 backup mutation carries a client-generated request UUID that durably binds its first authoritative

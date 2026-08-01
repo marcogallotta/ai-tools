@@ -151,6 +151,12 @@ def build_parser() -> JsonArgumentParser:
     sections = subparsers.add_parser("sections", help="list Cooking project sections and gids")
     sections.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
 
+    section_tasks = subparsers.add_parser(
+        "section-tasks", help="list the tasks currently placed in a Cooking project section"
+    )
+    section_tasks.add_argument("section_gid")
+    section_tasks.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+
     read = subparsers.add_parser("read", help="read the exact live task through the tool")
     read.add_argument("task_gid")
     read.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
