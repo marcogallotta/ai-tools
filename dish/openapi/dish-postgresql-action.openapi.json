@@ -1,0 +1,795 @@
+{
+  "components": {
+    "schemas": {
+      "ResultEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "command": {
+            "enum": [
+              "create",
+              "sections",
+              "section-tasks",
+              "read",
+              "inspect",
+              "start",
+              "prepare",
+              "approve",
+              "reject",
+              "submit",
+              "renew-lease"
+            ],
+            "type": "string"
+          },
+          "data": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "http_status": {
+            "type": "integer"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "request_replayed": {
+            "type": "boolean"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "command",
+          "code",
+          "http_status",
+          "retryable",
+          "data"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "actionBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "title": "Dish PostgreSQL Action",
+    "version": "stage-4"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/action/approve": {
+      "post": {
+        "description": "Replay-bound authoritative mutation; exact request identity is durable.",
+        "operationId": "dish_postgresql_approve",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish approve",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/create": {
+      "post": {
+        "description": "Replay-bound authoritative mutation; exact request identity is durable.",
+        "operationId": "dish_postgresql_create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish create",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/inspect": {
+      "post": {
+        "description": "Replay-bound authoritative mutation; exact request identity is durable.",
+        "operationId": "dish_postgresql_inspect",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish inspect",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/prepare": {
+      "post": {
+        "description": "Replay-bound authoritative mutation; exact request identity is durable.",
+        "operationId": "dish_postgresql_prepare",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish prepare",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/read": {
+      "post": {
+        "description": "Consistent authoritative query; request_id is not accepted.",
+        "operationId": "dish_postgresql_read",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish read",
+        "x-openai-isConsequential": false
+      }
+    },
+    "/v1/action/reject": {
+      "post": {
+        "description": "Replay-bound authoritative mutation; exact request identity is durable.",
+        "operationId": "dish_postgresql_reject",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish reject",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/renew-lease": {
+      "post": {
+        "description": "Replay-bound authoritative mutation; exact request identity is durable.",
+        "operationId": "dish_postgresql_renew_lease",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish renew-lease",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/section-tasks": {
+      "post": {
+        "description": "Consistent authoritative query; request_id is not accepted.",
+        "operationId": "dish_postgresql_section_tasks",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish section-tasks",
+        "x-openai-isConsequential": false
+      }
+    },
+    "/v1/action/sections": {
+      "post": {
+        "description": "Consistent authoritative query; request_id is not accepted.",
+        "operationId": "dish_postgresql_sections",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish sections",
+        "x-openai-isConsequential": false
+      }
+    },
+    "/v1/action/start": {
+      "post": {
+        "description": "Replay-bound authoritative mutation; exact request identity is durable.",
+        "operationId": "dish_postgresql_start",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish start",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/submit": {
+      "post": {
+        "description": "Replay-bound authoritative mutation; exact request identity is durable.",
+        "operationId": "dish_postgresql_submit",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "format": "uuid",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish submit",
+        "x-openai-isConsequential": true
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "https://dish-postgresql.example.invalid"
+    }
+  ]
+}

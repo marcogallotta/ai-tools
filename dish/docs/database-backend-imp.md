@@ -911,6 +911,20 @@ Commit result:
 
 > The full retained command and read surface operates against PostgreSQL and matches approved current behavior in an isolated non-production environment.
 
+Implemented physical boundary: `dish_pg.command_contract` is the executable approved §4 registry;
+`dish_pg.planner` is deterministic and delegates legal-action decisions to the shared policy;
+`dish_pg.read_model` owns active-registry reads, exact task current views, and authenticated opaque
+pagination; `dish_pg.command_port` admits and replays every retained mutation and dispatches every
+retained agent/admin route in caller-owned transactions; and `dish_pg.protocol` authenticates the
+existing Action/private bearer scopes before parsing a body. The checked-in PostgreSQL Action
+OpenAPI is generated from the same command registry. Stage 4 emits projection intent only through
+an injected recorder and therefore cannot perform an Asana write before Stage 5 authority exists.
+
+Stage 4 acceptance covers command inventory closure, retired-command rejection, deterministic
+planning/adjudication, exact replay, atomic bare-task creation, Planning challenge admission and
+consumption, active-registry reads, query-bound pagination, current-view policy delegation,
+OpenAPI parity, and authentication-before-body-loading. Production routing remains unchanged.
+
 ### Stage 5 — Import, shadow, and projection
 
 Purpose: implement the transition machinery and downstream Asana behavior without changing live authority prematurely.

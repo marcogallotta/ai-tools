@@ -247,9 +247,18 @@ revisioned; evidence rows are immutable. The service methods participate in the 
 transaction and never commit independently. Same-task exclusivity is database-constrained while
 independent tasks have no global serialization point.
 
-This remains an isolated non-production target. Current transports and workflow modules still do
-not import `dish_pg`; command-surface ownership and downstream Asana projection are absent until
-Stages 4 and 5 respectively, and production authority remains closed until Stage 6 activation.
+Stage 4 adds the isolated command and service port through `command_contract.py`, `planner.py`,
+`read_model.py`, `command_port.py`, `protocol.py`, and the checked-in PostgreSQL Action OpenAPI.
+The port owns the complete retained command registry, exact request replay, caller-owned command
+transactions, deterministic planning, exact external-effect adjudication, registry-bound opaque
+pagination, and one-task current-view computation. It delegates workflow legality to
+`workflow_policy` rather than copying the policy matrix. The protocol adapter reuses the established
+route-class bearer model and authenticates before body loading; it introduces no cookie/session
+authority. `section-tasks` is one bounded relational query and does not run workflow policy per row.
+
+This remains an isolated non-production target. Current production transports and workflow modules
+still do not import `dish_pg`; downstream Asana projection is absent until Stage 5, and production
+authority remains closed until Stage 6 activation.
 
 Agent and admin dispatch use the explicit `CURRENT_COMMAND_HANDLERS` and
 `CURRENT_ADMIN_COMMAND_HANDLERS` registries. Do not reintroduce import-time subclass rebinding or a
