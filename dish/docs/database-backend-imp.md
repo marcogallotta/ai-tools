@@ -67,52 +67,51 @@ Every effect has persisted intent, attempt ownership, evidence-based adjudicatio
 
 Legacy evidence may be imported or quarantined. Old mutation implementations do not remain active behind a compatibility flag.
 
-## 4. Command semantic-delta matrix
+## 4. Command semantic-delta contract
 
-Before implementation changes public behavior, maintain one version-controlled matrix containing every current route and its Stage A disposition.
+Complete and approve this contract immediately after current-system re-baseline and characterization, before target command, planner, repository, or public-protocol implementation. Public implementation may not use an unresolved row.
 
-The initial matrix is:
+Shared transaction profiles:
 
-| Current command | Current class | Stage A default disposition |
-|---|---|---|
-| `create` | replay-bound agent mutation | Retain semantics; public identity becomes Dish UUID at authority cutover. Pre-cutover routing remains Asana-GID-compatible until live authority can route Dish UUID safely. |
-| `sections` | read-only Action query | Retain or replace coherently with the target project/section read contract. |
-| `read` | read-only Action query | Retain semantics against the authoritative backend; after cutover read PostgreSQL plus projection freshness, not Asana task authority. |
-| `inspect` | currently requestless read route that creates durable evidence | Reclassify as replay-bound evidence mutation, or implement an explicitly equivalent durable idempotency contract. It remains non-content-changing. |
-| `start` | replay-bound agent mutation | Retain all current operation kinds and Planning confirmation semantics. |
-| `prepare` | replay-bound agent mutation | Retain current workflow and content semantics. |
-| `approve` | replay-bound agent mutation | Retain exact Verification occurrence and lineage semantics. |
-| `reject` | replay-bound agent mutation | Retain current Large, Evidence, and Human Review semantics. |
-| `submit` | replay-bound agent mutation | Retain current destination, movement, completion, and recovery semantics. |
-| `renew-lease` | replay-bound lease mutation | Retain lease semantics; bind to target run authority. |
-| `recover` | Marco-only admin mutation | Retain narrow ambiguous-effect reconciliation. |
-| `repair-destination` | Marco-only admin mutation | Retain narrow destination repair. |
-| `discard` | Marco-only admin mutation | Retain only for provably unapplied operations. |
-| `abandon-operation` | Marco-only admin mutation | Retain current permanent-attempt abandonment semantics. |
-| `reconcile-abandonment` | Marco-only admin mutation | Retain exact reconciliation semantics. |
-| `reopen-planning` | Marco-only admin mutation | Retain narrow completion clearing and audit. |
-| `reopen` | Marco-only admin mutation | Retain two-pass Human Review semantics. |
-| `supply-evidence` | Marco-only admin mutation | Retain protocol semantics. |
-| `record-human-decision` | Marco-only admin mutation | Retain protocol semantics. |
-| `authorize-governed-change` | Marco-only admin mutation | Retain exact authorization grant semantics. |
-| `recover-lease` | Marco-only admin mutation | Retain narrow expired-lease recovery. |
-| `expire-lease` | Marco-only admin mutation | Retain exact lease release semantics; do not treat as run revocation. |
-| `migrate` | Marco-only legacy compatibility mutation | Retain the bounded current schema-migration semantic for admitted older-schema tasks. Migration-time reconciliation may reduce how often it is needed but does not retire it without explicit architecture approval. |
-| `backup-create` | replay-bound admin mutation | Retire at authority cutover. Preserve historical requests, records, and artifacts. |
-| `backup-restore` | replay-bound admin mutation | Retire at authority cutover. Preserve historical journal and outcome evidence. |
-| Planning-intent settlement | new Marco-only admin mutation | Add one reason-bearing, terminal, non-reusable settlement route. Exact route name is an implementation choice. |
+- **Q — query:** consistent authoritative read; no durable mutation.
+- **E — evidence mutation:** exact request or deterministic evidence identity; snapshot and actor validation; evidence plus governed audit commit atomically; no content-pointer advance.
+- **L — local authoritative command:** generation-bound request, execution/fences, domain facts, versions/activation where applicable, outcome, governed audit, causality, and projection outbox commit atomically.
+- **R — recovery command:** profile L plus exact target attempt/execution/hold identity and route-specific settlement predicates; never a generic unblock.
+- **P — projection-only recovery:** settles only a downstream projection attempt and cannot change canonical content, logical placement, workflow legality, or the original command outcome.
+- **X — retired:** no new admission after cutover; historical request outcomes and evidence remain replayable/readable only as imported history.
 
-For every changed command, the matrix must also specify:
+Normative command treatment:
 
-- request schema and canonicalization;
-- authenticated principal and scope;
-- authority generation binding;
-- legal preconditions;
-- transaction and effect boundary;
-- replay outcome;
-- current-view behavior;
-- protocol/OpenAPI release introduction;
-- migration handling for historical requests.
+| Command | Stage A treatment | Principal / authority | Profile and effect boundary | Replay / migration treatment |
+|---|---|---|---|---|
+| `create` | Retain bare-task creation and initial Research Queue placement; public identity becomes Dish UUID at authority cutover. | Agent; active generation and registered run. | L; task, initial version/activation, logical location, request outcome, audit and create-projection event commit together. | Exact request replay. Imported tasks use import activation, never fabricated `create` executions. |
+| `sections` | Retain as a query over the active PostgreSQL section registry. | Authenticated Action reader. | Q; no live Asana registry read after cutover. | No request replay. Registry and aliases are imported with provenance. |
+| `read` | Retain against PostgreSQL authority plus separately reported projection freshness. | Authenticated reader. | Q. | Historical/current state comes from imported and later PostgreSQL authority. |
+| `inspect` | Reclassify as replay-bound evidence mutation. | Verification actor with exact operation/cycle/run authority. | E; inspection occurrence and governed audit commit atomically. | Exact request replay; existing inspection facts import unchanged. |
+| `start` | Retain all operation kinds; Planning retains two-request challenge admission. | Agent; registered run and applicable challenge/lease authority. | L; successful Planning start consumes the challenge with operation, outcome and audit. | Exact replay; open legacy authority is drained before production import. |
+| `prepare` | Retain current content/workflow semantics. | Current stage actor. | L; PostgreSQL authority commits before asynchronous projection. | Exact replay; resolved historical facts import. |
+| `approve` | Retain exact Verification occurrence, correction, candidate and signoff lineage. | Authorized verifier/actor. | L. | Exact replay; exact cycles, occurrences and Honest bindings import. |
+| `reject` | Retain Large, Evidence, Human Review and Small-correction routes. | Authorized actor. | L or hold-entry L profile according to route. | Exact replay; holds/decisions import as named authority. |
+| `submit` | Retain signed-state validation and exact logical destination transition. | Authorized actor. | L; logical placement commits atomically, Asana movement is projection-only. | Exact replay and convergence from already committed PostgreSQL domain evidence. |
+| `renew-lease` | Retain narrow renewal. | Exact lease owner/run. | L limited to lease plus request outcome/audit. | Exact replay against the original lease identity. |
+| `recover` | Retain only for imported/live authoritative command or effect uncertainty that the route currently owns; post-cutover Asana projection uncertainty uses P, not this route unless explicitly mapped. | Marco/admin. | R; exact execution/attempt target and three-way evidence adjudication. | Exact replay; imported terminal requests remain historical outcomes. |
+| `repair-destination` | Retain narrow authoritative logical-destination recovery where current semantics require it; downstream Asana-only repair is P. | Marco/admin. | R or P, selected by explicit target identity. | Exact replay; never infer canonical placement from Asana. |
+| `discard` | Retain only where exact evidence proves the targeted authoritative attempt was not applied. | Marco/admin. | R. | Exact replay; cannot discard a projection into canonical state or reopen historical attempts. |
+| `abandon-operation` | Retain permanent exact actor-attempt abandonment. | Marco/admin. | R using the abandonment state machine in §6.17. | Exact request/execution replay; no duplicate successor publication. |
+| `reconcile-abandonment` | Retain exact blocked-abandonment continuation. | Marco/admin. | R using the same abandonment execution and immutable successor baseline. | Exact replay; never rebase succession. |
+| `reopen-planning` | Retain the only current completion-clearing route. | Marco/admin. | L; completion clear, attempt/result, audit, outcome and projection commit together. | Exact replay; imported completion and attempts preserved. |
+| `reopen` | Retain two-pass Human Review reset. | Marco/admin. | R with exact cycle/content/reset authority. | Exact replay. |
+| `supply-evidence` | Retain Evidence-hold continuation. | Authorized caller under current protocol. | R; targets exact hold and continuation predicate. | Exact replay; hold evidence imported. |
+| `record-human-decision` | Retain Human Review continuation. | Marco/authorized human. | R; targets exact hold/decision requirement. | Exact replay; decision evidence imported. |
+| `authorize-governed-change` | Retain exact grant creation. | Marco/admin. | L; immutable grant and governed audit commit together. | Exact replay and semantic deduplication. |
+| `recover-lease` | Retain expired-lease release without ownership transfer. | Marco/admin. | R; exact lease target. | Exact replay; must not resolve a replacement lease on replay. |
+| `expire-lease` | Retain exact release; not run revocation. | Marco/admin. | L/R limited to exact lease and outcome. | Exact replay against original lease. |
+| `migrate` | Retain bounded Honest task-schema migration for admitted older-schema tasks. | Marco/admin. | L; exact migration binding, new version activation, operation/result, audit and projection event. | Exact replay; completed migration history imports; no silent retirement. |
+| `backup-create` | Retire at cutover. | Historical only. | X. | Preserve request outcomes, rows and artifacts as immutable evidence. |
+| `backup-restore` | Retire at cutover; operator PostgreSQL restore replaces it. | Historical only. | X. | Preserve journal/checkpoints/outcomes; no new connected admission. |
+| Planning-intent settlement | Add reason-bearing terminal settlement. | Marco/admin. | L limited to challenge/request/audit authority; proves no operation exists. | Exact replay; settled challenge is permanently non-reusable. |
+
+Every route implementation must additionally pin its request canonicalization, protocol/OpenAPI introduction, current-view effects, exact fence set, and approved error/result classes. Shared profiles may be referenced, but no route may leave its target authority or replay behavior unresolved.
 
 ## 5. Current-to-target authority coverage
 
@@ -123,11 +122,14 @@ The implementation must maintain a row-by-row coverage matrix at re-baseline. Th
 | `submissions` | Imported historical submission/request compatibility evidence or explicit retirement witness. Do not use as a second live task engine. |
 | `audit_events` | Append-only governed and operational audit events. |
 | `task_content_state` | Imported current content/placement head provenance; target current task/version/location pointers. |
+| Current Asana project/section registry | Imported governed project/section identities, active registry version, aliases, and exact placement provenance. |
+| Honest protocol/schema/migration assets | Immutable external-contract bindings with hashes and provenance; canonical authority remains external. |
+| Holds and route-specific recovery facts | Named hold requirements, attempts, checkpoints, outcomes, and exact target bindings; never generic unblock state. |
 | `operations` | Workflow operation authority. |
 | `content_versions` | Immutable document/version occurrences with preserved identity scheme. |
 | `verification_cycles` | Verification cycle, reviewed occurrence, decision, correction, and signoff bindings. |
-| `write_attempts` | Historical Asana write-effect evidence; target authoritative or projection effect attempts as appropriate. |
-| `movement_attempts` | Historical Asana placement-effect evidence; target projection effect attempts as appropriate. |
+| `write_attempts` | Imported legacy authoritative Asana-effect evidence only. Post-cutover Asana writes are represented exclusively as downstream projection attempts. |
+| `movement_attempts` | Imported legacy authoritative placement-effect evidence plus separately typed post-cutover projection attempts; never canonical post-cutover authority. |
 | `legacy_submission_quarantine` | Preserved isolated historical evidence. No automatic governed lifecycle. |
 | `operation_steps` | Immutable or monotonic operation-step facts. |
 | `operation_actor_facts` | Operation-scoped actor/run lineage. |
@@ -236,42 +238,69 @@ Activation is append-only and uses exactly one provenance route:
 
 A command may create multiple complete lineage occurrences where Verification requires reviewed, corrected, approved-candidate, and signed identities, but only the governed current activation advances the task pointer.
 
-### 6.6 Task locations and completion
+### 6.6 Governed projects, sections, registry, location, and completion
 
-Location history remains separate from content history. Current location references exact governed project/section identity and provenance.
+PostgreSQL owns stable logical governed-project and section identities after cutover. The target model must provide:
 
-Completion remains an independent Planning-eligibility axis, but it has no standalone positive-setting command. It may become true only through a governed Cooked or Archive transition. Stage A preserves imported completion and retains `reopen-planning`, which records the attempted before/after state and audit before clearing completion.
+- governed project records and lifecycle;
+- governed section records and lifecycle;
+- one active section-registry version or equivalent activation;
+- immutable registry provenance;
+- Asana project-GID and section-GID aliases with origin, non-transferability, and active/retired state;
+- task membership and section-placement history;
+- exact registry/location revisions used by workflow legality and current-view tokens.
+
+`sections` reads the active PostgreSQL registry. Asana enumeration after cutover is projection reconciliation only and cannot create, rename, retire, or select a logical section.
+
+Commands including `create`, workflow handoffs, Verification handoff, destination movement, and recovery use logical section identities. Where current semantics couple workflow phase, project membership, placement, or completion, those facts commit in the same authoritative transaction.
+
+Completion remains a separate Planning-eligibility axis, but it has no standalone positive-setting command. It may become true only through a governed Cooked or Archive transition. Stage A preserves imported completion and retains `reopen-planning`, which records the attempted before/after state and audit before clearing completion.
 
 No Cooked or Archive transition is implemented in Stage A unless separately authorized before re-baseline.
 
-### 6.7 Operations, steps, and actors
+### 6.7 Operations, steps, actors, and Honest contract bindings
 
 Operations preserve:
 
 - kind and lifecycle;
 - task binding;
 - creation request/execution;
-- exact protocol/release context;
+- exact Honest/protocol/schema binding;
 - predecessor/successor and abandonment lineage;
 - terminal outcome.
 
 Operation steps and actor facts remain append-only or monotonic. Actor facts bind exact operation participation, agent, owner, and run authority.
 
-### 6.8 Verification
+Canonical Honest authority remains the governing external release source. PostgreSQL stores immutable evidence bindings, not a competing canonical copy. An Honest binding records, as applicable:
+
+- source/repository or checkout identity;
+- protocol release and artifact hash;
+- task-schema release and artifact hash;
+- migration ID, source/target schema versions, migration metadata hash, and source IDs;
+- supporting Dish release;
+- resolution/import time and provenance.
+
+Bind the exact record to activation/import evidence, operations, Verification cycles, content occurrences whose interpretation depends on it, command executions requiring pinned release semantics, and retained `migrate` executions. Missing or hash-mismatched bindings fail closed.
+
+### 6.8 Verification and inspection occurrences
 
 Verification storage must represent:
 
 - cycle identity and operation/task binding;
 - exact reviewed version occurrence;
-- verifier actor/run and independence evidence;
-- inspection fact and attestation;
+- exact Honest protocol binding;
+- verifier actor fact, owner/run, and independence evidence;
+- immutable inspection occurrence and attestation;
+- exact logical Verification Queue section identity and active registry/location provenance at inspection;
 - rejection category/reason where applicable;
 - corrected candidate lineage;
 - signed occurrence and signoff evidence;
 - two-pass reset or Human Review evidence;
 - inherited signoff for permitted non-material check-ins.
 
-Do not infer signoff from rendered text or current content hash alone.
+Target `inspect` is a replay-bound evidence mutation. Its idempotency identity includes operation, cycle, reviewed occurrence and identity, verifier actor fact/run, attestation, and exact logical Verification Queue placement provenance. Evidence plus governed audit commits atomically. A changed head, actor fact, cycle, registry/location occurrence, or placement cannot reuse an earlier inspection.
+
+Do not infer signoff or inspection eligibility from rendered text, a current hash, or current placement alone.
 
 ### 6.9 Planning-intent challenges
 
@@ -354,26 +383,68 @@ A fence binds the execution to the exact snapshot or revision it planned against
 
 The implementation may use row versions, predicate checks, locks, or a combination, but must prove stale-executor rejection.
 
-### 6.15 Leases
+### 6.15 Leases and actor-attempt context
 
-Leases remain principal/run/task/operation-scoped actor authority.
+Leases remain principal/run/task/operation-scoped actor authority and preserve immutable creation context:
 
-They must preserve:
+- lease kind: actor or temporary admin request;
+- exact owner, actor/role, run, task, and operation;
+- task-monotonic actor-attempt sequence for actor leases;
+- optional exact Verification cycle context;
+- issuance, expiry, renewal, recovery, and release evidence.
 
-- exact owner and actor;
-- issuance and expiry;
-- renewal;
-- narrow recovery/release;
-- distinction from execution claims and run revocation;
-- inability of admin recovery to silently assume workflow ownership.
+Constraints must ensure:
 
-### 6.16 Abandonment and succession
+- admin-request leases have no actor-attempt sequence or Verification context;
+- actor-attempt sequence is unique and monotonic per task;
+- Verification context belongs to the same task and operation;
+- creation classification never changes;
+- recovery/release cannot silently assume workflow ownership, revoke a run, or become executor takeover.
 
-An abandonment attempt records exact target operation/lease/run evidence, reason, checkpoints, and terminal result.
+Legacy classified and unclassified leases receive explicit import disposition and cannot be guessed from timestamps.
 
-Where current semantics require continuation, create a fresh successor operation and immutable succession relation. Do not reopen or rewrite the abandoned operation as the new attempt.
+### 6.16 Holds and route-specific recovery authority
 
-### 6.17 Audit and repair
+Represent each retained hold/recovery family as named authority rather than a generic status or unblock event. At minimum distinguish:
+
+- Evidence hold and supplied-evidence continuation;
+- Human Review requirement and recorded decision;
+- expired-lease recovery/release;
+- authoritative execution/effect uncertainty recovery;
+- logical destination repair;
+- provably-not-applied discard;
+- Planning reopen/completion-clear attempts;
+- abandonment and successor recovery;
+- downstream projection-only recovery.
+
+Each family defines exact target identity, admission principal, request/execution profile, task/operation/lease/effect fences, monotonic checkpoints and outcomes, and interactions with content, location, audit, and projection. A post-cutover Asana observation can settle only projection authority unless it is immutable evidence for an imported legacy attempt; it cannot change canonical PostgreSQL content or logical placement.
+
+### 6.17 Abandonment and succession
+
+Abandonment is a task-fencing state machine, not a generic recovery flag.
+
+**Attempt creation** binds the exact classified actor lease and actor-attempt sequence, owner/run, task, source operation, optional Verification cycle, reason, request, and command execution. Only one active abandonment may fence a task.
+
+**Active fence** blocks unrelated connected mutation and new actor lease acquisition while the attempt is preparing, published, blocked, or reconciling.
+
+**Clean successor publication** atomically commits:
+
+- source operation terminalization;
+- exact incomplete-cycle disposition;
+- source-lease retirement;
+- fresh unowned successor operation and optional cycle;
+- immutable successor content/location baseline;
+- immutable succession edge;
+- exact successor claim mode and prepared target identity;
+- abandonment checkpoint/result.
+
+**Successor claim** requires the exact prepared operation or operation/cycle target, prohibits the abandoned owner/run, revalidates the immutable baseline and logical placement, appends the new actor fact and lease, clears claim mode, and terminalizes the abandonment as appropriate.
+
+**Drift and reconciliation** atomically mark the attempt blocked when baseline or placement diverges. Reconciliation uses successor-owned effect evidence to restore the immutable successor baseline and never rebases or rewrites the succession relation.
+
+All checkpoints remain under the same admitted command execution or exact continuation execution so process death cannot repeat committed workflow settlement or publish a second successor.
+
+### 6.18 Audit and repair
 
 Governed audit facts commit with their governed domain transaction.
 
@@ -389,7 +460,7 @@ Invocation/transport audit outside that transaction uses:
 
 A local durable journal is the default continuation of the current contract.
 
-### 6.18 Schema migration provenance
+### 6.19 Schema migration provenance
 
 Alembic controls executable ordering and current-head projection.
 
@@ -525,13 +596,24 @@ One import transaction or bounded batch transaction creates:
 
 It does not fabricate service requests or command executions.
 
-## 9. Asana projection implementation
+## 9. External-effect classes and Asana projection implementation
 
-### 9.1 Credentials and isolation
+### 9.1 Effect authority classes
+
+Keep three non-interchangeable classes:
+
+1. **Imported legacy authoritative Asana attempts:** immutable historical write/movement evidence from the pre-cutover authority. They are never reopened as post-cutover task authority.
+2. **Shadow envelopes and observations:** non-authoritative parity evidence while Asana/SQLite remains live authority.
+3. **Post-cutover projection attempts:** downstream effects only, with intent, claim, observation, adjudication, settlement, epoch, and mapping context.
+
+`recover`, `repair-destination`, and `discard` must select an exact authority class and target identity. No post-cutover Asana observation may mutate canonical content or logical placement.
+
+
+### 9.2 Credentials and isolation
 
 Use a dedicated projector credential after cutover. The authoritative mutation service path must not use the Asana authority credential for task state.
 
-### 9.2 Outbox
+### 9.3 Outbox
 
 Projection events are emitted in the authoritative command transaction.
 
@@ -547,13 +629,13 @@ Each event identifies:
 
 Creation events are not supersedable until mapping is settled.
 
-### 9.3 Mapping
+### 9.4 Mapping
 
 A mapping binds one Dish task to one Asana GID and records imported or projector-created origin.
 
 Mapping creation is exactly-once. Conflicting GIDs or duplicate correlations block automatic progress.
 
-### 9.4 Lost-response-safe create
+### 9.5 Lost-response-safe create
 
 Before enabling PostgreSQL-native `create`, prove that the deployed Asana API supports a non-canonical marker that is:
 
@@ -572,7 +654,7 @@ Settlement rules:
 
 If feasibility fails, keep PostgreSQL-native create disabled during shadowing and rehearsal and return bounded topology alternatives to Marco. Production cutover remains blocked unless Marco approves a topology that preserves the current `create` semantic or explicitly retires that semantic.
 
-### 9.5 Corpus reconciler
+### 9.6 Corpus reconciler
 
 Periodically enumerate every in-scope Asana project and classify each task GID as:
 
@@ -583,7 +665,7 @@ Periodically enumerate every in-scope Asana project and classify each task GID a
 
 A blocking unknown makes projection readiness unhealthy. Isolation must be conspicuous and must not manufacture Dish authority.
 
-### 9.6 Drift
+### 9.7 Drift
 
 For mapped tasks, compare Asana observation with exact committed PostgreSQL projection state.
 
@@ -595,10 +677,10 @@ A recommended package split is:
 
 - domain snapshot and policy;
 - command planner/adjudicator;
-- task/version repositories;
-- workflow/Verification repositories;
+- task/version and governed project/section registry repositories;
+- workflow/Verification and Honest-binding repositories;
 - request/run/execution repositories;
-- lease and abandonment repositories;
+- lease, hold/recovery, and abandonment repositories;
 - audit and repair repositories;
 - projection outbox and worker repositories;
 - migration/import repositories;
@@ -649,20 +731,22 @@ Projection freshness is reported separately and never changes legal PostgreSQL a
 
 ## 13. Implementation sequence
 
-1. Freeze current behavior characterization and authority inventory.
-2. Establish PostgreSQL project skeleton, SQLAlchemy session ownership, Alembic, and test database isolation.
-3. Implement authority generation, activation, migration provenance, and service readiness foundations.
-4. Implement task identity, aliases, immutable document versions, activations, locations, and completion.
-5. Implement request/run/execution/claim/fence/lease authority.
-6. Implement operations, steps, actor facts, Verification, inspect evidence, authorizations, Planning challenges, abandonment, succession, and recovery.
-7. Implement audit, external repair journal, and exact causality.
-8. Extract the shared planner/adjudicator while preserving the characterization corpus.
-9. Implement import provenance and shadow-envelope storage/delivery.
-10. Implement projection outbox, mappings, attempts, adjudication, and corpus reconciler.
-11. Prove Asana creation correlation; do not permit production cutover with current `create` unavailable unless Marco explicitly retires it.
-12. Implement coherent target service/OpenAPI/Action protocol and semantic-delta matrix.
-13. Complete migration tooling and rehearsal support under `database-backend-migration.md`.
-14. Run implementation acceptance before any production cutover decision.
+1. Freeze current behavior characterization and complete the authority inventory.
+2. Complete and approve the normative command semantic-delta contract in §4; no unresolved route may drive target schema or planner work.
+3. Establish PostgreSQL project skeleton, SQLAlchemy session ownership, Alembic, and test database isolation.
+4. Implement authority generation, activation, migration provenance, Honest bindings, and service readiness foundations.
+5. Implement governed project/section registry, aliases, task identity, immutable document versions, activations, location, and completion.
+6. Implement request/run/execution/claim/fence and classified lease authority.
+7. Implement operations, steps, actor facts, Verification/inspection, authorizations, and Planning challenges.
+8. Implement named holds/recovery profiles and the abandonment/succession state machine.
+9. Implement governed audit, external repair journal, exact causality, and typed effect authority.
+10. Extract the shared planner/adjudicator while preserving the independent characterization oracle.
+11. Implement import provenance and shadow-envelope storage/delivery.
+12. Implement projection outbox, mappings, attempts, adjudication, and corpus reconciler.
+13. Prove Asana creation correlation; do not permit production cutover with current `create` unavailable unless Marco explicitly retires it.
+14. Implement the coherent target service/OpenAPI/Action protocol from the approved semantic-delta contract.
+15. Complete migration tooling and rehearsal support under `database-backend-migration.md`.
+16. Run implementation acceptance before any production cutover decision.
 
 Implementation may be delivered incrementally, but no partial slice becomes production authority without the full cutover gates.
 
@@ -674,32 +758,38 @@ Implementation may be delivered incrementally, but no partial slice becomes prod
 - No named current authority is replaced only by generic audit.
 - Deferred product features are absent or feature-gated and non-gating.
 - Historical quarantine remains preserved and isolated.
+- The active project/section registry, aliases, Honest bindings, holds/recovery families, and typed effect classes each have explicit owners and import dispositions.
 
 ### 14.2 Schema and migration
 
 - Fresh database migration from empty to head succeeds.
 - Upgrade through every Alembic revision succeeds.
 - Applied migration provenance is immutable and complete.
-- Database constraints reject duplicate aliases, illegal pointer activation, duplicate consumptions, conflicting mappings, stale fences, and illegal monotonic transitions.
+- Database constraints reject duplicate task/project/section aliases, illegal registry or pointer activation, duplicate consumptions, conflicting mappings, stale fences, invalid lease classification/context, and illegal monotonic transitions.
 - Restore generation changes invalidate earlier run/request authority.
 
 ### 14.3 Current-behavior preservation
 
 - Every retained command passes its frozen characterization cases.
 - Legal actions and recovery guidance match current governing behavior unless the semantic-delta matrix records an approved change.
-- Verification exact occurrence and run-lineage cases pass.
+- Verification cases prove exact cycle, reviewed/corrected/approved/signed occurrence lineage, verifier actor fact/run, inspection attestation, exact Verification Queue placement provenance, signoff and inherited-signoff rules.
 - Planning first-call admission performs no task read, operation creation, or actor lease.
-- Completion/reopen, authorization, abandonment, and successor cases pass.
+- Completion/reopen, hold/recovery, authorization, abandonment, and successor cases pass.
+- Every command row in §4 is implemented with its selected profile, exact target authority, replay behavior, and retirement/import treatment.
 
 ### 14.4 Requests and concurrency
 
 - Exact request replay returns the stored outcome.
 - Identity conflict fails closed.
 - Concurrent duplicate delivery performs one logical execution.
+- Failure injection before the authoritative commit exposes none of the command bundle; failure after commit exposes the complete request/execution, domain facts, versions/activation, outcome, governed audit, causality, and outbox bundle, and exact replay returns that outcome.
 - Stale executor, task fence, and operation fence commits are rejected.
 - Lease expiry and executor takeover do not transfer actor authority incorrectly.
 - A restored generation cannot admit old capabilities, runs, or requests.
 - A surviving stale client cannot self-register without post-restore bootstrap authority.
+- Planning challenge claim/consume/settle races have one winner, deterministic loser replay, no partial operation, and no reuse after consumption or settlement.
+- Marco authorization reserve/release/consume races preserve all-or-nothing reservation, exact ownership, committed-result binding, and final single use.
+- Later uncertainty resolution, current-view computation, projection, cleanup, or invocation-audit failure cannot rewrite the immutable initial outcome or convert committed success into retry advice.
 
 ### 14.5 Audit and repair
 
@@ -723,6 +813,7 @@ Implementation may be delivered incrementally, but no partial slice becomes prod
 ### 14.7 Projection
 
 - Outbox event commits atomically with authoritative state.
+- Imported legacy authoritative attempts, shadow observations, and post-cutover projection attempts remain distinctly typed and cannot be settled through the wrong recovery route.
 - Per-task ordering is preserved across worker restart and takeover.
 - Duplicate delivery is idempotent.
 - Ambiguous writes and moves remain unresolved until adjudicated.

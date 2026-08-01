@@ -69,7 +69,7 @@ Minimum identities:
 
 - migration program release;
 - source Dish release;
-- source Honest/protocol/schema release;
+- source Honest/protocol/schema release, exact asset hashes, provenance, and operation/Verification bindings;
 - legacy authority generation;
 - baseline run;
 - baseline high-water mark;
@@ -214,7 +214,7 @@ For each supported current task:
 - create the imported title/body version;
 - activate it through import provenance rather than a fabricated command;
 - record all known Asana aliases and in-scope memberships;
-- import exact location, completion, workflow, request, execution, Verification, authorization, lease, abandonment, succession, audit, and historical evidence;
+- import the governed project/section registry, stable logical identities, project/section aliases, exact location and completion, workflow, request, execution, Verification, Honest bindings, authorization, classified lease/actor-attempt context, holds/recovery, abandonment, succession, audit, and historical evidence;
 - preserve the legacy identity scheme and source occurrence.
 
 For invalid or unsupported source evidence:
@@ -456,7 +456,7 @@ Production cutover may begin only when all of the following are true.
 
 - `database-backend.md` has no unresolved Stage A human decision other than conditional Asana-create fallback if feasibility fails.
 - Implementation acceptance in `database-backend-imp.md` passes.
-- Command semantic-delta matrix is complete.
+- The normative command semantic-delta contract is complete and approved before target command implementation, and remains complete at rehearsal.
 - Deferred features are non-gating.
 
 ### 11.2 Baseline and shadow
