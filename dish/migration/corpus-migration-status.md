@@ -164,31 +164,34 @@ record the later completed capture and accepted Correction 4 transformation.
    schema-v2 validation, deterministic migration validation, source-note fidelity, destination-name,
    and placeholder checks for all 99 tasks with zero findings. Re-run all three gates over any future
    batch revision.
-5. **Dish durable-state initialization — implementation and test rehearsal complete (2026-08-01).**
+5. **Dish durable-state initialization — production import complete (2026-08-01).**
    [`import_migrated_durable_state.py`](import_migrated_durable_state.py) resolves the approved
    placeholders, validates through Dish's parser and schema validator, and writes confirmed content
    baselines plus explicit `migration-assigned` audit facts through Dish's persistence layer. It
    fabricates no operation, Research evidence, Verification cycle, inspection fact, or signoff. A
    fresh throwaway database rehearsal wrote and reread 99 target-GID baselines and passed semantic
-   validation. The production assignment file still requires the approved per-task statuses and
-   production target GIDs before ingestion.
+   validation. Production then imported and reread all 99 approved baselines: 32 `ready`, 56
+   `pending-verification`, 10 `pending-research`, and 1 `pending-human-review`, with no operations
+   or Verification cycles created.
 6. **Planned and Korean policy — resolved 2026-07-31.** Planned hold released (all 5 into the
-   ordinary pipeline). Korean hold revised to ingest-now/govern-later, pending item 5.
-7. **Target project and importer — side-data policy and test pass complete; production creation still
-   open.** The read-only 99-task side-data audit found 39 human comments on 26 tasks, 787 ordinary
+   ordinary pipeline). Korean hold revised to ingest-now/govern-later and imported through item 5
+   without fabricated Research or Verification cycles.
+7. **Target project and importer — production import complete (2026-08-01).** The read-only 99-task
+   side-data audit found 39 human comments on 26 tasks, 787 ordinary
    system stories, 10 due dates, and no attachments, subtasks, task references, or human decisions.
    Preserve one exact attributed legacy-comment block per affected target and the 10 due dates;
    omit system history. [`prepare_asana_side_data_import.py`](prepare_asana_side_data_import.py)
    validates all mappings and target baselines, fails on drift, and emits only the guarded Asana batch
    needed to converge. The test-project pass applied 26 comment blocks and 10 dates; an exact reread
-   produced a zero-operation rerun plan. Still open: create the separate production target project
-   and section registry, retain the production-grade idempotent task-creation/mapping path, and bind
-   the final production assignments to its new GIDs.
-8. **Rehearsal and cutover — content, durable-state, and side-data test passes complete; rollback and
-   production cutover remain.** The isolated test project has 99 exact target tasks and an atomic
+   produced a zero-operation rerun plan. Production project `1217084805070730` now contains the 99
+   governed and 4 unmanaged targets across 22 registered sections. An exact live reread found all
+   103 targets, no missing tasks, and a zero-operation rerun plan; the source remains intact.
+8. **Rehearsal and cutover — migration complete; final rollback snapshot and public route flip
+   remain.** The isolated test project has 99 exact target tasks and an atomic
    source-to-target mapping; Correction 4, the fresh offline durable database, and the side-data
-   convergence pass all verified 99/99 with an idempotent zero-write side-data rerun. Prove the final
-   production rollback inputs, then follow the separately authorized joint cutover in
+   convergence pass all verified 99/99 with an idempotent zero-write side-data rerun. Production now
+   passes the same exact-content and idempotency checks. Create the final managed production database
+   snapshot, then follow the separately authorized joint cutover in
    [`rollout.md`](../docs/rollout.md). Do not activate a mixed protocol/schema/tool/database/project
    state.
 

@@ -20,6 +20,8 @@ complete and need not be repeated wholesale:
 - Codex automated smoke testing is complete for its tested revisions. If later code changes land,
   select regression coverage in proportion to the affected authority and commits since the last
   recorded pass; documentation-only changes require no test rerun.
+- The final production-import code passed the smoke gate (347 tests), database-boundary gate (12
+  tests), and complete suite (1,233 tests) on 2026-08-01.
 - A connected GPT completed create → Planning → Research → independent Verification → submit, with
   exact content identities, placement, request replay, and final signoff confirmed. The custom GPT
   Action lifecycle testing is complete.
@@ -55,9 +57,7 @@ selection, migration rehearsal, rollback proof, or production authorization.
 Resolve and record these review items before production activation. Until a decision changes the
 implementation or runtime documentation, the current code and contracts remain authoritative.
 
-1. **Final regression gate.** Preserve the deterministic recovery and governed-audit regressions,
-   then pass focused concurrency/recovery coverage plus the complete suite on the final code.
-2. **Production authorization.** Migration rehearsal, rollback confirmation, production credential
+1. **Production authorization.** Rollback confirmation, production credential
    and section-registry verification, and production cutover still require explicit authorization.
 
 ## Post-rollout: abandoned run ownership Part II review

@@ -121,7 +121,7 @@ Before any task mutation:
 2. In GPT Preview, call `sections`.
 3. Confirm the result is the canonical JSON envelope with `code: OK`.
 4. Confirm `data.project_gid` matches the selected environment: test is `1216693403164366` and
-   production is `1215089183018968`. Production selection requires the separately authorized
+   production is `1217084805070730`. Production selection requires the separately authorized
    cutover procedure in `../docs/rollout.md`.
 5. Confirm the returned Research and Verification queue GIDs match that same project.
 6. Confirm the Preview request succeeds through the standard HTTPS URL, not either private endpoint

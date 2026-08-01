@@ -72,7 +72,7 @@ DISH_DB_PATH=/home/marco/.local/state/dish/test/shared.sqlite3
 DISH_SERVICE_BACKUP_DIR=/home/marco/.local/state/dish/test/backups
 # private/action ports: 8765/8766
 
-DISH_COOKING_PROJECT_GID=1215089183018968
+DISH_COOKING_PROJECT_GID=1217084805070730
 DISH_DB_PATH=/home/marco/.local/state/dish/prod/shared.sqlite3
 DISH_SERVICE_BACKUP_DIR=/home/marco/.local/state/dish/prod/backups
 # private/action ports: 8775/8776
