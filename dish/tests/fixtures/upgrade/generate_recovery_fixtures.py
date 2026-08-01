@@ -9,7 +9,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 
 from dish_tool.database import content_identity
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 
 DB_PATH = HERE / "dish-tool-recovery-v12.sqlite"
 SIDECAR_PATH = HERE / "live-tasks.json"

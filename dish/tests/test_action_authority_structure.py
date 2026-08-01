@@ -54,3 +54,13 @@ def test_persistence_helper_is_named_as_candidate_not_authority():
     source = (ROOT / "dish_tool" / "database.py").read_text(encoding="utf-8")
     assert "def phase_candidate_actions(" in source
     assert "def legal_operation_actions(" not in source
+
+
+def test_production_uses_authoritative_transaction_and_workflow_primitives():
+    root = Path(__file__).resolve().parents[1]
+    production = list((root / "dish_tool").glob("*.py")) + list((root / "dish_service").glob("*.py"))
+    text = "\n".join(path.read_text(encoding="utf-8") for path in production)
+    assert "atomic_persistence" not in text
+    assert "immediate_persistence" not in text
+    assert "WorkflowRepository" not in text
+    assert not (root / "dish_tool" / "workflow_repository.py").exists()

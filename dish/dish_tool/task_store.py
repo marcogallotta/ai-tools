@@ -16,8 +16,8 @@ from .database import (
     begin_planning_reopen_attempt,
     finish_planning_reopen_attempt,
     record_audit,
-    immediate_persistence,
 )
+from .transactions import immediate_transaction
 from .errors import BackendFailure, DishRuleError
 from .recovery import (
     begin_movement_attempt,
@@ -286,7 +286,7 @@ def _confirm_planning_reopen(
     live: LiveTask | None,
     recovered_by: str | None = None,
 ) -> sqlite3.Row:
-    with immediate_persistence(conn, "planning_reopen_confirmed"):
+    with immediate_transaction(conn, "planning_reopen_confirmed"):
         finished = finish_planning_reopen_attempt(
             conn,
             attempt_id=attempt["attempt_id"],
@@ -526,7 +526,7 @@ def reconcile_planning_reopen_attempt(
     local transaction; the next replay reconciles the live task before acting.
     """
     if allow_external_retry:
-        with immediate_persistence(conn, "planning_reopen_reconciliation"):
+        with immediate_transaction(conn, "planning_reopen_reconciliation"):
             return _reconcile_planning_reopen_attempt(
                 conn,
                 backend,

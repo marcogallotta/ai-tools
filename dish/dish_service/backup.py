@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from dish_tool.constants import SCHEMA_VERSION
-from dish_tool.database_schema import _validate_current_database, initialize_database
+from dish_tool.database_initialization import initialize_database
+from dish_tool.database_schema import validate_current_database
 from dish_tool.errors import DishRuleError
 
 from .restore_plan import RestorePlan
@@ -174,7 +175,7 @@ class BackupManager:
         cls._validate_integrity(path)
         conn = cls._raw_connection(path)
         try:
-            _validate_current_database(conn)
+            validate_current_database(conn)
         finally:
             conn.close()
 

@@ -6,6 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Callable, TypeVar
 
+from .database import pending_operation_steps, phase_candidate_actions
 from .database_schema import _validate_semantic_evidence
 from .errors import DishRuleError
 from .execution_provenance import operation_execution_provenance
@@ -19,7 +20,6 @@ from .operation_execution import (
 )
 from .task_gateway import ExactTaskGateway
 from .workflow_policy import WorkflowSnapshot, legal_actions
-from .workflow_repository import WorkflowRepository
 
 T = TypeVar("T")
 
@@ -63,11 +63,10 @@ class CurrentWorkflowService:
         self.conn = conn
         self.backend = backend
         self.request_id = str(request_id or "").strip() or None
-        self.repository = WorkflowRepository(conn)
         self.gateway = ExactTaskGateway(conn, backend)
 
     def operation(self, operation_id: str) -> sqlite3.Row:
-        row = self.repository.operation(operation_id)
+        row = self.conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
         if row is None:
             raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
         return row
@@ -258,13 +257,13 @@ class CurrentWorkflowService:
             unresolved_attempts += tuple(
                 f"execution:{execution_id}" for execution_id in unresolved_executions
             )
-        pending_steps = tuple(row["step_name"] for row in self.repository.pending_steps(operation_id))
+        pending_steps = tuple(row["step_name"] for row in pending_operation_steps(self.conn, operation_id))
         migration_required = bool(op["migration_reconciliation_required"])
         snapshot = WorkflowSnapshot(
             operation_status=op["status"],
             operation_phase=op["phase"],
             operation_kind=op["operation_kind"],
-            persisted_actions=tuple(self.repository.legal_actions(op)),
+            persisted_actions=tuple(phase_candidate_actions(op)),
             live_status=live_status,
             live_section_gid=live.section_gid,
             verification_queue_gid=registry.verification_queue_gid,

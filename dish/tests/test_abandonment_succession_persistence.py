@@ -17,11 +17,11 @@ from dish_tool.database import (
     create_verification_cycle,
     declare_operation_step,
 )
+from dish_tool.database_initialization import initialize_database
 from dish_tool.database_schema import (
     MIGRATIONS,
     _execute_script_statements,
     _validate_semantic_evidence,
-    initialize_database,
 )
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors

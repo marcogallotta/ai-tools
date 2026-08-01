@@ -13,7 +13,7 @@ from dish_tool.admin import DishAdminApplication
 from dish_tool.abandonment import settle_abandonment_frontier
 from dish_tool.commands import DishApplication
 from dish_tool.database import create_abandonment_attempt_in_transaction
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import ResolvedRelease
 from tests.support.workflow_builders import create_large_rejection_successor, reject_large

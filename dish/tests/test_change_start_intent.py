@@ -10,7 +10,7 @@ from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
 from dish_tool import database as database_module
 from dish_tool.database import confirm_task_content, create_operation
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
 

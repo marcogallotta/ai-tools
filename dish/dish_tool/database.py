@@ -11,23 +11,13 @@ from typing import Any, Iterable, Mapping, Sequence
 from .abandonment_succession import AbandonmentSuccessionSpec
 from .audit_repair_sidecar import fsync_parent, locked_audit_repair_sidecar
 from .constants import SUBMISSION_STATES
-from .database_schema import MIGRATIONS, initialize_database, migrate_database
+from .database_initialization import initialize_database
+from .database_schema import MIGRATIONS, migrate_database
 from .errors import DishRuleError
 from .execution_provenance import current_operation_execution_id
 from .models import ContentIdentity, OperationActors, agent_family, utc_now
 from .transactions import immediate_transaction, savepoint_transaction
 
-
-def atomic_persistence(conn: sqlite3.Connection, label: str):
-    """Backward-compatible alias for an isolated nested persistence unit."""
-
-    return savepoint_transaction(conn, label)
-
-
-def immediate_persistence(conn: sqlite3.Connection, label: str):
-    """Backward-compatible alias for a serialized persistence unit."""
-
-    return immediate_transaction(conn, label)
 
 
 def record_audit(
@@ -190,7 +180,7 @@ def confirm_task_content(
     identity = content_identity(title, notes)
     now = utc_now()
     version_id = str(uuid.uuid4())
-    with immediate_persistence(conn, "confirm_task_content"):
+    with immediate_transaction(conn, "confirm_task_content"):
         conn.execute(
             """
             INSERT INTO content_versions (
@@ -233,7 +223,7 @@ def finalize_confirmed_write_attempt(
     """Atomically bind a confirmed external write to all local facts it proves."""
     identity = content_identity(title, notes)
     now = utc_now()
-    with immediate_persistence(conn, "finalize_confirmed_write_attempt"):
+    with immediate_transaction(conn, "finalize_confirmed_write_attempt"):
         attempt = conn.execute("SELECT * FROM write_attempts WHERE attempt_id = ?", (attempt_id,)).fetchone()
         if attempt is None:
             raise DishRuleError("NOT_FOUND", "write attempt not found", rule="write_attempt_not_found")
@@ -320,7 +310,7 @@ def finalize_confirmed_write_attempt(
 def finalize_not_applied_write_attempt(
     conn: sqlite3.Connection, *, attempt_id: str
 ) -> sqlite3.Row:
-    with immediate_persistence(conn, "finalize_not_applied_write_attempt"):
+    with immediate_transaction(conn, "finalize_not_applied_write_attempt"):
         row = conn.execute(
             "SELECT * FROM write_attempts WHERE attempt_id=?", (attempt_id,)
         ).fetchone()
@@ -377,7 +367,7 @@ def finalize_confirmed_movement_attempt(
     conn: sqlite3.Connection, *, attempt_id: str, live_section_gid: str
 ) -> sqlite3.Row:
     now = utc_now()
-    with immediate_persistence(conn, "finalize_confirmed_movement_attempt"):
+    with immediate_transaction(conn, "finalize_confirmed_movement_attempt"):
         row = conn.execute(
             "SELECT * FROM movement_attempts WHERE attempt_id=?", (attempt_id,)
         ).fetchone()
@@ -444,7 +434,7 @@ def finalize_not_applied_movement_attempt(
     conn: sqlite3.Connection, *, attempt_id: str
 ) -> sqlite3.Row:
     now = utc_now()
-    with immediate_persistence(conn, "finalize_not_applied_movement_attempt"):
+    with immediate_transaction(conn, "finalize_not_applied_movement_attempt"):
         row = conn.execute(
             "SELECT * FROM movement_attempts WHERE attempt_id=?", (attempt_id,)
         ).fetchone()
@@ -502,7 +492,7 @@ def create_operation(
     initial_steps: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> sqlite3.Row:
     operation_id = str(uuid.uuid4())
-    with immediate_persistence(conn, "create_operation"):
+    with immediate_transaction(conn, "create_operation"):
         abandonment = conn.execute(
             """SELECT abandonment_id,status,source_operation_id,successor_operation_id
                  FROM abandonment_attempts
@@ -1574,7 +1564,7 @@ def mark_operation_completion(
         column = columns[marker]
     except KeyError as exc:
         raise ValueError(f"unknown completion marker: {marker}") from exc
-    with atomic_persistence(conn, "operation_marker"):
+    with savepoint_transaction(conn, "operation_marker"):
         conn.execute(
             f"UPDATE operations SET {column} = ? WHERE operation_id = ?",
             (utc_now(), operation_id),
@@ -1605,7 +1595,7 @@ def create_verification_cycle(
     route: str | None = None, resume_state: str | None = None,
 ) -> sqlite3.Row:
     cycle_id = str(uuid.uuid4())
-    with atomic_persistence(conn, "verification_cycle"):
+    with savepoint_transaction(conn, "verification_cycle"):
         conn.execute(
             """INSERT INTO verification_cycles (
                 cycle_id, operation_id, task_gid, cycle_number, protocol_release, protocol_text,
@@ -1661,7 +1651,7 @@ def begin_planning_reopen_attempt(
     request_id: str | None,
 ) -> sqlite3.Row:
     attempt_id = str(uuid.uuid4())
-    with immediate_persistence(conn, "planning_reopen_attempt"):
+    with immediate_transaction(conn, "planning_reopen_attempt"):
         active = conn.execute(
             """SELECT operation_id FROM operations
                  WHERE task_gid=? AND status IN ('open','uncertain')
@@ -1840,7 +1830,7 @@ def record_dish_inspect_fact(
             rule="dish_inspect_review_binding_invalid",
         )
     fact_id = str(uuid.uuid4())
-    with atomic_persistence(conn, "dish_inspect_fact"):
+    with savepoint_transaction(conn, "dish_inspect_fact"):
         conn.execute(
             """INSERT INTO dish_inspect_facts(
                    fact_id,operation_id,cycle_id,task_gid,reviewed_content_version_id,
@@ -1931,7 +1921,7 @@ def resolve_signoff_cycle_for_identity(
 
 
 def transition_operation(conn: sqlite3.Connection, operation_id: str, *, phase: str, status: str | None = None, terminal_outcome: str | None = None, inherited_signoff_cycle_id: str | None = None) -> sqlite3.Row:
-    with atomic_persistence(conn, "operation_transition"):
+    with savepoint_transaction(conn, "operation_transition"):
         row = conn.execute(
             "SELECT * FROM operations WHERE operation_id = ?", (operation_id,)
         ).fetchone()
@@ -2074,7 +2064,7 @@ def record_actor_fact(conn: sqlite3.Connection, *, operation_id: str, task_gid: 
     """Record an immutable actor fact idempotently within one operation."""
     clean_run = str(run_id or '').strip() or None
     clean_attestation = str(independence_attestation or '').strip() or None
-    with atomic_persistence(conn, "actor_fact"):
+    with savepoint_transaction(conn, "actor_fact"):
         if clean_run is not None:
             existing_rows = conn.execute(
                 """SELECT * FROM operation_actor_facts
@@ -2172,7 +2162,7 @@ def record_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, opera
     before_json = json.dumps(before, sort_keys=True)
     after_json = json.dumps(after, sort_keys=True)
     clean_run_id = str(actor_run_id or "").strip() or None
-    with immediate_persistence(conn, "record_marco_authorization"):
+    with immediate_transaction(conn, "record_marco_authorization"):
         if operation_id is not None:
             operation = conn.execute(
                 "SELECT task_gid,status FROM operations WHERE operation_id=?",
@@ -2251,7 +2241,7 @@ def reserve_marco_authorizations(
     authorization. Existing reservations owned by this operation are reusable;
     reservations owned by another operation fail closed.
     """
-    with immediate_persistence(conn, "reserve_marco_authorizations"):
+    with immediate_transaction(conn, "reserve_marco_authorizations"):
         operation = conn.execute(
             "SELECT task_gid,status FROM operations WHERE operation_id=?",
             (operation_id,),
@@ -2418,7 +2408,7 @@ def process_command_audit_repairs(conn: sqlite3.Connection, *, limit: int = 100)
     """Import and replay pending invocation-audit repairs exactly once."""
     _import_command_audit_repair_fallback(conn)
     repaired = 0
-    with immediate_persistence(conn, "process_command_audit_repairs"):
+    with immediate_transaction(conn, "process_command_audit_repairs"):
         rows = conn.execute(
             """SELECT * FROM command_audit_repairs
                  WHERE repaired_at IS NULL
@@ -2450,7 +2440,7 @@ def process_command_audit_repairs(conn: sqlite3.Connection, *, limit: int = 100)
                 "original_audit_error": row["audit_error"],
             })
             try:
-                with atomic_persistence(conn, "audit_repair_row"):
+                with savepoint_transaction(conn, "audit_repair_row"):
                     record_audit(
                         conn, submission_id=row["submission_id"],
                         task_gid=row["task_gid"], operation_id=row["operation_id"],

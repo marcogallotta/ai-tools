@@ -9,8 +9,9 @@ from .constants import COOKING_PROJECT_GID
 from .database import (
     mark_operation_completion, record_audit, transition_operation, assert_fresh_verifier,
     record_actor_fact, declare_operation_step, complete_operation_step, content_identity,
-    record_dish_inspect_fact, atomic_persistence, complete_abandonment_in_transaction,
+    record_dish_inspect_fact, savepoint_transaction, complete_abandonment_in_transaction,
 )
+from .transactions import savepoint_transaction
 from .errors import DishRuleError
 from .models import (
     SectionRegistry,
@@ -325,7 +326,7 @@ def verification_read(
 
     # The external read is complete. Persist every local review-authority fact as
     # one atomic unit so a crash leaves either no review binding or a complete one.
-    with atomic_persistence(conn, "verification_read_local"):
+    with savepoint_transaction(conn, "verification_read_local"):
         current_op, current_cycle = _operation_and_cycle(
             conn, operation_id, target_cycle_id=target_cycle_id
         )
@@ -652,7 +653,7 @@ def _resume_approved_cycle(
                AND json_extract(details, '$.cycle_id')=? LIMIT 1""",
         (operation_id, cycle["cycle_id"]),
     ).fetchone()
-    with atomic_persistence(conn, "approval_replay_finalize"):
+    with savepoint_transaction(conn, "approval_replay_finalize"):
         complete_operation_step(conn, operation_id, "signoff_write")
         if op["phase"] != "await_submission":
             transition_operation(conn, operation_id, phase="await_submission")
@@ -825,7 +826,7 @@ def approve_live(
     signed_version = _content_version_for_identity(
         conn, operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity
     )
-    with atomic_persistence(conn, "verification_approved_finalize"):
+    with savepoint_transaction(conn, "verification_approved_finalize"):
         complete_operation_step(conn, operation_id, "signoff_write")
         transition_operation(conn, operation_id, phase="await_submission")
         complete_operation_step(conn, operation_id, "signoff_finalize")

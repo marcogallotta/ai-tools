@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import atomic_persistence, create_verification_cycle, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step, content_identity, release_marco_authorization_reservations
+from .database import create_verification_cycle, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step, content_identity, release_marco_authorization_reservations
+from .transactions import savepoint_transaction
 from .errors import DishRuleError
 from .hold_resolution import resolve_preconstruction_hold_to_successor
 from .small_correction_lineage import assert_small_correction_write_lineage
@@ -102,7 +103,7 @@ def _preconstruction_research_hold(
         "candidate_content_existed": False,
     }
     target_phase = "held_evidence" if route == "evidence" else "held_human"
-    with atomic_persistence(conn, "research_preconstruction_hold"):
+    with savepoint_transaction(conn, "research_preconstruction_hold"):
         declare_operation_step(
             conn, op["operation_id"], "research_preconstruction_hold", intended
         )
@@ -503,7 +504,7 @@ def _resume_pending_rejection_finalize(
         )
     target_phase = json.loads(target_phase_row["intended_json"]).get("phase")
     new_cycle = None
-    with atomic_persistence(conn, "verification_rejected_replay_finalize"):
+    with savepoint_transaction(conn, "verification_rejected_replay_finalize"):
         complete_operation_step(conn, operation_id, route_write_step)
         if route == "large":
             actor_row = conn.execute(
@@ -686,7 +687,7 @@ def _resume_rejected_cycle(
         )
     document = parse_task_document(f"{live.title}\n{live.notes}")
     if prior is None:
-        with atomic_persistence(conn, "rejection_replay_audit"):
+        with savepoint_transaction(conn, "rejection_replay_audit"):
             record_audit(
                 conn, submission_id=None, task_gid=op["task_gid"],
                 operation_id=operation_id, event_type="verification.rejected",
@@ -866,7 +867,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         declare_operation_step(conn, operation_id, route_new_cycle_step, {"protocol_release": snapshot.identity, "protocol_text": snapshot.text})
     declare_operation_step(conn, operation_id, route_phase_step, {"phase": target_phase})
     confirmed = _write_document(conn, backend, op, live, document, schema=schema, authorization_ids=authorization_ids)
-    with atomic_persistence(conn, "verification_rejected_finalize"):
+    with savepoint_transaction(conn, "verification_rejected_finalize"):
         complete_operation_step(conn, operation_id, route_write_step)
         if route == "large":
             record_actor_fact(

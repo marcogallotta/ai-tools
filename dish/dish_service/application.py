@@ -19,8 +19,6 @@ from dish_tool.backend import AsanaBackend
 from dish_tool.commands import DishApplication, expose_authoritative_view
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
 from dish_tool.database import (
-    atomic_persistence,
-    immediate_persistence,
     initialize_database,
     planning_reopen_attempt_by_request,
     process_command_audit_repairs,
@@ -29,6 +27,7 @@ from dish_tool.database import (
     unresolved_planning_reopen_attempts,
 )
 import dish_tool.database_initialization as database_initialization
+from dish_tool.transactions import immediate_transaction, savepoint_transaction
 from dish_tool.errors import BackendFailure, DishRuleError
 from dish_tool.invocation_audit import record_invocation_audit
 from dish_tool.models import (
@@ -368,7 +367,7 @@ def _probe_database_write_readiness(conn: sqlite3.Connection) -> None:
     prior_timeout_ms = int(timeout_row[0]) if timeout_row is not None else 0
     try:
         conn.execute("PRAGMA busy_timeout = 100")
-        with atomic_persistence(conn, "health_write_probe"):
+        with savepoint_transaction(conn, "health_write_probe"):
             conn.execute(
                 """UPDATE schema_migrations
                       SET applied_at = applied_at
@@ -872,7 +871,7 @@ class DishService:
     ) -> dict[str, Any]:
         result = self._planning_reopen_result(attempt, state=state, live=live)
         request_id = str(attempt["request_id"] or "").strip() or None
-        with immediate_persistence(conn, "planning_reopen_request_completion"):
+        with immediate_transaction(conn, "planning_reopen_request_completion"):
             self._ensure_planning_reopen_invocation_audit(
                 conn, attempt=attempt, result=result
             )
@@ -921,7 +920,7 @@ class DishService:
             # An unresolved Planning reopen remains pending so a later exact
             # replay can converge it when live evidence becomes authoritative.
             if exc.code != "BACKEND_UNCERTAIN":
-                with immediate_persistence(
+                with immediate_transaction(
                     conn, "planning_reopen_failed_request_completion"
                 ):
                     self._ensure_planning_reopen_invocation_audit(
@@ -1588,7 +1587,7 @@ class DishService:
             fallback_applied = False
             fallback_error: Exception | None = None
             try:
-                with immediate_persistence(conn, "admin_lease_cleanup_fallback"):
+                with immediate_transaction(conn, "admin_lease_cleanup_fallback"):
                     active = conn.execute(
                         "SELECT lease_id,owner_id,run_id FROM service_leases "
                         "WHERE operation_id=? AND released_at IS NULL",
@@ -1773,7 +1772,7 @@ class DishService:
             agent=str(arguments.get("agent") or "") or None,
         )
         if kind == "planning":
-            with immediate_persistence(conn, "complete_planning_start_replay"):
+            with immediate_transaction(conn, "complete_planning_start_replay"):
                 consume_planning_intent(
                     conn, request_id=request_id, operation_id=operation_id
                 )
@@ -1830,7 +1829,7 @@ class DishService:
                     retryable=False,
                     details={"field": "client.request_id"},
                 )
-            with immediate_persistence(state.conn, "planning_intent_gate"):
+            with immediate_transaction(state.conn, "planning_intent_gate"):
                 confirmation = issue_or_claim_planning_intent(
                     state.conn,
                     request_id=request_id,
@@ -2116,7 +2115,7 @@ class DishService:
                 and result.get("ok")
                 and result_operation_id
             ):
-                with immediate_persistence(
+                with immediate_transaction(
                     state.conn, "complete_planning_start_request"
                 ):
                     consume_planning_intent(
@@ -2349,7 +2348,7 @@ class DishService:
                     )
                 leases = self._lease_manager(conn)
                 transaction = (
-                    immediate_persistence(conn, "renew_service_lease_request")
+                    immediate_transaction(conn, "renew_service_lease_request")
                     if request_id
                     else contextlib.nullcontext()
                 )
@@ -2463,7 +2462,7 @@ class DishService:
                     )
                 leases = self._lease_manager(conn)
                 transaction = (
-                    immediate_persistence(conn, "recover_service_lease_request")
+                    immediate_transaction(conn, "recover_service_lease_request")
                     if request_id
                     else contextlib.nullcontext()
                 )
@@ -2600,7 +2599,7 @@ class DishService:
                     prior["allowed_actions"] = []
                     return prior
 
-                with immediate_persistence(conn, "expire_service_lease_request"):
+                with immediate_transaction(conn, "expire_service_lease_request"):
                     current_request = conn.execute(
                         "SELECT * FROM service_requests WHERE request_id=?",
                         (request_id,),
@@ -3208,7 +3207,7 @@ class DishService:
                 self.authoritative = authoritative
 
         try:
-            with immediate_persistence(conn, "complete_backup_creation_request"):
+            with immediate_transaction(conn, "complete_backup_creation_request"):
                 complete_backup_creation(
                     conn, request_id=request_id, record=record
                 )

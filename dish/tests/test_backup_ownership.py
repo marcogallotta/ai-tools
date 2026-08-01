@@ -14,7 +14,8 @@ from dish_service.database_ownership import (
 )
 from dish_service.process_lock import ServiceProcessLock
 from dish_tool.constants import SCHEMA_VERSION
-from dish_tool.database_schema import MIGRATIONS, _execute_script_statements, initialize_database
+from dish_tool.database_initialization import initialize_database
+from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
 from dish_tool.errors import DishRuleError
 from tests.support.operational import _service
 

@@ -6,7 +6,7 @@ import sqlite3
 import dish_service.application as application_module
 from dish_service.backup import BackupManager
 from dish_service.leases import ServicePrincipal
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 from tests.support.operational import _service
 
 

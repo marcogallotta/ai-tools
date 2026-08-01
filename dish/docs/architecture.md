@@ -644,5 +644,13 @@ HTTP POST path recognition is declarative in `http_routing.py`. The request hand
 
 A first runtime request may bootstrap a missing database for embedded and test callers that have no separate listener-startup phase. Concurrent first callers join the serialized full initialization path when they observe a file that has not yet converged. After convergence, request connections do not rescan the complete append-only history.
 
-The migration ledger and canonical DDL remain in `database_schema.py`. Request code must not reproduce connection or migration setup locally. `database_schema.initialize_database` is a temporary compatibility facade only; `database_initialization.initialize_database` is the implementation owner.
+The migration ledger and canonical DDL remain in `database_schema.py`. Request code must not reproduce connection or migration setup locally. Stage 8 removes the temporary `database_schema.initialize_database` and private validation aliases; `database_initialization.initialize_database` and the public validation functions are now the only owners.
 
+
+### Compatibility-surface retirement
+
+Current production code calls `savepoint_transaction`, `immediate_transaction`,
+`pending_operation_steps`, and `phase_candidate_actions` directly. Historical
+transaction aliases and the forwarding-only `WorkflowRepository` facade are not
+part of the supported architecture. New code must use the authoritative primitive
+owned by the transaction or workflow module rather than add a second name for it.

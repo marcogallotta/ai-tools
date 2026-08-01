@@ -5,7 +5,8 @@ import uuid
 
 import pytest
 
-from dish_tool.database_schema import _validate_semantic_evidence, initialize_database
+from dish_tool.database_initialization import initialize_database
+from dish_tool.database_schema import _validate_semantic_evidence
 from tests.support.operational import _approved, _service
 
 

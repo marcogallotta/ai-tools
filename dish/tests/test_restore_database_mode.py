@@ -6,7 +6,7 @@ import stat
 from pathlib import Path
 
 from dish_service.backup import BackupManager
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 
 
 def _mode(path: Path) -> int:

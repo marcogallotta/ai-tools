@@ -7,7 +7,7 @@ import pytest
 import dish_tool.audit_repair_sidecar as sidecar_module
 import dish_tool.database as database_module
 from dish_tool.database import _import_command_audit_repair_fallback
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.invocation_audit import _write_emergency_repair
 from tests.support.thread_teardown import join_thread, managed_thread
 

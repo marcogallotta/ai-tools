@@ -5,7 +5,7 @@ import pytest
 
 from dish_tool.admin import DishAdminApplication
 from dish_tool.database import confirm_task_content, create_operation, declare_operation_step
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
 from dish_tool.recovery import begin_movement_attempt, begin_operation_write_attempt

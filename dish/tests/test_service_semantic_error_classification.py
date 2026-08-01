@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 from dish_service.leases import LeaseManager, ServicePrincipal
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from tests.support.operational import _service
 

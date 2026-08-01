@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from dish_service.leases import ServicePrincipal
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 from tests.support.operational import _service
 from tests.support.verification import TASK
 

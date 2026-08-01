@@ -327,7 +327,7 @@ def current_database_template(tmp_path_factory):
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA synchronous = OFF")
         database_schema.migrate_database(conn)
-        database_schema._validate_current_database(conn)
+        database_schema.validate_current_database(conn)
     finally:
         conn.close()
     return path

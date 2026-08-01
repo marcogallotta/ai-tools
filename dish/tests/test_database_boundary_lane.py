@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 
 
 @pytest.mark.database_boundary

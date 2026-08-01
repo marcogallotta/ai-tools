@@ -16,7 +16,7 @@ from dish_tool.database import (
     create_abandonment_attempt_in_transaction,
     create_operation,
 )
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
 from tests.support.thread_teardown import join_thread, start_server_thread, stop_server

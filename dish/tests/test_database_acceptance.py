@@ -6,7 +6,8 @@ import pytest
 
 from dish_tool.database import create_operation, mark_operation_completion, confirm_task_content
 import dish_tool.database_schema as database_schema
-from dish_tool.database_schema import MIGRATIONS, initialize_database
+from dish_tool.database_initialization import initialize_database
+from dish_tool.database_schema import MIGRATIONS
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
 from dish_tool.recovery import begin_movement_attempt, begin_operation_write_attempt, finish_movement_attempt, finish_operation_write_attempt

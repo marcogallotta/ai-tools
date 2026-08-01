@@ -2356,22 +2356,6 @@ MIGRATION_BUSY_TIMEOUT_MS = 2000
 RUNTIME_BUSY_TIMEOUT_MS = 30000
 
 
-def initialize_database(
-    path: str | os.PathLike[str] = DEFAULT_DB_PATH,
-) -> sqlite3.Connection:
-    """Compatibility facade for complete startup-grade initialization.
-
-    The implementation owner is ``database_initialization``. Dynamic lookup
-    keeps the legacy import surface without creating a production import cycle;
-    the facade is retired in the subsequent compatibility-cleanup stage.
-    """
-
-    import importlib
-
-    owner = importlib.import_module(".database_initialization", __package__)
-    return owner.initialize_database(path)
-
-
 def _execute_script_statements(conn: sqlite3.Connection, script: str) -> None:
     statement = ""
     for line in script.splitlines(keepends=True):
@@ -3813,12 +3797,6 @@ def validate_current_database(conn: sqlite3.Connection) -> None:
 
     validate_current_schema(conn)
     _validate_semantic_evidence(conn)
-
-
-# Temporary compatibility aliases for historical validation callers.
-# The implementation owner is public; stage 8 retires these aliases.
-_validate_current_schema = validate_current_schema
-_validate_current_database = validate_current_database
 
 
 def _normalized_schema_sql(sql: str | None) -> str:

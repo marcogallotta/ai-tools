@@ -13,18 +13,17 @@ from typing import Any, Callable, Mapping
 from .application_service import OperationApplicationService
 from .command_support import reject_undeclared_arguments
 from .database import (
-    atomic_persistence,
     bind_abandonment_execution_in_transaction,
     create_abandonment_attempt_in_transaction,
     get_abandonment_attempt,
     complete_operation_step,
     declare_operation_step,
-    immediate_persistence,
     record_audit,
     resolve_admin_abandonment_target,
     resolve_admin_operation_target,
 )
 from .invocation_audit import record_invocation_audit
+from .transactions import immediate_transaction, savepoint_transaction
 from .errors import DishRuleError
 from .results import error_envelope, result_envelope
 
@@ -183,7 +182,7 @@ class DishAdminApplication:
             str(trace.audit_details.get("request_id") or "").strip() or None
         )
         if command == "reopen-planning" and request_id is not None:
-            with immediate_persistence(self.conn, "planning_reopen_invocation"):
+            with immediate_transaction(self.conn, "planning_reopen_invocation"):
                 existing = self.conn.execute(
                     """SELECT 1 FROM audit_events
                          WHERE event_type='dish-admin.reopen-planning'
@@ -909,7 +908,7 @@ def _command_abandon_operation(
         execution = _claimed_admin_execution(
             self.conn, operation_id=operation_id
         )
-        with immediate_persistence(self.conn, "create_abandonment_attempt"):
+        with immediate_transaction(self.conn, "create_abandonment_attempt"):
             create_abandonment_attempt_in_transaction(
                 self.conn,
                 abandonment_id=abandonment_id,
@@ -996,7 +995,7 @@ def _command_reconcile_abandonment(
         execution = _claimed_admin_execution(
             self.conn, operation_id=operation_id
         )
-        with immediate_persistence(self.conn, "bind_abandonment_execution"):
+        with immediate_transaction(self.conn, "bind_abandonment_execution"):
             bind_abandonment_execution_in_transaction(
                 self.conn,
                 abandonment_id=clean_id,
@@ -1083,7 +1082,7 @@ def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, r
         declare_operation_step(
             self.conn, operation_id, cancel_step, {"reason": clean_reason}
         )
-        with atomic_persistence(self.conn, "operation_cancel"):
+        with savepoint_transaction(self.conn, "operation_cancel"):
             final = transition_operation(
                 self.conn, operation_id, phase="terminal", status="cancelled",
                 terminal_outcome="cancelled_by_marco",

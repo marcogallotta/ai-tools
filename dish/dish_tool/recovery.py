@@ -10,7 +10,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .database import atomic_persistence, record_audit
+from .database import record_audit
+from .transactions import savepoint_transaction
 from .errors import DishRuleError
 from .transactions import immediate_transaction
 from .models import ProcessIdentity, utc_now
@@ -78,7 +79,7 @@ def begin_operation_write_attempt(
     """Persist one complete write intent before the backend call begins."""
     attempt_id = str(uuid.uuid4())
     try:
-        with atomic_persistence(conn, "write_attempt_start"):
+        with savepoint_transaction(conn, "write_attempt_start"):
             conn.execute(
                 """INSERT INTO write_attempts (
                     attempt_id, operation_id, expected_identity, intended_identity, outcome, started_at,
@@ -135,7 +136,7 @@ def finish_operation_write_attempt(
 ) -> sqlite3.Row:
     if outcome not in {"not_applied", "uncertain"}:
         raise ValueError("confirmed writes must use finalize_confirmed_write_attempt with exact live evidence")
-    with atomic_persistence(conn, "write_attempt_finish"):
+    with savepoint_transaction(conn, "write_attempt_finish"):
         cursor = conn.execute(
             """UPDATE write_attempts
                   SET outcome = ?, finished_at = ?
@@ -173,7 +174,7 @@ def begin_movement_attempt(
 ) -> str:
     attempt_id = str(uuid.uuid4())
     try:
-        with atomic_persistence(conn, "movement_attempt_start"):
+        with savepoint_transaction(conn, "movement_attempt_start"):
             conn.execute(
                 """INSERT INTO movement_attempts (
                     attempt_id, operation_id, expected_section_gid, intended_section_gid,
@@ -229,7 +230,7 @@ def finish_movement_attempt(
 ) -> sqlite3.Row:
     if outcome not in {"not_applied", "uncertain"}:
         raise ValueError("confirmed movements must use finalize_confirmed_movement_attempt with exact live evidence")
-    with atomic_persistence(conn, "movement_attempt_finish"):
+    with savepoint_transaction(conn, "movement_attempt_finish"):
         cursor = conn.execute(
             """UPDATE movement_attempts
                   SET outcome = ?, finished_at = ?

@@ -6,7 +6,8 @@ import uuid
 import pytest
 
 from dish_service.leases import LeaseManager, ServicePrincipal
-from dish_tool.database_schema import MIGRATIONS, _execute_script_statements, initialize_database
+from dish_tool.database_initialization import initialize_database
+from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
 from tests.support.service_leases import _service
 from tests.support.operational import Clock
 from tests.support.verification import Backend, TASK

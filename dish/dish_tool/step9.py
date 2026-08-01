@@ -10,7 +10,6 @@ from typing import Any
 
 from .constants import COOKING_PROJECT_GID
 from .database import (
-    atomic_persistence,
     complete_operation_step,
     content_identity,
     create_verification_cycle,
@@ -21,6 +20,7 @@ from .database import (
     record_audit,
     transition_operation,
 )
+from .transactions import savepoint_transaction
 from .errors import DishRuleError
 from .small_correction_lineage import assert_small_correction_write_lineage
 from .lifecycle import assert_transition, require_status
@@ -233,7 +233,7 @@ def _record_movement_failure(
     step_name = f"destination_failure:{digest}"
     intended = {**details, "classification_step": step_name}
     declare_operation_step(conn, op["operation_id"], step_name, intended)
-    with atomic_persistence(conn, "destination_failure_classification"):
+    with savepoint_transaction(conn, "destination_failure_classification"):
         if op["phase"] != "ready_move_failed":
             transition_operation(
                 conn, op["operation_id"], phase="ready_move_failed"
@@ -413,7 +413,7 @@ def _finalize_submission_terminal(
                 "CONFLICT", "submission movement evidence is incomplete",
                 rule="workflow_movement_incomplete",
             )
-    with atomic_persistence(conn, "submission_terminal"):
+    with savepoint_transaction(conn, "submission_terminal"):
         declare_operation_step(conn, operation_id, "submission_terminal", intended)
         if op["status"] != "completed":
             transition_operation(
@@ -681,7 +681,7 @@ def _complete_destination_repair_step(
     repaired_identity: str,
     recovered: bool = False,
 ) -> None:
-    with atomic_persistence(conn, "destination_repair_finalize"):
+    with savepoint_transaction(conn, "destination_repair_finalize"):
         op = conn.execute(
             "SELECT task_gid, phase FROM operations WHERE operation_id=?",
             (operation_id,),

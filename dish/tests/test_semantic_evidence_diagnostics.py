@@ -15,7 +15,7 @@ from dish_tool.database import (
     transition_operation,
 )
 from dish_tool import database_schema as database_schema_module
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.step7 import assert_verifier_authority
 from tests.support.thread_teardown import join_thread, managed_thread

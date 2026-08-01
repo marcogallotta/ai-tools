@@ -24,7 +24,7 @@ from dish_tool.application_service import CurrentWorkflowService
 
 from dish_tool.database import declare_operation_step
 
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 
 
 from tests.support.workflow_builders import create_large_rejection_successor
