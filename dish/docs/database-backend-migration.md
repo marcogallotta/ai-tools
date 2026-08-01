@@ -475,8 +475,8 @@ Production cutover may begin only when all of the following are true.
 - no unreadable or unaccounted sidecar exists;
 - no current command can be accepted by a legacy writer after the planned fence;
 - every visible in-scope Asana task is mapped for import or explicitly isolated;
-- the approved final Asana snapshot covers exact content, completion, governed project membership, section placement, and the complete in-scope object set;
-- gap-free observation remains closed through durable activation, and any relevant intervening Asana change invalidates approval and requires recapture.
+- the approved final Asana snapshot covers exact content, completion, governed project membership, section placement, the active governed project/section registry, project and section identities, names, aliases and relevant registry metadata, and the complete in-scope object set;
+- gap-free observation of both task state and registry/alias state remains closed through durable activation, and any relevant intervening Asana task, project, section, registry-metadata, or alias change invalidates approval and requires recapture.
 
 ### 11.4 Target readiness
 
@@ -510,8 +510,8 @@ The exact commands and deployment tooling are implementation details, but the au
 2. Stop new ordinary mutation admission.
 3. Drain or settle in-flight requests and effects.
 4. Establish the hard mechanical legacy-writer fence.
-5. Establish an exact final Asana authority snapshot covering content, completion, governed project membership, section placement, and the complete in-scope object set.
-6. Maintain gap-free change closure from that snapshot through durable activation; any relevant Asana change invalidates approval and requires recapture.
+5. Establish an exact final Asana authority snapshot covering content, completion, governed project membership, section placement, the active governed project/section registry, project and section identities, names, aliases and relevant registry metadata, and the complete in-scope object set.
+6. Maintain gap-free change closure for both task state and registry/alias state from that snapshot through durable activation; any relevant Asana task, project, section, registry-metadata, or alias change invalidates approval and requires recapture.
 7. Prove legacy closure and continuous Asana corpus classification.
 8. Capture the final transactionally complete SQLite and sidecar authority bundle.
 9. Import into a clean production PostgreSQL target.

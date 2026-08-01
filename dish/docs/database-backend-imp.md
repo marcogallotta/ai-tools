@@ -94,18 +94,18 @@ Normative command treatment:
 | `reject` | Retain Large, Evidence, Human Review and Small-correction routes. | Authorized actor. | L or hold-entry L profile according to route. | Exact replay; holds/decisions import as named authority. |
 | `submit` | Retain signed-state validation and exact logical destination transition. | Authorized actor. | L; logical placement commits atomically, Asana movement is projection-only. | Exact replay and convergence from already committed PostgreSQL domain evidence. |
 | `renew-lease` | Retain narrow renewal. | Exact lease owner/run. | L limited to lease plus request outcome/audit. | Exact replay against the original lease identity. |
-| `recover` | Retain only for imported/live authoritative command or effect uncertainty that the route currently owns; post-cutover Asana projection uncertainty uses P, not this route unless explicitly mapped. | Marco/admin. | R; exact execution/attempt target and three-way evidence adjudication. | Exact replay; imported terminal requests remain historical outcomes. |
-| `repair-destination` | Retain narrow authoritative logical-destination recovery where current semantics require it; downstream Asana-only repair is P. | Marco/admin. | R or P, selected by explicit target identity. | Exact replay; never infer canonical placement from Asana. |
-| `discard` | Retain only where exact evidence proves the targeted authoritative attempt was not applied. | Marco/admin. | R. | Exact replay; cannot discard a projection into canonical state or reopen historical attempts. |
+| `recover` | Retain as post-cutover adjudication of an exact unresolved downstream Asana projection attempt. It never settles PostgreSQL command authority or changes canonical task state. | Marco/admin. | P; exact projection-attempt target, persisted intent, observation, and three-way adjudication. | Exact replay. Imported legacy authoritative attempts and their terminal requests remain immutable historical outcomes and are not reopened. |
+| `repair-destination` | Retain as projection-only repair of an exact downstream Asana destination movement after canonical PostgreSQL logical placement has committed. | Marco/admin. | P; exact projection movement attempt, mapping, intended logical destination, and observation evidence. | Exact replay; never infer or alter canonical placement from Asana. |
+| `discard` | Retain as projection-only terminal settlement where exact evidence proves the targeted downstream Asana effect was not applied. | Marco/admin. | P; exact projection attempt and non-application proof. | Exact replay; canonical PostgreSQL state and the original command outcome remain unchanged, and imported historical attempts are never reopened. |
 | `abandon-operation` | Retain permanent exact actor-attempt abandonment. | Marco/admin. | R using the abandonment state machine in §6.17. | Exact request/execution replay; no duplicate successor publication. |
 | `reconcile-abandonment` | Retain exact blocked-abandonment continuation. | Marco/admin. | R using the same abandonment execution and immutable successor baseline. | Exact replay; never rebase succession. |
 | `reopen-planning` | Retain the only current completion-clearing route. | Marco/admin. | L; completion clear, attempt/result, audit, outcome and projection commit together. | Exact replay; imported completion and attempts preserved. |
 | `reopen` | Retain two-pass Human Review reset. | Marco/admin. | R with exact cycle/content/reset authority. | Exact replay. |
-| `supply-evidence` | Retain Evidence-hold continuation. | Authorized caller under current protocol. | R; targets exact hold and continuation predicate. | Exact replay; hold evidence imported. |
-| `record-human-decision` | Retain Human Review continuation. | Marco/authorized human. | R; targets exact hold/decision requirement. | Exact replay; decision evidence imported. |
+| `supply-evidence` | Retain Evidence-hold continuation. | Marco/admin. | R; targets exact hold and continuation predicate. | Exact replay; hold evidence imported. |
+| `record-human-decision` | Retain Human Review continuation. | Marco/admin. | R; targets exact hold/decision requirement. | Exact replay; decision evidence imported. |
 | `authorize-governed-change` | Retain exact grant creation. | Marco/admin. | L; immutable grant and governed audit commit together. | Exact replay and semantic deduplication. |
 | `recover-lease` | Retain expired-lease release without ownership transfer. | Marco/admin. | R; exact lease target. | Exact replay; must not resolve a replacement lease on replay. |
-| `expire-lease` | Retain exact release; not run revocation. | Marco/admin. | L/R limited to exact lease and outcome. | Exact replay against original lease. |
+| `expire-lease` | Retain exact point-in-time lease release; not run revocation and not recovery of uncertain work. | Marco/admin. | L limited to the exact resolved lease identity, release fact, request outcome, and governed audit. | Exact replay against the original lease; never retarget a replacement lease. |
 | `migrate` | Retain bounded Honest task-schema migration for admitted older-schema tasks. | Marco/admin. | L; exact migration binding, new version activation, operation/result, audit and projection event. | Exact replay; completed migration history imports; no silent retirement. |
 | `backup-create` | Retire at cutover. | Historical only. | X. | Preserve request outcomes, rows and artifacts as immutable evidence. |
 | `backup-restore` | Retire at cutover; operator PostgreSQL restore replaces it. | Historical only. | X. | Preserve journal/checkpoints/outcomes; no new connected admission. |
@@ -410,14 +410,15 @@ Represent each retained hold/recovery family as named authority rather than a ge
 - Evidence hold and supplied-evidence continuation;
 - Human Review requirement and recorded decision;
 - expired-lease recovery/release;
-- authoritative execution/effect uncertainty recovery;
-- logical destination repair;
-- provably-not-applied discard;
+- unfinished PostgreSQL command execution continuation through the original request/execution authority, never through an admin projection-recovery route;
+- downstream projection-attempt adjudication through `recover`;
+- downstream destination projection repair through `repair-destination`;
+- provably-not-applied downstream projection settlement through `discard`;
 - Planning reopen/completion-clear attempts;
 - abandonment and successor recovery;
 - downstream projection-only recovery.
 
-Each family defines exact target identity, admission principal, request/execution profile, task/operation/lease/effect fences, monotonic checkpoints and outcomes, and interactions with content, location, audit, and projection. A post-cutover Asana observation can settle only projection authority unless it is immutable evidence for an imported legacy attempt; it cannot change canonical PostgreSQL content or logical placement.
+Each family defines exact target identity, admission principal, request/execution profile, task/operation/lease/effect fences, monotonic checkpoints and outcomes, and interactions with content, location, audit, and projection. Unfinished PostgreSQL command work is resumed, taken over, or settled only through its original generation-bound request and execution authority. The `recover`, `repair-destination`, and `discard` routes are profile P after cutover and settle only exact downstream projection attempts. A post-cutover Asana observation can settle only projection authority unless it is immutable evidence for an imported legacy attempt; it cannot change canonical PostgreSQL content or logical placement.
 
 ### 6.17 Abandonment and succession
 
@@ -448,17 +449,20 @@ All checkpoints remain under the same admitted command execution or exact contin
 
 Governed audit facts commit with their governed domain transaction.
 
+Every authoritative command transaction also commits a durable invocation-audit obligation keyed to the authority generation, request, immutable initial outcome, execution, causality, and required invocation metadata. The obligation is the restart-discoverable owner of audit completion after authoritative commit. Successful invocation-audit persistence terminalizes the obligation; process death after authoritative commit leaves it pending for deterministic scanning and repair rather than losing it.
+
 Invocation/transport audit outside that transaction uses:
 
 - immutable repair identity;
-- exact request/result/audit payload;
-- durable append before success response when PostgreSQL cannot store repair intent;
+- exact request/result/audit payload, reconstructible from the committed obligation and referenced authoritative facts;
+- durable external append before success response when PostgreSQL cannot record a later repair transition;
+- restart scanning of pending obligations before they can be treated as silently complete;
 - claim/import semantics safe under concurrent writer and importer;
 - deduplication;
-- repaired or quarantined terminal outcome;
+- fulfilled, repaired, or quarantined terminal outcome;
 - backup and restore-generation reconciliation.
 
-A local durable journal is the default continuation of the current contract.
+A local durable journal is the default continuation when PostgreSQL is unavailable after the authoritative obligation already exists. No crash interval after authoritative commit may make the missing invocation audit undiscoverable.
 
 ### 6.19 Schema migration provenance
 
@@ -606,7 +610,7 @@ Keep three non-interchangeable classes:
 2. **Shadow envelopes and observations:** non-authoritative parity evidence while Asana/SQLite remains live authority.
 3. **Post-cutover projection attempts:** downstream effects only, with intent, claim, observation, adjudication, settlement, epoch, and mapping context.
 
-`recover`, `repair-destination`, and `discard` must select an exact authority class and target identity. No post-cutover Asana observation may mutate canonical content or logical placement.
+`recover`, `repair-destination`, and `discard` are post-cutover projection-only recovery routes. Each targets an exact class-3 projection attempt and mapping/effect identity; none may target a PostgreSQL command execution or an imported legacy authoritative attempt. No post-cutover Asana observation may mutate canonical content or logical placement.
 
 
 ### 9.2 Credentials and isolation
@@ -795,6 +799,8 @@ Implementation may be delivered incrementally, but no partial slice becomes prod
 
 - Governed audit commits atomically with domain facts.
 - Invocation-audit failure after committed success does not change the result.
+- Every committed authoritative command has a transactionally durable, restart-discoverable invocation-audit obligation until audit completion is fulfilled, repaired, or quarantined.
+- Process death immediately after authoritative commit cannot lose or hide the invocation-audit obligation.
 - PostgreSQL-unavailable audit repair survives process death.
 - Concurrent repair append/import loses no record.
 - Duplicate repair delivery is idempotent.
