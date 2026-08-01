@@ -228,14 +228,28 @@ owned session and never commit independently. Until an explicit authority activa
 current transports and workflow modules must not import `dish_pg` or treat its state as
 production authority.
 
-Stage 2 gives that isolated target only the foundational authority model. Alembic revision
+Stage 2 gives that isolated target the foundational authority model. Alembic revision
 `0002_core_authority_model` owns generation and activation provenance, immutable Honest
 contract bindings, governed project/section registries and aliases, stable Dish task identity,
 immutable complete task documents and activations, and append-only membership, placement, and
 completion occurrences with validated current pointers. `CoreAuthorityService` may assemble an
-imported task only as one caller-owned transaction with exact import provenance; it creates no
-request, command execution, workflow operation, lease, Verification, or projection authority.
-Those authorities remain absent until their later implementation stages.
+imported task only as one caller-owned transaction with exact import provenance; it fabricates no
+request or command execution.
+
+Stage 3 adds the isolated workflow and concurrency authority through
+`0003_workflow_authority`, `stage3_models.py`, and `workflow.py`. It owns generation-bound runs,
+immutable requests and outcomes, replay identity, command executions and claims, exact task and
+operation fences, workflow operations/steps/actors, classified leases, Planning challenges, Marco
+authorization state and immutable event history, Verification occurrences and signoff, named
+Evidence and Human Review authority, abandonment/succession evidence, governed audit/causality,
+and restart-discoverable invocation-audit obligations and repairs. Mutable current rows are
+revisioned; evidence rows are immutable. The service methods participate in the caller's one
+transaction and never commit independently. Same-task exclusivity is database-constrained while
+independent tasks have no global serialization point.
+
+This remains an isolated non-production target. Current transports and workflow modules still do
+not import `dish_pg`; command-surface ownership and downstream Asana projection are absent until
+Stages 4 and 5 respectively, and production authority remains closed until Stage 6 activation.
 
 Agent and admin dispatch use the explicit `CURRENT_COMMAND_HANDLERS` and
 `CURRENT_ADMIN_COMMAND_HANDLERS` registries. Do not reintroduce import-time subclass rebinding or a

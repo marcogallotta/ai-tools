@@ -875,6 +875,24 @@ Commit result:
 
 This stage must include concentrated two-, three-, and ten-way same-task contention tests. Independent-task work must remain legal without global serialization.
 
+Implemented physical boundary: Alembic revision `0003_workflow_authority` and
+`dish_pg.stage3_models` add only the workflow/replay/recovery/concurrency authorities named above.
+`dish_pg.workflow` owns generation-bound run registration, exact request admission and replay,
+execution claims, revision fences, operation and actor authority, classified lease acquisition and
+renewal, Planning challenge claim/consume/settle, Marco authorization grant/reservation/consumption,
+Verification inspection/signoff, named hold continuations, abandonment baselines, governed audit,
+and invocation-audit obligation/repair transitions. All methods use a caller-owned session and no
+repository or domain service commits. Immutable occurrences are protected against update/delete;
+current execution, lease, challenge, authorization, cycle, hold, requirement, abandonment, and
+audit-obligation rows are revisioned or monotonic. Partial unique constraints fence one open
+operation, active actor lease, open Verification cycle, open hold, open Human Review requirement,
+and active abandonment at their exact task/operation scope.
+
+Stage 3 acceptance covers fresh migration to head, immutable evidence, exact replay identity, stale
+generation and stale-fence rejection, atomic outcome/audit/repair-obligation rollback, ten-way
+same-task lease and authorization contention, and independent-task concurrency. It does not expose
+a command or HTTP surface and it creates no shadow or projection authority.
+
 ### Stage 4 — Command and service port
 
 Purpose: connect the authoritative domain to the complete Dish command and read surface.

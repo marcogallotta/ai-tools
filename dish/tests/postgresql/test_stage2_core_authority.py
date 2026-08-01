@@ -315,7 +315,7 @@ def test_stage2_alembic_upgrade_reaches_head_from_empty_database(tmp_path: Path)
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", database_url)
 
-    command.upgrade(config, "head")
+    command.upgrade(config, "0002_core_authority_model")
 
     engine = create_engine(database_url, future=True)
     try:
