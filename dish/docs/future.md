@@ -376,6 +376,10 @@ See [`database-backend.md`](database-backend.md), with companion documents
 storage, transaction, and migration design. It remains future design rather than
 implementation or cutover authorization.
 
+The separate frontend mentioned above has its own draft staging design in
+[`frontend.md`](frontend.md). That document is explicitly marked not ready for implementation and
+is not a Stage A dependency.
+
 The draft permits an Asana-authoritative one-way shadow before cutover and an optional
 DB-authoritative read-only Asana projection afterward. Neither stage permits peer writes or dual
 authority.
