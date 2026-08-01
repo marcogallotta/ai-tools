@@ -77,6 +77,22 @@ Exact package versions are pinned in the implementation change set and tested to
 
 These defaults may change only when the replacement preserves the same authority and failure semantics.
 
+### 2.1 Stage A operating envelope
+
+Stage A is optimized for a small private deployment with concentrated agent contention rather than high aggregate throughput:
+
+- one human operator;
+- approximately 100 current tasks at the August 1, 2026 re-baseline, with modest near-term growth;
+- low aggregate command and listing throughput;
+- multiple autonomous agents may act concurrently;
+- typical same-task contention is two or three agents;
+- the required adversarial ceiling is ten simultaneous agents or requests targeting the same task;
+- correctness, deterministic replay, and recoverability take priority over throughput optimization.
+
+The implementation does not require sharding, table partitioning, read replicas, distributed locking, or high-availability infrastructure. One service deployment and one active projector are acceptable initially, but database constraints, request identity, leases, claims, fences, transaction profiles, and worker ownership must remain correct if additional service or projector processes are later started.
+
+Performance choices must be proportionate to this envelope. Ordinary indexed PostgreSQL queries, bounded import batches, and bounded pagination are sufficient unless measured evidence shows otherwise. Small scale does not permit weakening same-task concurrency, crash, replay, restore-generation, or external-effect guarantees.
+
 ## 3. Implementation principles
 
 ### 3.1 One service authority
@@ -733,6 +749,8 @@ Use dependency injection for sessions, clocks, UUID generation, release resoluti
 
 ## 11. Concurrency and database behavior
 
+Concurrency design targets low aggregate throughput with concentrated contention. Two or three agents may commonly target one task, and the implementation must remain correct with ten simultaneous agents or requests targeting that same task. This is a correctness ceiling, not a high-throughput or distributed-systems requirement.
+
 Implementation must define and test:
 
 - transaction isolation for each command class;
@@ -746,9 +764,11 @@ Implementation must define and test:
 - append-only and monotonic constraints;
 - safe worker claim and takeover;
 - outbox ordering and idempotency;
-- restore-generation invalidation.
+- restore-generation invalidation;
+- deterministic winner and loser behavior under two-, three-, and ten-way same-task contention;
+- absence of duplicate operations, activations, lease ownership, capability consumption, signoff, successor publication, request outcomes, or projection effects under that contention.
 
-Database constraints enforce authority invariants even when application code is defective.
+Independent-task work should not require global serialization merely to satisfy the same-task safety contract. Database constraints enforce authority invariants even when application code is defective.
 
 ## 12. Read model and current view
 
@@ -822,6 +842,9 @@ Implementation may be delivered incrementally, but no partial slice becomes prod
 - Exact request replay returns the stored outcome.
 - Identity conflict fails closed.
 - Concurrent duplicate delivery performs one logical execution.
+- Acceptance exercises the expected two- and three-agent same-task contention cases and an adversarial ten-request same-task case for every transaction family with exclusive or single-use authority.
+- Under conflicting same-task contention, at most one incompatible transition wins; every loser fails closed or returns its deterministic stored outcome without duplicate domain facts or external effects.
+- Concurrent work on unrelated tasks remains legal and is not forced through a global task lock.
 - Failure injection before the authoritative commit exposes none of the command bundle; failure after commit exposes the complete request/execution, domain facts, versions/activation, outcome, governed audit, causality, and outbox bundle, and exact replay returns that outcome.
 - Stale executor, task fence, and operation fence commits are rejected.
 - Lease expiry and executor takeover do not transfer actor authority incorrectly.
