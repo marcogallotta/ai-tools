@@ -35,6 +35,21 @@ python3 -m venv .venv
 
 `dish`, `dish-admin`, and `dish-service` re-exec under `.venv/bin/python` and fail closed if it is unavailable.
 
+### Isolated Stage A PostgreSQL development
+
+The PostgreSQL target is isolated under `dish_pg/` and is not imported by the live
+SQLite/Asana service. Start its disposable local database with:
+
+```sh
+docker compose -f deploy/postgresql/compose.yaml up -d
+.venv/bin/alembic -c alembic.ini upgrade head
+.venv/bin/python -m pytest -q -k 'stage1 or stage2'
+```
+
+Override `sqlalchemy.url` or supply a test configuration when the database is not on
+`127.0.0.1:55432`. The Compose database is development/test state only; it is not a
+production authority or migration source.
+
 ## Service-host configuration
 
 Start from `deploy/systemd/service-test.env.example` and `service-prod.env.example`. Each instance

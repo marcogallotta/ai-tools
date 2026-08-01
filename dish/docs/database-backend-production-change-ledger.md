@@ -1,6 +1,6 @@
 # Database backend production-change ledger
 
-Status: backfilled from Git history through commit `42619b9` (2026-08-01 20:47).
+Status: backfilled, reviewed, and Stage 1 contract-closed through commit `42619b9` (2026-08-01 20:47).
 
 Scope: every commit merged/deployed under `dish/` on or after 2026-08-01, screened
 against the in-scope criteria in `database-backend-imp.md` §1.1. Reviewer: Claude
@@ -10,10 +10,10 @@ against the in-scope criteria in `database-backend-imp.md` §1.1. Reviewer: Clau
 
 | Commit | Time | Summary | Affected area | Disposition |
 | --- | --- | --- | --- | --- |
-| `a2a9b52` | 17:07 | Made `CurrentWorkflowService`/`workflow_policy.legal_actions` the sole owner of legal-action derivation; removed `ALLOWED_ACTIONS_BY_STATE`; renamed `legal_operation_actions` to `phase_candidate_actions`. | Command/action authority | Locked-architecture amendment required: confirm §12's bounded legal-action read query matches this exact single-owner model before Stage 3/4 build it. |
+| `a2a9b52` | 17:07 | Made `CurrentWorkflowService`/`workflow_policy.legal_actions` the sole owner of legal-action derivation; removed `ALLOWED_ACTIONS_BY_STATE`; renamed `legal_operation_actions` to `phase_candidate_actions`. | Command/action authority | Already covered and Stage 1 closed: §12 now requires the PostgreSQL single-task policy and bounded set-oriented query to consume the same declared predicates, with equivalence contract tests and no second action matrix. |
 | `7f2f114` | 14:26 | Cooking-project placement selected by exact identity; Asana create/section-move mutations reread and confirmed; partial-application evidence reported. | External-effect/projection semantics | Implementation/migration document update required: Stage 5 shadow/projection design must replicate this confirm-and-reread contract. |
-| `6075321` | 20:11 | New read-only `section-tasks` Action/CLI command listing tasks placed in a Cooking section. | Public protocol/command surface | Implementation/migration document update required: not yet a row in the §4 semantic-delta contract; add before Stage 3/4. |
-| `873ed5d` | 20:29 | Paginated `section-tasks` (opaque `next_cursor`); updated command/CLI/schema/OpenAPI and both GPT instruction docs. | Public protocol/command surface | Same row as `6075321`; pagination contract must be part of the same §4 entry and the §12 read-model design. |
+| `6075321` | 20:11 | New read-only `section-tasks` Action/CLI command listing tasks placed in a Cooking section. | Public protocol/command surface | Already covered and Stage 1 closed: §4 now retains it as a PostgreSQL Q-profile query over authoritative registry/location state. |
+| `873ed5d` | 20:29 | Paginated `section-tasks` (opaque `next_cursor`); updated command/CLI/schema/OpenAPI and both GPT instruction docs. | Public protocol/command surface | Already covered and Stage 1 closed: the §4 row binds the opaque cursor to registry, section, ordering, and page boundary and fails closed on stale/mismatched use. |
 | `dd277f1` | 20:44 | `future.md` note: phase-authoritative pending-Research/Verification listing deferred to Stage A schema/read model. | Documentation only, cross-reference | Already covered: matches Stage A's existing read-model intent (§12); no new decision needed. |
 | `f0bbd51` | 17:10 | Split `initialize_database` (full init/migration/audit) from `open_runtime_database` (fast runtime open); first-caller bootstrap fallback. | Schema/migration bootstrap | Implementation/migration document update required: target bootstrap design should preserve this same init/runtime-open split as current authoritative behavior. |
 | `cc6b32c` | 17:19 | Fixed a durable migration initializer import introduced by `f0bbd51`. | Schema/migration bootstrap | Already covered under the `f0bbd51` review. |

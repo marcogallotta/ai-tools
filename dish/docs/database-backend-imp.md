@@ -140,6 +140,7 @@ Normative command treatment:
 |---|---|---|---|---|
 | `create` | Retain bare-task creation and initial Research Queue placement; public identity becomes Dish UUID at authority cutover. | Agent; active generation and registered run. | L; task, initial version/activation, logical location, request outcome, audit and create-projection event commit together. | Exact request replay. Imported tasks use import activation, never fabricated `create` executions. |
 | `sections` | Retain as a query over the active PostgreSQL section registry. | Authenticated Action reader. | Q; no live Asana registry read after cutover. | No request replay. Registry and aliases are imported with provenance. |
+| `section-tasks` | Retain bounded pagination over tasks whose authoritative logical placement is the requested active-registry section. The cursor is opaque and binds the registry version, section identity, ordering key, and page boundary; stale or mismatched cursors fail closed rather than silently rebasing. | Authenticated Action reader. | Q; one bounded relational query over PostgreSQL task/location/registry authority, with no per-task Asana read or application-service call. | No request replay. Imported task aliases and exact logical placement establish the initial rows; pagination tokens are ephemeral read artifacts, not durable authority. |
 | `read` | Retain against PostgreSQL authority plus separately reported projection freshness. | Authenticated reader. | Q. | Historical/current state comes from imported and later PostgreSQL authority. |
 | `inspect` | Reclassify as replay-bound evidence mutation. | Verification actor with exact operation/cycle/run authority. | E; inspection occurrence and governed audit commit atomically. | Exact request replay; existing inspection facts import unchanged. |
 | `start` | Retain all operation kinds; Planning retains two-request challenge admission. | Agent; registered run and applicable challenge/lease authority. | L; successful Planning start consumes the challenge with operation, outcome and audit. | Exact replay; open legacy authority is drained before production import. |
@@ -166,6 +167,8 @@ Normative command treatment:
 | Planning-intent settlement | Add reason-bearing terminal settlement. | Marco/admin. | L limited to challenge/request/audit authority; proves no operation exists. | Exact replay; settled challenge is permanently non-reusable. |
 
 Every route implementation must additionally pin its request canonicalization, protocol/OpenAPI introduction, current-view effects, exact fence set, and approved error/result classes. Shared profiles may be referenced, but no route may leave its target authority or replay behavior unresolved.
+
+This matrix is approved for the frozen `42619b9` source baseline recorded in `database-backend-stage-a-baseline.json`. A later in-scope production change reopens only the affected rows through the production-change ledger; it does not permit implementation-time invention.
 
 ## 5. Current-to-target authority coverage
 
@@ -208,7 +211,7 @@ The implementation must maintain a row-by-row coverage matrix at re-baseline. Th
 | SQLite database plus WAL state | Transactionally complete legacy database snapshot. |
 | Managed backup artifacts | Historical immutable backup evidence and cutover closure. |
 
-The final matrix must include any authority added to the current repository before implementation re-baseline.
+The executable re-baseline inventory is `database-backend-stage-a-baseline.json`. It freezes the exact Action/admin command surfaces, all current SQLite tables, external sidecar families, governing-source hashes, and the complete current characterization-test file set through source commit `42619b9`. The final matrix must include any authority added to the current repository after that baseline through the production-change ledger.
 
 ## 6. Target domain model
 
@@ -791,7 +794,7 @@ The physical token format is implementation-specific. It is not the immutable re
 
 Projection freshness is reported separately and never changes legal PostgreSQL actions merely because Asana is stale.
 
-The authoritative read model must support deriving each task's current legal next action entirely from local PostgreSQL state. It must also support bounded, paginated relational queries that select tasks by that derived legal action without per-task Asana reads, per-task application-service calls, a denormalized authoritative task-status column, or a second workflow-policy implementation. The query must correctly include tasks for which the next legal action exists even when no operation row has yet been opened for that next phase.
+The authoritative read model must support deriving each task's current legal next action entirely from local PostgreSQL state. `CurrentWorkflowService` and `workflow_policy.legal_actions` remain the sole semantic owner of legal-action derivation: the PostgreSQL read model exposes one normalized relational authority projection consumed by that policy and by a bounded set-oriented query compiled from the same declared predicates. It must not introduce a separately maintained action matrix, denormalized authoritative task-status column, transport-owned rule set, or per-task application-service loop. The bounded, paginated query must select tasks by derived legal action without per-task Asana reads and must correctly include tasks for which the next legal action exists even when no operation row has yet been opened for that next phase. Contract tests compare the set-oriented query against the authoritative single-task computation for every frozen policy case.
 
 ## 13. Implementation sequence and commit stages
 
@@ -802,20 +805,19 @@ Implementation is organized into six top-level stages. Each stage is a reasonabl
 Purpose: freeze the exact system being implemented before target schema or command work begins.
 
 The production-change ledger (`database-backend-production-change-ledger.md`) is
-already backfilled through commit `42619b9`; it lists two rows implementation must
-close before Stage 3/4: the new `section-tasks` command and its pagination
-contract need a §4 entry, and the `a2a9b52` legal-action ownership model must be
-confirmed against §12's bounded read-model design.
+backfilled and closed through commit `42619b9`. The `section-tasks` pagination
+contract now has a normative §4 row, and §12 explicitly preserves
+`CurrentWorkflowService`/`workflow_policy.legal_actions` as the sole semantic owner
+while requiring set-oriented PostgreSQL selection from the same predicates.
 
 Includes:
 
-- close the two open ledger rows above by adding `section-tasks` to the §4
-  semantic-delta contract and confirming §12 against the current legal-action
-  ownership model;
+- maintain the closed ledger range and reopen affected contracts for every later
+  in-scope production change;
 - freeze current-behavior characterization and complete the authority inventory
-  against the closed ledger range;
+  in `database-backend-stage-a-baseline.json`;
 - complete and approve the normative command semantic-delta contract in §4, with no unresolved command treatment;
-- establish the PostgreSQL project skeleton, SQLAlchemy session ownership, Alembic, and isolated test database.
+- establish the isolated `dish_pg` PostgreSQL project skeleton, explicit SQLAlchemy session ownership, Alembic lineage, and Docker Compose test database.
 
 Commit result:
 

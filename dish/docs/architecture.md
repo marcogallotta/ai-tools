@@ -222,6 +222,12 @@ Put a rule in the highest shared layer that owns the fact. Do not patch every ca
 | external effects | `task_store`, `task_gateway`, `backend` | exact reread/write/move protocol and Asana SDK boundary | workflow policy |
 | persistence | repositories, `database.py`, `database_schema.py` | durable facts, migrations, triggers, semantic validation | caller-specific shortcuts |
 
+The isolated Stage A target implementation lives under `dish_pg/`. Its application
+services own SQLAlchemy sessions and transaction boundaries; repositories accept the
+owned session and never commit independently. Until an explicit authority activation,
+current transports and workflow modules must not import `dish_pg` or treat its state as
+production authority.
+
 Agent and admin dispatch use the explicit `CURRENT_COMMAND_HANDLERS` and
 `CURRENT_ADMIN_COMMAND_HANDLERS` registries. Do not reintroduce import-time subclass rebinding or a
 compatibility dispatcher.

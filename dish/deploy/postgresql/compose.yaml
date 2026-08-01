@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17.5
+    environment:
+      POSTGRES_DB: dish_stage_a_test
+      POSTGRES_USER: dish
+      POSTGRES_PASSWORD: dish
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dish -d dish_stage_a_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - dish-stage-a-postgres:/var/lib/postgresql/data
+
+volumes:
+  dish-stage-a-postgres:
