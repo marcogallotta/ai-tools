@@ -14,7 +14,10 @@ from typing import Any
 
 
 ADMIN_URL = "http://127.0.0.1:2019"
-PROXY_PATH = "/id/dish_action_proxy/upstreams"
+# Caddy returns the canonical /config/ path in the Etag trailer even when the
+# object is read through /id/. urllib cannot expose response trailers, so use
+# the canonical path here; its locally reconstructed Etag then matches Caddy.
+PROXY_PATH = "/config/apps/http/servers/dish_action_router/routes/0/handle/0/upstreams"
 ROUTER_URL = "http://127.0.0.1:8786"
 
 
