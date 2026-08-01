@@ -256,9 +256,26 @@ pagination, and one-task current-view computation. It delegates workflow legalit
 route-class bearer model and authenticates before body loading; it introduces no cookie/session
 authority. `section-tasks` is one bounded relational query and does not run workflow policy per row.
 
+Stage 5 adds isolated transition and downstream-projection authority through
+`0004_transition_projection`, `stage5_models.py`, and `transition.py`. Exact source-import batches
+bind the current source release, database digest, sidecar manifest, production-change ledger
+high-water mark, and per-entity immutable evidence. Shadow baselines own exact source envelopes,
+resumable asynchronous deliveries, independent comparisons, explicit proof gaps, and closure only
+after every delivery and gap is settled. Projection epochs fence restore and takeover; historical
+project, section, and task mappings are generation/epoch-bound and cannot transfer an external
+alias between logical entities. Authoritative commands emit ordered, idempotent outbox events in
+the same caller-owned transaction as PostgreSQL state. Workers persist exact attempts before an
+Asana call, then append immutable reread observations and adjudications; later `recover` or
+`repair-destination` decisions target the same unresolved attempt without rewriting its first
+evidence. Lost create responses require one exact correlation-marker match before mapping, multiple
+matches block automation, and zero matches do not imply retry safety without a complete reread.
+Drift produces a service-owned reproject event rather than importing an external edit, and corpus
+reconciliation reports unknown external objects as blocking. No Stage 5 service performs network
+I/O or commits independently.
+
 This remains an isolated non-production target. Current production transports and workflow modules
-still do not import `dish_pg`; downstream Asana projection is absent until Stage 5, and production
-authority remains closed until Stage 6 activation.
+still do not import `dish_pg`; Stage 5 projection records and adjudicates downstream intent but no
+production worker or credential is activated, and production authority remains closed until Stage 6.
 
 Agent and admin dispatch use the explicit `CURRENT_COMMAND_HANDLERS` and
 `CURRENT_ADMIN_COMMAND_HANDLERS` registries. Do not reintroduce import-time subclass rebinding or a

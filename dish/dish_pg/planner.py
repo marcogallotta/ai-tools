@@ -105,7 +105,6 @@ def _requires_current_action(command_name: str) -> bool:
         "approve",
         "reject",
         "submit",
-        "repair-destination",
         "reopen",
         "supply-evidence",
         "record-human-decision",

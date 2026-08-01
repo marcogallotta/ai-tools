@@ -946,6 +946,43 @@ Commit result:
 
 The conditional Asana-create fallback becomes a human decision only if the required correlation proof fails. Production cutover remains blocked if current `create` would otherwise be unavailable.
 
+Implemented Stage 5 foundation:
+
+- Alembic revision `0004_transition_projection` and `stage5_models.py` add exact source-import
+  batches and immutable entity evidence, shadow baselines/envelopes/deliveries/comparisons/gaps,
+  projection epochs and historical mappings, ordered outbox events, exact attempts, append-only
+  observations and adjudications, create correlations, drift evidence, and corpus reconciliation.
+- `SourceImportService` closes a source import only when the declared entity corpus is complete and
+  duplicate source identities reproduce the same target and provenance.
+- `ShadowService` stores source success independently from target delivery, uses revisioned claims,
+  resumes failed deliveries after explicit gap resolution, and refuses baseline closure while any
+  delivery or gap remains unresolved. Missing or uncomparable command evidence is recorded as an
+  explicit gap rather than inferred from later state.
+- `ProjectionService` binds imported aliases only for the active generation and registry, permits
+  historical rebinding only after the prior epoch mapping is retired, and database guards reject
+  alias transfer or stale-epoch mapping.
+- Command-sourced projection events require the exact task-bound command execution and commit in the
+  same caller-owned transaction as authoritative state. Service-sourced reprojection is separately
+  typed. Event identity, intent, task sequence, generation, and epoch are immutable.
+- Claims preserve per-task order. A worker records an attempt before external dispatch and appends
+  exact observations and adjudications after reread. Uncertainty can receive later evidence on the
+  same attempt; `recover` and `repair-destination` are task-bound and cannot settle another task's
+  command execution or imported legacy attempt.
+- Create correlation is attempt-bound. One canonical GID binds exactly once, multiple matches block
+  automation, and a not-applied settlement requires an exact zero-match correlation plus complete
+  reread evidence.
+- Retiring an epoch retires its active mappings and supersedes non-applied events, preventing stale
+  workers from winning or blocking the next epoch. Direct mapped-task drift emits an ordered
+  authoritative reproject event; unknown corpus objects keep reconciliation blocked.
+- Stage 5 services perform no network I/O and never commit. The live Asana/SQLite path remains
+  authoritative; production credentials, worker activation, final import, rehearsal, and cutover
+  remain Stage 6 decisions.
+
+Stage 5 acceptance covers full migration from an empty database, source-import closure and
+immutability, shadow delivery/gap closure, mapping identity and epoch fences, atomic command/outbox
+rollback, exact replay and idempotency, per-task ordering, lost-response create correlation, later
+uncertainty recovery, drift reprojection, and blocking corpus reconciliation.
+
 ### Stage 6 — Rehearsal, acceptance, and cutover package
 
 Purpose: produce the complete evidence-backed release candidate and rollout package.

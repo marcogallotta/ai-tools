@@ -332,11 +332,15 @@ class PostgresCommandPort:
             if reference is None:
                 raise CommandRuleError("TASK_REQUIRED", "task reference is required", http_status=400)
             view = self.reads.task_view(str(reference))
+            freshness = dict(view.projection_freshness)
+            if self.projection_recorder is not None and hasattr(self.projection_recorder, "task_freshness"):
+                freshness = dict(self.projection_recorder.task_freshness(view.task_id))
             data = asdict(view) | {
                 "task_id": str(view.task_id),
                 "content_version_id": str(view.content_version_id),
                 "section_id": str(view.section_id),
                 "operation_id": str(view.operation_id) if view.operation_id else None,
+                "projection_freshness": freshness,
             }
         else:
             raise CommandRuleError("NOT_A_QUERY", "command is not a read query")
@@ -424,10 +428,19 @@ class PostgresCommandPort:
             current_section_id=str(view.section_id),
             completed=view.completed,
             active_lease_id=self._active_lease_id(task.task_id),
+            unresolved_projection_attempt_id=self._unresolved_projection_attempt_id(task.task_id),
             open_hold_id=self._open_id(wf.EvidenceHold, task.task_id),
             open_human_requirement_id=self._open_id(wf.HumanReviewRequirement, task.task_id),
             open_abandonment_id=self._open_abandonment_id(task.task_id),
         )
+
+    def _unresolved_projection_attempt_id(self, task_id: uuid.UUID) -> str | None:
+        if self.projection_recorder is None or not hasattr(
+            self.projection_recorder, "unresolved_attempt_id"
+        ):
+            return None
+        value = self.projection_recorder.unresolved_attempt_id(task_id)
+        return str(value) if value else None
 
     def _active_lease_id(self, task_id: uuid.UUID) -> str | None:
         value = self.session.scalar(select(wf.ServiceLease.lease_id).where(wf.ServiceLease.task_id == task_id, wf.ServiceLease.state == "active"))
@@ -648,8 +661,24 @@ class PostgresCommandPort:
         row = self.workflow.renew_lease(lease_id=lease.lease_id, execution_id=execution.execution_id, run_id=call.run_id, owner_id=call.owner_id, now=call.now, new_expiry=call.now + self.lease_duration)
         return {"lease_id": str(row.lease_id), "expires_at": row.expires_at.isoformat(), "lease_revision": row.lease_revision}
 
-    def _projection_only(self, *_args) -> dict[str, Any]:
-        raise CommandRuleError("PROJECTION_ATTEMPT_REQUIRED", "projection recovery requires Stage 5 exact attempt authority")
+    def _projection_only(self, call, _generation, _binding, _execution, task, _operation) -> dict[str, Any]:
+        if self.projection_recorder is None or not hasattr(self.projection_recorder, "recover"):
+            raise CommandRuleError("PROJECTION_ATTEMPT_REQUIRED", "projection recovery requires Stage 5 exact attempt authority")
+        attempt_id = call.arguments.get("attempt_id")
+        if not attempt_id:
+            raise CommandRuleError("PROJECTION_ATTEMPT_REQUIRED", "attempt_id is required", http_status=400)
+        try:
+            result = self.projection_recorder.recover(
+                attempt_id=uuid.UUID(str(attempt_id)),
+                route=call.command_name,
+                arguments=dict(call.arguments),
+                actor=call.owner_id,
+                recovered_at=call.now,
+                expected_task_id=task.task_id if task is not None else None,
+            )
+        except ValueError as exc:
+            raise CommandRuleError("PROJECTION_RECOVERY_REJECTED", str(exc)) from exc
+        return dict(result)
 
     def _discard(self, call, _generation, _binding, _execution, _task, operation) -> dict[str, Any]:
         assert operation is not None

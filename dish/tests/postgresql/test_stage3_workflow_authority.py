@@ -165,14 +165,14 @@ def test_stage3_schema_adds_named_authorities_but_not_projection() -> None:
         "projection_outbox_events",
         "projection_attempts",
         "shadow_envelopes",
-    }.isdisjoint(models.Base.metadata.tables)
+    }.isdisjoint(wf.STAGE3_TABLE_NAMES)
 
 
 def test_stage3_migration_renders_guards_and_reaches_head(tmp_path: Path) -> None:
     config = Config(str(ROOT / "alembic.ini"))
     buffer = io.StringIO()
     config.attributes["output_buffer"] = buffer
-    command.upgrade(config, "head", sql=True)
+    command.upgrade(config, "0003_workflow_authority", sql=True)
     rendered = buffer.getvalue()
     assert "CREATE TABLE service_requests" in rendered
     assert "CREATE TABLE workflow_operations" in rendered
@@ -183,7 +183,7 @@ def test_stage3_migration_renders_guards_and_reaches_head(tmp_path: Path) -> Non
     path = tmp_path / "stage3.sqlite3"
     online = Config(str(ROOT / "alembic.ini"))
     online.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{path}")
-    command.upgrade(online, "head")
+    command.upgrade(online, "0003_workflow_authority")
     engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)
     try:
         assert set(wf.STAGE3_TABLE_NAMES).issubset(inspect(engine).get_table_names())
