@@ -9,8 +9,6 @@ Companion documents:
 - `database-backend-imp.md` — implementation design and implementation acceptance;
 - `database-backend-migration.md` — baseline, shadow, rehearsal, cutover, rollback, backup, and restore procedures.
 
-The original pre-split design document is not preserved in the repository as a separate archive file; its exact prior text remains available via Git history.
-
 The current governing behavior remains defined by the repository architecture and runtime contract until production authority is explicitly activated on PostgreSQL.
 
 ## 1. Problem
