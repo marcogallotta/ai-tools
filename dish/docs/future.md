@@ -35,6 +35,7 @@ operation/lease facts). If that migration becomes a near-term priority, treat th
 its scope is decided rather than building against a model about to change:
 
 - paginated section task listing;
+- phase-authoritative pending-Research/pending-Verification listing;
 - archive route for unapproved/redundant composite dishes;
 - unchanged-content re-Verification admin route;
 - activation-derived observability (its Asana-latency/rate-limit signals disappear post-cutover);
@@ -97,6 +98,44 @@ See [`section-task-listing-design.md`](section-task-listing-design.md) for the p
 completion filters, result contract, pagination behavior, private-surface boundary, and test scope.
 This is intentionally smaller than natural-language `dish_find` and should be useful soon after
 rollout without expanding workflow authority.
+
+### Phase-authoritative pending-Research/pending-Verification listing
+
+Blocked on the database-backend move, and becomes high priority once that move ships — not a
+speculative nice-to-have.
+
+`section-tasks` (shipped this pass) lists tasks Asana currently has placed in a Cooking section
+(e.g. Research Queue, Verification Queue) as a discovery/display convenience only — Asana
+section placement is explicitly non-authoritative for workflow status, only the local `phase` is.
+What agents actually want — "list every task currently pending Research start" / "... pending
+Verification start," phase-authoritative, not a section-placement proxy — is not a cheap query
+on the current SQLite+Asana split:
+
+- `phase` lives on the `operations` table (one row per operation), not on any one-row-per-task
+  table, so it only covers tasks that already have an operation row. A task that finished
+  Planning but never had a Research operation opened yet has zero local rows.
+- The real authoritative answer — what `read`/`start` expose today as `required_start_kind` — is
+  computed per task, live: an Asana read of that one task plus a document parse
+  (`legal_actions()` / `_snapshot()` in `dish_tool/application_service.py`,
+  `dish_tool/workflow_policy.py`), not a bulk SQL lookup.
+- There's no durable enumeration of "all known task_gids" either, so even a per-task loop needs
+  Asana's section listing first just to get candidates.
+
+A bulk listing today would mean either a coarse, sometimes-wrong DB-only proxy on
+`operations.phase`, or one live Asana read+parse per candidate task discovered via
+`section-tasks`. Neither is worth building as a stopgap.
+
+[`database-backend.md`](database-backend.md)'s Stage A move puts task content and
+operation/phase state into one transactionally-consistent PostgreSQL authority, removing the
+reason this is expensive today: no per-task external round-trip should be needed to know a
+task's current legal next action. When that schema and read model are designed, confirm it stays
+practical to ask "every task whose current legal next action is `start kind=initial`" or
+"`start kind=verification`" as one query, without iterating per task — consistent with, not an
+exception to, `database-backend-imp.md` §6.3's rule against a denormalized one-column task
+status (this should fall out of a normal join across tasks and current/latest operation state,
+the same way `required_start_kind` is derived today, just without the live Asana call). If it
+doesn't fall out naturally from that schema, that is worth flagging back rather than assumed
+away — don't let this feature get harder post-migration than it needs to be.
 
 ### Serve the Honest repository to agents
 
