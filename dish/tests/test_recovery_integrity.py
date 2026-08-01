@@ -74,7 +74,7 @@ def test_destination_movement_recovery_binds_final_marker_to_attempt(tmp_path):
     assert tuple(attempt) == ("confirmed", "destination_submission")
 
 
-def test_verification_handoff_never_sets_final_movement_marker(tmp_path):
+def test_prepared_verification_handoff_leaves_final_movement_markers_unset(tmp_path):
     app, _, operation_id = _prepared(tmp_path)
     row = app.conn.execute("SELECT movement_completed_at, destination_movement_attempt_id FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
     assert row["movement_completed_at"] is None and row["destination_movement_attempt_id"] is None

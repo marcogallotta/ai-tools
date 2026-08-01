@@ -65,7 +65,7 @@ def test_backend_call_without_explicit_tracker_marks_request_as_sent():
 
 
 @pytest.mark.smoke
-def test_backend_call_never_requests_async_execution():
+def test_backend_call_invokes_sdk_without_async_request():
     """close_asana_sdk_client's bounded pool shutdown is only safe because the
     Asana SDK's worker pool never carries a live request; it stays safe only
     as long as nothing here passes ``async_req=True``."""

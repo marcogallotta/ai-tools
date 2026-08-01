@@ -26,7 +26,7 @@ from dish_tool.recovery import (
 )
 
 
-def test_redesigned_schema_is_idempotent_and_complete(tmp_path):
+def test_schema_migration_is_idempotent_and_creates_required_tables(tmp_path):
     conn = initialize_database(tmp_path / "dish.db")
     from dish_tool.database import migrate_database
 
