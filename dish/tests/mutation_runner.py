@@ -51,6 +51,16 @@ def _copy_workspace(destination: Path) -> None:
             shutil.copy2(source, target)
 
 
+
+def pytest_selection_expression(case: MutationCase) -> str:
+    """Select exact registered function names while collecting the whole suite.
+
+    Full collection is required so collection-time smoke invariant ownership
+    contracts remain enforceable during mutation probes.
+    """
+    names = [node_id.split("::", 1)[1] for node_id in case.tests]
+    return " or ".join(names)
+
 def run_case(case: MutationCase) -> dict:
     with tempfile.TemporaryDirectory(prefix=f"dish-mutant-{case.mutation_id}-") as raw:
         workspace = Path(raw)
@@ -63,7 +73,9 @@ def run_case(case: MutationCase) -> dict:
             "-q",
             "-p",
             "no:cacheprovider",
-            *case.tests,
+            "tests",
+            "-k",
+            pytest_selection_expression(case),
         ]
         try:
             completed = subprocess.run(

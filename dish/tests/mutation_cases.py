@@ -75,5 +75,65 @@ CASES = (
             "tests/test_operation_lifecycle.py::test_cancelled_transition_records_terminal_completion_time",
         ),
         invariant="cancelled operations receive terminal completion evidence",
+    ),    MutationCase(
+        mutation_id="abandonment-abandoned-run-claim",
+        target="dish_tool/database.py",
+        before='if clean_run == str(row["abandoned_run_id"] or "").strip():',
+        after="if False:",
+        tests=(
+            "tests/test_abandonment_stage_successors.py::test_prepared_planning_claim_rejects_abandoned_run_then_binds_fresh_run",
+        ),
+        invariant="an abandoned run cannot claim the successor attempt created to replace it",
     ),
+    MutationCase(
+        mutation_id="planning-intent-single-use",
+        target="dish_service/planning_intent.py",
+        before='if row["claimed_request_id"] == request_id and row["status"] in {',
+        after='if row["status"] in {',
+        tests=(
+            "tests/test_planning_intent_confirmation.py::test_challenge_is_bound_to_exact_principal_task_and_single_followup",
+        ),
+        invariant="a Planning intent challenge is reusable only by its exact claimed request",
+    ),
+    MutationCase(
+        mutation_id="strict-fake-task-identity",
+        target="tests/support/asana_backend.py",
+        before="        try:\n            return self._tasks[gid]\n        except KeyError as exc:\n            raise AssertionError(f\"unexpected task gid: {gid}\") from exc",
+        after="        return self._tasks[self.task_gid]",
+        tests=(
+            "tests/test_support_asana_backend.py::test_stateful_asana_backend_rejects_unknown_task_identity",
+        ),
+        invariant="the canonical Asana fake must not alias an unknown task to its seeded task",
+    ),
+    MutationCase(
+        mutation_id="partial-effect-write-attribution",
+        target="dish_tool/operation_execution.py",
+        before='"write_committed": classification["write_committed"],',
+        after='"write_committed": False,',
+        tests=(
+            "tests/test_dish_critical_partial_recovery.py::test_partial_failures_report_request_scoped_durable_evidence",
+        ),
+        invariant="partial-effect diagnostics report whether the content write committed",
+    ),
+    MutationCase(
+        mutation_id="restore-installs-candidate",
+        target="dish_service/backup.py",
+        before="os.replace(candidate_path, self.db_path)",
+        after="candidate_path.unlink()",
+        tests=(
+            "tests/test_operational_recovery.py::test_backup_restore_preserves_open_signoff_lease_and_recovery_state",
+        ),
+        invariant="restore installs the validated candidate rather than retaining the mutated live database",
+    ),
+    MutationCase(
+        mutation_id="destination-already-placed",
+        target="dish_tool/step9.py",
+        before="elif current == destination.gid:",
+        after="elif False:",
+        tests=(
+            "tests/test_terminal_placement.py::test_completed_task_already_present_in_destination_matches",
+        ),
+        invariant="a task already at its approved destination is accepted without another movement",
+    ),
+
 )

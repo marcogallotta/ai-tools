@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from tests.mutation_cases import CASES
-from tests.mutation_runner import ROOT, apply_mutation, classify_pytest_exit
+from tests.mutation_runner import (
+    ROOT,
+    apply_mutation,
+    classify_pytest_exit,
+    pytest_selection_expression,
+)
 
 
 def test_curated_mutations_have_one_source_site_and_real_test_nodes():
@@ -37,3 +42,10 @@ def test_pytest_exit_classification_distinguishes_survivors_from_runner_errors(
     returncode, expected
 ):
     assert classify_pytest_exit(returncode) == expected
+
+
+def test_mutation_selection_collects_full_suite_but_targets_registered_functions():
+    case = CASES[0]
+    expression = pytest_selection_expression(case)
+    assert expression == "test_completed_start_request_replays_full_stored_result"
+    assert "tests/" not in expression
