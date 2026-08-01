@@ -24,6 +24,42 @@ When these sources differ:
 - implementation convenience does not resolve a semantic conflict;
 - unresolved product semantics return to Marco rather than being invented by the implementer.
 
+### 1.1 Production change control from August 1, 2026
+
+August 1, 2026 is the Stage A production-change control epoch. Production feature work and bug fixes may continue under the current Asana/SQLite authority while Stage A is implemented, including urgent changes that touch durable state. They may not disappear from the target contract merely because they were added after the original re-baseline.
+
+Maintain one append-only production-change ledger covering every commit merged or deployed on or after August 1, 2026, including commits already merged before this rule was added. Screen each commit when it is merged and again before each implementation, rehearsal, and cutover acceptance milestone.
+
+A commit is in scope when it changes or can change any of the following:
+
+- database schema, migrations, constraints, indexes with semantic effect, or durable sidecars;
+- task content, completion, project membership, section placement, or section-registry behavior;
+- commands, principals, legal actions, request identity, replay, outcomes, or public protocol semantics;
+- operations, Verification, holds, leases, claims, fences, recovery, abandonment, audit, backup, restore, or projection;
+- external-effect intent, correlation, adjudication, or retry behavior;
+- release, Honest asset, migration, or provenance bindings;
+- any production feature or bug fix whose observable behavior becomes part of the current governed system.
+
+For each in-scope commit, record at least:
+
+- commit identity, merge time, deployment time, and source release;
+- changed files and a concise behavior summary;
+- affected commands, authorities, tables, sidecars, protocols, and migration paths;
+- required data migration, backfill, compatibility, characterization, shadow, and acceptance updates;
+- disposition as **already covered**, **implementation/migration document update required**, **locked-architecture amendment required**, or **explicit retirement/isolation decision required**;
+- reviewer and closure evidence.
+
+Urgent current-production work does not have to wait for the PostgreSQL implementation. However:
+
+- no implementation or migration milestone may be accepted with an unreviewed in-scope commit;
+- a deployed feature becomes current governed behavior and must be preserved, explicitly retired, or explicitly isolated before cutover;
+- a bug fix that changes persisted facts or governed semantics must update the characterization corpus and target treatment rather than being treated as code-only;
+- schema or sidecar changes must update the authority inventory, import contract, and migration evidence;
+- command or protocol changes must update the normative semantic-delta contract before the corresponding target behavior is implemented;
+- a change that contradicts the locked architecture requires a bounded architecture amendment approved by Marco rather than an implementation guess.
+
+The implementation re-baseline is therefore moving but controlled: the target contract must reconcile the complete ledger through the exact source release selected for production cutover.
+
 ## 2. Implementation defaults
 
 The default Stage A stack is:
@@ -96,7 +132,7 @@ Normative command treatment:
 | `renew-lease` | Retain narrow renewal. | Exact lease owner/run. | L limited to lease plus request outcome/audit. | Exact replay against the original lease identity. |
 | `recover` | Retain as post-cutover adjudication of an exact unresolved downstream Asana projection attempt. It never settles PostgreSQL command authority or changes canonical task state. | Marco/admin. | P; exact projection-attempt target, persisted intent, observation, and three-way adjudication. | Exact replay. Imported legacy authoritative attempts and their terminal requests remain immutable historical outcomes and are not reopened. |
 | `repair-destination` | Retain as projection-only repair of an exact downstream Asana destination movement after canonical PostgreSQL logical placement has committed. | Marco/admin. | P; exact projection movement attempt, mapping, intended logical destination, and observation evidence. | Exact replay; never infer or alter canonical placement from Asana. |
-| `discard` | Retain as projection-only terminal settlement where exact evidence proves the targeted downstream Asana effect was not applied. | Marco/admin. | P; exact projection attempt and non-application proof. | Exact replay; canonical PostgreSQL state and the original command outcome remain unchanged, and imported historical attempts are never reopened. |
+| `discard` | Retain cancellation of an exact provably unapplied open operation. | Marco/admin. | R; targets the exact operation, originating request/execution, immutable pre-operation task baseline, and current task/operation fences. Unresolved or confirmed external effects and completed workflow steps fail closed. Operation terminalization as `cancelled_by_marco`, request/execution outcome, governed audit, causality, and any required projection intent commit atomically. | Exact replay returns the original cancellation outcome. Imported terminal cancellation evidence remains immutable history and is never reopened. |
 | `abandon-operation` | Retain permanent exact actor-attempt abandonment. | Marco/admin. | R using the abandonment state machine in §6.17. | Exact request/execution replay; no duplicate successor publication. |
 | `reconcile-abandonment` | Retain exact blocked-abandonment continuation. | Marco/admin. | R using the same abandonment execution and immutable successor baseline. | Exact replay; never rebase succession. |
 | `reopen-planning` | Retain the only current completion-clearing route. | Marco/admin. | L; completion clear, attempt/result, audit, outcome and projection commit together. | Exact replay; imported completion and attempts preserved. |
@@ -413,12 +449,12 @@ Represent each retained hold/recovery family as named authority rather than a ge
 - unfinished PostgreSQL command execution continuation through the original request/execution authority, never through an admin projection-recovery route;
 - downstream projection-attempt adjudication through `recover`;
 - downstream destination projection repair through `repair-destination`;
-- provably-not-applied downstream projection settlement through `discard`;
+- exact cancellation of a provably unapplied open operation through `discard`;
 - Planning reopen/completion-clear attempts;
 - abandonment and successor recovery;
 - downstream projection-only recovery.
 
-Each family defines exact target identity, admission principal, request/execution profile, task/operation/lease/effect fences, monotonic checkpoints and outcomes, and interactions with content, location, audit, and projection. Unfinished PostgreSQL command work is resumed, taken over, or settled only through its original generation-bound request and execution authority. The `recover`, `repair-destination`, and `discard` routes are profile P after cutover and settle only exact downstream projection attempts. A post-cutover Asana observation can settle only projection authority unless it is immutable evidence for an imported legacy attempt; it cannot change canonical PostgreSQL content or logical placement.
+Each family defines exact target identity, admission principal, request/execution profile, task/operation/lease/effect fences, monotonic checkpoints and outcomes, and interactions with content, location, audit, and projection. Unfinished PostgreSQL command work is resumed, taken over, or settled only through its original generation-bound request and execution authority. The `recover` and `repair-destination` routes are profile P after cutover and settle only exact downstream projection attempts. `discard` is profile R and retains the current authoritative cancellation of an exact provably unapplied open operation; it does not adjudicate projection non-application. A post-cutover Asana observation can settle only projection authority unless it is immutable evidence for an imported legacy attempt; it cannot change canonical PostgreSQL content or logical placement.
 
 ### 6.17 Abandonment and succession
 
@@ -610,7 +646,7 @@ Keep three non-interchangeable classes:
 2. **Shadow envelopes and observations:** non-authoritative parity evidence while Asana/SQLite remains live authority.
 3. **Post-cutover projection attempts:** downstream effects only, with intent, claim, observation, adjudication, settlement, epoch, and mapping context.
 
-`recover`, `repair-destination`, and `discard` are post-cutover projection-only recovery routes. Each targets an exact class-3 projection attempt and mapping/effect identity; none may target a PostgreSQL command execution or an imported legacy authoritative attempt. No post-cutover Asana observation may mutate canonical content or logical placement.
+`recover` and `repair-destination` are post-cutover projection-only recovery routes. Each targets an exact class-3 projection attempt and mapping/effect identity; neither may target a PostgreSQL command execution or an imported legacy authoritative attempt. `discard` is not an effect-class recovery route: it retains exact cancellation of a provably unapplied PostgreSQL operation under profile R. No post-cutover Asana observation may mutate canonical content or logical placement.
 
 
 ### 9.2 Credentials and isolation
@@ -752,7 +788,7 @@ Projection freshness is reported separately and never changes legal PostgreSQL a
 15. Complete migration tooling and rehearsal support under `database-backend-migration.md`.
 16. Run implementation acceptance before any production cutover decision.
 
-Implementation may be delivered incrementally, but no partial slice becomes production authority without the full cutover gates.
+Implementation may be delivered incrementally, but no partial slice becomes production authority without the full cutover gates. Throughout this sequence, continuously reconcile the August 1, 2026 production-change ledger. A newly merged in-scope commit may require re-characterization, semantic-matrix revision, target schema or service changes, migration updates, or renewed acceptance before the affected milestone remains valid.
 
 ## 14. Implementation acceptance
 
@@ -846,6 +882,16 @@ Implementation may be delivered incrementally, but no partial slice becomes prod
 - PostgreSQL outage fails governed mutations closed.
 - Asana outage affects projection freshness but not committed PostgreSQL authority.
 - The implementation contains no laptop-specific authority assumptions that would prevent later relocation to the intended self-managed AWS host. Actual AWS deployment is not a Stage A acceptance gate.
+
+### 14.10 Production-change closure
+
+- The production-change ledger is complete from August 1, 2026 through the exact source release under review.
+- Every in-scope commit has an approved disposition and reviewer evidence; no row remains unreviewed or conditionally ignored.
+- Added commands, features, authorities, schema objects, sidecars, and persisted semantics are represented in the authority inventory, semantic-delta contract, target implementation, migration import, characterization corpus, and acceptance evidence as applicable.
+- Bug fixes that alter governed behavior or durable facts are characterized and reflected in target semantics.
+- Changes deployed after a prior acceptance run invalidate the affected acceptance evidence until impact review and required re-execution complete.
+- No production feature is silently dropped at cutover; it is preserved, explicitly retired by Marco, or explicitly isolated with migration evidence.
+- The implementation and migration documents bind the exact source commit/release range they cover.
 
 ## 15. Out of implementation scope
 

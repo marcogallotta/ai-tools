@@ -186,6 +186,20 @@ Before baseline work:
 
 No live command shadowing begins before these foundations exist.
 
+### 6.1 Production changes from August 1, 2026 through cutover
+
+Use the production-change ledger defined by `database-backend-imp.md` as migration evidence. Backfill it for every commit merged or deployed on or after August 1, 2026, and keep it current through durable authority activation.
+
+For every in-scope commit:
+
+- bind the exact source commit and release identity;
+- update the current-to-target authority inventory and command semantic-delta contract when applicable;
+- update baseline capture, import, delta capture, shadow envelopes, reconciliation, and acceptance evidence affected by the change;
+- include schema migrations, data backfills, new tables, sidecars, commands, aliases, recovery states, and protocol changes in the final source bundle;
+- re-run or invalidate prior parity and rehearsal evidence when the commit changes the behavior or durable facts those results covered.
+
+Urgent production changes may deploy under legacy authority, but they cannot be omitted from cutover. A production feature introduced during Stage A must be preserved, explicitly retired by Marco, or explicitly isolated before activation. An unreviewed in-scope commit closes rehearsal approval and production cutover readiness.
+
 ## 7. Phase 1: baseline and delta closure
 
 ### 7.1 Baseline capture
@@ -457,6 +471,7 @@ Production cutover may begin only when all of the following are true.
 - `database-backend.md` has no unresolved Stage A human decision other than conditional Asana-create fallback if feasibility fails.
 - Implementation acceptance in `database-backend-imp.md` passes.
 - The normative command semantic-delta contract is complete and approved before target command implementation, and remains complete at rehearsal.
+- The production-change ledger is complete from August 1, 2026 through the exact final source commit/release; every in-scope commit has an approved disposition and all affected characterization, implementation, migration, shadow, rehearsal, and acceptance evidence has been updated or rerun.
 - Deferred features are non-gating.
 
 ### 11.2 Baseline and shadow
@@ -492,6 +507,7 @@ Production cutover may begin only when all of the following are true.
 
 Marco reviews the evidence package and records an explicit cutover approval bound to:
 
+- exact final source commit/release and closed August 1, 2026 production-change ledger;
 - final legacy bundle;
 - final import run;
 - accepted discrepancies/isolation list;
