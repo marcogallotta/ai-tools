@@ -300,14 +300,23 @@ Run the launch-critical mutation sample with:
 ```
 
 The runner mutates request replay, request/run binding, lease ownership, governed authorization
-consumption, verifier independence, and terminal cancellation evidence in isolated temporary copies.
-A mutant is counted as killed only when its targeted pytest command exits with an ordinary test
-failure. Collection or infrastructure errors are reported separately and fail the mutation lane.
-Results are written to `.test-artifacts/mutation-sample/summary.json` and `summary.md`.
+consumption, verifier independence, terminal cancellation evidence, Planning intent dimensions,
+workflow-policy fail-closed facts, Cooking-project membership selection, and post-mutation Asana
+confirmation in isolated temporary copies. A mutant is counted as killed only when its targeted
+pytest command exits with an ordinary test failure. Collection or infrastructure errors are reported
+separately and fail the mutation lane. Results are written to
+`.test-artifacts/mutation-sample/summary.json` and `summary.md`.
 
-This is a deliberately small signal, not a global score. New launch-critical invariants should add a
-specific mutant and the narrowest authoritative test that kills it. Surviving mutants block the lane
-until the oracle is strengthened or the mutant is documented as equivalent.
+This is a deliberately curated signal, not a global score. New launch-critical invariants should add
+a specific realistic mutant and the narrowest authoritative test that kills it. Surviving mutants
+block the lane until the oracle is strengthened or the mutant is documented as equivalent.
+
+Equivalent or deliberately redundant guards are classified rather than converted into artificial
+score-only tests. Current examples are the explicit Planning task, agent, and run comparisons that
+are also covered by the exact target hash, the fresh-request guard that is independently enforced by
+the service request journal, and the held-baseline guard derived from the same identity and placement
+facts. These branches still need direct unit coverage when changed, but they are not counted as
+public-contract mutation probes unless removing them changes an externally visible decision.
 
 ## Test support ownership
 

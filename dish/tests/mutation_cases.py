@@ -135,5 +135,176 @@ CASES = (
         ),
         invariant="a task already at its approved destination is accepted without another movement",
     ),
+    MutationCase(
+        mutation_id="planning-intent-owner-binding",
+        target="dish_service/planning_intent.py",
+        before='row["owner_id"] != principal.owner_id',
+        after="False",
+        tests=(
+            "tests/test_planning_intent_confirmation.py::test_confirmation_rejects_different_owner_with_same_run",
+        ),
+        invariant="Planning intent confirmation remains bound to the authenticated owner independently of run identity",
+    ),
+    MutationCase(
+        mutation_id="planning-intent-target-hash",
+        target="dish_service/planning_intent.py",
+        before='or row["target_hash"] != planning_intent_target_hash(arguments)',
+        after="or False",
+        tests=(
+            "tests/test_planning_intent_confirmation.py::test_confirmation_rejects_hash_only_prepared_operation_change",
+        ),
+        invariant="Planning intent confirmation binds target arguments not covered by principal or task fields",
+    ),
+    MutationCase(
+        mutation_id="workflow-policy-unresolved-effect",
+        target="dish_tool/workflow_policy.py",
+        before="or snapshot.unresolved_attempts",
+        after="or False",
+        tests=(
+            "tests/test_workflow_policy_fail_closed.py::test_each_unsafe_authority_fact_suppresses_all_actions",
+        ),
+        invariant="unresolved external effects suppress every ordinary workflow action",
+    ),
+    MutationCase(
+        mutation_id="workflow-policy-migration-reconciliation",
+        target="dish_tool/workflow_policy.py",
+        before="or snapshot.migration_reconciliation_required",
+        after="or False",
+        tests=(
+            "tests/test_workflow_policy_fail_closed.py::test_each_unsafe_authority_fact_suppresses_all_actions",
+        ),
+        invariant="required migration reconciliation suppresses ordinary workflow actions",
+    ),
+    MutationCase(
+        mutation_id="workflow-policy-placement-binding",
+        target="dish_tool/workflow_policy.py",
+        before="or not snapshot.placement_matches",
+        after="or False",
+        tests=(
+            "tests/test_workflow_policy_fail_closed.py::test_each_unsafe_authority_fact_suppresses_all_actions",
+        ),
+        invariant="live Cooking-project placement must match the authoritative snapshot",
+    ),
+    MutationCase(
+        mutation_id="workflow-policy-required-cycle",
+        target="dish_tool/workflow_policy.py",
+        before="if not snapshot.required_cycle_exists:",
+        after="if False:",
+        tests=(
+            "tests/test_workflow_policy_fail_closed.py::test_each_unsafe_authority_fact_suppresses_all_actions",
+        ),
+        invariant="verification actions require the expected current verification cycle",
+    ),
+    MutationCase(
+        mutation_id="workflow-policy-verification-live-state",
+        target="dish_tool/workflow_policy.py",
+        before='snapshot.live_status != "pending-verification"',
+        after="False",
+        tests=(
+            "tests/test_workflow_policy_fail_closed.py::test_each_unsafe_authority_fact_suppresses_all_actions",
+        ),
+        invariant="verification actions require the live pending-verification state",
+    ),
+    MutationCase(
+        mutation_id="workflow-policy-signoff-binding",
+        target="dish_tool/workflow_policy.py",
+        before='if snapshot.live_status != "ready" or not snapshot.signoff_bound:',
+        after='if snapshot.live_status != "ready" or False:',
+        tests=(
+            "tests/test_workflow_policy_fail_closed.py::test_each_unsafe_authority_fact_suppresses_all_actions",
+        ),
+        invariant="submission actions require exact durable signoff binding",
+    ),
+    MutationCase(
+        mutation_id="task-store-cooking-project-selection",
+        target="dish_tool/task_store.py",
+        before="if membership_project_gid == project_gid:",
+        after="if True:",
+        tests=(
+            "tests/test_task_store_and_backend_negative_contracts.py::test_task_reader_selects_only_the_cooking_membership",
+        ),
+        invariant="task placement is selected by Cooking project identity rather than membership order",
+    ),
+    MutationCase(
+        mutation_id="task-store-ambiguous-cooking-membership",
+        target="dish_tool/task_store.py",
+        before="if len(matches) > 1:",
+        after="if False:",
+        tests=(
+            "tests/test_task_store_and_backend_negative_contracts.py::test_task_reader_rejects_distinct_cooking_memberships",
+        ),
+        invariant="multiple distinct Cooking placements are rejected as ambiguous",
+    ),
+    MutationCase(
+        mutation_id="backend-reread-task-identity",
+        target="dish_tool/backend.py",
+        before="if actual_task_gid == expected_task_gid:",
+        after="if True:",
+        tests=(
+            "tests/test_task_store_and_backend_negative_contracts.py::test_move_rejects_wrong_identity_after_sending",
+        ),
+        invariant="post-mutation confirmation must identify the exact requested task",
+    ),
+    MutationCase(
+        mutation_id="backend-create-placement-confirmation",
+        target="dish_tool/backend.py",
+        before=(
+            'if self._section_for_project(\n'
+            '            confirmed, project_gid, partial_application="task_created"\n'
+            '        ) != section_gid:'
+        ),
+        after="if False:",
+        tests=(
+            "tests/test_task_store_and_backend_negative_contracts.py::test_create_rejects_task_outside_research_queue",
+        ),
+        invariant="created tasks must be reread in the requested Research Queue placement",
+    ),
+    MutationCase(
+        mutation_id="backend-move-placement-confirmation",
+        target="dish_tool/backend.py",
+        before=(
+            'if self._section_for_project(\n'
+            '            after, COOKING_PROJECT_GID, partial_application="section_move_requested"\n'
+            '        ) != section_gid:'
+        ),
+        after="if False:",
+        tests=(
+            "tests/test_task_store_and_backend_negative_contracts.py::test_move_requires_requested_cooking_section_on_reread",
+        ),
+        invariant="section movement must be confirmed in the Cooking project after the effect",
+    ),
+    MutationCase(
+        mutation_id="backend-move-content-drift",
+        target="dish_tool/backend.py",
+        before=(
+            'if str(after.get("name") or "") != str(before.get("name") or "") '
+            'or str(after.get("notes") or "") != str(before.get("notes") or ""):'
+        ),
+        after="if False:",
+        tests=(
+            "tests/test_task_store_and_backend_negative_contracts.py::test_move_rejects_concurrent_content_change",
+        ),
+        invariant="movement confirmation rejects concurrent title or notes drift",
+    ),
+    MutationCase(
+        mutation_id="backend-content-update-response-identity",
+        target="dish_tool/backend.py",
+        before=(
+            'if response_gid != task_gid:\n'
+            '            raise BackendFailure(\n'
+            '                "BACKEND_UNCERTAIN",\n'
+            '                "Asana returned malformed data after the title-and-notes write",'
+        ),
+        after=(
+            'if False:\n'
+            '            raise BackendFailure(\n'
+            '                "BACKEND_UNCERTAIN",\n'
+            '                "Asana returned malformed data after the title-and-notes write",'
+        ),
+        tests=(
+            "tests/test_task_store_and_backend_negative_contracts.py::test_update_rejects_wrong_response_identity",
+        ),
+        invariant="content updates reject a response for a different task identity",
+    ),
 
 )
