@@ -2,19 +2,10 @@
 
 from typing import Any, Mapping, Sequence
 
-from .constants import (
-    ALLOWED_ACTIONS_BY_STATE,
-    DEFAULT_RETRYABLE_BY_CODE,
-    EXIT_STATUS_BY_CODE,
-)
+from .constants import DEFAULT_RETRYABLE_BY_CODE, EXIT_STATUS_BY_CODE
 from .errors import BackendFailure, DishRuleError
 from .validation_scope import add_validation_scope
 
-
-def allowed_actions_for_state(state: str | None) -> list[str]:
-    if state not in ALLOWED_ACTIONS_BY_STATE:
-        return []
-    return list(ALLOWED_ACTIONS_BY_STATE[state])
 
 
 def result_envelope(
@@ -40,7 +31,7 @@ def result_envelope(
     if retryable is None:
         retryable = DEFAULT_RETRYABLE_BY_CODE[code]
     if allowed_actions is None:
-        allowed_actions = allowed_actions_for_state(state)
+        allowed_actions = ()
     result_data = add_validation_scope(dict(data or {}), validation_scope)
     return {
         "ok": bool(ok),

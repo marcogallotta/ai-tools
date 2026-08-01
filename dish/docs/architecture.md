@@ -87,6 +87,10 @@ legal transitions from it, and ordinary mutations assert the selected action aga
 Clients, transports, and individual use cases must not independently reconstruct which action is
 legal. Agent-facing callers follow only `allowed_actions`. Private continuations are reported as
 `data.required_admin_action`, not exposed as agent actions.
+Result-envelope formatting never derives actions from a workflow state string. Callers that expose
+current actions must pass the exact list produced from the authoritative snapshot. Persistence may
+return phase candidates for snapshot construction, but those candidates are not themselves legal
+actions.
 Principal and lease filtering must update every exposed current-action projection together. Actions
 that may become legal only after a private recovery are reported separately and never mixed into a
 current `allowed_actions` or nested authoritative view.
@@ -235,19 +239,8 @@ The shared service exposes two loopback listeners:
 - **private:** CLI, admin, health, migration, recovery, backup, and generated Action schema;
 - **Action:** bounded `/v1/action/*` workflow, Action lease renewal, and generated schema.
 
-Test and production are separate permanently running service instances with distinct Asana project,
-database, backup, and loopback-port configuration. Tailscale Serve exposes each private listener to
-trusted tailnet clients. Funnel reaches a loopback-only Caddy router whose single upstream selects
-one Action listener; Caddy holds no Dish or Asana credential and cannot bypass either service's
-workflow authority. Production route selection requires explicit cutover authorization and is
-confirmed from Caddy's running configuration after an Etag-guarded update.
-
-Private clients select a named `test` or `prod` profile per CLI invocation. The shared profile
-resolver binds the environment's URL and credential as one choice; bare `dish` defaults to
-production. Agents have both agent profiles and only the test admin profile. Caddy's public Action
-selection is a separate authority and cannot be changed through a client profile.
-
-The Action token is invalid on private/admin routes, and the Action surface contains no
+Tailscale Serve exposes the private listener to trusted tailnet clients. Funnel exposes the Action
+listener. The Action token is invalid on private/admin routes, and the Action surface contains no
 raw Asana, migration, recovery, health, or backup route. `dish_service.command_spec` is shared by the
 Action validator and OpenAPI generator so their accepted arguments cannot drift.
 

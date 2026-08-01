@@ -5,7 +5,7 @@ from .database import (
     complete_operation_step,
     create_verification_cycle,
     declare_operation_step,
-    legal_operation_actions,
+    phase_candidate_actions,
     pending_operation_steps,
     record_actor_fact,
     transition_operation,
@@ -22,7 +22,7 @@ class WorkflowRepository:
         ).fetchone()
 
     def legal_actions(self, operation):
-        return legal_operation_actions(operation)
+        return phase_candidate_actions(operation)
 
     def declare_step(self, operation_id, name, intended):
         return declare_operation_step(self.conn, operation_id, name, intended)

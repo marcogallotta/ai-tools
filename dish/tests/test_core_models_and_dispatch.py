@@ -146,7 +146,7 @@ def test_common_result_contract_and_exit_statuses():
         "submission_id": None,
         "state": "ready",
         "retryable": False,
-        "allowed_actions": ["submit"],
+        "allowed_actions": [],
         "data": {},
         "errors": [],
     }
@@ -162,11 +162,23 @@ def test_common_result_contract_and_exit_statuses():
         errors=[{"rule": "missing_label", "field": "Exemptions"}],
     )
     assert failure["retryable"] is True
-    assert failure["allowed_actions"] == ["prepare"]
+    assert failure["allowed_actions"] == []
     assert exit_status(failure["code"]) == 2
 
     for code, expected in EXIT_STATUS_BY_CODE.items():
         assert exit_status(code) == expected
+
+
+def test_result_envelope_never_derives_workflow_actions_from_state():
+    result = result_envelope(command="probe", state="ready")
+
+    assert result["state"] == "ready"
+    assert result["allowed_actions"] == []
+
+    explicit = result_envelope(
+        command="probe", state="ready", allowed_actions=["submit"]
+    )
+    assert explicit["allowed_actions"] == ["submit"]
 
 
 @pytest.mark.smoke

@@ -2365,7 +2365,7 @@ def resolve_admin_abandonment_target(conn: sqlite3.Connection, raw: Any) -> str:
     return str(row["abandonment_id"])
 
 
-def legal_operation_actions(operation: Mapping[str, Any]) -> list[str]:
+def phase_candidate_actions(operation: Mapping[str, Any]) -> list[str]:
     if operation["status"] not in {"open", "uncertain"}:
         return []
     return list(_OPERATION_PHASE_ACTIONS.get(operation["phase"], ()))

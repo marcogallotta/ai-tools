@@ -6,7 +6,7 @@ import sqlite3
 from typing import Any, Mapping
 
 from .constants import COOKING_PROJECT_GID
-from .database import confirm_task_content, create_operation, content_identity, legal_operation_actions, transition_operation, declare_operation_step, complete_operation_step
+from .database import confirm_task_content, create_operation, content_identity, phase_candidate_actions, transition_operation, declare_operation_step, complete_operation_step
 from .errors import DishRuleError
 from .models import OperationActors, ResolvedRelease
 from .migrations import migrate_task_document
@@ -271,7 +271,7 @@ def inspect_operation(conn: sqlite3.Connection, operation_id: str) -> dict[str, 
         raise DishRuleError("NOT_FOUND", f"operation not found: {operation_id}", rule="operation_not_found")
     state = conn.execute("SELECT * FROM task_content_state WHERE task_gid = ?", (op["task_gid"],)).fetchone()
     cycles = conn.execute("SELECT * FROM verification_cycles WHERE operation_id = ? ORDER BY cycle_number", (operation_id,)).fetchall()
-    actions = legal_operation_actions(op)
+    actions = phase_candidate_actions(op)
     return {
         "operation": {k: op[k] for k in op.keys()},
         "content": (

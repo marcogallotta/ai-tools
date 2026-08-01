@@ -42,19 +42,6 @@ SUBMISSION_STATES = frozenset(
 TERMINAL_STATES = frozenset({"consumed", "discarded"})
 NONTERMINAL_STATES = SUBMISSION_STATES - TERMINAL_STATES
 
-ALLOWED_ACTIONS_BY_STATE = {
-    None: [],
-    "drafting": ["prepare"],
-    "research_handoff": ["prepare"],
-    "awaiting_verification": ["approve", "reject"],
-    "ready": ["submit"],
-    "written": ["submit"],
-    "awaiting_human": [],
-    "in_flight": [],
-    "uncertain": [],
-    "consumed": [],
-    "discarded": [],
-}
 
 EXIT_STATUS_BY_CODE = {
     "OK": 0,
