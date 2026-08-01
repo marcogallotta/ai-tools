@@ -47,7 +47,11 @@ Add an operating instruction with all of these requirements:
 - Use the machine identifier `agent: gpt` whenever the operation schema accepts an agent; Dish
   renders that identifier as the human-readable actor name `Custom GPT`.
 - Create one non-nil canonical lowercase UUID as `client.run_id` for the current agent run and reuse
-  it for every Action call and lease renewal in that run. A genuinely new run uses a new UUID.
+  it for every Action call and lease renewal in that run. One run is one assistant execution
+  triggered by one Marco message: all tool calls, retries, and continuations made while producing
+  that response remain in the same run. A later Marco message starts a new execution and uses a new
+  UUID; a new chat is not required. An automatic continuation without a new Marco message is not a
+  new run.
 - Before every mutation—`create`, `start`, `prepare`, `approve`, `reject`, `submit`, and lease
   renewal—create a new non-nil canonical lowercase UUID as `client.request_id` and preserve it with
   the attempted call. Read-only `sections`, `section-tasks`, `read`, and `inspect` do not accept a
