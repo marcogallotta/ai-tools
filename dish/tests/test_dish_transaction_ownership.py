@@ -7,6 +7,7 @@ import pytest
 from dish_tool.transactions import (
     immediate_transaction,
     join_or_begin_immediate,
+    read_transaction,
     require_transaction,
     savepoint_transaction,
 )
@@ -30,6 +31,28 @@ def test_immediate_transaction_commits_owned_unit():
 
     assert not conn.in_transaction
     assert _values(conn) == ["committed"]
+
+
+def test_read_transaction_holds_a_snapshot_and_releases_without_commit(tmp_path):
+    path = tmp_path / "read-snapshot.sqlite"
+    setup = sqlite3.connect(path, isolation_level=None)
+    setup.execute("PRAGMA journal_mode = WAL")
+    setup.execute("CREATE TABLE facts(value TEXT NOT NULL)")
+    setup.execute("INSERT INTO facts(value) VALUES('before')")
+    setup.close()
+
+    reader = sqlite3.connect(path, isolation_level=None)
+    writer = sqlite3.connect(path, isolation_level=None)
+    try:
+        with read_transaction(reader):
+            assert _values(reader) == ["before"]
+            writer.execute("INSERT INTO facts(value) VALUES('after')")
+            assert _values(reader) == ["before"]
+        assert not reader.in_transaction
+        assert _values(reader) == ["before", "after"]
+    finally:
+        reader.close()
+        writer.close()
 
 
 @pytest.mark.smoke

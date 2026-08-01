@@ -14,7 +14,7 @@ from typing import Any, Iterable, Mapping
 
 from .constants import DEFAULT_DB_PATH, SUBMISSION_STATES
 from .errors import DishRuleError
-from .transactions import immediate_transaction
+from .transactions import immediate_transaction, read_transaction
 from .models import ContentIdentity, OperationActors, agent_family, utc_now
 
 _MIGRATION_1 = f"""
@@ -2310,22 +2310,28 @@ def _backup_legacy_database(db_path: Path) -> None:
     source.row_factory = sqlite3.Row
     temp_path: Path | None = None
     try:
-        version = int(source.execute("PRAGMA user_version").fetchone()[0])
-        if version >= 3:
-            return
-        with tempfile.NamedTemporaryFile(
-            dir=backup.parent,
-            prefix=f".{backup.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as handle:
-            temp_path = Path(handle.name)
-        target = sqlite3.connect(str(temp_path), timeout=30, isolation_level=None)
-        try:
-            source.backup(target)
-            target.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        finally:
-            target.close()
+        # Keep the schema-version observation and the online-backup source on
+        # one SQLite snapshot. In WAL mode another initializer may migrate the
+        # live file after this read; without the read transaction the backup
+        # API can then copy the newer schema while ``version`` still describes
+        # the legacy one.
+        with read_transaction(source):
+            version = int(source.execute("PRAGMA user_version").fetchone()[0])
+            if version >= 3:
+                return
+            with tempfile.NamedTemporaryFile(
+                dir=backup.parent,
+                prefix=f".{backup.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temp_path = Path(handle.name)
+            target = sqlite3.connect(str(temp_path), timeout=30, isolation_level=None)
+            try:
+                source.backup(target)
+                target.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            finally:
+                target.close()
         check = sqlite3.connect(str(temp_path), timeout=30, isolation_level=None)
         try:
             if check.execute("PRAGMA integrity_check").fetchone()[0] != "ok":

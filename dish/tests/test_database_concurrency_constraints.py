@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import dish_tool.database_schema as database_schema
 from dish_tool.database_schema import (
     MIGRATIONS,
     _execute_script_statements,
@@ -31,6 +32,71 @@ def _make_v2(path: Path) -> None:
         conn.execute("COMMIT")
     finally:
         conn.close()
+
+
+class _MigrateBeforeBackupConnection(sqlite3.Connection):
+    migrate_live_database = None
+
+    def backup(self, target, *args, **kwargs):
+        callback = type(self).migrate_live_database
+        assert callback is not None
+        type(self).migrate_live_database = None
+        callback()
+        return super().backup(target, *args, **kwargs)
+
+
+@pytest.mark.database_boundary
+@pytest.mark.real_database_bootstrap
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_concurrency
+def test_legacy_backup_uses_the_schema_snapshot_that_was_versioned(
+    tmp_path: Path, monkeypatch
+) -> None:
+    db_path = tmp_path / "backup-snapshot-v2.sqlite"
+    _make_v2(db_path)
+    setup = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        assert setup.execute("PRAGMA journal_mode = WAL").fetchone()[0] == "wal"
+    finally:
+        setup.close()
+
+    tracked_connect = sqlite3.connect
+    source_created = False
+    migration_ran = False
+
+    def migrate_live_database() -> None:
+        nonlocal migration_ran
+        migration_ran = True
+        writer = tracked_connect(db_path, isolation_level=None)
+        try:
+            database_schema.migrate_database(writer)
+        finally:
+            writer.close()
+
+    def racing_connect(database, *args, **kwargs):
+        nonlocal source_created
+        if Path(database) == db_path and not source_created:
+            source_created = True
+            kwargs["factory"] = _MigrateBeforeBackupConnection
+            _MigrateBeforeBackupConnection.migrate_live_database = migrate_live_database
+        return tracked_connect(database, *args, **kwargs)
+
+    monkeypatch.setattr(database_schema.sqlite3, "connect", racing_connect)
+    initialized = initialize_database(db_path)
+    initialized.close()
+
+    assert migration_ran
+    backup = sqlite3.connect(db_path.with_suffix(".sqlite.legacy-v2.bak"))
+    try:
+        assert backup.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert backup.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        backup.close()
+    live = sqlite3.connect(db_path)
+    try:
+        assert live.execute("PRAGMA user_version").fetchone()[0] == max(MIGRATIONS)
+    finally:
+        live.close()
 
 
 @pytest.mark.database_boundary

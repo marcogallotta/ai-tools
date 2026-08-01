@@ -6,6 +6,8 @@ The repository has three distinct transaction semantics:
   savepoint;
 * ``join_or_begin_immediate`` joins a caller-owned unit unchanged, or owns one
   when called at the boundary;
+* ``read_transaction`` owns a stable deferred-read snapshot and always releases
+  it without committing writes;
 * ``require_transaction`` documents helpers that may only participate in an
   already active caller transaction.
 
@@ -33,6 +35,19 @@ def _savepoint_name(label: str) -> str:
 def _rollback_connection(conn: sqlite3.Connection) -> None:
     if conn.in_transaction:
         conn.execute("ROLLBACK")
+
+
+@contextlib.contextmanager
+def read_transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """Own one stable deferred-read snapshot on a dedicated connection."""
+
+    if conn.in_transaction:
+        raise RuntimeError("read_transaction requires an unowned connection")
+    conn.execute("BEGIN")
+    try:
+        yield
+    finally:
+        _rollback_connection(conn)
 
 
 @contextlib.contextmanager

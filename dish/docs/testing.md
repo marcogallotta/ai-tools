@@ -71,10 +71,10 @@ Run candidates directly with:
 .venv/bin/python -m pytest --flake-candidates
 ```
 
-`test_concurrent_exact_first_calls_share_one_durable_challenge` (`DISH-flake-038-concurrent-challenge-backup-race`)
-is currently a candidate: the flake-stress lane reproduced a `sqlite3.DatabaseError: legacy backup
-schema version mismatch` race between concurrent `initialize_database` calls in
-`_backup_legacy_database`. Under review.
+No tests are currently marked as flake candidates. The previously investigated concurrent
+planning-intent failure was traced to a real database-initialization race: the legacy schema version
+and online-backup source could come from different SQLite snapshots. The backup now keeps both on
+one read transaction, and the formerly quarantined test is back in the normal blocking suite.
 
 ### Quarantined flake
 
@@ -105,7 +105,7 @@ Quarantine rules are enforced during collection:
 - a test cannot be both `flake_candidate` and `quarantined`;
 - automatic per-test `@pytest.mark.flaky(reruns=...)` is forbidden.
 
-No test is quarantined by this change.
+No test is currently quarantined.
 
 ## Reproducible detection commands
 

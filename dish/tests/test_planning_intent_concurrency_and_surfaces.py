@@ -45,15 +45,6 @@ from tests.support.planning_intent import (
 
 
 @pytest.mark.flake_stress
-@pytest.mark.quarantined(
-    issue="DISH-flake-038-concurrent-challenge-backup-race",
-    owner="Marco",
-    first_seen="2026-07-31",
-    quarantined_on="2026-07-31",
-    expires="2026-08-07",
-    signature="sqlite3.DatabaseError: legacy backup schema version mismatch racing "
-    "concurrent initialize_database calls in _backup_legacy_database",
-)
 def test_concurrent_exact_first_calls_share_one_durable_challenge(tmp_path):
     service, _ = _service(tmp_path)
     barrier = threading.Barrier(3)
