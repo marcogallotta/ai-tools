@@ -9,6 +9,7 @@ from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.commands import DishApplication
 from dish_tool.database import initialize_database
 from dish_tool.errors import DishRuleError
+from tests.support.thread_teardown import join_thread, managed_thread
 from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend, TASK
 from tests.support.service_leases import (
@@ -43,13 +44,13 @@ def test_two_clients_cannot_start_and_lease_same_task(tmp_path):
         ))
 
     threads = [
-        threading.Thread(target=run, args=(_principal("client-a", "run-a"),)),
-        threading.Thread(target=run, args=(_principal("client-b", "run-b"),)),
+        managed_thread(target=run, args=(_principal("client-a", "run-a"),)),
+        managed_thread(target=run, args=(_principal("client-b", "run-b"),)),
     ]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=5)
+        join_thread(thread, timeout=5)
 
     assert sum(result["ok"] for result in results) == 1
     loser = next(result for result in results if not result["ok"])

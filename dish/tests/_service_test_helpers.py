@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.support.thread_teardown import start_server_thread
+
 import json
 import threading
 from http.client import HTTPConnection
@@ -40,8 +42,7 @@ def service(tmp_path):
 def running(tmp_path):
     instance, backend = service(tmp_path)
     server = build_server(instance)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, daemon=True, name="thread")
     host, port = server.server_address
     return instance, backend, server, thread, f"http://{host}:{port}"
 

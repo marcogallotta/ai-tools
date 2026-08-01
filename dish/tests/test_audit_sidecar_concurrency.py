@@ -9,6 +9,7 @@ import dish_tool.database as database_module
 from dish_tool.database import _import_command_audit_repair_fallback
 from dish_tool.database_schema import initialize_database
 from dish_tool.invocation_audit import _write_emergency_repair
+from tests.support.thread_teardown import join_thread, managed_thread
 
 
 def _repair(repair_id: str) -> dict:
@@ -96,18 +97,18 @@ def test_import_does_not_delete_concurrent_emergency_append(monkeypatch, tmp_pat
         finally:
             writer_finished.set()
 
-    importer_thread = threading.Thread(target=importer, name="audit-sidecar-importer")
+    importer_thread = managed_thread(target=importer, name="audit-sidecar-importer")
     importer_thread.start()
     assert importer_inside_claim.wait(timeout=5)
 
-    writer_thread = threading.Thread(target=writer, name="audit-sidecar-writer")
+    writer_thread = managed_thread(target=writer, name="audit-sidecar-writer")
     writer_thread.start()
     assert writer_lock_attempted.wait(timeout=5), "writer never attempted the sidecar lock"
     assert not writer_finished.is_set(), "writer acquired the importer-held sidecar lock"
 
     release_importer.set()
-    importer_thread.join(timeout=5)
-    writer_thread.join(timeout=5)
+    join_thread(importer_thread, timeout=5)
+    join_thread(writer_thread, timeout=5)
     assert not importer_thread.is_alive()
     assert not writer_thread.is_alive()
     assert thread_errors == []

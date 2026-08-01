@@ -11,6 +11,7 @@ import pytest
 from dish_service import __main__ as service_main
 from dish_service.config import ServiceConfig
 from dish_service.http import DishHTTPServer
+from tests.support.thread_teardown import join_thread, start_server_thread, managed_thread
 
 
 @dataclass
@@ -47,8 +48,7 @@ def _running_server(tmp_path: Path, service: _HealthService | None = None):
     server = DishHTTPServer(("127.0.0.1", 0), actual_service, surface_mode="private")
     stop_event = threading.Event()
     server.attach_stop_event(stop_event)
-    thread = threading.Thread(target=server.serve_forever, daemon=False)
-    thread.start()
+    thread = start_server_thread(server, daemon=False, name="thread")
     return actual_service, server, stop_event, thread
 
 
@@ -141,7 +141,7 @@ def test_shutdown_drains_request_that_crossed_admission_boundary(tmp_path):
         finally:
             connection.close()
 
-    request_thread = threading.Thread(target=request_health, daemon=False)
+    request_thread = managed_thread(target=request_health, daemon=False)
     request_thread.start()
     assert entered.wait(timeout=2)
 
@@ -159,7 +159,7 @@ def test_shutdown_drains_request_that_crossed_admission_boundary(tmp_path):
         finally:
             shutdown_finished.set()
 
-    shutdown_thread = threading.Thread(target=shutdown, daemon=False)
+    shutdown_thread = managed_thread(target=shutdown, daemon=False)
     shutdown_thread.start()
     assert shutdown_started.wait(timeout=2)
     assert not shutdown_finished.is_set(), (
@@ -167,8 +167,8 @@ def test_shutdown_drains_request_that_crossed_admission_boundary(tmp_path):
     )
 
     release.set()
-    request_thread.join(timeout=2)
-    shutdown_thread.join(timeout=2)
+    join_thread(request_thread, timeout=2)
+    join_thread(shutdown_thread, timeout=2)
 
     assert result["status"] == 200
     assert result["body"]

@@ -20,6 +20,7 @@ from tests._service_test_helpers import (
     post as _post,
     running as _running,
 )
+from tests.support.thread_teardown import join_thread, stop_server
 from tests.support.service_foundation import _release_loader
 from tests.support.request_restore import Backend
 
@@ -59,7 +60,7 @@ def test_every_agent_mutation_requires_request_id(tmp_path, command):
             },
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == 200
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"] == [
@@ -89,7 +90,7 @@ def test_every_admin_and_service_state_mutation_requires_request_id(tmp_path, pa
     try:
         status, result = _post(url, path, token="admin-secret", payload=payload)
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == 400
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"] == [
@@ -107,7 +108,7 @@ def test_renew_lease_requires_request_id(tmp_path):
             payload={"client": {"run_id": RUN_ID}},
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == 400
     assert result["errors"] == [
         {"field": "client.request_id", "rule": "request_field_required"}
@@ -127,7 +128,7 @@ def test_malformed_request_id_is_not_recorded_and_identifies_field(tmp_path):
             },
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert result["errors"] == [
         {
             "field": "client.request_id",
@@ -171,7 +172,7 @@ def test_nil_client_identities_are_rejected_before_request_journaling(
             },
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
 
     assert status == 200
     assert result["code"] == "INVALID_ARGUMENT"
@@ -210,7 +211,7 @@ def test_first_validation_failure_is_replayed_and_changed_reuse_conflicts(tmp_pa
             url, "/v1/action/start", token="action-secret", payload=changed
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert first_status == second_status == conflict_status == 200
     assert first["code"] == second["code"] == "INVALID_ARGUMENT"
     assert second["data"]["request_replayed"] is True

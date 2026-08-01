@@ -20,6 +20,7 @@ from dish_tool.constants import (
 )
 from dish_tool.errors import DishRuleError
 from tests._service_test_helpers import post as _post, running as _running
+from tests.support.thread_teardown import join_thread, stop_server
 from tests.support.action_http import _running as _running_action, _stop
 
 RUN_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -80,7 +81,7 @@ def test_protected_routes_reject_presented_token_whitespace(
     try:
         status, result = _post(url, path, token=token, payload=payload)
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == 401
     assert result["code"] == "AGENT_MISMATCH"
     assert result["errors"][0]["rule"] == "service_auth_invalid"
@@ -97,7 +98,7 @@ def test_unmodified_bearer_token_remains_accepted(tmp_path):
             payload={"client": {"run_id": RUN_ID}, "arguments": {"agent": "gpt"}},
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == 200
     assert result["ok"] is True
 
@@ -273,7 +274,7 @@ def test_private_routes_reject_unexpected_top_level_fields(
     try:
         status, result = _post(url, path, token=token, payload=payload)
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == 400
     assert result["errors"][0] == {
         "field": field,

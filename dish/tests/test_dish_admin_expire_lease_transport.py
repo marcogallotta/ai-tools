@@ -15,14 +15,14 @@ from dish_service.leases import LeaseManager
 from dish_service.task_urls import task_gid_from_url
 from dish_tool.database import initialize_database
 from dish_tool.errors import DishRuleError
+from tests.support.thread_teardown import join_thread, start_server_thread, stop_server
 from tests.support.lease_expiry import ADMIN_RUN, EXPIRY_REQUEST, TASK_GID, _admin, _service, _start
 
 
 def _running(tmp_path):
     service, backend = _service(tmp_path)
     server = build_server(service)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, daemon=True, name="thread")
     host, port = server.server_address
     return service, backend, server, thread, f"http://{host}:{port}"
 
@@ -62,7 +62,7 @@ def test_http_route_trims_reason_before_request_hash(tmp_path):
         payload["reason"] = "agent died"
         _status, replay = _post(url, "/v1/admin/leases/expire", payload)
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == 200
     assert first["data"]["lease"]["release_reason"] == "admin expiry: agent died"
     assert replay["data"]["request_replayed"] is True
@@ -94,7 +94,7 @@ def test_http_validation_boundary_journals_target_reason_but_not_shape(tmp_path)
             },
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert invalid["code"] == "INVALID_ARGUMENT"
     assert status == 400
     assert shape["errors"][0]["rule"] == "request_field_unexpected"
@@ -220,7 +220,7 @@ def test_real_http_client_accepts_canonical_expiry_response(tmp_path):
             request_id=EXPIRY_REQUEST,
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert result["ok"] is True
     assert result["data"]["outcome"] == "released"
 
@@ -291,7 +291,7 @@ def test_committed_lost_response_exact_retry_does_not_release_replacement(
             conn.close()
         assert active["lease_id"] == replacement["lease_id"]
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
 
 
 @pytest.mark.smoke
@@ -342,7 +342,7 @@ def test_http_nonstring_reason_and_target_cardinality_are_journalled(tmp_path):
             },
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
 
     assert bad_reason["errors"][0]["rule"] == "lease_expiry_reason_invalid"
     assert bad_target["errors"][0]["rule"] == "lease_expiry_target_invalid"
@@ -375,7 +375,7 @@ def test_http_invalid_client_identity_is_not_journalled(tmp_path):
             },
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == 400
     assert result["errors"][0]["rule"] == "uuid_identifier_required"
     conn = initialize_database(service.config.db_path)
@@ -392,8 +392,7 @@ def test_http_invalid_client_identity_is_not_journalled(tmp_path):
 def test_action_listener_does_not_expose_expiry_route(tmp_path):
     service, _backend = _service(tmp_path)
     server = DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action")
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, daemon=True, name="thread")
     host, port = server.server_address
     try:
         status, result = _post(
@@ -407,6 +406,6 @@ def test_action_listener_does_not_expose_expiry_route(tmp_path):
             token="action-secret",
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == 404
     assert result == {"ok": False, "error": "not_found"}

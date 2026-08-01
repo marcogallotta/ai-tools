@@ -19,6 +19,7 @@ from dish_tool.database import (
 from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
+from tests.support.thread_teardown import join_thread, start_server_thread, stop_server
 from tests.support.abandonment import Backend
 from tests.support.service_foundation import _release_loader
 
@@ -215,8 +216,7 @@ def test_real_http_admin_client_abandons_by_task_gid_with_no_lease_id(tmp_path):
         release_loader=_release_loader(honest),
     )
     server = build_server(service)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, daemon=True, name="thread")
     host, port = server.server_address
     client = DishAdminServiceClient(
         f"http://{host}:{port}", token="admin-secret", run_id=str(uuid.uuid4())
@@ -229,9 +229,7 @@ def test_real_http_admin_client_abandons_by_task_gid_with_no_lease_id(tmp_path):
             reason="the original conversation is permanently unavailable",
         )
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        stop_server(server, thread)
         assert not thread.is_alive()
 
     assert result["ok"], result

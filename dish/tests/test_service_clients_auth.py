@@ -10,6 +10,7 @@ from dish_service.config import ServiceConfig
 from dish_service.http import build_server
 from dish_tool import admin_cli, cli
 from dish_tool.errors import DishRuleError
+from tests.support.thread_teardown import join_thread, start_server_thread, stop_server
 from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend, TASK
 
@@ -30,16 +31,13 @@ def _running_service(tmp_path):
         release_loader=_release_loader(honest),
     )
     server = build_server(service)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, daemon=True, name="thread")
     host, port = server.server_address
     return service, backend, server, thread, f"http://{host}:{port}"
 
 
 def _stop(server, thread):
-    server.shutdown()
-    server.server_close()
-    thread.join(timeout=2)
+    stop_server(server, thread)
 
 
 def test_unauthorized_clients_cannot_read_or_mutate(tmp_path):
@@ -114,7 +112,7 @@ def test_remote_cli_transports_candidate_text_not_client_path(tmp_path, monkeypa
     assert backend.moves == 1
 
 
-def test_service_token_never_appears_in_results(tmp_path):
+def test_sections_result_omits_agent_and_admin_tokens(tmp_path):
     _service, _backend, server, thread, url = _running_service(tmp_path)
     try:
         client = DishServiceClient(url, token="agent-secret", run_id="11111111-1111-4111-8111-111111111111")

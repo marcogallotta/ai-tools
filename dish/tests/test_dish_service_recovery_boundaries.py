@@ -10,6 +10,7 @@ from dish_service.maintenance import MaintenanceGate
 from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database import initialize_database
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
+from tests.support.thread_teardown import join_thread, managed_thread
 from tests.support.operational import UnavailableBackend, _service
 
 
@@ -159,7 +160,7 @@ def test_slow_asana_read_does_not_block_lease_renewal(tmp_path):
 
     backend.read_task = blocked_read
     read_result = {}
-    read_thread = threading.Thread(
+    read_thread = managed_thread(
         target=lambda: read_result.update(
             service.execute_agent("read", {"agent": "gpt", "task_gid": "t"}, principal=owner)
         )
@@ -174,19 +175,19 @@ def test_slow_asana_read_does_not_block_lease_renewal(tmp_path):
         renewal_result.update(service.renew_lease(started["submission_id"], owner))
         renewal_done.set()
 
-    renewal_thread = threading.Thread(target=renew)
+    renewal_thread = managed_thread(target=renew)
     renewal_thread.start()
     try:
         assert renewal_done.wait(timeout=2), "lease renewal was blocked by unrelated Asana work"
         assert renewal_result["ok"]
     finally:
         release.set()
-        read_thread.join(timeout=2)
-        renewal_thread.join(timeout=2)
+        join_thread(read_thread, timeout=2)
+        join_thread(renewal_thread, timeout=2)
     assert read_result["ok"]
 
 
-def test_maintenance_gate_gives_waiting_restore_priority():
+def test_request_queued_after_restore_waiter_enters_after_restore():
     gate = MaintenanceGate()
     first_entered = threading.Event()
     release_first = threading.Event()
@@ -212,9 +213,9 @@ def test_maintenance_gate_gives_waiting_restore_priority():
             order.append("second")
             second_entered.set()
 
-    first = threading.Thread(target=first_request)
-    writer = threading.Thread(target=restore)
-    second = threading.Thread(target=second_request)
+    first = managed_thread(target=first_request)
+    writer = managed_thread(target=restore)
+    second = managed_thread(target=second_request)
     first.start()
     assert first_entered.wait(timeout=2)
     writer.start()
@@ -228,9 +229,9 @@ def test_maintenance_gate_gives_waiting_restore_priority():
     assert restore_entered.wait(timeout=2)
     assert not second_entered.is_set()
     release_restore.set()
-    first.join(timeout=2)
-    writer.join(timeout=2)
-    second.join(timeout=2)
+    join_thread(first, timeout=2)
+    join_thread(writer, timeout=2)
+    join_thread(second, timeout=2)
     assert not first.is_alive()
     assert not writer.is_alive()
     assert not second.is_alive()

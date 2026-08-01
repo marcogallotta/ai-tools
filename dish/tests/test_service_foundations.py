@@ -13,6 +13,7 @@ from dish_tool.commands import DishApplication
 from dish_tool.database import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import ResolvedRelease
+from tests.support.thread_teardown import join_thread, start_server_thread, stop_server
 from tests.support.verification import Backend, TASK
 from tests.support.service_foundation import (
     _release_loader,
@@ -25,7 +26,7 @@ from tests.support.service_foundation import (
 
 
 
-def test_service_and_direct_application_share_canonical_result_contract(tmp_path):
+def test_service_read_matches_direct_application_result_contract(tmp_path):
     backend = Backend()
     honest = tmp_path / "honest"
     honest.mkdir()
@@ -97,17 +98,14 @@ def test_loopback_http_transport_returns_same_envelope(tmp_path):
     backend = Backend()
     service = _service(tmp_path, backend)
     server = build_server(service)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, daemon=True, name="thread")
     try:
         host, port = server.server_address
         client = DishServiceClient(f"http://{host}:{port}", token="agent-token", run_id="11111111-1111-4111-8111-111111111111")
         health = client.health()
         result = client.execute("sections", {"agent": "gpt"})
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        stop_server(server, thread)
     assert health["ok"]
     assert result["ok"]
     assert result["command"] == "sections"
@@ -123,15 +121,12 @@ def test_http_request_size_limit_fails_before_command(tmp_path):
         release_loader=service.release_loader,
     )
     server = build_server(service)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, daemon=True, name="thread")
     try:
         host, port = server.server_address
         client = DishServiceClient(f"http://{host}:{port}", token="agent-token", run_id="11111111-1111-4111-8111-111111111111")
         result = client.execute("create", {"agent": "gpt", "title": "x" * 100})
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        stop_server(server, thread)
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"][0]["rule"] == "request_too_large"

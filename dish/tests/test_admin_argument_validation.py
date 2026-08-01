@@ -6,6 +6,7 @@ import pytest
 
 from dish_tool.admin import DishAdminApplication
 from tests._service_test_helpers import RUN_ID, post as _post, running as _running
+from tests.support.thread_teardown import join_thread, stop_server
 from tests.support.submission import _signed
 
 
@@ -46,9 +47,7 @@ def test_empty_generic_admin_arguments_are_structured_and_replayable(
             payload=payload,
         )
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        stop_server(server, thread)
 
     assert first_status == replay_status == 200
     assert first["ok"] is False
@@ -97,9 +96,7 @@ def test_recover_validates_required_fields_before_unknown_operation_and_replays(
             payload=payload,
         )
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        stop_server(server, thread)
 
     assert first_status == replay_status == 200
     assert first["code"] == "INVALID_ARGUMENT"

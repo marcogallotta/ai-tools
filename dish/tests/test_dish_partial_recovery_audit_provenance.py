@@ -26,6 +26,7 @@ from tests._partial_recovery_helpers import (
     started_application as _started_application,
     fault_at_step as _fault_at_step,
 )
+from tests.support.thread_teardown import join_thread, managed_thread
 from tests.support.verification import make_app
 
 
@@ -224,7 +225,7 @@ def test_real_authorization_racing_no_effect_prepare_is_not_misattributed(
         finally:
             conn.close()
 
-    thread = threading.Thread(target=execute_prepare)
+    thread = managed_thread(target=execute_prepare)
     thread.start()
     assert entered.wait(5), "prepare execution did not reach the fault barrier"
     other = initialize_database(database_path)
@@ -245,7 +246,7 @@ def test_real_authorization_racing_no_effect_prepare_is_not_misattributed(
     finally:
         other.close()
         release.set()
-    thread.join(5)
+    join_thread(thread, timeout=5)
     assert not thread.is_alive()
 
     result = outcome["result"]
@@ -325,7 +326,7 @@ def test_real_verifier_inspect_racing_no_effect_approve_is_not_misattributed(
         finally:
             conn.close()
 
-    thread = threading.Thread(target=execute_approve)
+    thread = managed_thread(target=execute_approve)
     thread.start()
     assert entered.wait(5), "approve execution did not reach the fault barrier"
     inspected = application.execute(
@@ -334,7 +335,7 @@ def test_real_verifier_inspect_racing_no_effect_approve_is_not_misattributed(
     assert inspected["ok"]
     assert inspected["data"]["dish_inspect_fact"] is not None
     release.set()
-    thread.join(5)
+    join_thread(thread, timeout=5)
     assert not thread.is_alive()
 
     result = outcome["result"]

@@ -10,6 +10,7 @@ from dish_tool.database import (
     transition_operation,
 )
 from dish_tool.errors import DishRuleError
+from tests.support.thread_teardown import join_thread, managed_thread
 from tests.support.verification import make_app
 
 
@@ -50,11 +51,11 @@ def test_duplicate_exact_grant_race_creates_one_audited_capability(tmp_path):
         except Exception as exc:  # pragma: no cover - diagnostic capture
             errors.append(exc)
 
-    threads = [threading.Thread(target=worker, args=(first,)), threading.Thread(target=worker, args=(second,))]
+    threads = [managed_thread(target=worker, args=(first,)), managed_thread(target=worker, args=(second,))]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=10)
+        join_thread(thread, timeout=10)
 
     assert errors == []
     assert len(rows) == 2
@@ -104,7 +105,7 @@ def test_terminalization_between_admin_precheck_and_atomic_grant_is_rejected(tmp
             )
         )
 
-    thread = threading.Thread(target=grant)
+    thread = managed_thread(target=grant)
     thread.start()
     assert entered.wait(timeout=5)
     transition_operation(
@@ -115,7 +116,7 @@ def test_terminalization_between_admin_precheck_and_atomic_grant_is_rejected(tmp
         terminal_outcome="discarded",
     )
     resume.set()
-    thread.join(timeout=10)
+    join_thread(thread, timeout=10)
 
     assert result["code"] == "WRONG_STATE"
     assert result["errors"][0]["rule"] == "authorization_operation_not_open"
@@ -151,7 +152,7 @@ def test_authorization_is_not_reservable_before_grant_audit_commits(tmp_path, mo
     grant_result = []
     reserve_result = []
 
-    grant_thread = threading.Thread(target=lambda: grant_result.append(_grant(grant_conn, operation_id)))
+    grant_thread = managed_thread(target=lambda: grant_result.append(_grant(grant_conn, operation_id)))
     grant_thread.start()
     assert audit_entered.wait(timeout=5)
 
@@ -174,14 +175,14 @@ def test_authorization_is_not_reservable_before_grant_audit_commits(tmp_path, mo
         finally:
             reserve_finished.set()
 
-    reserve_thread = threading.Thread(target=reserve, name="authorization-reserver")
+    reserve_thread = managed_thread(target=reserve, name="authorization-reserver")
     reserve_thread.start()
     assert reserve_started.wait(timeout=5)
     assert not reserve_finished.is_set(), "reservation completed before the grant audit committed"
 
     release_audit.set()
-    grant_thread.join(timeout=10)
-    reserve_thread.join(timeout=10)
+    join_thread(grant_thread, timeout=10)
+    join_thread(reserve_thread, timeout=10)
     assert not grant_thread.is_alive()
     assert not reserve_thread.is_alive()
     assert thread_errors == []

@@ -16,6 +16,7 @@ from tests._service_test_helpers import (
     RUN_ID,
     running as _running,
 )
+from tests.support.thread_teardown import join_thread, stop_server
 
 OTHER_RUN_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 
@@ -84,7 +85,7 @@ def test_protected_json_routes_reject_non_json_media_type(
             content_type="text/plain",
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == expected_status
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"] == [
@@ -110,7 +111,7 @@ def test_protected_json_route_rejects_missing_media_type_before_parsing(tmp_path
             content_type=None,
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == 415
     assert result["errors"] == [
         {"expected": "application/json", "rule": "request_content_type_required"}
@@ -133,7 +134,7 @@ def test_application_json_with_charset_remains_accepted(tmp_path):
             content_type="application/json; charset=utf-8",
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == 200
     assert result["ok"] is True
 
@@ -174,7 +175,7 @@ def test_duplicate_json_keys_are_rejected_recursively_before_mutation(
             content_type="application/json",
         )
     finally:
-        server.shutdown(); server.server_close(); thread.join(timeout=2)
+        stop_server(server, thread)
     assert status == 200
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"] == [
@@ -200,7 +201,7 @@ def _logical_database_dump(path: Path) -> str:
 def test_health_write_readiness_probe_is_logically_side_effect_free(tmp_path):
     service, _backend, _server, _thread, _url = _running(tmp_path)
     # The helper starts a server; stop it so this test exercises the service directly.
-    _server.shutdown(); _server.server_close(); _thread.join(timeout=2)
+    stop_server(_server, _thread)
     before = _logical_database_dump(service.config.db_path)
     health = service.health()
     after = _logical_database_dump(service.config.db_path)
@@ -216,7 +217,7 @@ def test_health_write_readiness_probe_is_logically_side_effect_free(tmp_path):
 @pytest.mark.smoke
 def test_health_rejects_read_only_database_as_not_mutation_ready(monkeypatch, tmp_path):
     service, _backend, server, thread, _url = _running(tmp_path)
-    server.shutdown(); server.server_close(); thread.join(timeout=2)
+    stop_server(server, thread)
     conn = initialize_database(service.config.db_path)
     conn.close()
 
@@ -243,7 +244,7 @@ def test_health_reports_transient_writer_lock_without_calling_it_corruption(
     monkeypatch, tmp_path
 ):
     service, _backend, server, thread, _url = _running(tmp_path)
-    server.shutdown(); server.server_close(); thread.join(timeout=2)
+    stop_server(server, thread)
     monkeypatch.setattr(database_schema_module, "MIGRATION_BUSY_TIMEOUT_MS", 25)
     locker = initialize_database(service.config.db_path)
     locker.execute("BEGIN IMMEDIATE")

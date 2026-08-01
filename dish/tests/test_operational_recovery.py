@@ -12,6 +12,7 @@ from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database import initialize_database, record_command_audit_repair
 from dish_tool.errors import DishRuleError
 from dish_tool.results import result_envelope
+from tests.support.thread_teardown import join_thread, start_server_thread, stop_server, managed_thread
 from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend, TASK
 from tests.support.operational import (
@@ -185,8 +186,7 @@ def test_server_close_drains_inflight_request_before_return(monkeypatch, tmp_pat
 
     monkeypatch.setattr(service, "execute_agent", blocking_execute)
     server = build_server(service)
-    listener = threading.Thread(target=server.serve_forever, daemon=False)
-    listener.start()
+    listener = start_server_thread(server, daemon=False, name="listener")
     host, port = server.server_address
     result = {}
 
@@ -196,7 +196,7 @@ def test_server_close_drains_inflight_request_before_return(monkeypatch, tmp_pat
         )
         result.update(client.execute("sections", {"agent": "gpt"}))
 
-    requester = threading.Thread(target=request, daemon=False)
+    requester = managed_thread(target=request, daemon=False)
     closer = None
     requester.start()
     try:
@@ -216,7 +216,7 @@ def test_server_close_drains_inflight_request_before_return(monkeypatch, tmp_pat
             finally:
                 closer_finished.set()
 
-        closer = threading.Thread(target=close_server, daemon=False)
+        closer = managed_thread(target=close_server, daemon=False)
         closer.start()
         assert closer_started.wait(timeout=2)
         assert not closer_finished.is_set(), (
@@ -228,9 +228,9 @@ def test_server_close_drains_inflight_request_before_return(monkeypatch, tmp_pat
             server.shutdown()
             server.server_close()
         else:
-            closer.join(timeout=2)
-        requester.join(timeout=2)
-        listener.join(timeout=2)
+            join_thread(closer, timeout=2)
+        join_thread(requester, timeout=2)
+        join_thread(listener, timeout=2)
 
     assert closer is not None and not closer.is_alive()
     assert closer_errors == []
@@ -247,8 +247,7 @@ def test_backup_restore_and_admin_argument_audit_are_available_over_private_http
 
     service, _backend = _service(tmp_path)
     server = build_server(service)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, daemon=True, name="thread")
     host, port = server.server_address
     client = DishAdminServiceClient(
         f"http://{host}:{port}", token="admin-secret", run_id="22222222-2222-4222-8222-222222222222"
@@ -262,9 +261,7 @@ def test_backup_restore_and_admin_argument_audit_are_available_over_private_http
             submission_id=None,
         )
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        stop_server(server, thread)
 
     assert created["ok"] and restored["ok"] and audited["ok"] is False
     conn = initialize_database(service.config.db_path)

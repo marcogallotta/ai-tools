@@ -9,12 +9,13 @@ from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.database import transition_operation
 from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
+from tests.support.thread_teardown import join_thread, managed_thread
 from tests.support.operational import _approved, _service
 from tests.support.submission import _signed
 
 
 @pytest.mark.flake_stress
-def test_concurrent_read_never_observes_partial_submit_terminal_evidence(
+def test_inspect_waits_for_submit_transaction_and_returns_completed_state(
     tmp_path, monkeypatch
 ):
     import dish_tool.step9 as step9
@@ -56,7 +57,7 @@ def test_concurrent_read_never_observes_partial_submit_terminal_evidence(
         except BaseException as exc:  # pragma: no cover - surfaced below
             thread_errors.append(exc)
 
-    submit_thread = threading.Thread(target=submit, name="partial-submit-writer")
+    submit_thread = managed_thread(target=submit, name="partial-submit-writer")
     submit_thread.start()
     assert terminal_audit_entered.wait(5)
 
@@ -74,7 +75,7 @@ def test_concurrent_read_never_observes_partial_submit_terminal_evidence(
         finally:
             inspect_done.set()
 
-    inspect_thread = threading.Thread(target=inspect, name="partial-submit-inspector")
+    inspect_thread = managed_thread(target=inspect, name="partial-submit-inspector")
     inspect_thread.start()
     assert inspect_database_attempted.wait(timeout=5), (
         "inspector never reached database initialization while submit was paused"
@@ -84,8 +85,8 @@ def test_concurrent_read_never_observes_partial_submit_terminal_evidence(
     )
 
     release_terminal_audit.set()
-    submit_thread.join(timeout=5)
-    inspect_thread.join(timeout=5)
+    join_thread(submit_thread, timeout=5)
+    join_thread(inspect_thread, timeout=5)
     assert not submit_thread.is_alive()
     assert not inspect_thread.is_alive()
     assert thread_errors == []
@@ -111,7 +112,7 @@ def test_concurrent_read_accepts_durable_submit_intent_during_external_move(
         return real_move(*args, **kwargs)
 
     monkeypatch.setattr(backend, "move_task_to_section", pause_external_move)
-    submit_thread = threading.Thread(
+    submit_thread = managed_thread(
         target=lambda: submitted.append(
             service.execute_agent(
                 "submit", {"submission_id": operation_id}, principal=verifier
@@ -150,7 +151,7 @@ def test_concurrent_read_accepts_durable_submit_intent_during_external_move(
         visible.close()
 
     release_movement.set()
-    submit_thread.join(timeout=5)
+    join_thread(submit_thread, timeout=5)
     assert not submit_thread.is_alive()
     assert submitted[0]["ok"]
 
@@ -170,7 +171,7 @@ def test_concurrent_read_accepts_terminal_lease_cleanup_tail(tmp_path, monkeypat
         return real_finalize(**kwargs)
 
     monkeypatch.setattr(service, "_finalize_successful_lease", pause_cleanup)
-    submit_thread = threading.Thread(
+    submit_thread = managed_thread(
         target=lambda: submitted.append(
             service.execute_agent(
                 "submit", {"submission_id": operation_id}, principal=verifier
@@ -193,7 +194,7 @@ def test_concurrent_read_accepts_terminal_lease_cleanup_tail(tmp_path, monkeypat
     assert inspected["allowed_actions"] == []
 
     release_cleanup.set()
-    submit_thread.join(timeout=5)
+    join_thread(submit_thread, timeout=5)
     assert not submit_thread.is_alive()
     assert submitted[0]["ok"]
 

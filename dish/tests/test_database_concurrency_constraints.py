@@ -11,6 +11,7 @@ from dish_tool.database_schema import (
     _execute_script_statements,
     initialize_database,
 )
+from tests.support.thread_teardown import join_thread, managed_thread
 
 
 def _make_v2(path: Path) -> None:
@@ -51,11 +52,11 @@ def test_concurrent_initializers_serialize_migrations(tmp_path: Path) -> None:
         except BaseException as exc:  # surfaced below with both thread outcomes
             errors.append(exc)
 
-    threads = [threading.Thread(target=worker) for _ in range(2)]
+    threads = [managed_thread(target=worker) for _ in range(2)]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=15)
+        join_thread(thread, timeout=15)
 
     assert not errors
     assert not any(thread.is_alive() for thread in threads)
@@ -211,11 +212,11 @@ def test_many_concurrent_initializers_all_converge(tmp_path: Path) -> None:
         except BaseException as exc:
             errors.append(exc)
 
-    threads = [threading.Thread(target=worker) for _ in range(count)]
+    threads = [managed_thread(target=worker) for _ in range(count)]
     for thread in threads:
         thread.start()
     for thread in threads:
-        thread.join(timeout=20)
+        join_thread(thread, timeout=20)
 
     assert not errors
     assert not any(thread.is_alive() for thread in threads)

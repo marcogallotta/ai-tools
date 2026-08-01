@@ -15,6 +15,7 @@ from dish_service.http import build_action_server, build_private_server
 from dish_service.process_lock import ServiceProcessLock
 from dish_tool import admin_cli
 from dish_tool.errors import DishRuleError
+from tests.support.thread_teardown import start_server_thread, stop_server
 from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend
 
@@ -41,10 +42,8 @@ def _split_servers(tmp_path):
     )
     private = build_private_server(service)
     action = build_action_server(service)
-    private_thread = threading.Thread(target=private.serve_forever, daemon=True)
-    action_thread = threading.Thread(target=action.serve_forever, daemon=True)
-    private_thread.start()
-    action_thread.start()
+    private_thread = start_server_thread(private, daemon=True, name="private-listener")
+    action_thread = start_server_thread(action, daemon=True, name="action-listener")
     private_host, private_port = private.server_address
     action_host, action_port = action.server_address
     return (
@@ -59,9 +58,7 @@ def _split_servers(tmp_path):
 
 
 def _stop(server, thread):
-    server.shutdown()
-    server.server_close()
-    thread.join(timeout=2)
+    stop_server(server, thread)
 
 
 def test_private_and_public_listeners_have_disjoint_route_surfaces(tmp_path, capsys):

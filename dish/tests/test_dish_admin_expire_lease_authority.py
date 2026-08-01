@@ -10,6 +10,7 @@ from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.database import initialize_database
+from tests.support.thread_teardown import join_thread, managed_thread
 from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend, TASK
 from tests.support.lease_expiry import (
@@ -147,11 +148,11 @@ def test_duplicate_request_id_concurrency_returns_one_release_and_one_replay(tmp
             )
         )
 
-    threads = [threading.Thread(target=worker) for _ in range(2)]
+    threads = [managed_thread(target=worker) for _ in range(2)]
     for item in threads:
         item.start()
     for item in threads:
-        item.join(timeout=5)
+        join_thread(item, timeout=5)
 
     assert len(results) == 2
     assert all(result["ok"] for result in results)

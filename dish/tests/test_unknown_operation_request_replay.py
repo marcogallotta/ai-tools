@@ -7,6 +7,7 @@ import pytest
 
 from dish_tool.database import initialize_database
 from tests._service_test_helpers import RUN_ID, post as _post, running as _running
+from tests.support.thread_teardown import join_thread, stop_server
 
 
 UNKNOWN_OPERATION = "99999999-9999-4999-8999-999999999999"
@@ -62,9 +63,7 @@ def test_unknown_operation_results_are_completed_and_replayable(
         first_status, first = _post(url, path, token=token, payload=payload)
         replay_status, replay = _post(url, path, token=token, payload=payload)
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        stop_server(server, thread)
 
     assert first_status == replay_status == 200
     assert first["ok"] is False
@@ -121,9 +120,7 @@ def test_unknown_operation_request_id_still_rejects_changed_reuse(tmp_path):
             payload=changed_payload,
         )
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        stop_server(server, thread)
 
     assert first_status == conflict_status == 200
     assert first["code"] == "NOT_FOUND"

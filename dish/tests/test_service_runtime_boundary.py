@@ -10,6 +10,7 @@ from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.http import build_action_server, build_private_server
 from dish_tool.errors import DishRuleError
+from tests.support.thread_teardown import join_thread, start_server_thread, stop_server
 from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend
 
@@ -60,15 +61,12 @@ def _post(server, path, payload, *, token="action-secret-12345"):
 
 
 def _start(server):
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, daemon=True, name="thread")
     return thread
 
 
 def _stop(server, thread):
-    server.shutdown()
-    server.server_close()
-    thread.join(timeout=2)
+    stop_server(server, thread)
     assert not thread.is_alive()
 
 
