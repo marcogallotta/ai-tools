@@ -25,7 +25,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from dish_tool.database import confirm_task_content, record_audit
-from dish_tool.database_schema import _validate_semantic_evidence, initialize_database
+from dish_tool.database_initialization import initialize_database
+from dish_tool.database_schema import _validate_semantic_evidence
 from dish_tool.errors import DishRuleError
 from dish_tool.task_document import (
     DocumentParseError,
