@@ -260,7 +260,10 @@ def test_owned_backend_cleanup_failure_does_not_replace_result_or_skip_db_close(
     tracked = TrackingConnection(raw)
     service = DishService(ServiceConfig(db_path=tmp_path / "dish.db", honest_root=tmp_path))
     service.backend_factory = ClosingBackend
-    monkeypatch.setattr("dish_service.application.initialize_database", lambda _path: tracked)
+    monkeypatch.setattr(
+        "dish_service.application.database_initialization.open_runtime_database",
+        lambda _path: tracked,
+    )
 
     result = service.record_agent_argument_failure(
         "prepare",

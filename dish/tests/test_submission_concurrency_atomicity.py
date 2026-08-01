@@ -7,7 +7,7 @@ import pytest
 
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.database import transition_operation
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from tests.support.thread_teardown import join_thread, managed_thread
 from tests.support.operational import _approved, _service
@@ -30,8 +30,8 @@ def test_inspect_waits_for_submit_transaction_and_returns_completed_state(
     inspected: list[dict] = []
     thread_errors: list[BaseException] = []
     real_record_audit = step9.record_audit
-    import dish_tool.database_schema as database_schema
-    real_migrate_database = database_schema.migrate_database
+    import dish_tool.database_initialization as database_initialization
+    real_open_runtime_database = database_initialization.open_runtime_database
 
     def pause_terminal_audit(*args, **kwargs):
         if kwargs.get("event_type") == "operation.submitted":
@@ -39,13 +39,15 @@ def test_inspect_waits_for_submit_transaction_and_returns_completed_state(
             assert release_terminal_audit.wait(5)
         return real_record_audit(*args, **kwargs)
 
-    def observed_migrate_database(conn):
+    def observed_runtime_open(path):
         if threading.current_thread().name == "partial-submit-inspector":
             inspect_database_attempted.set()
-        return real_migrate_database(conn)
+        return real_open_runtime_database(path)
 
     monkeypatch.setattr(step9, "record_audit", pause_terminal_audit)
-    monkeypatch.setattr(database_schema, "migrate_database", observed_migrate_database)
+    monkeypatch.setattr(
+        database_initialization, "open_runtime_database", observed_runtime_open
+    )
 
     def submit():
         try:

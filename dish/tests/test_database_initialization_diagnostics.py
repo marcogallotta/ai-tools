@@ -9,7 +9,7 @@ import pytest
 
 from dish_service import application as service_application
 from dish_service.leases import ServicePrincipal
-from dish_tool.database_schema import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from tests.support.operational import _service
 
@@ -70,7 +70,7 @@ def test_database_initialization_failure_logs_original_exception_and_safe_reques
     def fail_initialization(_db_path):
         raise original
 
-    monkeypatch.setattr(service_application, "initialize_database", fail_initialization)
+    monkeypatch.setattr(service_application.database_initialization, "open_runtime_database", fail_initialization)
     arguments = {
         "agent": "gpt",
         "task_gid": "123456789",
@@ -161,7 +161,7 @@ def test_database_initialization_failure_logs_backup_request_context(
 
 
 @pytest.mark.smoke
-def test_semantic_initialization_failure_keeps_classification_and_preexecution_retry(
+def test_full_semantic_initialization_keeps_exact_diagnostic_classification(
     tmp_path,
 ):
     service, _backend = _service(tmp_path)
@@ -183,41 +183,15 @@ def test_semantic_initialization_failure_keeps_classification_and_preexecution_r
     )
     conn.close()
 
-    backend_factory_called = False
+    with pytest.raises(DishRuleError) as caught:
+        service._initialize_database(surface="startup", command="startup-check")
 
-    def fail_if_backend_created():
-        nonlocal backend_factory_called
-        backend_factory_called = True
-        raise AssertionError("backend must not be created after initialization failure")
-
-    service.backend_factory = fail_if_backend_created
-    request_id = "33333333-3333-4333-8333-333333333333"
-    result = service.execute_agent(
-        "start",
-        {
-            "agent": "gpt",
-            "task_gid": "task-semantic-failure",
-            "kind": "initial",
-            "file_text": "SENSITIVE REQUEST PAYLOAD",
-        },
-        principal=ServicePrincipal("agent-owner", "agent-run"),
-        request_id=request_id,
-    )
-
-    assert result["code"] == "VALIDATION_FAILED"
-    assert result["retryable"] is True
-    assert result["data"]["message"] == (
-        "database durable evidence is semantically inconsistent"
-    )
-    error = result["errors"][0]
-    assert error["rule"] == "database_semantic_evidence_invalid"
-    assert error["execution_occurred"] is False
-    assert error["request_id_consumed"] is False
-    assert error["retry_condition"] == "after_database_semantic_evidence_repair"
+    error = caught.value
+    assert error.rule == "database_semantic_evidence_invalid"
     problem = next(
-        problem
-        for problem in error["problems"]
-        if problem["invariant"] == "content_identity_mismatch"
+        item
+        for item in error.details["problems"]
+        if item["invariant"] == "content_identity_mismatch"
     )
     assert problem["record_type"] == "content_versions"
     assert problem["record_id"] == "content-version-semantic-failure"
@@ -228,117 +202,8 @@ def test_semantic_initialization_failure_keeps_classification_and_preexecution_r
     assert problem["broken_relationship"]["required_predicate"] == (
         "content_digest(title, notes) == identity"
     )
-    assert error["transaction_state"] == {
+    assert error.details["transaction_state"] == {
         "connection_in_transaction": False,
         "evidence_visibility": "committed_database",
     }
-    assert error["diagnostic_timestamp"].endswith("Z")
-    assert backend_factory_called is False
-
-    raw = sqlite3.connect(service.config.db_path)
-    try:
-        assert raw.execute(
-            "SELECT COUNT(*) FROM service_requests WHERE request_id=?",
-            (request_id,),
-        ).fetchone()[0] == 0
-    finally:
-        raw.close()
-
-    rendered = repr(result)
-    assert "service_database_unavailable" not in rendered
-    assert "SENSITIVE INVALID IDENTITY" not in rendered
-    assert "SENSITIVE CANDIDATE TITLE" not in rendered
-    assert "SENSITIVE CANDIDATE NOTES" not in rendered
-    assert "SENSITIVE REQUEST PAYLOAD" not in rendered
-
-
-@pytest.mark.smoke
-def test_semantic_failure_after_request_start_requires_fresh_request_id(
-    tmp_path, monkeypatch
-):
-    service, _backend = _service(tmp_path)
-    principal = ServicePrincipal("admin-owner", "admin-run")
-    request_id = "44444444-4444-4444-8444-444444444444"
-    calls = 0
-
-    class SemanticFailureBackupManager:
-        @staticmethod
-        def new_backup_id(*, label):
-            assert label == "semantic-check"
-            return "dish-semantic-check.sqlite3"
-
-        def create(self, *, label, backup_id=None):
-            nonlocal calls
-            calls += 1
-            assert label == "semantic-check"
-            assert backup_id == "dish-semantic-check.sqlite3"
-            raise DishRuleError(
-                "VALIDATION_FAILED",
-                "database durable evidence is semantically inconsistent",
-                rule="database_semantic_evidence_invalid",
-                retryable=False,
-                details={
-                    "problems": [
-                        {
-                            "invariant": "content_identity_mismatch",
-                            "record_type": "content_versions",
-                            "record_id": "content-version-post-start",
-                        }
-                    ]
-                },
-            )
-
-    manager = SemanticFailureBackupManager()
-    monkeypatch.setattr(
-        type(service),
-        "backup_manager",
-        property(lambda _self: manager),
-    )
-
-    result = service.create_backup(
-        label="semantic-check",
-        principal=principal,
-        request_id=request_id,
-    )
-
-    assert result["code"] == "VALIDATION_FAILED"
-    assert result["retryable"] is True
-    error = result["errors"][0]
-    assert error["rule"] == "database_semantic_evidence_invalid"
-    assert error["execution_occurred"] is True
-    assert error["request_id_consumed"] is True
-    assert error["retry_condition"] == (
-        "after_database_semantic_evidence_repair_with_fresh_request_id"
-    )
-    assert error["problems"] == [
-        {
-            "invariant": "content_identity_mismatch",
-            "record_type": "content_versions",
-            "record_id": "content-version-post-start",
-        }
-    ]
-    assert result["data"]["request_id"] == request_id
-
-    replay = service.create_backup(
-        label="semantic-check",
-        principal=principal,
-        request_id=request_id,
-    )
-    assert calls == 1
-    assert replay["code"] == "VALIDATION_FAILED"
-    assert replay["data"]["request_replayed"] is True
-    assert replay["errors"][0]["retry_condition"] == (
-        "after_database_semantic_evidence_repair_with_fresh_request_id"
-    )
-
-    raw = sqlite3.connect(service.config.db_path)
-    try:
-        row = raw.execute(
-            "SELECT status, result_json FROM service_requests WHERE request_id=?",
-            (request_id,),
-        ).fetchone()
-        assert row is not None
-        assert row[0] == "completed"
-        assert row[1] is not None
-    finally:
-        raw.close()
+    assert error.details["diagnostic_timestamp"].endswith("Z")

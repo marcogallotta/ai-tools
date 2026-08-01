@@ -637,3 +637,12 @@ Atomic abandonment succession accepts one immutable `AbandonmentSuccessionSpec`.
 `DishService` remains the composition root and sole shared-service authority, but top-level agent and admin request lifecycles are owned by `AgentRequestCoordinator` and `AdminRequestCoordinator`. They sequence initialization, replay, application construction, lease handling, dispatch, result finalization, and cleanup while calling the existing authoritative service helpers.
 
 HTTP POST path recognition is declarative in `http_routing.py`. The request handler owns transport validation and response mapping; it does not encode route shape through an expanding conditional chain.
+
+### Database initialization layers
+
+`database_initialization.py` owns connection setup, WAL negotiation, migration serialization, and validation mode. `initialize_database` performs canonical schema validation plus the complete historical semantic audit and is used for startup, health, administration, backup, restore, and explicit diagnostics. `open_runtime_database` uses a bounded version-and-ledger check for an already initialized database and leaves historical semantic auditing to those full-audit boundaries; ordinary connected-agent requests continue to validate the exact task, operation, lease, cycle, request, and external-effect evidence they consume.
+
+A first runtime request may bootstrap a missing database for embedded and test callers that have no separate listener-startup phase. Concurrent first callers join the serialized full initialization path when they observe a file that has not yet converged. After convergence, request connections do not rescan the complete append-only history.
+
+The migration ledger and canonical DDL remain in `database_schema.py`. Request code must not reproduce connection or migration setup locally. `database_schema.initialize_database` is a temporary compatibility facade only; `database_initialization.initialize_database` is the implementation owner.
+

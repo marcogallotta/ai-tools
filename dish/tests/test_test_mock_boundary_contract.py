@@ -17,7 +17,6 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("test_transport.py", "__init__"),
     ("test_committed_success_boundaries.py", "_write_emergency_repair"),
     ("test_material_change_grammar.py", "_signed_identity"),
-    ("test_dish_resource_lifecycle_regressions.py", "_validate_current_database"),
     ("test_dish_admin_expire_lease_authority.py", "_linux_process_start"),
 }
 

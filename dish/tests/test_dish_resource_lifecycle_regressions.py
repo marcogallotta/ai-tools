@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import dish_tool.database_initialization as database_initialization
 import dish_tool.database_schema as database_schema
 
 
@@ -32,11 +33,11 @@ def test_final_database_validation_failure_closes_created_connection(monkeypatch
     def fail_validation(_conn):
         raise RuntimeError("final validation failed")
 
-    monkeypatch.setattr(database_schema.sqlite3, "connect", tracking_connect)
-    monkeypatch.setattr(database_schema, "_validate_current_database", fail_validation)
+    monkeypatch.setattr(database_initialization.sqlite3, "connect", tracking_connect)
+    monkeypatch.setattr(database_initialization, "validate_current_database", fail_validation)
 
     with pytest.raises(RuntimeError, match="final validation failed"):
-        database_schema.initialize_database(tmp_path / "invalid-after-migration.sqlite3")
+        database_initialization.initialize_database(tmp_path / "invalid-after-migration.sqlite3")
 
     assert len(created) == 1
     assert created[0].closed_by_owner is True

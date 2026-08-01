@@ -28,6 +28,7 @@ from dish_tool.database import (
     resolve_admin_operation_target,
     unresolved_planning_reopen_attempts,
 )
+import dish_tool.database_initialization as database_initialization
 from dish_tool.errors import BackendFailure, DishRuleError
 from dish_tool.invocation_audit import record_invocation_audit
 from dish_tool.models import (
@@ -469,7 +470,9 @@ class DishService:
         """Initialize SQLite and retain safe diagnostics for every failure."""
 
         try:
-            return initialize_database(self.config.db_path)
+            if surface in {"startup", "health", "admin"}:
+                return initialize_database(self.config.db_path)
+            return database_initialization.open_runtime_database(self.config.db_path)
         except Exception as exc:
             classification, _details = _classify_database_initialization_exception(exc)
             context = {
@@ -1770,7 +1773,7 @@ class DishService:
             agent=str(arguments.get("agent") or "") or None,
         )
         if kind == "planning":
-            with immediate_transaction(conn, "complete_planning_start_replay"):
+            with immediate_persistence(conn, "complete_planning_start_replay"):
                 consume_planning_intent(
                     conn, request_id=request_id, operation_id=operation_id
                 )
@@ -1827,7 +1830,7 @@ class DishService:
                     retryable=False,
                     details={"field": "client.request_id"},
                 )
-            with immediate_transaction(state.conn, "planning_intent_gate"):
+            with immediate_persistence(state.conn, "planning_intent_gate"):
                 confirmation = issue_or_claim_planning_intent(
                     state.conn,
                     request_id=request_id,
@@ -2113,7 +2116,7 @@ class DishService:
                 and result.get("ok")
                 and result_operation_id
             ):
-                with immediate_transaction(
+                with immediate_persistence(
                     state.conn, "complete_planning_start_request"
                 ):
                     consume_planning_intent(

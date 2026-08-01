@@ -2359,59 +2359,17 @@ RUNTIME_BUSY_TIMEOUT_MS = 30000
 def initialize_database(
     path: str | os.PathLike[str] = DEFAULT_DB_PATH,
 ) -> sqlite3.Connection:
-    db_path = Path(path).expanduser()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    _backup_legacy_database(db_path)
-    conn = sqlite3.connect(str(db_path), timeout=30, isolation_level=None)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute(f"PRAGMA busy_timeout = {WAL_BUSY_TIMEOUT_MS}")
-    journal_exc: sqlite3.OperationalError | None = None
-    # A second initializer can briefly collide with the first while SQLite is
-    # establishing WAL mode. Retry only this narrow busy/locked boundary; after
-    # the bounded window, a persistent reader is reported as a structured lock.
-    for attempt in range(WAL_RETRY_ATTEMPTS):
-        try:
-            conn.execute("PRAGMA journal_mode = WAL")
-            journal_exc = None
-            break
-        except sqlite3.OperationalError as exc:
-            text = str(exc).lower()
-            if "locked" not in text and "busy" not in text:
-                conn.close()
-                raise
-            journal_exc = exc
-            time.sleep(min(WAL_RETRY_SLEEP_BASE_SECONDS * (attempt + 1), WAL_RETRY_SLEEP_CAP_SECONDS))
-    if journal_exc is not None:
-        conn.close()
-        raise DishRuleError(
-            "BACKEND_REJECTED",
-            "database journal mode could not be established while another reader holds the file",
-            rule="database_reader_lock",
-            retryable=True,
-        ) from journal_exc
-    conn.execute(f"PRAGMA busy_timeout = {MIGRATION_BUSY_TIMEOUT_MS}")
-    try:
-        migrate_database(conn)
-    except sqlite3.OperationalError as exc:
-        if "locked" in str(exc).lower() or "busy" in str(exc).lower():
-            conn.close()
-            raise DishRuleError(
-                "BACKEND_REJECTED",
-                "database initialization is blocked by another writer",
-                rule="database_writer_lock",
-                retryable=True,
-                details={"timeout_ms": MIGRATION_BUSY_TIMEOUT_MS},
-            ) from exc
-        conn.close()
-        raise
-    conn.execute(f"PRAGMA busy_timeout = {RUNTIME_BUSY_TIMEOUT_MS}")
-    try:
-        _validate_current_database(conn)
-    except Exception:
-        conn.close()
-        raise
-    return conn
+    """Compatibility facade for complete startup-grade initialization.
+
+    The implementation owner is ``database_initialization``. Dynamic lookup
+    keeps the legacy import surface without creating a production import cycle;
+    the facade is retired in the subsequent compatibility-cleanup stage.
+    """
+
+    import importlib
+
+    owner = importlib.import_module(".database_initialization", __package__)
+    return owner.initialize_database(path)
 
 
 def _execute_script_statements(conn: sqlite3.Connection, script: str) -> None:
@@ -3805,7 +3763,26 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
         )
 
 
-def _validate_current_database(conn: sqlite3.Connection) -> None:
+
+def validate_runtime_schema_state(conn: sqlite3.Connection) -> None:
+    """Check only the bounded schema facts required at request admission."""
+
+    current = max(MIGRATIONS)
+    _validate_version_claims(conn)
+    user_version, ledger_version = _schema_version_state(conn)
+    if user_version != current or ledger_version != current:
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "database did not converge to the current schema",
+            rule="database_schema_not_current",
+            details={
+                "user_version": user_version,
+                "ledger_version": ledger_version,
+                "current": current,
+            },
+        )
+
+def validate_current_schema(conn: sqlite3.Connection) -> None:
     current = max(MIGRATIONS)
     _validate_version_claims(conn)
     user_version, ledger_version = _schema_version_state(conn)
@@ -3828,7 +3805,20 @@ def _validate_current_database(conn: sqlite3.Connection) -> None:
             rule="database_schema_signature_mismatch",
             details={"missing_objects": missing_objects, "extra_objects": extra_objects, "altered_objects": altered_objects},
         )
+
+
+
+def validate_current_database(conn: sqlite3.Connection) -> None:
+    """Validate the canonical schema and all durable historical relationships."""
+
+    validate_current_schema(conn)
     _validate_semantic_evidence(conn)
+
+
+# Temporary compatibility aliases for historical validation callers.
+# The implementation owner is public; stage 8 retires these aliases.
+_validate_current_schema = validate_current_schema
+_validate_current_database = validate_current_database
 
 
 def _normalized_schema_sql(sql: str | None) -> str:
