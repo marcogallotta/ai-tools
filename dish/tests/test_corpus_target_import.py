@@ -38,7 +38,7 @@ def _registry(manifest: list[dict]) -> dict[str, str]:
     names = sorted({
         row.get("proposed_target_section_name") or row["captured_section_name"]
         for row in manifest
-    } | {"Sourcing"})
+    } | {"Sourcing", "Research Queue", "Reference"})
     return {name: str(900_000 + index) for index, name in enumerate(names)}
 
 
@@ -63,7 +63,7 @@ def test_blueprint_has_all_103_tasks_and_approved_canh_destination(tmp_path):
     assert {item["name"] for item in blueprint["sections"]} == {
         "Desserts", "Eating", "Fish", "Hunan", "Indonesia/Malaysia", "Isan/Lao",
         "Japanese", "Korean", "Levant", "Maghreb", "Mediterranean", "Persian",
-        "Planned", "Seasonal", "Sichuan", "Sourcing", "Subcontinent", "Thai",
+        "Planned", "Reference", "Research Queue", "Seasonal", "Sichuan", "Sourcing", "Subcontinent", "Thai",
         "Verification Queue", "Vietnamese",
     }
     canh = next(

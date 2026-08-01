@@ -37,6 +37,7 @@ SOURCE_PROJECT_GID = "1215089183018968"
 TEST_PROJECT_GID = "1216693403164366"
 EXPECTED_GOVERNED = 99
 EXPECTED_UNMANAGED = 4
+RUNTIME_REQUIRED_SECTIONS = {"Research Queue", "Reference"}
 CORRECTION_ARCHIVE_SHA256 = (
     "c3a2ce255fc50f2085e3bb9c03b658061bfbbfef4daf3ec6325296fc6454505f"
 )
@@ -388,7 +389,11 @@ def render_governed(
 
 
 def expected_sections(tasks: list[GovernedTask]) -> list[str]:
-    return sorted({task.destination_section_name for task in tasks} | {"Sourcing"})
+    return sorted(
+        {task.destination_section_name for task in tasks}
+        | {"Sourcing"}
+        | RUNTIME_REQUIRED_SECTIONS
+    )
 
 
 def write_json(path: Path, value: Any) -> None:
