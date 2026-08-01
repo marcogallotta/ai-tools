@@ -8,7 +8,7 @@ from dish_service.application import DishService
 from dish_service.backup import BackupManager
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
-from tests._service_test_helpers import (
+from tests.support.service_scenarios import (
     OTHER_REQUEST_ID,
     REQUEST_ID,
     RUN_ID,

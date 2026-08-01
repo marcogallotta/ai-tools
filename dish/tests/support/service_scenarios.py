@@ -11,7 +11,7 @@ from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
 from dish_service.leases import ServicePrincipal
-from tests._partial_recovery_helpers import ServiceBackend, release_loader
+from tests.support.partial_recovery import ServiceBackend, release_loader
 
 RUN_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 REQUEST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"

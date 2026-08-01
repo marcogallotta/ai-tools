@@ -6,7 +6,7 @@ from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.admin import DishAdminApplication
 from dish_tool.abandonment import settle_abandonment_frontier
 from dish_tool.database import create_abandonment_attempt_in_transaction
-from tests._workflow_builders import create_large_rejection_successor, reject_large
+from tests.support.workflow_builders import create_large_rejection_successor, reject_large
 from tests.support.verification import TASK, make_app
 
 

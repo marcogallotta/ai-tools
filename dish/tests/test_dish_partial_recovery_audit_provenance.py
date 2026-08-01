@@ -16,7 +16,7 @@ from dish_tool.database import initialize_database
 from dish_tool.execution_provenance import operation_execution_provenance
 from dish_tool.operation_execution import claim_operation_execution
 from dish_tool.step6 import prepare_live
-from tests._partial_recovery_helpers import (
+from tests.support.partial_recovery import (
     Backend,
     TASK,
     app,

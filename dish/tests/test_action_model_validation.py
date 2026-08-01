@@ -5,7 +5,7 @@ import threading
 from dish_service.http import build_server
 from dish_service.leases import ServicePrincipal
 from dish_tool.database import initialize_database
-from tests._service_test_helpers import (
+from tests.support.service_scenarios import (
     complete_service_submission as _complete_service_submission,
     post as _post,
     service as _service,

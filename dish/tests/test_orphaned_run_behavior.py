@@ -14,7 +14,7 @@ from __future__ import annotations
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
-from tests.planning_intent_support import confirmed_planning_start
+from tests.support.planning_intent import confirmed_planning_start
 from tests.support.attestation import ATTESTATION
 from tests.support.operational import Clock, _service
 from tests.support.planning import Backend as PlanningBackend, PLANNING, release as planning_release

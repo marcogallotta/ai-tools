@@ -21,7 +21,7 @@ from dish_tool.database import (
 from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
-from tests.planning_intent_support import confirmed_planning_start
+from tests.support.planning_intent import confirmed_planning_start
 from tests.support.thread_teardown import join_thread, managed_thread
 from tests.support.request_restore import Backend, _service
 from tests.support.planning_reopen import (

@@ -13,7 +13,7 @@ from dish_service.backup import BackupManager
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
 from dish_service.leases import ServicePrincipal
-from tests._service_test_helpers import (
+from tests.support.service_scenarios import (
     OPERATION_ID,
     REQUEST_ID,
     RUN_ID,

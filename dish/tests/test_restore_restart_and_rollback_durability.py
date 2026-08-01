@@ -5,7 +5,7 @@ import pytest
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
-from tests.planning_intent_support import confirmed_planning_start
+from tests.support.planning_intent import confirmed_planning_start
 from dish_service.request_replay import begin_request
 from dish_tool.commands import DishApplication
 from dish_tool.database import initialize_database

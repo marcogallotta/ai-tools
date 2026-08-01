@@ -5,7 +5,7 @@ import uuid
 import pytest
 
 from dish_tool.admin import DishAdminApplication
-from tests._service_test_helpers import RUN_ID, post as _post, running as _running
+from tests.support.service_scenarios import RUN_ID, post as _post, running as _running
 from tests.support.thread_teardown import join_thread, stop_server
 from tests.support.submission import _signed
 

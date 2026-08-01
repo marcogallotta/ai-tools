@@ -21,7 +21,7 @@ from dish_tool.constants import (
     RECOVERY_SAFETY_MARGIN_SECONDS,
 )
 from dish_tool.errors import DishRuleError
-from tests._service_test_helpers import post as _post, running as _running
+from tests.support.service_scenarios import post as _post, running as _running
 from tests.support.thread_teardown import join_thread, stop_server
 from tests.support.action_http import _running as _running_action, _stop
 

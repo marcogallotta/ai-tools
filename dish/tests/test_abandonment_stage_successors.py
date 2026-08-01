@@ -27,7 +27,7 @@ from dish_tool.step5 import claim_prepared_stage_successor
 from dish_tool.step8 import resolve_hold
 from dish_tool.task_store import LiveTask
 
-from tests.planning_intent_support import confirmed_planning_start
+from tests.support.planning_intent import confirmed_planning_start
 from tests.support.abandonment import (
     Backend,
     _abandon,

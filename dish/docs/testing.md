@@ -308,3 +308,11 @@ Results are written to `.test-artifacts/mutation-sample/summary.json` and `summa
 This is a deliberately small signal, not a global score. New launch-critical invariants should add a
 specific mutant and the narrowest authoritative test that kills it. Surviving mutants block the lane
 until the oracle is strengthened or the mutant is documented as equivalent.
+
+## Test support ownership
+
+Reusable fixtures, stateful fakes, workflow builders, and scenario helpers live under
+`tests/support/`. The test-package root is reserved for collected `test_*.py` modules,
+pytest configuration, and the dedicated flake/mutation runners. A structural contract
+rejects new root-level helper modules so support ownership cannot drift back into an
+accidental second namespace.

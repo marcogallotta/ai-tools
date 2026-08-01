@@ -41,3 +41,24 @@ def test_tests_do_not_import_other_test_modules():
         "tests must import shared helpers from tests.support rather than another "
         "collected test module:\n" + "\n".join(violations)
     )
+
+
+def test_reusable_support_modules_live_under_tests_support():
+    root = Path(__file__).parent
+    allowed_root_modules = {
+        "__init__.py",
+        "conftest.py",
+        "flake_policy.py",
+        "flake_runner.py",
+        "mutation_cases.py",
+        "mutation_runner.py",
+    }
+    unexpected = sorted(
+        path.name
+        for path in root.glob("*.py")
+        if not path.name.startswith("test_") and path.name not in allowed_root_modules
+    )
+    assert unexpected == [], (
+        "reusable test helpers belong under tests/support; root-level helper "
+        f"modules found: {unexpected}"
+    )

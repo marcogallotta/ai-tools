@@ -12,7 +12,7 @@ from dish_service.config import ServiceConfig
 
 from dish_service.leases import ServicePrincipal
 
-from tests.planning_intent_support import confirmed_planning_start
+from tests.support.planning_intent import confirmed_planning_start
 
 from dish_service.request_replay import begin_request
 
