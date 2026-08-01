@@ -11,9 +11,12 @@ from dish_service.command_spec import validate_action_request
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
 from dish_service.leases import ServicePrincipal
+from dish_service.planning_intent import issue_or_claim_planning_intent
+from dish_service.request_replay import begin_request
 from dish_tool.cli import build_parser
 from dish_tool.database import initialize_database
 from dish_tool.errors import DishRuleError
+from dish_tool.transactions import immediate_transaction
 from tests.support.planning import Backend, release
 from tests.support.planning_intent import (
     FIRST_REQUEST,
@@ -28,6 +31,22 @@ from tests.support.planning_intent import (
     principal as _principal,
     service as _service,
 )
+
+
+def _assert_challenge_unchanged_without_work(service, backend, challenge):
+    assert backend.calls() == []
+    conn = _connect(service)
+    try:
+        row = conn.execute(
+            "SELECT status,claimed_request_id,operation_id "
+            "FROM planning_intent_challenges WHERE challenge_id=?",
+            (challenge["data"]["intent_challenge_id"],),
+        ).fetchone()
+        assert tuple(row) == ("issued", None, None)
+        assert conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM service_leases").fetchone()[0] == 0
+    finally:
+        conn.close()
 
 
 
@@ -183,21 +202,135 @@ def test_agent_override_requires_and_persists_nonblank_reason(tmp_path):
         conn.close()
 @pytest.mark.invariant_planning_intent
 @pytest.mark.smoke
-def test_challenge_is_bound_to_exact_principal_task_and_single_followup(tmp_path):
-    service, _ = _service(tmp_path)
+def test_confirmation_rejects_different_owner_with_same_run(tmp_path):
+    service, backend = _service(tmp_path)
     challenge = _issue(service)
 
-    wrong_principal = _confirm(
+    result = _confirm(
+        service,
+        challenge,
+        principal=_principal(owner_id="another-action", run_id=RUN_ID),
+    )
+
+    assert result["code"] == "CONFLICT"
+    assert result["errors"][0]["rule"] == "planning_intent_challenge_mismatch"
+    _assert_challenge_unchanged_without_work(service, backend, challenge)
+
+
+@pytest.mark.invariant_planning_intent
+@pytest.mark.smoke
+def test_confirmation_rejects_different_run_with_same_owner(tmp_path):
+    service, backend = _service(tmp_path)
+    challenge = _issue(service)
+
+    result = _confirm(
         service,
         challenge,
         principal=_principal(
-            owner_id="another-action",
+            owner_id="action",
             run_id="55555555-5555-4555-8555-555555555555",
         ),
     )
-    assert wrong_principal["code"] == "CONFLICT"
-    assert wrong_principal["errors"][0]["rule"] == "planning_intent_challenge_mismatch"
 
+    assert result["code"] == "CONFLICT"
+    assert result["errors"][0]["rule"] == "planning_intent_challenge_mismatch"
+    _assert_challenge_unchanged_without_work(service, backend, challenge)
+
+
+@pytest.mark.invariant_planning_intent
+@pytest.mark.smoke
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        pytest.param({"agent": "claude"}, id="agent"),
+        pytest.param({"task_gid": "987654321"}, id="task"),
+    ],
+)
+def test_confirmation_rejects_changed_exact_start_identity(tmp_path, arguments):
+    service, backend = _service(tmp_path)
+    challenge = _issue(service)
+
+    result = _confirm(
+        service,
+        challenge,
+        arguments=_planning_arguments(**arguments),
+    )
+
+    assert result["code"] == "CONFLICT"
+    assert result["errors"][0]["rule"] == "planning_intent_challenge_mismatch"
+    _assert_challenge_unchanged_without_work(service, backend, challenge)
+
+
+@pytest.mark.invariant_planning_intent
+@pytest.mark.smoke
+def test_confirmation_rejects_hash_only_prepared_operation_change(tmp_path):
+    service, backend = _service(tmp_path)
+    challenge = _issue(service)
+
+    result = _confirm(
+        service,
+        challenge,
+        arguments=_planning_arguments(
+            prepared_operation_id="77777777-7777-4777-8777-777777777777"
+        ),
+    )
+
+    assert result["code"] == "CONFLICT"
+    assert result["errors"][0]["rule"] == "planning_intent_challenge_mismatch"
+    _assert_challenge_unchanged_without_work(service, backend, challenge)
+
+
+@pytest.mark.invariant_planning_intent
+@pytest.mark.smoke
+def test_planning_intent_gate_requires_fresh_request_id(tmp_path):
+    service, _ = _service(tmp_path)
+    arguments = _planning_arguments()
+    conn = _connect(service)
+    try:
+        begin_request(
+            conn,
+            request_id=FIRST_REQUEST,
+            owner_id="action",
+            run_id=RUN_ID,
+            command="start",
+            arguments=arguments,
+        )
+        with immediate_transaction(conn, "issue planning intent challenge"):
+            challenge = issue_or_claim_planning_intent(
+                conn,
+                request_id=FIRST_REQUEST,
+                principal=_principal(),
+                arguments=arguments,
+            )
+        followup = {
+            **arguments,
+            "intent_challenge_id": challenge["data"]["intent_challenge_id"],
+            "intent_basis": "user_requested",
+        }
+
+        with pytest.raises(DishRuleError) as caught:
+            with immediate_transaction(conn, "reject reused planning request"):
+                issue_or_claim_planning_intent(
+                    conn,
+                    request_id=FIRST_REQUEST,
+                    principal=_principal(),
+                    arguments=followup,
+                )
+
+        assert caught.value.rule == "planning_intent_fresh_request_required"
+        row = conn.execute(
+            "SELECT status,claimed_request_id FROM planning_intent_challenges"
+        ).fetchone()
+        assert tuple(row) == ("issued", None)
+    finally:
+        conn.close()
+
+
+@pytest.mark.invariant_planning_intent
+@pytest.mark.smoke
+def test_confirmation_challenge_is_single_use(tmp_path):
+    service, _ = _service(tmp_path)
+    challenge = _issue(service)
     started = _confirm(service, challenge, request_id=THIRD_REQUEST)
     assert started["ok"], started
 
@@ -206,6 +339,7 @@ def test_challenge_is_bound_to_exact_principal_task_and_single_followup(tmp_path
         challenge,
         request_id="66666666-6666-4666-8666-666666666666",
     )
+
     assert reused["code"] == "CONFLICT"
     assert reused["errors"][0]["rule"] == "planning_intent_challenge_already_used"
 def test_exact_replay_resumes_after_crash_between_claim_and_start(tmp_path, monkeypatch):

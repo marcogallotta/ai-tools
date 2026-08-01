@@ -91,7 +91,7 @@ CASES = (
         before='if row["claimed_request_id"] == request_id and row["status"] in {',
         after='if row["status"] in {',
         tests=(
-            "tests/test_planning_intent_confirmation.py::test_challenge_is_bound_to_exact_principal_task_and_single_followup",
+            "tests/test_planning_intent_confirmation.py::test_confirmation_challenge_is_single_use",
         ),
         invariant="a Planning intent challenge is reusable only by its exact claimed request",
     ),

@@ -64,7 +64,12 @@ SMOKE_INVARIANT_OWNERS = {
     },
     "invariant_planning_intent": {
         "tests/test_planning_intent_confirmation.py::test_fresh_user_requested_confirmation_starts_and_consumes_challenge",
-        "tests/test_planning_intent_confirmation.py::test_challenge_is_bound_to_exact_principal_task_and_single_followup",
+        "tests/test_planning_intent_confirmation.py::test_confirmation_rejects_different_owner_with_same_run",
+        "tests/test_planning_intent_confirmation.py::test_confirmation_rejects_different_run_with_same_owner",
+        "tests/test_planning_intent_confirmation.py::test_confirmation_rejects_changed_exact_start_identity",
+        "tests/test_planning_intent_confirmation.py::test_confirmation_rejects_hash_only_prepared_operation_change",
+        "tests/test_planning_intent_confirmation.py::test_planning_intent_gate_requires_fresh_request_id",
+        "tests/test_planning_intent_confirmation.py::test_confirmation_challenge_is_single_use",
     },
     "invariant_abandonment": {
         "tests/test_abandonment_admin_workflow.py::test_admin_abandon_operation_creates_exact_planning_successor",
