@@ -138,18 +138,28 @@ exact notes file, notes SHA-256, or Asana `modified_at`.
    released Planned and 6 Korean) matched their expected name, section, and `modified_at` exactly;
    results are in `migration/cooking-raw-capture/`. This is raw source capture only, not the
    transformed Dish document format — item 3 is still open for every task, including the original 88.
-3. **Offline transformation — done for all 99 governed tasks (2026-07-31).** ChatGPT produced one
+3. **Offline transformation — done for all 99 governed tasks (2026-08-01).** ChatGPT produced one
    template per task from `migration/transformation-handoff.tgz`. The first pass blanket-flagged
    boilerplate questions on nearly every task; two correction rounds
    (`migration/transformation-handoff-correction.md`, `migration/transformation-handoff-correction-2.md`)
    fixed it to attempt Role/Destination/Locks inference from source content and only flag genuine
-   ambiguity. Final batch: `migration/batch-002-correction-2.tgz`, 0 open exceptions.
-4. **Deterministic validation — done for the current batch (2026-07-31).** ChatGPT built
+   ambiguity. A third round (`migration/transformation-handoff-correction-3.md`) fixed a real
+   canonical-parser defect: a blank line between `---` and `## PROCESS RECORD` (all 99 templates), and
+   legacy-preserved note prose reusing structural markers (`---`, `PROCESS RECORD`, or a bare `##`
+   heading) that collided with Dish's real document structure (5 templates for the separator/heading
+   collision, 9 for a stray `##` body heading demoted to `###`). Final batch:
+   `migration/batch-002-correction-3.tgz`, 0 open exceptions. Independently verified (not just taken on
+   ChatGPT's report): re-ran `validate_batch_002.py` (99/99 pass) and called Dish's real
+   `parse_task_document` directly against all 99 corrected templates (0 failures).
+4. **Deterministic validation — done for the current batch (2026-08-01).** ChatGPT built
    `migration/validate_batch_002.py` from `migration/validator-request.md`'s spec (coverage, source
    fidelity, placeholder integrity, destination legality, Planning brief structure, no fabricated
    Research/Verification evidence, schema legality, Korean status guard). One scoping bug was found
    and fixed locally (a Status-field scan was catching preserved legacy note prose instead of only the
-   live record). Current result: 99/99 tasks pass. Re-run this script over any future batch revision.
+   live record). Current result: 99/99 tasks pass against `batch-002-correction-3.tgz`. Note: this
+   validator checks content, not exact structural adjacency — it did not catch the parser-breaking
+   formatting defect fixed in item 3's third correction round; real acceptance now also requires a
+   direct `parse_task_document` pass, not just this script. Re-run both over any future batch revision.
 5. **Dish durable-state initialization.** Decide and implement how imported `pending-research`,
    `pending-verification`, and accepted-ready tasks acquire legal Dish durable state. Rendered legacy
    provenance or Verification prose is not durable Dish evidence. This must be resolved before any
