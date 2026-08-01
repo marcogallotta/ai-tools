@@ -801,10 +801,19 @@ Implementation is organized into six top-level stages. Each stage is a reasonabl
 
 Purpose: freeze the exact system being implemented before target schema or command work begins.
 
+The production-change ledger (`database-backend-production-change-ledger.md`) is
+already backfilled through commit `42619b9`; it lists two rows implementation must
+close before Stage 3/4: the new `section-tasks` command and its pagination
+contract need a §4 entry, and the `a2a9b52` legal-action ownership model must be
+confirmed against §12's bounded read-model design.
+
 Includes:
 
-- create and backfill `database-backend-production-change-ledger.md` from August 1, 2026 through the exact implementation re-baseline using authoritative Git history and deployment evidence;
-- freeze current-behavior characterization and complete the authority inventory against that closed ledger range;
+- close the two open ledger rows above by adding `section-tasks` to the §4
+  semantic-delta contract and confirming §12 against the current legal-action
+  ownership model;
+- freeze current-behavior characterization and complete the authority inventory
+  against the closed ledger range;
 - complete and approve the normative command semantic-delta contract in §4, with no unresolved command treatment;
 - establish the PostgreSQL project skeleton, SQLAlchemy session ownership, Alembic, and isolated test database.
 
