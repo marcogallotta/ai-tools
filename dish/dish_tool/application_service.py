@@ -75,7 +75,11 @@ class CurrentWorkflowService:
     def _snapshot(self, operation_id: str, *, schema=None) -> tuple[WorkflowSnapshot, dict[str, object]]:
         from .constants import COOKING_PROJECT_GID
         from .models import SectionRegistry
-        from .task_document import parse_task_document, validate_task_document
+        from .task_document import (
+            DocumentParseError,
+            parse_task_document,
+            validate_task_document,
+        )
 
         op = self.operation(operation_id)
         live = self.gateway.read(task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
@@ -92,7 +96,7 @@ class CurrentWorkflowService:
                     schema=schema,
                 ).findings
             ]
-        except Exception:
+        except DocumentParseError:
             validation_rules = ["canonical_task_required"]
 
         registry = SectionRegistry.from_sections(self.backend.list_sections(COOKING_PROJECT_GID))

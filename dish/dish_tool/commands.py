@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .audit_repair import attempt_command_audit_repairs, attach_audit_repair_warning
+
 import asyncio
 import inspect
 import json
@@ -18,7 +20,6 @@ from .command_support import (
     reject_undeclared_arguments,
 )
 from .constants import AGENT_FAMILIES, CHANGE_LEVELS, COOKING_PROJECT_GID, SUBMISSION_KINDS
-from .database import process_command_audit_repairs
 from .invocation_audit import record_invocation_audit
 from .errors import BackendFailure, DishRuleError
 from .models import (
@@ -275,10 +276,9 @@ class DishApplication:
 
 
     def execute(self, command: str, **arguments: Any) -> dict[str, Any]:
-        try:
-            process_command_audit_repairs(self.conn)
-        except Exception:
-            pass
+        repair_attempt = attempt_command_audit_repairs(
+            self.conn, surface="dish"
+        )
         trace = CommandTrace(
             task_gid=arguments.get("task_gid"),
             submission_id=arguments.get("submission_id"),
@@ -370,6 +370,7 @@ class DishApplication:
                 state=trace.state,
                 validation_scope=trace.validation_scope,
             )
+        attach_audit_repair_warning(result, repair_attempt, surface="dish")
         self._record_invocation(command, trace.actor_agent or actor, trace, result)
         return result
 
@@ -382,6 +383,9 @@ class DishApplication:
         task_gid: str | None = None,
         submission_id: str | None = None,
     ) -> dict[str, Any]:
+        repair_attempt = attempt_command_audit_repairs(
+            self.conn, surface="dish"
+        )
         trace = CommandTrace(task_gid=task_gid, submission_id=submission_id)
         if submission_id:
             row = self.conn.execute(
@@ -400,6 +404,7 @@ class DishApplication:
             submission_id=submission_id, state=trace.state,
             validation_scope=trace.validation_scope,
         )
+        attach_audit_repair_warning(result, repair_attempt, surface="dish")
         self._record_invocation(command, trace.actor_agent or agent, trace, result)
         return result
 

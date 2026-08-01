@@ -104,6 +104,18 @@ Placement is selected by Cooking project GID, never by the first membership.
 An effect has exactly one evidence-backed outcome: `confirmed`, `not_applied`, or `uncertain`.
 Uncertain effects are reconciled against recorded intent; they are never blindly retried.
 
+### Exception and cleanup observability
+
+Broad exception handling is permitted only at an explicit process, transport, external-effect, or
+success-preserving cleanup boundary. The boundary must preserve the primary outcome, record or log
+the secondary failure type, and expose recovery guidance when durable authority may remain. Domain
+parsing and validation catch only their documented exception types; programming errors are never
+reclassified as ordinary invalid task content.
+
+Pending invocation-audit repair failures do not reverse the current command, but they are logged and
+returned as `data.audit_repair_processing_warning`. A failed rejected-command lease release preserves
+the original rule error while clearing exposed actions and returning exact cleanup/recovery evidence.
+
 ### Durable intent before external effects
 
 Dish persists the intended effect before calling Asana and durably finalizes the corresponding

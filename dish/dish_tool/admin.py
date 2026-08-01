@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from .audit_repair import attempt_command_audit_repairs, attach_audit_repair_warning
+
 import json
 import sqlite3
 import uuid
@@ -18,7 +20,6 @@ from .database import (
     complete_operation_step,
     declare_operation_step,
     immediate_persistence,
-    process_command_audit_repairs,
     record_audit,
     resolve_admin_abandonment_target,
     resolve_admin_operation_target,
@@ -74,10 +75,9 @@ class DishAdminApplication:
         )
 
     def execute(self, command: str, **arguments: Any) -> dict[str, Any]:
-        try:
-            process_command_audit_repairs(self.conn)
-        except Exception:
-            pass
+        repair_attempt = attempt_command_audit_repairs(
+            self.conn, surface="dish-admin"
+        )
         trace = AdminTrace(submission_id=arguments.get("submission_id"))
         handler = CURRENT_ADMIN_COMMAND_HANDLERS.get(command)
         try:
@@ -125,6 +125,9 @@ class DishAdminApplication:
                 submission_id=trace.submission_id,
                 state=trace.state,
             )
+        attach_audit_repair_warning(
+            result, repair_attempt, surface="dish-admin"
+        )
         self._record_invocation(command, trace, result)
         return result
 
@@ -148,6 +151,9 @@ class DishAdminApplication:
         *,
         submission_id: str | None = None,
     ) -> dict[str, Any]:
+        repair_attempt = attempt_command_audit_repairs(
+            self.conn, surface="dish-admin"
+        )
         trace = AdminTrace(submission_id=submission_id)
         if submission_id:
             row = self.conn.execute(
@@ -160,6 +166,9 @@ class DishAdminApplication:
         result = error_envelope(
             command, error, task_gid=trace.task_gid,
             submission_id=trace.submission_id, state=trace.state,
+        )
+        attach_audit_repair_warning(
+            result, repair_attempt, surface="dish-admin"
         )
         self._record_invocation(command, trace, result)
         return result

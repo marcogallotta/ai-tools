@@ -2149,6 +2149,38 @@ class DishService:
                 complete_request(state.conn, request_id=request_id, result=result)
         return result
 
+    def _release_rejected_request_lease(
+        self,
+        *,
+        leases: LeaseManager,
+        operation_id: str,
+        principal: ServicePrincipal,
+        command: str,
+        reason: str,
+    ) -> dict[str, Any] | None:
+        """Preserve the rule error while exposing failed lease cleanup."""
+
+        try:
+            leases.release(operation_id, principal, reason=reason)
+            return None
+        except Exception as exc:  # explicit cleanup boundary; original rule stays primary
+            warning: dict[str, Any] = {
+                "kind": "rejected_command_lease_release",
+                "operation_id": operation_id,
+                "command": command,
+                "error_type": type(exc).__name__,
+                "do_not_retry_command": True,
+            }
+            try:
+                active = leases.active_for_operation(operation_id)
+                warning["lease_still_active"] = active is not None
+                if active is not None:
+                    warning["lease_id"] = active["lease_id"]
+            except Exception as read_exc:
+                warning["lease_state_unknown"] = True
+                warning["lease_read_error_type"] = type(read_exc).__name__
+            return warning
+
     def _agent_rule_error_result(
         self,
         state: _AgentExecutionState,
@@ -2163,15 +2195,15 @@ class DishService:
             execution_occurred=True,
             request_id_consumed=bool(request_id and state.replay_started),
         )
+        cleanup_warning = None
         if state.acquired_for_request and state.operation_id:
-            try:
-                state.leases.release(
-                    state.operation_id,
-                    state.principal,
-                    reason="service_command_rejected",
-                )
-            except Exception:
-                pass
+            cleanup_warning = self._release_rejected_request_lease(
+                leases=state.leases,
+                operation_id=state.operation_id,
+                principal=state.principal,
+                command=command,
+                reason="service_command_rejected",
+            )
         operation_id = state.operation_id or (
             str(arguments.get("submission_id") or "").strip() or None
         )
@@ -2197,6 +2229,12 @@ class DishService:
             submission_id=operation_id,
             validation_scope=validation_scope,
         )
+        if cleanup_warning is not None:
+            data = result.setdefault("data", {})
+            data["service_cleanup_warning"] = cleanup_warning
+            data["service_recovery_required"] = True
+            self._synchronize_exposed_actions(result, [])
+            result["retryable"] = False
         if error.rule == "service_lease_expired":
             view = (
                 self._exposed_operation_view(
@@ -3199,15 +3237,15 @@ class DishService:
             execution_occurred=True,
             request_id_consumed=bool(request_id and state.replay_started),
         )
+        cleanup_warning = None
         if state.acquired_for_request and state.operation_id:
-            try:
-                state.leases.release(
-                    state.operation_id,
-                    state.principal,
-                    reason="admin_command_rejected",
-                )
-            except Exception:
-                pass
+            cleanup_warning = self._release_rejected_request_lease(
+                leases=state.leases,
+                operation_id=state.operation_id,
+                principal=state.principal,
+                command=command,
+                reason="admin_command_rejected",
+            )
         task_gid = None
         if state.operation_id:
             row = state.conn.execute(
@@ -3221,6 +3259,12 @@ class DishService:
             task_gid=task_gid,
             submission_id=state.operation_id,
         )
+        if cleanup_warning is not None:
+            data = result.setdefault("data", {})
+            data["service_cleanup_warning"] = cleanup_warning
+            data["service_recovery_required"] = True
+            self._synchronize_exposed_actions(result, [])
+            result["retryable"] = False
         if request_id and state.replay_started:
             result.setdefault("data", {})["request_id"] = request_id
             complete_request(state.conn, request_id=request_id, result=result)
