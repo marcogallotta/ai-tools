@@ -22,7 +22,7 @@ from dish_tool.database_schema import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
 from dish_tool.step5 import claim_prepared_stage_successor
-from tests.support.abandonment import Backend, _abandon, _live, _release, _source
+from tests.support.abandonment import Backend, RepairBackend, _abandon, _live, _release, _source
 from tests.support.abandonment_admin import _released_actor_lease
 from tests.support.abandonment_scenarios import (
     abandonment_in_state as _abandonment_in_state,
@@ -32,17 +32,6 @@ from tests.support.service_foundation import _release_loader
 
 
 
-
-
-class RepairBackend(Backend):
-    def update_task_content(self, *, task_gid, title, notes):
-        assert task_gid == "task"
-        self.title = title
-        self.notes = notes
-
-    def move_task_to_section(self, *, task_gid, section_gid):
-        assert task_gid == "task"
-        self.section = section_gid
 
 @pytest.mark.smoke
 def test_active_abandonment_fences_new_operation_after_source_terminalizes():

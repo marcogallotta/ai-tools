@@ -152,7 +152,7 @@ def test_abandonment_requires_latest_exact_actor_attempt_and_one_active_per_task
         other["operation_id"], ServicePrincipal("owner-2", "run-2")
     )
     conn.execute("BEGIN IMMEDIATE")
-    with pytest.raises(DishRuleError):
+    with pytest.raises(DishRuleError) as wrong_task:
         create_abandonment_attempt_in_transaction(
             conn,
             abandonment_id="wrong-task-copy",
@@ -163,6 +163,7 @@ def test_abandonment_requires_latest_exact_actor_attempt_and_one_active_per_task
             abandoned_run_id=other_lease["run_id"],
             reason="wrong task",
         )
+    assert wrong_task.value.rule == "abandonment_authority_invalid"
     conn.execute("ROLLBACK")
 def test_live_actor_lease_cannot_start_abandonment():
     conn = initialize_database(":memory:")

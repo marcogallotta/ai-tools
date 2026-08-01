@@ -131,8 +131,9 @@ def test_recovery_sidecars_execute_and_match_exact_row_diff_contracts(tmp_path):
             result = recover_operation(conn, backend, operation_id=op, requested_outcome="inspect", reason="fixture acceptance")
             assert not result["actions"]
             for decision in ("applied", "not-applied"):
-                with pytest.raises(DishRuleError):
+                with pytest.raises(DishRuleError) as ambiguous:
                     recover_operation(conn, backend, operation_id=op, requested_outcome=decision, reason="contradictory fixture decision")
+                assert ambiguous.value.rule == "recovery_evidence_ambiguous"
         else:
             # Closed and held scenarios must remain stable under inspection.
             recover_operation(conn, backend, operation_id=op, requested_outcome="inspect", reason="fixture acceptance")

@@ -4,7 +4,7 @@ from dish_service.application import DishService
 from dish_service.leases import ServicePrincipal
 from dish_tool.database import initialize_database
 from tests.planning_intent_support import confirmed_planning_start
-from tests.support.request_restore import Backend
+from tests.support.request_restore import Backend, restart_service
 
 
 class SimulatedProcessDeath(BaseException):
@@ -57,12 +57,7 @@ class CompletedBackend(Backend):
         self.modified_at = f"m{self.reopens}"
 
 
-def restart(service, backend):
-    return DishService(
-        service.config,
-        backend_factory=lambda: backend,
-        release_loader=service.release_loader,
-    )
+restart = restart_service
 
 
 def rows(service):

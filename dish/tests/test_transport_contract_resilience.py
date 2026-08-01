@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from tests.support.transport import FakeSocket as _FakeSocket
+
 from dish_service import client as client_module
 from dish_service.client import DishActionClient, DishServiceClient
 from dish_service.config import ServiceConfig
@@ -131,10 +133,6 @@ def test_client_rejects_invalid_timeout(field, timeout):
         )
     assert exc.value.rule == "service_timeout_invalid"
 
-
-class _FakeSocket:
-    def settimeout(self, value):
-        self.timeout = value
 
 
 class _FakeConnection:

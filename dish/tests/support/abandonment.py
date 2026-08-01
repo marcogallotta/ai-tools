@@ -163,3 +163,16 @@ def _live(backend: Backend) -> LiveTask:
         completed=False,
         modified_at="now",
     )
+
+
+class RepairBackend(Backend):
+    """Backend that permits reconciliation to repair task content and placement."""
+
+    def update_task_content(self, *, task_gid, title, notes):
+        assert task_gid == self.task_gid
+        self.title = title
+        self.notes = notes
+
+    def move_task_to_section(self, *, task_gid, section_gid):
+        assert task_gid == self.task_gid
+        self.section = section_gid

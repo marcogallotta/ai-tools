@@ -231,6 +231,7 @@ def test_conditional_transition_fails_competing_state_change(tmp_path):
     with pytest.raises(DishRuleError) as exc:
         transition_submission(conn, "s1", {"drafting"}, "ready")
     assert exc.value.code == "WRONG_STATE"
+    assert exc.value.rule == "wrong_state"
 
 
 @pytest.mark.smoke
@@ -262,13 +263,14 @@ def test_begin_write_attempt_records_identity_and_compare_and_swap(tmp_path):
     assert row[3] == attempt.identity.pid
     assert row[4] == attempt.identity.process_start
 
-    with pytest.raises(DishRuleError):
+    with pytest.raises(DishRuleError) as stale:
         finish_write_attempt(
             conn,
             "s1",
             attempt_id="stale-attempt",
             target_state="written",
         )
+    assert stale.value.rule == "stale_write_attempt"
     finish_write_attempt(
         conn,
         "s1",

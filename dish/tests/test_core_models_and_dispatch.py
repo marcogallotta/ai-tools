@@ -72,6 +72,7 @@ def test_unknown_agent_fails_closed():
     with pytest.raises(DishRuleError) as exc:
         agent_family("other")
     assert exc.value.code == "INVALID_ARGUMENT"
+    assert exc.value.rule == "invalid_agent"
 
 
 @pytest.mark.smoke
@@ -112,10 +113,12 @@ def test_section_resolution_and_management_fail_closed():
     assert is_protocol_managed(None, registry) is True
     assert resolve_destination("Ready to Cook", "14", registry).gid == "14"
 
-    with pytest.raises(DishRuleError):
+    with pytest.raises(DishRuleError) as queue_destination:
         resolve_destination("Research Queue", "10", registry)
-    with pytest.raises(DishRuleError):
+    assert queue_destination.value.rule == "destination_is_queue"
+    with pytest.raises(DishRuleError) as unresolved_destination:
         resolve_destination("Ready to Cook", "999", registry)
+    assert unresolved_destination.value.rule == "destination_unresolved"
 
 
 @pytest.mark.smoke
@@ -127,8 +130,9 @@ def test_section_setup_rejects_missing_or_duplicate_names():
         {"gid": "13", "name": "Reference"},
         {"gid": "14", "name": "Reference"},
     ]
-    with pytest.raises(DishRuleError):
+    with pytest.raises(DishRuleError) as ambiguous_section:
         SectionRegistry.from_sections(sections)
+    assert ambiguous_section.value.rule == "section_ambiguous"
 
 
 @pytest.mark.smoke

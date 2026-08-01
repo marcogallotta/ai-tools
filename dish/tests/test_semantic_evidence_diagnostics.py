@@ -98,6 +98,7 @@ def test_semantic_evidence_diagnostic_marks_connection_local_transaction(tmp_pat
     with pytest.raises(DishRuleError) as exc:
         database_schema_module._validate_semantic_evidence(conn)
 
+    assert exc.value.rule == "database_semantic_evidence_invalid"
     assert exc.value.details["transaction_state"] == {
         "connection_in_transaction": True,
         "evidence_visibility": "connection_local_uncommitted",
@@ -132,6 +133,7 @@ def test_semantic_evidence_document_failure_omits_raw_json(tmp_path):
     with pytest.raises(DishRuleError) as exc:
         initialize_database(db_path)
 
+    assert exc.value.rule == "database_semantic_evidence_invalid"
     problem = next(
         problem
         for problem in exc.value.details["problems"]
@@ -235,6 +237,7 @@ def test_cycle_sequence_diagnostic_keeps_task_provenance(tmp_path):
     with pytest.raises(DishRuleError) as exc:
         initialize_database(db_path)
 
+    assert exc.value.rule == "database_semantic_evidence_invalid"
     problem = next(
         problem
         for problem in exc.value.details["problems"]
@@ -285,6 +288,7 @@ def test_small_correction_lineage_diagnostic_names_exact_relationship(tmp_path):
     with pytest.raises(DishRuleError) as exc:
         initialize_database(db_path)
 
+    assert exc.value.rule == "database_semantic_evidence_invalid"
     problem = next(
         problem
         for problem in exc.value.details["problems"]

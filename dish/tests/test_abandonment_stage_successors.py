@@ -443,7 +443,7 @@ def test_start_schema_accepts_prepared_stage_target_but_not_verification():
             },
         },
     )
-    with pytest.raises(DishRuleError):
+    with pytest.raises(DishRuleError) as rejected_prepared_target:
         validate_action_request(
             "start",
             {
@@ -457,3 +457,4 @@ def test_start_schema_accepts_prepared_stage_target_but_not_verification():
                 },
             },
         )
+    assert rejected_prepared_target.value.rule == "argument_unexpected"

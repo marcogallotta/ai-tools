@@ -2,12 +2,11 @@ from pathlib import Path
 
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
-from dish_tool.commands import DishApplication
 from dish_tool.constants import COOKING_PROJECT_GID
-from dish_tool.database import initialize_database
-from dish_tool.models import ResolvedRelease
 
 from tests.support.asana_backend import StatefulAsanaBackend
+from tests.support.planning import Backend, app, release, write
+from tests.support.service_foundation import _release_loader as release_loader
 
 TASK = """[non-main] Test dish — crisp comparison side
 A compact side dish for testing texture.
@@ -47,27 +46,6 @@ Schema version: 2
 """
 
 
-class Backend(StatefulAsanaBackend):
-    def __init__(
-        self,
-        title="Bare",
-        notes="",
-        section="rq",
-        completed=False,
-        *,
-        task_gid="t",
-        created_task_gid="1000000000000001",
-    ):
-        super().__init__(
-            title=title,
-            notes=notes,
-            section=section,
-            completed=completed,
-            task_gid=task_gid,
-            created_task_gid=created_task_gid,
-        )
-
-
 class ServiceBackend(StatefulAsanaBackend):
     def __init__(self):
         lines = TASK.splitlines()
@@ -77,57 +55,6 @@ class ServiceBackend(StatefulAsanaBackend):
             task_gid="t",
             created_task_gid="1000000000000001",
         )
-
-
-def release(root: Path, role=None):
-    return ResolvedRelease(
-        version="1.0.10",
-        commit="",
-        root=root,
-        protocols={} if role is None else {role: f"{role} protocol"},
-        manifests={},
-        manifest_texts={},
-        schema_version="2",
-        schema={},
-        schema_text="{}",
-        migration_metadata={},
-        requested_protocol_role=role,
-    )
-
-
-def release_loader(root: Path):
-    verification = "# frozen verification\n"
-    (root / "dish-verification-protocol.md").write_text(verification)
-
-    def load(role=None, include_migrations=False):
-        return ResolvedRelease(
-            version="1.0.10",
-            commit="",
-            root=root,
-            protocols={}
-            if role is None
-            else {role: verification if role == "verification" else f"{role} protocol"},
-            manifests={},
-            manifest_texts={},
-            schema_version="2",
-            schema={},
-            schema_text="{}",
-            migration_metadata={},
-            requested_protocol_role=role,
-        )
-
-    return load
-
-
-def app(tmp_path, backend):
-    honest = tmp_path / "honest"
-    honest.mkdir(exist_ok=True)
-    (honest / "dish-verification-protocol.md").write_text("verification protocol")
-    return DishApplication(
-        initialize_database(tmp_path / "d.db"),
-        backend,
-        release_loader=lambda role=None: release(honest, role),
-    )
 
 
 def write(tmp_path, name, text):

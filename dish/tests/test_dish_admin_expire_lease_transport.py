@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from tests.support.transport import FakeSocket as _FakeSocket
+
 from dish_service import client as client_module
 from dish_service.client import DishAdminServiceClient
 from dish_service.http import DishHTTPServer, build_server
@@ -125,13 +127,10 @@ def test_task_url_parser_is_narrow_and_deterministic():
         "https://app.asana.com:444/0/987654321/123456789",
         "https://app.asana.com/0/987654321/%31%32%33",
     ):
-        with pytest.raises(DishRuleError):
+        with pytest.raises(DishRuleError) as rejected:
             task_gid_from_url(value)
+        assert rejected.value.rule == "asana_task_url_invalid"
 
-
-class _FakeSocket:
-    def settimeout(self, value):
-        self.timeout = value
 
 
 class _FakeResponse:

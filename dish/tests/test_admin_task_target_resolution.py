@@ -21,6 +21,7 @@ from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
 from tests.support.thread_teardown import join_thread, start_server_thread, stop_server
 from tests.support.abandonment import Backend
+from tests.support.abandonment_admin import _released_actor_lease
 from tests.support.service_foundation import _release_loader
 
 _NUMERIC_TASK_GID = "1234567890123456"
@@ -39,13 +40,6 @@ def _numeric_task_source(conn, backend: Backend, *, task_gid: str = _NUMERIC_TAS
         expected_section_gid=backend.section, actors=actors,
     )
 
-
-def _released_actor_lease(conn, operation_id: str, *, owner="owner", run_id="dead-run"):
-    lease = LeaseManager(conn).acquire(operation_id, ServicePrincipal(owner, run_id))
-    LeaseManager(conn).release(
-        operation_id, None, reason="conversation permanently unavailable", admin=True
-    )
-    return lease
 
 
 def test_abandon_operation_resolves_task_gid_to_open_operation():

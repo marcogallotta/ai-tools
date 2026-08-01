@@ -343,7 +343,7 @@ def test_action_schema_accepts_only_complete_verification_target_pair():
             },
         },
     )
-    with pytest.raises(DishRuleError):
+    with pytest.raises(DishRuleError) as missing_target:
         validate_action_request(
             "start",
             {
@@ -357,7 +357,8 @@ def test_action_schema_accepts_only_complete_verification_target_pair():
                 },
             },
         )
-    with pytest.raises(DishRuleError):
+    assert missing_target.value.rule == "argument_required"
+    with pytest.raises(DishRuleError) as unexpected_target:
         validate_action_request(
             "start",
             {
@@ -371,3 +372,5 @@ def test_action_schema_accepts_only_complete_verification_target_pair():
                 },
             },
         )
+    assert unexpected_target.value.rule == "argument_unexpected"
+
