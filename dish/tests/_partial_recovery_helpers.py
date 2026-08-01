@@ -47,7 +47,25 @@ Schema version: 2
 """
 
 
-Backend = StatefulAsanaBackend
+class Backend(StatefulAsanaBackend):
+    def __init__(
+        self,
+        title="Bare",
+        notes="",
+        section="rq",
+        completed=False,
+        *,
+        task_gid="t",
+        created_task_gid="1000000000000001",
+    ):
+        super().__init__(
+            title=title,
+            notes=notes,
+            section=section,
+            completed=completed,
+            task_gid=task_gid,
+            created_task_gid=created_task_gid,
+        )
 
 
 class ServiceBackend(StatefulAsanaBackend):
@@ -56,6 +74,7 @@ class ServiceBackend(StatefulAsanaBackend):
         super().__init__(
             title=lines[0],
             notes="\n".join(lines[1:]) + "\n",
+            task_gid="t",
             created_task_gid="1000000000000001",
         )
 

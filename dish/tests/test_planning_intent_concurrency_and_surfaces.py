@@ -84,7 +84,7 @@ def test_concurrent_exact_first_calls_share_one_durable_challenge(tmp_path):
         conn.close()
 class _BlockingPlanningBackend(Backend):
     def __init__(self, entered_read, release_read):
-        super().__init__()
+        super().__init__(task_gid=TASK_GID)
         self._entered_read = entered_read
         self._release_read = release_read
         self._read_lock = threading.Lock()

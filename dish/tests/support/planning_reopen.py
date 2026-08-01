@@ -27,6 +27,14 @@ class CompletedBackend(Backend):
         self.notes = ""
         self.completed = True
         self.modified_at = "m0"
+        self.add_task(
+            task_gid="other",
+            title="Bare",
+            notes="",
+            section_gid="rq",
+            completed=False,
+            modified_at="other-m0",
+        )
         self.reopens = 0
         self.fail_next_read = False
 

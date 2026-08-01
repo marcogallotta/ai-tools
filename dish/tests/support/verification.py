@@ -55,12 +55,18 @@ Schema version: 2
 """
 
 class Backend(StatefulAsanaBackend):
-    def __init__(self, *, created_task_gid="1000000000000001"):
+    def __init__(
+        self,
+        *,
+        task_gid: str = "t",
+        created_task_gid: str = "1000000000000001",
+    ):
         lines = TASK.splitlines()
         super().__init__(
             title=lines[0],
             notes="\n".join(lines[1:]) + "\n",
             section="rq",
+            task_gid=task_gid,
             created_task_gid=created_task_gid,
         )
 

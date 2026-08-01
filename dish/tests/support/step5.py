@@ -59,11 +59,21 @@ Schema version: 2
 """
 
 class Backend(StatefulAsanaBackend):
-    def __init__(self, title="Bare", notes="", section="rq"):
+    def __init__(
+        self,
+        title="Bare",
+        notes="",
+        section="rq",
+        completed=False,
+        *,
+        task_gid="t",
+    ):
         super().__init__(
             title=title,
             notes=notes,
             section=section,
+            completed=completed,
+            task_gid=task_gid,
             created_task_gid="new",
         )
 

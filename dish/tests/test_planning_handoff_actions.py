@@ -8,7 +8,7 @@ from tests.support.planning import Backend, PLANNING, release
 
 
 def test_service_preserves_planning_handoff_start_contract(tmp_path):
-    backend = Backend()
+    backend = Backend(task_gid="123456789")
     honest = tmp_path / "honest"
     honest.mkdir()
     (honest / "dish-verification-protocol.md").write_text(

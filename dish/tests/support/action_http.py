@@ -39,7 +39,7 @@ from tests.support.verification import Backend, TASK
 
 
 def _running(tmp_path, *, max_body=2 * 1024 * 1024):
-    backend = Backend()
+    backend = Backend(task_gid="123456789")
     honest = tmp_path / "honest"
     honest.mkdir()
     service = DishService(

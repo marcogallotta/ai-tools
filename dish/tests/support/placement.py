@@ -49,7 +49,7 @@ class StatefulAsanaTransport:
             })
         return {
             "gid": task["gid"], "name": task["name"], "notes": task.get("notes", ""),
-            "completed": False, "modified_at": "now", "projects": [{"gid": task["project"]}],
+            "completed": bool(task.get("completed", False)), "modified_at": "now", "projects": [{"gid": task["project"]}],
             "memberships": memberships,
         }
 

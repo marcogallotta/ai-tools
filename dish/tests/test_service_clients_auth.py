@@ -16,7 +16,13 @@ from tests.support.verification import Backend, TASK
 
 
 def _running_service(tmp_path):
-    backend = Backend()
+    backend = Backend(task_gid="123456789")
+    backend.add_task(
+        task_gid="t",
+        title=backend.title,
+        notes=backend.notes,
+        section_gid=backend.section,
+    )
     honest = tmp_path / "honest"
     honest.mkdir()
     service = DishService(

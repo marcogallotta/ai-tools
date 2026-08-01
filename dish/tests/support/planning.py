@@ -65,7 +65,25 @@ Research emphasis: Compare two hydration levels
 Destination section: Sichuan — 12345
 """
 
-Backend = StatefulAsanaBackend
+class Backend(StatefulAsanaBackend):
+    def __init__(
+        self,
+        title="Bare",
+        notes="",
+        section="rq",
+        completed=False,
+        *,
+        task_gid="t",
+        created_task_gid="1000000000000001",
+    ):
+        super().__init__(
+            title=title,
+            notes=notes,
+            section=section,
+            completed=completed,
+            task_gid=task_gid,
+            created_task_gid=created_task_gid,
+        )
 
 def release(root, role=None):
     return ResolvedRelease(version="1.0.10", commit="", root=root, protocols={} if role is None else {role:f"{role} protocol"}, manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}", migration_metadata={}, requested_protocol_role=role)

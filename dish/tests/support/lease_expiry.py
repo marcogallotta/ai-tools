@@ -35,7 +35,7 @@ EXPIRY_REQUEST = "55555555-5555-4555-8555-555555555555"
 TASK_GID = "123456789"
 
 def _service(tmp_path, *, backend_factory=None, release_loader=None):
-    backend = Backend()
+    backend = Backend(task_gid=TASK_GID)
     honest = tmp_path / "honest"
     honest.mkdir(exist_ok=True)
     service = DishService(

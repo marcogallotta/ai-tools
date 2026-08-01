@@ -50,7 +50,7 @@ def _released_actor_lease(conn, operation_id: str, *, owner="owner", run_id="dea
 
 def test_abandon_operation_resolves_task_gid_to_open_operation():
     conn = initialize_database(":memory:")
-    backend = Backend(section="pi")
+    backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
     source = _numeric_task_source(conn, backend)
     lease = _released_actor_lease(conn, source["operation_id"])
     app = DishAdminApplication(conn, backend=backend)
@@ -68,7 +68,7 @@ def test_abandon_operation_resolves_task_gid_to_open_operation():
 
 def test_abandon_operation_resolves_asana_task_url_to_open_operation():
     conn = initialize_database(":memory:")
-    backend = Backend(section="pi")
+    backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
     source = _numeric_task_source(conn, backend)
     lease = _released_actor_lease(conn, source["operation_id"])
     app = DishAdminApplication(conn, backend=backend)
@@ -86,7 +86,7 @@ def test_abandon_operation_resolves_asana_task_url_to_open_operation():
 
 def test_abandon_operation_task_gid_with_no_open_operation_fails_not_found():
     conn = initialize_database(":memory:")
-    backend = Backend(section="pi")
+    backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
     app = DishAdminApplication(conn, backend=backend)
 
     result = app.execute(
@@ -105,7 +105,7 @@ def test_abandon_operation_task_gid_with_no_open_operation_fails_not_found():
 
 def test_reconcile_abandonment_resolves_task_gid_to_active_abandonment():
     conn = initialize_database(":memory:")
-    backend = Backend(section="pi")
+    backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
     source = _numeric_task_source(conn, backend)
     lease = _released_actor_lease(conn, source["operation_id"])
     conn.execute("BEGIN IMMEDIATE")
@@ -132,7 +132,7 @@ def test_reconcile_abandonment_resolves_task_gid_to_active_abandonment():
 def test_service_execute_admin_resolves_task_gid_for_abandon_operation(tmp_path):
     db_path = tmp_path / "dish.db"
     conn = initialize_database(db_path)
-    backend = Backend(section="pi")
+    backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
     source = _numeric_task_source(conn, backend)
     lease = _released_actor_lease(conn, source["operation_id"])
     conn.close()
@@ -164,7 +164,7 @@ def test_service_execute_admin_resolves_task_gid_for_abandon_operation(tmp_path)
 def test_service_execute_admin_task_gid_with_no_open_operation_fails_not_found(tmp_path):
     db_path = tmp_path / "dish.db"
     initialize_database(db_path).close()
-    backend = Backend(section="pi")
+    backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
 
     honest = tmp_path / "honest"
     honest.mkdir()
@@ -196,7 +196,7 @@ def test_service_execute_admin_task_gid_with_no_open_operation_fails_not_found(t
 def test_real_http_admin_client_abandons_by_task_gid_with_no_lease_id(tmp_path):
     db_path = tmp_path / "dish.db"
     conn = initialize_database(db_path)
-    backend = Backend(section="pi")
+    backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
     source = _numeric_task_source(conn, backend)
     _released_actor_lease(conn, source["operation_id"])
     conn.close()
@@ -238,7 +238,7 @@ def test_real_http_admin_client_abandons_by_task_gid_with_no_lease_id(tmp_path):
 
 def test_resolve_admin_operation_target_passes_through_exact_operation_id():
     conn = initialize_database(":memory:")
-    backend = Backend(section="pi")
+    backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
     source = _numeric_task_source(conn, backend)
 
     from dish_tool.database import resolve_admin_operation_target

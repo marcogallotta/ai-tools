@@ -58,7 +58,6 @@ class StatefulAsanaBackend:
         self.created_task_gid = created_task_gid
         self.sections = [dict(item) for item in (sections or DEFAULT_SECTIONS)]
         self._tasks: dict[str, dict[str, Any]] = {}
-        self._allow_unknown_task_aliases = tasks is None
         self._calls: list[BackendCall] = []
         self._before: dict[str, list[Callable[..., None]]] = defaultdict(list)
         self._after: dict[str, list[Callable[..., None]]] = defaultdict(list)
@@ -190,31 +189,31 @@ class StatefulAsanaBackend:
         return self._invoke("list_sections", arguments, effect)
 
     def _task(self, gid: str) -> dict[str, Any]:
-        if gid not in self._tasks and self._allow_unknown_task_aliases:
-            self._tasks[gid] = self._tasks[self.task_gid]
-        return self._tasks[gid]
+        try:
+            return self._tasks[gid]
+        except KeyError as exc:
+            raise AssertionError(f"unexpected task gid: {gid}") from exc
+
+    def _task_response(self, gid: str) -> dict[str, Any]:
+        item = self._task(gid)
+        return {
+            "gid": gid,
+            "name": item["title"],
+            "notes": item["notes"],
+            "completed": item["completed"],
+            "modified_at": item["modified_at"],
+            "projects": [{"gid": self.project_gid}],
+            "memberships": [
+                {
+                    "project": {"gid": self.project_gid},
+                    "section": {"gid": item["section_gid"]},
+                }
+            ],
+        }
 
     def read_task(self, gid: str) -> dict[str, Any]:
         arguments = {"gid": gid}
-
-        def effect() -> dict[str, Any]:
-            item = self._task(gid)
-            return {
-                "gid": gid,
-                "name": item["title"],
-                "notes": item["notes"],
-                "completed": item["completed"],
-                "modified_at": item["modified_at"],
-                "projects": [{"gid": self.project_gid}],
-                "memberships": [
-                    {
-                        "project": {"gid": self.project_gid},
-                        "section": {"gid": item["section_gid"]},
-                    }
-                ],
-            }
-
-        return self._invoke("read_task", arguments, effect)
+        return self._invoke("read_task", arguments, lambda: self._task_response(gid))
 
     def create_bare_task(self, *, title: str, project_gid: str, section_gid: str) -> dict[str, Any]:
         arguments = {"title": title, "project_gid": project_gid, "section_gid": section_gid}
@@ -225,7 +224,7 @@ class StatefulAsanaBackend:
             gid = self.created_task_gid
             self.add_task(task_gid=gid, title=title, notes="", section_gid=section_gid)
             self.task_gid = gid
-            return {"gid": gid, "name": title, "notes": ""}
+            return self._task_response(gid)
 
         return self._invoke("create_bare_task", arguments, effect)
 

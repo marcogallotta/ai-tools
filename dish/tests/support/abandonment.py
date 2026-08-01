@@ -50,8 +50,20 @@ from tests.planning_intent_support import confirmed_planning_start
 from tests.support.asana_backend import StatefulAsanaBackend
 
 class Backend(StatefulAsanaBackend):
-    def __init__(self, *, title: str = "Bare", notes: str = "", section: str = "rq"):
-        super().__init__(title=title, notes=notes, section=section)
+    def __init__(
+        self,
+        *,
+        title: str = "Bare",
+        notes: str = "",
+        section: str = "rq",
+        task_gid: str = "task",
+    ):
+        super().__init__(
+            title=title,
+            notes=notes,
+            section=section,
+            task_gid=task_gid,
+        )
         self.forbid(
             "update_task_content",
             "clean stage successor creation must not write Asana",

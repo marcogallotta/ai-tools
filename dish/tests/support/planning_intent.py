@@ -20,7 +20,7 @@ def service(tmp_path, backend=None, *, backend_factory=None):
     (honest / "dish-verification-protocol.md").write_text(
         "verification protocol", encoding="utf-8"
     )
-    selected_backend = backend or Backend()
+    selected_backend = backend or Backend(task_gid=TASK_GID)
     return DishService(
         ServiceConfig(
             db_path=tmp_path / "dish.db",
