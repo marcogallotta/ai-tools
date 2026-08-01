@@ -19,6 +19,7 @@ from .application import DishService
 from .application import _ADMIN_OPERATION_TARGET_COMMANDS
 from .auth import authenticate_bearer
 from .identifiers import require_asana_gid, require_dish_uuid, validate_identifier_fields
+from .http_routing import resolve_post_route
 from .leases import ServicePrincipal
 from .command_spec import ACTION_COMMANDS, REPLAY_CAPABLE_COMMANDS, REPLAY_SAFE_COMMANDS, validate_action_request
 from .openapi import action_openapi
@@ -338,29 +339,10 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         started = time.monotonic()
         self._request_body_consumed = False
         path = urlsplit(self.path).path
-        parts = [part for part in path.split("/") if part]
-        command = "unknown"
-        surface = "unknown"
-        if len(parts) == 3 and parts[:2] == ["v1", "commands"]:
-            surface, command = "agent", parts[2]
-        elif len(parts) == 3 and parts[:2] == ["v1", "action"]:
-            surface, command = "action", parts[2]
-        elif len(parts) == 4 and parts[:2] == ["v1", "leases"] and parts[3] == "renew":
-            surface, command = "lease", "renew-lease"
-        elif len(parts) == 3 and parts[:2] == ["v1", "admin"]:
-            surface, command = "admin", parts[2]
-        elif len(parts) == 5 and parts[:3] == ["v1", "admin", "leases"] and parts[4] == "recover":
-            surface, command = "admin-lease", "recover-lease"
-        elif parts == ["v1", "admin", "leases", "expire"]:
-            surface, command = "admin-lease-expiry", "expire-lease"
-        elif parts == ["v1", "admin", "backups", "create"]:
-            surface, command = "admin-backup", "backup-create"
-        elif parts == ["v1", "admin", "backups", "restore"]:
-            surface, command = "admin-backup", "backup-restore"
-        elif len(parts) == 4 and parts[:3] == ["v1", "admin", "argument-failures"]:
-            surface, command = "admin-argument-failure", parts[3]
-        elif len(parts) == 3 and parts[:2] == ["v1", "argument-failures"]:
-            surface, command = "argument-failure", parts[2]
+        route = resolve_post_route(path)
+        parts = list(route.parts) if route is not None else []
+        command = route.command if route is not None else "unknown"
+        surface = route.surface if route is not None else "unknown"
         request = {}
         principal = None
         request_id = None

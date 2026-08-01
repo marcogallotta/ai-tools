@@ -631,3 +631,9 @@ post-activation proposals belong in [`future.md`](future.md), not in current arc
 Database restore checkpoints retain their JSON-compatible journal shape, but runtime restore code owns that shape through `RestorePlan`. The type rejects unknown fields and is the only mutable restore-plan representation passed between preparation, replacement, validation, rollback, and recovery phases.
 
 Atomic abandonment succession accepts one immutable `AbandonmentSuccessionSpec`. Callers construct the complete source, successor, cycle, actor, and transfer evidence before entering persistence; the database function no longer exposes a long list of independently swappable scalar arguments.
+
+### Request coordination and HTTP routing
+
+`DishService` remains the composition root and sole shared-service authority, but top-level agent and admin request lifecycles are owned by `AgentRequestCoordinator` and `AdminRequestCoordinator`. They sequence initialization, replay, application construction, lease handling, dispatch, result finalization, and cleanup while calling the existing authoritative service helpers.
+
+HTTP POST path recognition is declarative in `http_routing.py`. The request handler owns transport validation and response mapping; it does not encode route shape through an expanding conditional chain.

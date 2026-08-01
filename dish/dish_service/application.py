@@ -9,7 +9,6 @@ import sqlite3
 import tempfile
 import threading
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -70,6 +69,12 @@ from .planning_intent import (
     planning_start_may_resume,
 )
 from .request_replay import begin_request, complete_request, pending_error, stored_result
+from .request_coordinators import (
+    AdminExecutionState as _AdminExecutionState,
+    AdminRequestCoordinator,
+    AgentExecutionState as _AgentExecutionState,
+    AgentRequestCoordinator,
+)
 from .restore_fault import RestoreFaultMarker
 from .restore_request_journal import RestoreRequestJournal
 
@@ -93,38 +98,6 @@ _OPERATION_ADMIN_COMMANDS = {
 _LEASE_FREE_ADMIN_COMMANDS = {"authorize-governed-change", "abandon-operation", "reconcile-abandonment"}
 
 LOG = logging.getLogger("dish.service.application")
-
-
-@dataclass
-class _AgentExecutionState:
-    conn: sqlite3.Connection
-    principal: ServicePrincipal
-    leases: LeaseManager
-    invocation_run_id: str | None
-    prepared_arguments: dict[str, Any]
-    backend: Any = None
-    app: DishApplication | None = None
-    request_row: Any = None
-    operation_id: str | None = None
-    verification_start_cycle_id: str | None = None
-    replay_started: bool = False
-    acquired_for_request: bool = False
-    completed_submit: bool = False
-
-
-@dataclass
-class _AdminExecutionState:
-    conn: sqlite3.Connection
-    principal: ServicePrincipal
-    leases: LeaseManager
-    prepared_arguments: dict[str, Any]
-    operation_id: str | None
-    supplied_run_id: str
-    backend: Any = None
-    replay_started: bool = False
-    acquired_for_request: bool = False
-    exact_recovery_execution_id: str | None = None
-    exact_recovery_lease_id: str | None = None
 
 
 def _lease_recovery_details(
@@ -464,6 +437,12 @@ class DishService:
         self._planning_intent_locks = tuple(threading.Lock() for _ in range(64))
         self._restore_fault = RestoreFaultMarker(self.config.db_path)
         self._restore_requests = RestoreRequestJournal(self.config.db_path)
+        self._agent_requests = AgentRequestCoordinator(
+            self, initialization_error=_database_initialization_error
+        )
+        self._admin_requests = AdminRequestCoordinator(
+            self, initialization_error=_database_initialization_error
+        )
 
     def _planning_intent_execution_lock(
         self, command: str, arguments: Mapping[str, Any]
@@ -2264,95 +2243,9 @@ class DishService:
         principal: ServicePrincipal | None = None,
         request_id: str | None = None,
     ) -> dict[str, Any]:
-        with self._maintenance_gate.request(), self._planning_intent_execution_lock(
-            command, arguments
-        ):
-            explicit_principal = principal is not None
-            principal = principal or self._default_principal(arguments)
-            task_gid = str(arguments.get("task_gid") or "").strip() or None
-            requested_operation_id = (
-                str(arguments.get("submission_id") or "").strip() or None
-            )
-            try:
-                conn = self._initialize_database(
-                    surface="agent",
-                    command=command,
-                    request_id=request_id,
-                    principal=principal,
-                    task_gid=task_gid,
-                    operation_id=requested_operation_id,
-                )
-            except Exception as exc:
-                return error_envelope(
-                    command,
-                    _database_initialization_error(exc),
-                    task_gid=task_gid,
-                    submission_id=requested_operation_id,
-                )
-            invocation_run_id = (
-                principal.run_id
-                if explicit_principal
-                else str(arguments.get("run_id") or "").strip() or None
-            )
-            state = _AgentExecutionState(
-                conn=conn,
-                principal=principal,
-                leases=self._lease_manager(conn),
-                invocation_run_id=invocation_run_id,
-                prepared_arguments={},
-            )
-            try:
-                state.prepared_arguments = self._arguments_for_principal(
-                    command, arguments, run_id=invocation_run_id
-                )
-                early = self._begin_agent_execution(
-                    state, command=command, request_id=request_id
-                )
-                if early is not None:
-                    return early
-                self._build_agent_application(
-                    state, command=command, request_id=request_id
-                )
-                if (
-                    state.request_row is not None
-                    and not state.replay_started
-                    and command == "start"
-                ):
-                    resumable_planning = bool(
-                        state.prepared_arguments.get("kind") == "planning"
-                        and planning_start_may_resume(
-                            state.conn,
-                            request_id=str(request_id),
-                            arguments=state.prepared_arguments,
-                        )
-                    )
-                    if not resumable_planning:
-                        return self._reconcile_pending_start(
-                            conn=state.conn,
-                            backend=state.backend,
-                            app=state.app,
-                            leases=state.leases,
-                            principal=state.principal,
-                            arguments=state.prepared_arguments,
-                            request_id=str(request_id),
-                        )
-                self._resolve_agent_operation(state, command=command)
-                self._acquire_agent_lease(state, command=command)
-                result = self._dispatch_agent_command(state, command=command)
-                return self._finish_agent_result(
-                    state, command=command, request_id=request_id, result=result
-                )
-            except DishRuleError as exc:
-                return self._agent_rule_error_result(
-                    state,
-                    command=command,
-                    arguments=arguments,
-                    request_id=request_id,
-                    error=exc,
-                )
-            finally:
-                self._close_backend(state.backend)
-                conn.close()
+        return self._agent_requests.execute(
+            command, arguments, principal=principal, request_id=request_id
+        )
 
 
     def record_replay_validation_failure(
@@ -3278,64 +3171,9 @@ class DishService:
         principal: ServicePrincipal | None = None,
         request_id: str | None = None,
     ) -> dict[str, Any]:
-        with self._maintenance_gate.request():
-            principal = principal or self._default_principal(arguments, admin=True)
-            requested_operation_id = (
-                str(arguments.get("submission_id") or "").strip() or None
-            )
-            try:
-                conn = self._initialize_database(
-                    surface="admin",
-                    command=command,
-                    request_id=request_id,
-                    principal=principal,
-                    operation_id=requested_operation_id,
-                )
-            except Exception as exc:
-                return error_envelope(
-                    command,
-                    _database_initialization_error(exc),
-                    submission_id=requested_operation_id,
-                )
-            try:
-                state = self._prepare_admin_execution_state(
-                    conn,
-                    command=command,
-                    arguments=arguments,
-                    principal=principal,
-                    requested_operation_id=requested_operation_id,
-                )
-            except DishRuleError as exc:
-                conn.close()
-                return error_envelope(command, exc, submission_id=requested_operation_id)
-            try:
-                early = self._begin_admin_execution(
-                    state, command=command, request_id=request_id
-                )
-                if early is not None:
-                    return early
-                early = self._build_admin_backend(
-                    state, command=command, request_id=request_id
-                )
-                if early is not None:
-                    return early
-                self._acquire_admin_execution_lease(state, command=command)
-                result = self._dispatch_admin_command(
-                    state, command=command, request_id=request_id
-                )
-                return self._finish_admin_result(
-                    state, command=command, request_id=request_id, result=result
-                )
-            except DishRuleError as exc:
-                return self._admin_rule_error_result(
-                    state,
-                    command=command,
-                    request_id=request_id,
-                    error=exc,
-                )
-            finally:
-                self._close_backend(state.backend)
-                conn.close()
+        return self._admin_requests.execute(
+            command, arguments, principal=principal, request_id=request_id
+        )
 
 
     @staticmethod
