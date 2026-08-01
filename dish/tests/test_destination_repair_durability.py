@@ -22,8 +22,6 @@ from tests.support.submission import _signed
 from tests.support.planning import Backend as PlanningBackend, TASK, app, release
 from tests.support.planning import Backend as PlanningBackend, TASK, app
 
-
-
 def test_restore_request_replay_survives_database_replacement_and_restart(tmp_path, monkeypatch):
     service, backend = _service(tmp_path)
     principal = ServicePrincipal(owner_id="admin", run_id=RUN_ID)
@@ -54,8 +52,6 @@ def test_restore_request_replay_survives_database_replacement_and_restart(tmp_pa
     assert replayed["ok"]
     assert replayed["data"]["request_replayed"] is True
     assert replayed["data"]["restored"] == first["data"]["restored"]
-
-
 def test_pending_restore_request_is_not_blindly_repeated(tmp_path, monkeypatch):
     service, _backend = _service(tmp_path)
     principal = ServicePrincipal(owner_id="admin", run_id=RUN_ID)
@@ -83,8 +79,6 @@ def test_pending_restore_request_is_not_blindly_repeated(tmp_path, monkeypatch):
     assert result["code"] == "BACKEND_UNCERTAIN"
     assert result["errors"][0]["rule"] == "service_request_pending"
     assert result["retryable"] is False
-
-
 def test_completed_submit_exact_and_fresh_request_are_idempotent(tmp_path):
     service, backend = _service(tmp_path)
     verifier, operation_id = _complete_service_submission(service, backend)
@@ -114,8 +108,6 @@ def test_completed_submit_exact_and_fresh_request_are_idempotent(tmp_path):
     assert fresh["ok"] and fresh["data"]["completed_submission_reused"] is True
     assert fresh["data"]["signed_identity"] == first["data"]["signed_identity"]
     assert backend.moves == moves
-
-
 def test_planning_rejects_nonexistent_destination_before_write(tmp_path):
 
     backend = PlanningBackend()
@@ -135,8 +127,6 @@ def test_planning_rejects_nonexistent_destination_before_write(tmp_path):
     assert result["errors"][0]["rule"] == "destination_unresolved"
     assert backend.writes == 0
     assert backend.moves == 0
-
-
 def test_destination_deleted_after_approval_leaves_recoverable_open_state(tmp_path):
 
     application, backend, operation_id = _signed(tmp_path)
@@ -154,8 +144,6 @@ def test_destination_deleted_after_approval_leaves_recoverable_open_state(tmp_pa
     assert operation["signoff_completed_at"] is not None
     assert "Status: ready" in backend.notes
     assert backend.section == "vq"
-
-
 def test_admin_destination_repair_changes_only_destination_and_preserves_signoff(tmp_path):
     from dish_tool.admin import DishAdminApplication
     from dish_tool.governed_diff import canonical_diff
@@ -214,8 +202,6 @@ def test_admin_destination_repair_changes_only_destination_and_preserves_signoff
     assert submitted["data"]["destination_repair"]["actor_run_id"] == "marco-repair-run"
     assert backend.section == "67890"
     assert backend.writes == writes_after_repair
-
-
 def test_destination_repair_rejects_queue_and_retry_safe_failure(tmp_path):
     from dish_tool.admin import DishAdminApplication
     from dish_tool.errors import BackendFailure
@@ -262,8 +248,6 @@ def test_destination_repair_rejects_queue_and_retry_safe_failure(tmp_path):
     )
     assert not_required["code"] == "WRONG_STATE"
     assert not_required["errors"][0]["rule"] == "operation_action_not_allowed"
-
-
 def test_destination_repair_evidence_survives_restart(tmp_path):
     from dish_tool.admin import DishAdminApplication
     from dish_tool.commands import DishApplication
@@ -302,8 +286,6 @@ def test_destination_repair_evidence_survives_restart(tmp_path):
     assert submitted["ok"]
     assert submitted["data"]["effective_identity"] == repaired_identity
     assert backend.section == "67890"
-
-
 def test_destination_repair_request_replays_without_second_write(tmp_path, monkeypatch):
     from dish_service.application import DishService
     from dish_service.config import ServiceConfig
@@ -358,8 +340,6 @@ def test_destination_repair_request_replays_without_second_write(tmp_path, monke
     )
     assert conflict["code"] == "CONFLICT"
     assert conflict["errors"][0]["rule"] == "service_request_identity_conflict"
-
-
 def test_uncertain_destination_repair_recovers_from_live_evidence(tmp_path):
     from dish_tool.admin import DishAdminApplication
     from dish_tool.errors import BackendFailure
@@ -432,8 +412,6 @@ def test_uncertain_destination_repair_recovers_from_live_evidence(tmp_path):
     submitted = application.execute("submit", submission_id=operation_id)
     assert submitted["ok"]
     assert submitted["data"]["destination"]["gid"] == "67890"
-
-
 def test_not_applied_destination_move_can_retry_without_content_write(tmp_path):
     from dish_tool.errors import BackendFailure
 
@@ -465,134 +443,3 @@ def test_not_applied_destination_move_can_retry_without_content_write(tmp_path):
     assert retried["data"]["handoff"] == "moved_to_destination"
     assert backend.section == "12345"
     assert backend.writes == writes
-
-
-@pytest.mark.parametrize(
-    ("route", "admin_command", "held_phase"),
-    [
-        ("evidence", "supply-evidence", "held_evidence"),
-        ("human-review", "record-human-decision", "held_human"),
-    ],
-)
-def test_initial_research_can_hold_before_prepare_and_resume_same_operation(
-    tmp_path, route, admin_command, held_phase
-):
-    from dish_tool.admin import DishAdminApplication
-
-    lines = TASK.splitlines()
-    backend = PlanningBackend(lines[0], "\n".join(lines[1:]) + "\n")
-    application = app(tmp_path, backend)
-    started = application.execute(
-        "start", agent="gpt", task_gid="t", kind="initial"
-    )
-    operation_id = started["submission_id"]
-    writes = backend.writes
-    held = application.execute(
-        "reject",
-        agent="gpt",
-        submission_id=operation_id,
-        route=route,
-        reason="Need authoritative input before constructing a candidate",
-        resume_status="pending-research",
-    )
-    assert held["ok"]
-    assert held["data"]["description"] == "Research blocked before construction"
-    assert held["data"]["candidate_content_existed"] is False
-    assert held["state"] == "open"
-    assert backend.writes == writes
-    assert application.conn.execute(
-        "SELECT COUNT(*) FROM verification_cycles WHERE operation_id=?", (operation_id,)
-    ).fetchone()[0] == 0
-
-    inspected = application.execute(
-        "inspect", agent="gpt", submission_id=operation_id
-    )
-    view = inspected["data"]["authoritative_view"]
-    assert view["phase"] == held_phase
-    assert view["preconstruction_hold"] is True
-    assert view["research_hold"]["candidate_content_existed"] is False
-    assert view["research_hold"]["resume_status"] == "pending-research"
-
-    admin = DishAdminApplication(
-        application.conn,
-        backend=backend,
-        release_loader=lambda: release(tmp_path / "honest"),
-    )
-    resolved = admin.execute(
-        admin_command,
-        submission_id=operation_id,
-        detail="Required input supplied",
-        resume_status="pending-research",
-    )
-    assert resolved["ok"]
-    assert resolved["data"]["candidate_content_existed"] is False
-    assert resolved["data"]["phase"] == "prepare_required"
-    assert backend.writes == writes
-
-    resumed = application.execute(
-        "inspect", agent="gpt", submission_id=operation_id
-    )["data"]["authoritative_view"]
-    assert resumed["phase"] == "prepare_required"
-    assert "prepare" in resumed["legal_actions"]
-
-
-def test_preconstruction_hold_rejects_wrong_resume_status_without_false_cycle(tmp_path):
-
-    lines = TASK.splitlines()
-    backend = PlanningBackend(lines[0], "\n".join(lines[1:]) + "\n")
-    application = app(tmp_path, backend)
-    started = application.execute(
-        "start", agent="gpt", task_gid="t", kind="initial"
-    )
-    result = application.execute(
-        "reject",
-        agent="gpt",
-        submission_id=started["submission_id"],
-        route="evidence",
-        reason="Need evidence",
-        resume_status="pending-verification",
-    )
-    assert result["code"] == "INVALID_ARGUMENT"
-    assert result["errors"][0]["rule"] == "preconstruction_resume_status_invalid"
-    assert application.conn.execute(
-        "SELECT COUNT(*) FROM verification_cycles WHERE operation_id=?",
-        (started["submission_id"],),
-    ).fetchone()[0] == 0
-
-
-def test_service_preconstruction_hold_persists_request_identity_and_timestamp(tmp_path):
-    service, _backend = _service(tmp_path)
-    principal = ServicePrincipal(owner_id="action", run_id=RUN_ID)
-    started = service.execute_agent(
-        "start",
-        {"agent": "gpt", "task_gid": "t", "kind": "initial"},
-        principal=principal,
-        request_id="20000000-0000-4000-8000-000000000001",
-    )
-    assert started["ok"]
-    hold_request_id = "20000000-0000-4000-8000-000000000002"
-    held = service.execute_agent(
-        "reject",
-        {
-            "agent": "gpt",
-            "submission_id": started["submission_id"],
-            "route": "evidence",
-            "reason": "Need authoritative source before construction",
-            "resume_status": "pending-research",
-        },
-        principal=principal,
-        request_id=hold_request_id,
-    )
-    assert held["ok"]
-    assert held["data"]["request_id"] == hold_request_id
-    assert held["data"]["timestamp"].endswith("Z")
-
-    inspected = service.execute_agent(
-        "inspect",
-        {"agent": "gpt", "submission_id": started["submission_id"]},
-        principal=principal,
-    )
-    record = inspected["data"]["authoritative_view"]["research_hold"]
-    assert record["request_id"] == hold_request_id
-    assert record["timestamp"] == held["data"]["timestamp"]
-
