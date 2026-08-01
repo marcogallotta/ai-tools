@@ -1,4 +1,4 @@
-"""JSON-only argparse surface for the Marco-only ``dish-admin`` executable."""
+"""JSON-only argparse surface for the environment-scoped ``dish-admin`` executable."""
 
 from __future__ import annotations
 
@@ -10,6 +10,12 @@ import uuid
 from typing import Sequence
 
 from .admin import DishAdminApplication
+from .client_profiles import (
+    add_profile_argument,
+    argv_without_profile,
+    profile_from_argv,
+    resolve_client_profile,
+)
 from .constants import DB_PATH
 from .database import initialize_database
 from .backend import AsanaBackend
@@ -38,11 +44,11 @@ def build_parser() -> JsonArgumentParser:
     parser = JsonArgumentParser(
         prog="dish-admin",
         description=(
-            "Marco-only recovery and override commands for the dish tool. Agents do not run "
-            "these; they exist for reconciling an interrupted write/movement, discarding a "
-            "stale operation, clearing a stuck state, or reopening a two-pass Human Review hold."
+            "Recovery and override commands for Dish. Agents may use them only against the "
+            "test profile; production administration remains Marco-only."
         ),
     )
+    add_profile_argument(parser)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     _submission_target_help = (
@@ -187,9 +193,10 @@ def build_parser() -> JsonArgumentParser:
     return parser
 
 
-def build_application():
+def build_application(profile: str | None = None):
     mode = os.environ.get("DISH_MODE", "").strip().lower()
-    service_url = os.environ.get("DISH_SERVICE_URL", "").strip()
+    client_profile = resolve_client_profile(profile, admin=True)
+    service_url = client_profile.service_url
     if mode not in {"", "local", "service"}:
         raise DishRuleError("INVALID_ARGUMENT", "DISH_MODE must be local or service", rule="dish_mode_invalid")
     live_mode = os.environ.get("DISH_LIVE_MODE", "").strip().lower() in {"1", "true", "yes"}
@@ -213,7 +220,7 @@ def build_application():
             raise DishRuleError("INVALID_ARGUMENT", "DISH_SERVICE_URL is required in service mode", rule="service_url_required")
         return DishAdminServiceClient(
             service_url,
-            token=os.environ.get("DISH_ADMIN_TOKEN", ""),
+            token=client_profile.token,
             run_id=os.environ.get("DISH_CLIENT_RUN_ID", ""),
             connect_timeout=float(os.environ.get("DISH_SERVICE_CLIENT_CONNECT_TIMEOUT", "10")),
             response_timeout=float(os.environ.get("DISH_SERVICE_CLIENT_RESPONSE_TIMEOUT", "600")),
@@ -229,9 +236,10 @@ def build_application():
     return DishAdminApplication(initialize_database(DB_PATH), backend=AsanaBackend(), release_loader=lambda: resolve_release(honest_root, include_migrations=True))
 
 
-def _build_expire_lease_client() -> DishAdminServiceClient:
+def _build_expire_lease_client(profile: str | None = None) -> DishAdminServiceClient:
     mode = os.environ.get("DISH_MODE", "").strip().lower()
-    service_url = os.environ.get("DISH_SERVICE_URL", "").strip()
+    client_profile = resolve_client_profile(profile, admin=True)
+    service_url = client_profile.service_url
     if mode not in {"", "local", "service"}:
         raise DishRuleError(
             "INVALID_ARGUMENT",
@@ -275,7 +283,7 @@ def _build_expire_lease_client() -> DishAdminServiceClient:
     )
     return DishAdminServiceClient(
         service_url,
-        token=os.environ.get("DISH_ADMIN_TOKEN", ""),
+        token=client_profile.token,
         run_id=run_id,
         connect_timeout=float(
             os.environ.get("DISH_SERVICE_CLIENT_CONNECT_TIMEOUT", "10")
@@ -311,7 +319,12 @@ def _run_expire_lease(
             )
         request_id = parsed.get("request_id") or str(uuid.uuid4())
         request_id = require_dish_uuid(request_id, field="request_id")
-        app = application or _build_expire_lease_client()
+        requested_profile = parsed.pop("profile", None)
+        app = application or (
+            _build_expire_lease_client(requested_profile)
+            if requested_profile is not None
+            else _build_expire_lease_client()
+        )
         method = getattr(app, "expire_lease", None)
         if method is None:
             raise DishRuleError(
@@ -355,6 +368,7 @@ def _run_expire_lease(
 
 
 def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
+    argv = argv_without_profile(argv)
     command = argv[0] if argv and not argv[0].startswith("-") else "unknown"
     submission_id = None
     task_gid = None
@@ -375,17 +389,23 @@ def main(
     application: DishAdminApplication | None = None,
 ) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    command_arguments = argv_without_profile(arguments)
 
     if "-h" in arguments or "--help" in arguments:
         build_parser().parse_args(arguments)  # prints help and raises SystemExit(0)
 
-    if arguments and arguments[0] == "expire-lease":
+    if command_arguments and command_arguments[0] == "expire-lease":
         return _run_expire_lease(arguments, application=application)
 
     context = _argument_context(arguments)
     owned_application = application is None
     try:
-        app = application or build_application()
+        requested_profile = profile_from_argv(arguments)
+        app = application or (
+            build_application(requested_profile)
+            if requested_profile is not None
+            else build_application()
+        )
     except DishRuleError as exc:
         result = error_envelope(
             context["command"] or "unknown",
@@ -417,6 +437,7 @@ def main(
             )
         else:
             command = parsed.pop("command")
+            parsed.pop("profile", None)
             if command == "recover-lease":
                 method = getattr(app, "recover_lease", None)
                 if method is None:

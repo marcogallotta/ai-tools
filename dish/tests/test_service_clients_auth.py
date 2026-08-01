@@ -140,6 +140,43 @@ def test_admin_cli_builds_remote_admin_client(monkeypatch):
     assert isinstance(app, DishAdminServiceClient)
 
 
+def test_named_profiles_select_matching_url_and_agent_token(monkeypatch):
+    monkeypatch.setenv("DISH_MODE", "service")
+    monkeypatch.setenv("DISH_CLIENT_RUN_ID", "profile-run")
+    monkeypatch.setenv("DISH_SERVICE_URL", "http://legacy.invalid")
+    monkeypatch.setenv("DISH_SERVICE_TOKEN", "legacy-token")
+    monkeypatch.setenv("DISH_SERVICE_URL_PROD", "http://prod.invalid")
+    monkeypatch.setenv("DISH_SERVICE_TOKEN_PROD", "prod-token")
+    monkeypatch.setenv("DISH_SERVICE_URL_TEST", "http://test.invalid")
+    monkeypatch.setenv("DISH_SERVICE_TOKEN_TEST", "test-token")
+
+    default_client = cli.build_application()
+    test_client = cli.build_application("test")
+
+    assert default_client.base_url == "http://prod.invalid"
+    assert default_client.token == "prod-token"
+    assert test_client.base_url == "http://test.invalid"
+    assert test_client.token == "test-token"
+
+
+def test_admin_profiles_use_environment_specific_admin_tokens(monkeypatch):
+    monkeypatch.setenv("DISH_MODE", "service")
+    monkeypatch.setenv("DISH_CLIENT_RUN_ID", "profile-run")
+    monkeypatch.setenv("DISH_SERVICE_URL_PROD", "http://prod.invalid")
+    monkeypatch.setenv("DISH_SERVICE_URL_TEST", "http://test.invalid")
+    monkeypatch.setenv("DISH_ADMIN_TOKEN_TEST", "test-admin-token")
+    monkeypatch.delenv("DISH_ADMIN_TOKEN_PROD", raising=False)
+    monkeypatch.delenv("DISH_ADMIN_TOKEN", raising=False)
+
+    test_client = admin_cli.build_application("test")
+
+    assert test_client.base_url == "http://test.invalid"
+    assert test_client.token == "test-admin-token"
+    with pytest.raises(DishRuleError) as exc:
+        admin_cli.build_application("prod")
+    assert exc.value.rule == "service_token_required"
+
+
 def test_mode_is_required_for_direct_local_operation(monkeypatch):
     monkeypatch.delenv("DISH_MODE", raising=False)
     monkeypatch.delenv("DISH_SERVICE_URL", raising=False)

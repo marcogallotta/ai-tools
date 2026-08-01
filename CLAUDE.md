@@ -28,9 +28,14 @@ needed.
 Marco regularly tests the live GPT Action outside this session. When a pasted transcript
 references an existing Cooking task/submission ID or an already-open operation, assume it came
 from the deployed GPT Action, not this repo's local `dish`/`dish-admin` CLI, unless Marco says
-otherwise. Verify current state read-only (`dish read`/`dish inspect`) before acting on it; never
-run `dish-admin` write/recovery commands yourself — only Marco can, regardless of which surface
-got stuck.
+otherwise. Verify current state read-only (`dish read`/`dish inspect`) before acting on it. Agents
+may use `dish-admin --profile test` against the scratch environment. Production administration is
+Marco-only: agents must never run `dish-admin` with the production profile.
+
+Use production for genuine Dish work. Use test only for experiments, rehearsals, destructive
+testing, or when Marco explicitly requests test. Never substitute test for production merely
+because it feels safer. Before any mutation where the intended environment is ambiguous, stop and
+confirm the target environment with Marco.
 
 `dish/deploy/gpt-action.md`'s "Instructions for the GPT" section is a template only. The custom
 GPT actually runs on `~/honest-pantry/dish-custom-gpt-instructions.md`, outside this
@@ -63,12 +68,20 @@ suite. Never package `.venv` in a patch or archive.
 
 ## Live Dish smoke-test credentials
 
-For an authorized live Dish smoke test run from the service host, load
-`/home/marco/.config/dish-service/service.env` and map
-`DISH_SERVICE_AGENT_TOKEN` to the client variable `DISH_SERVICE_TOKEN` and
-`DISH_SERVICE_ADMIN_TOKEN` to `DISH_ADMIN_TOKEN`. `DISH_SERVICE_URL` is configured
-through the interactive `~/.bashrc` path, so invoke the smoke-test shell interactively.
-Never print, log, or include any token value in a transcript or report.
+The service host keeps test and production running as separate systemd units. Test owns private and
+Action ports `8765/8766`, production owns `8775/8776`, and the loopback Caddy router on `8786`
+selects the public Action upstream. Environment files are
+`/home/marco/.config/dish-service/test.env` and `prod.env`; databases and backups remain under the
+matching `/home/marco/.local/state/dish/{test,prod}/` directory. Agent shells default to production;
+use `dish --profile test` for the test environment. Production private access uses `:8445`. Inspect
+the running public selection with `dish-action-route status`. Never
+switch it, initialize migrated production state, or enable production mutations without Marco's
+separate cutover authorization.
+
+Interactive `~/.bashrc` loads `DISH_SERVICE_TOKEN_TEST`, `DISH_SERVICE_TOKEN_PROD`, and
+`DISH_ADMIN_TOKEN_TEST` from the two owner-only service environment files. Claude and Codex inherit
+those tokens; their settings pin only non-secret URLs and the production default. Never print, log,
+or include any token value in a transcript or report.
 
 When architecture changes, update `architecture.md` in the same commit. Do not add
 executable legacy mutation paths, duplicate workflow authority in transports or CLIs, or

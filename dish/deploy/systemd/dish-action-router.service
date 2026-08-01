@@ -1,0 +1,31 @@
+[Unit]
+Description=Dish Action test/production router
+After=network-online.target dish-service-test.service dish-service-prod.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=marco
+WorkingDirectory=/home/marco/ai-tools/dish
+Environment=XDG_CONFIG_HOME=/home/marco/.local/state/dish/caddy/config
+Environment=XDG_DATA_HOME=/home/marco/.local/state/dish/caddy/data
+ExecStart=/usr/bin/caddy run --resume --config /home/marco/ai-tools/dish/deploy/caddy/dish-action-router.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=5min
+NoNewPrivileges=true
+UMask=0077
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/marco/.local/state/dish/caddy
+
+[Install]
+WantedBy=multi-user.target

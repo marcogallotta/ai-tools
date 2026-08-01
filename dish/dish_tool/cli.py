@@ -9,6 +9,12 @@ import sys
 from typing import Sequence
 
 from .backend import AsanaBackend
+from .client_profiles import (
+    add_profile_argument,
+    argv_without_profile,
+    profile_from_argv,
+    resolve_client_profile,
+)
 from .commands import DishApplication
 from .constants import DB_PATH
 from .database import initialize_database
@@ -127,6 +133,7 @@ def build_parser() -> JsonArgumentParser:
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
+    add_profile_argument(parser)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     for topic in TOPIC_COMMANDS:
@@ -285,9 +292,10 @@ def build_parser() -> JsonArgumentParser:
     return parser
 
 
-def build_application():
+def build_application(profile: str | None = None):
     mode = os.environ.get("DISH_MODE", "").strip().lower()
-    service_url = os.environ.get("DISH_SERVICE_URL", "").strip()
+    client_profile = resolve_client_profile(profile, admin=False)
+    service_url = client_profile.service_url
     if mode not in {"", "local", "service"}:
         raise DishRuleError("INVALID_ARGUMENT", "DISH_MODE must be local or service", rule="dish_mode_invalid")
     live_mode = os.environ.get("DISH_LIVE_MODE", "").strip().lower() in {"1", "true", "yes"}
@@ -311,7 +319,7 @@ def build_application():
             raise DishRuleError("INVALID_ARGUMENT", "DISH_SERVICE_URL is required in service mode", rule="service_url_required")
         return DishServiceClient(
             service_url,
-            token=os.environ.get("DISH_SERVICE_TOKEN", ""),
+            token=client_profile.token,
             run_id=os.environ.get("DISH_CLIENT_RUN_ID", ""),
             connect_timeout=float(os.environ.get("DISH_SERVICE_CLIENT_CONNECT_TIMEOUT", "10")),
             response_timeout=float(os.environ.get("DISH_SERVICE_CLIENT_RESPONSE_TIMEOUT", "600")),
@@ -335,6 +343,7 @@ def build_application():
 
 
 def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
+    argv = argv_without_profile(argv)
     command = argv[0] if argv and not argv[0].startswith("-") else "unknown"
     agent = None
     if "--agent" in argv:
@@ -365,18 +374,24 @@ def main(
     application: DishApplication | None = None,
 ) -> int:
     arguments = list(sys.argv[1:] if argv is None else argv)
+    command_arguments = argv_without_profile(arguments)
 
     if "-h" in arguments or "--help" in arguments:
         build_parser().parse_args(arguments)  # prints help and raises SystemExit(0)
 
-    if len(arguments) == 1 and arguments[0] in TOPIC_COMMANDS:
-        print(_TOPIC_WALKTHROUGHS[arguments[0]], end="")
+    if len(command_arguments) == 1 and command_arguments[0] in TOPIC_COMMANDS:
+        print(_TOPIC_WALKTHROUGHS[command_arguments[0]], end="")
         return 0
 
     context = _argument_context(arguments)
     owned_application = application is None
     try:
-        app = application or build_application()
+        requested_profile = profile_from_argv(arguments)
+        app = application or (
+            build_application(requested_profile)
+            if requested_profile is not None
+            else build_application()
+        )
     except DishRuleError as exc:
         result = error_envelope(context["command"] or "unknown", exc)
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
@@ -404,6 +419,7 @@ def main(
             )
         else:
             command = parsed.pop("command")
+            parsed.pop("profile", None)
             result = app.execute(command, **parsed)
     except DishRuleError as exc:
         result = error_envelope(

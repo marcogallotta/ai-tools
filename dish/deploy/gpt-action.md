@@ -6,13 +6,13 @@ Asana, CLI, or admin credential.
 
 ## Preconditions
 
-Before opening the GPT editor:
+Before opening the GPT editor for the test rehearsal:
 
-1. Start the service with the test-project configuration in `../README.md`.
-2. Confirm private `GET /health` is healthy.
+1. Start both environment services and the Caddy Action router as described in `../README.md`.
+2. Confirm both private services are healthy and `dish-action-route status` reports `test`.
 3. Configure and verify the Tailscale mappings in `tailscale/README.md`.
-4. Confirm the public listener returns 404 for health, CLI, admin, backup, migration, and recovery
-   routes.
+4. Confirm the public listener through Caddy returns 404 for health, CLI, admin, backup, migration,
+   and recovery routes.
 5. Confirm only the Action token succeeds on public `/v1/action/sections`.
 
 ## Editor configuration
@@ -23,8 +23,10 @@ Import the runtime schema from:
 https://laptop.tail46f0b9.ts.net/openapi/action.json
 ```
 
-The imported schema must retain that exact `https` server with no non-default port. Configure
-API-key authentication so requests use:
+The imported schema must retain that exact `https` server with no non-default port. That stable
+public URL reaches the loopback Caddy router; `dish-action-route status` identifies whether its
+Action requests currently reach test or production. CLI `--profile` selection does not affect it.
+Configure API-key authentication so requests use:
 
 ```text
 Authorization: Bearer <DISH_SERVICE_ACTION_TOKEN>
@@ -114,14 +116,19 @@ If a lease expires, stop. If the same chat/run will continue, only Marco may use
 
 Before any task mutation:
 
-1. In GPT Preview, call `sections`.
-2. Confirm the result is the canonical JSON envelope with `code: OK`.
-3. Confirm `data.project_gid` is the test project `1216693403164366`.
-4. Confirm the returned Research and Verification queue GIDs match the live test project.
-5. Confirm the Preview request succeeds through the standard HTTPS URL, not the private `:8444`
-   endpoint.
-6. Review the GPT configuration and confirm no CLI, admin, or Asana secret is present.
-7. Inspect every imported operation and visibly confirm `client.run_id` is constrained as a
+1. Run `dish-action-route status` on the service host and record the selected environment. Do not
+   infer it from an earlier shell, Preview result, or CLI profile.
+2. In GPT Preview, call `sections`.
+3. Confirm the result is the canonical JSON envelope with `code: OK`.
+4. Confirm `data.project_gid` matches the selected environment: test is `1216693403164366` and
+   production is `1215089183018968`. Production selection requires the separately authorized
+   cutover procedure in `../docs/rollout.md`.
+5. Confirm the returned Research and Verification queue GIDs match that same project.
+6. Confirm the Preview request succeeds through the standard HTTPS URL, not either private endpoint
+   (`:8444` for test or `:8445` for production).
+7. Confirm a second `dish-action-route status` read still reports the recorded environment.
+8. Review the GPT configuration and confirm no CLI, admin, or Asana secret is present.
+9. Inspect every imported operation and visibly confirm `client.run_id` is constrained as a
    non-nil canonical lowercase UUID; for `create`, `start`, `prepare`, `approve`, `reject`, `submit`,
    and `renew-lease`, also confirm `client.request_id` is required and has the same UUID constraints.
 
@@ -137,10 +144,13 @@ Then run the complete disposable-task procedure in `live-test-project-smoke.md`.
 Tokens are rotated manually:
 
 1. Generate a new high-entropy Action token outside the repository.
-2. Replace only `DISH_SERVICE_ACTION_TOKEN` in the owner-only service environment.
-3. Restart `dish-service`; this immediately invalidates the old Action token.
+2. Replace only `DISH_SERVICE_ACTION_TOKEN` in both owner-only environment files, `test.env` and
+   `prod.env`, with the same new value.
+3. Restart `dish-service-test.service` and `dish-service-prod.service`; this invalidates the old
+   Action token on both possible Caddy upstreams. The router itself does not hold the token and does
+   not need a restart.
 4. Replace the GPT Action credential with the new token.
-5. Repeat the Preview gate.
+5. Repeat the Preview gate, including both route-status reads.
 
 Never commit a populated token or paste one into test transcripts. Rotate the CLI and admin tokens
 separately; they must never be substituted into the Action configuration.

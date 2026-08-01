@@ -6,7 +6,8 @@
 
 ### Shared-service live mode
 
-This is the only supported multi-agent path. One `dish-service` process on Marco's laptop owns:
+This is the only supported multi-agent path. Each environment has one `dish-service` process that
+owns:
 
 - the shared SQLite operation database;
 - task operation locks and client/run leases;
@@ -14,7 +15,10 @@ This is the only supported multi-agent path. One `dish-service` process on Marco
 - exact-content baselines, audit repair, backup, and recovery;
 - requests from `dish`, `dish-admin`, and the GPT Action.
 
-Agent laptops and GPT Actions must not receive `ASANA_PAT`, `ASANA_ENV`, or a writable copy of the shared database.
+Agent laptops and GPT Actions must not receive `ASANA_PAT`, `ASANA_ENV`, or a writable copy of a
+shared database. Test and production run as separate, permanently available instances with distinct
+projects, databases, backup directories, and loopback ports. A loopback-only Caddy router selects
+which Action listener Funnel exposes; it does not own workflow state or credentials.
 
 ### Local test mode
 
@@ -33,13 +37,14 @@ python3 -m venv .venv
 
 ## Service-host configuration
 
-Start from `deploy/systemd/service.env.example`. The service host needs:
+Start from `deploy/systemd/service-test.env.example` and `service-prod.env.example`. Each instance
+needs:
 
 ```sh
 DISH_HONEST_PATH=/home/marco/honest-pantry
 DISH_COOKING_PROJECT_GID=<Cooking project gid>
-DISH_DB_PATH=/home/marco/.local/state/dish/shared.sqlite3
-DISH_SERVICE_BACKUP_DIR=/home/marco/.local/state/dish/backups
+DISH_DB_PATH=<environment-specific database>
+DISH_SERVICE_BACKUP_DIR=<environment-specific backup directory>
 DISH_SERVICE_BIND=127.0.0.1
 DISH_SERVICE_PORT=8765
 DISH_ACTION_BIND=127.0.0.1
@@ -50,58 +55,90 @@ DISH_SERVICE_ACTION_TOKEN=<dedicated GPT Action token>
 ASANA_ENV=/home/marco/.config/asana-cli/.env
 ```
 
-Only the service-host environment contains Asana credentials. Protect the environment file and state directory with owner-only permissions. All three service tokens are required for the live dual-listener process, must be distinct, and must not use placeholder or short values. Listener hosts must remain loopback and the private and Action ports must be distinct. Invalid configuration fails before either listener binds.
+Only the service-host environment contains Asana credentials. Protect each environment file and
+state directory with owner-only permissions. All three service tokens are required for each live
+dual-listener process, must be distinct within that process, and must not use placeholder or short
+values. The Action token must match between test and production so an authorized router flip does
+not require an editor-secret change; CLI/admin tokens may remain environment-specific. Listener
+hosts must remain loopback and all four service ports must be distinct. Invalid configuration fails
+before either listener binds.
 
-For the controlled rollout test deployment, keep test state separate from production:
+The fixed environment identities are:
 
 ```sh
 DISH_HONEST_PATH=/home/marco/honest-pantry
 DISH_COOKING_PROJECT_GID=1216693403164366
 DISH_DB_PATH=/home/marco/.local/state/dish/test/shared.sqlite3
 DISH_SERVICE_BACKUP_DIR=/home/marco/.local/state/dish/test/backups
+# private/action ports: 8765/8766
+
+DISH_COOKING_PROJECT_GID=1215089183018968
+DISH_DB_PATH=/home/marco/.local/state/dish/prod/shared.sqlite3
+DISH_SERVICE_BACKUP_DIR=/home/marco/.local/state/dish/prod/backups
+# private/action ports: 8775/8776
 ```
 
-Do not switch those values to the production checkout, project, or database until the separately
-authorized production cutover.
+Starting the production instance on its loopback ports does not expose it through Funnel and is safe
+preparation. Do not initialize migrated state, admit production mutations, or select the production
+Action route until the separately authorized production cutover.
 
-Install and start the systemd unit only during the controlled rollout:
+Install the two service units and Caddy router only during the controlled rollout:
 
 ```sh
-sudo install -m 0644 deploy/systemd/dish-service.service /etc/systemd/system/
+sudo apt-get install caddy
+sudo systemctl disable --now caddy.service
+sudo install -m 0755 deploy/caddy/dish-action-route /usr/local/bin/
+sudo install -m 0644 deploy/systemd/dish-service-test.service /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/dish-service-prod.service /etc/systemd/system/
+sudo install -m 0644 deploy/systemd/dish-action-router.service /etc/systemd/system/
+sudo systemctl disable --now dish-service.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now dish-service
+sudo systemctl enable --now dish-service-test dish-service-prod dish-action-router
 ```
 
-View service logs with `journalctl -u dish-service.service`.
+Populate `/home/marco/.config/dish-service/test.env` and `prod.env` from their examples before
+starting the units; both files must be mode `0600`. The distribution's generic `caddy.service` is
+disabled because Dish's router has a dedicated config, state directory, and unit.
+
+The legacy `dish-service.service` conflicts with the test unit because both bind `8765/8766`; stop
+and disable it when installing `dish-service-test`. View logs with `journalctl -u
+dish-service-test -u dish-service-prod -u dish-action-router`.
 
 Dish reads the current protocol and task-schema assets from `DISH_HONEST_PATH` when it handles
-workflow commands, so edits to those assets do not require a service restart. Restart
-`dish-service` after changing its environment or Python code. Verification cycles already in
+workflow commands, so edits to those assets do not require a service restart. Restart the affected
+service after changing its environment or Python code. Verification cycles already in
 progress remain bound to their recorded Verification protocol release.
 
 The unit is `Type=notify`: the process sends systemd a `READY=1` notification only once both
-listeners are bound and their serve loops are running, so `sudo systemctl restart dish-service`
+listeners are bound and their serve loops are running, so a systemd restart
 blocks until the new process is actually ready to take requests — no race where a command issued
 right after `restart` returns hits the old process mid-shutdown.
 
-The service binds two loopback listeners:
+The instances bind four loopback listeners:
 
-- private CLI/admin listener on `127.0.0.1:8765`;
-- Action listener on `127.0.0.1:8766`, including the read-only generated Action schema.
+- test private/Action on `127.0.0.1:8765` and `127.0.0.1:8766`;
+- production private/Action on `127.0.0.1:8775` and `127.0.0.1:8776`.
+
+Caddy listens on `127.0.0.1:8786` and defaults to test on first start. Inspect the active route with
+`deploy/caddy/dish-action-route status`. An authorized change uses `set test` or `set prod`; every
+change requires `--authorize-route-change`, and production additionally requires
+`--authorize-production-cutover`. Caddy's autosaved native configuration preserves API changes
+across restart, and the command uses the route Etag plus an exact read-back.
 
 Keep `DISH_DB_PATH` in one stable host-state location independent of any checkout or worktree. The
 service derives its process lock and persistent ownership marker from the canonical database target,
 so pathname aliases do not create another authority. A service-owned database cannot later be
 opened through direct local mode.
 
-The two listeners are one supervised service. Failure to bind either listener stops startup and
-closes the other. On shutdown, one process-wide admission gate closes both surfaces before either
+Each instance's two listeners are one supervised service. Failure to bind either listener stops
+startup and closes the other. On shutdown, one process-wide admission gate closes both surfaces before either
 listener is drained. Requests that have not crossed that gate are disconnected without dispatch;
 requests already executing are allowed to finish because they may own a transaction or an in-flight
 Asana effect. Loopback HTTP responses close their backend connection, so Serve or Funnel must open a
 new connection—and cross admission again—for every later request.
 
-See `deploy/tailscale/README.md` before configuring Serve or Funnel.
+See `deploy/tailscale/README.md` before configuring Serve or Funnel. Tailnet clients use `8444` for
+test and `8445` for production; public port `443` points only to Caddy's router.
 
 ## CLI client configuration
 
@@ -110,22 +147,27 @@ The normal live CLI is an HTTP client and does not open SQLite or construct an A
 ```sh
 export DISH_LIVE_MODE=1
 export DISH_MODE=service
-export DISH_SERVICE_URL=https://<laptop-tailnet-name>:8444
-export DISH_SERVICE_TOKEN=<private CLI token>
+export DISH_PROFILE=prod
+export DISH_SERVICE_URL_TEST=https://<laptop-tailnet-name>:8444
+export DISH_SERVICE_URL_PROD=https://<laptop-tailnet-name>:8445
+export DISH_SERVICE_TOKEN_TEST=<test private CLI token>
+export DISH_SERVICE_TOKEN_PROD=<production private CLI token>
 export DISH_CLIENT_RUN_ID=<non-nil canonical lowercase UUID for this run>
 ```
 
-Marco's admin shell uses the same private tailnet URL but a separate token:
+Bare `dish` uses production. Claude, Codex, or a human can select test for one command without
+changing the process environment:
 
 ```sh
-export DISH_LIVE_MODE=1
-export DISH_MODE=service
-export DISH_SERVICE_URL=https://<laptop-tailnet-name>:8444
-export DISH_ADMIN_TOKEN=<Marco-admin token>
-export DISH_CLIENT_RUN_ID=<non-nil canonical lowercase UUID for this admin run>
+dish sections --agent claude
+dish --profile test sections --agent claude
 ```
 
-Never place the CLI/admin token in the GPT Action configuration.
+Profiles select the matching URL and credential together; `--profile` overrides `DISH_PROFILE`,
+which overrides the production default. Agents receive `DISH_ADMIN_TOKEN_TEST` and may use
+`dish-admin --profile test`. They do not receive `DISH_ADMIN_TOKEN_PROD`; production administration
+remains Marco-only. Never place a CLI/admin token in the GPT Action configuration. GPT Action
+environment selection remains exclusively Caddy's public route and is unaffected by CLI profiles.
 
 ## HTTP request boundary
 
@@ -188,7 +230,8 @@ evidence is fabricated.
 
 ## Administrative operations
 
-`dish-admin` is Marco-only. In service mode it exposes:
+`dish-admin` is available to agents only with the test profile; production use is Marco-only. In
+service mode it exposes:
 
 - `recover-lease` to release an expired client/run lease when the same durable run will continue, without transferring workflow ownership to Marco;
 - `abandon-operation` to permanently retire the latest expired or administratively released actor attempt and automatically prepare the safe stage-specific continuation;

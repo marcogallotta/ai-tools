@@ -21,7 +21,7 @@ Candidate files are ephemeral complete-text inputs. In service mode the client r
 | Caller | Network path | Credential | Permitted surface |
 |---|---|---|---|
 | `dish` CLI | private Tailscale Serve/tailnet endpoint | agent CLI bearer token | bounded agent commands and lease renewal |
-| `dish-admin` | private Tailscale Serve/tailnet endpoint | separate Marco-admin bearer token | admin workflow, stale-lease recovery, point-in-time lease release, backup/restore |
+| `dish-admin` | private Tailscale Serve/tailnet endpoint | separate environment admin bearer token | test administration for agents; production administration for Marco |
 | GPT Action | public Tailscale Funnel endpoint on its own HTTPS port | dedicated Action bearer token | `/v1/action/*` commands and Action lease renewal only |
 | local tests | direct local application mode | local Asana test credential when required | controlled single-agent development only |
 
@@ -30,13 +30,27 @@ Live client environments set all of:
 ```text
 DISH_LIVE_MODE=1
 DISH_MODE=service
-DISH_SERVICE_URL=<private service URL>
+DISH_PROFILE=prod
+DISH_SERVICE_URL_TEST=<test private service URL>
+DISH_SERVICE_URL_PROD=<production private service URL>
 DISH_CLIENT_RUN_ID=<non-nil canonical lowercase UUID for this run>
 ```
 
-The CLI adds `DISH_SERVICE_TOKEN`; Marco's admin shell adds `DISH_ADMIN_TOKEN`. The GPT Action stores only `DISH_SERVICE_ACTION_TOKEN` in its Action authentication configuration. No client receives the service database path or Asana credential.
+The CLI uses `DISH_SERVICE_TOKEN_TEST` or `DISH_SERVICE_TOKEN_PROD` with the matching named profile.
+Agents also receive `DISH_ADMIN_TOKEN_TEST`; only Marco receives `DISH_ADMIN_TOKEN_PROD`. The
+`--profile` flag selects one invocation, `DISH_PROFILE` supplies the process default, and production
+is the fallback default. A named profile never falls back to a generic token. The GPT Action stores
+only `DISH_SERVICE_ACTION_TOKEN`; its Caddy route is independent of private client profiles. No
+client receives the service database path or Asana credential.
 
-The service host is the only place that defines `ASANA_PAT` or `ASANA_ENV`. It runs one process, enforced by a host file lock tied to the shared database. The process exposes two loopback listeners:
+Environment selection follows intent, not caution: genuine Dish work uses production. Test is only
+for experiments, rehearsals, destructive testing, or Marco's explicit request. An agent must not
+redirect real work to test merely because test feels safer. If the intended environment is
+ambiguous before a mutation, the agent must stop and confirm it with Marco.
+
+The service host is the only place that defines `ASANA_PAT` or `ASANA_ENV`. Each environment runs
+one process, enforced by a host file lock tied to that environment's shared database. Each process
+exposes two loopback listeners:
 
 - private CLI/admin listener, intended for Tailscale Serve;
 - Action listener, intended for Tailscale Funnel.

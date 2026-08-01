@@ -116,22 +116,23 @@ Follow the approved corpus-wide procedure in the frozen Honest rollout revision'
 the initial corpus-migration mechanism. Completed historical tasks remain untouched unless
 deliberately reopened, when they must migrate before substantive work.
 
-## Test/prod flip (planned, not yet built)
+## Test/prod flip
 
-Only one public Funnel slot exists on the service host, but test and prod must both stay live so
+Only one public Funnel slot exists on the service host, but test and prod both stay live so
 local/tailnet agents can address either at will and GPT Actions can be redirected fast in an
-emergency. Decided direction: run `dish-service-test` and `dish-service-prod` as two permanently
-running instances on distinct fixed ports; local/tailnet clients reach either directly by port, so
+emergency. Run `dish-service-test` and `dish-service-prod` as two permanently running instances on
+distinct fixed ports; local/tailnet clients reach either directly by port, so
 nothing about local access ever needs to "flip." A Caddy instance sits statically behind Funnel and
-is the sole flip point — the running config is changed live via Caddy's admin API to point at the
-test or prod port, with `GET /config/...` as the "what's live right now" check. Rejected: relying on
-shell env (e.g. `~/.bashrc` exports) as the source of truth, since already-open shells/sessions don't
+is the sole flip point. `deploy/caddy/dish-action-route` preflights the selected Action listener,
+changes the running config through Caddy's admin API with Etag collision protection, and rereads the
+exact upstream as the "what's live right now" check. Caddy resumes its autosaved native config after
+restart. Rejected: relying on shell env (e.g. `~/.bashrc` exports) as the source of truth, since
+already-open shells/sessions don't
 pick up a change; and nginx-reload/consul-template style approaches, which reintroduce "did the flip
 actually take" uncertainty under stress.
 
 This may be short-lived: prod is likely to move to AWS in the medium term, at which point this local
-two-instance/Caddy setup can be retired without unwinding any custom code. Not built yet; step 2 below
-still describes the current single-service-swap model until this replaces it.
+two-instance/Caddy setup can be retired without unwinding any custom code.
 
 ## Production cutover
 
@@ -139,11 +140,11 @@ Production cutover requires a separate explicit authorization. After authorizati
 
 1. Freeze and record the exact compatible Honest protocol/schema revision and Dish code/tool
    revision being released together.
-2. Stop the test-configured service. Replace its rollout values with the frozen production Honest
-   checkout, production `DISH_COOKING_PROJECT_GID`, a fresh production `DISH_DB_PATH`, and a
-   production `DISH_SERVICE_BACKUP_DIR`. Do not copy or reuse the test service database as
-   production state.
-3. Restart the service and confirm its configured database path, owner-only state and backup
+2. Configure and start the production instance on its fixed dark loopback ports with the frozen
+   production Honest checkout, production `DISH_COOKING_PROJECT_GID`, a fresh production
+   `DISH_DB_PATH`, and a production `DISH_SERVICE_BACKUP_DIR`. Keep the test instance running and do
+   not copy or reuse its database as production state.
+3. Confirm the production service's configured database path, owner-only state and backup
    directory, production Cooking project and section registry, production Asana credential,
    compatibility with the frozen Honest release, and GPT Action exposure/authentication route.
    Do not admit production mutations while any test checkout, database, backup directory, project,
@@ -156,8 +157,9 @@ Production cutover requires a separate explicit authorization. After authorizati
    disabled. Keep Planning's deliberate read-only access to completed cooking history.
 6. Confirm the joint test-project, migration, backup/restore, and rollback rehearsals passed.
 7. Apply the resolved migration sequence only to the approved target corpus, then activate the
-   matching Honest protocol authority, repository routing, and Dish production service in the same
-   deliberate cutover.
+   matching Honest protocol authority and repository routing. Select production with
+   `dish-action-route set prod --authorize-route-change --authorize-production-cutover`, reread the
+   route, and retain the live test instance for immediate authorized rollback.
 8. Open broader use only after the final protocol, lock, drift, recovery, and audit checks pass.
 
 ## Rollback
