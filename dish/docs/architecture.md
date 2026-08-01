@@ -228,6 +228,15 @@ owned session and never commit independently. Until an explicit authority activa
 current transports and workflow modules must not import `dish_pg` or treat its state as
 production authority.
 
+Stage 2 gives that isolated target only the foundational authority model. Alembic revision
+`0002_core_authority_model` owns generation and activation provenance, immutable Honest
+contract bindings, governed project/section registries and aliases, stable Dish task identity,
+immutable complete task documents and activations, and append-only membership, placement, and
+completion occurrences with validated current pointers. `CoreAuthorityService` may assemble an
+imported task only as one caller-owned transaction with exact import provenance; it creates no
+request, command execution, workflow operation, lease, Verification, or projection authority.
+Those authorities remain absent until their later implementation stages.
+
 Agent and admin dispatch use the explicit `CURRENT_COMMAND_HANDLERS` and
 `CURRENT_ADMIN_COMMAND_HANDLERS` registries. Do not reintroduce import-time subclass rebinding or a
 compatibility dispatcher.

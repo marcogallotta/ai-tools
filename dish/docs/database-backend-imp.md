@@ -843,6 +843,13 @@ Commit result:
 
 > PostgreSQL can represent the complete authoritative task document, identity, registry, placement, completion, release context, and authority generation, but it is not yet the production command authority.
 
+Implemented physical boundary: `dish_pg.models` and Alembic revision
+`0002_core_authority_model` define only the Stage 2 tables above; `dish_pg.repositories`
+participates in caller-owned sessions without committing; and `dish_pg.services.CoreAuthorityService`
+provides atomic import-style task activation without fabricating requests, executions, operations,
+or projection facts. PostgreSQL triggers enforce immutable evidence, monotonic generation and alias
+transitions, exact current-pointer targets, and active-registry placement legality.
+
 Acceptance at this stage covers migrations, constraints, aliases, registry legality, immutable versions, import activation, and generation isolation.
 
 ### Stage 3 — Command execution and workflow authority
