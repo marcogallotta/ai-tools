@@ -625,3 +625,9 @@ recipe judge, or writable legacy workflow. It has no arbitrary workflow-state ad
 
 Tracked gaps and accepted limitations belong in [`known-issues.md`](known-issues.md). Broader
 post-activation proposals belong in [`future.md`](future.md), not in current architecture.
+
+### Typed recovery and succession bundles
+
+Database restore checkpoints retain their JSON-compatible journal shape, but runtime restore code owns that shape through `RestorePlan`. The type rejects unknown fields and is the only mutable restore-plan representation passed between preparation, replacement, validation, rollback, and recovery phases.
+
+Atomic abandonment succession accepts one immutable `AbandonmentSuccessionSpec`. Callers construct the complete source, successor, cycle, actor, and transfer evidence before entering persistence; the database function no longer exposes a long list of independently swappable scalar arguments.

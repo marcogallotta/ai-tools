@@ -6,6 +6,7 @@ import sqlite3
 import pytest
 
 from dish_service.leases import LeaseManager, ServicePrincipal
+from dish_tool.abandonment_succession import AbandonmentSuccessionSpec
 from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database import (
     apply_operation_abandonment_succession_in_transaction,
@@ -41,19 +42,21 @@ def test_clean_succession_is_one_atomic_source_successor_baseline_transition():
     conn.execute("BEGIN IMMEDIATE")
     abandonment, successor, succession = apply_operation_abandonment_succession_in_transaction(
         conn,
-        abandonment_id="abandonment-1",
-        succession_id="succession-1",
-        successor_operation_id="successor-1",
-        source_content_version_id=source_version_id,
-        successor_content_version_id="successor-version-1",
-        successor_operation_kind="initial",
-        successor_phase="prepare_required",
-        successor_expected_section_gid="section-1",
-        successor_schema_version="2",
-        successor_claim_mode="stage_actor",
-        transition_reason="agent permanently unavailable",
-        candidate_transfer_kind="restored_stage_baseline",
-        result={"required_action": "start"},
+        AbandonmentSuccessionSpec(
+            abandonment_id="abandonment-1",
+            succession_id="succession-1",
+            successor_operation_id="successor-1",
+            source_content_version_id=source_version_id,
+            successor_content_version_id="successor-version-1",
+            successor_operation_kind="initial",
+            successor_phase="prepare_required",
+            successor_expected_section_gid="section-1",
+            successor_schema_version="2",
+            successor_claim_mode="stage_actor",
+            transition_reason="agent permanently unavailable",
+            candidate_transfer_kind="restored_stage_baseline",
+            result={"required_action": "start"},
+        ),
     )
     _validate_semantic_evidence(conn)
     conn.execute("COMMIT")
@@ -100,18 +103,20 @@ def test_clean_restart_rejects_pending_steps_and_unresolved_effects():
     with pytest.raises(DishRuleError) as exc:
         apply_operation_abandonment_succession_in_transaction(
             conn,
-            abandonment_id="abandonment-1",
-            succession_id="succession-pending",
-            successor_operation_id="successor-pending",
-            source_content_version_id=source_version_id,
-            successor_content_version_id="version-pending",
-            successor_operation_kind="initial",
-            successor_phase="prepare_required",
-            successor_expected_section_gid="section-1",
-            successor_schema_version="2",
-            successor_claim_mode="stage_actor",
-            transition_reason="agent unavailable",
-            candidate_transfer_kind="restored_stage_baseline",
+            AbandonmentSuccessionSpec(
+                abandonment_id="abandonment-1",
+                succession_id="succession-pending",
+                successor_operation_id="successor-pending",
+                source_content_version_id=source_version_id,
+                successor_content_version_id="version-pending",
+                successor_operation_kind="initial",
+                successor_phase="prepare_required",
+                successor_expected_section_gid="section-1",
+                successor_schema_version="2",
+                successor_claim_mode="stage_actor",
+                transition_reason="agent unavailable",
+                candidate_transfer_kind="restored_stage_baseline",
+            ),
         )
     assert exc.value.rule == "abandonment_pending_steps"
     conn.execute("ROLLBACK")
@@ -143,24 +148,26 @@ def test_verification_succession_closes_only_exact_incomplete_cycle_and_creates_
     conn.execute("BEGIN IMMEDIATE")
     abandonment, successor, succession = apply_operation_abandonment_succession_in_transaction(
         conn,
-        abandonment_id="abandonment-1",
-        succession_id="verification-succession",
-        successor_operation_id="verification-successor",
-        source_content_version_id=source_version_id,
-        successor_content_version_id="verification-baseline",
-        successor_operation_kind="initial",
-        successor_phase="await_verification",
-        successor_expected_section_gid="section-1",
-        successor_schema_version="2",
-        successor_claim_mode="verifier",
-        transition_reason="verifier unavailable",
-        candidate_transfer_kind="inherited_confirmed_candidate",
-        source_cycle_id=cycle["cycle_id"],
-        close_source_cycle_as_abandoned=True,
-        successor_cycle_id="cycle-2",
-        successor_cycle_number=2,
-        successor_protocol_release="verification-v1",
-        successor_protocol_text="protocol",
+        AbandonmentSuccessionSpec(
+            abandonment_id="abandonment-1",
+            succession_id="verification-succession",
+            successor_operation_id="verification-successor",
+            source_content_version_id=source_version_id,
+            successor_content_version_id="verification-baseline",
+            successor_operation_kind="initial",
+            successor_phase="await_verification",
+            successor_expected_section_gid="section-1",
+            successor_schema_version="2",
+            successor_claim_mode="verifier",
+            transition_reason="verifier unavailable",
+            candidate_transfer_kind="inherited_confirmed_candidate",
+            source_cycle_id=cycle["cycle_id"],
+            close_source_cycle_as_abandoned=True,
+            successor_cycle_id="cycle-2",
+            successor_cycle_number=2,
+            successor_protocol_release="verification-v1",
+            successor_protocol_text="protocol",
+        ),
     )
     _validate_semantic_evidence(conn)
     conn.execute("COMMIT")
@@ -188,18 +195,20 @@ def test_succession_rolls_back_as_one_unit_on_late_failure():
     conn.execute("BEGIN IMMEDIATE")
     apply_operation_abandonment_succession_in_transaction(
         conn,
-        abandonment_id="abandonment-1",
-        succession_id="rollback-succession",
-        successor_operation_id="rollback-successor",
-        source_content_version_id=source_version_id,
-        successor_content_version_id="rollback-baseline",
-        successor_operation_kind="initial",
-        successor_phase="prepare_required",
-        successor_expected_section_gid="section-1",
-        successor_schema_version="2",
-        successor_claim_mode="stage_actor",
-        transition_reason="agent unavailable",
-        candidate_transfer_kind="restored_stage_baseline",
+        AbandonmentSuccessionSpec(
+            abandonment_id="abandonment-1",
+            succession_id="rollback-succession",
+            successor_operation_id="rollback-successor",
+            source_content_version_id=source_version_id,
+            successor_content_version_id="rollback-baseline",
+            successor_operation_kind="initial",
+            successor_phase="prepare_required",
+            successor_expected_section_gid="section-1",
+            successor_schema_version="2",
+            successor_claim_mode="stage_actor",
+            transition_reason="agent unavailable",
+            candidate_transfer_kind="restored_stage_baseline",
+        ),
     )
     conn.execute("ROLLBACK")
 
@@ -228,18 +237,20 @@ def test_agent_abandoned_source_and_succession_are_immutable():
     conn.execute("BEGIN IMMEDIATE")
     apply_operation_abandonment_succession_in_transaction(
         conn,
-        abandonment_id="abandonment-1",
-        succession_id="immutable-succession",
-        successor_operation_id="immutable-successor",
-        source_content_version_id=source_version_id,
-        successor_content_version_id="immutable-baseline",
-        successor_operation_kind="initial",
-        successor_phase="prepare_required",
-        successor_expected_section_gid="section-1",
-        successor_schema_version="2",
-        successor_claim_mode="stage_actor",
-        transition_reason="agent unavailable",
-        candidate_transfer_kind="restored_stage_baseline",
+        AbandonmentSuccessionSpec(
+            abandonment_id="abandonment-1",
+            succession_id="immutable-succession",
+            successor_operation_id="immutable-successor",
+            source_content_version_id=source_version_id,
+            successor_content_version_id="immutable-baseline",
+            successor_operation_kind="initial",
+            successor_phase="prepare_required",
+            successor_expected_section_gid="section-1",
+            successor_schema_version="2",
+            successor_claim_mode="stage_actor",
+            transition_reason="agent unavailable",
+            candidate_transfer_kind="restored_stage_baseline",
+        ),
     )
     conn.execute("COMMIT")
 
@@ -262,3 +273,4 @@ def test_abandonment_tables_are_not_exposed_as_commands():
 
     assert "abandon-operation" not in ACTION_COMMANDS
     assert "reconcile-abandonment" not in ACTION_COMMANDS
+

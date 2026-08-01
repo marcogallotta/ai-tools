@@ -6,9 +6,9 @@ import hashlib
 import json
 import sqlite3
 import uuid
-from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
+from .abandonment_succession import AbandonmentSuccessionSpec
 from .audit_repair_sidecar import fsync_parent, locked_audit_repair_sidecar
 from .constants import SUBMISSION_STATES
 from .database_schema import MIGRATIONS, initialize_database, migrate_database
@@ -16,37 +16,6 @@ from .errors import DishRuleError
 from .execution_provenance import current_operation_execution_id
 from .models import ContentIdentity, OperationActors, agent_family, utc_now
 from .transactions import immediate_transaction, savepoint_transaction
-
-
-@dataclass(frozen=True)
-class _AbandonmentSuccessionSpec:
-    abandonment_id: str
-    succession_id: str
-    successor_operation_id: str
-    source_content_version_id: str
-    successor_content_version_id: str
-    successor_operation_kind: str
-    successor_phase: str
-    successor_expected_section_gid: str
-    successor_schema_version: str
-    successor_claim_mode: str
-    transition_reason: str
-    candidate_transfer_kind: str
-    source_cycle_id: str | None
-    close_source_cycle_as_abandoned: bool
-    successor_cycle_id: str | None
-    successor_cycle_number: int | None
-    successor_protocol_release: str | None
-    successor_protocol_text: str | None
-    successor_editor_agent: str | None
-    successor_researcher_agent: str | None
-    successor_verifier_agent: str | None
-    successor_run_id: str | None
-    successor_independence_attestation: str | None
-    successor_actor_facts: Sequence[Mapping[str, Any]]
-    successor_completed_steps: Mapping[str, Mapping[str, Any]]
-    result: Mapping[str, Any] | None
-    created_at: str
 
 
 def atomic_persistence(conn: sqlite3.Connection, label: str):
@@ -983,7 +952,7 @@ def mark_abandonment_awaiting_hold_in_transaction(
 
 
 def _validate_abandonment_succession_spec(
-    spec: _AbandonmentSuccessionSpec,
+    spec: AbandonmentSuccessionSpec,
 ) -> None:
     if spec.successor_claim_mode not in {"stage_actor", "verifier"}:
         raise ValueError(
@@ -999,7 +968,7 @@ def _validate_abandonment_succession_spec(
 
 def _load_abandonment_succession_source(
     conn: sqlite3.Connection,
-    spec: _AbandonmentSuccessionSpec,
+    spec: AbandonmentSuccessionSpec,
 ) -> tuple[sqlite3.Row, sqlite3.Row, sqlite3.Row]:
     abandonment = get_abandonment_attempt(conn, spec.abandonment_id)
     if abandonment["status"] not in {
@@ -1053,7 +1022,7 @@ def _load_abandonment_succession_source(
 def _terminalize_abandonment_source(
     conn: sqlite3.Connection,
     *,
-    spec: _AbandonmentSuccessionSpec,
+    spec: AbandonmentSuccessionSpec,
     abandonment: Mapping[str, Any],
     source: Mapping[str, Any],
 ) -> None:
@@ -1099,7 +1068,7 @@ def _terminalize_abandonment_source(
 def _insert_abandonment_successor(
     conn: sqlite3.Connection,
     *,
-    spec: _AbandonmentSuccessionSpec,
+    spec: AbandonmentSuccessionSpec,
     abandonment: Mapping[str, Any],
     source_version: Mapping[str, Any],
 ) -> None:
@@ -1164,7 +1133,7 @@ def _insert_abandonment_successor(
 def _insert_abandonment_successor_cycle(
     conn: sqlite3.Connection,
     *,
-    spec: _AbandonmentSuccessionSpec,
+    spec: AbandonmentSuccessionSpec,
     abandonment: Mapping[str, Any],
 ) -> None:
     if spec.successor_cycle_id is None:
@@ -1204,7 +1173,7 @@ def _insert_abandonment_successor_cycle(
 def _publish_abandonment_succession(
     conn: sqlite3.Connection,
     *,
-    spec: _AbandonmentSuccessionSpec,
+    spec: AbandonmentSuccessionSpec,
     abandonment: Mapping[str, Any],
     source: Mapping[str, Any],
 ) -> None:
@@ -1272,7 +1241,7 @@ def _publish_abandonment_succession(
 
 
 def _abandonment_succession_rows(
-    conn: sqlite3.Connection, spec: _AbandonmentSuccessionSpec
+    conn: sqlite3.Connection, spec: AbandonmentSuccessionSpec
 ) -> tuple[sqlite3.Row, sqlite3.Row, sqlite3.Row]:
     return (
         get_abandonment_attempt(conn, spec.abandonment_id),
@@ -1289,66 +1258,11 @@ def _abandonment_succession_rows(
 
 def apply_operation_abandonment_succession_in_transaction(
     conn: sqlite3.Connection,
-    *,
-    abandonment_id: str,
-    succession_id: str,
-    successor_operation_id: str,
-    source_content_version_id: str,
-    successor_content_version_id: str,
-    successor_operation_kind: str,
-    successor_phase: str,
-    successor_expected_section_gid: str,
-    successor_schema_version: str,
-    successor_claim_mode: str,
-    transition_reason: str,
-    candidate_transfer_kind: str,
-    source_cycle_id: str | None = None,
-    close_source_cycle_as_abandoned: bool = False,
-    successor_cycle_id: str | None = None,
-    successor_cycle_number: int | None = None,
-    successor_protocol_release: str | None = None,
-    successor_protocol_text: str | None = None,
-    successor_editor_agent: str | None = None,
-    successor_researcher_agent: str | None = None,
-    successor_verifier_agent: str | None = None,
-    successor_run_id: str | None = None,
-    successor_independence_attestation: str | None = None,
-    successor_actor_facts: Sequence[Mapping[str, Any]] = (),
-    successor_completed_steps: Mapping[str, Mapping[str, Any]] | None = None,
-    result: Mapping[str, Any] | None = None,
-    created_at: str | None = None,
+    spec: AbandonmentSuccessionSpec,
 ) -> tuple[sqlite3.Row, sqlite3.Row, sqlite3.Row]:
     """Atomically terminalize one clean source and create its prepared successor."""
     _require_writer_transaction(conn, operation="operation abandonment succession")
-    spec = _AbandonmentSuccessionSpec(
-        abandonment_id=abandonment_id,
-        succession_id=succession_id,
-        successor_operation_id=successor_operation_id,
-        source_content_version_id=source_content_version_id,
-        successor_content_version_id=successor_content_version_id,
-        successor_operation_kind=successor_operation_kind,
-        successor_phase=successor_phase,
-        successor_expected_section_gid=successor_expected_section_gid,
-        successor_schema_version=successor_schema_version,
-        successor_claim_mode=successor_claim_mode,
-        transition_reason=transition_reason,
-        candidate_transfer_kind=candidate_transfer_kind,
-        source_cycle_id=source_cycle_id,
-        close_source_cycle_as_abandoned=close_source_cycle_as_abandoned,
-        successor_cycle_id=successor_cycle_id,
-        successor_cycle_number=successor_cycle_number,
-        successor_protocol_release=successor_protocol_release,
-        successor_protocol_text=successor_protocol_text,
-        successor_editor_agent=successor_editor_agent,
-        successor_researcher_agent=successor_researcher_agent,
-        successor_verifier_agent=successor_verifier_agent,
-        successor_run_id=successor_run_id,
-        successor_independence_attestation=successor_independence_attestation,
-        successor_actor_facts=successor_actor_facts,
-        successor_completed_steps=dict(successor_completed_steps or {}),
-        result=result,
-        created_at=created_at or utc_now(),
-    )
+    spec = spec.normalized()
     _validate_abandonment_succession_spec(spec)
     abandonment, source, source_version = _load_abandonment_succession_source(
         conn, spec

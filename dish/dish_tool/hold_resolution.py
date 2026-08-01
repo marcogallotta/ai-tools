@@ -7,6 +7,7 @@ import uuid
 from typing import Any, Mapping
 
 from .content_versions import confirmed_content_version
+from .abandonment_succession import AbandonmentSuccessionSpec
 from .database import (
     apply_operation_abandonment_succession_in_transaction,
     complete_operation_step,
@@ -117,18 +118,20 @@ def resolve_preconstruction_hold_to_successor(
         )
         apply_operation_abandonment_succession_in_transaction(
             conn,
-            abandonment_id=abandonment["abandonment_id"],
-            succession_id=succession_id,
-            successor_operation_id=successor_operation_id,
-            source_content_version_id=source_version["content_version_id"],
-            successor_content_version_id=successor_content_version_id,
-            successor_operation_kind="initial",
-            successor_phase="prepare_required",
-            successor_expected_section_gid=source["expected_section_gid"],
-            successor_schema_version=source["schema_version"],
-            successor_claim_mode="stage_actor",
-            transition_reason="resolved_abandoned_preconstruction_hold",
-            candidate_transfer_kind="restored_stage_baseline",
-            result=result,
+            AbandonmentSuccessionSpec(
+                abandonment_id=abandonment["abandonment_id"],
+                succession_id=succession_id,
+                successor_operation_id=successor_operation_id,
+                source_content_version_id=source_version["content_version_id"],
+                successor_content_version_id=successor_content_version_id,
+                successor_operation_kind="initial",
+                successor_phase="prepare_required",
+                successor_expected_section_gid=source["expected_section_gid"],
+                successor_schema_version=source["schema_version"],
+                successor_claim_mode="stage_actor",
+                transition_reason="resolved_abandoned_preconstruction_hold",
+                candidate_transfer_kind="restored_stage_baseline",
+                result=result,
+            ),
         )
     return result

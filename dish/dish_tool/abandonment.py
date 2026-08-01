@@ -15,6 +15,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Mapping
 
+from .abandonment_succession import AbandonmentSuccessionSpec
 from .constants import COOKING_PROJECT_GID
 from .database import (
     apply_operation_abandonment_succession_in_transaction,
@@ -765,20 +766,22 @@ def _prepare_stage_successor(
         abandonment, successor, succession = (
             apply_operation_abandonment_succession_in_transaction(
                 conn,
-                abandonment_id=abandonment_id,
-                succession_id=succession_id,
-                successor_operation_id=successor_operation_id,
-                source_content_version_id=frontier.source_content_version_id,
-                successor_content_version_id=successor_content_version_id,
-                successor_operation_kind=source["operation_kind"],
-                successor_phase="prepare_required",
-                successor_expected_section_gid=source["expected_section_gid"],
-                successor_schema_version=source["schema_version"],
-                successor_claim_mode="stage_actor",
-                transition_reason="permanent_agent_run_abandonment",
-                candidate_transfer_kind="restored_stage_baseline",
-                successor_completed_steps=completed_steps,
-                result=result,
+                AbandonmentSuccessionSpec(
+                    abandonment_id=abandonment_id,
+                    succession_id=succession_id,
+                    successor_operation_id=successor_operation_id,
+                    source_content_version_id=frontier.source_content_version_id,
+                    successor_content_version_id=successor_content_version_id,
+                    successor_operation_kind=source["operation_kind"],
+                    successor_phase="prepare_required",
+                    successor_expected_section_gid=source["expected_section_gid"],
+                    successor_schema_version=source["schema_version"],
+                    successor_claim_mode="stage_actor",
+                    transition_reason="permanent_agent_run_abandonment",
+                    candidate_transfer_kind="restored_stage_baseline",
+                    successor_completed_steps=completed_steps,
+                    result=result,
+                ),
             )
         )
     result["abandonment"] = {key: abandonment[key] for key in abandonment.keys()}
@@ -877,32 +880,34 @@ def _prepare_verification_successor(
         abandonment, successor, succession = (
             apply_operation_abandonment_succession_in_transaction(
                 conn,
-                abandonment_id=abandonment_id,
-                succession_id=succession_id,
-                successor_operation_id=successor_operation_id,
-                source_content_version_id=frontier.source_content_version_id,
-                successor_content_version_id=successor_content_version_id,
-                successor_operation_kind=source["operation_kind"],
-                successor_phase="await_verification",
-                successor_expected_section_gid=source["expected_section_gid"],
-                successor_schema_version=source["schema_version"],
-                successor_claim_mode="verifier",
-                transition_reason="permanent_verifier_run_abandonment",
-                candidate_transfer_kind="inherited_confirmed_candidate",
-                source_cycle_id=source_cycle["cycle_id"],
-                close_source_cycle_as_abandoned=True,
-                successor_cycle_id=successor_cycle_id,
-                successor_cycle_number=int(next_cycle_number),
-                successor_protocol_release=source_cycle["protocol_release"],
-                successor_protocol_text=source_cycle["protocol_text"],
-                successor_editor_agent=source["editor_agent"],
-                successor_researcher_agent=source["researcher_agent"],
-                successor_run_id=source["run_id"],
-                successor_actor_facts=_successor_actor_facts(
-                    conn, source["operation_id"]
+                AbandonmentSuccessionSpec(
+                    abandonment_id=abandonment_id,
+                    succession_id=succession_id,
+                    successor_operation_id=successor_operation_id,
+                    source_content_version_id=frontier.source_content_version_id,
+                    successor_content_version_id=successor_content_version_id,
+                    successor_operation_kind=source["operation_kind"],
+                    successor_phase="await_verification",
+                    successor_expected_section_gid=source["expected_section_gid"],
+                    successor_schema_version=source["schema_version"],
+                    successor_claim_mode="verifier",
+                    transition_reason="permanent_verifier_run_abandonment",
+                    candidate_transfer_kind="inherited_confirmed_candidate",
+                    source_cycle_id=source_cycle["cycle_id"],
+                    close_source_cycle_as_abandoned=True,
+                    successor_cycle_id=successor_cycle_id,
+                    successor_cycle_number=int(next_cycle_number),
+                    successor_protocol_release=source_cycle["protocol_release"],
+                    successor_protocol_text=source_cycle["protocol_text"],
+                    successor_editor_agent=source["editor_agent"],
+                    successor_researcher_agent=source["researcher_agent"],
+                    successor_run_id=source["run_id"],
+                    successor_actor_facts=_successor_actor_facts(
+                        conn, source["operation_id"]
+                    ),
+                    successor_completed_steps=completed_steps,
+                    result=result,
                 ),
-                successor_completed_steps=completed_steps,
-                result=result,
             )
         )
     result["abandonment"] = {key: abandonment[key] for key in abandonment.keys()}
@@ -1383,3 +1388,4 @@ def settle_abandonment_frontier(
         )
     result["abandonment"] = {key: row[key] for key in row.keys()}
     return result
+

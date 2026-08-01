@@ -16,6 +16,8 @@ from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database_schema import _validate_current_database, initialize_database
 from dish_tool.errors import DishRuleError
 
+from .restore_plan import RestorePlan
+
 _BACKUP_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.sqlite3$")
 
 
@@ -94,9 +96,9 @@ class BackupManager:
         """Attach the sidecar progress writer used by the service restore route."""
         self._restore_checkpoint = callback
 
-    def _emit_restore_checkpoint(self, stage: str, plan: Mapping[str, Any]) -> None:
+    def _emit_restore_checkpoint(self, stage: str, plan: RestorePlan) -> None:
         if self._restore_checkpoint is not None:
-            self._restore_checkpoint(stage, {"plan": dict(plan)})
+            self._restore_checkpoint(stage, {"plan": plan.as_dict()})
 
     def _managed_path(self, backup_id: str) -> Path:
         clean = str(backup_id or "").strip()
@@ -420,11 +422,11 @@ class BackupManager:
     @staticmethod
     def _plan_from_checkpoint(
         backup_id: str, checkpoint: Mapping[str, Any]
-    ) -> tuple[str, dict[str, Any]]:
+    ) -> tuple[str, RestorePlan]:
         stage = checkpoint.get("stage")
         details = checkpoint.get("details")
         plan = details.get("plan") if isinstance(details, dict) else None
-        if not isinstance(stage, str) or not isinstance(plan, dict):
+        if not isinstance(stage, str) or not isinstance(plan, Mapping):
             raise DishRuleError(
                 "BACKEND_UNCERTAIN",
                 "restore request checkpoint is incomplete",
@@ -440,7 +442,7 @@ class BackupManager:
                 retryable=False,
                 details={"database_retained": False},
             )
-        return stage, dict(plan)
+        return stage, RestorePlan.from_mapping(plan)
 
     def _installed_candidate_matches(self, plan: Mapping[str, Any]) -> bool:
         candidate = plan.get("candidate")
@@ -471,7 +473,7 @@ class BackupManager:
             "pre_restore_unavailable": plan.get("pre_restore_unavailable"),
         }
 
-    def _complete_pre_restore_attempt(self, plan: dict[str, Any]) -> dict[str, Any]:
+    def _complete_pre_restore_attempt(self, plan: RestorePlan) -> RestorePlan:
         target = plan.get("pre_restore_target")
         if not isinstance(target, dict):
             raise DishRuleError(
@@ -537,7 +539,7 @@ class BackupManager:
         self._emit_restore_checkpoint("pre_restore_captured", plan)
         return plan
 
-    def _capture_pre_restore(self, plan: dict[str, Any]) -> dict[str, Any]:
+    def _capture_pre_restore(self, plan: RestorePlan) -> RestorePlan:
         safe_label = "pre-restore"
         backup_id = (
             f"dish-{_stamp()}-{safe_label}-{uuid.uuid4().hex[:8]}.sqlite3"
@@ -549,7 +551,7 @@ class BackupManager:
         self._emit_restore_checkpoint("pre_restore_attempted", plan)
         return self._complete_pre_restore_attempt(plan)
 
-    def _populate_preparation(self, plan: dict[str, Any]) -> dict[str, Any]:
+    def _populate_preparation(self, plan: RestorePlan) -> RestorePlan:
         self._assert_source_identity(plan)
         candidate = plan.get("candidate")
         if not isinstance(candidate, dict):
@@ -590,7 +592,7 @@ class BackupManager:
         self._emit_restore_checkpoint("candidate_prepared", plan)
         return self._capture_pre_restore(plan)
 
-    def _prepare_restore(self, backup_id: str) -> dict[str, Any]:
+    def _prepare_restore(self, backup_id: str) -> RestorePlan:
         source_path = self._managed_path(backup_id)
         try:
             source_schema_version = self._validate_integrity(source_path)
@@ -619,14 +621,14 @@ class BackupManager:
                 delete=False,
             ) as handle:
                 candidate_path = Path(handle.name)
-            plan: dict[str, Any] = {
-                "backup_id": source_path.name,
-                "source": source_record.as_dict(),
-                "source_schema_version": source_schema_version,
-                "restored_schema_version": SCHEMA_VERSION,
-                "candidate": {"path": str(candidate_path)},
-                "live_at_start": live_at_start,
-            }
+            plan = RestorePlan(
+                backup_id=source_path.name,
+                source=source_record.as_dict(),
+                source_schema_version=source_schema_version,
+                restored_schema_version=SCHEMA_VERSION,
+                candidate={"path": str(candidate_path)},
+                live_at_start=live_at_start,
+            )
             self._emit_restore_checkpoint("preparation_started", plan)
             return self._populate_preparation(plan)
         except Exception:
@@ -646,7 +648,7 @@ class BackupManager:
             },
         )
 
-    def _rollback(self, plan: dict[str, Any], restore_exc: BaseException) -> None:
+    def _rollback(self, plan: RestorePlan, restore_exc: BaseException) -> None:
         pre_restore = plan.get("pre_restore_backup")
         if not isinstance(pre_restore, dict):
             raise DishRuleError(
@@ -726,7 +728,7 @@ class BackupManager:
             ) from rollback_exc
         raise self._rolled_back_error(type(restore_exc).__name__) from restore_exc
 
-    def _validate_installed(self, plan: dict[str, Any]) -> dict[str, Any]:
+    def _validate_installed(self, plan: RestorePlan) -> dict[str, Any]:
         if not self._installed_candidate_matches(plan):
             raise DishRuleError(
                 "BACKEND_UNCERTAIN",
@@ -753,7 +755,7 @@ class BackupManager:
         return data
 
     def _commit_prepared(
-        self, plan: dict[str, Any], *, replacement_already_started: bool = False
+        self, plan: RestorePlan, *, replacement_already_started: bool = False
     ) -> dict[str, Any]:
         candidate_path = self._verify_candidate(plan)
         live_before = plan.get("live_before")
@@ -803,7 +805,7 @@ class BackupManager:
         return self._validate_installed(plan)
 
     def restore(self, backup_id: str) -> dict[str, Any]:
-        plan: dict[str, Any] | None = None
+        plan: RestorePlan | None = None
         try:
             plan = self._prepare_restore(backup_id)
             return self._commit_prepared(plan)
@@ -823,7 +825,7 @@ class BackupManager:
         # leaves a durably identified candidate for restart recovery. SIGKILL
         # skips Python cleanup entirely and has the same filesystem outcome.
 
-    def _resume_rollback(self, plan: dict[str, Any], *, already_started: bool) -> None:
+    def _resume_rollback(self, plan: RestorePlan, *, already_started: bool) -> None:
         candidate = plan.get("rollback_candidate")
         if not isinstance(candidate, dict):
             raise DishRuleError(
