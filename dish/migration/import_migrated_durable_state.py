@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import sys
 from dataclasses import dataclass
@@ -197,13 +198,17 @@ def _prepare_tasks(
         row = rows_by_gid[gid]
         source_name = str(row.get("source_name") or row.get("expected_name") or "").strip()
         template_rel = str(row.get("template_file") or "").strip()
-        captured_section = str(row.get("captured_section_name") or "").strip()
-        if not source_name or not template_rel or not captured_section:
-            failures.append(f"{gid}: manifest lacks source_name, template_file, or captured_section_name")
+        destination_section = str(
+            row.get("proposed_target_section_name") or row.get("captured_section_name") or ""
+        ).strip()
+        if not source_name or not template_rel or not destination_section:
+            failures.append(
+                f"{gid}: manifest lacks source_name, template_file, or destination section"
+            )
             continue
-        section_gid = registry.get(captured_section)
+        section_gid = registry.get(destination_section)
         if section_gid is None:
-            failures.append(f"{gid} {source_name}: section registry lacks {captured_section!r}")
+            failures.append(f"{gid} {source_name}: section registry lacks {destination_section!r}")
             continue
         template_path = (batch_dir / template_rel).resolve()
         try:
@@ -234,6 +239,16 @@ def _prepare_tasks(
         if template.count(SECTION_PLACEHOLDER) != 1:
             failures.append(f"{gid} {source_name}: expected exactly one section placeholder")
             continue
+        destination_pattern = re.compile(
+            r"(?m)^Destination section: .+? — " + re.escape(SECTION_PLACEHOLDER) + r"$"
+        )
+        if len(destination_pattern.findall(template)) != 1:
+            failures.append(f"{gid} {source_name}: canonical destination line is missing or duplicated")
+            continue
+        template = destination_pattern.sub(
+            f"Destination section: {destination_section} — {SECTION_PLACEHOLDER}",
+            template,
+        )
         resolved = template.replace(STATE_PLACEHOLDER, _state_block(assignments[gid]))
         resolved = resolved.replace(SECTION_PLACEHOLDER, section_gid)
         resolved = resolved.rstrip("\n") + f"\nSchema version: {schema_version}\n"
