@@ -474,7 +474,9 @@ Production cutover may begin only when all of the following are true.
 - no active restore/fault state exists;
 - no unreadable or unaccounted sidecar exists;
 - no current command can be accepted by a legacy writer after the planned fence;
-- every visible in-scope Asana task is mapped for import or explicitly isolated.
+- every visible in-scope Asana task is mapped for import or explicitly isolated;
+- the approved final Asana snapshot covers exact content, completion, governed project membership, section placement, and the complete in-scope object set;
+- gap-free observation remains closed through durable activation, and any relevant intervening Asana change invalidates approval and requires recapture.
 
 ### 11.4 Target readiness
 
@@ -484,7 +486,7 @@ Production cutover may begin only when all of the following are true.
 - service and client protocol release is coordinated;
 - post-restore bootstrap authority exists;
 - projection readiness and corpus reconciler are healthy;
-- PostgreSQL-native create is enabled only if Asana correlation proof passes.
+- PostgreSQL-native `create` is available through a proven safe topology; production cutover cannot leave the current governed creation semantic disabled unless Marco explicitly approves retirement.
 
 ### 11.5 Human authorization
 
@@ -508,20 +510,22 @@ The exact commands and deployment tooling are implementation details, but the au
 2. Stop new ordinary mutation admission.
 3. Drain or settle in-flight requests and effects.
 4. Establish the hard mechanical legacy-writer fence.
-5. Prove legacy closure and continuous Asana corpus classification.
-6. Capture the final transactionally complete legacy authority bundle.
-7. Import into a clean production PostgreSQL target.
-8. Validate semantic parity, provenance, mappings, schema, releases, and no unresolved target authority.
-9. Record Marco's exact cutover approval if not already bound to the final evidence.
-10. Prepare the authority activation and initial PostgreSQL generation.
-11. Deploy the coherent target service, Action/OpenAPI, protocol, and routing release while mutation admission remains closed.
-12. Activate PostgreSQL authority durably.
-13. Burn ordinary rollback before the first PostgreSQL mutation request is admitted.
-14. Open PostgreSQL mutation admission only for the active generation and release set.
-15. Start or enable downstream projection workers and corpus reconciliation.
-16. Verify old direct endpoints, credentials, and processes cannot mutate.
-17. Run immediate post-activation health, read, replay, mutation, projection, and stale-client probes.
-18. Record cutover completion or enter the applicable recovery boundary.
+5. Establish an exact final Asana authority snapshot covering content, completion, governed project membership, section placement, and the complete in-scope object set.
+6. Maintain gap-free change closure from that snapshot through durable activation; any relevant Asana change invalidates approval and requires recapture.
+7. Prove legacy closure and continuous Asana corpus classification.
+8. Capture the final transactionally complete SQLite and sidecar authority bundle.
+9. Import into a clean production PostgreSQL target.
+10. Validate semantic parity, provenance, mappings, schema, releases, and no unresolved target authority.
+11. Record Marco's exact cutover approval if not already bound to the final evidence.
+12. Prepare the authority activation and initial PostgreSQL generation.
+13. Deploy the coherent target service, Action/OpenAPI, protocol, and routing release while mutation admission remains closed.
+14. Activate PostgreSQL authority durably.
+15. Commit rollback-burn evidence; once committed, return to legacy authority is prohibited even if no PostgreSQL mutation request has yet been admitted.
+16. Open PostgreSQL mutation admission only after rollback burn is durable and only for the active generation and release set.
+17. Start or enable downstream projection workers and corpus reconciliation.
+18. Verify old direct endpoints, credentials, and processes cannot mutate.
+19. Run immediate post-activation health, read, replay, mutation, projection, and stale-client probes.
+20. Record cutover completion or enter the applicable recovery boundary.
 
 Routing changes alone do not transfer authority. Credential revocation or equivalent hard fencing is mandatory, not best effort.
 
@@ -545,7 +549,7 @@ Only one activation and one PostgreSQL generation may be current.
 
 ### 14.1 Before rollback burn
 
-Before the first PostgreSQL mutation request is admitted, cutover may abort back to the still-frozen legacy authority only when:
+Before rollback-burn evidence commits, cutover may abort back to the still-frozen legacy authority only when:
 
 - no PostgreSQL mutation request was accepted;
 - no target-side downstream effect was issued as production projection;
@@ -555,7 +559,7 @@ Before the first PostgreSQL mutation request is admitted, cutover may abort back
 
 ### 14.2 After rollback burn
 
-After the first PostgreSQL mutation request is admitted, ordinary rollback to Asana is prohibited.
+Once rollback-burn evidence commits, ordinary rollback to Asana is prohibited, even if no PostgreSQL mutation request has yet been admitted. Mutation admission opens only after the burn is durable.
 
 Recovery uses:
 
@@ -684,10 +688,10 @@ Evidence should be machine-readable where practical and linked to immutable dige
 | Import semantic mismatch | Fail import approval. Correct tooling or source through a new governed process; recapture as needed. |
 | Unresolved legacy authority | Drain, resolve, settle, abandon, or isolate under an explicit rule. Do not import as live open authority. |
 | Hard writer fence cannot be proven | Do not activate PostgreSQL authority. |
-| Asana create correlation proof fails | Keep PostgreSQL-native create disabled and return topology choices to Marco. |
+| Asana create correlation proof fails | Keep `create` disabled during shadowing/rehearsal. Do not cut over until Marco approves a safe topology preserving current `create`, or explicitly retires it. |
 | Activation crash | Recover from durable activation evidence; never infer authority from routing. |
-| Failure before rollback burn | Abort only if no PostgreSQL request was admitted and legacy authority remains valid. |
-| Failure after rollback burn | Recover PostgreSQL; do not reverse-import Asana. |
+| Failure before rollback burn | Abort only if no PostgreSQL request was admitted, no production projection was issued, and legacy authority remains valid. |
+| Failure after rollback burn | Recover PostgreSQL even if no request was admitted; do not reactivate or reverse-import Asana. |
 | Post-cutover Asana outage | Continue PostgreSQL authority; report projection lag and retry safely. |
 | Destructive PostgreSQL restore | Establish a new generation and deliberate-reissue boundary before reopening mutations. |
 

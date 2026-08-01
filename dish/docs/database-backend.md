@@ -55,7 +55,7 @@ Stage A does not include:
 - migration of unresolved operations into live PostgreSQL authority at production cutover;
 - routine hard deletion as a lifecycle feature.
 
-Future Cooked and Archive semantics must remain distinct from completion and from each other, but they are not designed here.
+Completion has no independent product meaning. It becomes true only as the consequence of a governed Cooked or Archive transition. Stage A does not design those transitions and does not add a generic completion-setting command. Imported completion remains preserved, and the existing narrow `reopen-planning` route may clear it.
 
 ## 3. Approved human decisions
 
@@ -124,7 +124,7 @@ Stage A preserves current governed actions and adds only specifically identified
 
 ### 3.15 Historical exceptions
 
-Problematic historical source items are not silently discarded. They are reconciled or isolated case by case from exact evidence. Stage A does not introduce a general governed `historical_read_only` lifecycle.
+Problematic historical source items are not silently discarded. Marco approves their reconciliation or isolation from exact presented evidence. Stage A does not introduce a general governed `historical_read_only` lifecycle.
 
 ### 3.16 Planning-intent settlement
 
@@ -138,14 +138,14 @@ The migration changes storage and authority location, not the meaning of current
 |---|---|
 | Live mutation ownership | One Dish service remains the only supported governed mutation authority. Clients never receive writable database access or the Asana authority credential. |
 | Workflow legality | One authoritative current snapshot determines legal actions. Transports, individual commands, and compatibility paths do not independently invent legality. |
-| Exact live state | Governed mutations bind to exact task content and relevant placement or state evidence, not assumed or stale state. |
+| Exact live state | Governed mutations bind to exact task content, logical project membership, logical section placement, and relevant state evidence, not assumed or stale state. |
 | External effects | Intent is durable before an external call. Every attempt settles as `confirmed`, `not_applied`, or `uncertain`; uncertain effects are reconciled rather than blindly retried. |
 | Request replay | One immutable request identity binds owner, run, command, canonical arguments, and authoritative outcome. Reuse with conflicting identity fails closed. |
 | Committed success | A later view, cleanup, transport-audit, or projection failure cannot turn committed success into retry advice. |
 | Planning intent | The two-request Planning gate remains durable, exact, owner/run/task/agent/target-bound, single-use, and admission-only on the first request. |
 | Marco authorization | Governed-change authorizations remain exact, reservable, releasable, single-use capabilities rather than generic audit annotations. |
 | Verification | Verification binds exact content/version occurrence, cycle, actor, run lineage, inspection evidence, correction lineage, and signoff evidence. |
-| Completion | Completion remains separate from workflow phase and gates Planning. `reopen-planning` clears completion through a narrow audited route. |
+| Completion | Completion remains separate from workflow phase and gates Planning. Completion may become true only through a governed Cooked or Archive transition; Stage A adds no generic completion-setting command. Imported completion remains authoritative, and `reopen-planning` clears it through a narrow audited route. |
 | Leases | Actor leases remain distinct from workflow ownership, executor claims, task mutation fences, and run revocation. |
 | Execution | Request execution claims and unresolved execution evidence prevent duplicate work and support exact takeover or recovery. |
 | Recovery | Recovery remains route-specific. Lease recovery, ambiguous-effect reconciliation, destination repair, discard, evidence handling, Human Review, Planning reopen, and abandonment are not collapsed into a generic unblock. |
@@ -171,7 +171,15 @@ A task is identified by a stable Dish UUID. External identifiers are recorded as
 
 Imported Asana GIDs remain aliases to the imported Dish task. A post-cutover Asana projection mapping is downstream evidence and cannot create or transfer task authority.
 
-### 5.3 Canonical document and immutable versions
+### 5.3 Logical placement and section registry
+
+After cutover, PostgreSQL owns logical membership in the governed project set, logical section placement, and the authoritative section registry used by workflow legality. Asana project and section GIDs are aliases or projection mappings. Downstream Asana observations never change legal actions or authoritative placement. Governed transitions that currently couple workflow and placement advance those authorities together.
+
+### 5.4 Honest protocol and canonical schema authority
+
+Stage A does not transfer authority for the Honest protocol or canonical task schema into PostgreSQL. Canonical interpretation continues to come from the governing Honest release source. PostgreSQL records immutable release identity, hashes, provenance, and operation or Verification-cycle bindings. Any later transfer of that authority requires a separate explicit decision.
+
+### 5.5 Canonical document and immutable versions
 
 Stage A stores a canonical title/body document. Every authoritative content occurrence is immutable.
 
@@ -179,13 +187,13 @@ A task's current content pointer advances through append-only activation evidenc
 
 Content identity must remain reproducible across migration. Existing identity schemes remain named and versioned rather than being silently reinterpreted.
 
-### 5.4 Workflow and control state
+### 5.6 Workflow and control state
 
-Workflow operations, steps, actor facts, Verification cycles, inspection facts, authorizations, completion, holds, abandonment, succession, and recovery evidence remain separate domain authorities.
+Workflow operations, steps, actor facts, Verification cycles, inspection facts, authorizations, completion, logical placement, holds, abandonment, succession, and recovery evidence remain separate domain authorities. Completion is imported or derived only from a governed Cooked or Archive transition; Stage A defines no standalone positive-completion mutation.
 
 A generic event stream or audit log may provide causality and observability, but it does not replace these domain facts.
 
-### 5.5 Requests, runs, executions, and fences
+### 5.7 Requests, runs, executions, and fences
 
 Request identity is immutable within an authority generation. A request stores its canonical initial outcome separately from any later uncertainty resolution or fresh current view.
 
@@ -193,7 +201,7 @@ A command execution records admission and execution ownership. Executor claims a
 
 Runs and requests are generation-bound. After destructive restore, stale processes cannot regain mutation authority merely by selecting a new run UUID or echoing the current generation. Reissue must be deliberately authorized by the post-restore control boundary.
 
-### 5.6 Planning intent
+### 5.8 Planning intent
 
 Planning challenge issuance is a replay-bound admission mutation that does not read or mutate task state, create an operation, or acquire an actor lease.
 
@@ -201,19 +209,19 @@ A fresh request must claim the exact challenge before ordinary Planning admissio
 
 Marco-only terminal settlement is append-only and non-reusable.
 
-### 5.7 Verification
+### 5.9 Verification
 
 Verification reviews and signs exact immutable content occurrences. Reviewed, corrected, approved-candidate, and signed occurrences remain explicit where current behavior requires distinct lineage.
 
 Inspection creates durable decision evidence even though it does not advance canonical content. The target service contract must give that evidence an exact replay or equivalent idempotent admission boundary.
 
-### 5.8 External effects
+### 5.10 External effects
 
 Before cutover, Asana effects remain governed external effects under current authority. During shadowing, exact effect intent and observations feed both the live adjudication and PostgreSQL shadow evidence.
 
 After cutover, Asana projection effects use the same intent-before-call and evidence-after-call discipline. A projection effect never becomes task authority.
 
-### 5.9 Projection to Asana
+### 5.11 Projection to Asana
 
 PostgreSQL emits ordered downstream projection intent transactionally with authoritative changes.
 
@@ -235,9 +243,9 @@ Every visible in-scope Asana task must be classified as one of:
 
 A blocking unknown object makes projection readiness unhealthy until isolated or resolved. It is not automatically deleted or promoted.
 
-PostgreSQL-native task creation remains disabled until the deployed Asana contract proves lost-response-safe creation correlation. If that proof fails, Marco chooses a different bounded topology or temporarily disables the affected creation path.
+PostgreSQL-native task creation remains disabled during shadowing and rehearsal until the deployed Asana contract proves lost-response-safe creation correlation. Production cutover cannot leave the current governed `create` semantic unavailable unless Marco explicitly approves its retirement. If the proof fails, cutover remains blocked until Marco approves a bounded topology that preserves `create` or explicitly retires it.
 
-### 5.10 Audit, migration provenance, and repair
+### 5.12 Audit, migration provenance, and repair
 
 Governed domain facts and their authoritative audit commit together where current semantics require atomicity.
 
@@ -245,7 +253,7 @@ Invocation or transport audit may remain outside that transaction only if commit
 
 Alembic may execute schema migrations, but applied migration history remains immutable, release-bound, and authority-generation-bound.
 
-### 5.11 Backup and restore
+### 5.13 Backup and restore
 
 PostgreSQL backups, WAL retention, restore, and PITR are operator responsibilities. They are not ordinary Dish task commands.
 
@@ -276,7 +284,7 @@ Before the live external effect, the current authority durably registers either:
 
 PostgreSQL availability does not change the live Asana result. Exact envelopes may be delivered and adjudicated asynchronously. A post-state reread may repair current-state mirroring but cannot manufacture missing command-parity evidence.
 
-Shared decision logic is not accepted as its own behavioral oracle. Before refactoring, implementation freezes a characterization corpus from the current system. Readiness proves both preservation against that corpus and live/shadow agreement.
+Shared decision logic is not accepted as its own behavioral oracle. Preservation evidence must be independent of the shared implementation logic; adapter agreement alone is insufficient.
 
 A destructive legacy SQLite restore establishes a new legacy authority generation, rejects or invalidates prior-generation requests and runs, disqualifies prior-generation parity evidence, and requires a fresh complete baseline before shadowing resumes.
 
@@ -286,6 +294,7 @@ Production cutover requires:
 
 - Marco's explicit evidence-based authorization;
 - no unresolved operations, leases, requests, execution claims, external effects, authorization reservations, Planning challenges, backup reservations, restore activity, abandonment transitions, or other open authority accepted by the cutover policy;
+- an exact final Asana authority snapshot covering content, completion, governed project membership, section placement, and the complete in-scope object set, with gap-free closure through durable activation;
 - a complete transactionally consistent legacy authority bundle;
 - a validated PostgreSQL import with exact provenance;
 - a proven downstream projection path;
@@ -315,7 +324,7 @@ Authority activation is a durable decision, not only a routing change. Old write
 
 ### 7.5 Complete cutover bundle
 
-The legacy cutover bundle includes WAL-complete SQLite state, sidecars, restore evidence, ownership evidence, audit-repair evidence, and exact migration provenance.
+The cutover evidence binds an exact final Asana authority snapshot and gap-free closure through activation together with WAL-complete SQLite state, sidecars, restore evidence, ownership evidence, audit-repair evidence, and exact migration provenance. Any relevant Asana change after the accepted snapshot invalidates approval and requires recapture and revalidation.
 
 ### 7.6 Import activation provenance
 
@@ -327,7 +336,7 @@ The reused Asana projects remain continuously classified as mapped, in-flight-co
 
 ### 7.8 Projector-create feasibility
 
-Lost-response-safe Asana creation is proven before PostgreSQL-native creation depends on it.
+Lost-response-safe Asana creation is proven before PostgreSQL-native creation depends on it. Production cutover preserves the current governed `create` semantic unless Marco explicitly approves its retirement.
 
 ### 7.9 Post-restore deliberate reissue
 
@@ -343,7 +352,7 @@ Current schema head is not the only migration evidence. Applied history remains 
 
 ### 7.12 Independent behavioral oracle
 
-Current behavior is characterized before shared-kernel refactoring. Adapter parity does not substitute for behavior preservation.
+Behavior-preservation evidence is independent of shared target implementation logic. Adapter parity does not substitute for preservation evidence.
 
 ### 7.13 Resolved production import
 
@@ -353,17 +362,7 @@ Shadow may model open state; production cutover imports only resolved authority.
 
 The target command surface may break compatibility, but its semantics remain bounded by this architecture and the current authority coverage.
 
-Before cutover, the implementation design must maintain a semantic-delta matrix for every current agent and admin command:
-
-- retained, retired, renamed, or reclassified;
-- principal and authority source;
-- legal preconditions;
-- replay treatment;
-- canonical result semantics;
-- migration treatment;
-- feature gate.
-
-The matrix is not permission to add speculative commands. New product behavior requires explicit acceptance before becoming a cutover dependency.
+Before cutover, every current agent and admin command must have an explicit approved treatment consistent with preserved authority and the compatibility policy. The implementation companion owns the concrete semantic-delta artifact and its fields. This coverage is not permission to add speculative commands. New product behavior requires explicit acceptance before becoming a cutover dependency.
 
 The public task identifier changes to Dish UUID only when the live authority path can route that identifier correctly. A shadow-only UUID must not become pre-cutover mutation authority.
 

@@ -240,9 +240,9 @@ A command may create multiple complete lineage occurrences where Verification re
 
 Location history remains separate from content history. Current location references exact governed project/section identity and provenance.
 
-Completion remains an independent Planning-eligibility axis. `reopen-planning` records the attempted before/after state and audit before clearing completion.
+Completion remains an independent Planning-eligibility axis, but it has no standalone positive-setting command. It may become true only through a governed Cooked or Archive transition. Stage A preserves imported completion and retains `reopen-planning`, which records the attempted before/after state and audit before clearing completion.
 
-No Cooked or Archive state is implemented in Stage A unless separately authorized before re-baseline.
+No Cooked or Archive transition is implemented in Stage A unless separately authorized before re-baseline.
 
 ### 6.7 Operations, steps, and actors
 
@@ -570,7 +570,7 @@ Settlement rules:
 - multiple matches: unresolved, block automatic action;
 - zero matches: do not retry until the effect can be proven not applied under the supported API/indexing contract.
 
-If feasibility fails, keep PostgreSQL-native create disabled and return bounded topology alternatives to Marco.
+If feasibility fails, keep PostgreSQL-native create disabled during shadowing and rehearsal and return bounded topology alternatives to Marco. Production cutover remains blocked unless Marco approves a topology that preserves the current `create` semantic or explicitly retires that semantic.
 
 ### 9.5 Corpus reconciler
 
@@ -659,7 +659,7 @@ Projection freshness is reported separately and never changes legal PostgreSQL a
 8. Extract the shared planner/adjudicator while preserving the characterization corpus.
 9. Implement import provenance and shadow-envelope storage/delivery.
 10. Implement projection outbox, mappings, attempts, adjudication, and corpus reconciler.
-11. Prove Asana creation correlation or leave PostgreSQL-native create disabled.
+11. Prove Asana creation correlation; do not permit production cutover with current `create` unavailable unless Marco explicitly retires it.
 12. Implement coherent target service/OpenAPI/Action protocol and semantic-delta matrix.
 13. Complete migration tooling and rehearsal support under `database-backend-migration.md`.
 14. Run implementation acceptance before any production cutover decision.
