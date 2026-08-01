@@ -14,84 +14,35 @@ from dish_service.leases import ServicePrincipal
 from dish_tool.cli import build_parser
 from dish_tool.database import initialize_database
 from dish_tool.errors import DishRuleError
+from tests.support.thread_teardown import join_thread, start_server_thread, stop_server, managed_thread
 from tests.support.planning import Backend, release
+from tests.support.planning_intent import (
+    FIRST_REQUEST,
+    RUN_ID,
+    SECOND_REQUEST,
+    TASK_GID,
+    THIRD_REQUEST,
+    confirm as _confirm,
+    connect as _connect,
+    issue as _issue,
+    planning_arguments as _planning_arguments,
+    principal as _principal,
+    service as _service,
+)
 
 
-TASK_GID = "123456789"
-RUN_ID = "11111111-1111-4111-8111-111111111111"
-FIRST_REQUEST = "22222222-2222-4222-8222-222222222222"
-SECOND_REQUEST = "33333333-3333-4333-8333-333333333333"
-THIRD_REQUEST = "44444444-4444-4444-8444-444444444444"
 
 
-def _service(tmp_path, backend=None, *, backend_factory=None):
-    honest = tmp_path / "honest"
-    honest.mkdir()
-    (honest / "dish-verification-protocol.md").write_text(
-        "verification protocol", encoding="utf-8"
-    )
-    selected_backend = backend or Backend()
-    return DishService(
-        ServiceConfig(
-            db_path=tmp_path / "dish.db",
-            honest_root=honest,
-            backup_dir=tmp_path / "backups",
-            port=0,
-            agent_token="agent-secret",
-            admin_token="admin-secret",
-            action_token="action-secret",
-        ),
-        backend_factory=backend_factory or (lambda: selected_backend),
-        release_loader=lambda role=None: release(honest, role),
-    ), selected_backend
 
 
-def _principal(owner_id="action", run_id=RUN_ID):
-    return ServicePrincipal(owner_id=owner_id, run_id=run_id)
 
 
-def _planning_arguments(**extra):
-    return {"agent": "gpt", "task_gid": TASK_GID, "kind": "planning", **extra}
 
 
-def _issue(service, *, arguments=None, request_id=FIRST_REQUEST, principal=None):
-    return service.execute_agent(
-        "start",
-        arguments or _planning_arguments(),
-        principal=principal or _principal(),
-        request_id=request_id,
-    )
 
 
-def _confirm(
-    service,
-    challenge,
-    *,
-    request_id=SECOND_REQUEST,
-    principal=None,
-    intent_basis="user_requested",
-    override_reason=None,
-    arguments=None,
-):
-    payload = dict(arguments or _planning_arguments())
-    payload.update(
-        {
-            "intent_challenge_id": challenge["data"]["intent_challenge_id"],
-            "intent_basis": intent_basis,
-        }
-    )
-    if override_reason is not None:
-        payload["override_reason"] = override_reason
-    return service.execute_agent(
-        "start",
-        payload,
-        principal=principal or _principal(),
-        request_id=request_id,
-    )
 
 
-def _connect(service):
-    return initialize_database(service.config.db_path)
 
 @pytest.mark.flake_stress
 @pytest.mark.quarantined(
@@ -116,12 +67,12 @@ def test_concurrent_exact_first_calls_share_one_durable_challenge(tmp_path):
         except BaseException as exc:  # pragma: no cover - assertion reports it
             failures.append(exc)
 
-    threads = [threading.Thread(target=invoke) for _ in range(2)]
+    threads = [managed_thread(target=invoke) for _ in range(2)]
     for thread in threads:
         thread.start()
     barrier.wait(timeout=5)
     for thread in threads:
-        thread.join(timeout=5)
+        join_thread(thread, timeout=5)
         assert not thread.is_alive(), "Planning challenge worker did not terminate"
 
     assert not failures
@@ -140,58 +91,60 @@ def test_concurrent_exact_first_calls_share_one_durable_challenge(tmp_path):
         ).fetchone()[0] == 1
     finally:
         conn.close()
-@pytest.mark.flake_stress
-def test_concurrent_exact_followups_converge_on_one_operation(tmp_path):
-    entered_read = threading.Event()
-    release_read = threading.Event()
-    read_lock = threading.Lock()
+class _BlockingPlanningBackend(Backend):
+    def __init__(self, entered_read, release_read):
+        super().__init__()
+        self._entered_read = entered_read
+        self._release_read = release_read
+        self._read_lock = threading.Lock()
+        self._blocked_once = False
 
-    class BlockingBackend(Backend):
-        def __init__(self):
-            super().__init__()
-            self._blocked_once = False
-
-        def read_task(self, gid):
-            with read_lock:
-                should_block = not self._blocked_once
-                if should_block:
-                    self._blocked_once = True
+    def read_task(self, gid):
+        with self._read_lock:
+            should_block = not self._blocked_once
             if should_block:
-                entered_read.set()
-                assert release_read.wait(timeout=5)
-            return super().read_task(gid)
+                self._blocked_once = True
+        if should_block:
+            self._entered_read.set()
+            assert self._release_read.wait(timeout=5)
+        return super().read_task(gid)
 
-    backend = BlockingBackend()
-    service, _ = _service(tmp_path, backend=backend)
-    challenge = _issue(service)
-    arguments = _planning_arguments(
-        intent_challenge_id=challenge["data"]["intent_challenge_id"],
-        intent_basis="user_requested",
+
+class _ObservedPlanningIntentLock:
+    def __init__(self, real_lock, second_lock_attempted):
+        self._real_lock = real_lock
+        self._second_lock_attempted = second_lock_attempted
+
+    def __enter__(self):
+        if threading.current_thread().name == "planning-followup-second":
+            self._second_lock_attempted.set()
+        self._real_lock.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self._real_lock.release()
+
+
+def _observe_followup_lock(service, challenge_id, second_lock_attempted):
+    lock_index = sum(challenge_id.encode("utf-8")) % len(
+        service._planning_intent_locks
     )
+    locks = list(service._planning_intent_locks)
+    locks[lock_index] = _ObservedPlanningIntentLock(
+        locks[lock_index], second_lock_attempted
+    )
+    service._planning_intent_locks = tuple(locks)
+
+
+def _run_exact_followup_race(service, arguments, entered_read, release_read):
     results: list[dict] = []
     failures: list[BaseException] = []
     second_started = threading.Event()
     second_lock_attempted = threading.Event()
     second_done = threading.Event()
-    challenge_id = arguments["intent_challenge_id"]
-    lock_index = sum(challenge_id.encode("utf-8")) % len(
-        service._planning_intent_locks
+    _observe_followup_lock(
+        service, arguments["intent_challenge_id"], second_lock_attempted
     )
-    real_lock = service._planning_intent_locks[lock_index]
-
-    class ObservedPlanningIntentLock:
-        def __enter__(self):
-            if threading.current_thread().name == "planning-followup-second":
-                second_lock_attempted.set()
-            real_lock.acquire()
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            real_lock.release()
-
-    locks = list(service._planning_intent_locks)
-    locks[lock_index] = ObservedPlanningIntentLock()
-    service._planning_intent_locks = tuple(locks)
 
     def invoke(*, second=False):
         try:
@@ -211,10 +164,10 @@ def test_concurrent_exact_followups_converge_on_one_operation(tmp_path):
             if second:
                 second_done.set()
 
-    first = threading.Thread(target=invoke, name="planning-followup-first")
+    first = managed_thread(target=invoke, name="planning-followup-first")
     first.start()
     assert entered_read.wait(timeout=5)
-    second = threading.Thread(
+    second = managed_thread(
         target=invoke, kwargs={"second": True}, name="planning-followup-second"
     )
     second.start()
@@ -226,16 +179,17 @@ def test_concurrent_exact_followups_converge_on_one_operation(tmp_path):
         "second exact follow-up completed before the first request released"
     )
     release_read.set()
-    first.join(timeout=5)
-    second.join(timeout=5)
-    assert not first.is_alive()
-    assert not second.is_alive()
+    for thread in (first, second):
+        join_thread(thread, timeout=5)
+        assert not thread.is_alive()
+    return results, failures
 
+
+def _assert_followups_converged(service, results, failures):
     assert not failures
     assert len(results) == 2
     assert all(result["ok"] for result in results)
     assert len({result["submission_id"] for result in results}) == 1
-
     conn = _connect(service)
     try:
         assert conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 1
@@ -245,6 +199,26 @@ def test_concurrent_exact_followups_converge_on_one_operation(tmp_path):
         assert tuple(row) == ("consumed", results[0]["submission_id"])
     finally:
         conn.close()
+
+
+@pytest.mark.flake_stress
+def test_concurrent_exact_followups_converge_on_one_operation(tmp_path):
+    entered_read = threading.Event()
+    release_read = threading.Event()
+    backend = _BlockingPlanningBackend(entered_read, release_read)
+    service, _ = _service(tmp_path, backend=backend)
+    challenge = _issue(service)
+    arguments = _planning_arguments(
+        intent_challenge_id=challenge["data"]["intent_challenge_id"],
+        intent_basis="user_requested",
+    )
+    results, failures = _run_exact_followup_race(
+        service, arguments, entered_read, release_read
+    )
+    assert len(results) == 2
+    _assert_followups_converged(service, results, failures)
+
+
 def test_cli_parser_and_transport_preserve_only_supplied_confirmation_fields():
     first = vars(
         build_parser().parse_args(
@@ -337,8 +311,7 @@ def test_live_cli_and_action_http_surfaces_share_two_call_gate(
 ):
     service, _ = _service(tmp_path)
     server = build_server(service)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, daemon=True, name="thread")
     host, port = server.server_address
     client = client_type(f"http://{host}:{port}", token=token, run_id=RUN_ID)
     try:
@@ -362,9 +335,7 @@ def test_live_cli_and_action_http_surfaces_share_two_call_gate(
             intent_basis="user_requested",
         )
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
+        stop_server(server, thread)
 
     assert second["ok"], second
     assert second["allowed_actions"] == ["prepare"]

@@ -1,9 +1,9 @@
 from __future__ import annotations
-import pytest
 
 import threading
 
 import asana
+import pytest
 
 from dish_service.application import DishService
 from dish_service.client import DishActionClient
@@ -11,12 +11,12 @@ from dish_service.config import ServiceConfig
 from dish_service.http import build_action_server
 from dish_tool.backend import AsanaBackend, close_asana_sdk_client
 from dish_tool.database import initialize_database
+from tests.support.thread_teardown import join_thread, start_server_thread, stop_server
 from tests.support.placement import StatefulAsanaTransport, _release
 from tests.support.planning import PLANNING, TASK
 
 
-@pytest.mark.smoke
-def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
+def _running_action_topology(tmp_path):
     config = asana.Configuration()
     config.return_page_iterator = False
     api_client = asana.ApiClient(config)
@@ -44,108 +44,112 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
         release_loader=lambda role=None: _release(honest, role),
     )
     server = build_action_server(service)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, daemon=True, name="thread")
     host, port = server.server_address
-    url = f"http://{host}:{port}"
+    return service, transport, api_client, server, thread, f"http://{host}:{port}"
 
-    try:
-        planner = DishActionClient(url, token="action-secret-123", run_id="11111111-1111-4111-8111-111111111111")
-        created = planner.execute(
-            "create",
-            agent="gpt",
-            title="Bare",
-            request_id="11111111-1111-4111-8111-111111111111",
-        )
-        task_gid = created["task_gid"]
-        planning_challenge = planner.execute(
-            "start",
-            agent="gpt",
-            task_gid=task_gid,
-            kind="planning",
-            request_id="22222222-2222-4222-8222-222222222222",
-        )
-        assert planning_challenge["code"] == "CONFIRMATION_REQUIRED"
-        planning = planner.execute(
-            "start",
-            agent="gpt",
-            task_gid=task_gid,
-            kind="planning",
-            intent_challenge_id=planning_challenge["data"]["intent_challenge_id"],
-            intent_basis="user_requested",
-            request_id="25252525-2525-4525-8525-252525252525",
-        )
-        planned = planner.execute(
-            "prepare",
-            agent="gpt",
-            model="gpt-5.6-sol",
-            submission_id=planning["submission_id"],
-            file_text=PLANNING.replace("Sichuan — 12345", "Planned — 333"),
-        )
 
-        researcher = DishActionClient(
-            url, token="action-secret-123", run_id="22222222-2222-4222-8222-222222222222"
-        )
-        research = researcher.execute(
-            "start",
-            agent="gpt",
-            task_gid=task_gid,
-            kind="initial",
-            request_id="33333333-3333-4333-8333-333333333333",
-        )
-        prepared = researcher.execute(
-            "prepare",
-            agent="gpt",
-            model="gpt-5.6-sol",
-            submission_id=research["submission_id"],
-            file_text=TASK.replace("Sichuan — 12345", "Planned — 333"),
-        )
+def _run_planning(url):
+    planner = DishActionClient(
+        url,
+        token="action-secret-123",
+        run_id="11111111-1111-4111-8111-111111111111",
+    )
+    created = planner.execute(
+        "create",
+        agent="gpt",
+        title="Bare",
+        request_id="11111111-1111-4111-8111-111111111111",
+    )
+    task_gid = created["task_gid"]
+    challenge = planner.execute(
+        "start",
+        agent="gpt",
+        task_gid=task_gid,
+        kind="planning",
+        request_id="22222222-2222-4222-8222-222222222222",
+    )
+    assert challenge["code"] == "CONFIRMATION_REQUIRED"
+    planning = planner.execute(
+        "start",
+        agent="gpt",
+        task_gid=task_gid,
+        kind="planning",
+        intent_challenge_id=challenge["data"]["intent_challenge_id"],
+        intent_basis="user_requested",
+        request_id="25252525-2525-4525-8525-252525252525",
+    )
+    planned = planner.execute(
+        "prepare",
+        agent="gpt",
+        model="gpt-5.6-sol",
+        submission_id=planning["submission_id"],
+        file_text=PLANNING.replace("Sichuan — 12345", "Planned — 333"),
+    )
+    return created, planning, planned, task_gid
 
-        verifier = DishActionClient(
-            url, token="action-secret-123", run_id="33333333-3333-4333-8333-333333333333"
-        )
-        review = verifier.execute(
-            "start",
-            agent="codex",
-            task_gid=task_gid,
-            kind="verification",
-            request_id="44444444-4444-4444-8444-444444444444",
-            independence_attestation="independent",
-        )
-        review_inspect = verifier.execute(
-            "inspect",
-            agent="codex",
-            submission_id=research["submission_id"],
-        )
-        assert review_inspect["ok"], review_inspect
-        assert review_inspect["data"].get("dish_inspect_fact"), review_inspect
-        approved = verifier.execute(
-            "approve",
-            agent="codex",
-            model="gpt-5.6-sol",
-            submission_id=research["submission_id"],
-            correction="none",
-            reviewed_identity=review["data"]["reviewed_identity"],
-            semantic_review_complete=True,
-            provenance_complete=True,
-        )
-        submitted = verifier.execute(
-            "submit", submission_id=research["submission_id"]
-        )
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2)
-        close_asana_sdk_client(api_client)
 
-    assert created["ok"] and planning["ok"] and planned["ok"]
-    assert research["ok"] and prepared["ok"] and review["ok"]
-    assert approved["ok"], approved
-    assert submitted["ok"], submitted
+def _run_research(url, task_gid):
+    researcher = DishActionClient(
+        url,
+        token="action-secret-123",
+        run_id="22222222-2222-4222-8222-222222222222",
+    )
+    research = researcher.execute(
+        "start",
+        agent="gpt",
+        task_gid=task_gid,
+        kind="initial",
+        request_id="33333333-3333-4333-8333-333333333333",
+    )
+    prepared = researcher.execute(
+        "prepare",
+        agent="gpt",
+        model="gpt-5.6-sol",
+        submission_id=research["submission_id"],
+        file_text=TASK.replace("Sichuan — 12345", "Planned — 333"),
+    )
+    return research, prepared
+
+
+def _run_verification(url, task_gid, operation_id):
+    verifier = DishActionClient(
+        url,
+        token="action-secret-123",
+        run_id="33333333-3333-4333-8333-333333333333",
+    )
+    review = verifier.execute(
+        "start",
+        agent="codex",
+        task_gid=task_gid,
+        kind="verification",
+        request_id="44444444-4444-4444-8444-444444444444",
+        independence_attestation="independent",
+    )
+    inspected = verifier.execute(
+        "inspect", agent="codex", submission_id=operation_id
+    )
+    assert inspected["ok"], inspected
+    assert inspected["data"].get("dish_inspect_fact"), inspected
+    approved = verifier.execute(
+        "approve",
+        agent="codex",
+        model="gpt-5.6-sol",
+        submission_id=operation_id,
+        correction="none",
+        reviewed_identity=review["data"]["reviewed_identity"],
+        semantic_review_complete=True,
+        provenance_complete=True,
+    )
+    submitted = verifier.execute("submit", submission_id=operation_id)
+    return review, approved, submitted
+
+
+def _assert_full_lifecycle_persistence(service, transport, task_gid, operation_id):
     assert transport.tasks[task_gid]["section"] == "333"
-
     placement_calls = [
-        call for call in transport.calls
+        call
+        for call in transport.calls
         if call[0] == "/sections/{section_gid}/addTask"
     ]
     assert [call[2]["section_gid"] for call in placement_calls] == ["rq", "vq", "333"]
@@ -165,7 +169,31 @@ def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
         ).fetchone()[0] == 0
         assert conn.execute(
             "SELECT terminal_outcome FROM operations WHERE operation_id=?",
-            (research["submission_id"],),
+            (operation_id,),
         ).fetchone()[0] == "destination_handled"
     finally:
         conn.close()
+
+
+@pytest.mark.smoke
+def test_production_action_topology_drives_real_sdk_full_lifecycle(tmp_path):
+    service, transport, api_client, server, thread, url = _running_action_topology(
+        tmp_path
+    )
+    try:
+        created, planning, planned, task_gid = _run_planning(url)
+        research, prepared = _run_research(url, task_gid)
+        review, approved, submitted = _run_verification(
+            url, task_gid, research["submission_id"]
+        )
+    finally:
+        stop_server(server, thread)
+        close_asana_sdk_client(api_client)
+
+    assert created["ok"] and planning["ok"] and planned["ok"]
+    assert research["ok"] and prepared["ok"] and review["ok"]
+    assert approved["ok"], approved
+    assert submitted["ok"], submitted
+    _assert_full_lifecycle_persistence(
+        service, transport, task_gid, research["submission_id"]
+    )

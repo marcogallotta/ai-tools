@@ -9,15 +9,9 @@ from dish_tool.database_schema import _validate_semantic_evidence, initialize_da
 from tests.support.operational import _approved, _service
 
 
-@pytest.mark.smoke
-@pytest.mark.invariant_submission_terminal_proof
-def test_submission_audit_failure_preserves_movement_and_exact_replay_finalizes_once(
-    tmp_path, monkeypatch
-):
+def _submit_with_audit_failure(service, backend, operation_id, verifier, monkeypatch):
     import dish_tool.step9 as step9
 
-    service, backend = _service(tmp_path)
-    operation_id, verifier = _approved(service)
     original = step9.record_audit
     failed_once = False
 
@@ -39,7 +33,10 @@ def test_submission_audit_failure_preserves_movement_and_exact_replay_finalizes_
     )
     assert failed["code"] == "BACKEND_UNCERTAIN"
     assert backend.moves == moves_before + 1
+    return step9, original, request_id, moves_before
 
+
+def _assert_partial_submission_state(service, operation_id, request_id):
     conn = initialize_database(service.config.db_path)
     try:
         operation = conn.execute(
@@ -70,25 +67,8 @@ def test_submission_audit_failure_preserves_movement_and_exact_replay_finalizes_
     finally:
         conn.close()
 
-    fresh = service.execute_agent(
-        "submit",
-        {"submission_id": operation_id},
-        principal=verifier,
-        request_id=str(uuid.uuid4()),
-    )
-    assert fresh["errors"][0]["rule"] == "operation_mutation_recovery_required"
 
-    monkeypatch.setattr(step9, "record_audit", original)
-    recovered = service.execute_agent(
-        "submit",
-        {"submission_id": operation_id},
-        principal=verifier,
-        request_id=request_id,
-    )
-    assert recovered["ok"]
-    assert recovered["data"]["submission_recovered"] is True
-    assert backend.moves == moves_before + 1
-
+def _assert_terminal_submission_state(service, operation_id, request_id):
     conn = initialize_database(service.config.db_path)
     try:
         operation = conn.execute(
@@ -129,6 +109,39 @@ def test_submission_audit_failure_preserves_movement_and_exact_replay_finalizes_
         _validate_semantic_evidence(conn)
     finally:
         conn.close()
+
+
+@pytest.mark.smoke
+@pytest.mark.invariant_submission_terminal_proof
+def test_submission_audit_failure_preserves_movement_and_exact_replay_finalizes_once(
+    tmp_path, monkeypatch
+):
+    service, backend = _service(tmp_path)
+    operation_id, verifier = _approved(service)
+    step9, original, request_id, moves_before = _submit_with_audit_failure(
+        service, backend, operation_id, verifier, monkeypatch
+    )
+    _assert_partial_submission_state(service, operation_id, request_id)
+
+    fresh = service.execute_agent(
+        "submit",
+        {"submission_id": operation_id},
+        principal=verifier,
+        request_id=str(uuid.uuid4()),
+    )
+    assert fresh["errors"][0]["rule"] == "operation_mutation_recovery_required"
+
+    monkeypatch.setattr(step9, "record_audit", original)
+    recovered = service.execute_agent(
+        "submit",
+        {"submission_id": operation_id},
+        principal=verifier,
+        request_id=request_id,
+    )
+    assert recovered["ok"]
+    assert recovered["data"]["submission_recovered"] is True
+    assert backend.moves == moves_before + 1
+    _assert_terminal_submission_state(service, operation_id, request_id)
 
     replay = service.execute_agent(
         "submit",

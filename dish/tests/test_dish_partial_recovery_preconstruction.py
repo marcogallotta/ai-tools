@@ -28,10 +28,7 @@ from tests._partial_recovery_helpers import (
 )
 
 
-def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_once(
-    tmp_path, monkeypatch
-):
-    service, _backend = _service(tmp_path)
+def _start_preconstruction_operation(service):
     principal = ServicePrincipal(
         owner_id="action", run_id="efefefef-efef-4fef-8fef-efefefefefef"
     )
@@ -42,7 +39,7 @@ def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_
         request_id="72000000-0000-4000-8000-000000000001",
     )
     operation_id = started["submission_id"]
-    hold_request = "72000000-0000-4000-8000-000000000002"
+    request_id = "72000000-0000-4000-8000-000000000002"
     arguments = {
         "agent": "gpt",
         "submission_id": operation_id,
@@ -50,7 +47,12 @@ def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_
         "reason": "Need authoritative evidence before construction",
         "resume_status": "pending-research",
     }
+    return principal, operation_id, request_id, arguments
 
+
+def _fail_hold_audit_after_interleaved_inspect(
+    service, principal, operation_id, request_id, arguments, monkeypatch
+):
     import dish_tool.application_service as application_service
     import dish_tool.step8 as step8
     from dish_tool.invocation_audit import record_invocation_audit
@@ -62,10 +64,7 @@ def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_
 
     def fail_governed_hold_audit(*args, **kwargs):
         nonlocal failed_once
-        if (
-            not failed_once
-            and kwargs.get("event_type") == "research.preconstruction_blocked"
-        ):
+        if not failed_once and kwargs.get("event_type") == "research.preconstruction_blocked":
             failed_once = True
             raise RuntimeError("injected governed hold audit failure")
         return real_record_audit(*args, **kwargs)
@@ -105,12 +104,13 @@ def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_
             recover_after_interleaved_inspect,
         )
         failed = service.execute_agent(
-            "reject",
-            arguments,
-            principal=principal,
-            request_id=hold_request,
+            "reject", arguments, principal=principal, request_id=request_id
         )
+    assert inspect_interleaved is True
+    return failed
 
+
+def _assert_failed_hold_rolled_back(service, operation_id, request_id, failed):
     assert failed["code"] == "BACKEND_UNCERTAIN"
     assert failed["errors"][0]["rule"] == "operation_exact_replay_required"
     assert failed["retryable"] is True
@@ -122,93 +122,74 @@ def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_
     assert failed["data"].get("required_admin_outcome") is None
     assert failed["data"].get("admin_recovery_lease_scope") is None
     assert failed["data"]["admin_recovery_immediately_executable"] is False
-    assert inspect_interleaved is True
-
     conn = initialize_database(service.config.db_path)
     try:
         operation = conn.execute(
-            "SELECT phase,status FROM operations WHERE operation_id=?",
-            (operation_id,),
+            "SELECT phase,status FROM operations WHERE operation_id=?", (operation_id,)
         ).fetchone()
-        assert operation["phase"] == "prepare_required"
-        assert operation["status"] == "open"
+        assert tuple(operation) == ("prepare_required", "open")
         assert conn.execute(
-            "SELECT COUNT(*) FROM operation_steps "
-            "WHERE operation_id=? AND step_name='research_preconstruction_hold'",
+            "SELECT COUNT(*) FROM operation_steps WHERE operation_id=? AND step_name='research_preconstruction_hold'",
             (operation_id,),
         ).fetchone()[0] == 0
         assert conn.execute(
-            "SELECT COUNT(*) FROM audit_events "
-            "WHERE operation_id=? AND event_type='research.preconstruction_blocked'",
+            "SELECT COUNT(*) FROM audit_events WHERE operation_id=? AND event_type='research.preconstruction_blocked'",
             (operation_id,),
         ).fetchone()[0] == 0
         assert conn.execute(
-            "SELECT COUNT(*) FROM audit_events "
-            "WHERE operation_id=? AND event_type='dish.inspect'",
+            "SELECT COUNT(*) FROM audit_events WHERE operation_id=? AND event_type='dish.inspect'",
             (operation_id,),
         ).fetchone()[0] == 1
         request = conn.execute(
-            "SELECT * FROM service_requests WHERE request_id=?", (hold_request,)
+            "SELECT * FROM service_requests WHERE request_id=?", (request_id,)
+        ).fetchone()
+        execution = conn.execute(
+            "SELECT * FROM operation_executions WHERE request_id=?", (request_id,)
         ).fetchone()
         assert request["status"] == "uncertain"
-        execution = conn.execute(
-            "SELECT * FROM operation_executions WHERE request_id=?", (hold_request,)
-        ).fetchone()
-        assert execution["status"] == "uncertain"
-        assert execution["resolved_at"] is None
+        assert execution["status"] == "uncertain" and execution["resolved_at"] is None
     finally:
         conn.close()
 
+
+def _apply_and_replay_preconstruction_hold(service, principal, request_id, arguments):
     applied = service.execute_agent(
-        "reject",
-        arguments,
-        principal=principal,
-        request_id=hold_request,
+        "reject", arguments, principal=principal, request_id=request_id
     )
     assert applied["ok"]
     assert applied["data"]["route"] == "evidence"
     assert applied["data"]["phase"] == "held_evidence"
-
     replayed = service.execute_agent(
-        "reject",
-        arguments,
-        principal=principal,
-        request_id=hold_request,
+        "reject", arguments, principal=principal, request_id=request_id
     )
     assert replayed["ok"]
     assert replayed["data"]["request_replayed"] is True
 
+
+def _assert_preconstruction_hold_applied_once(service, operation_id, request_id):
     conn = initialize_database(service.config.db_path)
     try:
         operation = conn.execute(
-            "SELECT phase,status FROM operations WHERE operation_id=?",
-            (operation_id,),
+            "SELECT phase,status FROM operations WHERE operation_id=?", (operation_id,)
         ).fetchone()
-        assert operation["phase"] == "held_evidence"
-        assert operation["status"] == "open"
+        assert tuple(operation) == ("held_evidence", "open")
         hold_step = conn.execute(
-            "SELECT * FROM operation_steps "
-            "WHERE operation_id=? AND step_name='research_preconstruction_hold'",
+            "SELECT * FROM operation_steps WHERE operation_id=? AND step_name='research_preconstruction_hold'",
             (operation_id,),
         ).fetchone()
-        assert hold_step is not None
-        assert hold_step["completed_at"] is not None
+        assert hold_step is not None and hold_step["completed_at"] is not None
         assert conn.execute(
-            "SELECT COUNT(*) FROM audit_events "
-            "WHERE operation_id=? AND event_type='research.preconstruction_blocked' "
-            "AND governed_kind='decision' AND result_ok=1",
+            "SELECT COUNT(*) FROM audit_events WHERE operation_id=? AND event_type='research.preconstruction_blocked' AND governed_kind='decision' AND result_ok=1",
             (operation_id,),
         ).fetchone()[0] == 1
         request = conn.execute(
-            "SELECT * FROM service_requests WHERE request_id=?", (hold_request,)
+            "SELECT * FROM service_requests WHERE request_id=?", (request_id,)
         ).fetchone()
         assert request["status"] == "completed"
-        assert request["resolution_result_json"] is not None
         resolved = json.loads(request["resolution_result_json"])
-        assert resolved["ok"] is True
-        assert resolved["data"]["phase"] == "held_evidence"
+        assert resolved["ok"] is True and resolved["data"]["phase"] == "held_evidence"
         execution = conn.execute(
-            "SELECT * FROM operation_executions WHERE request_id=?", (hold_request,)
+            "SELECT * FROM operation_executions WHERE request_id=?", (request_id,)
         ).fetchone()
         assert execution["status"] == "completed"
         assert execution["resolution_evidence_json"] is not None
@@ -216,13 +197,23 @@ def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_
         conn.close()
 
 
-def test_admin_pending_request_reconstructs_preconstruction_resolution_after_restart(
+def test_preconstruction_hold_audit_failure_rolls_back_and_exact_replay_applies_once(
     tmp_path, monkeypatch
 ):
-    service, backend = _service(tmp_path)
-    import dish_tool.operation_execution as operation_execution
-    import dish_tool.step8 as step8
+    service, _backend = _service(tmp_path)
+    principal, operation_id, request_id, arguments = _start_preconstruction_operation(
+        service
+    )
+    failed = _fail_hold_audit_after_interleaved_inspect(
+        service, principal, operation_id, request_id, arguments, monkeypatch
+    )
+    assert failed["code"] == "BACKEND_UNCERTAIN"
+    _assert_failed_hold_rolled_back(service, operation_id, request_id, failed)
+    _apply_and_replay_preconstruction_hold(service, principal, request_id, arguments)
+    _assert_preconstruction_hold_applied_once(service, operation_id, request_id)
 
+
+def _start_held_preconstruction(service):
     agent = ServicePrincipal(
         owner_id="action", run_id="cccccccc-cccc-4ccc-8ccc-cccccccccccc"
     )
@@ -247,6 +238,11 @@ def test_admin_pending_request_reconstructs_preconstruction_resolution_after_res
         request_id="50000000-0000-4000-8000-000000000501",
     )
     assert held["ok"]
+    return operation_id
+
+
+def _interrupt_admin_hold_resolution(service, operation_id, monkeypatch):
+    import dish_tool.step8 as step8
 
     principal = ServicePrincipal(
         owner_id="marco-admin", run_id="dddddddd-dddd-4ddd-8ddd-dddddddddddd"
@@ -273,22 +269,29 @@ def test_admin_pending_request_reconstructs_preconstruction_resolution_after_res
                 principal=principal,
                 request_id=request_id,
             )
+    return principal, request_id, arguments
 
+
+def _assert_interrupted_hold_resolution(service, operation_id):
     conn = initialize_database(service.config.db_path)
     try:
         operation = conn.execute(
-            "SELECT status,phase FROM operations WHERE operation_id=?",
-            (operation_id,),
+            "SELECT status,phase FROM operations WHERE operation_id=?", (operation_id,)
         ).fetchone()
         assert tuple(operation) == ("open", "prepare_required")
         pending = conn.execute(
-            "SELECT completed_at FROM operation_steps "
-            "WHERE operation_id=? AND step_name='research_preconstruction_hold_resolution'",
+            "SELECT completed_at FROM operation_steps WHERE operation_id=? AND step_name='research_preconstruction_hold_resolution'",
             (operation_id,),
         ).fetchone()
         assert pending["completed_at"] is None
     finally:
         conn.close()
+
+
+def _reconstruct_admin_hold_resolution(
+    service, backend, operation_id, principal, request_id, arguments, monkeypatch
+):
+    import dish_tool.operation_execution as operation_execution
 
     restarted = DishService(
         service.config,
@@ -310,21 +313,20 @@ def test_admin_pending_request_reconstructs_preconstruction_resolution_after_res
     assert recovered["data"]["local_state_committed"] is True
     assert recovered["data"]["write_committed"] is False
     assert recovered["data"]["move_committed"] is False
-    assert recovered["data"]["failed_step"] == (
-        "research_preconstruction_hold_resolution"
-    )
+    assert recovered["data"]["failed_step"] == "research_preconstruction_hold_resolution"
     assert recovered["data"]["required_admin_action"] == "recover"
     assert recovered["data"]["required_admin_outcome"] == "applied"
     assert recovered["data"]["safe_to_retry"] is False
-
     exact = restarted.execute_admin(
-        "supply-evidence",
-        arguments,
-        principal=principal,
-        request_id=request_id,
+        "supply-evidence", arguments, principal=principal, request_id=request_id
     )
     assert exact["data"]["request_replayed"] is True
     assert exact["data"]["execution_id"] == recovered["data"]["execution_id"]
+    return restarted
+
+
+def _reconcile_admin_hold_resolution(restarted, operation_id, principal, monkeypatch):
+    import dish_tool.operation_execution as operation_execution
 
     with monkeypatch.context() as dead_process:
         dead_process.setattr(
@@ -346,3 +348,24 @@ def test_admin_pending_request_reconstructs_preconstruction_resolution_after_res
         for action in reconciled["data"]["actions"]
     )
 
+
+def test_admin_pending_request_reconstructs_preconstruction_resolution_after_restart(
+    tmp_path, monkeypatch
+):
+    service, backend = _service(tmp_path)
+    operation_id = _start_held_preconstruction(service)
+    assert operation_id
+    principal, request_id, arguments = _interrupt_admin_hold_resolution(
+        service, operation_id, monkeypatch
+    )
+    _assert_interrupted_hold_resolution(service, operation_id)
+    restarted = _reconstruct_admin_hold_resolution(
+        service,
+        backend,
+        operation_id,
+        principal,
+        request_id,
+        arguments,
+        monkeypatch,
+    )
+    _reconcile_admin_hold_resolution(restarted, operation_id, principal, monkeypatch)

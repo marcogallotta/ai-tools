@@ -30,10 +30,7 @@ from tests._partial_recovery_helpers import (
 
 
 
-def test_admin_recover_executes_immediately_under_exact_live_action_lease(
-    tmp_path, monkeypatch
-):
-    service, backend = _service(tmp_path)
+def _prepare_uncertain_write_under_action_lease(service, backend, monkeypatch):
     action = ServicePrincipal(
         owner_id="action", run_id="abababab-abab-4bab-8bab-abababababab"
     )
@@ -44,7 +41,6 @@ def test_admin_recover_executes_immediately_under_exact_live_action_lease(
         request_id="71000000-0000-4000-8000-000000000001",
     )
     operation_id = started["submission_id"]
-
     import dish_tool.step6 as step6
     from dish_tool.errors import DishRuleError
 
@@ -75,15 +71,15 @@ def test_admin_recover_executes_immediately_under_exact_live_action_lease(
             principal=action,
             request_id="71000000-0000-4000-8000-000000000002",
         )
-
     assert uncertain["code"] == "BACKEND_UNCERTAIN"
     assert uncertain["data"]["required_admin_action"] == "recover"
-    assert uncertain["data"]["admin_recovery_lease_scope"] == (
-        "exact_uncertain_execution"
-    )
+    assert uncertain["data"]["admin_recovery_lease_scope"] == "exact_uncertain_execution"
     assert uncertain["data"]["admin_recovery_immediately_executable"] is True
     assert backend.writes == 1
+    return action, operation_id, uncertain
 
+
+def _active_lease_id(service, operation_id, action):
     conn = initialize_database(service.config.db_path)
     try:
         actor_lease = conn.execute(
@@ -92,41 +88,33 @@ def test_admin_recover_executes_immediately_under_exact_live_action_lease(
         ).fetchone()
         assert actor_lease["owner_id"] == action.owner_id
         assert actor_lease["run_id"] == action.run_id
-        lease_id = actor_lease["lease_id"]
+        return actor_lease["lease_id"]
     finally:
         conn.close()
 
+
+def _recover_and_replay_action_write(service, operation_id, backend):
     admin = ServicePrincipal(
         owner_id="admin", run_id="cdcdcdcd-cdcd-4dcd-8dcd-cdcdcdcdcdcd"
     )
-    recovery_request = "71000000-0000-4000-8000-000000000003"
+    request_id = "71000000-0000-4000-8000-000000000003"
+    arguments = {
+        "submission_id": operation_id,
+        "outcome": "applied",
+        "reason": "reconcile confirmed Action write",
+    }
     recovered = service.execute_admin(
-        "recover",
-        {
-            "submission_id": operation_id,
-            "outcome": "applied",
-            "reason": "reconcile confirmed Action write",
-        },
-        principal=admin,
-        request_id=recovery_request,
+        "recover", arguments, principal=admin, request_id=request_id
+    )
+    replayed = service.execute_admin(
+        "recover", arguments, principal=admin, request_id=request_id
     )
     assert recovered["ok"]
+    assert replayed["ok"] and replayed["data"]["request_replayed"] is True
     assert backend.writes == 1
 
-    replayed = service.execute_admin(
-        "recover",
-        {
-            "submission_id": operation_id,
-            "outcome": "applied",
-            "reason": "reconcile confirmed Action write",
-        },
-        principal=admin,
-        request_id=recovery_request,
-    )
-    assert replayed["ok"]
-    assert replayed["data"]["request_replayed"] is True
-    assert backend.writes == 1
 
+def _assert_action_lease_handoff(service, operation_id, action, lease_id, execution_id):
     conn = initialize_database(service.config.db_path)
     try:
         assert conn.execute(
@@ -134,29 +122,26 @@ def test_admin_recover_executes_immediately_under_exact_live_action_lease(
             (operation_id,),
         ).fetchone() is None
         released_lease = conn.execute(
-            "SELECT * FROM service_leases WHERE lease_id=?",
-            (lease_id,),
+            "SELECT * FROM service_leases WHERE lease_id=?", (lease_id,)
         ).fetchone()
         assert released_lease["owner_id"] == action.owner_id
         assert released_lease["run_id"] == action.run_id
         assert released_lease["released_at"] is not None
-        assert released_lease["release_reason"].startswith(
-            "exact_recovery_handoff:"
-        )
+        assert released_lease["release_reason"].startswith("exact_recovery_handoff:")
         assert conn.execute(
-            "SELECT COUNT(*) FROM audit_events "
-            "WHERE operation_id=? AND event_type='operation.recovery'",
+            "SELECT COUNT(*) FROM audit_events WHERE operation_id=? AND event_type='operation.recovery'",
             (operation_id,),
         ).fetchone()[0] == 1
         execution = conn.execute(
-            "SELECT * FROM operation_executions WHERE execution_id=?",
-            (uncertain["data"]["execution_id"],),
+            "SELECT * FROM operation_executions WHERE execution_id=?", (execution_id,)
         ).fetchone()
         assert execution["status"] == "completed"
         assert execution["resolution_evidence_json"] is not None
     finally:
         conn.close()
 
+
+def _assert_fresh_verifier_claims(service):
     verifier = ServicePrincipal(
         owner_id="action", run_id="dededede-dede-4ded-8ded-dededededede"
     )
@@ -175,10 +160,23 @@ def test_admin_recover_executes_immediately_under_exact_live_action_lease(
     assert verification["data"]["service_lease"]["run_id"] == verifier.run_id
 
 
-def test_exact_recovery_to_evidence_handoff_releases_verifier_lease_for_admin_continuation(
+def test_admin_recover_executes_immediately_under_exact_live_action_lease(
     tmp_path, monkeypatch
 ):
     service, backend = _service(tmp_path)
+    action, operation_id, uncertain = _prepare_uncertain_write_under_action_lease(
+        service, backend, monkeypatch
+    )
+    assert uncertain["data"]["execution_id"]
+    lease_id = _active_lease_id(service, operation_id, action)
+    _recover_and_replay_action_write(service, operation_id, backend)
+    _assert_action_lease_handoff(
+        service, operation_id, action, lease_id, uncertain["data"]["execution_id"]
+    )
+    _assert_fresh_verifier_claims(service)
+
+
+def _prepare_verifier_for_evidence_handoff(service, backend):
     constructor = ServicePrincipal(
         owner_id="action", run_id="11111111-1111-4111-8111-111111111111"
     )
@@ -201,7 +199,6 @@ def test_exact_recovery_to_evidence_handoff_releases_verifier_lease_for_admin_co
         request_id="73000000-0000-4000-8000-000000000002",
     )
     assert prepared["ok"]
-
     verifier = ServicePrincipal(
         owner_id="action", run_id="22222222-2222-4222-8222-222222222222"
     )
@@ -224,7 +221,10 @@ def test_exact_recovery_to_evidence_handoff_releases_verifier_lease_for_admin_co
         request_id="73000000-0000-4000-8000-000000000004",
     )
     assert inspected["ok"]
+    return operation_id, verifier
 
+
+def _fail_confirmed_evidence_hold(service, operation_id, verifier, monkeypatch):
     import dish_tool.step8 as step8
     from dish_tool.errors import DishRuleError
 
@@ -256,11 +256,12 @@ def test_exact_recovery_to_evidence_handoff_releases_verifier_lease_for_admin_co
             principal=verifier,
             request_id="73000000-0000-4000-8000-000000000005",
         )
-
     assert uncertain["code"] == "BACKEND_UNCERTAIN"
     assert uncertain["data"]["required_admin_action"] == "recover"
     assert uncertain["data"]["admin_recovery_immediately_executable"] is True
 
+
+def _recover_and_supply_evidence(service, operation_id):
     admin = ServicePrincipal(
         owner_id="admin", run_id="33333333-3333-4333-8333-333333333333"
     )
@@ -274,10 +275,8 @@ def test_exact_recovery_to_evidence_handoff_releases_verifier_lease_for_admin_co
         principal=admin,
         request_id="73000000-0000-4000-8000-000000000006",
     )
-    assert recovered["ok"]
-    assert recovered["state"] == "open"
+    assert recovered["ok"] and recovered["state"] == "open"
     assert recovered["data"]["service_lease"] is None
-
     supplied = service.execute_admin(
         "supply-evidence",
         {
@@ -292,3 +291,11 @@ def test_exact_recovery_to_evidence_handoff_releases_verifier_lease_for_admin_co
     assert supplied["data"]["service_lease"] is None
 
 
+def test_exact_recovery_to_evidence_handoff_releases_verifier_lease_for_admin_continuation(
+    tmp_path, monkeypatch
+):
+    service, backend = _service(tmp_path)
+    operation_id, verifier = _prepare_verifier_for_evidence_handoff(service, backend)
+    assert operation_id
+    _fail_confirmed_evidence_hold(service, operation_id, verifier, monkeypatch)
+    _recover_and_supply_evidence(service, operation_id)

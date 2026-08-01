@@ -16,48 +16,24 @@ from dish_tool.errors import DishRuleError
 from dish_tool.models import utc_now
 from tests.support.service_foundation import _service
 from tests.support.verification import Backend, TASK, make_app
+from tests.support.small_correction import (
+    review_and_inspect as _review_and_inspect,
+    small_candidate as _small_candidate,
+    without_replay_marker as _without_replay_marker,
+)
 
 
-def _review_and_inspect(app, operation_id: str, *, run_id: str = "dish-020-review"):
-    review = app.execute(
-        "start",
-        agent="codex",
-        task_gid="t",
-        kind="verification",
-        run_id=run_id,
-        independence_attestation="independent",
-    )
-    assert review["ok"]
-    inspected = app.execute(
-        "inspect", agent="codex", submission_id=operation_id
-    )
-    assert inspected["ok"]
-    return review, inspected
 
 
-def _small_candidate(path: Path) -> Path:
-    candidate = path / "small-correction.txt"
-    candidate.write_text(
-        TASK.replace("1. Cook it.", "1. Cook it gently."), encoding="utf-8"
-    )
-    return candidate
 
 
-def _without_replay_marker(result):
-    normalized = copy.deepcopy(result)
-    normalized.get("data", {}).pop("request_replayed", None)
-    return normalized
 
-def test_small_correction_preserves_reviewed_fact_and_proves_full_lineage(tmp_path):
-    app, backend, operation_id, _ = make_app(tmp_path)
+def _approve_small_correction(app, tmp_path, operation_id):
     review, inspected = _review_and_inspect(app, operation_id)
-    inspected_fact = inspected["data"]["dish_inspect_fact"]
-    reviewed_identity = review["data"]["reviewed_identity"]
     cycle_before = app.conn.execute(
         "SELECT * FROM verification_cycles WHERE operation_id=?",
         (operation_id,),
     ).fetchone()
-
     approved = app.execute(
         "approve",
         agent="codex",
@@ -65,28 +41,31 @@ def test_small_correction_preserves_reviewed_fact_and_proves_full_lineage(tmp_pa
         submission_id=operation_id,
         correction="small",
         file_path=str(_small_candidate(tmp_path)),
-        reviewed_identity=reviewed_identity,
+        reviewed_identity=review["data"]["reviewed_identity"],
         semantic_review_complete=True,
         provenance_complete=True,
         run_id="dish-020-review",
     )
-
     assert approved["ok"]
+    return approved, inspected["data"]["dish_inspect_fact"], cycle_before
+
+
+def _assert_small_correction_write_lineage(
+    app, operation_id, approved, inspected_fact, cycle_before
+):
+    reviewed_identity = cycle_before["reviewed_identity"]
     corrected_identity = approved["data"]["approved_candidate_identity"]
     signed_identity = approved["data"]["signed_identity"]
     assert len({reviewed_identity, corrected_identity, signed_identity}) == 3
-
     cycle = app.conn.execute(
-        "SELECT * FROM verification_cycles WHERE operation_id=?",
-        (operation_id,),
+        "SELECT * FROM verification_cycles WHERE operation_id=?", (operation_id,)
     ).fetchone()
     fact = app.conn.execute(
         "SELECT * FROM dish_inspect_facts WHERE fact_id=?",
         (inspected_fact["fact_id"],),
     ).fetchone()
-    assert cycle["reviewed_identity"] == reviewed_identity
+    assert cycle["reviewed_identity"] == fact["reviewed_identity"] == reviewed_identity
     assert cycle["reviewed_content_version_id"] == cycle_before["reviewed_content_version_id"]
-    assert fact["reviewed_identity"] == reviewed_identity
     assert fact["reviewed_content_version_id"] == cycle_before["reviewed_content_version_id"]
     assert cycle["signed_identity"] == signed_identity
 
@@ -117,30 +96,29 @@ def test_small_correction_preserves_reviewed_fact_and_proves_full_lineage(tmp_pa
         "correction_class": "small",
         "cycle_id": cycle["cycle_id"],
     }
+    return cycle, fact, corrected_version
 
+
+def _assert_small_correction_audit(app, operation_id, cycle, fact, corrected_version):
     audit = app.conn.execute(
         """SELECT details FROM audit_events
              WHERE operation_id=? AND event_type='verification.approved'
              ORDER BY created_at DESC LIMIT 1""",
         (operation_id,),
     ).fetchone()
-    details = json.loads(audit["details"])
-    assert details == {
+    assert json.loads(audit["details"]) == {
         "approved_candidate_content_version_id": corrected_version["content_version_id"],
-        "approved_candidate_identity": corrected_identity,
+        "approved_candidate_identity": corrected_version["identity"],
         "correction_class": "small",
         "cycle_id": cycle["cycle_id"],
         "reviewed_content_version_id": fact["reviewed_content_version_id"],
-        "reviewed_identity": reviewed_identity,
+        "reviewed_identity": fact["reviewed_identity"],
         "signed_content_version_id": cycle["signed_content_version_id"],
-        "signed_identity": signed_identity,
+        "signed_identity": cycle["signed_identity"],
     }
 
-    _validate_semantic_evidence(app.conn)
-    unrelated = app.execute("sections", agent="gpt")
-    assert unrelated["ok"]
 
-    app.conn.close()
+def _assert_small_correction_survives_restart(tmp_path, cycle, fact):
     restarted = initialize_database(tmp_path / "dish.db")
     try:
         _validate_semantic_evidence(restarted)
@@ -150,11 +128,28 @@ def test_small_correction_preserves_reviewed_fact_and_proves_full_lineage(tmp_pa
         restarted_fact = restarted.execute(
             "SELECT * FROM dish_inspect_facts WHERE fact_id=?", (fact["fact_id"],)
         ).fetchone()
-        assert restarted_cycle["reviewed_identity"] == reviewed_identity
-        assert restarted_cycle["signed_identity"] == signed_identity
-        assert restarted_fact["reviewed_identity"] == reviewed_identity
+        assert restarted_cycle["reviewed_identity"] == cycle["reviewed_identity"]
+        assert restarted_cycle["signed_identity"] == cycle["signed_identity"]
+        assert restarted_fact["reviewed_identity"] == fact["reviewed_identity"]
     finally:
         restarted.close()
+
+
+def test_small_correction_preserves_reviewed_fact_and_proves_full_lineage(tmp_path):
+    app, _backend, operation_id, _ = make_app(tmp_path)
+    approved, inspected_fact, cycle_before = _approve_small_correction(
+        app, tmp_path, operation_id
+    )
+    cycle, fact, corrected_version = _assert_small_correction_write_lineage(
+        app, operation_id, approved, inspected_fact, cycle_before
+    )
+    _assert_small_correction_audit(app, operation_id, cycle, fact, corrected_version)
+    _validate_semantic_evidence(app.conn)
+    assert app.execute("sections", agent="gpt")["ok"]
+    app.conn.close()
+    _assert_small_correction_survives_restart(tmp_path, cycle, fact)
+
+
 def test_small_correction_approval_replays_exactly_across_restart(tmp_path):
     backend = Backend()
     service = _service(tmp_path, backend)

@@ -28,20 +28,14 @@ from tests._partial_recovery_helpers import (
 )
 
 
-def test_pending_request_reconstructs_same_recovery_state_after_restart(
-    tmp_path, monkeypatch
+def _leave_interrupted_prepare_execution(
+    service, backend, tmp_path, principal, prepare_request, monkeypatch
 ):
-    service, backend = _service(tmp_path)
-    principal = ServicePrincipal(
-        owner_id="action", run_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-    )
-    start_request = "10000000-0000-4000-8000-000000000101"
-    prepare_request = "10000000-0000-4000-8000-000000000102"
     started = service.execute_agent(
         "start",
         {"agent": "gpt", "task_gid": "t", "kind": "initial"},
         principal=principal,
-        request_id=start_request,
+        request_id="10000000-0000-4000-8000-000000000101",
     )
     assert started["ok"]
     operation_id = started["submission_id"]
@@ -54,7 +48,6 @@ def test_pending_request_reconstructs_same_recovery_state_after_restart(
     prepared_arguments = service._arguments_for_principal(
         "prepare", arguments, run_id=principal.run_id
     )
-
     conn = initialize_database(service.config.db_path)
     try:
         _row, created = begin_request(
@@ -95,14 +88,15 @@ def test_pending_request_reconstructs_same_recovery_state_after_restart(
                     file_path=str(candidate),
                     release=service._release("research"),
                 )
-        # Deliberately do not finish or release the execution claim. This is the
-        # durable state a killed process leaves behind.
         assert claim.request_id == prepare_request
     finally:
         conn.close()
+    return operation_id, arguments
 
-    writes = backend.writes
-    moves = backend.moves
+
+def _reconstruct_prepare_recovery(
+    service, arguments, principal, prepare_request, monkeypatch
+):
     backend_factory_calls = 0
 
     def unavailable_backend():
@@ -122,11 +116,15 @@ def test_pending_request_reconstructs_same_recovery_state_after_restart(
             operation_execution, "process_identity_is_live", lambda _identity: False
         )
         recovered = restarted.execute_agent(
-            "prepare",
-            arguments,
-            principal=principal,
-            request_id=prepare_request,
+            "prepare", arguments, principal=principal, request_id=prepare_request
         )
+    exact = restarted.execute_agent(
+        "prepare", arguments, principal=principal, request_id=prepare_request
+    )
+    return restarted, recovered, exact, backend_factory_calls
+
+
+def _assert_reconstructed_prepare_recovery(recovered, exact):
     assert recovered["code"] == "BACKEND_UNCERTAIN"
     assert recovered["data"]["write_committed"] is True
     assert recovered["data"]["cycle_created"] is True
@@ -135,22 +133,13 @@ def test_pending_request_reconstructs_same_recovery_state_after_restart(
     assert recovered["data"]["required_admin_action"] == "recover"
     assert recovered["data"]["required_admin_outcome"] == "applied"
     assert recovered["data"]["safe_to_retry"] is False
-    assert backend.writes == writes
-    assert backend.moves == moves
-    assert backend_factory_calls == 0
-
-    exact = restarted.execute_agent(
-        "prepare",
-        arguments,
-        principal=principal,
-        request_id=prepare_request,
-    )
     assert exact["code"] == "BACKEND_UNCERTAIN"
     assert exact["data"]["request_replayed"] is True
     assert exact["data"]["execution_id"] == recovered["data"]["execution_id"]
-    assert backend.writes == writes
-    assert backend.moves == moves
-    assert backend_factory_calls == 0
+
+
+def _admin_finish_interrupted_prepare(service, backend, operation_id, monkeypatch):
+    import dish_tool.operation_execution as operation_execution
 
     with monkeypatch.context() as dead_process:
         dead_process.setattr(
@@ -161,11 +150,9 @@ def test_pending_request_reconstructs_same_recovery_state_after_restart(
             admin = DishAdminApplication(
                 admin_conn,
                 backend=backend,
-                release_loader=lambda: service._release(
-                    None, include_migrations=True
-                ),
+                release_loader=lambda: service._release(None, include_migrations=True),
             )
-            applied = admin.execute(
+            return admin.execute(
                 "recover",
                 submission_id=operation_id,
                 outcome="applied",
@@ -173,9 +160,30 @@ def test_pending_request_reconstructs_same_recovery_state_after_restart(
             )
         finally:
             admin_conn.close()
+
+
+def test_pending_request_reconstructs_same_recovery_state_after_restart(
+    tmp_path, monkeypatch
+):
+    service, backend = _service(tmp_path)
+    principal = ServicePrincipal(
+        owner_id="action", run_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    )
+    prepare_request = "10000000-0000-4000-8000-000000000102"
+    operation_id, arguments = _leave_interrupted_prepare_execution(
+        service, backend, tmp_path, principal, prepare_request, monkeypatch
+    )
+    writes, moves = backend.writes, backend.moves
+    _restarted, recovered, exact, backend_calls = _reconstruct_prepare_recovery(
+        service, arguments, principal, prepare_request, monkeypatch
+    )
+    _assert_reconstructed_prepare_recovery(recovered, exact)
+    assert (backend.writes, backend.moves, backend_calls) == (writes, moves, 0)
+    applied = _admin_finish_interrupted_prepare(
+        service, backend, operation_id, monkeypatch
+    )
     assert applied["ok"]
-    assert backend.writes == writes
-    assert backend.moves == moves
+    assert (backend.writes, backend.moves) == (writes, moves)
 
 
 def test_recovery_execution_detects_updates_to_preexisting_attempts_and_steps(
