@@ -7,8 +7,9 @@ Role: this document defines the Stage A database-backend scope, approved decisio
 Companion documents:
 
 - `database-backend-imp.md` — implementation design and implementation acceptance;
-- `database-backend-migration.md` — baseline, shadow, rehearsal, cutover, rollback, backup, and restore procedures;
-- `database-backend-design.archive.md` — frozen non-governing design history and evidence.
+- `database-backend-migration.md` — baseline, shadow, rehearsal, cutover, rollback, backup, and restore procedures.
+
+The original pre-split design document is not preserved in the repository as a separate archive file; its exact prior text remains available via Git history.
 
 The current governing behavior remains defined by the repository architecture and runtime contract until production authority is explicitly activated on PostgreSQL.
 
