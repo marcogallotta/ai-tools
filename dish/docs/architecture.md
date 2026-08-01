@@ -217,6 +217,11 @@ compatibility dispatcher.
 An explicitly injected `backend_factory` and every resource returned by it remain caller-owned; the
 service must never close them or infer a different ownership mode from the returned object.
 
+Cross-stage workflow concepts live in neutral domain modules. In particular, Small-correction
+write lineage and abandoned pre-construction hold resolution are not owned by a numbered stage.
+Numbered workflow modules must not import one another through local imports to evade an architectural
+cycle, and private stage helpers are never cross-stage APIs.
+
 The numbered workflow modules reflect implementation order, not separate authorities:
 
 | Module | Responsibility |

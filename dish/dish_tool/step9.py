@@ -22,6 +22,7 @@ from .database import (
     transition_operation,
 )
 from .errors import DishRuleError
+from .small_correction_lineage import assert_small_correction_write_lineage
 from .lifecycle import assert_transition, require_status
 from .models import SectionRegistry, resolve_destination, utc_now
 from .task_document import (
@@ -1314,7 +1315,6 @@ def _recover_workflow_step_group_2(
         actions.append({'kind': 'workflow_step', 'step': step['step_name'], 'outcome': 'confirmed'})
         return True, live
     if step['step_name'] == 'small_review_binding':
-        from .step8 import _assert_small_correction_write_lineage
         cycle = conn.execute('SELECT * FROM verification_cycles WHERE cycle_id=?', (intended['cycle_id'],)).fetchone()
         if cycle is None:
             raise DishRuleError('CONFLICT', 'Small-correction cycle is missing', rule='workflow_cycle_missing')
@@ -1324,7 +1324,7 @@ def _recover_workflow_step_group_2(
             raise DishRuleError('CONFLICT', 'Small-correction review binding no longer matches its inspected candidate', rule='workflow_step_evidence_mismatch')
         if live.identity != corrected_identity:
             raise DishRuleError('CONFLICT', 'live correction does not match review-binding intent', rule='workflow_step_evidence_mismatch')
-        _assert_small_correction_write_lineage(conn, cycle=cycle, corrected_identity=corrected_identity)
+        assert_small_correction_write_lineage(conn, cycle=cycle, corrected_identity=corrected_identity)
         complete_operation_step(conn, operation_id, 'small_review_binding')
         actions.append({'kind': 'workflow_step', 'step': 'small_review_binding', 'outcome': 'confirmed'})
         return True, live

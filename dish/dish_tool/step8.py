@@ -13,6 +13,8 @@ from typing import Any
 from .constants import COOKING_PROJECT_GID
 from .database import atomic_persistence, create_verification_cycle, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step, content_identity, release_marco_authorization_reservations
 from .errors import DishRuleError
+from .hold_resolution import resolve_preconstruction_hold_to_successor
+from .small_correction_lineage import assert_small_correction_write_lineage
 from .models import (
     material_change_line,
     material_editor_line,
@@ -174,41 +176,6 @@ def _confirmed_version(conn: sqlite3.Connection, *, operation_id: str, task_gid:
     return row
 
 
-def _assert_small_correction_write_lineage(
-    conn: sqlite3.Connection,
-    *,
-    cycle,
-    corrected_identity: str,
-):
-    """Prove the exact reviewed candidate produced the corrected candidate."""
-    corrected_version = _confirmed_version(
-        conn,
-        operation_id=cycle["operation_id"],
-        task_gid=cycle["task_gid"],
-        identity=corrected_identity,
-    )
-    correction_write = conn.execute(
-        """SELECT * FROM write_attempts
-             WHERE operation_id=? AND purpose='content_write' AND outcome='confirmed'
-               AND expected_identity=? AND intended_identity=?
-               AND confirmed_content_version_id=?
-             ORDER BY started_at DESC, rowid DESC LIMIT 1""",
-        (
-            cycle["operation_id"],
-            cycle["reviewed_identity"],
-            corrected_identity,
-            corrected_version["content_version_id"],
-        ),
-    ).fetchone()
-    if correction_write is None:
-        raise DishRuleError(
-            "CONFLICT",
-            "Small correction lacks an exact reviewed-to-corrected write binding",
-            rule="small_correction_lineage_invalid",
-            details={"cycle_id": cycle["cycle_id"]},
-        )
-    return corrected_version
-
 
 def _held_document(conn: sqlite3.Connection, *, cycle, live):
     if not cycle["hold_content_version_id"] or not cycle["hold_identity"] or not cycle["hold_section_gid"]:
@@ -343,7 +310,7 @@ def approve_small(conn: sqlite3.Connection, backend: Any, *, operation_id: str, 
             "confirmed Small correction identity does not match its durable intent",
             rule="small_correction_identity_mismatch",
         )
-    _assert_small_correction_write_lineage(
+    assert_small_correction_write_lineage(
         conn, cycle=cycle, corrected_identity=confirmed.identity
     )
     complete_operation_step(conn, operation_id, "small_review_binding")
@@ -1281,8 +1248,6 @@ def resolve_hold(
             "resume_status": "pending-research",
             "candidate_content_existed": False,
         }
-        from .abandonment import resolve_preconstruction_hold_to_successor
-
         abandoned_result = resolve_preconstruction_hold_to_successor(
             conn,
             operation_id=operation_id,
