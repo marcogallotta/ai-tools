@@ -497,17 +497,20 @@ def _step5_sections(self, *, trace: CommandTrace, agent: str) -> dict[str, Any]:
     return result_envelope(command="sections", data={"project_gid": COOKING_PROJECT_GID, "sections": clean})
 
 
-def _step5_section_tasks(self, *, trace: CommandTrace, agent: str, section_gid: str) -> dict[str, Any]:
+def _step5_section_tasks(
+    self, *, trace: CommandTrace, agent: str, section_gid: str, cursor: str | None = None
+) -> dict[str, Any]:
     agent_family(agent)
     section_gid = _clean_required(section_gid, rule="section_gid_required", label="section GID")
-    tasks = self.backend.list_tasks_for_section(section_gid)
+    clean_cursor = cursor.strip() if isinstance(cursor, str) and cursor.strip() else None
+    tasks, next_cursor = self.backend.list_tasks_for_section(section_gid, cursor=clean_cursor)
     clean = [
         {"gid": _gid(item), "name": str(item.get("name") or ""), "completed": bool(item.get("completed"))}
         for item in tasks
     ]
     return result_envelope(
         command="section-tasks",
-        data={"section_gid": section_gid, "tasks": clean},
+        data={"section_gid": section_gid, "tasks": clean, "next_cursor": next_cursor},
     )
 
 

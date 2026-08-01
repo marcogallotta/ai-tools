@@ -66,6 +66,10 @@ Add an operating instruction with all of these requirements:
   not workflow authority: it can lag or be moved by hand, so it never substitutes for the task's own
   recorded status. Confirm eligibility from the task returned by `read`/`start`, not from its
   presence in a `section-tasks` listing.
+- `section-tasks` returns one page at a time. Omit `cursor` for the first page; if
+  `data.next_cursor` is non-null, call `section-tasks` again with that exact value as `cursor` to
+  fetch the next page, and stop once `data.next_cursor` is null. Never invent a cursor value or
+  reuse one from a different `section_gid`.
 - The authenticated `client.run_id` is both lease ownership and the durable agent-run identity. The
   service applies it to `start`, `prepare`, `approve`, and `reject`; do not invent a separate
   workflow run ID. A redundant `arguments.run_id`, when supplied, must match it exactly.

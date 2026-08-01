@@ -97,7 +97,10 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     )
 
     assert "`create`, `start`, `prepare`, `approve`, `reject`, `submit`" in action_guide
-    assert "Read-only `sections`, `read`, and `inspect` do not accept a request ID" in action_guide
+    assert (
+        "Read-only `sections`, `section-tasks`, `read`, and `inspect` do not accept a request ID"
+        in action_guide
+    )
     assert "first authoritative success or expected failure" in action_guide
     assert "Reusing the UUID for different work conflicts" in action_guide
     assert "pending or uncertain request is not executed again" in action_guide

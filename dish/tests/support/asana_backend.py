@@ -57,6 +57,7 @@ class StatefulAsanaBackend:
         self.project_gid = project_gid
         self.created_task_gid = created_task_gid
         self.sections = [dict(item) for item in (sections or DEFAULT_SECTIONS)]
+        self.section_tasks_page_size = 100
         self._tasks: dict[str, dict[str, Any]] = {}
         self._calls: list[BackendCall] = []
         self._before: dict[str, list[Callable[..., None]]] = defaultdict(list)
@@ -188,15 +189,22 @@ class StatefulAsanaBackend:
 
         return self._invoke("list_sections", arguments, effect)
 
-    def list_tasks_for_section(self, section_gid: str) -> list[dict[str, Any]]:
-        arguments = {"section_gid": section_gid}
+    def list_tasks_for_section(
+        self, section_gid: str, *, cursor: str | None = None
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        arguments = {"section_gid": section_gid, "cursor": cursor}
 
-        def effect() -> list[dict[str, Any]]:
-            return [
+        def effect() -> tuple[list[dict[str, Any]], str | None]:
+            matches = [
                 {"gid": gid, "name": item["title"], "completed": item["completed"]}
                 for gid, item in self._tasks.items()
                 if item["section_gid"] == section_gid
             ]
+            start = int(cursor) if cursor else 0
+            page = matches[start : start + self.section_tasks_page_size]
+            end = start + len(page)
+            next_cursor = str(end) if end < len(matches) else None
+            return page, next_cursor
 
         return self._invoke("list_tasks_for_section", arguments, effect)
 

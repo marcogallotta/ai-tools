@@ -156,6 +156,9 @@ def build_parser() -> JsonArgumentParser:
     )
     section_tasks.add_argument("section_gid")
     section_tasks.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    section_tasks.add_argument(
+        "--cursor", default=None, help="opaque next_cursor from a prior section-tasks page"
+    )
 
     read = subparsers.add_parser("read", help="read the exact live task through the tool")
     read.add_argument("task_gid")

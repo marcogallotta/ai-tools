@@ -39,7 +39,33 @@ def test_section_tasks_lists_only_tasks_placed_in_the_requested_section(tmp_path
     assert result["data"] == {
         "section_gid": "rq",
         "tasks": [{"gid": "in-rq", "name": "In queue", "completed": False}],
+        "next_cursor": None,
     }
+
+
+@pytest.mark.smoke
+def test_section_tasks_pages_through_a_large_section_with_cursor(tmp_path):
+    b = Backend(title="task 0", task_gid="t0", section="rq")
+    for index in range(1, 5):
+        b.add_task(task_gid=f"t{index}", title=f"task {index}", notes="", section_gid="rq")
+    b.section_tasks_page_size = 2
+    a = app(tmp_path, b)
+
+    first = a.execute("section-tasks", agent="claude", section_gid="rq")
+    assert [t["gid"] for t in first["data"]["tasks"]] == ["t0", "t1"]
+    assert first["data"]["next_cursor"] == "2"
+
+    second = a.execute(
+        "section-tasks", agent="claude", section_gid="rq", cursor=first["data"]["next_cursor"]
+    )
+    assert [t["gid"] for t in second["data"]["tasks"]] == ["t2", "t3"]
+    assert second["data"]["next_cursor"] == "4"
+
+    third = a.execute(
+        "section-tasks", agent="claude", section_gid="rq", cursor=second["data"]["next_cursor"]
+    )
+    assert [t["gid"] for t in third["data"]["tasks"]] == ["t4"]
+    assert third["data"]["next_cursor"] is None
 
 
 @pytest.mark.smoke

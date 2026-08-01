@@ -79,6 +79,14 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "section_gid": dict(ASANA_GID_SCHEMA),
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
+            "cursor": {
+                "type": "string",
+                "description": (
+                    "Opaque next_cursor returned by a prior section-tasks call. Omit for the "
+                    "first page; repeat the call with the returned next_cursor to fetch the "
+                    "next page. A null next_cursor means there are no more tasks."
+                ),
+            },
         },
     },
     "read": {
