@@ -273,3 +273,31 @@ state, complete thread/process teardown, and independent oracles.
 `.test-artifacts/` is ignored by Git. Preserve the relevant run directory with the associated issue
 or handoff whenever it contains a failure. Do not commit generated JUnit XML or local environment
 metadata.
+
+## Generated artifact assurance
+
+A checked-in generated artifact needs two different tests:
+
+1. a synchronization test proving the checked-in bytes or semantic snapshot match a fresh generator run;
+2. an independent contract test whose expected inventory, states, and invariants are not imported from the generator or production constants.
+
+The recovery fixture database and its JSON sidecars are checked both ways. Updating the generator and
+checked-in artifacts together is insufficient unless the independent literal contract is also reviewed.
+
+## Curated mutation sample
+
+Run the launch-critical mutation sample with:
+
+```sh
+.venv/bin/python -m tests.mutation_runner
+```
+
+The runner mutates request replay, request/run binding, lease ownership, governed authorization
+consumption, verifier independence, and terminal cancellation evidence in isolated temporary copies.
+A mutant is counted as killed only when its targeted pytest command exits with an ordinary test
+failure. Collection or infrastructure errors are reported separately and fail the mutation lane.
+Results are written to `.test-artifacts/mutation-sample/summary.json` and `summary.md`.
+
+This is a deliberately small signal, not a global score. New launch-critical invariants should add a
+specific mutant and the narrowest authoritative test that kills it. Surviving mutants block the lane
+until the oracle is strengthened or the mutant is documented as equivalent.
