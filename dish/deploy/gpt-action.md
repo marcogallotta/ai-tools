@@ -80,6 +80,10 @@ Add an operating instruction with all of these requirements:
   Approval and every rejection route — including Large — inherit the exact persisted start
   attestation automatically and do not accept the field; never send `independence_attestation` on
   `reject`.
+- For an ordinary Verification start, omit both `target_operation_id` and `target_cycle_id`.
+  `submission_id` from `read` identifies the open operation for later commands; it is not a
+  Verification target. Supply the two target fields only together, and only when Dish explicitly
+  returns that exact pair for an abandonment continuation. Never infer either target from `read`.
 - Planning start requires a guaranteed two-call intent gate. On the first `start` with
   `kind: planning`, omit `intent_challenge_id`, `intent_basis`, and `override_reason`; Dish returns
   `CONFIRMATION_REQUIRED` without opening an operation or lease. Do not treat task legality, a prior

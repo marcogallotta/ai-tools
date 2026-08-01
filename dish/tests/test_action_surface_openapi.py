@@ -141,6 +141,21 @@ def test_checked_in_openapi_is_synchronized_with_generator():
     assert checked == action_openapi()
 
 
+@pytest.mark.smoke
+def test_verification_targets_explain_ordinary_start_and_abandonment_scope():
+    schema = action_openapi()["paths"]["/v1/action/start"]["post"]["requestBody"][
+        "content"
+    ]["application/json"]["schema"]["properties"]["arguments"]
+    verification = next(
+        variant for variant in schema["oneOf"]
+        if variant["properties"]["kind"].get("const") == "verification"
+    )
+    properties = verification["properties"]
+    assert "ordinary Verification start" in properties["target_operation_id"]["description"]
+    assert "never copy submission_id" in properties["target_operation_id"]["description"]
+    assert "abandonment continuation" in properties["target_cycle_id"]["description"]
+
+
 
 def test_generated_and_checked_in_openapi_satisfy_independent_action_contract():
     from pathlib import Path

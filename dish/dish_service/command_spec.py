@@ -137,8 +137,22 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
                     "Required non-blank explanation only when intent_basis=agent_override."
                 ),
             },
-            "target_operation_id": dict(DISH_UUID_SCHEMA),
-            "target_cycle_id": dict(DISH_UUID_SCHEMA),
+            "target_operation_id": {
+                **DISH_UUID_SCHEMA,
+                "description": (
+                    "Omit for an ordinary Verification start. Supply only as part of the exact "
+                    "operation/cycle pair returned by Dish for an abandonment continuation; "
+                    "never copy submission_id into this field."
+                ),
+            },
+            "target_cycle_id": {
+                **DISH_UUID_SCHEMA,
+                "description": (
+                    "Omit for an ordinary Verification start. Supply only as part of the exact "
+                    "operation/cycle pair returned by Dish for an abandonment continuation; "
+                    "never invent or infer this value."
+                ),
+            },
         },
     },
     "prepare": {
@@ -539,7 +553,9 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
         if has_operation != has_cycle:
             missing = "target_cycle_id" if has_operation else "target_operation_id"
             raise _argument_error(
-                "Verification target operation and cycle must be supplied together",
+                "Verification targets are only for an exact Dish-returned abandonment "
+                "continuation; supply both returned values together, or omit both for an "
+                "ordinary Verification start",
                 "argument_required",
                 field=missing,
             )

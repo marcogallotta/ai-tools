@@ -1363,6 +1363,7 @@
                             "type": "string"
                           },
                           "target_cycle_id": {
+                            "description": "Omit for an ordinary Verification start. Supply only as part of the exact operation/cycle pair returned by Dish for an abandonment continuation; never invent or infer this value.",
                             "format": "uuid",
                             "maxLength": 36,
                             "minLength": 36,
@@ -1370,6 +1371,7 @@
                             "type": "string"
                           },
                           "target_operation_id": {
+                            "description": "Omit for an ordinary Verification start. Supply only as part of the exact operation/cycle pair returned by Dish for an abandonment continuation; never copy submission_id into this field.",
                             "format": "uuid",
                             "maxLength": 36,
                             "minLength": 36,
