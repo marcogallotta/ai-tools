@@ -156,27 +156,6 @@ class ResolvedRelease:
             )
         return {role: self.protocol_for_role(role)}
 
-    def manifest_for_submission(self, submission_kind: str) -> Mapping[str, Any]:
-        if submission_kind == "planning":
-            key = "planning"
-        elif submission_kind in {"initial", "change"}:
-            key = "complete_task"
-        else:
-            raise DishRuleError(
-                "INVALID_ARGUMENT",
-                f"unknown submission kind: {submission_kind!r}",
-                rule="invalid_submission_kind",
-            )
-        try:
-            return copy.deepcopy(self.manifests[key])
-        except KeyError as exc:
-            raise DishRuleError(
-                "VALIDATION_FAILED",
-                "the current task schema has no legacy validation adapter",
-                rule="schema_adapter_missing",
-                details={"adapter": key},
-            ) from exc
-
 
 @dataclass(frozen=True)
 class VerificationProtocolSnapshot:
@@ -505,30 +484,10 @@ class OperationRecord:
 
 
 @dataclass(frozen=True)
-class VerificationCycleRecord:
-    cycle_id: str
-    operation_id: str
-    task_gid: str
-    cycle_number: int
-    protocol_release: str
-    correction_class: str | None
-    outcome: str | None
-    route: str | None
-    resume_state: str | None
-
-
-@dataclass(frozen=True)
 class ProcessIdentity:
     hostname: str
     pid: int
     process_start: str
-
-
-@dataclass(frozen=True)
-class WriteAttempt:
-    attempt_id: str
-    started_at: str
-    identity: ProcessIdentity
 
 
 class RequestPhase(str, Enum):

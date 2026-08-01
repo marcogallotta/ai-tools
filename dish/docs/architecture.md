@@ -191,7 +191,9 @@ already-exact ID is never reinterpreted. `expire-lease`'s task GID/URL target an
 The executable workflow supports the current Honest protocol/schema pair. Historical records may be
 read, migrated, reconciled, or quarantined, but they do not fall back into legacy mutation code. A
 compatibility path needs a real producer or database-preservation requirement; an artificial test
-fixture is not enough.
+fixture is not enough. Legacy submission rows and their write-attempt columns remain readable for
+migration and diagnostics, but production exposes no API that creates, transitions, or recovers a
+legacy submission.
 
 ## Layers and ownership
 

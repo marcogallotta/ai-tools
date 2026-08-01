@@ -134,76 +134,6 @@ def record_command_audit_repair(
     return repair_id
 
 
-def latest_change_diff_telemetry(
-    conn: sqlite3.Connection, submission_id: str
-) -> dict[str, Any] | None:
-    """Return the latest source-free prepare telemetry for a move-only retry."""
-
-    rows = conn.execute(
-        """
-        SELECT details
-          FROM audit_events
-         WHERE submission_id = ?
-           AND event_type = 'dish.prepare'
-         ORDER BY created_at DESC, rowid DESC
-        """,
-        (submission_id,),
-    ).fetchall()
-    for row in rows:
-        try:
-            details = json.loads(row["details"])
-        except (TypeError, json.JSONDecodeError):
-            continue
-        summary = details.get("change_diff")
-        if isinstance(summary, dict):
-            counts = {}
-            for key in (
-                "characters_added",
-                "characters_removed",
-                "lines_added",
-                "lines_removed",
-            ):
-                value = summary.get(key)
-                if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-                    counts = {}
-                    break
-                counts[key] = value
-            headings = summary.get("headings_changed")
-            if counts and isinstance(headings, list) and all(
-                isinstance(heading, str) for heading in headings
-            ):
-                counts["headings_changed"] = list(headings)
-                return {"change_diff": counts}
-        reason = details.get("change_diff_unavailable")
-        if isinstance(reason, str) and reason:
-            return {"change_diff_unavailable": reason}
-    return None
-
-
-def latest_successful_rejection_reason(
-    conn: sqlite3.Connection, submission_id: str
-) -> str | None:
-    rows = conn.execute(
-        """
-        SELECT details
-          FROM audit_events
-         WHERE submission_id = ?
-           AND event_type = 'dish.reject'
-         ORDER BY created_at DESC
-        """,
-        (submission_id,),
-    ).fetchall()
-    for row in rows:
-        try:
-            details = json.loads(row["details"])
-        except (TypeError, json.JSONDecodeError):
-            continue
-        reason = str(details.get("reason") or "").strip()
-        if details.get("ok") is True and details.get("decision") == "reject" and reason:
-            return reason
-    return None
-
-
 def get_submission(conn: sqlite3.Connection, submission_id: str) -> sqlite3.Row:
     row = conn.execute(
         "SELECT * FROM submissions WHERE submission_id = ?", (submission_id,)
@@ -230,105 +160,6 @@ def get_open_submission_for_task(
         (task_gid,),
     ).fetchone()
 
-
-def create_submission(
-    conn: sqlite3.Connection,
-    *,
-    task_gid: str,
-    submission_kind: str,
-    protocol_release: str,
-    release_commit: str,
-    protocol_bundle: Mapping[str, str],
-    canonical_manifest_text: str,
-    baseline_exemption_tags: Iterable[str] | None,
-    baseline_title: str,
-    baseline_title_fields: Mapping[str, Any] | None,
-    editor_agent: str,
-    change_level: str | None,
-    change_reason: str | None,
-    baseline_verification_line: str | None,
-) -> sqlite3.Row:
-    """Atomically claim the per-task lock and create a drafting submission."""
-
-    editor_family = agent_family(editor_agent)
-    submission_id = str(uuid.uuid4())
-    baseline_json = (
-        None
-        if baseline_exemption_tags is None
-        else json.dumps(
-            sorted(set(baseline_exemption_tags)), separators=(",", ":")
-        )
-    )
-    baseline_title_json = (
-        None
-        if baseline_title_fields is None
-        else json.dumps(
-            dict(baseline_title_fields),
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-    )
-    with immediate_persistence(conn, "create_submission"):
-        existing = get_open_submission_for_task(conn, task_gid)
-        if existing is not None:
-            raise DishRuleError(
-                "CONFLICT",
-                f"task already has an open submission: {existing['submission_id']}",
-                rule="open_submission_exists",
-                details={
-                    "existing_submission_id": existing["submission_id"],
-                    "existing_state": existing["status"],
-                },
-            )
-        try:
-            conn.execute(
-                """
-                INSERT INTO submissions (
-                    submission_id, task_gid, submission_kind, protocol_release,
-                    release_commit, protocol_bundle, canonical_manifest,
-                    baseline_exemption_tags, baseline_title, baseline_title_fields,
-                    editor_agent, editor_family, change_level, change_reason,
-                    baseline_verification_line, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'drafting', ?)
-                """,
-                (
-                    submission_id,
-                    task_gid,
-                    submission_kind,
-                    protocol_release,
-                    release_commit,
-                    json.dumps(
-                        dict(protocol_bundle),
-                        ensure_ascii=False,
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ),
-                    canonical_manifest_text,
-                    baseline_json,
-                    baseline_title,
-                    baseline_title_json,
-                    editor_agent,
-                    editor_family,
-                    change_level,
-                    change_reason,
-                    baseline_verification_line,
-                    utc_now(),
-                ),
-            )
-        except sqlite3.IntegrityError as exc:
-            if "submissions_one_open_per_task" in str(exc) or (
-                "UNIQUE constraint failed: submissions.task_gid" in str(exc)
-            ):
-                raise DishRuleError(
-                    "CONFLICT",
-                    "task already has an open submission",
-                    rule="open_submission_exists",
-                ) from exc
-            raise
-        row = get_submission(conn, submission_id)
-        return row
-
 _ALLOWED_SUBMISSION_UPDATE_COLUMNS = {
     "prepared_exemption_tags",
     "prepared_title",
@@ -353,61 +184,6 @@ _ALLOWED_SUBMISSION_UPDATE_COLUMNS = {
     "task_content_written_at",
     "destination_moved_at",
 }
-
-
-def transition_submission(
-    conn: sqlite3.Connection,
-    submission_id: str,
-    expected_states: Iterable[str],
-    target_state: str,
-    *,
-    updates: Mapping[str, Any] | None = None,
-) -> sqlite3.Row:
-    expected = tuple(sorted(set(expected_states)))
-    if not expected or not set(expected) <= SUBMISSION_STATES:
-        raise ValueError("expected_states contains an invalid state")
-    if target_state not in SUBMISSION_STATES:
-        raise ValueError("target_state is invalid")
-    changes = dict(updates or {})
-    unknown = set(changes) - _ALLOWED_SUBMISSION_UPDATE_COLUMNS
-    if unknown:
-        raise ValueError(f"unsupported submission update columns: {sorted(unknown)}")
-
-    assignments = ["status = ?"] + [f"{column} = ?" for column in changes]
-    params: list[Any] = [target_state, *changes.values(), submission_id, *expected]
-    placeholders = ",".join("?" for _ in expected)
-    with immediate_persistence(conn, "transition_submission"):
-        cursor = conn.execute(
-            f"""
-            UPDATE submissions
-               SET {", ".join(assignments)}
-             WHERE submission_id = ?
-               AND status IN ({placeholders})
-            """,
-            params,
-        )
-        if cursor.rowcount != 1:
-            row = conn.execute(
-                "SELECT status FROM submissions WHERE submission_id = ?",
-                (submission_id,),
-            ).fetchone()
-            if row is None:
-                raise DishRuleError(
-                    "NOT_FOUND",
-                    f"submission not found: {submission_id}",
-                    rule="submission_not_found",
-                )
-            raise DishRuleError(
-                "WRONG_STATE",
-                f"submission is {row['status']}, expected one of {expected}",
-                rule="wrong_state",
-                details={"actual": row["status"], "expected": list(expected)},
-            )
-        row = conn.execute(
-            "SELECT * FROM submissions WHERE submission_id = ?",
-            (submission_id,),
-        ).fetchone()
-        return row
 
 
 def normalize_transport_text(value: str) -> str:
@@ -743,29 +519,6 @@ def finalize_not_applied_movement_attempt(
         return conn.execute(
             "SELECT * FROM movement_attempts WHERE attempt_id=?", (attempt_id,)
         ).fetchone()
-
-
-
-def assert_expected_identity(
-    conn: sqlite3.Connection, *, task_gid: str, expected_identity: str
-) -> sqlite3.Row:
-    """Atomically reject stale callers before they can create an operation."""
-
-    with immediate_persistence(conn, "assert_expected_identity"):
-        row = conn.execute(
-            "SELECT * FROM task_content_state WHERE task_gid = ?", (task_gid,)
-        ).fetchone()
-        if row is None or row["last_confirmed_identity"] != expected_identity:
-            raise DishRuleError(
-                "CONFLICT",
-                "live task content differs from the expected identity",
-                rule="stale_content_identity",
-                details={
-                    "expected_identity": expected_identity,
-                    "actual_identity": None if row is None else row["last_confirmed_identity"],
-                },
-            )
-        return row
 
 
 def create_operation(

@@ -148,22 +148,6 @@ def _assert_expected(live: LiveTask, *, expected_identity: str, expected_section
         )
 
 
-def assert_live_matches_confirmed(
-    conn: sqlite3.Connection,
-    backend: TaskBackend,
-    *,
-    task_gid: str,
-    project_gid: str,
-    expected_section_gid: str | None,
-) -> LiveTask:
-    row = conn.execute("SELECT last_confirmed_identity FROM task_content_state WHERE task_gid = ?", (task_gid,)).fetchone()
-    if row is None:
-        raise DishRuleError("CONFLICT", "task has no confirmed content baseline", rule="confirmed_content_missing")
-    live = read_complete_task(backend, task_gid=task_gid, project_gid=project_gid)
-    _assert_expected(live, expected_identity=row["last_confirmed_identity"], expected_section_gid=expected_section_gid)
-    return live
-
-
 def _attempt_value(attempt: Mapping[str, Any], key: str) -> Any:
     try:
         return attempt[key]

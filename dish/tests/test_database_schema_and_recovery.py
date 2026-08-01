@@ -17,14 +17,11 @@ from dish_tool.database import (
     initialize_database,
     migrate_database,
     record_audit,
-    transition_submission,
 )
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
 from dish_tool.errors import DishRuleError
 from dish_tool.recovery import (
-    begin_write_attempt,
     current_process_identity,
-    finish_write_attempt,
     process_identity_is_live,
 )
 
@@ -222,17 +219,6 @@ def test_audit_rows_allow_null_submission_and_keep_task_gid(tmp_path):
     assert json.loads(row[2]) == {"code": "OK", "command": "set-notes"}
 
 
-@pytest.mark.smoke
-def test_conditional_transition_fails_competing_state_change(tmp_path):
-    conn = initialize_database(tmp_path / "dish-tool.db")
-    insert_submission(conn, "s1", "t1", "drafting")
-
-    transition_submission(conn, "s1", {"drafting"}, "ready")
-    with pytest.raises(DishRuleError) as exc:
-        transition_submission(conn, "s1", {"drafting"}, "ready")
-    assert exc.value.code == "WRONG_STATE"
-    assert exc.value.rule == "wrong_state"
-
 
 @pytest.mark.smoke
 def test_process_identity_and_recovery_quarantine_invariant():
@@ -247,40 +233,31 @@ def test_process_identity_and_recovery_quarantine_invariant():
     )
 
 
+
 @pytest.mark.smoke
-def test_begin_write_attempt_records_identity_and_compare_and_swap(tmp_path):
+def test_legacy_submission_write_attempt_evidence_remains_readable(tmp_path):
     conn = initialize_database(tmp_path / "dish-tool.db")
-    insert_submission(conn, "s1", "t1", "ready")
+    insert_submission(conn, "s1", "t1", "in_flight")
+    conn.execute(
+        """UPDATE submissions
+              SET write_attempt_id='legacy-attempt',
+                  in_flight_at='2026-07-01T00:00:00+00:00',
+                  in_flight_hostname='legacy-host',
+                  in_flight_pid=123,
+                  in_flight_process_start='legacy-start'
+            WHERE submission_id='s1'"""
+    )
 
-    attempt = begin_write_attempt(conn, "s1")
     row = conn.execute(
-        """SELECT status, write_attempt_id, in_flight_hostname, in_flight_pid,
-                  in_flight_process_start FROM submissions WHERE submission_id = 's1'"""
+        """SELECT status, write_attempt_id, in_flight_at, in_flight_hostname,
+                  in_flight_pid, in_flight_process_start
+             FROM submissions WHERE submission_id='s1'"""
     ).fetchone()
-    assert row[0] == "in_flight"
-    assert row[1] == attempt.attempt_id
-    assert row[2] == attempt.identity.hostname
-    assert row[3] == attempt.identity.pid
-    assert row[4] == attempt.identity.process_start
-
-    with pytest.raises(DishRuleError) as stale:
-        finish_write_attempt(
-            conn,
-            "s1",
-            attempt_id="stale-attempt",
-            target_state="written",
-        )
-    assert stale.value.rule == "stale_write_attempt"
-    finish_write_attempt(
-        conn,
-        "s1",
-        attempt_id=attempt.attempt_id,
-        target_state="written",
+    assert tuple(row) == (
+        "in_flight",
+        "legacy-attempt",
+        "2026-07-01T00:00:00+00:00",
+        "legacy-host",
+        123,
+        "legacy-start",
     )
-    assert (
-        conn.execute(
-            "SELECT status FROM submissions WHERE submission_id = 's1'"
-        ).fetchone()[0]
-        == "written"
-    )
-

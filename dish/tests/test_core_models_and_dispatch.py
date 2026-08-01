@@ -32,7 +32,6 @@ from dish_tool.database import (
     initialize_database,
     migrate_database,
     record_audit,
-    transition_submission,
 )
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
 from dish_tool.errors import BackendFailure, DishRuleError, ReleaseResolutionError
@@ -47,9 +46,7 @@ from dish_tool.models import (
     resolve_destination,
 )
 from dish_tool.recovery import (
-    begin_write_attempt,
     current_process_identity,
-    finish_write_attempt,
     process_identity_is_live,
 )
 from dish_tool.releases import resolve_release

@@ -925,18 +925,6 @@ class CurrentWorkflowService:
             operation_id, "cancel", checked, schema=schema, assert_action=False
         )
 
-    def authorize_governed_change(
-        self, operation_id: str, executor: Callable[[], T], *, schema=None
-    ):
-        self.operation(operation_id)
-        return self._execute_claimed(
-            operation_id,
-            "authorize-governed-change",
-            executor,
-            schema=schema,
-            assert_action=False,
-        )
-
 
 class OperationApplicationService:
     """Generation router plus the current workflow mutation authority."""
