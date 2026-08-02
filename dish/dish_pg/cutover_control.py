@@ -552,6 +552,77 @@ class CutoverControlAuthority:
         self.session.add(row)
         self.session.flush()
         return row
+    def _validate_first_admission_targets(
+        self,
+        *,
+        candidate: rel.ReleaseCandidate,
+        command_name: str,
+        definition: Any,
+        arguments: Mapping[str, Any],
+        task_id: uuid.UUID | None,
+    ) -> uuid.UUID | None:
+        if command_name != "start":
+            raise ReleaseAuthorityError(
+                "first admission must use the bounded start command against an existing task"
+            )
+        if not definition.task_required:
+            raise ReleaseAuthorityError(
+                "first admission must bind an existing task before mutation admission opens"
+            )
+        if task_id is None:
+            raise ReleaseAuthorityError("first-admission command requires task_id")
+        if "task_gid" in arguments:
+            raise ReleaseAuthorityError(
+                "first-admission plan must use canonical task_id, not task_gid"
+            )
+        raw_task_id = arguments.get("task_id")
+        if raw_task_id is None:
+            raise ReleaseAuthorityError(
+                "first-admission command arguments must include canonical task_id"
+            )
+        try:
+            argument_task_id = uuid.UUID(str(raw_task_id))
+        except (TypeError, ValueError) as exc:
+            raise ReleaseAuthorityError(
+                "first-admission command task_id must be a UUID"
+            ) from exc
+        if argument_task_id != task_id:
+            raise ReleaseAuthorityError(
+                "first-admission plan task identity conflicts with command arguments"
+            )
+        task = self.session.get(models.DishTask, task_id)
+        head = self.session.get(
+            models.TaskAuthorityHead, (candidate.generation_id, task_id)
+        )
+        if task is None or head is None:
+            raise ReleaseAuthorityError(
+                "first-admission task does not belong to the candidate generation"
+            )
+
+        if definition.operation_required:
+            raise ReleaseAuthorityError(
+                "first-admission command cannot require a pre-existing open operation"
+            )
+        prohibited_operation_fields = {
+            "operation_id",
+            "submission_id",
+            "prepared_operation_id",
+            "target_operation_id",
+            "target_cycle_id",
+            "intent_challenge_id",
+        }
+        if prohibited_operation_fields & set(arguments):
+            raise ReleaseAuthorityError(
+                "first-admission start cannot carry prior operation or challenge identity"
+            )
+        kind = arguments.get("kind")
+        if kind not in {"initial", "change", "verification"}:
+            raise ReleaseAuthorityError(
+                "first-admission start kind must be initial, change, or verification"
+            )
+        _require_nonblank(arguments.get("agent"), "first-admission agent")
+        return None
+
     def plan_first_admission(
         self,
         *,
@@ -586,10 +657,19 @@ class CutoverControlAuthority:
         if not definition.retained or definition.profile == "Q":
             raise ReleaseAuthorityError("first admission must be a retained mutation command")
         arguments = dict(command_arguments)
+        candidate = self._candidate(run.candidate_id)
+        operation_id = self._validate_first_admission_targets(
+            candidate=candidate,
+            command_name=normalized_command,
+            definition=definition,
+            arguments=arguments,
+            task_id=task_id,
+        )
         expected_projection_events = expected_projection_count(normalized_command, arguments)
         plan_payload = {
             "command_arguments": arguments,
             "operator_evidence": dict(payload),
+            "operation_id": None if operation_id is None else str(operation_id),
         }
         body = {
             "cutover_run_id": str(cutover_run_id),
@@ -769,6 +849,15 @@ class CutoverControlAuthority:
             for item in reconciliation_items
             if item.mapping_id is not None and item.outcome in {"matched", "reprojected"}
         }
+        planned_operation_id: uuid.UUID | None = None
+        if plan is not None:
+            raw_planned_operation_id = plan.payload.get("operation_id")
+            if raw_planned_operation_id is not None:
+                try:
+                    planned_operation_id = uuid.UUID(str(raw_planned_operation_id))
+                except (TypeError, ValueError):
+                    planned_operation_id = uuid.UUID(int=0)
+
         evidence_times = [
             request.admitted_at if request is not None else None,
             outcome.recorded_at if outcome is not None else None,
@@ -831,6 +920,8 @@ class CutoverControlAuthority:
                 "request_id": str(request_id),
                 "outcome_id": str(outcome.outcome_id),
                 "execution_id": str(execution.execution_id),
+                "task_id": str(plan.task_id),
+                "operation_id": None if planned_operation_id is None else str(planned_operation_id),
                 "audit_event_id": str(audit.audit_event_id),
                 "invocation_obligation_id": str(obligation.obligation_id),
                 "projection_event_ids": [str(event.projection_event_id) for event in projection_events],

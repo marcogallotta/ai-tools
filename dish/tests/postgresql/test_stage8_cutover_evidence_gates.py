@@ -295,16 +295,13 @@ def test_admission_requires_post_burn_runtime_worker_and_first_request_evidence(
         plan = service.plan_first_admission(
             cutover_run_id=cutover_run_id,
             request_id=first_request_id,
-            command_name="prepare",
-            command_arguments={
-                "task_id": str(task_id),
-                "operation_id": str(_next(ids)),
-            },
+            command_name="start",
+            command_arguments={"task_id": str(task_id), "agent": "codex", "kind": "initial"},
             task_id=task_id,
             payload={"probe": "stage8-first-admission"},
             recorded_at=NOW + timedelta(minutes=6),
         )
-        assert plan.expected_projection_events == 2
+        assert plan.expected_projection_events == 0
         assert plan.payload["command_arguments"]["task_id"] == str(task_id)
         control = service.open_mutation_admission(
             cutover_run_id=cutover_run_id,
@@ -344,3 +341,89 @@ def test_stage8_operator_cli_exposes_readiness_and_first_admission_commands() ->
         "--file",
         "/tmp/first.json",
     ]).command == "first-admission-plan"
+
+
+def test_first_admission_plan_rejects_unverifiable_target_shapes(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, _candidate_id, cutover_run_id = _burn_rollback(
+            session, ids, context, task_id
+        )
+        common = {
+            "cutover_run_id": cutover_run_id,
+            "request_id": _next(ids),
+            "payload": {"probe": "invalid-first-admission"},
+            "recorded_at": NOW + timedelta(minutes=6),
+        }
+        with pytest.raises(ReleaseAuthorityError, match="must use the bounded start command"):
+            service.plan_first_admission(
+                **common,
+                command_name="create",
+                command_arguments={"title": "New task"},
+                task_id=None,
+            )
+        common["request_id"] = _next(ids)
+        with pytest.raises(ReleaseAuthorityError, match="requires task_id"):
+            service.plan_first_admission(
+                **common,
+                command_name="start",
+                command_arguments={"task_id": str(task_id), "agent": "codex", "kind": "initial"},
+                task_id=None,
+            )
+        common["request_id"] = _next(ids)
+        with pytest.raises(ReleaseAuthorityError, match="must include canonical task_id"):
+            service.plan_first_admission(
+                **common,
+                command_name="start",
+                command_arguments={},
+                task_id=task_id,
+            )
+        common["request_id"] = _next(ids)
+        with pytest.raises(ReleaseAuthorityError, match="task identity conflicts"):
+            service.plan_first_admission(
+                **common,
+                command_name="start",
+                command_arguments={"task_id": str(_next(ids))},
+                task_id=task_id,
+            )
+        common["request_id"] = _next(ids)
+        with pytest.raises(ReleaseAuthorityError, match="must use the bounded start command"):
+            service.plan_first_admission(
+                **common,
+                command_name="prepare",
+                command_arguments={"task_id": str(task_id)},
+                task_id=task_id,
+            )
+        common["request_id"] = _next(ids)
+        with pytest.raises(ReleaseAuthorityError, match="cannot carry prior operation"):
+            service.plan_first_admission(
+                **common,
+                command_name="start",
+                command_arguments={
+                    "task_id": str(task_id),
+                    "agent": "codex",
+                    "kind": "initial",
+                    "operation_id": str(_next(ids)),
+                },
+                task_id=task_id,
+            )
+        common["request_id"] = _next(ids)
+        with pytest.raises(ReleaseAuthorityError, match="kind must be initial"):
+            service.plan_first_admission(
+                **common,
+                command_name="start",
+                command_arguments={
+                    "task_id": str(task_id),
+                    "agent": "codex",
+                    "kind": "planning",
+                },
+                task_id=task_id,
+            )
+        common["request_id"] = _next(ids)
+        with pytest.raises(ReleaseAuthorityError, match="first-admission agent"):
+            service.plan_first_admission(
+                **common,
+                command_name="start",
+                command_arguments={"task_id": str(task_id), "kind": "initial"},
+                task_id=task_id,
+            )
