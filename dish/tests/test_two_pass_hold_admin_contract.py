@@ -2,35 +2,44 @@ from dish_tool.admin import DishAdminApplication
 from tests.support.verification import TASK, make_app, review_and_inspect
 
 
-def test_two_pass_hold_advertises_reopen_not_human_decision(tmp_path):
+def test_verification_hold_advertises_resolved_and_releases_unchanged_candidate(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     candidate = tmp_path / "large.txt"
-    candidate.write_text(TASK.replace("100 g", "120 g"))
-    review_and_inspect(app, agent="codex", run_id="first")
-    first = app.execute(
-        "reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large",
-        reason="first failure", file_path=str(candidate), run_id="first",
-    )
-    assert first["ok"]
+    for index, (agent, run_id, amount) in enumerate((
+        ("codex", "first", "120 g"),
+        ("gpt", "second", "130 g"),
+        ("claude", "third", "140 g"),
+    ), start=1):
+        review_and_inspect(app, agent=agent, run_id=run_id)
+        candidate.write_text(TASK.replace("100 g", amount))
+        result = app.execute(
+            "reject", agent=agent, model="gpt-5.6-sol", submission_id=operation_id,
+            route="large", reason=f"failure {index}", file_path=str(candidate), run_id=run_id,
+        )
+        assert result["ok"]
+        if index < 3:
+            assert result["data"]["verification_hold"] is False
+            assert result["data"]["new_cycle_id"]
+        else:
+            assert result["data"]["verification_hold"] is True
 
-    review_and_inspect(app, agent="gpt", run_id="second")
-    candidate.write_text(TASK.replace("100 g", "130 g"))
-    second = app.execute(
-        "reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large",
-        reason="second failure", file_path=str(candidate), run_id="second",
-    )
-    assert second["ok"] and second["data"]["two_pass_hold"]
-    assert second["allowed_actions"] == []
-    assert second["data"]["required_admin_action"] == "reopen"
-
-    inspected = app.execute("inspect", agent="gpt", submission_id=operation_id)
-    assert inspected["ok"]
-    assert inspected["allowed_actions"] == []
-    assert inspected["data"]["required_admin_action"] == "reopen"
+    held = backend.notes
+    assert "140 g" in held
+    assert app.conn.execute(
+        "SELECT outcome FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1",
+        (operation_id,),
+    ).fetchone()[0] == "verification-hold"
+    assert result["allowed_actions"] == []
+    assert result["data"]["required_admin_action"] == "resolved"
+    assert result["data"]["admin_command"] == f"dish-admin resolved {operation_id}"
 
     admin = DishAdminApplication(app.conn, backend=backend, release_loader=lambda: app._load_release(None))
-    wrong = admin.execute(
-        "record-human-decision", submission_id=operation_id,
-        detail="continue", resume_status="pending-verification",
-    )
-    assert wrong["code"] == "WRONG_STATE"
+    released = admin.execute("resolved", submission_id=operation_id)
+    assert released["ok"]
+    assert released["data"]["approved"] is False
+    assert released["data"]["signed_off"] is False
+    assert released["data"]["new_cycle_id"]
+    assert "140 g" in backend.notes
+    assert "Status: pending-verification" in backend.notes
+    assert "Verified by: None" in backend.notes
+    assert released["allowed_actions"] == ["verify"]

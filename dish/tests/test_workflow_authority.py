@@ -224,7 +224,7 @@ def test_decisions_authorization_preserves_typed_values(tmp_path):
     assert len(rows) == 1
 
 
-def test_two_pass_reset_requires_one_operative_replacement_hunk():
+def test_verification_hold_reset_requires_one_operative_replacement_hunk():
     from dish_tool.step8 import _prove_reset
 
     before = _doc(TASK.replace("100 g test ingredient", "130 g test ingredient"))
@@ -234,8 +234,7 @@ def test_two_pass_reset_requires_one_operative_replacement_hunk():
     ))
     with pytest.raises(DishRuleError) as exc:
         _prove_reset(before, fake, "scope", "130 g test ingredient", "140 g test ingredient")
-    assert exc.value.rule == "two_pass_reset_not_applied"
+    assert exc.value.rule == "verification_hold_reset_not_applied"
 
     genuine = _doc(TASK.replace("100 g test ingredient", "140 g test ingredient"))
     assert _prove_reset(before, genuine, "scope", "130 g test ingredient", "140 g test ingredient") == "sections.QUANTITIES"
-

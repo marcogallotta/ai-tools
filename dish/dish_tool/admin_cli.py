@@ -27,8 +27,8 @@ from dish_service.task_urls import task_gid_from_url
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
-_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "abandon-operation", "reconcile-abandonment", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease", "expire-lease", "backup-create", "backup-restore"}
-_OPERATION_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "abandon-operation", "reopen", "supply-evidence", "record-human-decision", "authorize-governed-change", "recover-lease"}
+_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "abandon-operation", "reconcile-abandonment", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease", "expire-lease", "backup-create", "backup-restore"}
+_OPERATION_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "abandon-operation", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease"}
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -107,7 +107,7 @@ def build_parser() -> JsonArgumentParser:
 
     reopen = subparsers.add_parser(
         "reopen",
-        help="the only path out of the two-pass Verification Human Review hold",
+        help="apply a substantive reset to a held Verification candidate",
     )
     reopen.add_argument("submission_id", help=_submission_target_help)
     reopen.add_argument(
@@ -123,6 +123,11 @@ def build_parser() -> JsonArgumentParser:
     reopen.add_argument("--run-id", required=True)
     reopen.add_argument("--file", dest="file_path", required=True)
     reopen.add_argument("--date", required=True)
+
+    resolved = subparsers.add_parser(
+        "resolved", help="release a Verification hold into a fresh Verification round"
+    )
+    resolved.add_argument("submission_id", help=_submission_target_help)
 
     migrate = subparsers.add_parser(
         "migrate", help="migrate one individually encountered older-schema task after cutover"

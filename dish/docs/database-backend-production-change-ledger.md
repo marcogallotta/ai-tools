@@ -46,6 +46,16 @@ Stage A's PostgreSQL migration; its end state is simply part of the "current
 system" that Stage A's characterization must start from, not a change requiring
 reconciliation into the target design.
 
+## Pending production change
+
+The 2026-08-02 Verification-hold worktree change is reviewed as in scope pending its final commit
+identifier. It raises the hold threshold to the third non-approved round, replaces the durable
+`two-pass-hold` outcome and `two_pass_resets` table with threshold-agnostic Verification-hold names,
+adds the Marco-only `resolved` release command, and adds migration 36. The Stage A baseline,
+SQLite characterization, migration/recovery fixtures, command inventory, and target treatment are
+updated in this worktree. Replace the `WORKTREE` baseline source marker with the final commit before
+release or cutover evidence is closed.
+
 ## Ongoing obligation
 
 This ledger must be extended for every further in-scope commit through the exact

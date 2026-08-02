@@ -80,8 +80,8 @@ def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
     if phase == "held_human":
         if snapshot.live_status != "pending-human-review":
             return []
-        if snapshot.latest_cycle_outcome == "two-pass-hold":
-            return ["reopen"]
+        if snapshot.latest_cycle_outcome == "verification-hold":
+            return ["resolved", "reopen"]
         if snapshot.latest_cycle_route == "human_review":
             return ["record-human-decision"]
         return []

@@ -1332,7 +1332,7 @@ def _recover_workflow_step_group_2(
         if live.identity != intended['candidate_identity']:
             raise DishRuleError('CONFLICT', 'live reopen candidate does not match reset intent', rule='workflow_step_evidence_mismatch')
         import uuid
-        conn.execute('INSERT OR IGNORE INTO two_pass_resets(\n                           reset_id, operation_id, source_cycle_id, candidate_identity,\n                           canonical_path, category, before_json, after_json, created_at\n                       ) VALUES(?,?,?,?,?,?,?,?,?)', (str(uuid.uuid4()), operation_id, intended['source_cycle_id'], intended['candidate_identity'], intended['canonical_path'], intended['category'], json.dumps(intended['before']), json.dumps(intended['after']), utc_now()))
+        conn.execute('INSERT OR IGNORE INTO verification_hold_resets(\n                           reset_id, operation_id, source_cycle_id, candidate_identity,\n                           canonical_path, category, before_json, after_json, created_at\n                       ) VALUES(?,?,?,?,?,?,?,?,?)', (str(uuid.uuid4()), operation_id, intended['source_cycle_id'], intended['candidate_identity'], intended['canonical_path'], intended['category'], json.dumps(intended['before']), json.dumps(intended['after']), utc_now()))
         complete_operation_step(conn, operation_id, 'reopen_reset')
         actions.append({'kind': 'workflow_step', 'step': 'reopen_reset', 'outcome': 'confirmed'})
         return True, live
@@ -1614,4 +1614,3 @@ def recover_operation(
         write_attempt=write_attempt,
         movement_attempt=movement_attempt,
     )
-

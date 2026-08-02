@@ -74,6 +74,11 @@ def test_frozen_sqlite_authority_inventory_matches_schema() -> None:
     ):
         if name not in actual:
             actual.append(name)
+    for old_name, new_name in re.findall(
+        r"ALTER TABLE\s+([A-Za-z0-9_]+)\s+RENAME TO\s+([A-Za-z0-9_]+)", source
+    ):
+        if old_name in actual:
+            actual[actual.index(old_name)] = new_name
     assert actual == baseline["sqlite_tables"]
 
 

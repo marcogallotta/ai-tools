@@ -77,7 +77,7 @@
       "task_gid": "task-human_review-hold",
       "covers": [
         "human_review review",
-        "two-pass-hold",
+        "verification-hold",
         "reviewed binding"
       ]
     },

@@ -489,8 +489,8 @@ def _resume_pending_rejection_finalize(
     route_cycle_step = f"route_cycle_finalize:{suffix}"
     route_new_cycle_step = f"route_new_cycle:{suffix}"
     route_phase_step = f"route_phase:{suffix}"
-    two_pass = bool(intended.get("two_pass_hold"))
-    outcome = str(intended.get("outcome") or ("two-pass-hold" if two_pass else "rejected"))
+    verification_hold = bool(intended.get("verification_hold"))
+    outcome = str(intended.get("outcome") or ("verification-hold" if verification_hold else "rejected"))
     persisted_route = intended.get("route")
     resume_state = intended.get("resume_state")
     target_phase_row = conn.execute(
@@ -532,7 +532,7 @@ def _resume_pending_rejection_finalize(
         if target_phase and op["phase"] != target_phase:
             transition_operation(conn, operation_id, phase=target_phase)
         hold_fields = (None, None, None)
-        if two_pass or route in {"evidence", "human-review"}:
+        if verification_hold or route in {"evidence", "human-review"}:
             hold_fields = (version["content_version_id"], decision_identity, live.section_gid)
         conn.execute(
             """UPDATE verification_cycles
@@ -546,7 +546,7 @@ def _resume_pending_rejection_finalize(
             ),
         )
         complete_operation_step(conn, operation_id, route_cycle_step)
-        if route == "large" and not two_pass:
+        if route == "large" and not verification_hold:
             next_step = conn.execute(
                 "SELECT intended_json FROM operation_steps WHERE operation_id=? AND step_name=?",
                 (operation_id, route_new_cycle_step),
@@ -582,7 +582,7 @@ def _resume_pending_rejection_finalize(
                 actor_agent=agent,
                 details={
                     "cycle_id": cycle_id, "route": route, "reason": reason,
-                    "two_pass_hold": two_pass, "identity": decision_identity,
+                    "verification_hold": verification_hold, "identity": decision_identity,
                     "recovered": True,
                 },
                 result_code="OK", result_ok=True, governed_kind="decision",
@@ -601,7 +601,7 @@ def _resume_pending_rejection_finalize(
             )
     return {
         "operation_id": operation_id, "route": route,
-        "two_pass_hold": two_pass,
+        "verification_hold": verification_hold,
         "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"],
         "task": dataclasses.asdict(live),
         "rejection_recovered": True,
@@ -634,7 +634,7 @@ def _resume_rejected_cycle(
     cycle = conn.execute(
         """SELECT * FROM verification_cycles
              WHERE operation_id=? AND completed_at IS NOT NULL
-               AND outcome IN ('rejected','two-pass-hold')
+               AND outcome IN ('rejected','verification-hold')
              ORDER BY completed_at DESC, rowid DESC LIMIT 1""",
         (operation_id,),
     ).fetchone()
@@ -649,7 +649,7 @@ def _resume_rejected_cycle(
         return None
     suffix = cycle["cycle_id"]
     required_steps = [f"route_cycle_finalize:{suffix}", f"route_phase:{suffix}"]
-    if route == "large" and cycle["outcome"] != "two-pass-hold":
+    if route == "large" and cycle["outcome"] != "verification-hold":
         required_steps.append(f"route_new_cycle:{suffix}")
     rows = conn.execute(
         f"SELECT step_name, completed_at FROM operation_steps WHERE operation_id=? AND step_name IN ({','.join('?' for _ in required_steps)})",
@@ -695,7 +695,7 @@ def _resume_rejected_cycle(
                 details={
                     "cycle_id": cycle["cycle_id"],
                     "route": route, "reason": reason,
-                    "two_pass_hold": cycle["outcome"] == "two-pass-hold",
+                    "verification_hold": cycle["outcome"] == "verification-hold",
                     "identity": live.identity, "recovered": True,
                 },
                 result_code="OK", result_ok=True, governed_kind="decision",
@@ -716,7 +716,7 @@ def _resume_rejected_cycle(
     ).fetchone()
     return {
         "operation_id": operation_id, "route": route,
-        "two_pass_hold": cycle["outcome"] == "two-pass-hold",
+        "verification_hold": cycle["outcome"] == "verification-hold",
         "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"],
         "task": dataclasses.asdict(live),
         "rejection_recovered": prior is None,
@@ -816,10 +816,10 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         document = dataclasses.replace(document, state=hold(state, target="pending-human-review", detail=reason, resume_status=resume_status))
 
     completed = conn.execute("SELECT COUNT(*) FROM verification_cycles WHERE operation_id = ? AND completed_at IS NOT NULL AND outcome != 'approved'", (operation_id,)).fetchone()[0]
-    two_pass = completed + 1 >= 2 and route == "large"
-    if two_pass:
-        assert_transition(action="two_pass_hold", before="pending-verification", after="pending-human-review")
-        document = dataclasses.replace(document, state=hold(document.state.values, target="pending-human-review", detail=f"Two independent Verification passes ended without a signable task: {reason}", resume_status="pending-verification"))
+    verification_hold = completed + 1 >= 3 and route == "large"
+    if verification_hold:
+        assert_transition(action="verification_hold", before="pending-verification", after="pending-human-review")
+        document = dataclasses.replace(document, state=hold(document.state.values, target="pending-human-review", detail=f"Three consecutive Verification rounds ended without a signable task: {reason}", resume_status="pending-verification"))
 
     precheck = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not precheck.ok:
@@ -830,8 +830,8 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     )
     intended_title, intended_notes = _render(document)
     intended_identity = content_identity(intended_title, intended_notes).digest
-    outcome = "two-pass-hold" if two_pass else "rejected"
-    target_phase = "held_human" if (two_pass or route == "human-review") else ("held_evidence" if route == "evidence" else "await_verification")
+    outcome = "verification-hold" if verification_hold else "rejected"
+    target_phase = "held_human" if (verification_hold or route == "human-review") else ("held_evidence" if route == "evidence" else "await_verification")
     route_suffix = cycle["cycle_id"]
     route_write_step = f"route_write:{route_suffix}"
     route_actor_step = f"route_actor:{route_suffix}"
@@ -852,18 +852,18 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         "cycle_id": cycle["cycle_id"], "correction_class": "large" if route == "large" else None,
         "outcome": outcome, "route": {"evidence": "evidence", "human-review": "human_review"}.get(route),
         "resume_state": document.state.values["Resume status"],
-        "hold_identity": intended_identity if (two_pass or route in {"evidence", "human-review"}) else None,
-        "hold_section_gid": live.section_gid if (two_pass or route in {"evidence", "human-review"}) else None,
+        "hold_identity": intended_identity if (verification_hold or route in {"evidence", "human-review"}) else None,
+        "hold_section_gid": live.section_gid if (verification_hold or route in {"evidence", "human-review"}) else None,
         "decision_route": route,
         "decision_reason": reason,
         "decision_identity": intended_identity,
         "decision_status": document.state.values["Status"],
-        "two_pass_hold": two_pass,
+        "verification_hold": verification_hold,
         "actor_agent": agent,
         "actor_run_id": run_id,
         "actor_attestation": authority_attestation,
     })
-    if route == "large" and not two_pass:
+    if route == "large" and not verification_hold:
         declare_operation_step(conn, operation_id, route_new_cycle_step, {"protocol_release": snapshot.identity, "protocol_text": snapshot.text})
     declare_operation_step(conn, operation_id, route_phase_step, {"phase": target_phase})
     confirmed = _write_document(conn, backend, op, live, document, schema=schema, authorization_ids=authorization_ids)
@@ -881,12 +881,12 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
                 "UPDATE operations SET editor_agent=?, verifier_agent=NULL, run_id=?, independence_attestation=? WHERE operation_id=?",
                 (agent, cycle["run_id"], cycle["independence_attestation"], operation_id),
             )
-        if two_pass or route == "human-review":
+        if verification_hold or route == "human-review":
             transition_operation(conn, operation_id, phase="held_human")
         elif route == "evidence":
             transition_operation(conn, operation_id, phase="held_evidence")
         hold_fields = (None, None, None)
-        if two_pass or route in {"evidence", "human-review"}:
+        if verification_hold or route in {"evidence", "human-review"}:
             hold_version = _confirmed_version(
                 conn, operation_id=operation_id, task_gid=op["task_gid"], identity=confirmed.identity
             )
@@ -905,7 +905,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
             ),
         )
         complete_operation_step(conn, operation_id, route_cycle_step)
-        if route == "large" and not two_pass:
+        if route == "large" and not verification_hold:
             next_number = conn.execute("SELECT COALESCE(MAX(cycle_number), 0) + 1 FROM verification_cycles WHERE task_gid = ?", (op["task_gid"],)).fetchone()[0]
             new_cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=next_number, protocol_release=snapshot.identity, protocol_text=snapshot.text, route=None)
             complete_operation_step(conn, operation_id, route_new_cycle_step)
@@ -913,8 +913,8 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         else:
             new_cycle = None
         complete_operation_step(conn, operation_id, route_phase_step)
-        record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "two_pass_hold": two_pass, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
-    return {"operation_id": operation_id, "route": route, "two_pass_hold": two_pass, "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"], "task": dataclasses.asdict(confirmed)}
+        record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "verification_hold": verification_hold, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
+    return {"operation_id": operation_id, "route": route, "verification_hold": verification_hold, "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"], "task": dataclasses.asdict(confirmed)}
 
 
 
@@ -1011,11 +1011,11 @@ def _prove_reset(original, candidate, category: str, before: str, after: str) ->
     raise DishRuleError(
         "VALIDATION_FAILED",
         "corrected candidate must replace the declared operative value in one diff hunk",
-        rule="two_pass_reset_not_applied",
+        rule="verification_hold_reset_not_applied",
         details={"category": category, "before": before, "after": after, "matching_paths": matches},
     )
 
-def reopen_two_pass(
+def reopen_verification_hold(
     conn: sqlite3.Connection,
     backend: Any,
     *,
@@ -1044,16 +1044,16 @@ def reopen_two_pass(
         raise DishRuleError("INVALID_ARGUMENT", "reopen editor must be an agent", rule="reopen_editor_required")
     cycle = conn.execute(
         """SELECT * FROM verification_cycles
-             WHERE operation_id=? AND outcome='two-pass-hold'
+             WHERE operation_id=? AND outcome='verification-hold'
              ORDER BY cycle_number DESC LIMIT 1""",
         (operation_id,),
     ).fetchone()
     if cycle is None:
-        raise DishRuleError("WRONG_STATE", "operation has no two-pass hold", rule="two_pass_hold_required")
+        raise DishRuleError("WRONG_STATE", "operation has no Verification hold", rule="verification_hold_required")
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     original = _held_document(conn, cycle=cycle, live=live)
     if original.state.values["Status"] != "pending-human-review" or original.state.values["Resume status"] != "pending-verification":
-        raise DishRuleError("WRONG_STATE", "task is not on the two-pass Verification hold", rule="two_pass_hold_required")
+        raise DishRuleError("WRONG_STATE", "task is not on the Verification hold", rule="verification_hold_required")
     candidate = _candidate(file_path)
     candidate_state = dict(candidate.state.values)
     candidate_state["Researched by"] = original.state.values["Researched by"]
@@ -1082,7 +1082,7 @@ def reopen_two_pass(
         model,
         date,
         change=f"reset {category} at {changed_path} from {before} to {after}",
-        reason="Marco-authorized substantive reset after two unsuccessful passes",
+        reason="Marco-authorized substantive reset after a Verification hold",
         materiality="Large",
     )
     document = dataclasses.replace(
@@ -1119,7 +1119,7 @@ def reopen_two_pass(
     )
     complete_operation_step(conn, operation_id, "reopen_write")
     conn.execute(
-        """INSERT OR IGNORE INTO two_pass_resets(
+        """INSERT OR IGNORE INTO verification_hold_resets(
                reset_id, operation_id, source_cycle_id, candidate_identity,
                canonical_path, category, before_json, after_json, created_at
            ) VALUES(?,?,?,?,?,?,?,?,?)""",
@@ -1418,3 +1418,41 @@ def resolve_hold(
         "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"],
         "task": dataclasses.asdict(confirmed),
     }
+
+
+def resolve_verification_hold(
+    conn: sqlite3.Connection, backend: Any, *, operation_id: str, schema=None
+):
+    """Release a Verification hold without editing or approving its candidate."""
+    op = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
+    if op is None:
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    if op["status"] != "open" or op["phase"] != "held_human":
+        raise DishRuleError("WRONG_STATE", "operation is not on a Verification hold", rule="verification_hold_required")
+    cycle = conn.execute(
+        "SELECT * FROM verification_cycles WHERE operation_id=? AND outcome='verification-hold' ORDER BY cycle_number DESC LIMIT 1",
+        (operation_id,),
+    ).fetchone()
+    if cycle is None:
+        raise DishRuleError("WRONG_STATE", "operation has no Verification hold", rule="verification_hold_required")
+    live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
+    before_doc = _held_document(conn, cycle=cycle, live=live)
+    if before_doc.state.values["Status"] != "pending-human-review" or before_doc.state.values["Resume status"] != "pending-verification":
+        raise DishRuleError("WRONG_STATE", "live task does not match the Verification hold", rule="hold_state_mismatch")
+    values = dict(before_doc.state.values)
+    values.update({"Status": "pending-verification", "Status detail": "None", "Resume status": "None", "Verified by": "None", "Verification protocol release": cycle["protocol_release"]})
+    document = dataclasses.replace(before_doc, state=TaskState(values))
+    intended_title, intended_notes = _render(document)
+    declare_operation_step(conn, operation_id, "verification_hold_release_write", {"title": intended_title, "notes": intended_notes, "source_cycle_id": cycle["cycle_id"]})
+    declare_operation_step(conn, operation_id, "verification_hold_release_cycle", {"protocol_release": cycle["protocol_release"], "protocol_text": cycle["protocol_text"]})
+    declare_operation_step(conn, operation_id, "verification_hold_release_phase", {"phase": "await_verification"})
+    confirmed = _write_document(conn, backend, op, live, document, schema=schema)
+    complete_operation_step(conn, operation_id, "verification_hold_release_write")
+    number = conn.execute("SELECT COALESCE(MAX(cycle_number),0)+1 FROM verification_cycles WHERE task_gid=?", (op["task_gid"],)).fetchone()[0]
+    new_cycle = create_verification_cycle(conn, operation_id=operation_id, task_gid=op["task_gid"], cycle_number=number, protocol_release=cycle["protocol_release"], protocol_text=cycle["protocol_text"])
+    complete_operation_step(conn, operation_id, "verification_hold_release_cycle")
+    conn.execute("UPDATE operations SET verifier_agent=NULL, independence_attestation=NULL WHERE operation_id=?", (operation_id,))
+    transition_operation(conn, operation_id, phase="await_verification")
+    complete_operation_step(conn, operation_id, "verification_hold_release_phase")
+    record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.hold_released", actor_agent=None, details={"source_cycle_id": cycle["cycle_id"], "new_cycle_id": new_cycle["cycle_id"], "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"status": "pending-human-review", "outcome": "verification-hold"}, after_state={"status": "pending-verification", "approved": False}, actor_source="marco-admin")
+    return {"operation_id": operation_id, "source_cycle_id": cycle["cycle_id"], "new_cycle_id": new_cycle["cycle_id"], "resume_status": "pending-verification", "candidate_identity": confirmed.identity, "approved": False, "signed_off": False, "task": dataclasses.asdict(confirmed)}

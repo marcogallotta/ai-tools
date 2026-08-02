@@ -20,6 +20,7 @@ from tests.support.submission import _signed
         ("repair-destination", "submission_id"),
         ("supply-evidence", "submission_id"),
         ("record-human-decision", "submission_id"),
+        ("resolved", "submission_id"),
         ("authorize-governed-change", "submission_id"),
         ("discard", "submission_id"),
     ],

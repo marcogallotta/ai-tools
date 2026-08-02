@@ -30,7 +30,7 @@ EXPECTED_SCENARIOS = {
     "signed-binding": ("task-signed", ("signed binding", "multiple content versions", "confirmed write")),
     "closed-not-applied-attempt": ("task-attempt-not-applied", ("not-applied attempt",)),
     "evidence-hold": ("task-evidence-hold", ("evidence review", "evidence-hold", "reviewed binding")),
-    "human_review-hold": ("task-human_review-hold", ("human_review review", "two-pass-hold", "reviewed binding")),
+    "human_review-hold": ("task-human_review-hold", ("human_review review", "verification-hold", "reviewed binding")),
     "checked-in-movement-ambiguity": ("task-move-ambiguous", ("checked-in movement ambiguity", "contradictory recovery decisions", "exact row diff")),
     "partially-finalized-write": ("task-partial-write", ("partially finalized attempt", "exact row diff")),
 }
@@ -67,7 +67,7 @@ EXPECTED_MOVEMENT_ATTEMPTS = {
 EXPECTED_CYCLES = {
     "cycle-signed": ("op-signed", "approved", True),
     "cycle-evidence": ("op-evidence-hold", "evidence-hold", False),
-    "cycle-human_review": ("op-human_review-hold", "two-pass-hold", False),
+    "cycle-human_review": ("op-human_review-hold", "verification-hold", False),
 }
 
 

@@ -192,7 +192,7 @@ The implementation must maintain a row-by-row coverage matrix at re-baseline. Th
 | `operation_actor_facts` | Operation-scoped actor/run lineage. |
 | `marco_authorizations` | Authorization grants, reservations/releases, and single-use consumption. |
 | `command_audit_repairs` | Durable pending/repaired/quarantined invocation-audit repair authority. |
-| `two_pass_resets` | Two-pass Human Review reopen evidence. |
+| `verification_hold_resets` | Verification-hold substantive-reopen evidence. |
 | `service_leases` | Actor lease authority. |
 | `service_requests` | Generation-bound immutable request identity and canonical outcome. |
 | `operation_execution_claims` | Executor-claim authority, distinct from mutation fences. |
@@ -352,7 +352,7 @@ Verification storage must represent:
 - rejection category/reason where applicable;
 - corrected candidate lineage;
 - signed occurrence and signoff evidence;
-- two-pass reset or Human Review evidence;
+- Verification-hold reset or Human Review evidence;
 - inherited signoff for permitted non-material check-ins.
 
 Target `inspect` is a replay-bound evidence mutation. Its idempotency identity includes operation, cycle, reviewed occurrence and identity, verifier actor fact/run, attestation, and exact logical Verification Queue placement provenance. Evidence plus governed audit commits atomically. A changed head, actor fact, cycle, registry/location occurrence, or placement cannot reuse an earlier inspection.

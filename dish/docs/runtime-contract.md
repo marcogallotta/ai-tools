@@ -431,3 +431,11 @@ During a fresh initial Research operation, `reject --route evidence|human-review
 7. For a `started` or `uncertain` write/movement, do not retry the backend mutation. Use `dish-admin recover` after a live reread; recovery must match persisted expected/intended evidence and records the reconciliation outcome durably. This includes an interrupted destination-repair content write.
 8. For an unrecoverable destination failure, use only the returned `repair-destination` admin action; do not reopen Verification or edit the task directly.
 9. For tool/protocol disagreement, preserve the task unchanged and report both the protocol clause and tool rule.
+
+## Verification hold continuation
+
+A third non-approved Verification round ending in a Large correction returns no agent action and advertises
+`dish-admin resolved <operation-id>`. Resolution preserves the held recipe candidate, changes only
+the workflow state back to `pending-verification`, creates the next independent Verification cycle,
+and does not approve or sign off the task. `dish-admin reopen` remains available only for an actual
+substantive reset with its existing evidence contract.

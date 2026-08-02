@@ -2291,7 +2291,65 @@ WHEN NEW.operation_execution_id IS NOT NULL
 BEGIN SELECT RAISE(ABORT, 'audit execution binding is invalid'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35}
+
+_MIGRATION_36 = """
+DROP TRIGGER IF EXISTS verification_cycles_state_insert;
+DROP TRIGGER IF EXISTS verification_cycles_state_update;
+DROP TRIGGER IF EXISTS verification_cycles_hold_binding_required_insert;
+DROP TRIGGER IF EXISTS verification_cycles_hold_binding_required_update;
+DROP TRIGGER IF EXISTS verification_cycles_outcome_monotonic_update;
+UPDATE verification_cycles SET outcome='verification-hold' WHERE outcome='two-pass-hold';
+ALTER TABLE two_pass_resets RENAME TO verification_hold_resets;
+DROP INDEX IF EXISTS two_pass_resets_operation_idx;
+DROP TRIGGER IF EXISTS two_pass_resets_append_only_update;
+DROP TRIGGER IF EXISTS two_pass_resets_append_only_delete;
+CREATE INDEX verification_hold_resets_operation_idx ON verification_hold_resets(operation_id, created_at);
+CREATE TRIGGER verification_hold_resets_append_only_update
+BEFORE UPDATE ON verification_hold_resets
+BEGIN SELECT RAISE(ABORT, 'Verification hold reset evidence is append-only'); END;
+CREATE TRIGGER verification_hold_resets_append_only_delete
+BEFORE DELETE ON verification_hold_resets
+BEGIN SELECT RAISE(ABORT, 'Verification hold reset evidence is append-only'); END;
+CREATE TRIGGER verification_cycles_state_insert
+BEFORE INSERT ON verification_cycles
+WHEN (NEW.outcome = 'approved' AND (NEW.completed_at IS NULL OR NEW.signed_content_version_id IS NULL OR NEW.signed_identity IS NULL))
+   OR (NEW.route IS NULL AND COALESCE(NEW.resume_state, 'None') != 'None' AND COALESCE(NEW.outcome, '') != 'verification-hold')
+   OR (NEW.route IS NOT NULL AND COALESCE(NEW.resume_state, 'None') = 'None')
+BEGIN SELECT RAISE(ABORT, 'verification cycle state is invalid'); END;
+CREATE TRIGGER verification_cycles_state_update
+BEFORE UPDATE OF outcome, completed_at, signed_content_version_id, signed_identity, route, resume_state
+ON verification_cycles
+WHEN (NEW.outcome = 'approved' AND (NEW.completed_at IS NULL OR NEW.signed_content_version_id IS NULL OR NEW.signed_identity IS NULL))
+   OR (NEW.route IS NULL AND COALESCE(NEW.resume_state, 'None') != 'None' AND COALESCE(NEW.outcome, '') != 'verification-hold')
+   OR (NEW.route IS NOT NULL AND COALESCE(NEW.resume_state, 'None') = 'None')
+BEGIN SELECT RAISE(ABORT, 'verification cycle state is invalid'); END;
+CREATE TRIGGER verification_cycles_hold_binding_required_insert
+BEFORE INSERT ON verification_cycles
+WHEN NEW.completed_at IS NOT NULL
+ AND (NEW.route IN ('evidence','human_review') OR NEW.outcome='verification-hold')
+ AND (NEW.hold_content_version_id IS NULL OR NEW.hold_identity IS NULL OR NEW.hold_section_gid IS NULL
+      OR NOT EXISTS (SELECT 1 FROM content_versions AS version WHERE version.content_version_id=NEW.hold_content_version_id AND version.operation_id=NEW.operation_id AND version.task_gid=NEW.task_gid AND version.confirmed=1 AND version.identity=NEW.hold_identity))
+BEGIN SELECT RAISE(ABORT, 'hold outcome requires exact content and placement evidence'); END;
+CREATE TRIGGER verification_cycles_hold_binding_required_update
+BEFORE UPDATE ON verification_cycles
+WHEN NEW.completed_at IS NOT NULL
+ AND (NEW.route IN ('evidence','human_review') OR NEW.outcome='verification-hold')
+ AND (NEW.hold_content_version_id IS NULL OR NEW.hold_identity IS NULL OR NEW.hold_section_gid IS NULL
+      OR NOT EXISTS (SELECT 1 FROM content_versions AS version WHERE version.content_version_id=NEW.hold_content_version_id AND version.operation_id=NEW.operation_id AND version.task_gid=NEW.task_gid AND version.confirmed=1 AND version.identity=NEW.hold_identity))
+BEGIN SELECT RAISE(ABORT, 'hold outcome requires exact content and placement evidence'); END;
+CREATE TRIGGER verification_cycles_outcome_monotonic_update
+BEFORE UPDATE ON verification_cycles
+WHEN (OLD.completed_at IS NOT NULL AND NEW.completed_at IS NOT OLD.completed_at)
+  OR (OLD.outcome IS NOT NULL AND NEW.outcome IS NOT OLD.outcome)
+  OR (OLD.route IS NOT NULL AND NEW.route IS NOT OLD.route)
+  OR (OLD.resume_state IS NOT NULL AND NEW.resume_state IS NOT OLD.resume_state)
+  OR (OLD.signed_content_version_id IS NOT NULL
+      AND NEW.signed_content_version_id IS NOT OLD.signed_content_version_id)
+  OR (OLD.signed_identity IS NOT NULL AND NEW.signed_identity IS NOT OLD.signed_identity)
+BEGIN SELECT RAISE(ABORT, 'verification cycle outcome is monotonic'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -2438,7 +2496,7 @@ _SEMANTIC_RECORD_SELECTORS = {
     "operation_executions": "execution_id",
     "abandonment_attempts": "abandonment_id",
     "operation_successions": "succession_id",
-    "two_pass_resets": "reset_id",
+    "verification_hold_resets": "reset_id",
 }
 _SEMANTIC_PROVENANCE_FIELDS = (
     "task_gid", "operation_id", "request_id", "execution_id", "command",
@@ -2833,7 +2891,7 @@ def _semantic_relationship(
                 "consumed challenge selects one Planning operation for the same task and run"
             ),
         },
-        "two_pass_reset_binding": {
+        "verification_hold_reset_binding": {
             "source_fields": ["operation_id", "source_cycle_id", "candidate_identity"],
             "targets": [{
                 "record_type": "content_versions",
@@ -2846,7 +2904,7 @@ def _semantic_relationship(
             }],
             "required_predicate": (
                 "confirmed candidate content exists for the operation and source cycle belongs to the same "
-                "operation with outcome=two-pass-hold"
+                "operation with outcome=verification-hold"
             ),
         },
     }
@@ -2971,7 +3029,7 @@ def _validate_content_and_cycle_evidence(
              FROM verification_cycles AS cycle
              JOIN operations AS operation ON operation.operation_id=cycle.operation_id
             WHERE cycle.completed_at IS NOT NULL
-              AND (cycle.route IN ('evidence','human_review') OR cycle.outcome='two-pass-hold')"""
+              AND (cycle.route IN ('evidence','human_review') OR cycle.outcome='verification-hold')"""
     ):
         held = conn.execute(
             "SELECT task_gid,operation_id,identity,confirmed FROM content_versions WHERE content_version_id=?",
@@ -3483,19 +3541,19 @@ def _validate_backup_and_reset_evidence(
                 "service_requests",
                 request["request_id"],
             ))
-    for row in conn.execute("SELECT * FROM two_pass_resets"):
+    for row in conn.execute("SELECT * FROM verification_hold_resets"):
         version = conn.execute(
             """SELECT 1 FROM content_versions
                  WHERE operation_id=? AND identity=? AND confirmed=1 LIMIT 1""",
             (row["operation_id"], row["candidate_identity"]),
         ).fetchone()
         cycle = conn.execute(
-            "SELECT 1 FROM verification_cycles WHERE cycle_id=? AND operation_id=? AND outcome='two-pass-hold'",
+            "SELECT 1 FROM verification_cycles WHERE cycle_id=? AND operation_id=? AND outcome='verification-hold'",
             (row["source_cycle_id"], row["operation_id"]),
         ).fetchone()
         if version is None or cycle is None:
             problems.append(_semantic_problem(conn,
-                "two_pass_reset_binding", "two_pass_resets", row["reset_id"],
+                "verification_hold_reset_binding", "verification_hold_resets", row["reset_id"],
             ))
 
 def _validate_abandonment_attempt_evidence(

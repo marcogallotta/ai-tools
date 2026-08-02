@@ -48,13 +48,13 @@ def test_schema_v16_and_audit_repair_table(tmp_path):
     assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='verification_cycles_completed_fully_immutable_update'").fetchone()
 
 
-def test_two_pass_reset_rejects_future_target_without_replacement():
+def test_verification_hold_reset_rejects_future_target_without_replacement():
     from dish_tool.step8 import _prove_reset
     before = doc()
     candidate = doc(TASK.replace("100 g test ingredient", "100 g test ingredient\nFuture target: 140 g test ingredient"))
     with pytest.raises(DishRuleError) as exc:
         _prove_reset(before, candidate, "scope", "100 g test ingredient", "140 g test ingredient")
-    assert exc.value.rule == "two_pass_reset_not_applied"
+    assert exc.value.rule == "verification_hold_reset_not_applied"
 
 
 def test_start_returns_environment_specific_runtime_context(tmp_path, monkeypatch):
@@ -168,13 +168,13 @@ def test_decisions_and_research_basis_are_material():
     assert "research_basis" in explicit_material_reasons(before, research)
 
 
-def test_two_pass_reset_rejects_whitespace_disguised_retention():
+def test_verification_hold_reset_rejects_whitespace_disguised_retention():
     from dish_tool.step8 import _prove_reset
     before = doc(TASK.replace("100 g test ingredient", "130 g test ingredient"))
     candidate = doc(TASK.replace("100 g test ingredient", "130g test ingredient\nFuture target: 140 g test ingredient"))
     with pytest.raises(DishRuleError) as exc:
         _prove_reset(before, candidate, "scope", "130 g test ingredient", "140 g test ingredient")
-    assert exc.value.rule == "two_pass_reset_not_applied"
+    assert exc.value.rule == "verification_hold_reset_not_applied"
 
 
 def test_database_reopens_with_timestamped_protocol_release(tmp_path):

@@ -202,7 +202,7 @@ class CurrentWorkflowService:
                 held = self.conn.execute(
                     """SELECT * FROM verification_cycles
                          WHERE operation_id=? AND completed_at IS NOT NULL
-                           AND (route IN ('evidence','human_review') OR outcome='two-pass-hold')
+                           AND (route IN ('evidence','human_review') OR outcome='verification-hold')
                          ORDER BY cycle_number DESC LIMIT 1""",
                     (operation_id,),
                 ).fetchone()
@@ -824,7 +824,7 @@ class CurrentWorkflowService:
     def resolve_hold(self, operation_id: str, action: str, executor: Callable[[], T], *, schema=None):
         return self.mutate(operation_id, action, executor, schema=schema)
 
-    def reopen_two_pass(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+    def reopen_verification_hold(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         return self.mutate(operation_id, "reopen", executor, schema=schema)
 
     def recover(self, operation_id: str, executor: Callable[[], T], *, schema=None):

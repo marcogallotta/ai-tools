@@ -33,6 +33,11 @@ def test_reopen_recovery_records_editor_before_cycle_is_usable(tmp_path, monkeyp
         "reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large",
         reason="second", file_path=str(candidate), run_id="two",
     )["ok"]
+    _review(app, "three", agent="claude")
+    assert app.execute(
+        "reject", agent="claude", model="claude-sonnet", submission_id=operation_id, route="large",
+        reason="third", file_path=str(candidate), run_id="three",
+    )["ok"]
 
     corrected = tmp_path / "corrected.txt"
     corrected.write_text(
@@ -195,7 +200,7 @@ def test_current_dispatch_contract_is_explicit_and_complete():
     }
     assert set(CURRENT_ADMIN_COMMAND_HANDLERS) == {
         "migrate", "reopen-planning", "reopen", "recover", "repair-destination", "supply-evidence",
-        "record-human-decision", "authorize-governed-change", "discard",
+        "record-human-decision", "resolved", "authorize-governed-change", "discard",
         "abandon-operation", "reconcile-abandonment",
     }
     assert all(callable(handler) for handler in CURRENT_COMMAND_HANDLERS.values())

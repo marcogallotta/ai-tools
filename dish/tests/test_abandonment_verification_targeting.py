@@ -82,7 +82,30 @@ def _claim_targeted_continuation(app, backend, tmp_path, operation_id, next_cycl
         run_id="fresh-run",
         candidate_text=live_candidate,
     )
-    assert held["data"]["two_pass_hold"] is True
+    assert held["data"]["verification_hold"] is False
+    next_cycle_id = held["data"]["new_cycle_id"]
+    assert next_cycle_id
+    claimed = app.execute(
+        "start",
+        agent="claude",
+        task_gid="t",
+        kind="verification",
+        run_id="third-run",
+        independence_attestation="independent",
+        target_operation_id=operation_id,
+        target_cycle_id=next_cycle_id,
+    )
+    assert claimed["ok"], claimed
+    held_candidate = f"{backend.title}\n{backend.notes}".replace("130 g", "140 g")
+    held = reject_large(
+        app,
+        tmp_path,
+        operation_id=operation_id,
+        agent="claude",
+        run_id="third-run",
+        candidate_text=held_candidate,
+    )
+    assert held["data"]["verification_hold"] is True
 
 
 def _reopen_route_and_assert_old_target_is_stale(
@@ -141,5 +164,4 @@ def test_route_preserved_verification_continuation_is_exact_targeted(tmp_path):
     _reopen_route_and_assert_old_target_is_stale(
         app, backend, tmp_path, operation_id, next_cycle
     )
-
 

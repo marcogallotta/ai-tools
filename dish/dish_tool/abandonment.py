@@ -451,7 +451,7 @@ def _completed_verification_frontier(
 ) -> AbandonmentFrontier | None:
     if cycle["completed_at"] is None:
         return None
-    if cycle["outcome"] in {"rejected", "two-pass-hold"}:
+    if cycle["outcome"] in {"rejected", "verification-hold"}:
         if cycle["hold_identity"] is not None:
             if (
                 live.identity != cycle["hold_identity"]

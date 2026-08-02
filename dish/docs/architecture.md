@@ -181,7 +181,7 @@ claiming that an intermediate identity was independently verified.
 ### Recovery is specific
 
 There is no generic `unblock`. Lease recovery, ambiguous-effect recovery, destination repair,
-discard, Evidence resolution, Human Review, completed-task Planning reopen, and two-pass hold reopen
+discard, Evidence resolution, Human Review, completed-task Planning reopen, and Verification hold reopen
 each have narrow preconditions and preserve different evidence. A completed task cannot directly
 claim a Planning operation: Marco must use `reopen-planning`, which records an exact completion-state
 attempt and audit before the task becomes eligible. Add a new recovery route only when its durable facts and legal continuation
@@ -458,7 +458,7 @@ cannot silently create separate live authorities.
 | operation lifecycle | `operations`, `operation_steps`, `operation_actor_facts` |
 | abandoned-attempt lineage | `abandonment_attempts`, `operation_successions` |
 | exact task state | `task_content_state`, `content_versions` |
-| Verification/signoff | `verification_cycles`, `two_pass_resets` |
+| Verification/signoff | `verification_cycles`, `verification_hold_resets` |
 | external effects | `write_attempts`, `movement_attempts` |
 | governed authority | `marco_authorizations` |
 | execution and ownership | `operation_executions`, `operation_execution_claims`, `service_leases` |
@@ -769,3 +769,12 @@ Current production code calls `savepoint_transaction`, `immediate_transaction`,
 transaction aliases and the forwarding-only `WorkflowRepository` facade are not
 part of the supported architecture. New code must use the authoritative primitive
 owned by the transaction or workflow module rather than add a second name for it.
+
+### Verification hold release
+
+Verification rounds continue through V1 and V2. The third non-approved round ending in a Large correction
+round persists the verifier-corrected candidate and records the threshold-agnostic
+`verification-hold` outcome. The private `dish-admin resolved` continuation releases that exact
+candidate into a fresh Verification cycle without approval, signoff, or a fabricated content edit.
+The separate `dish-admin reopen` route remains the substantive-reset path when Marco intentionally
+authorizes a real candidate change.

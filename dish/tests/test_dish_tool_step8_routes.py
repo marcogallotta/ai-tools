@@ -27,23 +27,24 @@ def test_small_correction_is_written_rechecked_and_signed_same_pass(tmp_path):
 
 
 @pytest.mark.smoke
-def test_large_requires_fresh_verifier_and_two_pass_writes_task_hold(tmp_path):
+def test_large_requires_fresh_verifier_and_third_failure_writes_task_hold(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    review_and_inspect(app, agent="codex", run_id="first")
-    candidate = tmp_path / "large.txt"; candidate.write_text(TASK.replace("100 g", "120 g"))
-    first = app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="method needs replacement", file_path=str(candidate), run_id="first")
-    assert first["ok"] and first["data"]["new_cycle_id"]
-    assert first["allowed_actions"] == ["start"]
-    assert first["data"]["required_start_kind"] == "verification"
-    barred = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="first", independence_attestation="independent")
-    assert barred["code"] == "AGENT_MISMATCH"
-    review_and_inspect(app, agent="gpt", run_id="second")
-    candidate.write_text(TASK.replace("100 g", "130 g"))
-    second = app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="premise still unresolved", file_path=str(candidate), run_id="second")
-    assert second["ok"] and second["data"]["two_pass_hold"]
+    candidate = tmp_path / "large.txt"
+    for index, (agent, run_id, amount) in enumerate((("codex", "first", "120 g"), ("gpt", "second", "130 g"), ("claude", "third", "140 g")), start=1):
+        review_and_inspect(app, agent=agent, run_id=run_id)
+        candidate.write_text(TASK.replace("100 g", amount))
+        result = app.execute("reject", agent=agent, model="gpt-5.6-sol", submission_id=operation_id, route="large", reason=f"failure {index}", file_path=str(candidate), run_id=run_id)
+        assert result["ok"]
+        if index < 3:
+            assert result["data"]["verification_hold"] is False
+            assert result["data"]["new_cycle_id"]
+            assert result["allowed_actions"] == ["start"]
+        else:
+            assert result["data"]["verification_hold"] is True
     assert "Status: pending-human-review" in backend.notes
     assert "Resume status: pending-verification" in backend.notes
-    blocked = app.execute("start", agent="gpt", task_gid="t", kind="verification", run_id="third", independence_attestation="independent")
+    assert "140 g" in backend.notes
+    blocked = app.execute("start", agent="gpt", task_gid="t", kind="verification", run_id="fourth", independence_attestation="independent")
     assert blocked["code"] == "WRONG_STATE"
 
 
@@ -95,11 +96,15 @@ def test_human_review_route_reports_private_continuation_without_exposing_it(tmp
 @pytest.mark.smoke
 def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
-    candidate = tmp_path / "large.txt"; candidate.write_text(TASK)
+    candidate = tmp_path / "large.txt"; candidate.write_text(TASK.replace("100 g", "120 g"))
     review_and_inspect(app, agent="codex", run_id="one")
     app.execute("reject", agent="codex", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="first", file_path=str(candidate), run_id="one")
     review_and_inspect(app, agent="gpt", run_id="two")
+    candidate.write_text(TASK.replace("100 g", "130 g"))
     app.execute("reject", agent="gpt", model="gpt-5.6-sol", submission_id=operation_id, route="large", reason="second", file_path=str(candidate), run_id="two")
+    review_and_inspect(app, agent="claude", run_id="three")
+    candidate.write_text(TASK.replace("100 g", "140 g"))
+    app.execute("reject", agent="claude", model="claude-sonnet", submission_id=operation_id, route="large", reason="third", file_path=str(candidate), run_id="three")
     admin = DishAdminApplication(app.conn, backend=backend)
     bad = admin.execute("reopen", submission_id=operation_id, category="hash", before="a", after="b", editor="codex", model="gpt-5.6-sol", run_id="reopen-run", file_path=str(candidate), date="2026-07-25")
     assert bad["code"] == "INVALID_ARGUMENT"
@@ -118,7 +123,7 @@ def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):
         "to Compare hydration routes with a rested-starch reset."
     ) in backend.notes
     assert "Large — pending-verification" in backend.notes
-    assert app.conn.execute("SELECT COUNT(*) FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()[0] == 3
+    assert app.conn.execute("SELECT COUNT(*) FROM verification_cycles WHERE operation_id = ?", (operation_id,)).fetchone()[0] == 4
 
 
 @pytest.mark.smoke

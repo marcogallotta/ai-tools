@@ -29,7 +29,7 @@ _ALLOWED: dict[str, set[tuple[str | None, str]]] = {
     "large_correction": {("pending-verification", "pending-verification")},
     "request_evidence": {("pending-research", "pending-evidence"), ("pending-verification", "pending-evidence")},
     "request_human_review": {("pending-research", "pending-human-review"), ("pending-verification", "pending-human-review")},
-    "two_pass_hold": {("pending-verification", "pending-human-review")},
+    "verification_hold": {("pending-verification", "pending-human-review")},
     "resume": {("pending-evidence", "pending-research"), ("pending-evidence", "pending-verification"), ("pending-human-review", "pending-research"), ("pending-human-review", "pending-verification")},
     "submit": {("ready", "ready")},
 }

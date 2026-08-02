@@ -172,7 +172,7 @@ def test_recovery_fixture_matrix_covers_release_gate_scenarios():
         "not-applied attempt",
         "evidence review",
         "human_review review",
-        "two-pass-hold",
+        "verification-hold",
         "checked-in movement ambiguity",
         "contradictory recovery decisions",
         "partially finalized attempt",

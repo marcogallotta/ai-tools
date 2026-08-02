@@ -232,8 +232,8 @@ def build(output_dir: str | Path | None = None) -> None:
     scenarios.append({"id": "closed-not-applied-attempt", "task_gid": task,
                       "covers": ["not-applied attempt"]})
 
-    # Evidence and human-review holds, including a two-pass hold.
-    for route, outcome in [("evidence", "evidence-hold"), ("human_review", "two-pass-hold")]:
+    # Evidence and human-review holds, including a Verification hold.
+    for route, outcome in [("evidence", "evidence-hold"), ("human_review", "verification-hold")]:
         task, op = f"task-{route}-hold", f"op-{route}-hold"
         title, notes = f"Dish {route}", "reviewed notes"
         cid = add_state(conn, task=task, title=title, notes=notes)
