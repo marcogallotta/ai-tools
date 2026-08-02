@@ -1,6 +1,7 @@
 """Core PostgreSQL authority fixtures shared across collected tests."""
 from __future__ import annotations
 
+import os
 import uuid
 from collections.abc import Iterator
 from datetime import datetime, timezone
@@ -19,6 +20,11 @@ HASH_A = "a" * 64
 HASH_B = "b" * 64
 HASH_C = "c" * 64
 
+REAL_POSTGRESQL_DSN = os.environ.get(
+    "DISH_TEST_POSTGRESQL_DSN",
+    "postgresql+psycopg://dish:dish@127.0.0.1:55432/dish_stage_a_test",
+)
+
 
 def _uuid_stream() -> Iterator[uuid.UUID]:
     for value in range(1, 1000):
@@ -26,14 +32,23 @@ def _uuid_stream() -> Iterator[uuid.UUID]:
 
 
 @pytest.fixture
-def core_db() -> tuple[sessionmaker[Session], Iterator[uuid.UUID]]:
-    engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
+def core_db(request) -> tuple[sessionmaker[Session], Iterator[uuid.UUID]]:
+    if request.config.getoption("--postgresql"):
+        # Real PostgreSQL lane: a shared, persistent-for-the-session instance (see
+        # deploy/postgresql/compose.yaml), so each test gets a clean schema by dropping and
+        # recreating it rather than relying on a fresh in-memory database like the SQLite lane.
+        engine = create_engine(REAL_POSTGRESQL_DSN, future=True)
+        models.Base.metadata.drop_all(engine)
+        models.Base.metadata.create_all(engine)
+    else:
+        engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
 
-    @event.listens_for(engine, "connect")
-    def _foreign_keys(dbapi_connection, _connection_record) -> None:
-        dbapi_connection.execute("PRAGMA foreign_keys = ON")
+        @event.listens_for(engine, "connect")
+        def _foreign_keys(dbapi_connection, _connection_record) -> None:
+            dbapi_connection.execute("PRAGMA foreign_keys = ON")
 
-    models.Base.metadata.create_all(engine)
+        models.Base.metadata.create_all(engine)
+
     factory = sessionmaker(
         bind=engine,
         class_=Session,

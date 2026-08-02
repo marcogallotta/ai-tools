@@ -104,6 +104,16 @@ def pytest_addoption(parser):
         help="run the real SQLite bootstrap, migration, concurrency, and durability lane",
     )
     parser.addoption(
+        "--postgresql",
+        action="store_true",
+        default=False,
+        help=(
+            "run postgresql-marked fixtures against a real PostgreSQL instance "
+            "(see deploy/postgresql/compose.yaml) instead of the SQLite-rendered lane; "
+            "DSN overridable via DISH_TEST_POSTGRESQL_DSN"
+        ),
+    )
+    parser.addoption(
         "--flake-candidates",
         action="store_true",
         default=False,
