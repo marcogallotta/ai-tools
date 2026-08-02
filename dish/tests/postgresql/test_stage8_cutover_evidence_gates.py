@@ -59,31 +59,31 @@ def _burn_rollback(session, ids, context, task_id):
             "final_asana_closure_id": str(closure.closure_id),
             "final_asana_closure_sha256": closure.closure_sha256,
         },
-        approved_at=NOW + timedelta(minutes=2),
+        approved_at=NOW + timedelta(minutes=5),
     )
     fence = service.prepare_writer_fence(
         candidate_id=candidate_id,
         target_identity="legacy-service@stage8-test",
         mechanism="fail-closed-file",
         manifest={"path": "/tmp/stage8-writer-fence.json"},
-        prepared_at=NOW + timedelta(minutes=2),
+        prepared_at=NOW + timedelta(minutes=5),
     )
     run = service.prepare_cutover(
         candidate_id=candidate_id,
-        started_at=NOW + timedelta(minutes=2),
+        started_at=NOW + timedelta(minutes=5),
     )
     service.engage_writer_fence(
         fence_id=fence.fence_id,
-        engaged_at=NOW + timedelta(minutes=3),
+        engaged_at=NOW + timedelta(minutes=5),
     )
     service.verify_writer_fence(
         fence_id=fence.fence_id,
         proof=_writer_fence_proof(fence, candidate_id),
-        verified_at=NOW + timedelta(minutes=4),
+        verified_at=NOW + timedelta(minutes=5),
     )
     service.mark_fenced(
         cutover_run_id=run.cutover_run_id,
-        recorded_at=NOW + timedelta(minutes=4),
+        recorded_at=NOW + timedelta(minutes=5),
     )
     service.activate_authority(
         cutover_run_id=run.cutover_run_id,
@@ -225,8 +225,16 @@ def test_writer_fence_proof_is_candidate_bound_and_pre_body_parse(workflow_db) -
         )
         service.engage_writer_fence(fence_id=fence.fence_id, engaged_at=NOW)
         weak = _writer_fence_proof(fence, candidate_id)
+        weak["http_status"] = 401
+        with pytest.raises(ReleaseAuthorityError, match="exact authenticated mutation response"):
+            service.verify_writer_fence(
+                fence_id=fence.fence_id,
+                proof=weak,
+                verified_at=NOW + timedelta(minutes=1),
+            )
+        weak = _writer_fence_proof(fence, candidate_id)
         weak["body_loaded"] = True
-        with pytest.raises(ReleaseAuthorityError, match="exact candidate and fail-closed probe"):
+        with pytest.raises(ReleaseAuthorityError, match="exact authenticated mutation response"):
             service.verify_writer_fence(
                 fence_id=fence.fence_id,
                 proof=weak,
@@ -234,6 +242,32 @@ def test_writer_fence_proof_is_candidate_bound_and_pre_body_parse(workflow_db) -
             )
         assert service._fence(fence.fence_id).state == "engaged"
         assert service._fence(fence.fence_id).proof_sha256 is None
+
+
+def test_post_burn_evidence_cannot_predate_rollback_burn(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id, _cutover_run_id = _burn_rollback(
+            session, ids, context, task_id
+        )
+        candidate = service._candidate(candidate_id)
+        with pytest.raises(ReleaseAuthorityError, match="at or after rollback burn"):
+            service.record_runtime_release_attestation(
+                candidate_id=candidate_id,
+                service_artifact_sha256="1" * 64,
+                projection_worker_artifact_sha256="2" * 64,
+                route_probe_sha256="3" * 64,
+                payload={
+                    "dish_release": candidate.dish_release,
+                    "protocol_release": candidate.protocol_release,
+                    "openapi_release": candidate.openapi_release,
+                    "routing_release": candidate.routing_release,
+                    "route_target": "postgresql",
+                    "health": "pass",
+                    "mutation_admission": "closed",
+                },
+                recorded_at=NOW + timedelta(minutes=5),
+            )
 
 
 def test_admission_requires_post_burn_runtime_worker_and_first_request_evidence(workflow_db) -> None:

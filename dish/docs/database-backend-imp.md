@@ -1042,8 +1042,10 @@ Implemented Stage 6 offline foundation:
   activation-bound identity.
 - Alembic revision `0007_cutover_evidence_gates` adds immutable runtime-release attestation,
   projection-worker readiness, and first-admission plan records. Passed rehearsals must contain
-  class-specific checkpoints; writer-fence proof is candidate-, target-, manifest-, request-, and
-  pre-body-parse-bound. After rollback burn, admission remains closed until the exact deployed
+  class-specific checkpoints; writer-fence proof is candidate-, target-, manifest-, request-, exact
+  authenticated `409 CONFLICT`/`legacy_writer_fenced` response-, and pre-body-parse-bound. A `401`
+  cannot self-attest fencing. Cutover transitions reject impossible, backdated, or future chronology
+  against the database/service clock. After rollback burn, admission remains closed until the exact deployed
   release, PostgreSQL route, worker probes, complete active-epoch reconciliation, and bounded first
   request are durable. First-admission verification requires committed execution, immutable outcome,
   execution-bound audit, terminal invocation-audit obligation, exact applied projection count, and

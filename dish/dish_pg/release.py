@@ -91,6 +91,17 @@ def _require_nonblank(value: object, field: str) -> str:
     return value
 
 
+def _require_at_or_after(
+    value: datetime,
+    floor: datetime,
+    *,
+    field: str,
+    floor_field: str,
+) -> None:
+    if _utc_comparable(value) < _utc_comparable(floor):
+        raise ReleaseAuthorityError(f"{field} must be at or after {floor_field}")
+
+
 def _validate_evidence_payload(
     *, category: str, evidence_key: str, outcome: str, payload: Mapping[str, Any]
 ) -> dict[str, Any]:
@@ -187,9 +198,36 @@ class ReleaseCandidateService:
         session: Session,
         *,
         uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.session = session
         self.uuid_factory = uuid_factory
+        self.clock = clock
+
+    def _trusted_now(self) -> datetime:
+        if self.clock is not None:
+            return self.clock()
+        value = self.session.scalar(select(func.current_timestamp()))
+        if not isinstance(value, datetime):
+            raise ReleaseAuthorityError("database clock did not return a timestamp")
+        return value
+
+    def _require_not_future(self, value: datetime, field: str) -> None:
+        if _utc_comparable(value) > _utc_comparable(self._trusted_now()):
+            raise ReleaseAuthorityError(f"{field} cannot be later than the trusted database clock")
+
+    def _cutover_checkpoint_time(
+        self, cutover_run_id: uuid.UUID, checkpoint_kind: str
+    ) -> datetime:
+        checkpoint = self.session.scalar(
+            select(rel.CutoverCheckpoint).where(
+                rel.CutoverCheckpoint.cutover_run_id == cutover_run_id,
+                rel.CutoverCheckpoint.checkpoint_kind == checkpoint_kind,
+            )
+        )
+        if checkpoint is None:
+            raise ReleaseAuthorityError(f"cutover lacks {checkpoint_kind} chronology evidence")
+        return checkpoint.recorded_at
 
     def create_candidate(
         self,
@@ -513,6 +551,15 @@ class ReleaseCandidateService:
         candidate = self._candidate(candidate_id)
         if candidate.status not in {"assembling", "validated", "approved"}:
             raise ReleaseAuthorityError("writer fence cannot be prepared for terminal candidate")
+        _require_nonblank(target_identity, "target_identity")
+        _require_nonblank(mechanism, "mechanism")
+        _require_at_or_after(
+            prepared_at,
+            candidate.created_at,
+            field="prepared_at",
+            floor_field="candidate created_at",
+        )
+        self._require_not_future(prepared_at, "prepared_at")
         digest = sha256_json(dict(manifest))
         existing = self.session.scalar(
             select(rel.LegacyWriterFence).where(
@@ -548,6 +595,13 @@ class ReleaseCandidateService:
             return row
         if row.state != "prepared":
             raise ReleaseAuthorityError("writer fence is not prepared")
+        _require_at_or_after(
+            engaged_at,
+            row.prepared_at,
+            field="engaged_at",
+            floor_field="prepared_at",
+        )
+        self._require_not_future(engaged_at, "engaged_at")
         row.state = "engaged"
         row.fence_revision += 1
         row.engaged_at = engaged_at
@@ -569,15 +623,27 @@ class ReleaseCandidateService:
             "candidate_id": str(candidate.candidate_id),
             "target_identity": row.target_identity,
             "fence_manifest_sha256": row.manifest_sha256,
+            "http_status": 409,
+            "response_code": "CONFLICT",
+            "response_rule": "legacy_writer_fenced",
+            "response_retryable": False,
             "result": "pass",
             "body_loaded": False,
         }
         if any(body.get(key) != value for key, value in required.items()):
-            raise ReleaseAuthorityError("writer fence proof does not match the exact candidate and fail-closed probe")
-        token_hash = str(body.get("request_token_sha256", ""))
-        status = body.get("http_status")
-        if len(token_hash) != 64 or not isinstance(status, int) or status < 400:
-            raise ReleaseAuthorityError("writer fence proof lacks a rejected authenticated request identity")
+            raise ReleaseAuthorityError(
+                "writer fence proof does not match the exact authenticated mutation response"
+            )
+        _require_sha256(body.get("request_token_sha256"), "request_token_sha256")
+        if row.engaged_at is None:
+            raise ReleaseAuthorityError("writer fence lacks engagement chronology")
+        _require_at_or_after(
+            verified_at,
+            row.engaged_at,
+            field="verified_at",
+            floor_field="engaged_at",
+        )
+        self._require_not_future(verified_at, "verified_at")
         digest = sha256_json(body)
         if row.state == "verified":
             if row.proof_sha256 != digest:
@@ -609,6 +675,16 @@ class ReleaseCandidateService:
             return row
         if row.state not in {"engaged", "verified"}:
             raise ReleaseAuthorityError("writer fence is not engaged")
+        floor = row.verified_at or row.engaged_at
+        if floor is None:
+            raise ReleaseAuthorityError("writer fence lacks release chronology")
+        _require_at_or_after(
+            released_at,
+            floor,
+            field="released_at",
+            floor_field="latest writer fence transition",
+        )
+        self._require_not_future(released_at, "released_at")
         row.state = "released"
         row.fence_revision += 1
         row.released_at = released_at
@@ -1251,6 +1327,19 @@ class ReleaseCandidateService:
         )
         _require_nonblank(observation_high_water, "observation_high_water")
         _require_nonblank(watcher_identity, "watcher_identity")
+        _require_at_or_after(
+            closed_through_at,
+            interval_started_at,
+            field="closed_through_at",
+            floor_field="interval_started_at",
+        )
+        _require_at_or_after(
+            recorded_at,
+            closed_through_at,
+            field="recorded_at",
+            floor_field="closed_through_at",
+        )
+        self._require_not_future(recorded_at, "recorded_at")
         body = {
             "candidate_id": str(candidate_id),
             "capture_manifest_sha256": capture_manifest_sha256,
@@ -1298,6 +1387,27 @@ class ReleaseCandidateService:
         closure = self.session.get(rel.FinalAsanaClosure, closure_id)
         if closure is None:
             raise ReleaseAuthorityError("unknown final Asana closure")
+        _require_nonblank(change_identity, "change_identity")
+        _require_nonblank(change_kind, "change_kind")
+        _require_at_or_after(
+            observed_at,
+            closure.interval_started_at,
+            field="observed_at",
+            floor_field="closure.interval_started_at",
+        )
+        _require_at_or_after(
+            recorded_at,
+            observed_at,
+            field="recorded_at",
+            floor_field="observed_at",
+        )
+        _require_at_or_after(
+            recorded_at,
+            closure.recorded_at,
+            field="recorded_at",
+            floor_field="closure.recorded_at",
+        )
+        self._require_not_future(recorded_at, "recorded_at")
         body = {
             "closure_id": str(closure_id),
             "change_identity": change_identity,
@@ -1348,6 +1458,19 @@ class ReleaseCandidateService:
         closure = self._valid_final_asana_closure(candidate_id, closure_id)
         if approval is None:
             raise ReleaseAuthorityError("candidate has no approval to recertify")
+        _require_at_or_after(
+            recertified_at,
+            closure.recorded_at,
+            field="recertified_at",
+            floor_field="final closure recorded_at",
+        )
+        _require_at_or_after(
+            recertified_at,
+            approval.approved_at,
+            field="recertified_at",
+            floor_field="approved_at",
+        )
+        self._require_not_future(recertified_at, "recertified_at")
         revision = int(
             self.session.scalar(
                 select(func.coalesce(func.max(rel.CutoverRecertification.recertification_revision), 0)).where(
@@ -1426,6 +1549,21 @@ class ReleaseCandidateService:
         closure = self._valid_final_asana_closure(candidate_id, closure_id)
         if closure.closure_sha256 != str(closure_sha_value):
             raise ReleaseAuthorityError("approval final Asana closure digest mismatch")
+        if candidate.validated_at is None:
+            raise ReleaseAuthorityError("validated candidate lacks validation chronology")
+        _require_at_or_after(
+            approved_at,
+            candidate.validated_at,
+            field="approved_at",
+            floor_field="validated_at",
+        )
+        _require_at_or_after(
+            approved_at,
+            closure.recorded_at,
+            field="approved_at",
+            floor_field="final closure recorded_at",
+        )
+        self._require_not_future(approved_at, "approved_at")
         body = {
             "candidate_id": str(candidate_id),
             "evidence_bundle_sha256": bundle.manifest_sha256,
@@ -1469,6 +1607,21 @@ class ReleaseCandidateService:
         if candidate.status != "approved":
             raise ReleaseAuthorityError("cutover requires an approved candidate")
         approved_closure = self._current_approved_final_asana_closure(candidate_id)
+        if candidate.approved_at is None:
+            raise ReleaseAuthorityError("approved candidate lacks approval chronology")
+        _require_at_or_after(
+            started_at,
+            candidate.approved_at,
+            field="started_at",
+            floor_field="approved_at",
+        )
+        _require_at_or_after(
+            started_at,
+            approved_closure.recorded_at,
+            field="started_at",
+            floor_field="final closure recorded_at",
+        )
+        self._require_not_future(started_at, "started_at")
         existing = self.session.scalar(
             select(rel.CutoverRun).where(rel.CutoverRun.candidate_id == candidate_id)
         )
@@ -1507,6 +1660,22 @@ class ReleaseCandidateService:
         ).all()
         if not fences or any(fence.state != "verified" for fence in fences):
             raise ReleaseAuthorityError("every planned legacy writer fence must be verified")
+        for fence in fences:
+            if fence.verified_at is None:
+                raise ReleaseAuthorityError("verified writer fence lacks verification chronology")
+            _require_at_or_after(
+                recorded_at,
+                fence.verified_at,
+                field="recorded_at",
+                floor_field="writer fence verified_at",
+            )
+        _require_at_or_after(
+            recorded_at,
+            run.started_at,
+            field="recorded_at",
+            floor_field="cutover started_at",
+        )
+        self._require_not_future(recorded_at, "recorded_at")
         self._advance_cutover(run, "fenced")
         self._checkpoint(
             run,
@@ -1536,6 +1705,20 @@ class ReleaseCandidateService:
             raise ReleaseAuthorityError(
                 "final Asana closure does not cover the authority activation timestamp"
             )
+        fenced_at = self._cutover_checkpoint_time(cutover_run_id, "legacy_writers_fenced")
+        _require_at_or_after(
+            activated_at,
+            fenced_at,
+            field="activated_at",
+            floor_field="legacy writer fence verification",
+        )
+        _require_at_or_after(
+            activated_at,
+            closure.recorded_at,
+            field="activated_at",
+            floor_field="final closure recorded_at",
+        )
+        self._require_not_future(activated_at, "activated_at")
         control = self.session.get(rel.MutationAdmissionControl, candidate.generation_id)
         generation = self.session.get(models.AuthorityGeneration, candidate.generation_id)
         if control is None or control.state != "closed":
@@ -1594,6 +1777,13 @@ class ReleaseCandidateService:
         self._current_approved_final_asana_closure(
             candidate.candidate_id, expected_closure_id=uuid.UUID(str(closure_id_value))
         )
+        _require_at_or_after(
+            burned_at,
+            activation_checkpoint.recorded_at,
+            field="burned_at",
+            floor_field="authority activation",
+        )
+        self._require_not_future(burned_at, "burned_at")
         batch = self.session.get(tx.SourceImportBatch, candidate.source_import_batch_id)
         if batch is None:
             raise ReleaseAuthorityError("release candidate import batch is missing")
@@ -1649,6 +1839,14 @@ class ReleaseCandidateService:
             raise ReleaseAuthorityError(
                 "runtime attestation requires the exact candidate after durable rollback burn"
             )
+        burned_at = self._cutover_checkpoint_time(cutover.cutover_run_id, "rollback_burned")
+        _require_at_or_after(
+            recorded_at,
+            burned_at,
+            field="recorded_at",
+            floor_field="rollback burn",
+        )
+        self._require_not_future(recorded_at, "recorded_at")
         if not all(
             _is_sha256(value)
             for value in (
@@ -1730,6 +1928,13 @@ class ReleaseCandidateService:
             raise ReleaseAuthorityError(
                 "projection worker readiness requires the exact candidate after durable rollback burn"
             )
+        _require_at_or_after(
+            ready_at,
+            activation.rollback_burned_at,
+            field="ready_at",
+            floor_field="rollback burn",
+        )
+        self._require_not_future(ready_at, "ready_at")
         if worker_release.strip() != candidate.dish_release:
             raise ReleaseAuthorityError("projection worker readiness is for the wrong release")
         if (
@@ -1794,6 +1999,14 @@ class ReleaseCandidateService:
             raise ReleaseAuthorityError(
                 "first-admission plan must be recorded after rollback burn and before admission opens"
             )
+        burned_at = self._cutover_checkpoint_time(cutover_run_id, "rollback_burned")
+        _require_at_or_after(
+            recorded_at,
+            burned_at,
+            field="recorded_at",
+            floor_field="rollback burn",
+        )
+        self._require_not_future(recorded_at, "recorded_at")
         if not command_name.strip():
             raise ReleaseAuthorityError("first-admission command must be nonblank")
         if expected_projection_events < 0:
@@ -1844,6 +2057,14 @@ class ReleaseCandidateService:
             return control
         if run.state != "rollback_burned" or control is None or control.state != "closed":
             raise ReleaseAuthorityError("mutation admission opens only after durable rollback burn")
+        burned_at = self._cutover_checkpoint_time(cutover_run_id, "rollback_burned")
+        _require_at_or_after(
+            opened_at,
+            burned_at,
+            field="opened_at",
+            floor_field="rollback burn",
+        )
+        self._require_not_future(opened_at, "opened_at")
         runtime = self.session.scalar(
             select(rel.RuntimeReleaseAttestation).where(
                 rel.RuntimeReleaseAttestation.candidate_id == candidate.candidate_id
@@ -1970,8 +2191,25 @@ class ReleaseCandidateService:
             for item in reconciliation_items
             if item.mapping_id is not None and item.outcome in {"matched", "reprojected"}
         }
+        evidence_times = [
+            request.admitted_at if request is not None else None,
+            outcome.recorded_at if outcome is not None else None,
+            execution.terminal_at if execution is not None else None,
+            audit.occurred_at if audit is not None else None,
+            obligation.terminal_at if obligation is not None else None,
+            reconciliation.completed_at if reconciliation is not None else None,
+            *[event.terminal_at for event in projection_events],
+            *[item.recorded_at for item in reconciliation_items],
+        ]
+        chronology_valid = all(
+            value is not None
+            and _utc_comparable(verified_at) >= _utc_comparable(value)
+            for value in evidence_times
+        )
+        self._require_not_future(verified_at, "verified_at")
         if (
-            control is None
+            not chronology_valid
+            or control is None
             or control.state != "open"
             or control.opened_at is None
             or plan is None
@@ -2029,6 +2267,14 @@ class ReleaseCandidateService:
             return run
         if run.state != "first_admission_verified":
             raise ReleaseAuthorityError("cutover completion requires first-admission verification")
+        verified_at = self._cutover_checkpoint_time(cutover_run_id, "first_admission_verified")
+        _require_at_or_after(
+            completed_at,
+            verified_at,
+            field="completed_at",
+            floor_field="first-admission verification",
+        )
+        self._require_not_future(completed_at, "completed_at")
         self._advance_cutover(run, "completed", terminal_at=completed_at)
         self._checkpoint(run, "cutover_completed", {}, completed_at)
         return run

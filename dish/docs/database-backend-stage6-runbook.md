@@ -332,13 +332,20 @@ recorded fence manifest and prove that one authenticated mutation was rejected b
   "probe_kind": "authenticated_mutation_rejected_before_body_parse",
   "candidate_id": "CANDIDATE_UUID",
   "target_identity": "EXACT_TARGET_IDENTITY",
-  "fence_manifest_sha256": "64_HEX",
-  "request_token_sha256": "64_HEX",
-  "http_status": 503,
+  "fence_manifest_sha256": "64_LOWERCASE_HEX",
+  "request_token_sha256": "64_LOWERCASE_HEX",
+  "http_status": 409,
+  "response_code": "CONFLICT",
+  "response_rule": "legacy_writer_fenced",
+  "response_retryable": false,
   "body_loaded": false,
   "result": "pass"
 }
 ```
+
+A `401` response proves only that authentication failed; it is never accepted as writer-fence
+evidence. The proof must match the exact authenticated legacy mutation response above and bind the
+exact request-token digest.
 
 Record exact probe evidence:
 
@@ -351,6 +358,24 @@ scripts/dish-pg-release cutover-mark-fenced CUTOVER_UUID \
 ```
 
 ## 9. Activation, rollback burn, and admission
+
+Release chronology is fail-closed and is checked against the database/service clock. The minimum
+ordering is:
+
+- final closure `recorded_at >= closed_through_at >= interval_started_at`;
+- invalidation observation is no earlier than the closure interval start, and invalidation recording
+  is no earlier than both the observation and the closure record;
+- approval and cutover preparation follow the exact closure record;
+- fence engagement follows preparation, verification follows engagement, and the cutover fence
+  checkpoint follows every verification;
+- activation follows verified fencing and the closure record while remaining covered by
+  `closed_through_at`; rollback burn follows activation;
+- runtime attestation, worker readiness, and the first-admission plan follow rollback burn; admission
+  opening follows all three;
+- first-admission verification follows request admission, committed execution/outcome, audit,
+  terminal invocation obligation, applied outbox events, and completed reconciliation.
+
+Backdated, future-dated, or impossible operator timestamps are rejected rather than normalized.
 
 These commands are intentionally separate crash boundaries:
 

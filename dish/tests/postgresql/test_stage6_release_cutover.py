@@ -225,7 +225,10 @@ def _writer_fence_proof(fence, candidate_id):
         "target_identity": fence.target_identity,
         "fence_manifest_sha256": fence.manifest_sha256,
         "request_token_sha256": "f" * 64,
-        "http_status": 503,
+        "http_status": 409,
+        "response_code": "CONFLICT",
+        "response_rule": "legacy_writer_fenced",
+        "response_retryable": False,
         "body_loaded": False,
         "result": "pass",
     }
@@ -440,30 +443,32 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
                 "final_asana_closure_id": str(closure.closure_id),
                 "final_asana_closure_sha256": closure.closure_sha256,
             },
-            approved_at=NOW + timedelta(minutes=2),
+            approved_at=NOW + timedelta(minutes=5),
         )
         fence = service.prepare_writer_fence(
             candidate_id=candidate_id,
             target_identity="legacy-service@laptop",
             mechanism="fail-closed-file",
             manifest={"path": "/var/lib/dish/legacy-writer-fence.json"},
-            prepared_at=NOW,
+            prepared_at=NOW + timedelta(minutes=5),
         )
-        cutover = service.prepare_cutover(candidate_id=candidate_id, started_at=NOW)
+        cutover = service.prepare_cutover(
+            candidate_id=candidate_id, started_at=NOW + timedelta(minutes=5)
+        )
         cutover_id, fence_id = cutover.cutover_run_id, fence.fence_id
 
     # Resume each irreversible step in a fresh transaction/service instance.
     with session_scope(factory) as session:
         service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
-        service.engage_writer_fence(fence_id=fence_id, engaged_at=NOW + timedelta(minutes=3))
+        service.engage_writer_fence(fence_id=fence_id, engaged_at=NOW + timedelta(minutes=5))
         service.verify_writer_fence(
             fence_id=fence_id,
             proof=_writer_fence_proof(
                 service._fence(fence_id), candidate_id
             ),
-            verified_at=NOW + timedelta(minutes=4),
+            verified_at=NOW + timedelta(minutes=5),
         )
-        service.mark_fenced(cutover_run_id=cutover_id, recorded_at=NOW + timedelta(minutes=4))
+        service.mark_fenced(cutover_run_id=cutover_id, recorded_at=NOW + timedelta(minutes=5))
         service.activate_authority(
             cutover_run_id=cutover_id,
             final_asana_closure_id=closure.closure_id,
@@ -642,6 +647,12 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
             completed_at=NOW + timedelta(minutes=9),
         )
         service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
+        with pytest.raises(ReleaseAuthorityError, match="execution, audit, projection, and reconciliation"):
+            service.verify_first_admission(
+                cutover_run_id=cutover_id,
+                request_id=request_id,
+                verified_at=NOW + timedelta(minutes=8),
+            )
         service.verify_first_admission(
             cutover_run_id=cutover_id,
             request_id=request_id,
