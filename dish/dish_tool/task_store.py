@@ -205,6 +205,11 @@ def planning_reopen_recovery_details(
             ),
             "admin_command": None,
             "authority_conflict": conflict,
+            "directive": (
+                f"Tell the human: {conflict}. This has no fixed recovery command; Marco must "
+                "authorize recovery of the Planning reopen attempt directly. Do not start a new "
+                "operation or retry until he confirms how to proceed."
+            ),
         })
         return details
     replay_command = (

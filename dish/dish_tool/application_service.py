@@ -336,6 +336,12 @@ class CurrentWorkflowService:
                 "continuation_surface": "manual-reconciliation",
                 "connected_action_available": False,
                 "admin_command": None,
+                "directive": (
+                    "Tell the human: the durable historical Material-change evidence for this "
+                    "task is malformed and its exact-content binding cannot be trusted. This has "
+                    "no fixed recovery command; Marco must reconcile it directly. Do not start a "
+                    "new operation or retry until he confirms how to proceed."
+                ),
                 "historical_evidence": {
                     "kind": "malformed-material-change",
                     "validation_rules": malformed_material_change_rules,

@@ -29,7 +29,9 @@ def _recover_command_guidance(operation_id: str) -> dict[str, str]:
         '--reason "<summarize what the live reread showed>"'
     )
     directive = (
-        f"Tell the human to run: {command}\n"
+        "Tell the human to run the following command after replacing the angle-bracketed "
+        "--outcome choice and --reason text:\n"
+        f"{command}\n"
         "Start with --outcome inspect if the live state is not yet confirmed. Then wait "
         "for confirmation it succeeded before continuing — do not create a replacement "
         "operation, change run identity, or use any other private admin route."
@@ -555,6 +557,7 @@ def _claim_unresolved_execution(
                 "execution_id": prior["execution_id"],
                 "request_id": prior["request_id"],
                 "required_admin_action": "recover",
+                **_recover_command_guidance(operation_id),
             }
         )
         raise DishRuleError(
@@ -1119,6 +1122,8 @@ def _build_execution_recovery_state(
     }
     if failure_rule:
         state["original_failure_rule"] = failure_rule
+    if recovery_required:
+        state.update(_recover_command_guidance(row["operation_id"]))
     return state
 
 

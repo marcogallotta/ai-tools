@@ -516,6 +516,11 @@ def create_operation(
                     "successor_operation_id": abandonment["successor_operation_id"],
                     "required_admin_action": "reconcile-abandonment",
                     "admin_command": command,
+                    "directive": (
+                        f"Tell the human to run: {command}\n"
+                        "Then wait for confirmation it succeeded and refresh the authoritative "
+                        "Dish action before doing anything else."
+                    ),
                 },
             )
         state = conn.execute(

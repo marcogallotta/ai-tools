@@ -63,7 +63,9 @@ def _assert_expired_guidance(result, operation_id, *, view_path):
         '--reason "<summarize why the lease is being recovered>"'
     )
     assert data["directive"] == (
-        f"Tell the human to run: {data['admin_command']}\n"
+        "Tell the human to run the following command after replacing the angle-bracketed "
+        "reason text:\n"
+        f"{data['admin_command']}\n"
         "Then wait for confirmation it succeeded before continuing — do not start a new "
         "operation; resume this same submission"
         + (

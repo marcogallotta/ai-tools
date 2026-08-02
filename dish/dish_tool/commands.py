@@ -161,12 +161,77 @@ _HOLD_ADMIN_ACTIONS = {
 }
 
 
+def _reopen_two_pass_continuation(operation_id: str, view: Mapping[str, Any]) -> dict[str, Any]:
+    """Describe the reachable private continuation for a two-pass Verification hold."""
+
+    command = f"dish-admin reopen {operation_id} --category ... --before ... --after ... --editor ... --model ... --run-id ... --file ... --date ..."
+    directive = (
+        "Two independent Verification passes ended without a signable task (see this task's "
+        "Status detail for why). Reopening requires a genuinely new corrected candidate, not a "
+        "filled-in template: tell the human what concretely must change, then have an editor "
+        "construct that candidate and run `dish-admin reopen --help` for the exact "
+        "--category/--before/--after/--editor/--model/--run-id/--file/--date flags this needs. "
+        f"The operation ID is {operation_id}. Then wait for confirmation it succeeded before "
+        "continuing — do not start a new operation; resume this same submission."
+    )
+    return {
+        "phase": str(view.get("phase") or ""),
+        "submission_id": operation_id,
+        "existing_submission_id": operation_id,
+        "required_admin_action": "reopen",
+        "resolver": "Marco/admin reopen",
+        "continuation_surface": "private-admin",
+        "connected_action_available": False,
+        "admin_command": command,
+        "directive": directive,
+        "after_resolution": {
+            "legal_actions": ["start"],
+            "required_start_kind": "verification",
+            "phase": "await_verification",
+        },
+    }
+
+
+def _repair_destination_continuation(operation_id: str, view: Mapping[str, Any]) -> dict[str, Any]:
+    """Describe the reachable private continuation for a stuck destination move."""
+
+    command = (
+        f"dish-admin repair-destination {operation_id} "
+        '--destination-section-gid <SECTION_GID> --reason "<why this destination is correct>"'
+    )
+    directive = (
+        "The final destination move failed and cannot be retried automatically (see this task's "
+        "Status detail). Tell the human the correct destination section must be determined by "
+        "inspecting live section state, then ask them to run the following command after "
+        "replacing the section GID and reason placeholders:\n"
+        f"{command}\n"
+        "Then wait for confirmation it succeeded before continuing — do not start a new "
+        "operation; resume this same submission with `submit`."
+    )
+    return {
+        "phase": str(view.get("phase") or ""),
+        "submission_id": operation_id,
+        "existing_submission_id": operation_id,
+        "required_admin_action": "repair-destination",
+        "resolver": "Marco/admin repair-destination",
+        "continuation_surface": "private-admin",
+        "connected_action_available": False,
+        "admin_command": command,
+        "directive": directive,
+        "after_resolution": {"legal_actions": ["submit"], "phase": "await_submission"},
+    }
+
+
 def _evidence_hold_continuation(
     conn: sqlite3.Connection, operation_id: str, view: Mapping[str, Any]
 ) -> dict[str, Any]:
     """Describe the reachable private continuation for an Evidence or Human Review hold."""
 
     admin_action = view.get("required_admin_action")
+    if admin_action == "reopen":
+        return _reopen_two_pass_continuation(operation_id, view)
+    if admin_action == "repair-destination":
+        return _repair_destination_continuation(operation_id, view)
     routes = _HOLD_ADMIN_ACTIONS.get(admin_action)
     if routes is None:
         return {}

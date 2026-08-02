@@ -18,6 +18,7 @@ from dish_tool.admin import _OPERATION_TARGET_COMMANDS as _ADMIN_OPERATION_TARGE
 from dish_tool.backend import AsanaBackend
 from dish_tool.commands import DishApplication, expose_authoritative_view
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
+from dish_tool.operation_execution import _recover_command_guidance
 from dish_tool.database import (
     initialize_database,
     planning_reopen_attempt_by_request,
@@ -109,7 +110,9 @@ def _lease_recovery_details(
     )
     next_action = after_recovery_actions[0] if after_recovery_actions else None
     directive = (
-        f"Tell the human to run: {command}\n"
+        "Tell the human to run the following command after replacing the angle-bracketed "
+        "reason text:\n"
+        f"{command}\n"
         "Then wait for confirmation it succeeded before continuing — do not start a new "
         "operation; resume this same submission"
         + (f" with `{next_action}`." if next_action else ".")
@@ -1397,6 +1400,8 @@ class DishService:
                 operation_id=operation_id,
                 after_recovery_actions=after_recovery_actions,
             )
+        if access.get("rule") == "operation_uncertain" and not data.get("admin_command"):
+            data.update(_recover_command_guidance(operation_id))
         return result
 
     def _assert_mutation_ready(self, backend: Any) -> None:
