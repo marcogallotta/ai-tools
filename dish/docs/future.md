@@ -99,21 +99,19 @@ completion filters, result contract, pagination behavior, private-surface bounda
 This is intentionally smaller than natural-language `dish_find` and should be useful soon after
 rollout without expanding workflow authority.
 
-### Evidence / Human Review hold resolution
+### Evidence / Human Review inline resolution
 
 See [`hold-resolution-design.md`](hold-resolution-design.md) for the full problem,
-requirements, and two-phase plan. Phase 1 (a real `dish-admin holds` listing, quantified
-blocker fields on hold creation, and a stable-identifier wrong-paste guard) needs no
-database migration and can ship independent of any backend timing.
+requirements, and design: a Marco-authenticated inline resolution command that skips the
+`held_evidence`/`held_human` round-trip entirely when Marco is live in the same run as the
+agent, reserving the durable hold for the genuinely asynchronous case.
 
-Phase 2 (a Marco-authenticated inline resolution command that skips the `held_evidence`/
-`held_human` round-trip entirely when Marco is live in the same run) is not blocked on
-[`database-backend.md`](database-backend.md), but is meaningfully cheaper after that
-migration ships: today's resolution cost is dominated by the Asana round-trip — fetch live
-content, hash it into a content identity, confirm it still matches before mutating
+Not blocked on [`database-backend.md`](database-backend.md), but meaningfully cheaper after
+that migration ships: today's resolution cost is dominated by the Asana round-trip — fetch
+live content, hash it into a content identity, confirm it still matches before mutating
 anything. Once canonical content is fully internal, an inline resolve-and-create-new-cycle
 becomes one local transaction instead of read-Asana/hash/compare/write-Asana/re-verify.
-Sequence Phase 2 after the database-backend cutover if there's a real choice in ordering.
+Sequence this after the database-backend cutover if there's a real choice in ordering.
 
 ### Phase-authoritative pending-Research/pending-Verification listing
 
