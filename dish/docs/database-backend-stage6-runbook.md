@@ -97,7 +97,9 @@ scripts/dish-pg-release candidate-create --file /secure/input/candidate.json
 ```
 
 Candidate creation also creates a closed mutation-admission control for the generation. It does not
-open PostgreSQL mutation authority.
+open PostgreSQL mutation authority. Running this against the live production generation halts new
+request admission from that instant — treat it as the first operational step of cutover, not a
+preparatory or read-only one.
 
 ## 5. Record acceptance evidence
 
