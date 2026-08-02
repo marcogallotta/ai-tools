@@ -12,8 +12,3 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
-    volumes:
-      - dish-stage-a-postgres:/var/lib/postgresql/data
-
-volumes:
-  dish-stage-a-postgres:
