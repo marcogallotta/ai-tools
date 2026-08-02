@@ -1,289 +1,399 @@
-# Dish private frontend
+# Dish private frontend design
 
-**Status: draft — under review, not ready for implementation.** Nothing in this file authorizes
-frontend implementation yet. The proposed Stage 1 timing is after database-backend Stage 4 has
-produced a usable PostgreSQL-backed `dish-service` in a non-production environment, with frontend
-work then proceeding in parallel with backend Stages 5 and 6. Stage 2 mutations and the Stage 3
-cooking planner remain unapproved future work. This is a separate product track, not a Stage A
-deliverable. The frontend is not a database-cutover prerequisite or production-authority surface.
+**Status: Stage 1 design approved; implementation requires separate authorization.**
 
-Read [`database-backend.md`](database-backend.md),
+This document defines the approved private frontend product over Dish's PostgreSQL-backed service.
+It describes product behavior, user-visible information, authority boundaries, and acceptance
+outcomes. Every requirement introduced because this frontend needs it belongs to the frontend work,
+even when the implementation lands in the service, backend, PostgreSQL layer, deployment, or tests.
+The corresponding mechanics belong in [`frontend-imp.md`](frontend-imp.md).
+
+Read [`architecture.md`](architecture.md), [`runtime-contract.md`](runtime-contract.md),
+[`database-backend.md`](database-backend.md),
 [`database-backend-imp.md`](database-backend-imp.md), and
-[`database-backend-migration.md`](database-backend-migration.md) as the governing authority,
-implementation, and cutover contracts. The frontend never weakens or replaces those contracts.
+[`database-backend-migration.md`](database-backend-migration.md) as governing authority contracts.
+The frontend must preserve their shared authority invariants. These frontend documents are the
+additive governing contract for every frontend-specific product, access, service, and PostgreSQL
+requirement, including requirements not present in the older pre-frontend runtime surface. They do
+not reopen, amend, delay, or expand the database work. Where this frontend is narrower, the existing
+backend obligation remains.
 
-## Delivery stages
+## 1. Purpose
 
-### Stage 1: reading and discovery — proposed
+Dish needs a private human-facing view of the canonical PostgreSQL task state without making the
+browser a second authority system.
 
-If this draft is approved, Stage 1 begins only when backend Stage 4 is implemented and the frontend
-can connect to a real PostgreSQL-backed service. It does not begin against speculative mocks as the primary development
-surface. Mocks and fixtures remain useful for component tests, but integration starts from the real
-service contract.
+Stage 1 provides a fast, readable, desktop board for the sole human user. It lets that user find,
+open, and understand every non-retired, incomplete task in the active logical section registry.
+It does not allow the user to alter canonical content, workflow, completion, placement, projection,
+or any other governed task-authority state.
 
-The proposed first useful product includes:
+## 2. Product stages
 
-- a task list with bounded pagination, search, and filters by title, logical location, completion,
-  destination, and active-operation state;
-- task detail showing the exact current authoritative document and rendered view;
-- authoritative location, completion, operation, lease, hold, Verification, recovery, and allowed
-  action state;
-- content-version, workflow, Verification, audit, and recovery history;
-- the canonical title/body document and its rendered form, without introducing structured-dish
-  authority into Stage A;
-- projection freshness and drift status shown separately from authoritative PostgreSQL state when
-  the Stage 5 projection contract is available;
-- loading, empty, stale, unavailable, and conflict states that do not invent authority.
+### 2.1 Stage 1: private read-only board
 
-The proposed first release is read-only. Displaying an allowed action does not authorize the browser to invoke
-it. Stage 1 contains no generic save, drag-and-drop mutation, workflow command, or admin intervention.
+Stage 1 provides:
 
-### Stage 2: structured editing and human actions — future work
+- an Asana-style board whose columns are the authoritative logical sections;
+- compact incomplete-task cards in deterministic automatic title order;
+- current task detail in a fixed-width side panel;
+- factual workflow and attention information;
+- plain-English, non-authorizing guidance about what needs to happen next;
+- automatic background refresh while preserving the last successful usable view;
+- a consistent top-of-screen warning and error system;
+- a simple shared-password login with a seven-day session;
+- a desktop-focused experience.
 
-- create a bare task with a title-only form;
-- offer structured forms only inside lifecycle-authorized commands;
-- use text or Markdown editor components only for fields whose approved type is long prose;
-- expose Marco's existing private interventions with their exact preconditions;
-- show backup health and cutover/import quarantine status;
-- later append cook logs through a separately designed command.
+Stage 1 contains no global search page, completed-task view, history browser, generic save,
+drag-and-drop mutation, workflow command, administrative intervention, cutover control, or write to
+canonical task, workflow, placement, completion, projection, or other governed authority state.
+Frontend-owned session and security-audit storage is permitted only for the private access path and
+does not become task or workflow authority.
 
-Before implementation, each mutation must receive an exact command contract, principal, request and
-replay identity, current-view and fence requirements, error/result behavior, and concurrency tests.
-A visual gesture cannot conceal a governed transition.
+### 2.2 Stage 2: structured editing and human actions — future work
 
-### Stage 3: cooking planner — future work
+Stage 2 is not approved by this document. Any future mutation design must preserve these invariants:
 
-A later board may organize dishes into concepts such as Cook Now, Cook Soon, Cook Later, and
-Unscheduled, with ordering or priority where useful. These names and their storage are illustrative,
-not an approved enum or table design. Design work must decide whether planning is a single horizon,
-an ordered queue, dates, independent flags, or some combination, and how it interacts with
-completion, locations, workflow ownership, and multiple UI sessions.
+- no generic canonical-content save;
+- no arbitrary database-row patching;
+- no browser-owned workflow-legality engine;
+- every mutation is a named backend command with an exact principal, replay identity, current-view
+  and concurrency fences, and governed audit behavior;
+- the frontend never impersonates an agent or invents run lineage.
 
-Planning buckets are not workflow sections or canonical destinations. Dragging within or between
-them may become a convenient way to invoke a named, revision-checked planning command. Dragging
-must not directly patch rows, move a task through Research or Verification, change a canonical
-destination, invalidate signoff, or infer that any section-like UI column is lifecycle authority.
-The service returns whether the exact planning action is allowed and records whatever audit or
-transition evidence the approved planner design requires.
+Editor shape, payload design, reconciliation experience, and the exact set of human commands require
+a separate reviewed design.
 
-Before implementing this stage, separately approve the planning concepts, ordering semantics,
-command contract, concurrency behavior, history requirements, and which actions are reversible. Do
-not add generic task-section movement merely to support a board interaction.
+### 2.3 Stage 3: cooking planner — future work
 
-## Proposed Stage 1 implementation contract
+A future planner may organize dishes into planning concepts such as Cook Now, Cook Soon, Cook Later,
+and Unscheduled. Those concepts are not workflow sections, canonical destinations, or completion
+states. A visual gesture may invoke only an approved planning command and must never directly patch
+rows or move a task through governed workflow.
 
-### Backend entry condition
+## 3. Stage 1 experience
 
-The proposed Stage 1 entry condition is satisfied only when database-backend Stage 4 has delivered:
+### 3.1 Board
 
-- PostgreSQL-backed task identity, document, location, completion, workflow, and current-view reads;
-- stable bounded list, detail, and history query semantics;
-- authority-generation and current-view tokens;
-- a usable private service in a non-production environment;
-- generated OpenAPI that matches the implemented FastAPI routes.
+The landing view is one horizontally scrollable board. Columns do not wrap onto multiple rows.
 
-Backend Stages 5 and 6 may still be running import, shadow, projection, fault testing, rehearsal, and
-rollout work. Projection freshness may initially be absent or explicitly `not_configured`; the UI must
-not infer projection state or substitute Asana data. Frontend availability and polish do not gate
-those stages.
+The board behaves as follows:
 
-### API framework and trust boundary
+- every active logical section appears as a column, including empty sections;
+- columns use the authoritative section order;
+- when section labels are ambiguous across projects, the column header also shows the human-readable
+  project label; every displayed project-plus-section path must be distinct under the checked-in
+  display-label normalization contract, and the board fails visibly rather than showing ambiguous
+  columns when configuration cannot provide a unique normalized path;
+- completed and retired tasks are always hidden, with no control to reveal them;
+- every task remains in its authoritative logical section;
+- tasks within each section are ordered by normalized title ascending, with Dish task UUID as the
+  deterministic tie-breaker;
+- Stage 1 stores no manual card position or user-defined task order;
+- cards are compact so that many tasks remain visible at once;
+- Stage 1 has no drag-and-drop, personal column order, personal card order, alternate list view,
+  global title search, or cross-section filtering.
 
-The proposed frontend-facing API uses **FastAPI** on the existing private `dish-service` listener.
-FastAPI is the HTTP and OpenAPI framework; it is not a new domain, authority layer, or replacement
-service. The route layer reuses the existing scoped-bearer authentication and authorization model
-owned by `dish_service.auth`.
+The first view loads every section and the first bounded page of non-retired, incomplete tasks for
+each section. An active registry with no sections is a valid empty-board state, not an error.
+A section with additional tasks shows an explicit **Load more** control. Stage 1 does not use
+infinite scrolling.
 
-The FastAPI route layer must:
+### 3.2 Task cards
 
-- call application/query services rather than opening ad hoc SQL sessions in route handlers;
-- return typed response models whose OpenAPI schema is generated and checked into or validated by
-  the repository's existing OpenAPI synchronization tests;
-- expose only private frontend routes on the private listener;
-- keep Action/Funnel routes and credentials separate;
-- never call Asana to determine canonical workflow, legality, or task content after cutover;
-- include authority generation, current-view identity, and projection freshness where required by
-  the response contract.
+Each card shows:
 
-The frontend uses a generated or schema-checked typed client based on the FastAPI OpenAPI document.
-The frontend framework and component library remain implementation choices.
+- the task title;
+- one compact factual status line showing the current operation and phase when present, or
+  **No active operation** when no operation is active;
+- small attention indicators only for the approved Stage 1 categories: lease attention, Verification
+  attention, active hold, required recovery, active abandonment, active succession, or abnormal
+  projection.
 
-The browser must never receive Marco's admin bearer credential, an agent CLI token, or the Action
-token. Proposed Stage 1 uses a dedicated **frontend-read bearer token** implemented by the existing
-scoped-token mechanism. The proposed credential is environment-specific, follows the existing named
-profile pattern without generic fallback, and authorizes only the frontend GET routes defined by an
-approved version of this design. It is invalid on CLI/admin and Action routes and is authenticated by
-the shared HTTP auth layer before handler execution or protected-body parsing, in
-the same way as the existing protected surfaces. It must not be embedded in source, URLs, logs,
-local storage, or session storage. The initial private UI may accept it at browser startup and retain
-it only in process memory. Frontend routes must not become reachable from the Funnel listener.
+Attention facts do not move the task into a synthetic column. The card remains in its authoritative
+section. Every active attention category represented by the currently loaded board pages or open task
+detail also participates in the common banner treatment, with repeated instances grouped rather than
+shown as separate banners. While fresh detail is successfully open, its attention state supersedes the
+selected card's stale attention state for banner grouping until the panel closes or detail becomes
+unavailable.
 
-A later mutation stage must not silently widen the frontend-read token. Its principal and route
-scopes require separate review together with the exact mutation contracts.
+Cards do not show technical identifiers, raw policy output, canonical `allowed_actions`, or controls
+that imply mutation authority. New attention categories cannot be inferred or invented by the browser;
+they require an explicit frontend-contract update.
 
-### Proposed read operations
+Selecting a card opens the task in the side panel. Stage 1 has no dedicated **Open in new tab**
+control and no separate full-page task screen. The selected task is represented in the URL by a non-raw, non-sensitive browser-facing identity so
+that a reload or revisited deep link restores the same board-plus-panel view without exposing a
+canonical database or external-system identifier.
 
-Exact URL spelling is an implementation detail, but the FastAPI contract must provide these logical
-operations.
+### 3.3 Task side panel
 
-#### Task list
+The task side panel:
 
-A bounded, paginated task query returns at least:
+- has a fixed width;
+- keeps the board visible;
+- uses one vertically scrolling page rather than tabs;
+- closes through its close control, the Escape key, or a click outside the panel;
+- remains open through background refresh while the selected task remains eligible for the board;
+- shows human-readable information rather than technical identifiers or diagnostics.
 
-- Dish UUID and display title;
-- current logical project and section/location;
-- completion;
-- canonical destination where present;
-- current operation and phase summary;
-- active lease, hold, or blocking-condition summary;
-- authoritative task revision and authority generation;
-- projection freshness as non-authoritative metadata.
+The panel shows the task's current canonical content and current factual state only. Stage 1 has no
+history timeline or historical-content browser.
 
-The query supports title search and filters for logical location, completion, destination, and
-active-operation state. Pagination uses a stable server-defined ordering and opaque cursor. The list
-is a bounded relational read over authoritative factual state; it does not calculate, materialize,
-sort, or filter by legal actions. A page must not depend on per-task Asana reads or per-task
-application-service policy calls.
+The panel must show:
 
-#### Task detail
+- canonical title and body in the approved safe rendered form;
+- logical project and section labels;
+- current factual workflow status, including operation and phase when present;
+- named attention facts approved for human disclosure when present, including lease, Verification,
+  hold, recovery, abandonment, or succession information;
+- a plain-English explanation of what needs to happen next.
 
-A task-detail query returns:
+The panel also shows canonical destination when present and abnormal downstream projection
+information whenever an abnormal projection state is present. The panel never shows partial or
+executable task content. If an otherwise supported canonical body is rejected by the approved renderer
+or sanitizer, the panel shows an inert plain-text fallback with the common warning treatment; if no
+safe bounded presentation can be produced, the board remains usable and the common error treatment
+applies. A completed or retired task is not a Stage 1 detail state: the panel closes and the common
+banner explains that the task left the board.
 
-- canonical title/body document and its rendered form;
-- immutable version identity, active revision, authority generation, and current-view token;
-- logical membership, placement, completion, destination, workflow, lease, hold, Verification, and
-  recovery state;
-- allowed actions for display only;
-- Asana mapping and projection freshness separately from canonical state.
+The next-step explanation is descriptive only. It is not a command, bearer capability, button, or
+substitute for principal-aware legal-action computation. The frontend does not receive or present
+canonical `allowed_actions`.
 
-#### Task history
+Healthy projection state stays out of the way. Projection delay, failure, drift, unknown state, or
+unavailability appears only as an abnormal condition through the common warning/error treatment.
 
-One or more bounded history queries return authoritative occurrences for:
+### 3.4 Refresh and continuity
 
-- content versions and activations;
-- operations, steps, actor facts, and leases;
-- Verification cycles, inspection, correction, approval, and signoff lineage;
-- holds, recovery, abandonment, and succession;
-- governed audit and relevant projection/reconciliation history.
+The board and an open task panel refresh automatically in the background.
 
-History ordering is defined by authoritative occurrence sequence or durable database ordering, not a
-client-side merge of loosely comparable timestamps. Each history response states whether more data
-is available.
+Refresh behavior is fixed:
 
-### Consistency and error behavior
+- the last successful board remains visible while a refresh is in progress;
+- a temporary refresh or service failure does not replace a usable board with a full-screen error;
+- if the initial board load fails before any usable board exists, the board shell remains visible with
+  the common banner treatment and an explicit retry path;
+- an open task panel refreshes in place when possible;
+- opening a task always retrieves fresh detail rather than trusting the card as current authority;
+- a task that moves appears only in its new authoritative section after refresh;
+- a task that becomes completed or retired disappears from the board;
+- if the selected task becomes completed, retired, or otherwise ineligible for the Stage 1 board,
+  the panel closes and a banner explains why;
+- when changed pagination makes additional loaded pages unsafe to retain, the affected column resets
+  to its first page and the user may use **Load more** again;
+- recovered conditions clear their warning automatically;
+- Asana is never used as a fallback when canonical service data is unavailable.
 
-The frontend treats every response as a view of a particular authority generation and current-view
-identity.
+### 3.5 Warnings and errors
 
-- If task state changes after a list page is loaded, opening the task fetches current detail rather
-  than trusting the list row as authority.
-- A stale current-view token, revision, or authority generation produces a refresh/reload path. The
-  browser never silently overwrites newer state.
-- PostgreSQL/service unavailability is shown as authoritative data unavailable; stale Asana state is
-  not substituted.
-- Projection delay or failure is shown as downstream freshness/drift, not as uncertain canonical
-  workflow state.
-- Partial history loading is explicit and cannot be mistaken for complete history.
-- If an allowed action changes before a later mutation stage invokes it, the service rejection and
-  new canonical snapshot win; the UI does not locally force the action.
+Every warning or error uses a slim, full-width banner area at the top of the screen.
 
-### Proposed Stage 1 acceptance
+- distinct simultaneous conditions stack;
+- repeated instances of the same underlying condition across the currently accepted board pages and
+  open task detail are grouped into one banner with a truthful affected-task count;
+- messages use plain language;
+- the board and last successful data remain visible whenever continued viewing is safe;
+- an ongoing condition remains visible until it resolves;
+- only informational, no-longer-active notices may be dismissed;
+- a banner may link or scroll to relevant detail without becoming a mutation control.
 
-If Stage 1 is approved, it is complete only when tests prove:
+Task-card indicators remain available to locate affected tasks, but warning and error communication
+uses the common banner system rather than unrelated modal dialogs or replacement screens. Login and
+session errors use the same banner treatment while remaining programmatically associated with the
+relevant form or control.
 
-- every displayed workflow, legality, location, completion, and action fact comes from
-  `dish-service` and PostgreSQL authority;
-- direct Asana changes cannot alter the authoritative state displayed by the frontend;
-- list fields agree with authoritative PostgreSQL facts, while task-detail allowed actions agree with
-  the backend's existing per-task current-view and workflow-policy computation;
-- search and filters use bounded server-side queries and include governed tasks with no current or
-  historical operation row;
-- pagination under the declared ordering does not duplicate or omit records in stable test data;
-- stale revisions, current-view tokens, and authority generations produce an explicit refresh path;
-- projection freshness is visually and structurally separate from authoritative state, and an absent
-  Stage 5 projection reports an explicit not-configured/unavailable state rather than inferred data;
-- credentials do not enter frontend source, URLs, logs, local storage, or session storage;
-- the environment-specific frontend-read token is accepted only on its private read routes and is
-  rejected on CLI/admin and Funnel/Action routes;
-- private FastAPI routes are unavailable from the Funnel/Action listener;
-- generated OpenAPI and the typed frontend client remain synchronized with implemented routes;
-- the sole human user can find, open, and understand every current task without relying on Asana.
+### 3.6 Login and session experience
 
-## Cross-stage invariants
+Stage 1 uses one shared password for its sole human user.
 
-Across all stages, the frontend preserves the distinction between task organization, workflow state,
-canonical destination, and completion. It derives displayed action availability from the service's
-exact authoritative snapshot.
+- successful login creates a session that remains valid across browser restarts for a fixed seven
+  days from login;
+- activity does not extend the seven-day deadline;
+- logout ends only the current browser session;
+- Stage 1 has no separate **log out all sessions** control;
+- changing the shared password invalidates all existing sessions;
+- destructive restore or recovery cannot make an expired or revoked frontend session valid again;
+- the browser never handles or displays backend agent, admin, or Action bearer credentials.
 
-The frontend calls `dish-service`, not PostgreSQL or Asana directly. It does not contain a second
-workflow-policy implementation. Stage 1 list endpoints expose stored or relationally derived factual
-summaries only; they do not expose or filter by legal-action results. Task-detail allowed actions are
-computed by the existing authoritative workflow-policy layer from that task's exact current snapshot.
-No frontend query model, cache, or materialized view becomes a second source of workflow legality.
+The login experience is private and same-origin. Stage 1 does not require the user to paste a backend
+bearer token. An unauthenticated task deep link returns to the same board-plus-panel view after a
+successful login. Logout or session expiry clears protected task content before returning to login.
 
-Defer the complete dish editor until the structured command schema is stable. The target editor is a
-structured form over typed fields and collections. Established text or Markdown components may
-improve long prose fields such as instructions, but editor-specific state and a whole-document
-Markdown blob do not become canonical dish data.
+### 3.7 Device profile
 
-There is no generic canonical-content save command. Revision and exact-version checks protect
-concurrency, but they do not confer authority to create a new current structured version. Content
-legality is state-based:
+Stage 1 is desktop-focused. Responsive tablet and phone layouts are not part of the first release.
+The implementation defines and tests a minimum supported desktop viewport. Smaller viewports may
+remain usable where practical but are not an acceptance requirement.
 
-- a bare task is created title-only with empty body; a narrow command may change its title while it
-  remains bare;
-- a Planning brief is authored or changed only through the Planning workflow;
-- a governed canonical task is authored or changed only through the applicable Research, Change,
-  correction, or explicitly designed Marco lifecycle operation;
-- a signed or destination task has no ordinary save action; changing it starts Change or another
-  named lifecycle operation that invalidates or supersedes evidence explicitly;
-- a completed task must be reopened or cloned through a named command before content changes.
+## 4. Information and authority design
 
-The service derives these actions from the authoritative task and workflow snapshot. Merely having
-no active operation is not sufficient: an inactive task may still be signed, submitted,
-destination-placed, or completed. An edit control may therefore be read-only or absent even though
-the task has no current owner.
+### 4.1 Canonical authority
 
-When an authorized lifecycle command accepts edited fields, the browser loads the task identifier,
-exact structured version, monotonic revision, action identity, and any operation/run authority that
-command requires. It submits a complete versioned JSON candidate with those expectations and a fresh
-request UUID. `dish-service` reasserts lifecycle legality, validates the structured graph, rejects
-stale state without overwriting either version, appends the new immutable version, advances the task
-pointer, and records the required lineage, governed audit, and replay result in one transaction. The
-UI then renders the committed canonical result or presents the newer current version for explicit
-reconciliation. Silent last-write-wins and editor-level force-save behavior are prohibited.
+All task content, logical placement, board eligibility, workflow facts, and next-step guidance shown
+by the frontend come from Dish's canonical service over PostgreSQL authority.
 
-The frontend must not impersonate an agent or invent run lineage. Agent workflow actions remain on
-the authenticated agent surfaces. If a future UI hosts an authenticated agent session, it may render
-only the actions returned for that exact principal and run.
+The browser:
 
-Before any mutation stage, inventory the human actions currently performed in Asana. Any required
-replacement is a narrow command with explicit preconditions and audit—not a generic row or content
-editor. Structured content is accepted only by the lifecycle command authorized for the current
-state. These commands must remain frontend-independent and available through the service and narrow
-CLI/admin surfaces where required.
+- does not read PostgreSQL directly;
+- does not call Asana directly;
+- does not infer workflow legality;
+- does not compute canonical next actions;
+- does not treat cached or displayed data as mutation authority;
+- does not become a fallback authority when the service is unavailable.
 
-The browser never sends SQL, chooses arbitrary state transitions, patches task rows, or derives legal
-actions. State-changing UI controls call the same command applications as CLI/admin routes with
-fresh request UUIDs and render the canonical result envelope.
+### 4.2 Factual summaries versus authority
 
-## Relationship to backend rollout
+Board cards are compact, staleable factual summaries. They are sufficient for discovery but are not
+current-view or mutation authority. Opening a task retrieves a fresh canonical detail view.
 
-If approved, Frontend Stage 1 starts after backend Stage 4 is implemented and may run throughout
-backend Stages 5 and 6. It is a separate parallel product track rather than an added Stage A gate. It
-can help exercise real PostgreSQL-backed reads during import, shadow, projection, and rehearsal, but
-it remains observational and non-gating.
+Completion, destination, operation, phase, Verification, lease, hold, recovery, abandonment,
+succession, and projection remain distinct facts. The frontend does not collapse them into one
+generic authoritative task status or `blocked` value.
 
-The final production cutover does not depend on the frontend. Equivalent CLI/admin and service
-surfaces must remain sufficient for required operations. Frontend defects cannot authorize fallback
-to Asana or alter the database authority transition.
+### 4.3 Next-step guidance
 
-## Provenance
+Plain-English next-step guidance is produced from backend-owned workflow facts. It explains what
+needs to happen without claiming that the browser or current session may perform it.
 
-The original direction was drafted as part of the single-file `database-backend-design.md` (commit
-`2b7e354` onward) and removed in commit `bc24b37` ("update db doc", 2026-07-31) without a recorded
-rationale, before the remaining file was split into `database-backend.md`,
-`database-backend-imp.md`, and `database-backend-migration.md` (commit `d6acabb`). It was restored
-from the pre-removal version (`git show 63736b2:dish/docs/database-backend-design.md`) and has now
-been narrowed into a proposed Stage 1 read-only design while retaining Stage 2 and Stage 3 as future
-work. It remains a draft under review and does not authorize implementation.
+The guidance:
+
+- is read-only;
+- is not named `allowed_actions`;
+- does not impersonate an agent or run;
+- does not expose raw commands or private administrative continuations;
+- cannot be used by the browser to decide legality.
+
+### 4.4 Aliases and projection
+
+Imported Asana identifiers and downstream projection evidence are separate concepts.
+
+- imported identifiers are historical external aliases with provenance;
+- projection information describes the downstream Asana representation and reconciliation evidence;
+- an imported alias never proves a current projection mapping or healthy projection state;
+- projection delay or drift never changes canonical workflow legality.
+
+Healthy projection state is hidden. Abnormal projection state is disclosed only when it helps the
+user understand a warning or the current task.
+
+### 4.5 Disclosure
+
+The frontend displays only information required by the approved board and side panel. It does not
+show raw request, replay, run, current-view, audit, execution, reconciliation, infrastructure, or
+database details.
+
+Agent and actor facts may be converted into approved human-readable labels when needed to understand
+the task, but raw technical identities are not part of Stage 1 presentation.
+
+## 5. Scope exclusions
+
+Stage 1 does not include:
+
+- completed-task browsing;
+- global task search or cross-section filtering;
+- task history or historical document versions;
+- task creation;
+- content editing;
+- drag-and-drop movement;
+- workflow, recovery, completion, Cooked, or Archive controls;
+- administrative intervention;
+- legal-action filtering or sorting;
+- technical diagnostics;
+- direct database or Asana access;
+- tablet or phone acceptance requirements.
+
+Omitting a backend capability from Stage 1 does not authorize its removal, deferral, narrowing, or
+replacement.
+
+## 6. Stage 1 acceptance
+
+Stage 1 is complete only when the product demonstrates that:
+
+- the user can find, open, and understand every non-retired, incomplete task placed in the active
+  logical section registry without relying on Asana;
+- every active logical section appears in authoritative order, including empty sections;
+- completed or retired tasks never appear on the board or in board pagination;
+- tasks remain in their authoritative section and follow normalized-title order with Dish task UUID
+  as the deterministic tie-breaker;
+- cards remain compact while communicating title, the operation/phase status line, and only the
+  approved attention categories;
+- **Load more** extends only the chosen section;
+- opening a card obtains fresh task detail;
+- the side panel shows the required canonical content, factual state, and non-authorizing next-step
+  guidance, never shows partial or executable task content, uses the inert plain-text fallback with a
+  warning for an otherwise supported body rejected by the renderer or sanitizer, and preserves the
+  usable board with the common error treatment when no safe bounded presentation can be produced;
+- canonical `allowed_actions` are never exposed through the Stage 1 presentation;
+- automatic refresh moves, removes, or updates tasks without presenting duplicate authoritative
+  placement;
+- temporary failure preserves the last successful usable board, while an initial-load failure keeps
+  the board shell visible with the common banner and retry path;
+- distinct warnings stack, every active loaded attention category is represented through the common
+  banner treatment, and repeated instances across accepted board pages and open detail are grouped with
+  a truthful count;
+- healthy projection state is suppressed and abnormal projection state is clearly non-authoritative;
+- a valid login survives browser and ordinary service restart until its fixed seven-day expiry;
+- logout ends only the current session, password rotation invalidates all sessions, and destructive
+  restore or recovery cannot make an expired or revoked session valid again;
+- deep-linked task URLs restore the selected task panel;
+- the desktop minimum viewport supports the horizontal board and fixed-width panel, and the board,
+  cards, panel, close control, **Load more**, login, logout, and banners remain keyboard operable with
+  visible focus;
+- no Stage 1 interaction mutates canonical state or creates a second workflow authority.
+
+Technical evidence and test requirements for these outcomes are defined in
+[`frontend-imp.md`](frontend-imp.md).
+
+### 6.1 Staged delivery and design review
+
+Stage 1 is delivered through reviewable increments rather than as one final board revealed only at
+completion. The implementation plan in [`frontend-imp.md`](frontend-imp.md) must provide early
+runnable deliverables that let the human user review layout, density, labels, navigation, warning
+treatment, and task-detail presentation before the complete backend integration is finished.
+
+Each user-visible delivery stage ends with a deliberate design-review gate. Feedback may confirm the
+current design or require a targeted update to these frontend contracts before the next affected stage
+continues. Approval of an intermediate deliverable does not waive the remaining Stage 1 requirements
+or authorize unreviewed product behavior. Fixture-backed prototypes are review tools only and never
+become canonical authority.
+
+Stage 1 is not complete until the final integrated product passes its automated acceptance suite and a
+committed, repeatable Playwright browser-acceptance suite (authored by a capable local agent, such as
+Claude, with its first full run performed against a production-shaped local environment) as defined in
+[`frontend-imp.md`](frontend-imp.md). That suite is part of the Stage 1 delivery and remains in the
+repository as a standing regression gate afterward, not a one-time walkthrough or a future feature.
+
+## 7. Cross-stage invariants
+
+Across all frontend stages, task organization, workflow state, canonical destination, completion,
+planning, and projection remain separate concepts. The frontend calls Dish's service rather than
+PostgreSQL or Asana directly and contains no second workflow-policy implementation.
+
+Future state-changing controls must invoke named command applications with exact principal, replay,
+current-view, and concurrency requirements. The service reasserts legality and returns the canonical
+result. The browser never chooses arbitrary transitions, sends SQL, patches task rows, or forces
+last-write-wins behavior.
+
+Completion becomes true only through the governed Cooked or Archived transition. There is no generic
+mark-completed frontend action.
+
+## 8. Relationship to backend authority
+
+The frontend is a separate product surface over the PostgreSQL backend. It is not a migration stage,
+cutover authority, production fallback, or alternative workflow engine. Frontend defects cannot
+authorize return to Asana or alter database authority.
+
+All work required specifically to deliver this frontend remains frontend-owned, regardless of which
+code layer implements it. That includes presentation APIs, application/query services, PostgreSQL
+queries, read models, indexes, pagination, ordering, frontend-specific storage, authentication,
+deployment support, and acceptance tests. These requirements are specified in
+[`frontend-imp.md`](frontend-imp.md). That document is the additive contract for the frontend access
+path while the older runtime contracts continue to govern pre-existing callers and shared admission,
+authority, and shutdown invariants. The database design and implementation documents are not reopened
+or amended for frontend-driven work.
+
+## 9. Provenance
+
+The original direction was drafted inside the former single-file database design and later restored
+as a separate frontend proposal. This design records the approved Stage 1 product and authority
+behavior. Implementation mechanics are isolated in [`frontend-imp.md`](frontend-imp.md).
