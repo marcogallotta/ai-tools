@@ -2298,6 +2298,7 @@ DROP TRIGGER IF EXISTS verification_cycles_state_update;
 DROP TRIGGER IF EXISTS verification_cycles_hold_binding_required_insert;
 DROP TRIGGER IF EXISTS verification_cycles_hold_binding_required_update;
 DROP TRIGGER IF EXISTS verification_cycles_outcome_monotonic_update;
+DROP TRIGGER IF EXISTS verification_cycles_completed_fully_immutable_update;
 UPDATE verification_cycles SET outcome='verification-hold' WHERE outcome='two-pass-hold';
 ALTER TABLE two_pass_resets RENAME TO verification_hold_resets;
 DROP INDEX IF EXISTS two_pass_resets_operation_idx;
@@ -2347,6 +2348,22 @@ WHEN (OLD.completed_at IS NOT NULL AND NEW.completed_at IS NOT OLD.completed_at)
       AND NEW.signed_content_version_id IS NOT OLD.signed_content_version_id)
   OR (OLD.signed_identity IS NOT NULL AND NEW.signed_identity IS NOT OLD.signed_identity)
 BEGIN SELECT RAISE(ABORT, 'verification cycle outcome is monotonic'); END;
+CREATE TRIGGER verification_cycles_completed_fully_immutable_update
+BEFORE UPDATE ON verification_cycles
+WHEN OLD.completed_at IS NOT NULL AND (
+    NEW.operation_id IS NOT OLD.operation_id OR NEW.task_gid IS NOT OLD.task_gid OR
+    NEW.cycle_number IS NOT OLD.cycle_number OR NEW.protocol_release IS NOT OLD.protocol_release OR
+    NEW.protocol_text IS NOT OLD.protocol_text OR NEW.verifier_agent IS NOT OLD.verifier_agent OR
+    NEW.run_id IS NOT OLD.run_id OR NEW.independence_attestation IS NOT OLD.independence_attestation OR
+    NEW.correction_class IS NOT OLD.correction_class OR NEW.outcome IS NOT OLD.outcome OR
+    NEW.route IS NOT OLD.route OR NEW.resume_state IS NOT OLD.resume_state OR
+    NEW.created_at IS NOT OLD.created_at OR NEW.completed_at IS NOT OLD.completed_at OR
+    NEW.reviewed_content_version_id IS NOT OLD.reviewed_content_version_id OR
+    NEW.reviewed_identity IS NOT OLD.reviewed_identity OR
+    NEW.signed_content_version_id IS NOT OLD.signed_content_version_id OR
+    NEW.signed_identity IS NOT OLD.signed_identity
+)
+BEGIN SELECT RAISE(ABORT, 'completed verification cycle is immutable'); END;
 """
 
 MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36}
