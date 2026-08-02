@@ -1142,7 +1142,7 @@ class PostgresCommandPort:
                 f"expected {expected.projection_event_types!r}, observed {projection_types!r}"
             )
 
-        if call.command_name not in {"prepare", "approve", "reject"}:
+        if not expected.verify_mutation_effects:
             return
         if task is None or operation is None:
             raise CommandEffectMismatch(

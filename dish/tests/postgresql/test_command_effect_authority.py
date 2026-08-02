@@ -31,7 +31,8 @@ def test_effect_spec_is_the_exact_branch_sensitive_authority() -> None:
         "move_task",
     )
     assert effect_spec_for("approve", {"correction": "none"}) == CommandEffectSpec(
-        ("record_verification_signoff", "advance_operation")
+        ("record_verification_signoff", "advance_operation"),
+        verify_mutation_effects=True,
     )
     assert effect_spec_for("approve", {"correction": "small"}).projection_event_types == (
         "update_task_document",
@@ -42,6 +43,21 @@ def test_effect_spec_is_the_exact_branch_sensitive_authority() -> None:
     assert expected_projection_count("reject", {"route": "evidence"}) == 0
     assert expected_projection_count("reject", {"route": "human_review"}) == 0
     assert expected_projection_count("migrate", {}) == 2
+
+    verified = {
+        command
+        for command, arguments in (
+            ("create", {}),
+            ("start", {"kind": "initial"}),
+            ("prepare", {}),
+            ("migrate", {}),
+            ("approve", {"correction": "none"}),
+            ("reject", {"route": "large"}),
+            ("submit", {}),
+        )
+        if effect_spec_for(command, arguments).verify_mutation_effects
+    }
+    assert verified == {"prepare", "approve", "reject"}
 
 
 class _DropMoveProjection:
@@ -126,7 +142,9 @@ def test_execution_rejects_and_rolls_back_mutation_spec_drift(workflow_db, monke
 
     monkeypatch.setattr(
         "dish_pg.command_port.effect_spec_for",
-        lambda _command, _arguments: CommandEffectSpec(("advance_operation",)),
+        lambda _command, _arguments: CommandEffectSpec(
+            ("advance_operation",), verify_mutation_effects=True
+        ),
     )
     with pytest.raises(CommandEffectMismatch, match="authoritative effects mismatch"):
         with session_scope(factory) as session:

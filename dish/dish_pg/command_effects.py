@@ -1,9 +1,11 @@
-"""Authoritative command-effect specifications shared by planning and execution.
+"""Branch-sensitive command-effect specifications shared by planning and execution.
 
-This module is deliberately persistence-free.  It is the single source for the
-mutation classes a command is expected to commit and the projection outbox
-event types it must create.  Handlers remain responsible for applying those
-changes; the command port verifies their committed effects against this spec.
+This module is deliberately persistence-free. Projection event types are an
+authoritative runtime contract for every command. Mutation kinds describe the
+planner's intended domain changes for every command, but are runtime-verified
+only when ``verify_mutation_effects`` is true. That explicit flag prevents the
+descriptive planner inventory from being mistaken for a fully observed commit
+contract.
 """
 from __future__ import annotations
 
@@ -15,6 +17,7 @@ from typing import Any, Mapping
 class CommandEffectSpec:
     mutation_kinds: tuple[str, ...] = ()
     projection_event_types: tuple[str, ...] = ()
+    verify_mutation_effects: bool = False
 
 
 def effect_spec_for(command_name: str, arguments: Mapping[str, Any]) -> CommandEffectSpec:
@@ -42,7 +45,11 @@ def effect_spec_for(command_name: str, arguments: Mapping[str, Any]) -> CommandE
             "open_verification_cycle",
             "advance_operation",
         )
-        return CommandEffectSpec(mutations, ("update_task_document", "move_task"))
+        return CommandEffectSpec(
+            mutations,
+            ("update_task_document", "move_task"),
+            verify_mutation_effects=command_name == "prepare",
+        )
     if command_name == "approve":
         correction = str(args.get("correction", "none"))
         if correction == "small":
@@ -54,8 +61,12 @@ def effect_spec_for(command_name: str, arguments: Mapping[str, Any]) -> CommandE
                     "advance_operation",
                 ),
                 ("update_task_document",),
+                verify_mutation_effects=True,
             )
-        return CommandEffectSpec(("record_verification_signoff", "advance_operation"))
+        return CommandEffectSpec(
+            ("record_verification_signoff", "advance_operation"),
+            verify_mutation_effects=True,
+        )
     if command_name == "reject":
         route = str(args.get("route", "large")).replace("_", "-")
         if route == "large":
@@ -68,13 +79,16 @@ def effect_spec_for(command_name: str, arguments: Mapping[str, Any]) -> CommandE
                     "advance_operation",
                 ),
                 ("update_task_document",),
+                verify_mutation_effects=True,
             )
         if route == "evidence":
             return CommandEffectSpec(
-                ("reject_verification_cycle", "open_evidence_hold", "advance_operation")
+                ("reject_verification_cycle", "open_evidence_hold", "advance_operation"),
+                verify_mutation_effects=True,
             )
         return CommandEffectSpec(
-            ("reject_verification_cycle", "open_human_review", "advance_operation")
+            ("reject_verification_cycle", "open_human_review", "advance_operation"),
+            verify_mutation_effects=True,
         )
     if command_name == "submit":
         return CommandEffectSpec(
