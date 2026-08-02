@@ -13,9 +13,13 @@ from tests.support.authority import _authorize_dish_candidate
 def test_material_change_grammar_reports_all_detectable_subfields():
     from dish_tool.task_document import parse_task_document, validate_task_document
 
+    submitted = (
+        "25/07/2026 — GPT —  —  —  — Medium — "
+        "verified — GPT, bad, someday"
+    )
     invalid = CANONICAL_TASK.replace(
         "2026-07-25 — ChatGPT — GPT-5 — tightened hydration — improve crispness — Large — pending-verification",
-        "25/07/2026 — GPT —  —  —  — Medium — verified — GPT, bad, someday",
+        submitted,
     )
     findings = validate_task_document(parse_task_document(invalid)).findings
     rules = {finding.rule for finding in findings}
@@ -35,6 +39,39 @@ def test_material_change_grammar_reports_all_detectable_subfields():
     assert "exactly seven fields" not in format_finding.message
     assert "<YYYY-MM-DD>" in format_finding.message
     assert "<Small|Large>" in format_finding.message
+    current_by_rule = {finding.rule: finding.current for finding in findings}
+    assert current_by_rule == {
+        "material-changes.format": submitted,
+        "material-changes.date": "25/07/2026",
+        "material-changes.agent": "GPT",
+        "material-changes.model": "",
+        "material-changes.change": "",
+        "material-changes.reason": "",
+        "material-changes.materiality": "Medium",
+        "material-changes.verification": "verified — GPT, bad, someday",
+    }
+
+
+def test_material_change_field_count_findings_echo_the_complete_entry():
+    from dish_tool.task_document import parse_task_document, validate_task_document
+
+    submitted = "2026-07-25 — ChatGPT — incomplete entry"
+    invalid = CANONICAL_TASK.replace(
+        "2026-07-25 — ChatGPT — GPT-5 — tightened hydration — improve crispness — Large — pending-verification",
+        submitted,
+    )
+
+    findings = validate_task_document(parse_task_document(invalid)).findings
+    relevant = {
+        finding.rule: finding.current
+        for finding in findings
+        if finding.rule in {"material-changes.format", "material-changes.field-count"}
+    }
+
+    assert relevant == {
+        "material-changes.format": submitted,
+        "material-changes.field-count": submitted,
+    }
 
 
 def test_material_change_approval_finalizes_pending_entry_and_survives_restart(tmp_path):

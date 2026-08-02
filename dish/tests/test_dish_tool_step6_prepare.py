@@ -124,6 +124,7 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
                 "kind": "syntax",
                 "message": "recognition line requires non-empty text",
                 "location": "recognition",
+                "current": None,
             },
         ),
         (
@@ -134,6 +135,7 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
                 "kind": "syntax",
                 "message": "QUANTITIES requires a non-empty Portions: line",
                 "location": "QUANTITIES",
+                "current": None,
             },
         ),
         (
@@ -266,6 +268,7 @@ def test_planning_prepare_rejects_empty_required_values_before_write(
             "kind": "syntax",
             "message": f"{field_name} requires a non-empty value",
             "location": field_name,
+            "current": None,
         }
     ]
     assert b.writes == 0

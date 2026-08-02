@@ -144,6 +144,15 @@
           "errors": {
             "items": {
               "additionalProperties": true,
+              "properties": {
+                "current": {
+                  "description": "Exact submitted value for a deterministic document finding when one clean value exists; null otherwise.",
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
               "type": "object"
             },
             "type": "array"

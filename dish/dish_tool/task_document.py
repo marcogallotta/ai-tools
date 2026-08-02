@@ -78,6 +78,7 @@ class DocumentFinding:
     kind: FindingKind
     message: str
     location: str | None = None
+    current: str | None = None
 
 
 
@@ -89,6 +90,7 @@ def finding_payload(finding: DocumentFinding) -> dict[str, str | None]:
         "kind": finding.kind.value,
         "message": finding.message,
         "location": finding.location,
+        "current": finding.current,
     }
 
 
@@ -793,7 +795,13 @@ def validate_planning_brief(brief: PlanningBrief) -> DocumentValidation:
             )
     role = brief.values["Role"]
     if role and role != "main" and not role.startswith("non-main — "):
-        findings.append(DocumentFinding("planning.role", FindingKind.SYNTAX, "Role must be exactly `main` with no trailing text, or `non-main — <kind and why>`", "Role"))
+        findings.append(DocumentFinding(
+            "planning.role",
+            FindingKind.SYNTAX,
+            "Role must be exactly `main` with no trailing text, or `non-main — <kind and why>`",
+            "Role",
+            current=role,
+        ))
     exemptions = brief.values["Exemptions"]
     remainder = exemptions
     exemption_tags: list[str] = []
@@ -813,11 +821,18 @@ def validate_planning_brief(brief: PlanningBrief) -> DocumentValidation:
                     "[nutrition-fat]"
                 ),
                 "Exemptions",
+                current=", ".join(f"[{tag}]" for tag in unsupported_tags),
             )
         )
     destination = brief.values["Destination section"]
     if destination and destination not in {"[destination missing]", "[destination invalid]"} and not DESTINATION_RE.match(destination):
-        findings.append(DocumentFinding("planning.destination", FindingKind.AGENT_CORRECTABLE, "Destination section must be name — gid or a canonical defect marker", "Destination section"))
+        findings.append(DocumentFinding(
+            "planning.destination",
+            FindingKind.AGENT_CORRECTABLE,
+            "Destination section must be name — gid or a canonical defect marker",
+            "Destination section",
+            current=destination,
+        ))
     return DocumentValidation(tuple(findings))
 
 
@@ -833,12 +848,14 @@ def _material_change_findings(line: str, *, index: int) -> tuple[DocumentFinding
                 FindingKind.SYNTAX,
                 f"Material changes entries require exactly seven fields in this order: {MATERIAL_CHANGE_ACCEPTED_SYNTAX}",
                 location,
+                current=line,
             ),
             DocumentFinding(
                 "material-changes.field-count",
                 FindingKind.SYNTAX,
                 f"expected seven fields separated by ' — '; found {len(parts)}",
                 location,
+                current=line,
             ),
         )
 
@@ -847,31 +864,37 @@ def _material_change_findings(line: str, *, index: int) -> tuple[DocumentFinding
         findings.append(DocumentFinding(
             "material-changes.date", FindingKind.SYNTAX,
             "date must use YYYY-MM-DD", f"{location}.date",
+            current=date,
         ))
     if re.fullmatch(ACTOR_NAME_PATTERN, agent) is None:
         findings.append(DocumentFinding(
             "material-changes.agent", FindingKind.SYNTAX,
             "agent must be ChatGPT, Custom GPT, Claude, or Codex", f"{location}.agent",
+            current=agent,
         ))
     if not model.strip() or re.fullmatch(MODEL_PATTERN, model) is None:
         findings.append(DocumentFinding(
             "material-changes.model", FindingKind.SYNTAX,
             "model metadata is required and must not contain a comma or em dash", f"{location}.model",
+            current=model,
         ))
     if not change.strip():
         findings.append(DocumentFinding(
             "material-changes.change", FindingKind.SYNTAX,
             "change must describe the concrete edit", f"{location}.change",
+            current=change,
         ))
     if not reason.strip():
         findings.append(DocumentFinding(
             "material-changes.reason", FindingKind.SYNTAX,
             "reason is required", f"{location}.reason",
+            current=reason,
         ))
     if materiality not in {"Small", "Large"}:
         findings.append(DocumentFinding(
             "material-changes.materiality", FindingKind.SYNTAX,
             "materiality must be Small or Large", f"{location}.materiality",
+            current=materiality,
         ))
 
     if verification != "pending-verification":
@@ -884,6 +907,7 @@ def _material_change_findings(line: str, *, index: int) -> tuple[DocumentFinding
                 "material-changes.verification", FindingKind.SYNTAX,
                 "verification must be pending-verification or verified — <agent>, <model metadata>, <YYYY-MM-DD>",
                 f"{location}.verification",
+                current=verification,
             ))
 
     if findings:
@@ -892,6 +916,7 @@ def _material_change_findings(line: str, *, index: int) -> tuple[DocumentFinding
             FindingKind.SYNTAX,
             f"Material changes entry must use: {MATERIAL_CHANGE_ACCEPTED_SYNTAX}",
             location,
+            current=line,
         ))
     return tuple(findings)
 
@@ -915,11 +940,16 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
         re.fullmatch(r"Portions:\s*\S.*", line)
         for line in quantities.splitlines()
     ):
+        current_portions = next(
+            (line for line in quantities.splitlines() if line.startswith("Portions:")),
+            None,
+        )
         findings.append(DocumentFinding(
             "quantities.portions-required",
             FindingKind.SYNTAX,
             "QUANTITIES requires a non-empty Portions: line",
             "QUANTITIES",
+            current=current_portions,
         ))
     if not document.recognition.strip():
         findings.append(DocumentFinding(
@@ -930,23 +960,53 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
         ))
     if document.is_non_main:
         if not document.title.startswith("[non-main] "):
-            findings.append(DocumentFinding("title.non-main-spacing", FindingKind.AGENT_CORRECTABLE, "[non-main] must be the leading role tag", "title"))
+            findings.append(DocumentFinding(
+                "title.non-main-spacing",
+                FindingKind.AGENT_CORRECTABLE,
+                "[non-main] must be the leading role tag",
+                "title",
+                current=document.title,
+            ))
     elif re.match(r"^\[[^]]+\]", document.title) and document.title.startswith("["):
         first = document.title[1:].split("]", 1)[0]
         if first not in {"destination missing", "destination invalid"}:
-            findings.append(DocumentFinding("title.role-tag", FindingKind.SYNTAX, "only [non-main] is a role tag", "title"))
+            findings.append(DocumentFinding(
+                "title.role-tag",
+                FindingKind.SYNTAX,
+                "only [non-main] is a role tag",
+                "title",
+                current=document.title,
+            ))
     if " — " not in document.title:
-        findings.append(DocumentFinding("title.recognition", FindingKind.SYNTAX, "title requires dish name — recognition phrase", "title"))
+        findings.append(DocumentFinding(
+            "title.recognition",
+            FindingKind.SYNTAX,
+            "title requires dish name — recognition phrase",
+            "title",
+            current=document.title,
+        ))
     destination = document.planning_brief.values["Destination section"]
     for marker in destination_markers:
         in_title = f"[{marker}]" in document.title
         in_field = destination == f"[{marker}]"
         if in_title != in_field:
-            findings.append(DocumentFinding("title.destination-marker", FindingKind.AGENT_CORRECTABLE, "destination marker must agree between title and Destination section", "title"))
+            findings.append(DocumentFinding(
+                "title.destination-marker",
+                FindingKind.AGENT_CORRECTABLE,
+                "destination marker must agree between title and Destination section",
+                "title",
+                current=document.title,
+            ))
 
     status = document.state.values["Status"]
     if status not in allowed_statuses:
-        findings.append(DocumentFinding("state.status", FindingKind.SYNTAX, f"unknown Status {status}", "Status"))
+        findings.append(DocumentFinding(
+            "state.status",
+            FindingKind.SYNTAX,
+            f"unknown Status {status}",
+            "Status",
+            current=status,
+        ))
     else:
         detail, resume = document.state.values["Status detail"], document.state.values["Resume status"]
         release = document.state.values["Verification protocol release"]
@@ -972,16 +1032,52 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
     for field_name in ("Researched by", "Verified by", "Self-verified"):
         value = document.state.values[field_name]
         if value != "None" and not ACTOR_RE.match(value):
-            findings.append(DocumentFinding("state.actor-format", FindingKind.SYNTAX, f"invalid {field_name} format", field_name))
+            findings.append(DocumentFinding(
+                "state.actor-format",
+                FindingKind.SYNTAX,
+                f"invalid {field_name} format",
+                field_name,
+                current=value,
+            ))
     if expected_schema_version is not None and document.schema_version != expected_schema_version:
-        findings.append(DocumentFinding("schema.version-mismatch", FindingKind.SCHEMA_VERSION, f"task declares schema {document.schema_version}; expected {expected_schema_version}", "Schema version"))
-    if not any("Classification:" in line and line.split("Classification:", 1)[1].strip().startswith(classifications) for line in document.research_basis):
-        findings.append(DocumentFinding("research-basis.classification", FindingKind.SYNTAX, "Research basis requires an explicit approved classification", "Research basis"))
+        findings.append(DocumentFinding(
+            "schema.version-mismatch",
+            FindingKind.SCHEMA_VERSION,
+            f"task declares schema {document.schema_version}; expected {expected_schema_version}",
+            "Schema version",
+            current=document.schema_version,
+        ))
+    classification_lines = tuple(
+        line for line in document.research_basis if "Classification:" in line
+    )
+    if not any(
+        line.split("Classification:", 1)[1].strip().startswith(classifications)
+        for line in classification_lines
+    ):
+        findings.append(DocumentFinding(
+            "research-basis.classification",
+            FindingKind.SYNTAX,
+            "Research basis requires an explicit approved classification",
+            "Research basis",
+            current=classification_lines[0] if len(classification_lines) == 1 else None,
+        ))
     for line in document.decisions:
         if not line.startswith(human_prefix + " "):
-            findings.append(DocumentFinding("decisions.human-format", FindingKind.SYNTAX, "Decisions entries must use Human — Marco format", "Decisions"))
+            findings.append(DocumentFinding(
+                "decisions.human-format",
+                FindingKind.SYNTAX,
+                "Decisions entries must use Human — Marco format",
+                "Decisions",
+                current=line,
+            ))
     for index, line in enumerate(document.material_changes, start=1):
         findings.extend(_material_change_findings(line, index=index))
     if document.planning_brief.values["Role"].startswith("non-main") != document.is_non_main:
-        findings.append(DocumentFinding("role.title-brief-disagreement", FindingKind.ILLEGAL_COMBINATION, "title role and Planning brief Role disagree", "title"))
+        findings.append(DocumentFinding(
+            "role.title-brief-disagreement",
+            FindingKind.ILLEGAL_COMBINATION,
+            "title role and Planning brief Role disagree",
+            "title",
+            current=document.title,
+        ))
     return DocumentValidation(tuple(findings))

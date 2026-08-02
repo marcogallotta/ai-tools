@@ -287,7 +287,9 @@ their own JSON documents rather than this envelope:
 - `allowed_actions` is the bounded next tool action list derived from the same authoritative snapshot that mutation commands enforce.
 - `data` contains command-specific exact identities, diagnostics, protocol text, or completion facts.
   For `inspect`, `data.content.operation_baseline_identity` is the immutable identity captured when the operation started, while `confirmed_identity` is the latest Dish-confirmed task head. The current comparison is explicit: `live_identity` is compared with `required_identity`, and `identity_matches` reports only that comparison.
-- `errors` contains structured findings with a `rule` and any supporting fields.
+- `errors` contains structured findings with a `rule` and any supporting fields. Deterministic
+  document findings include `current`: the exact submitted value when one clean value exists, or
+  `null` when no single value is meaningful.
 
 Internal workflow permission `verify` is exposed as Action/CLI command `start`. When `start` is the
 required handoff command, `data.required_start_kind` identifies its required `kind`: `initial` after

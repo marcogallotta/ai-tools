@@ -171,7 +171,22 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                     },
                 },
             },
-            "errors": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+            "errors": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": True,
+                    "properties": {
+                        "current": {
+                            "type": ["string", "null"],
+                            "description": (
+                                "Exact submitted value for a deterministic document finding "
+                                "when one clean value exists; null otherwise."
+                            ),
+                        }
+                    },
+                },
+            },
         },
     }
     paths: dict[str, Any] = {}

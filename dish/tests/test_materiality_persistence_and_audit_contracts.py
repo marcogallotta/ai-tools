@@ -7,8 +7,15 @@ import pytest
 from dish_tool.database import initialize_database
 from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.governed_diff import explicit_material_reasons, require_small_scope
-from dish_tool.task_document import parse_task_document, validate_planning_brief, parse_planning_brief, finding_payload
+from dish_tool.task_document import (
+    finding_payload,
+    parse_planning_brief,
+    parse_task_document,
+    validate_planning_brief,
+    validate_task_document,
+)
 from dish_tool.errors import DishRuleError
+from tests.support.canonical import TASK as CANONICAL_TASK
 from tests.support.verification import TASK
 from tests.support.verification import Backend
 from tests.support.verification import make_app
@@ -40,6 +47,89 @@ def test_planning_finding_payload_is_actionable():
     payload = finding_payload(finding)
     assert payload["message"] == "Destination section must be name — gid or a canonical defect marker"
     assert payload["location"] == "Destination section"
+    assert payload["current"] == "Reference (123)"
+
+
+@pytest.mark.parametrize(
+    ("candidate", "rule", "current"),
+    [
+        (
+            CANONICAL_TASK.replace(
+                "[non-main] Test dish — crisp comparison side",
+                "Malaysian/Indonesian lamb curry",
+                1,
+            ),
+            "title.recognition",
+            "Malaysian/Indonesian lamb curry",
+        ),
+        (
+            CANONICAL_TASK.replace(
+                "Role: non-main — small side for comparison",
+                "Role: side dish",
+                1,
+            ),
+            "planning.role",
+            "side dish",
+        ),
+        (
+            CANONICAL_TASK.replace(
+                "Exemptions: None",
+                "Exemptions: [nutrition-sodium] — approved",
+                1,
+            ),
+            "planning.exemption-tag-unsupported",
+            "[nutrition-sodium]",
+        ),
+        (
+            CANONICAL_TASK.replace(
+                "Researched by: ChatGPT — GPT-5, 2026-07-25",
+                "Researched by: GPT — GPT-5, 2026-07-25",
+                1,
+            ),
+            "state.actor-format",
+            "GPT — GPT-5, 2026-07-25",
+        ),
+        (
+            CANONICAL_TASK.replace(
+                "Human — Marco: Use the smaller batch, 2026-07-25, to isolate texture",
+                "Marco: Use the smaller batch",
+                1,
+            ),
+            "decisions.human-format",
+            "Marco: Use the smaller batch",
+        ),
+        (
+            CANONICAL_TASK.replace("Schema version: 2", "Schema version: 1", 1),
+            "schema.version-mismatch",
+            "1",
+        ),
+    ],
+)
+def test_document_findings_echo_the_submitted_value(candidate, rule, current):
+    validation = validate_task_document(
+        parse_task_document(candidate),
+        expected_schema_version="2",
+    )
+    finding = next(item for item in validation.findings if item.rule == rule)
+
+    assert finding.current == current
+    assert finding_payload(finding)["current"] == current
+
+
+def test_document_finding_payload_uses_null_without_a_single_current_value():
+    candidate = CANONICAL_TASK.replace(
+        "A compact side dish for testing texture.",
+        "",
+        1,
+    )
+    finding = next(
+        item
+        for item in validate_task_document(parse_task_document(candidate)).findings
+        if item.rule == "document.recognition-empty"
+    )
+
+    assert finding.current is None
+    assert finding_payload(finding)["current"] is None
 
 
 def test_schema_v16_and_audit_repair_table(tmp_path):
