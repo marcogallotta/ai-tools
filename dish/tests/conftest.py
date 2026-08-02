@@ -315,6 +315,28 @@ def cli(monkeypatch):
         module.close_client()
 
 
+@pytest.fixture(autouse=True)
+def isolate_dish_client_profile_env(monkeypatch):
+    """Prevent ambient client-profile env vars from leaking into tests.
+
+    Agent shells default to DISH_PROFILE=prod with real DISH_SERVICE_URL_PROD
+    and DISH_*_TOKEN_PROD credentials loaded from ~/.bashrc. Without this,
+    a test that only clears the legacy DISH_SERVICE_URL/DISH_SERVICE_TOKEN
+    names falls through resolve_client_profile() to the real production
+    service instead of whatever it monkeypatched.
+    """
+    for name in (
+        "DISH_PROFILE",
+        "DISH_SERVICE_URL_TEST",
+        "DISH_SERVICE_URL_PROD",
+        "DISH_SERVICE_TOKEN_TEST",
+        "DISH_SERVICE_TOKEN_PROD",
+        "DISH_ADMIN_TOKEN_TEST",
+        "DISH_ADMIN_TOKEN_PROD",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture(scope="session")
 def current_database_template(tmp_path_factory):
     """Build the current empty schema once for tests that do not test migration."""
