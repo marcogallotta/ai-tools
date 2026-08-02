@@ -1,0 +1,9 @@
+{
+  "name": "dish-pglite-support",
+  "private": true,
+  "description": "Node runtime pglite depends on for py-pglite's PostgreSQL compatibility test lane.",
+  "dependencies": {
+    "@electric-sql/pglite": "^0.5.4",
+    "@electric-sql/pglite-socket": "^0.2.7"
+  }
+}

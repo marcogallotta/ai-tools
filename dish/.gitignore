@@ -4,3 +4,5 @@ __pycache__/
 var/
 .venv-flake/
 .test-artifacts/
+node_modules/
+tests/postgresql/pglite/pglite_manager.js
