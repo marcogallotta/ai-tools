@@ -1,6 +1,6 @@
 # Dish private frontend design
 
-**Status: Stage 1 design approved; implementation requires separate authorization.**
+**Status: Stage 1 product design approved. Implementation is authorized only stage by stage; real authentication and canonical-data integration remain blocked until the evidence gates in [`frontend-imp.md`](frontend-imp.md) pass.**
 
 This document defines the approved private frontend product over Dish's PostgreSQL-backed service.
 It describes product behavior, user-visible information, authority boundaries, and acceptance
@@ -356,6 +356,8 @@ current design or require a targeted update to these frontend contracts before t
 continues. Approval of an intermediate deliverable does not waive the remaining Stage 1 requirements
 or authorize unreviewed product behavior. Fixture-backed prototypes are review tools only and never
 become canonical authority.
+
+The staged plan does not make a document-wide claim that every integration dependency is already verified. Delivery Stages 0 and 1 may begin because they establish structure and obtain visual feedback without claiming real task authority. Before Delivery Stage 2, the complete contract and authentication/runtime dependencies must pass the independent readiness review in `frontend-imp.md`. Before Delivery Stage 3, every real board, detail, projection, and attention field must have an accepted code-grounded source and predicate map. An implementation agent may not infer missing semantics from field names or continue past either gate on the basis that the remaining work is probably straightforward.
 
 Stage 1 is not complete until the final integrated product passes its automated acceptance suite and a
 committed, repeatable Playwright browser-acceptance suite (authored by a capable local agent, such as

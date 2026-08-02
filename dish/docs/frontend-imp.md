@@ -1,6 +1,6 @@
 # Dish private frontend implementation contract
 
-**Status: implementation design; implementation proceeds only through the staged review gates below after explicit authorization.**
+**Status: staged implementation contract. Delivery Stages 0 and 1 are specified enough to begin after explicit authorization. Delivery Stages 2 through 7 are conditionally specified and must not begin until the readiness evidence gates in Section 11.2 pass.**
 
 This document defines how to realize the approved product in
 [`frontend.md`](frontend.md). The product behavior and authority outcomes in `frontend.md` are
@@ -1094,7 +1094,82 @@ Every stage includes formatting, linting, type or schema checking, and the relev
 integration tests. Tests for behavior delivered in a stage are delivered in that same stage; they are
 not deferred to a cleanup phase.
 
-### 11.2 Delivery Stage 0 — foundation and empty shell
+### 11.2 Readiness evidence gates before integrated implementation
+
+These gates correct a deliberate limit of the document: a future-state contract can define required
+behavior without proving that every required source fact, listener hook, and query already has an
+unambiguous implementation path in the current repository. Passing prose review alone is not enough to
+authorize an integration stage.
+
+Delivery Stages 0 and 1 may proceed after explicit authorization because they create the modular shell,
+test infrastructure, and fixture-backed design prototype without claiming real authentication or
+canonical task data. Delivery Stage 2 and later are blocked until Gate A passes. Delivery Stage 3 and
+later are additionally blocked until Gate B passes. A prior stage review cannot waive either gate.
+
+#### Gate A — complete contract and runtime readiness review
+
+Before Delivery Stage 2 begins, the implementation owner produces a checked-in readiness packet and an
+independent reviewer who did not author the implementation reviews it against the complete current
+`frontend.md` and `frontend-imp.md`, not excerpts or selected sections. The packet must contain:
+
+- a requirement-traceability table covering every normative section of both documents, with the owning
+  delivery stage, implementation module or boundary, required test level, and unresolved dependency;
+- an authentication/runtime map covering the existing private listener, shared admission and drain
+  gate, canonical private origin, configuration, session persistence, password verification,
+  throttling, CSRF, logout, restore invalidation, and frontend-specific audit ownership;
+- an OpenAPI ownership map confirming that the existing Action generator and synchronization tests
+  remain unchanged and that the frontend schema/client synchronization pipeline is new Stage 0
+  frontend work rather than an assumed pre-existing capability;
+- confirmation that the complete error, notice, session, DTO, browser-storage, accessibility, and
+  deployment contracts have an implementation and test owner;
+- every uncertainty, contradiction, or required supporting change found during the review.
+
+The gate passes only when all material findings are resolved in code or in these contracts, or are
+recorded as explicit blockers assigned to a later stage that does not yet begin. A reviewer may not mark
+the gate complete merely because the proposed architecture appears plausible. Product behavior may
+change only through an approved contract amendment; technical gaps remain frontend-owned work.
+
+#### Gate B — code-grounded canonical-data and attention map
+
+Gate B is a checked-in living source map, reviewed and extended immediately before each real-data
+stage. Before Delivery Stage 3 begins, it must cover every field emitted by board bootstrap, section
+continuation, card status, card attention, and board projection presentation. Before Delivery Stage 4
+begins, it must additionally cover every task-detail, disclosure, next-step-guidance, rendering-input,
+and detail projection field. For each mapped field the packet identifies:
+
+- the exact PostgreSQL model/table, application/query service, or other canonical source;
+- the exact selection predicate, join/cardinality rule, evaluation-time rule, and precedence when more
+  than one durable fact exists;
+- the frontend-owned query, read projection, index, view, migration, or application service that must
+  be added when the current read surface does not provide the required result;
+- the bounded-query and no-per-task-loop proof, including representative query-plan or performance
+  evidence where required;
+- the unit, integration, equivalence, and acceptance tests that prove the mapping.
+
+The Stage 3 portion of the map must separately cover each Stage 1 attention code. Terms such as
+**expired**, **invalid**, **contested**, **failed**, **disputed**, **awaiting human review**,
+**recovery required**, **active abandonment**, and **active succession** may not be interpreted from
+their English labels or guessed by the route, browser, or query author. Each term must resolve to a
+named canonical predicate. If the current repository has no exact durable source for an approved
+predicate, the implementation must do one of the following before that portion of the gate passes:
+
+1. add frontend-owned read support or durable support state that preserves the governing authority
+   model and is covered by the required tests; or
+2. propose a targeted contract amendment for review.
+
+It may not silently weaken, broaden, or substitute the predicate. The mapping is independently
+reviewed against the current code and schema. Human review is required only when resolving a gap would
+change approved product behavior; implementation-local support remains an engineering decision.
+
+#### Gate C — stage authorization record
+
+After Gates A and B, later delivery stages still proceed one at a time. Each stage packet records the
+exact commit or build reviewed, the gates already satisfied, new dependencies discovered, tests run,
+and the human review outcome. Discovery of a material unmapped dependency pauses the affected stage and
+reopens the relevant readiness packet; it does not authorize improvisation or a retroactive claim that
+the documents were implementation-ready.
+
+### 11.3 Delivery Stage 0 — foundation and empty shell
 
 Build the implementation skeleton before product behavior:
 
@@ -1111,7 +1186,7 @@ The reviewable deliverable is a runnable empty shell plus a short architecture m
 and style boundaries. It is not a Kanban board and does not claim product completeness. The gate
 confirms that the codebase is structured correctly before feature volume grows.
 
-### 11.3 Delivery Stage 1 — fixture-backed visual prototype
+### 11.4 Delivery Stage 1 — fixture-backed visual prototype
 
 Build the approved board experience against explicit local fixtures, without pretending those
 fixtures are canonical backend data. Include representative states for:
@@ -1129,7 +1204,9 @@ The gate is primarily a design review. The user can reject card density, spacing
 headers, panel organization, warning treatment, or interaction shape before real data integration is
 completed. The stage ships component and accessibility tests for the fixture-backed behaviors.
 
-### 11.4 Delivery Stage 2 — authentication and protected application shell
+### 11.5 Delivery Stage 2 — authentication and protected application shell
+
+**Entry condition:** Gate A in Section 11.2 is accepted and has no unresolved authentication, listener, session, OpenAPI, or deployment blocker assigned to this stage.
 
 Integrate the real private login/session lifecycle and protected shell while keeping task-data scope
 bounded. Deliver:
@@ -1142,7 +1219,9 @@ bounded. Deliver:
 The gate reviews the actual login, logout, session-expiry, reload, and deep-link experience. Security,
 API-contract, and browser-lifecycle tests required by Sections 2–4 land in this stage.
 
-### 11.5 Delivery Stage 3 — real board vertical slice
+### 11.6 Delivery Stage 3 — real board vertical slice
+
+**Entry condition:** Gates A and B in Section 11.2 are accepted. The code-grounded source map covers every board field and every attention predicate, and all frontend-owned read-support work required for this vertical slice is identified.
 
 Connect the board to the real frontend-owned board read model. Deliver:
 
@@ -1157,7 +1236,9 @@ real data density, section labeling, card wording, ordering, and loading behavio
 refresh systems are added. Board/query, pagination, DTO, schema, performance-bound, and integration
 tests land with this stage.
 
-### 11.6 Delivery Stage 4 — real task detail and deep links
+### 11.7 Delivery Stage 4 — real task detail and deep links
+
+**Entry condition:** Gate B has been extended and independently accepted for every detail, disclosure, advisory, rendering-input, and projection field introduced by this stage.
 
 Deliver the complete read-only side panel:
 
@@ -1170,7 +1251,7 @@ The gate reviews actual task readability and panel organization before refresh a
 is layered on. Detail, rendering, disclosure, route-identity, history-exclusion, and deep-link tests
 land in this stage.
 
-### 11.7 Delivery Stage 5 — refresh, continuity, warnings, and failure behavior
+### 11.8 Delivery Stage 5 — refresh, continuity, warnings, and failure behavior
 
 Deliver the dynamic behavior around the already-reviewed board and panel:
 
@@ -1185,7 +1266,7 @@ The gate uses controlled state changes and failures so the user can review wheth
 understandable and stable while data changes. Refresh, race, retry, failure, notice, and continuity
 tests land in this stage.
 
-### 11.8 Delivery Stage 6 — accessibility, hardening, and production-shaped integration
+### 11.9 Delivery Stage 6 — accessibility, hardening, and production-shaped integration
 
 Complete the integrated product without adding new product behavior:
 
@@ -1200,7 +1281,7 @@ Complete the integrated product without adding new product behavior:
 The gate is the final human design walkthrough of the integrated application. Any product discrepancy
 found here is corrected and re-reviewed before browser acceptance begins.
 
-### 11.9 Delivery Stage 7 — committed Playwright browser-acceptance suite
+### 11.10 Delivery Stage 7 — committed Playwright browser-acceptance suite
 
 Browser-driven UI acceptance is a required final implementation deliverable, not future work, and it
 is delivered as a **committed, repeatable automated test suite**, not a one-time manual or agent-driven
@@ -1245,13 +1326,16 @@ repository's ordinary test gates, not only at this one Stage 7 checkpoint.
 
 Final Stage 1 implementation acceptance is granted only when automated and production-shaped evidence
 demonstrates all of the following. Work may proceed stage by stage under Section 11, but final
-completion additionally requires the committed Playwright browser-acceptance suite in Section 11.9
+completion additionally requires the committed Playwright browser-acceptance suite in Section 11.10
 passing against the production-shaped build.
 
 ### Delivery process and maintainability
 
 - every delivery stage produces the runnable review packet, tests, and human review gate required by
   Section 11;
+- Delivery Stages 2 through 7 have not begun before their Section 11.2 readiness gates passed;
+- the checked-in Gate A traceability/runtime packet covers both documents in full and has an independent review record;
+- the checked-in Gate B source map was accepted before each applicable real-data stage and identifies and tests the exact canonical source and predicate for every board, detail, projection, and attention field, with no unresolved guessed semantics;
 - the application begins and remains separated into the approved shell, style, feature, API, service,
   data-support, fixture, and test boundaries rather than one monolithic board implementation;
 - hand-written files comply with the Section 11.1 size thresholds or have no unresolved temporary
