@@ -1044,6 +1044,9 @@ Implemented Stage 6 offline foundation:
   request are durable. First-admission verification requires committed execution, immutable outcome,
   execution-bound audit, terminal invocation-audit obligation, exact applied projection count, and
   post-request reconciliation of every active mapping.
+- Alembic revision `0008_fail_closed_admission_outbox` treats a missing admission-control row as
+  closed once a release candidate exists and removes the command port's projectionless construction
+  path, preserving authoritative mutation and outbox intent in one caller-owned transaction.
 - `MutationAdmissionControl` is created closed. Database guards reject target request admission after
   validation until rollback-burn evidence is durable and the exact cutover run opens admission.
 - `dish_service.legacy_writer_fence` supplies an atomic mode-0600 file fence. The legacy HTTP path

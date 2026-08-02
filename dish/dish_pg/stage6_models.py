@@ -562,8 +562,10 @@ def _install_sqlite_admission_guard() -> None:
         DDL(
             "CREATE TRIGGER service_requests_stage6_admission_guard "
             "BEFORE INSERT ON service_requests "
-            "WHEN EXISTS (SELECT 1 FROM mutation_admission_controls mac "
-            "WHERE mac.generation_id = NEW.generation_id AND mac.state = 'closed') "
+            "WHEN EXISTS (SELECT 1 FROM release_candidates rc "
+            "WHERE rc.generation_id = NEW.generation_id) "
+            "AND NOT EXISTS (SELECT 1 FROM mutation_admission_controls mac "
+            "WHERE mac.generation_id = NEW.generation_id AND mac.state = 'open') "
             "BEGIN SELECT RAISE(ABORT, 'PostgreSQL mutation admission is closed'); END"
         ).execute_if(dialect="sqlite"),
     )

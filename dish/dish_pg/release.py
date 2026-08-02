@@ -22,7 +22,7 @@ from . import stage3_models as wf
 from . import stage5_models as tx
 from . import stage6_models as rel
 
-ALEMBIC_HEAD = "0007_cutover_evidence_gates"
+ALEMBIC_HEAD = "0008_fail_closed_admission_outbox"
 
 REQUIRED_EVIDENCE = (
     ("authority_coverage", "current_to_target"),

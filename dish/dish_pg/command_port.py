@@ -26,6 +26,7 @@ from .planner import (
     plan_command,
 )
 from .read_model import PostgresReadModel, ReadModelError
+from .transition import ProjectionService
 from .workflow import ExecutionSpec, RequestSpec, StoredOutcome, WorkflowAuthorityService
 
 
@@ -80,7 +81,7 @@ class CommandResult:
     request_replayed: bool = False
 
 
-class ProjectionRecorder(Protocol):
+class ProjectionAuthority(Protocol):
     def record(
         self,
         *,
@@ -92,6 +93,21 @@ class ProjectionRecorder(Protocol):
         created_at: datetime,
     ) -> uuid.UUID: ...
 
+    def recover(
+        self,
+        *,
+        attempt_id: uuid.UUID,
+        route: str,
+        arguments: Mapping[str, Any],
+        actor: str,
+        recovered_at: datetime,
+        expected_task_id: uuid.UUID | None = None,
+    ) -> Mapping[str, Any]: ...
+
+    def unresolved_attempt_id(self, task_id: uuid.UUID) -> uuid.UUID | None: ...
+
+    def task_freshness(self, task_id: uuid.UUID) -> Mapping[str, Any]: ...
+
 
 class PostgresCommandPort:
     """Complete retained command surface in one caller-owned transaction."""
@@ -102,14 +118,16 @@ class PostgresCommandPort:
         *,
         cursor_secret: bytes,
         uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4,
-        projection_recorder: ProjectionRecorder | None = None,
+        projection_recorder: ProjectionAuthority | None = None,
         lease_duration: timedelta = timedelta(minutes=15),
     ) -> None:
         self.session = session
         self.uuid_factory = uuid_factory
         self.reads = PostgresReadModel(session, cursor_secret=cursor_secret)
         self.workflow = WorkflowAuthorityService(session, uuid_factory=uuid_factory)
-        self.projection_recorder = projection_recorder
+        self.projection_recorder: ProjectionAuthority = projection_recorder or ProjectionService(
+            session, uuid_factory=uuid_factory
+        )
         self.lease_duration = lease_duration
 
     def execute(self, call: CommandCall) -> CommandResult:
@@ -334,8 +352,7 @@ class PostgresCommandPort:
                 raise CommandRuleError("TASK_REQUIRED", "task reference is required", http_status=400)
             view = self.reads.task_view(str(reference))
             freshness = dict(view.projection_freshness)
-            if self.projection_recorder is not None and hasattr(self.projection_recorder, "task_freshness"):
-                freshness = dict(self.projection_recorder.task_freshness(view.task_id))
+            freshness = dict(self.projection_recorder.task_freshness(view.task_id))
             data = asdict(view) | {
                 "task_id": str(view.task_id),
                 "content_version_id": str(view.content_version_id),
@@ -436,10 +453,6 @@ class PostgresCommandPort:
         )
 
     def _unresolved_projection_attempt_id(self, task_id: uuid.UUID) -> str | None:
-        if self.projection_recorder is None or not hasattr(
-            self.projection_recorder, "unresolved_attempt_id"
-        ):
-            return None
         value = self.projection_recorder.unresolved_attempt_id(task_id)
         return str(value) if value else None
 
@@ -793,8 +806,6 @@ class PostgresCommandPort:
         return {"lease_id": str(row.lease_id), "expires_at": row.expires_at.isoformat(), "lease_revision": row.lease_revision}
 
     def _projection_only(self, call, _generation, _binding, _execution, task, _operation) -> dict[str, Any]:
-        if self.projection_recorder is None or not hasattr(self.projection_recorder, "recover"):
-            raise CommandRuleError("PROJECTION_ATTEMPT_REQUIRED", "projection recovery requires Stage 5 exact attempt authority")
         attempt_id = call.arguments.get("attempt_id")
         if not attempt_id:
             raise CommandRuleError("PROJECTION_ATTEMPT_REQUIRED", "attempt_id is required", http_status=400)
@@ -1093,10 +1104,15 @@ class PostgresCommandPort:
         lease.state, lease.lease_revision, lease.terminal_at = state, prior_revision + 1, at
         self.session.add(wf.LeaseEvent(lease_event_id=self.uuid_factory(), lease_id=lease.lease_id, event_kind="released", request_id=execution.request_id, command_execution_id=execution.execution_id, prior_revision=prior_revision, resulting_revision=prior_revision + 1, prior_expiry=prior_expiry, resulting_expiry=prior_expiry, reason=reason, occurred_at=at))
 
-    def _project(self, generation_id, execution_id, task_id, event_type, payload, at) -> str | None:
-        if self.projection_recorder is None:
-            return None
-        value = self.projection_recorder.record(generation_id=generation_id, execution_id=execution_id, task_id=task_id, event_type=event_type, payload=payload, created_at=at)
+    def _project(self, generation_id, execution_id, task_id, event_type, payload, at) -> str:
+        value = self.projection_recorder.record(
+            generation_id=generation_id,
+            execution_id=execution_id,
+            task_id=task_id,
+            event_type=event_type,
+            payload=payload,
+            created_at=at,
+        )
         return str(value)
 
     def _store_outcome(self, *, call, execution_id, task_id, operation_id, ok, code, http_status, data, audit_event_type) -> None:

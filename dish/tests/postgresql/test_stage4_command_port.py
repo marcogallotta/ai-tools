@@ -28,6 +28,7 @@ from dish_pg.planner import (
 )
 from dish_pg.protocol import AuthenticationError, PostgresProtocolService, ScopedBearerAuthenticator
 from dish_pg.read_model import InvalidCursor
+from dish_pg.transition import ProjectionService
 from dish_tool.workflow_policy import WorkflowSnapshot
 from tests.postgresql.test_stage2_core_authority import _import_one
 from tests.postgresql.test_stage3_workflow_authority import NOW, _next, _register_run, workflow_db
@@ -37,6 +38,16 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _port(session, ids) -> PostgresCommandPort:
+    generation_id = session.scalar(
+        select(models.AuthorityGeneration.generation_id).where(
+            models.AuthorityGeneration.status == "active"
+        )
+    )
+    ProjectionService(session, uuid_factory=lambda: _next(ids)).activate_epoch(
+        generation_id=generation_id,
+        activation_reason="Stage 4 command-port test authority",
+        created_at=NOW,
+    )
     return PostgresCommandPort(
         session,
         cursor_secret=SECRET,

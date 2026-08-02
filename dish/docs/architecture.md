@@ -317,6 +317,8 @@ execution-bound governed audit, fulfilled or repaired invocation-audit obligatio
 projection-event count, and a complete post-request reconciliation covering every active mapping.
 The final evidence bundle binds these records and their durable cutover checkpoints.
 
+Revision `0008_fail_closed_admission_outbox` then closes two retained safety gaps: once a release candidate exists, a missing admission-control row is treated as closed, and the command port always retains transactional projection authority instead of permitting a projectionless mutation path. Pre-candidate development generations keep their prior admission behavior.
+
 The Stage 6–8 package remains non-activating by itself. It performs no production Asana read/write,
 installs no credentials, starts no projection worker, records no Marco approval, and cannot invent
 backup/restore measurements or production-corpus evidence. Those exact environment observations and

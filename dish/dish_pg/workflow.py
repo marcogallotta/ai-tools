@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from . import models
 from . import stage3_models as wf
+from . import stage6_models as rel
 
 
 class WorkflowAuthorityError(ValueError):
@@ -159,6 +160,16 @@ class WorkflowAuthorityRepository:
                 )
             )
             return RequestAdmission(existing, True, outcome)
+
+        candidate_exists = self.session.scalar(
+            select(rel.ReleaseCandidate.candidate_id).where(
+                rel.ReleaseCandidate.generation_id == spec.generation_id
+            ).limit(1)
+        ) is not None
+        if candidate_exists:
+            control = self.session.get(rel.MutationAdmissionControl, spec.generation_id)
+            if control is None or control.state != "open":
+                raise MutationAdmissionClosed("PostgreSQL mutation admission is closed")
 
         row = wf.ServiceRequest(
             request_id=spec.request_id,
