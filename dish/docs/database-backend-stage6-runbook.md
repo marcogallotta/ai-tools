@@ -111,9 +111,13 @@ Record one JSON object per evidence item:
   "evidence_key": "current_to_target",
   "outcome": "pass",
   "payload": {
-    "artifact": "/secure/evidence/authority-coverage.json",
-    "sha256": "64_HEX",
-    "observations": {}
+    "artifact_kind": "authority-coverage-report",
+    "artifact_identity": "authority-coverage@SOURCE_COMMIT",
+    "artifact_path": "/secure/evidence/authority-coverage.json",
+    "artifact_sha256": "64_LOWERCASE_HEX",
+    "source_manifest_sha256": "64_LOWERCASE_HEX",
+    "gate_name": "authority_coverage:current_to_target",
+    "gate_result": "pass"
   },
   "recorded_at": "RFC3339_WITH_OFFSET"
 }
@@ -137,8 +141,11 @@ Required category/key pairs are:
 | `create_correlation` | `lost_response_safety` |
 | `protocol_coherence` | `service_openapi_routing` |
 
-`pass` means the referenced evidence actually passed. Use `fail`, `blocked`, or `info` honestly.
-Evidence is append-only while the candidate is assembling and frozen after validation.
+Only `pass` and `fail` are accepted outcomes. Each category/key pair has one exact artifact kind,
+gate name, artifact identity/path, artifact SHA-256, source-manifest SHA-256, and matching gate result.
+A bare operator assertion such as `{"result":"pass"}` is not evidence. Evidence is append-only while
+the candidate is assembling and frozen after validation. All externally supplied SHA-256 values are
+exact 64-character lowercase hexadecimal strings.
 
 ## 6. Record production-shaped rehearsals
 
@@ -154,12 +161,25 @@ binds an exact source manifest and may include monotonic checkpoints:
   "checkpoints": [
     {
       "kind": "backup_verified",
-      "payload": {"backup_id": "...", "sha256": "64_HEX"},
+      "payload": {
+        "rehearsal_kind": "restore",
+        "checkpoint_kind": "backup_verified",
+        "evidence_kind": "restore-backup_verified-evidence",
+        "artifact_identity": "backup@EXACT_ID",
+        "artifact_sha256": "64_LOWERCASE_HEX",
+        "source_manifest_sha256": "64_LOWERCASE_HEX",
+        "gate_result": "pass"
+      },
       "recorded_at": "RFC3339_WITH_OFFSET"
     }
   ],
   "passed": true,
-  "report": {"artifact": "/secure/evidence/restore-report.json", "sha256": "64_HEX"},
+  "report": {
+    "rehearsal_kind": "restore",
+    "source_manifest_sha256": "64_LOWERCASE_HEX",
+    "result": "passed",
+    "checkpoint_manifest_sha256": "SHA256_OF_ORDERED_CHECKPOINT_KIND_AND_PAYLOAD_DIGESTS"
+  },
   "measured_rpo_seconds": 0,
   "measured_rto_seconds": 0,
   "completed_at": "RFC3339_WITH_OFFSET"
@@ -170,8 +190,13 @@ binds an exact source manifest and may include monotonic checkpoints:
 scripts/dish-pg-release rehearsal-record CANDIDATE_UUID --file REHEARSAL.json
 ```
 
-Use measured values, not targets. A failed rehearsal remains evidence and requires a new passed run;
-it is not overwritten.
+Use measured values, not targets. A passed run must contain every class-specific checkpoint, every
+checkpoint must carry a passing typed evidence payload bound to the run source manifest, and the final
+report must bind the exact ordered checkpoint set. A failed rehearsal remains evidence and requires a
+new passed run; it is not overwritten.
+
+The release CLI rejects duplicate JSON object keys recursively before any payload is hashed or stored.
+Do not rely on parser "last key wins" behavior in operator files.
 
 ## 7. Evaluate, bundle, validate, and obtain approval
 

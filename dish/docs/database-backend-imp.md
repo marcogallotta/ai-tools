@@ -1028,9 +1028,13 @@ Implemented Stage 6 offline foundation:
   complete task/registry alias coverage, no unresolved workflow authority, no unresolved projection
   work, reconciliation coverage for every active mapping, schema head, required acceptance evidence,
   and all required rehearsal classes.
-- Candidate evidence is append-only until validation. Validation binds the exact current bundle and
-  rejects a stale bundle even when later evidence also passes. Approval is single-use and bound to
-  that validated bundle rather than to a candidate name or release label.
+- Candidate evidence is append-only until validation. Each required category/key uses a typed,
+  artifact-bound contract with exact artifact/source-manifest SHA-256 values and a matching gate
+  result; bare self-attestation is rejected. Rehearsal checkpoints and terminal reports bind the exact
+  source manifest and ordered checkpoint digest set. Operator JSON rejects duplicate keys recursively
+  before hashing. Validation binds the exact current bundle and rejects a stale bundle even when later
+  evidence also passes. Approval is single-use and bound to that validated bundle rather than to a
+  candidate name or release label.
 - Alembic revision `0006_final_asana_closure` adds immutable final Asana closure,
   invalidation, and candidate-recertification evidence. Approval binds one exact valid closure;
   any relevant intervening Asana change invalidates it. Activation names the closure, requires the

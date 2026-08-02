@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -44,6 +45,25 @@ REQUIRED_REHEARSAL_CHECKPOINTS = {
     "fault_injection": ("precommit_crash", "postcommit_replay", "projection_retry", "restart_recovery"),
 }
 
+EVIDENCE_ARTIFACT_KINDS = {
+    ("authority_coverage", "current_to_target"): "authority-coverage-report",
+    ("command_semantic_delta", "retained_commands"): "command-semantic-delta-report",
+    ("characterization", "frozen_current_behavior"): "characterization-manifest",
+    ("production_change_ledger", "source_commit_closure"): "production-change-ledger",
+    ("fault_injection", "crash_boundaries"): "fault-injection-report",
+    ("contention", "same_task_and_independent_tasks"): "contention-report",
+    ("backup_restore", "restore_rehearsal"): "backup-restore-report",
+    ("create_correlation", "lost_response_safety"): "create-correlation-report",
+    ("protocol_coherence", "service_openapi_routing"): "protocol-coherence-report",
+}
+
+REHEARSAL_CHECKPOINT_EVIDENCE_KINDS = {
+    kind: {checkpoint: f"{kind}-{checkpoint}-evidence" for checkpoint in checkpoints}
+    for kind, checkpoints in REQUIRED_REHEARSAL_CHECKPOINTS.items()
+}
+
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+
 
 class ReleaseAuthorityError(ValueError):
     """A release or cutover transition failed closed."""
@@ -55,8 +75,70 @@ def _utc_comparable(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-def _is_sha256(value: str) -> bool:
-    return len(value) == 64 and all(character in "0123456789abcdef" for character in value.lower())
+def _is_sha256(value: object) -> bool:
+    return isinstance(value, str) and _SHA256_RE.fullmatch(value) is not None
+
+
+def _require_sha256(value: object, field: str) -> str:
+    if not _is_sha256(value):
+        raise ReleaseAuthorityError(f"{field} must be exact lowercase hexadecimal SHA-256")
+    return str(value)
+
+
+def _require_nonblank(value: object, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ReleaseAuthorityError(f"{field} must be a nonblank string")
+    return value
+
+
+def _validate_evidence_payload(
+    *, category: str, evidence_key: str, outcome: str, payload: Mapping[str, Any]
+) -> dict[str, Any]:
+    contract = (category, evidence_key)
+    expected_kind = EVIDENCE_ARTIFACT_KINDS.get(contract)
+    if expected_kind is None:
+        raise ReleaseAuthorityError("unknown release evidence contract")
+    if outcome not in {"pass", "fail"}:
+        raise ReleaseAuthorityError("release evidence outcome must be pass or fail")
+    body = dict(payload)
+    if body.get("artifact_kind") != expected_kind:
+        raise ReleaseAuthorityError("release evidence artifact kind does not match contract")
+    _require_nonblank(body.get("artifact_identity"), "artifact_identity")
+    _require_nonblank(body.get("artifact_path"), "artifact_path")
+    _require_sha256(body.get("artifact_sha256"), "artifact_sha256")
+    _require_sha256(body.get("source_manifest_sha256"), "source_manifest_sha256")
+    if body.get("gate_name") != f"{category}:{evidence_key}":
+        raise ReleaseAuthorityError("release evidence gate name does not match contract")
+    if body.get("gate_result") != outcome:
+        raise ReleaseAuthorityError("release evidence gate result does not match outcome")
+    return body
+
+
+def _validate_checkpoint_payload(
+    *, rehearsal: rel.RehearsalRun, checkpoint_kind: str, payload: Mapping[str, Any]
+) -> dict[str, Any]:
+    expected = REHEARSAL_CHECKPOINT_EVIDENCE_KINDS.get(rehearsal.rehearsal_kind, {}).get(
+        checkpoint_kind
+    )
+    if expected is None:
+        raise ReleaseAuthorityError("checkpoint is not valid for rehearsal class")
+    body = dict(payload)
+    if body.get("rehearsal_kind") != rehearsal.rehearsal_kind:
+        raise ReleaseAuthorityError("checkpoint rehearsal kind does not match run")
+    if body.get("checkpoint_kind") != checkpoint_kind:
+        raise ReleaseAuthorityError("checkpoint kind does not match payload")
+    if body.get("evidence_kind") != expected:
+        raise ReleaseAuthorityError("checkpoint evidence kind does not match contract")
+    _require_nonblank(body.get("artifact_identity"), "artifact_identity")
+    _require_sha256(body.get("artifact_sha256"), "artifact_sha256")
+    source_manifest = _require_sha256(
+        body.get("source_manifest_sha256"), "source_manifest_sha256"
+    )
+    if source_manifest != rehearsal.source_manifest_sha256:
+        raise ReleaseAuthorityError("checkpoint source manifest does not match rehearsal")
+    if body.get("gate_result") not in {"pass", "fail"}:
+        raise ReleaseAuthorityError("checkpoint gate result must be pass or fail")
+    return body
 
 
 def canonical_json(value: Any) -> bytes:
@@ -223,7 +305,12 @@ class ReleaseCandidateService:
         candidate = self._candidate(candidate_id)
         if candidate.status != "assembling":
             raise ReleaseAuthorityError("release evidence is frozen after candidate validation")
-        body = dict(payload)
+        body = _validate_evidence_payload(
+            category=category,
+            evidence_key=evidence_key,
+            outcome=outcome,
+            payload=payload,
+        )
         latest = self.session.scalar(
             select(rel.ReleaseEvidenceItem)
             .where(
@@ -265,6 +352,12 @@ class ReleaseCandidateService:
         candidate = self._candidate(candidate_id)
         if candidate.status != "assembling":
             raise ReleaseAuthorityError("rehearsal evidence is frozen after candidate validation")
+        if rehearsal_kind not in REQUIRED_REHEARSALS:
+            raise ReleaseAuthorityError("unsupported rehearsal kind")
+        _require_nonblank(environment_identity, "environment_identity")
+        source_manifest_sha256 = _require_sha256(
+            source_manifest_sha256, "source_manifest_sha256"
+        )
         existing = self.session.scalar(
             select(rel.RehearsalRun).where(
                 rel.RehearsalRun.candidate_id == candidate_id,
@@ -311,7 +404,11 @@ class ReleaseCandidateService:
                 rel.RehearsalCheckpoint.checkpoint_kind == checkpoint_kind,
             )
         )
-        body = dict(payload)
+        body = _validate_checkpoint_payload(
+            rehearsal=rehearsal,
+            checkpoint_kind=checkpoint_kind,
+            payload=payload,
+        )
         digest = sha256_json(body)
         if existing is not None:
             if existing.payload_sha256 != digest:
@@ -351,23 +448,45 @@ class ReleaseCandidateService:
         row = self.session.get(rel.RehearsalRun, rehearsal_id)
         if row is None:
             raise ReleaseAuthorityError("unknown rehearsal")
-        body = dict(report)
-        digest = sha256_json(body)
-        terminal = "passed" if passed else "failed"
-        if passed:
-            observed = set(
-                self.session.scalars(
-                    select(rel.RehearsalCheckpoint.checkpoint_kind).where(
-                        rel.RehearsalCheckpoint.rehearsal_id == rehearsal_id
-                    )
-                ).all()
+        checkpoints = self.session.scalars(
+            select(rel.RehearsalCheckpoint)
+            .where(rel.RehearsalCheckpoint.rehearsal_id == rehearsal_id)
+            .order_by(rel.RehearsalCheckpoint.sequence)
+        ).all()
+        observed = {checkpoint.checkpoint_kind for checkpoint in checkpoints}
+        required = set(REQUIRED_REHEARSAL_CHECKPOINTS[row.rehearsal_kind])
+        missing = sorted(required - observed)
+        if passed and missing:
+            raise ReleaseAuthorityError(
+                "passed rehearsal lacks required checkpoints: " + ", ".join(missing)
             )
-            required = set(REQUIRED_REHEARSAL_CHECKPOINTS[row.rehearsal_kind])
-            missing = sorted(required - observed)
-            if missing:
-                raise ReleaseAuthorityError(
-                    "passed rehearsal lacks required checkpoints: " + ", ".join(missing)
-                )
+        if passed and any(
+            checkpoint.payload.get("gate_result") != "pass" for checkpoint in checkpoints
+        ):
+            raise ReleaseAuthorityError("passed rehearsal contains a failed checkpoint")
+        checkpoint_manifest_sha256 = sha256_json(
+            [
+                {
+                    "checkpoint_kind": checkpoint.checkpoint_kind,
+                    "payload_sha256": checkpoint.payload_sha256,
+                }
+                for checkpoint in checkpoints
+            ]
+        )
+        body = dict(report)
+        terminal = "passed" if passed else "failed"
+        if body.get("rehearsal_kind") != row.rehearsal_kind:
+            raise ReleaseAuthorityError("rehearsal report kind does not match run")
+        if body.get("source_manifest_sha256") != row.source_manifest_sha256:
+            raise ReleaseAuthorityError("rehearsal report source manifest does not match run")
+        if body.get("result") != terminal:
+            raise ReleaseAuthorityError("rehearsal report result does not match terminal state")
+        _require_sha256(
+            body.get("checkpoint_manifest_sha256"), "checkpoint_manifest_sha256"
+        )
+        if body["checkpoint_manifest_sha256"] != checkpoint_manifest_sha256:
+            raise ReleaseAuthorityError("rehearsal report does not bind exact checkpoint set")
+        digest = sha256_json(body)
         if row.status != "running":
             if row.status != terminal or row.report_sha256 != digest:
                 raise ReleaseAuthorityError("rehearsal terminal result conflict")
@@ -1127,6 +1246,11 @@ class ReleaseCandidateService:
         candidate = self._candidate(candidate_id)
         if candidate.status not in {"validated", "approved"}:
             raise ReleaseAuthorityError("final Asana closure requires a validated candidate")
+        capture_manifest_sha256 = _require_sha256(
+            capture_manifest_sha256, "capture_manifest_sha256"
+        )
+        _require_nonblank(observation_high_water, "observation_high_water")
+        _require_nonblank(watcher_identity, "watcher_identity")
         body = {
             "candidate_id": str(candidate_id),
             "capture_manifest_sha256": capture_manifest_sha256,
@@ -1292,6 +1416,9 @@ class ReleaseCandidateService:
         closure_sha_value = approval_payload.get("final_asana_closure_sha256")
         if closure_id_value is None or closure_sha_value is None:
             raise ReleaseAuthorityError("approval must bind the exact final Asana closure")
+        closure_sha_value = _require_sha256(
+            closure_sha_value, "final_asana_closure_sha256"
+        )
         try:
             closure_id = uuid.UUID(str(closure_id_value))
         except ValueError as exc:

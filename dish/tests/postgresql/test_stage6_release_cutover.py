@@ -18,6 +18,8 @@ from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
 from dish_pg.release import (
     ALEMBIC_HEAD,
+    EVIDENCE_ARTIFACT_KINDS,
+    REHEARSAL_CHECKPOINT_EVIDENCE_KINDS,
     REQUIRED_EVIDENCE,
     REQUIRED_REHEARSALS,
     REQUIRED_REHEARSAL_CHECKPOINTS,
@@ -146,7 +148,15 @@ def _prepare_candidate(session, ids, context, task_id):
             category=category,
             evidence_key=key,
             outcome="pass",
-            payload={"result": "pass", "source": f"{category}:{key}"},
+            payload={
+                "artifact_kind": EVIDENCE_ARTIFACT_KINDS[(category, key)],
+                "artifact_identity": f"fixture:{category}:{key}",
+                "artifact_path": f"/evidence/{category}/{key}.json",
+                "artifact_sha256": HASH_A,
+                "source_manifest_sha256": HASH_A,
+                "gate_name": f"{category}:{key}",
+                "gate_result": "pass",
+            },
             recorded_at=NOW,
         )
     for kind in REQUIRED_REHEARSALS:
@@ -157,17 +167,37 @@ def _prepare_candidate(session, ids, context, task_id):
             source_manifest_sha256=HASH_A,
             started_at=NOW,
         )
+        checkpoints = []
         for checkpoint_kind in REQUIRED_REHEARSAL_CHECKPOINTS[kind]:
-            service.record_rehearsal_checkpoint(
+            checkpoint = service.record_rehearsal_checkpoint(
                 rehearsal_id=rehearsal.rehearsal_id,
                 checkpoint_kind=checkpoint_kind,
-                payload={"kind": kind, "checkpoint": checkpoint_kind, "passed": True},
+                payload={
+                    "rehearsal_kind": kind,
+                    "checkpoint_kind": checkpoint_kind,
+                    "evidence_kind": REHEARSAL_CHECKPOINT_EVIDENCE_KINDS[kind][checkpoint_kind],
+                    "artifact_identity": f"fixture:{kind}:{checkpoint_kind}",
+                    "artifact_sha256": HASH_A,
+                    "source_manifest_sha256": HASH_A,
+                    "gate_result": "pass",
+                },
                 recorded_at=NOW,
+            )
+            checkpoints.append(
+                {
+                    "checkpoint_kind": checkpoint.checkpoint_kind,
+                    "payload_sha256": checkpoint.payload_sha256,
+                }
             )
         service.finish_rehearsal(
             rehearsal_id=rehearsal.rehearsal_id,
             passed=True,
-            report={"kind": kind, "result": "pass"},
+            report={
+                "rehearsal_kind": kind,
+                "source_manifest_sha256": HASH_A,
+                "result": "passed",
+                "checkpoint_manifest_sha256": sha256_json(checkpoints),
+            },
             measured_rpo_seconds=0.0 if kind == "restore" else None,
             measured_rto_seconds=12.5 if kind == "restore" else None,
             completed_at=NOW,
@@ -296,7 +326,15 @@ def test_candidate_evaluation_bundle_is_deterministic_and_stale_safe(workflow_db
             category="authority_coverage",
             evidence_key="current_to_target",
             outcome="pass",
-            payload={"result": "pass", "source": "new exact report"},
+            payload={
+                "artifact_kind": EVIDENCE_ARTIFACT_KINDS[("authority_coverage", "current_to_target")],
+                "artifact_identity": "fixture:authority-coverage:replacement",
+                "artifact_path": "/evidence/authority_coverage/replacement.json",
+                "artifact_sha256": "b" * 64,
+                "source_manifest_sha256": HASH_A,
+                "gate_name": "authority_coverage:current_to_target",
+                "gate_result": "pass",
+            },
             recorded_at=NOW + timedelta(minutes=1),
         )
         with pytest.raises(ReleaseAuthorityError, match="stale"):

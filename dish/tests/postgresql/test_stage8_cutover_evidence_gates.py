@@ -14,7 +14,13 @@ from dish_pg import models
 from dish_pg import stage5_models as tx
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
-from dish_pg.release import ALEMBIC_HEAD, ReleaseAuthorityError, ReleaseCandidateService
+from dish_pg.release import (
+    ALEMBIC_HEAD,
+    REHEARSAL_CHECKPOINT_EVIDENCE_KINDS,
+    ReleaseAuthorityError,
+    ReleaseCandidateService,
+    sha256_json,
+)
 from tests.postgresql.test_stage3_workflow_authority import NOW, _next, workflow_db
 from tests.postgresql.test_stage6_release_cutover import (
     HASH_A,
@@ -170,14 +176,38 @@ def test_passed_rehearsal_requires_kind_specific_checkpoints(workflow_db) -> Non
         service.record_rehearsal_checkpoint(
             rehearsal_id=rehearsal.rehearsal_id,
             checkpoint_kind="writer_fence",
-            payload={"result": "pass"},
+            payload={
+                "rehearsal_kind": "activation",
+                "checkpoint_kind": "writer_fence",
+                "evidence_kind": REHEARSAL_CHECKPOINT_EVIDENCE_KINDS["activation"]["writer_fence"],
+                "artifact_identity": "fixture:activation:writer-fence",
+                "artifact_sha256": "c" * 64,
+                "source_manifest_sha256": "b" * 64,
+                "gate_result": "pass",
+            },
             recorded_at=NOW + timedelta(minutes=1),
         )
         with pytest.raises(ReleaseAuthorityError, match="lacks required checkpoints"):
             service.finish_rehearsal(
                 rehearsal_id=rehearsal.rehearsal_id,
                 passed=True,
-                report={"result": "pass"},
+                report={
+                    "rehearsal_kind": "activation",
+                    "source_manifest_sha256": "b" * 64,
+                    "result": "passed",
+                    "checkpoint_manifest_sha256": sha256_json(
+                        [
+                            {
+                                "checkpoint_kind": "writer_fence",
+                                "payload_sha256": session.scalar(
+                                    select(rel.RehearsalCheckpoint.payload_sha256).where(
+                                        rel.RehearsalCheckpoint.rehearsal_id == rehearsal.rehearsal_id
+                                    )
+                                ),
+                            }
+                        ]
+                    ),
+                },
                 completed_at=NOW + timedelta(minutes=2),
             )
 
