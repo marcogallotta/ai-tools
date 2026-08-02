@@ -11,11 +11,21 @@ import tempfile
 from dataclasses import asdict
 from pathlib import Path
 
-from tests.mutation_cases import CASES, MutationCase
+from tests.mutation_cases import CASES, STAGE_A_CASES, MutationCase
 
 
 ROOT = Path(__file__).resolve().parents[1]
-COPY_ENTRIES = ("dish_tool", "dish_service", "tests", "pytest.ini")
+COPY_ENTRIES = (
+    "dish_tool",
+    "dish_service",
+    "dish_pg",
+    "deploy",
+    "openapi",
+    "scripts",
+    "tests",
+    "alembic.ini",
+    "pytest.ini",
+)
 CASE_TIMEOUT_SECONDS = 120
 
 
@@ -155,12 +165,18 @@ def main(argv: list[str] | None = None) -> int:
         help="directory for JSON and Markdown mutation results",
     )
     parser.add_argument("--list", action="store_true")
+    parser.add_argument(
+        "--stage-a",
+        action="store_true",
+        help="run only the curated PostgreSQL Stage A safety mutants",
+    )
     args = parser.parse_args(argv)
+    selected_cases = STAGE_A_CASES if args.stage_a else CASES
     if args.list:
-        for case in CASES:
+        for case in selected_cases:
             print(f"{case.mutation_id}: {case.invariant}")
         return 0
-    return run(artifacts=Path(args.artifacts))
+    return run(selected_cases, artifacts=Path(args.artifacts))
 
 
 if __name__ == "__main__":

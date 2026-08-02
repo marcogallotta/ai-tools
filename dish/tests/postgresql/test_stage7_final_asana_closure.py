@@ -12,8 +12,8 @@ from dish_pg import models
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
 from dish_pg.release import ALEMBIC_HEAD, ReleaseAuthorityError, ReleaseCandidateService
-from tests.postgresql.test_stage3_workflow_authority import NOW, _next, workflow_db
-from tests.postgresql.test_stage6_release_cutover import (
+from tests.support.postgresql.workflow import NOW, _next, workflow_db
+from tests.support.postgresql.release import (
     HASH_A,
     ROOT,
     _prepare_candidate,

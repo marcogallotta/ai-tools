@@ -22,9 +22,9 @@ from dish_pg.transition import (
     SourceImportService,
     TransitionAuthorityError,
 )
-from dish_pg.workflow import WorkflowAuthorityService
-from tests.postgresql.test_stage2_core_authority import _import_one
-from tests.postgresql.test_stage3_workflow_authority import (
+from tests.support.postgresql.core import _import_one
+from tests.support.postgresql.workflow import (
+    _claimed_execution,
     NOW,
     _admit,
     _execution,
@@ -40,37 +40,6 @@ HASH_A = "a" * 64
 
 def _projection(session, ids) -> ProjectionService:
     return ProjectionService(session, uuid_factory=lambda: _next(ids))
-
-
-def _claimed_execution(session, ids, context, task_id, *, command_name="prepare"):
-    run_id, request_id, execution_id = _next(ids), _next(ids), _next(ids)
-    _register_run(session, generation_id=context["generation_id"], run_id=run_id)
-    workflow = WorkflowAuthorityService(session, uuid_factory=lambda: _next(ids))
-    _admit(
-        workflow,
-        request_id=request_id,
-        generation_id=context["generation_id"],
-        run_id=run_id,
-        command=command_name,
-        payload={"task_id": str(task_id)},
-    )
-    _execution(
-        workflow,
-        execution_id=execution_id,
-        request_id=request_id,
-        generation_id=context["generation_id"],
-        task_id=task_id,
-        binding_id=context["binding_id"],
-        command=command_name,
-    )
-    workflow.repo.claim_execution(
-        execution_id=execution_id,
-        claimant=f"owner-1:{run_id}",
-        claim_token=_next(ids),
-        now=NOW,
-        ttl=timedelta(minutes=2),
-    )
-    return execution_id
 
 
 def test_stage5_schema_and_migration_reach_transition_head(tmp_path: Path) -> None:
@@ -297,10 +266,7 @@ def test_lost_create_response_binds_one_marker_and_blocks_multiple_matches(workf
             generation_id=context["generation_id"], activation_reason="create correlation", created_at=NOW
         )
         port = PostgresCommandPort(
-            session,
-            cursor_secret=SECRET,
-            uuid_factory=lambda: _next(ids),
-            projection_recorder=projection,
+            session, cursor_secret=SECRET, uuid_factory=lambda: _next(ids), projection_recorder=projection
         )
         result = port.execute(
             CommandCall(
@@ -354,7 +320,6 @@ def test_lost_create_response_binds_one_marker_and_blocks_multiple_matches(workf
             )
         )
         assert alias.external_id == "987654321"
-
         # A distinct create event with multiple marker matches cannot bind or continue.
         second_run, second_request = _next(ids), _next(ids)
         _register_run(session, generation_id=context["generation_id"], run_id=second_run)
@@ -370,9 +335,7 @@ def test_lost_create_response_binds_one_marker_and_blocks_multiple_matches(workf
             )
         )
         second_event_id = uuid.UUID(second.data["projection_event_id"])
-        second_claim = projection.claim_next(
-            worker_id="projector", now=NOW, ttl=timedelta(minutes=2)
-        )
+        second_claim = projection.claim_next(worker_id="projector", now=NOW, ttl=timedelta(minutes=2))
         second_attempt = projection.begin_attempt(
             event_id=second_event_id,
             claim_token=second_claim.claim_token,
@@ -392,250 +355,3 @@ def test_lost_create_response_binds_one_marker_and_blocks_multiple_matches(workf
         assert blocked.state == "ambiguous"
         assert session.get(tx.ProjectionOutboxEvent, second_event_id).state == "blocked"
         assert blocked.mapping_id is None
-
-
-def test_uncertain_projection_can_be_settled_later_by_exact_admin_recovery(workflow_db) -> None:
-    factory, ids, context, task_id = workflow_db
-    with session_scope(factory) as session:
-        projection = _projection(session, ids)
-        projection.activate_epoch(
-            generation_id=context["generation_id"], activation_reason="recovery", created_at=NOW
-        )
-        execution_id = _claimed_execution(session, ids, context, task_id)
-        event_id = projection.record(
-            generation_id=context["generation_id"],
-            execution_id=execution_id,
-            task_id=task_id,
-            event_type="update_task_document",
-            payload={"content_version_id": "v3"},
-            created_at=NOW,
-        )
-        claim = projection.claim_next(worker_id="projector", now=NOW, ttl=timedelta(minutes=2))
-        attempt = projection.begin_attempt(
-            event_id=event_id,
-            claim_token=claim.claim_token,
-            worker_id="projector",
-            request_identity="write-lost-response",
-            request_payload={"notes": "v3"},
-            intended_external_id="123456789",
-            started_at=NOW,
-        )
-        first = projection.record_observation_and_adjudicate(
-            attempt_id=attempt.attempt_id,
-            observation_kind="reread",
-            observed_applied=None,
-            observed_identity=None,
-            reread_complete=False,
-            evidence={"timeout": True},
-            decided_by="automatic",
-            decision_reason="reread incomplete",
-            observed_at=NOW,
-        )
-        assert first.outcome == "uncertain"
-        assert projection.unresolved_attempt_id(task_id) == attempt.attempt_id
-
-        recovery_run, recovery_request = _next(ids), _next(ids)
-        _register_run(
-            session,
-            generation_id=context["generation_id"],
-            run_id=recovery_run,
-            owner="marco",
-        )
-        port = PostgresCommandPort(
-            session,
-            cursor_secret=SECRET,
-            uuid_factory=lambda: _next(ids),
-            projection_recorder=projection,
-        )
-        event = session.get(tx.ProjectionOutboxEvent, event_id)
-        recovered = port.execute(
-            CommandCall(
-                command_name="recover",
-                arguments={
-                    "task_id": str(task_id),
-                    "attempt_id": str(attempt.attempt_id),
-                    "observed_applied": True,
-                    "observed_identity": event.idempotency_key,
-                    "reread_complete": True,
-                    "evidence": {"manual_reread": "exact"},
-                },
-                owner_id="marco",
-                principal_class="admin",
-                run_id=recovery_run,
-                request_id=recovery_request,
-                now=NOW,
-            )
-        )
-        assert recovered.ok and recovered.data["outcome"] == "confirmed"
-        assert session.get(tx.ProjectionOutboxEvent, event_id).state == "applied"
-        assert session.scalar(
-            select(func.count()).select_from(tx.ProjectionObservation).where(
-                tx.ProjectionObservation.attempt_id == attempt.attempt_id
-            )
-        ) == 2
-        assert session.scalar(
-            select(func.count()).select_from(tx.ProjectionAdjudication).where(
-                tx.ProjectionAdjudication.attempt_id == attempt.attempt_id
-            )
-        ) == 2
-
-
-def test_retired_epoch_fences_stale_workers_and_drift_reprojects_authority(workflow_db) -> None:
-    factory, ids, context, task_id = workflow_db
-    with session_scope(factory) as session:
-        projection = _projection(session, ids)
-        epoch = projection.activate_epoch(
-            generation_id=context["generation_id"], activation_reason="epoch one", created_at=NOW
-        )
-        projection.bind_imported_mappings(generation_id=context["generation_id"], bound_at=NOW)
-        mapping = session.scalar(
-            select(tx.TaskProjectionMapping).where(tx.TaskProjectionMapping.task_id == task_id)
-        )
-        drift = projection.record_drift_and_reproject(
-            generation_id=context["generation_id"],
-            task_id=task_id,
-            task_mapping_id=mapping.mapping_id,
-            drift_kind="document",
-            external_snapshot={"notes": "edited outside Dish"},
-            authoritative_snapshot={"notes": "canonical"},
-            evidence={"scan": "reconciler-1"},
-            detected_at=NOW,
-        )
-        assert drift.state == "reprojected"
-        assert session.get(tx.ProjectionOutboxEvent, drift.reproject_event_id).source_route == "service"
-        projection.retire_epoch(projection_epoch_id=epoch.projection_epoch_id, retired_at=NOW)
-        assert session.get(tx.ProjectionOutboxEvent, drift.reproject_event_id).state == "superseded"
-        assert session.get(tx.TaskProjectionMapping, mapping.mapping_id).state == "retired"
-        assert projection.claim_next(worker_id="stale-worker", now=NOW, ttl=timedelta(minutes=2)) is None
-
-
-def test_reconciliation_blocks_unknown_external_objects(workflow_db) -> None:
-    factory, ids, context, _task_id = workflow_db
-    with session_scope(factory) as session:
-        projection = _projection(session, ids)
-        projection.activate_epoch(
-            generation_id=context["generation_id"], activation_reason="corpus", created_at=NOW
-        )
-        run = projection.start_reconciliation(
-            generation_id=context["generation_id"],
-            corpus_identity="asana-project-snapshot-1",
-            expected_items=2,
-            started_at=NOW,
-        )
-        projection.record_reconciliation_item(
-            reconciliation_run_id=run.reconciliation_run_id,
-            item_identity="task:123456789",
-            entity_kind="task",
-            mapping_id=None,
-            outcome="matched",
-            evidence={"gid": "123456789"},
-            recorded_at=NOW,
-        )
-        with pytest.raises(TransitionAuthorityError, match="incomplete"):
-            projection.complete_reconciliation(
-                reconciliation_run_id=run.reconciliation_run_id, completed_at=NOW
-            )
-        projection.record_reconciliation_item(
-            reconciliation_run_id=run.reconciliation_run_id,
-            item_identity="task:999999999",
-            entity_kind="task",
-            mapping_id=None,
-            outcome="unknown_external",
-            evidence={"gid": "999999999"},
-            recorded_at=NOW,
-        )
-        assert projection.complete_reconciliation(
-            reconciliation_run_id=run.reconciliation_run_id, completed_at=NOW
-        ).status == "blocked"
-
-
-def test_authoritative_create_and_projection_outbox_roll_back_together(workflow_db) -> None:
-    factory, ids, context, _task_id = workflow_db
-    with session_scope(factory) as session:
-        projection = _projection(session, ids)
-        projection.activate_epoch(
-            generation_id=context["generation_id"],
-            activation_reason="atomic rollback",
-            created_at=NOW,
-        )
-
-    with pytest.raises(RuntimeError, match="force rollback"):
-        with session_scope(factory) as session:
-            run_id, request_id = _next(ids), _next(ids)
-            _register_run(session, generation_id=context["generation_id"], run_id=run_id)
-            projection = _projection(session, ids)
-            port = PostgresCommandPort(
-                session,
-                cursor_secret=SECRET,
-                uuid_factory=lambda: _next(ids),
-                projection_recorder=projection,
-            )
-            result = port.execute(
-                CommandCall(
-                    command_name="create",
-                    arguments={"title": "Rolled back task"},
-                    owner_id="owner-1",
-                    principal_class="agent",
-                    run_id=run_id,
-                    request_id=request_id,
-                    now=NOW,
-                )
-            )
-            assert result.ok
-            assert session.get(
-                tx.ProjectionOutboxEvent, uuid.UUID(result.data["projection_event_id"])
-            ) is not None
-            raise RuntimeError("force rollback")
-
-    with session_scope(factory) as session:
-        assert session.scalar(
-            select(func.count()).select_from(models.DishTask).where(
-                models.DishTask.creation_route == "create"
-            )
-        ) == 0
-        assert session.scalar(
-            select(func.count()).select_from(tx.ProjectionOutboxEvent)
-        ) == 0
-
-
-def test_projection_mapping_cannot_transfer_an_alias_between_tasks(workflow_db) -> None:
-    factory, ids, context, first_task_id = workflow_db
-    with pytest.raises(IntegrityError, match="projection mapping identity mismatch"):
-        with session_scope(factory) as session:
-            second = _import_one(session, ids, context, asana_gid="123456790")
-            projection = _projection(session, ids)
-            first_epoch = projection.activate_epoch(
-                generation_id=context["generation_id"],
-                activation_reason="mapping identity",
-                created_at=NOW,
-            )
-            projection.bind_imported_mappings(
-                generation_id=context["generation_id"], bound_at=NOW
-            )
-            first_alias = session.scalar(
-                select(models.TaskExternalAlias).where(
-                    models.TaskExternalAlias.task_id == first_task_id
-                )
-            )
-            projection.retire_epoch(
-                projection_epoch_id=first_epoch.projection_epoch_id, retired_at=NOW
-            )
-            second_epoch = projection.activate_epoch(
-                generation_id=context["generation_id"],
-                activation_reason="mapping identity retry",
-                created_at=NOW,
-            )
-            session.add(
-                tx.TaskProjectionMapping(
-                    mapping_id=_next(ids),
-                    generation_id=context["generation_id"],
-                    projection_epoch_id=second_epoch.projection_epoch_id,
-                    task_id=second.task_id,
-                    alias_id=first_alias.alias_id,
-                    state="active",
-                    mapping_revision=1,
-                    bound_at=NOW,
-                    retired_at=None,
-                )
-            )
-            session.flush()

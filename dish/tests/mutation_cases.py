@@ -308,3 +308,52 @@ CASES = (
     ),
 
 )
+
+STAGE_A_CASES = (
+    MutationCase(
+        mutation_id="stage-a-strict-evidence-sha256",
+        target="dish_pg/release.py",
+        before='_SHA256_RE = re.compile(r"[0-9a-f]{64}\\Z")',
+        after='_SHA256_RE = re.compile(r".{64}\\Z")',
+        tests=(
+            "tests/postgresql/test_release_evidence_contracts.py::test_release_evidence_requires_exact_lowercase_sha256",
+        ),
+        invariant="external release evidence accepts only exact lowercase hexadecimal SHA-256 values",
+    ),
+    MutationCase(
+        mutation_id="stage-a-mandatory-projection-authority",
+        target="dish_pg/command_port.py",
+        before=(
+            "self.projection_recorder: ProjectionAuthority = projection_recorder "
+            "or ProjectionService(\n            session, uuid_factory=uuid_factory\n        )"
+        ),
+        after="self.projection_recorder = projection_recorder",
+        tests=(
+            "tests/postgresql/test_fail_closed_admission_outbox.py::test_default_command_port_uses_full_projection_authority",
+        ),
+        invariant="production command-port construction cannot create a projectionless mutation path",
+    ),
+    MutationCase(
+        mutation_id="stage-a-writer-fence-auth-failure",
+        target="dish_pg/release.py",
+        before='"http_status": 409,\n            "response_code": "CONFLICT",',
+        after='"http_status": 401,\n            "response_code": "CONFLICT",',
+        tests=(
+            "tests/postgresql/test_stage8_cutover_evidence_gates.py::test_writer_fence_proof_is_candidate_bound_and_pre_body_parse",
+        ),
+        invariant="authentication failure cannot self-attest as proof that the authenticated legacy writer is fenced",
+    ),
+    MutationCase(
+        mutation_id="stage-a-command-effect-verifier",
+        target="dish_pg/command_port.py",
+        before="if projection_types != expected.projection_event_types:",
+        after="if False:",
+        tests=(
+            "tests/postgresql/test_command_effect_authority.py::test_execution_rejects_and_rolls_back_missing_projection_intent",
+        ),
+        invariant="committed projection effects are checked against the authoritative command-effect specification",
+    ),
+)
+
+CASES = CASES + STAGE_A_CASES
+

@@ -13,8 +13,10 @@ from dish_pg.release import (
     ReleaseAuthorityError,
     sha256_json,
 )
-from tests.postgresql.test_stage3_workflow_authority import NOW, workflow_db
-from tests.postgresql.test_stage6_release_cutover import HASH_A, ROOT, _prepare_candidate
+from tests.support.postgresql.workflow import NOW, workflow_db
+from tests.support.postgresql.release import HASH_A, ROOT, _prepare_candidate
+
+pytestmark = pytest.mark.smoke
 
 
 def _valid_evidence_payload(category: str, evidence_key: str) -> dict[str, object]:

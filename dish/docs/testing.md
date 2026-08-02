@@ -281,6 +281,14 @@ state, complete thread/process teardown, and independent oracles.
 or handoff whenever it contains a failure. Do not commit generated JUnit XML or local environment
 metadata.
 
+
+## Test module structure
+
+Collected test modules must not import helpers from another collected test module. Shared
+PostgreSQL builders and fixtures live under `tests/support/postgresql/`. Import and size governance
+walk the complete `tests/` tree, including `tests/postgresql/`; split a file by stable behavior
+ownership before it exceeds the repository ceilings.
+
 ## Generated artifact assurance
 
 A checked-in generated artifact needs two different tests:
@@ -298,6 +306,17 @@ Run the launch-critical mutation sample with:
 ```sh
 .venv/bin/python -m tests.mutation_runner
 ```
+
+Run the bounded PostgreSQL Stage A safety lane independently with:
+
+```sh
+.venv/bin/python -m tests.mutation_runner --stage-a
+```
+
+The Stage A lane is intentionally small. It probes strict external-evidence hashing, mandatory
+transactional projection authority, authenticated writer-fence proof, and command-effect
+verification. Add a mutant only when it represents a realistic release-safety regression and one
+focused authoritative test kills it.
 
 The runner mutates request replay, request/run binding, lease ownership, governed authorization
 consumption, verifier independence, terminal cancellation evidence, Planning intent dimensions,

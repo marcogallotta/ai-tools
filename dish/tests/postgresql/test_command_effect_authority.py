@@ -12,15 +12,17 @@ from dish_pg.command_effects import CommandEffectSpec, effect_spec_for, expected
 from dish_pg.command_port import CommandEffectMismatch, PostgresCommandPort
 from dish_pg.database import session_scope
 from dish_pg.transition import ProjectionService
-from tests.postgresql.test_stage3_workflow_authority import _next, _register_run, workflow_db
-from tests.postgresql.test_stage4_command_port import SECRET, _call, _port
-from tests.postgresql.test_stage4_command_semantics import (
+from tests.support.postgresql.workflow import _next, _register_run, workflow_db
+from tests.support.postgresql.command import SECRET, _call, _port
+from tests.support.postgresql.command import (
     _add_verification_queue,
     _inspect,
     _prepare_for_verification,
     _start_initial,
     _verification_ready,
 )
+
+pytestmark = pytest.mark.smoke
 
 
 def test_effect_spec_is_the_exact_branch_sensitive_authority() -> None:

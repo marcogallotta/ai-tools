@@ -67,6 +67,30 @@ REHEARSAL_CHECKPOINT_EVIDENCE_KINDS = {
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 
 
+@dataclass(frozen=True)
+class ReleaseCandidateStatus:
+    candidate_id: uuid.UUID
+    generation_id: uuid.UUID
+    projection_epoch_id: uuid.UUID
+    source_release: str
+    source_commit: str
+    dish_release: str
+    protocol_release: str
+    openapi_release: str
+    routing_release: str
+    status: str
+
+
+@dataclass(frozen=True)
+class WriterFenceStatus:
+    fence_id: uuid.UUID
+    candidate_id: uuid.UUID
+    target_identity: str
+    manifest_sha256: str
+    state: str
+    proof_sha256: str | None
+
+
 class ReleaseAuthorityError(ValueError):
     """A release or cutover transition failed closed."""
 
@@ -2376,6 +2400,32 @@ class ReleaseCandidateService:
             if expected_sha != closure.closure_sha256:
                 raise ReleaseAuthorityError("cutover approval final Asana closure digest mismatch")
         return closure
+
+    def candidate_status(self, candidate_id: uuid.UUID) -> ReleaseCandidateStatus:
+        row = self._candidate(candidate_id)
+        return ReleaseCandidateStatus(
+            candidate_id=row.candidate_id,
+            generation_id=row.generation_id,
+            projection_epoch_id=row.projection_epoch_id,
+            source_release=row.source_release,
+            source_commit=row.source_commit,
+            dish_release=row.dish_release,
+            protocol_release=row.protocol_release,
+            openapi_release=row.openapi_release,
+            routing_release=row.routing_release,
+            status=row.status,
+        )
+
+    def writer_fence_status(self, fence_id: uuid.UUID) -> WriterFenceStatus:
+        row = self._fence(fence_id)
+        return WriterFenceStatus(
+            fence_id=row.fence_id,
+            candidate_id=row.candidate_id,
+            target_identity=row.target_identity,
+            manifest_sha256=row.manifest_sha256,
+            state=row.state,
+            proof_sha256=row.proof_sha256,
+        )
 
     def _candidate(self, candidate_id: uuid.UUID) -> rel.ReleaseCandidate:
         row = self.session.get(rel.ReleaseCandidate, candidate_id)

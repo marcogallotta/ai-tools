@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import runpy
+
+import pytest
 from pathlib import Path
 
+
+pytestmark = pytest.mark.smoke
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -23,6 +27,8 @@ def test_stage_a_acceptance_selection_pins_all_release_safety_owners() -> None:
         "frozen_migration_history",
         "release_evidence_contracts",
         "command_effect_authority",
+        "postgresql_action_openapi_oracle",
+        "stage_a_release_decomposition",
         "stage_a_acceptance_runner",
     )
     assert namespace["FOCUSED_TEST_EXPRESSION"] == " or ".join(selectors)

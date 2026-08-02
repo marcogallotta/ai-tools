@@ -30,42 +30,12 @@ from dish_pg.protocol import AuthenticationError, PostgresProtocolService, Scope
 from dish_pg.read_model import InvalidCursor
 from dish_pg.transition import ProjectionService
 from dish_tool.workflow_policy import WorkflowSnapshot
-from tests.postgresql.test_stage2_core_authority import _import_one
-from tests.postgresql.test_stage3_workflow_authority import NOW, _next, _register_run, workflow_db
+from tests.support.postgresql.core import _import_one
+from tests.support.postgresql.command import _call, _port
+from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 
 SECRET = b"stage-4-cursor-secret-32-bytes!!"
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def _port(session, ids) -> PostgresCommandPort:
-    generation_id = session.scalar(
-        select(models.AuthorityGeneration.generation_id).where(
-            models.AuthorityGeneration.status == "active"
-        )
-    )
-    ProjectionService(session, uuid_factory=lambda: _next(ids)).activate_epoch(
-        generation_id=generation_id,
-        activation_reason="Stage 4 command-port test authority",
-        created_at=NOW,
-    )
-    return PostgresCommandPort(
-        session,
-        cursor_secret=SECRET,
-        uuid_factory=lambda: _next(ids),
-        lease_duration=timedelta(minutes=10),
-    )
-
-
-def _call(command, *, run_id, request_id=None, arguments=None, principal="agent", owner="owner-1"):
-    return CommandCall(
-        command_name=command,
-        arguments=arguments or {},
-        owner_id=owner,
-        principal_class=principal,
-        run_id=run_id,
-        request_id=request_id,
-        now=NOW,
-    )
 
 
 def test_stage4_ports_every_retained_mutation_and_action_path() -> None:

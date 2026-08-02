@@ -16,14 +16,16 @@ from dish_pg.command_port import CommandCall, PostgresCommandPort
 from dish_pg.database import session_scope
 from dish_pg.transition import ProjectionService
 from dish_pg.workflow import MutationAdmissionClosed, WorkflowAuthorityService
-from tests.postgresql.test_stage3_workflow_authority import (
+from tests.support.postgresql.workflow import (
     NOW,
     _admit,
     _next,
     _register_run,
     workflow_db,
 )
-from tests.postgresql.test_stage6_release_cutover import _prepare_candidate
+from tests.support.postgresql.release import _prepare_candidate
+
+pytestmark = pytest.mark.smoke
 
 SECRET = b"fail-closed-command-port-secret!!"
 

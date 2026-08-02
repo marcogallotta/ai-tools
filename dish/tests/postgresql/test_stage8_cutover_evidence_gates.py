@@ -21,8 +21,8 @@ from dish_pg.release import (
     ReleaseCandidateService,
     sha256_json,
 )
-from tests.postgresql.test_stage3_workflow_authority import NOW, _next, workflow_db
-from tests.postgresql.test_stage6_release_cutover import (
+from tests.support.postgresql.workflow import NOW, _next, workflow_db
+from tests.support.postgresql.release import (
     HASH_A,
     ROOT,
     _complete_active_mapping_reconciliation,
@@ -99,7 +99,7 @@ def _burn_rollback(session, ids, context, task_id):
 
 
 def _record_runtime_and_worker_readiness(session, ids, service, candidate_id, context):
-    candidate = service._candidate(candidate_id)
+    candidate = service.candidate_status(candidate_id)
     reconciliation = _complete_active_mapping_reconciliation(
         session,
         ids,
@@ -240,8 +240,8 @@ def test_writer_fence_proof_is_candidate_bound_and_pre_body_parse(workflow_db) -
                 proof=weak,
                 verified_at=NOW + timedelta(minutes=1),
             )
-        assert service._fence(fence.fence_id).state == "engaged"
-        assert service._fence(fence.fence_id).proof_sha256 is None
+        assert service.writer_fence_status(fence.fence_id).state == "engaged"
+        assert service.writer_fence_status(fence.fence_id).proof_sha256 is None
 
 
 def test_post_burn_evidence_cannot_predate_rollback_burn(workflow_db) -> None:
@@ -250,7 +250,7 @@ def test_post_burn_evidence_cannot_predate_rollback_burn(workflow_db) -> None:
         service, candidate_id, _cutover_run_id = _burn_rollback(
             session, ids, context, task_id
         )
-        candidate = service._candidate(candidate_id)
+        candidate = service.candidate_status(candidate_id)
         with pytest.raises(ReleaseAuthorityError, match="at or after rollback burn"):
             service.record_runtime_release_attestation(
                 candidate_id=candidate_id,

@@ -375,8 +375,8 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 return {"ok": True, **_row_id(row), "manifest_sha256": row.manifest_sha256}, 0
             if cmd == "writer-fence-engage":
                 fence_id = _uuid(args.fence_id)
-                row = service._fence(fence_id)
-                candidate = service._candidate(row.candidate_id)
+                row = service.writer_fence_status(fence_id)
+                candidate = service.candidate_status(row.candidate_id)
                 _manifest, digest = engage_legacy_writer_fence(
                     args.path,
                     fence_id=str(fence_id),

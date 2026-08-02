@@ -29,6 +29,8 @@ FOCUSED_TEST_SELECTORS = (
     "frozen_migration_history",
     "release_evidence_contracts",
     "command_effect_authority",
+    "postgresql_action_openapi_oracle",
+    "stage_a_release_decomposition",
     "stage_a_acceptance_runner",
 )
 FOCUSED_TEST_EXPRESSION = " or ".join(FOCUSED_TEST_SELECTORS)

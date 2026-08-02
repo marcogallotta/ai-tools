@@ -15,6 +15,8 @@ from dish_pg.migrations.frozen_tables import (
 )
 from dish_pg.release import ALEMBIC_HEAD
 
+pytestmark = pytest.mark.smoke
+
 ROOT = Path(__file__).resolve().parents[2]
 VERSIONS = ROOT / "dish_pg" / "migrations" / "versions"
 FROZEN_REVISIONS = (

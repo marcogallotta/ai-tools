@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.mutation_cases import CASES
+from tests.mutation_cases import CASES, STAGE_A_CASES
 from tests.mutation_runner import (
     ROOT,
     apply_mutation,
@@ -49,3 +49,31 @@ def test_mutation_selection_collects_full_suite_but_targets_registered_functions
     expression = pytest_selection_expression(case)
     assert expression == "test_completed_start_request_replays_full_stored_result"
     assert "tests/" not in expression
+
+
+def test_stage_a_mutation_lane_is_small_and_postgresql_owned():
+    assert 1 <= len(STAGE_A_CASES) <= 6
+    assert len({case.mutation_id for case in STAGE_A_CASES}) == len(STAGE_A_CASES)
+    assert all(case.mutation_id.startswith("stage-a-") for case in STAGE_A_CASES)
+    assert all(case.target.startswith("dish_pg/") for case in STAGE_A_CASES)
+    assert all(
+        node_id.startswith("tests/postgresql/")
+        for case in STAGE_A_CASES
+        for node_id in case.tests
+    )
+
+
+def test_stage_a_cli_selection_uses_only_stage_a_cases(monkeypatch, tmp_path):
+    from tests import mutation_runner
+
+    captured = {}
+
+    def fake_run(cases, *, artifacts):
+        captured["cases"] = cases
+        captured["artifacts"] = artifacts
+        return 0
+
+    monkeypatch.setattr(mutation_runner, "run", fake_run)
+    assert mutation_runner.main(["--stage-a", "--artifacts", str(tmp_path)]) == 0
+    assert captured["cases"] is STAGE_A_CASES
+    assert captured["artifacts"] == tmp_path
