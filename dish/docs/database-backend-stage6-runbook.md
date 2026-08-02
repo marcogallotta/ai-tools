@@ -13,7 +13,7 @@ memory.
 
 ## 1. What the repository can prove offline
 
-The repository can migrate an empty target through `0005_release_cutover`, execute the Stage 1–6
+The repository can migrate an empty target through `0006_final_asana_closure`, execute the Stage 1–6
 acceptance suites, hash the exact source tree, store immutable evidence revisions and rehearsal
 reports, recompute structural closure from PostgreSQL, build deterministic evidence bundles, fence
 the legacy HTTP writer mechanically, and resume an interrupted cutover from durable checkpoints.
@@ -46,7 +46,7 @@ Freeze and retain these exact identities before candidate creation:
 - closed shadow baseline;
 - active projection epoch and completed reconciliation run;
 - Dish, Honest, protocol, OpenAPI, and routing releases;
-- PostgreSQL schema head `0005_release_cutover`.
+- PostgreSQL schema head `0006_final_asana_closure`.
 
 A changed source commit, ledger high-water mark, production object, release, schema head, or proof gap
 requires a new or revised candidate. Do not relabel an old evidence bundle.
@@ -82,7 +82,7 @@ Prepare a mode-0600 JSON file containing exact UUIDs and release identities:
   "source_release": "EXACT_RELEASE",
   "source_commit": "EXACT_COMMIT",
   "ledger_through_commit": "EXACT_COMMIT",
-  "schema_head": "0005_release_cutover",
+  "schema_head": "0006_final_asana_closure",
   "dish_release": "EXACT_RELEASE",
   "honest_release": "EXACT_RELEASE",
   "protocol_release": "EXACT_RELEASE",
@@ -195,11 +195,30 @@ Evaluation fails closed unless all of the following are true in authoritative Po
   unresolved;
 - no projection outbox item, attempt, create correlation, or drift item is unresolved;
 - the latest completed reconciliation accounts for every active projection mapping;
-- the database is at `0005_release_cutover`;
+- the database is at `0006_final_asana_closure`;
 - every required evidence item and rehearsal class passes.
 
 Bundle identity is deterministic from authoritative contents; build time does not alter its SHA-256.
 Validation regenerates the current manifest and rejects a stale supplied bundle.
+
+After validation, capture the final Asana-authoritative interval before requesting approval:
+
+```json
+{
+  "capture_manifest_sha256": "64_HEX",
+  "observation_high_water": "EXACT_ASANA_HIGH_WATER",
+  "watcher_identity": "EXACT_WATCHER_AND_RELEASE",
+  "interval_started_at": "RFC3339_WITH_OFFSET",
+  "closed_through_at": "RFC3339_WITH_OFFSET",
+  "payload": {"task_count": 0, "registry_count": 0},
+  "recorded_at": "RFC3339_WITH_OFFSET"
+}
+```
+
+```sh
+scripts/dish-pg-release final-asana-closure-record CANDIDATE_UUID \
+  --file /secure/evidence/final-asana-closure.json
+```
 
 Marco's approval input must quote the exact candidate and bundle decision:
 
@@ -211,7 +230,9 @@ Marco's approval input must quote the exact candidate and bundle decision:
     "candidate_manifest_sha256": "64_HEX",
     "accepted_discrepancies": [],
     "measured_rpo_seconds": 0,
-    "measured_rto_seconds": 0
+    "measured_rto_seconds": 0,
+    "final_asana_closure_id": "CLOSURE_UUID",
+    "final_asana_closure_sha256": "64_HEX"
   },
   "approved_at": "RFC3339_WITH_OFFSET"
 }
@@ -222,6 +243,23 @@ scripts/dish-pg-release approve CANDIDATE_UUID BUNDLE_UUID --file APPROVAL.json
 ```
 
 Do not run `approve` without Marco's explicit decision for that exact bundle.
+
+If any relevant Asana task, project, section, registry metadata, or alias changes after approval,
+stop cutover and record the invalidation:
+
+```sh
+scripts/dish-pg-release final-asana-closure-invalidate CLOSURE_UUID \
+  --file /secure/evidence/final-asana-invalidation.json
+```
+
+Capture a new complete closure, then obtain Marco's explicit recertification of the same candidate:
+
+```sh
+scripts/dish-pg-release candidate-recertify CANDIDATE_UUID NEW_CLOSURE_UUID \
+  --file /secure/evidence/candidate-recertification.json
+```
+
+Do not activate against an invalidated, superseded, or time-incomplete closure.
 
 ## 8. Prepare and prove the legacy-writer fence
 
@@ -277,6 +315,7 @@ These commands are intentionally separate crash boundaries:
 
 ```sh
 scripts/dish-pg-release cutover-activate CUTOVER_UUID \
+  --final-closure-id CLOSURE_UUID \
   --activated-at RFC3339_WITH_OFFSET
 ```
 

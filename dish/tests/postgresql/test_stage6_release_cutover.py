@@ -166,6 +166,19 @@ def _prepare_candidate(session, ids, context, task_id):
     return service, candidate_id
 
 
+def _record_final_closure(service, ids, candidate_id, *, closed_through_at):
+    return service.record_final_asana_closure(
+        candidate_id=candidate_id,
+        capture_manifest_sha256=HASH_A,
+        observation_high_water="asana-change-900",
+        watcher_identity="final-asana-watcher@fixture",
+        interval_started_at=NOW,
+        closed_through_at=closed_through_at,
+        payload={"tasks": 1, "registry": "closed"},
+        recorded_at=closed_through_at,
+    )
+
+
 @pytest.mark.database_boundary
 def test_stage6_schema_migration_and_postgresql_guards(tmp_path: Path) -> None:
     assert set(rel.STAGE6_TABLE_NAMES).issubset(models.Base.metadata.tables)
@@ -307,12 +320,19 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
             evidence_bundle_id=bundle.bundle_id,
             validated_at=NOW + timedelta(minutes=1),
         )
+        closure = _record_final_closure(
+            service, ids, candidate_id, closed_through_at=NOW + timedelta(minutes=5)
+        )
         service.approve_candidate(
             candidate_id=candidate_id,
             evidence_bundle_id=bundle.bundle_id,
             approver="Marco",
             approval_statement="Approve this exact candidate and evidence bundle.",
-            approval_payload={"decision": "approved"},
+            approval_payload={
+                "decision": "approved",
+                "final_asana_closure_id": str(closure.closure_id),
+                "final_asana_closure_sha256": closure.closure_sha256,
+            },
             approved_at=NOW + timedelta(minutes=2),
         )
         fence = service.prepare_writer_fence(
@@ -335,7 +355,11 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
             verified_at=NOW + timedelta(minutes=4),
         )
         service.mark_fenced(cutover_run_id=cutover_id, recorded_at=NOW + timedelta(minutes=4))
-        service.activate_authority(cutover_run_id=cutover_id, activated_at=NOW + timedelta(minutes=5))
+        service.activate_authority(
+            cutover_run_id=cutover_id,
+            final_asana_closure_id=closure.closure_id,
+            activated_at=NOW + timedelta(minutes=5),
+        )
 
     # A validated/approved candidate cannot admit a target mutation yet.
     with pytest.raises(MutationAdmissionClosed, match="admission is closed"):

@@ -26,10 +26,11 @@ The migration has three operational phases:
 
 Production cutover is a separate Marco decision based on the recorded evidence.
 
-The repository now contains the offline Stage 6 control plane in Alembic revision
-`0005_release_cutover`, `dish_pg.release`, `scripts/dish-pg-acceptance`, and
-`scripts/dish-pg-release`. These components record and validate evidence but do not claim that a
-production rehearsal or cutover has occurred. The executable operator sequence, JSON inputs,
+The repository now contains the offline Stage 6–7 control plane through Alembic revision
+`0006_final_asana_closure`, `dish_pg.release`, `scripts/dish-pg-acceptance`, and
+`scripts/dish-pg-release`. These components record and validate evidence, final Asana closure,
+invalidation and recertification, but do not claim that a production rehearsal or cutover has
+occurred. The executable operator sequence, JSON inputs,
 fail-closed fence order, abort boundary, and environment-only gates are defined in
 `database-backend-stage6-runbook.md`. That runbook remains subordinate to this draft and cannot be
 used as implicit cutover approval.
@@ -505,6 +506,14 @@ Production cutover may begin only when all of the following are true.
 
 - production PostgreSQL is healthy, migrated, backed up, and restorable;
 - exact production import has passed validation;
+The implemented release controls represent this closure explicitly. After candidate validation,
+record one immutable final Asana closure containing the exact capture-manifest digest, observation
+high-water mark, watcher identity, interval start, and closed-through timestamp. Marco approval binds
+the closure ID and digest. Any relevant intervening change appends an immutable invalidation; the
+candidate cannot activate until a replacement closure is captured and Marco records an exact
+recertification. Activation names the final closure and requires its gap-free interval to include the
+activation timestamp. Rollback burn revalidates the same activation-bound closure.
+
 - authority activation can bind the approved evidence and releases;
 - service and client protocol release is coordinated;
 - post-restore bootstrap authority exists;

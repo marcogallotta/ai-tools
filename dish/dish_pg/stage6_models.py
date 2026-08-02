@@ -323,6 +323,82 @@ class CutoverCheckpoint(Base):
     )
 
 
+class FinalAsanaClosure(Base):
+    __tablename__ = "final_asana_closures"
+
+    closure_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("release_candidates.candidate_id", ondelete="RESTRICT"), nullable=False
+    )
+    capture_manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    observation_high_water: Mapped[str] = mapped_column(String(256), nullable=False)
+    watcher_identity: Mapped[str] = mapped_column(String(256), nullable=False)
+    interval_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    closed_through_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    closure_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("length(capture_manifest_sha256) = 64", name="capture_hash_length"),
+        CheckConstraint("length(closure_sha256) = 64", name="closure_hash_length"),
+        CheckConstraint("length(trim(observation_high_water)) > 0", name="high_water_nonblank"),
+        CheckConstraint("length(trim(watcher_identity)) > 0", name="watcher_nonblank"),
+        CheckConstraint("closed_through_at >= interval_started_at", name="interval_ordered"),
+        UniqueConstraint("candidate_id", "closure_sha256", name="uq_final_asana_closure_identity"),
+    )
+
+
+class FinalAsanaClosureInvalidation(Base):
+    __tablename__ = "final_asana_closure_invalidations"
+
+    invalidation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    closure_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("final_asana_closures.closure_id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    change_identity: Mapped[str] = mapped_column(String(256), nullable=False)
+    change_kind: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    invalidation_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("length(trim(change_identity)) > 0", name="change_identity_nonblank"),
+        CheckConstraint("length(trim(change_kind)) > 0", name="change_kind_nonblank"),
+        CheckConstraint("length(invalidation_sha256) = 64", name="invalidation_hash_length"),
+    )
+
+
+class CutoverRecertification(Base):
+    __tablename__ = "cutover_recertifications"
+
+    recertification_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("release_candidates.candidate_id", ondelete="RESTRICT"), nullable=False
+    )
+    approval_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("cutover_approvals.approval_id", ondelete="RESTRICT"), nullable=False
+    )
+    closure_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("final_asana_closures.closure_id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    recertification_revision: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    approver: Mapped[str] = mapped_column(String(256), nullable=False)
+    recertification_statement: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    recertification_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    recertified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("recertification_revision > 0", name="positive_revision"),
+        CheckConstraint("length(trim(approver)) > 0", name="approver_nonblank"),
+        CheckConstraint("length(trim(recertification_statement)) > 0", name="statement_nonblank"),
+        CheckConstraint("length(recertification_sha256) = 64", name="recertification_hash_length"),
+        UniqueConstraint("candidate_id", "recertification_revision", name="uq_recertification_revision"),
+    )
+
+
 class MutationAdmissionControl(Base):
     __tablename__ = "mutation_admission_controls"
 
@@ -368,9 +444,17 @@ STAGE6_IMMUTABLE_TABLE_NAMES = (
     "cutover_checkpoints",
 )
 
+STAGE7_TABLE_NAMES = (
+    "final_asana_closures",
+    "final_asana_closure_invalidations",
+    "cutover_recertifications",
+)
+
+STAGE7_IMMUTABLE_TABLE_NAMES = STAGE7_TABLE_NAMES
+
 
 def _install_sqlite_immutability_triggers() -> None:
-    for table_name in STAGE6_IMMUTABLE_TABLE_NAMES:
+    for table_name in STAGE6_IMMUTABLE_TABLE_NAMES + STAGE7_IMMUTABLE_TABLE_NAMES:
         table = Base.metadata.tables[table_name]
         event.listen(
             table,

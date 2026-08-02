@@ -11,7 +11,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping
 
 from sqlalchemy import func, inspect, select, text
@@ -22,7 +22,7 @@ from . import stage3_models as wf
 from . import stage5_models as tx
 from . import stage6_models as rel
 
-ALEMBIC_HEAD = "0005_release_cutover"
+ALEMBIC_HEAD = "0006_final_asana_closure"
 
 REQUIRED_EVIDENCE = (
     ("authority_coverage", "current_to_target"),
@@ -40,6 +40,12 @@ REQUIRED_REHEARSALS = ("full", "activation", "restore", "fault_injection")
 
 class ReleaseAuthorityError(ValueError):
     """A release or cutover transition failed closed."""
+
+
+def _utc_comparable(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def canonical_json(value: Any) -> bytes:
@@ -939,6 +945,36 @@ class ReleaseCandidateService:
                 else None,
             },
         }
+        if bundle_kind == "cutover_final":
+            closures = self.session.scalars(
+                select(rel.FinalAsanaClosure)
+                .where(rel.FinalAsanaClosure.candidate_id == candidate_id)
+                .order_by(rel.FinalAsanaClosure.closed_through_at, rel.FinalAsanaClosure.recorded_at)
+            ).all()
+            manifest["final_asana_closures"] = [
+                {
+                    "closure_id": str(closure.closure_id),
+                    "capture_manifest_sha256": closure.capture_manifest_sha256,
+                    "observation_high_water": closure.observation_high_water,
+                    "closed_through_at": closure.closed_through_at.isoformat(),
+                    "closure_sha256": closure.closure_sha256,
+                    "invalidated": self._closure_invalidation(closure.closure_id) is not None,
+                }
+                for closure in closures
+            ]
+            manifest["recertifications"] = [
+                {
+                    "recertification_id": str(row.recertification_id),
+                    "closure_id": str(row.closure_id),
+                    "revision": row.recertification_revision,
+                    "sha256": row.recertification_sha256,
+                }
+                for row in self.session.scalars(
+                    select(rel.CutoverRecertification)
+                    .where(rel.CutoverRecertification.candidate_id == candidate_id)
+                    .order_by(rel.CutoverRecertification.recertification_revision)
+                ).all()
+            ]
         digest = sha256_json(manifest)
         existing = self.session.scalar(
             select(rel.EvidenceBundle).where(
@@ -1005,6 +1041,162 @@ class ReleaseCandidateService:
         self.session.flush()
         return evaluation
 
+    def record_final_asana_closure(
+        self,
+        *,
+        candidate_id: uuid.UUID,
+        capture_manifest_sha256: str,
+        observation_high_water: str,
+        watcher_identity: str,
+        interval_started_at: datetime,
+        closed_through_at: datetime,
+        payload: Mapping[str, Any],
+        recorded_at: datetime,
+    ) -> rel.FinalAsanaClosure:
+        candidate = self._candidate(candidate_id)
+        if candidate.status not in {"validated", "approved"}:
+            raise ReleaseAuthorityError("final Asana closure requires a validated candidate")
+        body = {
+            "candidate_id": str(candidate_id),
+            "capture_manifest_sha256": capture_manifest_sha256,
+            "observation_high_water": observation_high_water,
+            "watcher_identity": watcher_identity,
+            "interval_started_at": interval_started_at.isoformat(),
+            "closed_through_at": closed_through_at.isoformat(),
+            "payload": dict(payload),
+        }
+        digest = sha256_json(body)
+        existing = self.session.scalar(
+            select(rel.FinalAsanaClosure).where(
+                rel.FinalAsanaClosure.candidate_id == candidate_id,
+                rel.FinalAsanaClosure.closure_sha256 == digest,
+            )
+        )
+        if existing is not None:
+            return existing
+        row = rel.FinalAsanaClosure(
+            closure_id=self.uuid_factory(),
+            candidate_id=candidate_id,
+            capture_manifest_sha256=capture_manifest_sha256,
+            observation_high_water=observation_high_water.strip(),
+            watcher_identity=watcher_identity.strip(),
+            interval_started_at=interval_started_at,
+            closed_through_at=closed_through_at,
+            payload=dict(payload),
+            closure_sha256=digest,
+            recorded_at=recorded_at,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def invalidate_final_asana_closure(
+        self,
+        *,
+        closure_id: uuid.UUID,
+        change_identity: str,
+        change_kind: str,
+        payload: Mapping[str, Any],
+        observed_at: datetime,
+        recorded_at: datetime,
+    ) -> rel.FinalAsanaClosureInvalidation:
+        closure = self.session.get(rel.FinalAsanaClosure, closure_id)
+        if closure is None:
+            raise ReleaseAuthorityError("unknown final Asana closure")
+        body = {
+            "closure_id": str(closure_id),
+            "change_identity": change_identity,
+            "change_kind": change_kind,
+            "payload": dict(payload),
+            "observed_at": observed_at.isoformat(),
+        }
+        digest = sha256_json(body)
+        existing = self.session.scalar(
+            select(rel.FinalAsanaClosureInvalidation).where(
+                rel.FinalAsanaClosureInvalidation.closure_id == closure_id
+            )
+        )
+        if existing is not None:
+            if existing.invalidation_sha256 != digest:
+                raise ReleaseAuthorityError("final Asana closure invalidation conflict")
+            return existing
+        row = rel.FinalAsanaClosureInvalidation(
+            invalidation_id=self.uuid_factory(),
+            closure_id=closure_id,
+            change_identity=change_identity.strip(),
+            change_kind=change_kind.strip(),
+            payload=dict(payload),
+            invalidation_sha256=digest,
+            observed_at=observed_at,
+            recorded_at=recorded_at,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def recertify_candidate(
+        self,
+        *,
+        candidate_id: uuid.UUID,
+        closure_id: uuid.UUID,
+        approver: str,
+        recertification_statement: str,
+        payload: Mapping[str, Any],
+        recertified_at: datetime,
+    ) -> rel.CutoverRecertification:
+        candidate = self._candidate(candidate_id)
+        if candidate.status != "approved":
+            raise ReleaseAuthorityError("recertification requires an approved candidate")
+        approval = self.session.scalar(
+            select(rel.CutoverApproval).where(rel.CutoverApproval.candidate_id == candidate_id)
+        )
+        closure = self._valid_final_asana_closure(candidate_id, closure_id)
+        if approval is None:
+            raise ReleaseAuthorityError("candidate has no approval to recertify")
+        revision = int(
+            self.session.scalar(
+                select(func.coalesce(func.max(rel.CutoverRecertification.recertification_revision), 0)).where(
+                    rel.CutoverRecertification.candidate_id == candidate_id
+                )
+            ) or 0
+        ) + 1
+        body = {
+            "candidate_id": str(candidate_id),
+            "approval_id": str(approval.approval_id),
+            "closure_id": str(closure.closure_id),
+            "closure_sha256": closure.closure_sha256,
+            "revision": revision,
+            "approver": approver,
+            "statement": recertification_statement,
+            "payload": dict(payload),
+            "recertified_at": recertified_at.isoformat(),
+        }
+        digest = sha256_json(body)
+        existing = self.session.scalar(
+            select(rel.CutoverRecertification).where(
+                rel.CutoverRecertification.closure_id == closure_id
+            )
+        )
+        if existing is not None:
+            if existing.recertification_sha256 != digest:
+                raise ReleaseAuthorityError("cutover recertification identity conflict")
+            return existing
+        row = rel.CutoverRecertification(
+            recertification_id=self.uuid_factory(),
+            candidate_id=candidate_id,
+            approval_id=approval.approval_id,
+            closure_id=closure.closure_id,
+            recertification_revision=revision,
+            approver=approver.strip(),
+            recertification_statement=recertification_statement.strip(),
+            payload=dict(payload),
+            recertification_sha256=digest,
+            recertified_at=recertified_at,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
     def approve_candidate(
         self,
         *,
@@ -1025,6 +1217,17 @@ class ReleaseCandidateService:
             or bundle.manifest_sha256 != candidate.validation_bundle_sha256
         ):
             raise ReleaseAuthorityError("approval must bind the exact validated evidence bundle")
+        closure_id_value = approval_payload.get("final_asana_closure_id")
+        closure_sha_value = approval_payload.get("final_asana_closure_sha256")
+        if closure_id_value is None or closure_sha_value is None:
+            raise ReleaseAuthorityError("approval must bind the exact final Asana closure")
+        try:
+            closure_id = uuid.UUID(str(closure_id_value))
+        except ValueError as exc:
+            raise ReleaseAuthorityError("approval final Asana closure identity is invalid") from exc
+        closure = self._valid_final_asana_closure(candidate_id, closure_id)
+        if closure.closure_sha256 != str(closure_sha_value):
+            raise ReleaseAuthorityError("approval final Asana closure digest mismatch")
         body = {
             "candidate_id": str(candidate_id),
             "evidence_bundle_sha256": bundle.manifest_sha256,
@@ -1067,6 +1270,7 @@ class ReleaseCandidateService:
         candidate = self._candidate(candidate_id)
         if candidate.status != "approved":
             raise ReleaseAuthorityError("cutover requires an approved candidate")
+        approved_closure = self._current_approved_final_asana_closure(candidate_id)
         existing = self.session.scalar(
             select(rel.CutoverRun).where(rel.CutoverRun.candidate_id == candidate_id)
         )
@@ -1082,7 +1286,16 @@ class ReleaseCandidateService:
         )
         self.session.add(row)
         self.session.flush()
-        self._checkpoint(row, "cutover_prepared", {"candidate_id": str(candidate_id)}, started_at)
+        self._checkpoint(
+            row,
+            "cutover_prepared",
+            {
+                "candidate_id": str(candidate_id),
+                "final_asana_closure_id": str(approved_closure.closure_id),
+                "final_asana_closure_sha256": approved_closure.closure_sha256,
+            },
+            started_at,
+        )
         return row
 
     def mark_fenced(self, *, cutover_run_id: uuid.UUID, recorded_at: datetime) -> rel.CutoverRun:
@@ -1105,13 +1318,26 @@ class ReleaseCandidateService:
         )
         return run
 
-    def activate_authority(self, *, cutover_run_id: uuid.UUID, activated_at: datetime) -> rel.CutoverRun:
+    def activate_authority(
+        self,
+        *,
+        cutover_run_id: uuid.UUID,
+        final_asana_closure_id: uuid.UUID,
+        activated_at: datetime,
+    ) -> rel.CutoverRun:
         run = self._cutover(cutover_run_id)
         if run.state == "activated":
             return run
         if run.state != "fenced":
             raise ReleaseAuthorityError("authority activation requires verified writer fencing")
         candidate = self._candidate(run.candidate_id)
+        closure = self._current_approved_final_asana_closure(
+            candidate.candidate_id, expected_closure_id=final_asana_closure_id
+        )
+        if _utc_comparable(closure.closed_through_at) < _utc_comparable(activated_at):
+            raise ReleaseAuthorityError(
+                "final Asana closure does not cover the authority activation timestamp"
+            )
         control = self.session.get(rel.MutationAdmissionControl, candidate.generation_id)
         generation = self.session.get(models.AuthorityGeneration, candidate.generation_id)
         if control is None or control.state != "closed":
@@ -1122,7 +1348,12 @@ class ReleaseCandidateService:
         self._checkpoint(
             run,
             "authority_activated_admission_closed",
-            {"generation_id": str(candidate.generation_id)},
+            {
+                "generation_id": str(candidate.generation_id),
+                "final_asana_closure_id": str(closure.closure_id),
+                "final_asana_closure_sha256": closure.closure_sha256,
+                "closed_through_at": closure.closed_through_at.isoformat(),
+            },
             activated_at,
         )
         return run
@@ -1151,6 +1382,20 @@ class ReleaseCandidateService:
             return existing
         if run.state != "activated" or approval is None:
             raise ReleaseAuthorityError("rollback burn requires activated approved cutover")
+        activation_checkpoint = self.session.scalar(
+            select(rel.CutoverCheckpoint).where(
+                rel.CutoverCheckpoint.cutover_run_id == cutover_run_id,
+                rel.CutoverCheckpoint.checkpoint_kind == "authority_activated_admission_closed",
+            )
+        )
+        if activation_checkpoint is None:
+            raise ReleaseAuthorityError("rollback burn lacks final Asana closure activation evidence")
+        closure_id_value = activation_checkpoint.payload.get("final_asana_closure_id")
+        if closure_id_value is None:
+            raise ReleaseAuthorityError("activation checkpoint lacks final Asana closure identity")
+        self._current_approved_final_asana_closure(
+            candidate.candidate_id, expected_closure_id=uuid.UUID(str(closure_id_value))
+        )
         batch = self.session.get(tx.SourceImportBatch, candidate.source_import_batch_id)
         if batch is None:
             raise ReleaseAuthorityError("release candidate import batch is missing")
@@ -1291,6 +1536,58 @@ class ReleaseCandidateService:
         candidate.terminal_at = aborted_at
         self._checkpoint(run, "cutover_aborted", {"reason": reason}, aborted_at)
         return run
+
+    def _closure_invalidation(
+        self, closure_id: uuid.UUID
+    ) -> rel.FinalAsanaClosureInvalidation | None:
+        return self.session.scalar(
+            select(rel.FinalAsanaClosureInvalidation).where(
+                rel.FinalAsanaClosureInvalidation.closure_id == closure_id
+            )
+        )
+
+    def _valid_final_asana_closure(
+        self, candidate_id: uuid.UUID, closure_id: uuid.UUID
+    ) -> rel.FinalAsanaClosure:
+        closure = self.session.get(rel.FinalAsanaClosure, closure_id)
+        if closure is None or closure.candidate_id != candidate_id:
+            raise ReleaseAuthorityError("final Asana closure does not belong to candidate")
+        if self._closure_invalidation(closure_id) is not None:
+            raise ReleaseAuthorityError("final Asana closure was invalidated by an intervening change")
+        return closure
+
+    def _current_approved_final_asana_closure(
+        self,
+        candidate_id: uuid.UUID,
+        *,
+        expected_closure_id: uuid.UUID | None = None,
+    ) -> rel.FinalAsanaClosure:
+        approval = self.session.scalar(
+            select(rel.CutoverApproval).where(rel.CutoverApproval.candidate_id == candidate_id)
+        )
+        if approval is None:
+            raise ReleaseAuthorityError("candidate has no cutover approval")
+        recertification = self.session.scalar(
+            select(rel.CutoverRecertification)
+            .where(rel.CutoverRecertification.candidate_id == candidate_id)
+            .order_by(rel.CutoverRecertification.recertification_revision.desc())
+            .limit(1)
+        )
+        if recertification is not None:
+            closure_id = recertification.closure_id
+        else:
+            value = approval.approval_payload.get("final_asana_closure_id")
+            if value is None:
+                raise ReleaseAuthorityError("cutover approval lacks final Asana closure binding")
+            closure_id = uuid.UUID(str(value))
+        if expected_closure_id is not None and closure_id != expected_closure_id:
+            raise ReleaseAuthorityError("cutover does not bind the currently approved final Asana closure")
+        closure = self._valid_final_asana_closure(candidate_id, closure_id)
+        if recertification is None:
+            expected_sha = approval.approval_payload.get("final_asana_closure_sha256")
+            if expected_sha != closure.closure_sha256:
+                raise ReleaseAuthorityError("cutover approval final Asana closure digest mismatch")
+        return closure
 
     def _candidate(self, candidate_id: uuid.UUID) -> rel.ReleaseCandidate:
         row = self.session.get(rel.ReleaseCandidate, candidate_id)

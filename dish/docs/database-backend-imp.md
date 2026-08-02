@@ -1031,6 +1031,11 @@ Implemented Stage 6 offline foundation:
 - Candidate evidence is append-only until validation. Validation binds the exact current bundle and
   rejects a stale bundle even when later evidence also passes. Approval is single-use and bound to
   that validated bundle rather than to a candidate name or release label.
+- Alembic revision `0006_final_asana_closure` adds immutable final Asana closure,
+  invalidation, and candidate-recertification evidence. Approval binds one exact valid closure;
+  any relevant intervening Asana change invalidates it. Activation names the closure, requires the
+  gap-free interval to include the activation timestamp, and rollback burn revalidates the same
+  activation-bound identity.
 - `MutationAdmissionControl` is created closed. Database guards reject target request admission after
   validation until rollback-burn evidence is durable and the exact cutover run opens admission.
 - `dish_service.legacy_writer_fence` supplies an atomic mode-0600 file fence. The legacy HTTP path
@@ -1038,7 +1043,7 @@ Implemented Stage 6 offline foundation:
   still an engaged fence.
 - `scripts/dish-pg-acceptance` runs the focused Stage 1–6 lane, smoke gate, database-boundary gate,
   and full suite and writes a source-manifest-bound JSON report. `scripts/dish-pg-release` records
-  candidate, evidence, rehearsal, approval, fence, activation, rollback-burn, first-admission, and
+  candidate, evidence, rehearsal, final Asana closure, invalidation, recertification, approval, fence, activation, rollback-burn, first-admission, and
   completion transitions through caller-owned transactions.
 - `database-backend-stage6-runbook.md` fixes the operator order and recovery boundary. Filesystem
   fence release records the authorized database transition first, so an I/O failure can only leave

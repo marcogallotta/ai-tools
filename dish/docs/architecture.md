@@ -295,7 +295,17 @@ validated. The legacy HTTP service checks its file fence after route-scope authe
 request-body loading, so malformed, oversized, or valid mutation bodies cannot bypass a cutover
 fence.
 
-The Stage 6 package remains non-activating by itself. It performs no production Asana read/write,
+Stage 7 closes the final Asana-authoritative interval through
+`0006_final_asana_closure`. `ReleaseCandidateService` records an immutable final Asana capture,
+observation high-water mark, watcher identity and gap-free closed-through timestamp. Any relevant
+intervening Asana task, project, section, registry or alias change appends an invalidation and makes
+the existing approval unusable. A replacement closure must be captured and Marco must recertify the
+same candidate against that exact closure. Authority activation binds the approved or recertified
+closure identity and digest and rejects a closure that does not remain valid through the exact
+activation timestamp. Rollback burn revalidates the activation-bound closure; routing cannot stand
+in for authority closure.
+
+The Stage 6–7 package remains non-activating by itself. It performs no production Asana read/write,
 installs no credentials, starts no projection worker, records no Marco approval, and cannot invent
 backup/restore measurements or production-corpus evidence. Those exact environment observations and
 Marco's bundle-bound approval are required inputs to the controlled runbook in

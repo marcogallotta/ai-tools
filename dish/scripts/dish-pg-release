@@ -58,6 +58,19 @@ def _parser() -> argparse.ArgumentParser:
     validate.add_argument("bundle_id")
     validate.add_argument("--validated-at", required=True)
 
+    closure = sub.add_parser("final-asana-closure-record")
+    closure.add_argument("candidate_id")
+    closure.add_argument("--file", type=Path, required=True)
+
+    invalidate = sub.add_parser("final-asana-closure-invalidate")
+    invalidate.add_argument("closure_id")
+    invalidate.add_argument("--file", type=Path, required=True)
+
+    recertify = sub.add_parser("candidate-recertify")
+    recertify.add_argument("candidate_id")
+    recertify.add_argument("closure_id")
+    recertify.add_argument("--file", type=Path, required=True)
+
     approve = sub.add_parser("approve")
     approve.add_argument("candidate_id")
     approve.add_argument("bundle_id")
@@ -97,6 +110,7 @@ def _parser() -> argparse.ArgumentParser:
 
     activate = sub.add_parser("cutover-activate")
     activate.add_argument("cutover_run_id")
+    activate.add_argument("--final-closure-id", required=True)
     activate.add_argument("--activated-at", required=True)
 
     burn = sub.add_parser("cutover-burn-rollback")
@@ -182,6 +196,9 @@ def _row_id(row: Any) -> dict[str, Any]:
         "fence_id",
         "bundle_id",
         "approval_id",
+        "closure_id",
+        "invalidation_id",
+        "recertification_id",
         "cutover_run_id",
         "activation_id",
         "generation_id",
@@ -273,6 +290,41 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                     validated_at=_time(args.validated_at),
                 )
                 return {"ok": True, **result.as_dict()}, 0
+            if cmd == "final-asana-closure-record":
+                data = _load(args.file)
+                row = service.record_final_asana_closure(
+                    candidate_id=_uuid(args.candidate_id),
+                    capture_manifest_sha256=data["capture_manifest_sha256"],
+                    observation_high_water=data["observation_high_water"],
+                    watcher_identity=data["watcher_identity"],
+                    interval_started_at=_time(data["interval_started_at"]),
+                    closed_through_at=_time(data["closed_through_at"]),
+                    payload=data.get("payload", {}),
+                    recorded_at=_time(data["recorded_at"]),
+                )
+                return {"ok": True, **_row_id(row), "sha256": row.closure_sha256}, 0
+            if cmd == "final-asana-closure-invalidate":
+                data = _load(args.file)
+                row = service.invalidate_final_asana_closure(
+                    closure_id=_uuid(args.closure_id),
+                    change_identity=data["change_identity"],
+                    change_kind=data["change_kind"],
+                    payload=data.get("payload", {}),
+                    observed_at=_time(data["observed_at"]),
+                    recorded_at=_time(data["recorded_at"]),
+                )
+                return {"ok": True, **_row_id(row), "sha256": row.invalidation_sha256}, 0
+            if cmd == "candidate-recertify":
+                data = _load(args.file)
+                row = service.recertify_candidate(
+                    candidate_id=_uuid(args.candidate_id),
+                    closure_id=_uuid(args.closure_id),
+                    approver=data["approver"],
+                    recertification_statement=data["recertification_statement"],
+                    payload=data.get("payload", {}),
+                    recertified_at=_time(data["recertified_at"]),
+                )
+                return {"ok": True, **_row_id(row), "sha256": row.recertification_sha256}, 0
             if cmd == "approve":
                 data = _load(args.file)
                 row = service.approve_candidate(
@@ -326,7 +378,9 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 )
             elif cmd == "cutover-activate":
                 row = service.activate_authority(
-                    cutover_run_id=_uuid(args.cutover_run_id), activated_at=_time(args.activated_at)
+                    cutover_run_id=_uuid(args.cutover_run_id),
+                    final_asana_closure_id=_uuid(args.final_closure_id),
+                    activated_at=_time(args.activated_at),
                 )
             elif cmd == "cutover-burn-rollback":
                 row = service.burn_rollback(

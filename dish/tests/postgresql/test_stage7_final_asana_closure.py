@@ -1,0 +1,236 @@
+from __future__ import annotations
+
+from datetime import timedelta
+import runpy
+
+import pytest
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import inspect, select
+
+from dish_pg import models
+from dish_pg import stage6_models as rel
+from dish_pg.database import session_scope
+from dish_pg.release import ALEMBIC_HEAD, ReleaseAuthorityError, ReleaseCandidateService
+from tests.postgresql.test_stage3_workflow_authority import NOW, _next, workflow_db
+from tests.postgresql.test_stage6_release_cutover import HASH_A, ROOT, _prepare_candidate, _record_final_closure
+
+
+def _validate_and_approve(service, ids, candidate_id, closure):
+    bundle = service.build_evidence_bundle(
+        candidate_id=candidate_id, bundle_kind="release_candidate", built_at=NOW
+    )
+    service.validate_candidate(
+        candidate_id=candidate_id,
+        evidence_bundle_id=bundle.bundle_id,
+        validated_at=NOW + timedelta(minutes=1),
+    )
+    service.approve_candidate(
+        candidate_id=candidate_id,
+        evidence_bundle_id=bundle.bundle_id,
+        approver="Marco",
+        approval_statement="Approve the exact candidate through the final observed Asana closure.",
+        approval_payload={
+            "final_asana_closure_id": str(closure.closure_id),
+            "final_asana_closure_sha256": closure.closure_sha256,
+        },
+        approved_at=NOW + timedelta(minutes=2),
+    )
+
+
+def test_final_asana_change_invalidates_activation_until_recaptured_and_recertified(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        # Closure is a post-validation authority fact, so validate first.
+        bundle = service.build_evidence_bundle(
+            candidate_id=candidate_id, bundle_kind="release_candidate", built_at=NOW
+        )
+        service.validate_candidate(
+            candidate_id=candidate_id,
+            evidence_bundle_id=bundle.bundle_id,
+            validated_at=NOW + timedelta(minutes=1),
+        )
+        original = _record_final_closure(
+            service, ids, candidate_id, closed_through_at=NOW + timedelta(minutes=8)
+        )
+        service.approve_candidate(
+            candidate_id=candidate_id,
+            evidence_bundle_id=bundle.bundle_id,
+            approver="Marco",
+            approval_statement="Approve the exact captured Asana authority state.",
+            approval_payload={
+                "final_asana_closure_id": str(original.closure_id),
+                "final_asana_closure_sha256": original.closure_sha256,
+            },
+            approved_at=NOW + timedelta(minutes=2),
+        )
+        fence = service.prepare_writer_fence(
+            candidate_id=candidate_id,
+            target_identity="legacy-service@laptop",
+            mechanism="fail-closed-file",
+            manifest={"path": "/var/lib/dish/legacy-writer-fence.json"},
+            prepared_at=NOW + timedelta(minutes=2),
+        )
+        cutover = service.prepare_cutover(
+            candidate_id=candidate_id, started_at=NOW + timedelta(minutes=2)
+        )
+        service.engage_writer_fence(
+            fence_id=fence.fence_id, engaged_at=NOW + timedelta(minutes=3)
+        )
+        service.verify_writer_fence(
+            fence_id=fence.fence_id,
+            proof={"probe": "old writer rejected before request admission", "passed": True},
+            verified_at=NOW + timedelta(minutes=4),
+        )
+        service.mark_fenced(
+            cutover_run_id=cutover.cutover_run_id, recorded_at=NOW + timedelta(minutes=4)
+        )
+        service.invalidate_final_asana_closure(
+            closure_id=original.closure_id,
+            change_identity="asana-event-901",
+            change_kind="task_content_changed",
+            payload={"task_gid": "123456789"},
+            observed_at=NOW + timedelta(minutes=5),
+            recorded_at=NOW + timedelta(minutes=5),
+        )
+        with pytest.raises(ReleaseAuthorityError, match="invalidated"):
+            service.activate_authority(
+                cutover_run_id=cutover.cutover_run_id,
+                final_asana_closure_id=original.closure_id,
+                activated_at=NOW + timedelta(minutes=6),
+            )
+
+        replacement = service.record_final_asana_closure(
+            candidate_id=candidate_id,
+            capture_manifest_sha256="b" * 64,
+            observation_high_water="asana-event-901",
+            watcher_identity="final-asana-watcher@production",
+            interval_started_at=NOW + timedelta(minutes=5),
+            closed_through_at=NOW + timedelta(minutes=7),
+            payload={"recaptured": True, "tasks": 1, "registry": "closed"},
+            recorded_at=NOW + timedelta(minutes=7),
+        )
+        service.recertify_candidate(
+            candidate_id=candidate_id,
+            closure_id=replacement.closure_id,
+            approver="Marco",
+            recertification_statement="Recertify after exact recapture of the intervening change.",
+            payload={"change_identity": "asana-event-901"},
+            recertified_at=NOW + timedelta(minutes=7),
+        )
+        activated = service.activate_authority(
+            cutover_run_id=cutover.cutover_run_id,
+            final_asana_closure_id=replacement.closure_id,
+            activated_at=NOW + timedelta(minutes=7),
+        )
+        assert activated.state == "activated"
+        service.burn_rollback(
+            cutover_run_id=cutover.cutover_run_id,
+            legacy_bundle_id="legacy-bundle-sha256:" + HASH_A,
+            burned_at=NOW + timedelta(minutes=8),
+        )
+        checkpoint = session.scalar(
+            select(rel.CutoverCheckpoint).where(
+                rel.CutoverCheckpoint.cutover_run_id == cutover.cutover_run_id,
+                rel.CutoverCheckpoint.checkpoint_kind == "authority_activated_admission_closed",
+            )
+        )
+        assert checkpoint.payload["final_asana_closure_id"] == str(replacement.closure_id)
+
+
+def test_activation_requires_closure_through_exact_activation_timestamp(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        bundle = service.build_evidence_bundle(
+            candidate_id=candidate_id, bundle_kind="release_candidate", built_at=NOW
+        )
+        service.validate_candidate(
+            candidate_id=candidate_id,
+            evidence_bundle_id=bundle.bundle_id,
+            validated_at=NOW + timedelta(minutes=1),
+        )
+        closure = _record_final_closure(
+            service, ids, candidate_id, closed_through_at=NOW + timedelta(minutes=4)
+        )
+        service.approve_candidate(
+            candidate_id=candidate_id,
+            evidence_bundle_id=bundle.bundle_id,
+            approver="Marco",
+            approval_statement="Approve exact final Asana closure.",
+            approval_payload={
+                "final_asana_closure_id": str(closure.closure_id),
+                "final_asana_closure_sha256": closure.closure_sha256,
+            },
+            approved_at=NOW + timedelta(minutes=2),
+        )
+        fence = service.prepare_writer_fence(
+            candidate_id=candidate_id,
+            target_identity="legacy-service@laptop",
+            mechanism="fail-closed-file",
+            manifest={"path": "/var/lib/dish/legacy-writer-fence.json"},
+            prepared_at=NOW,
+        )
+        run = service.prepare_cutover(candidate_id=candidate_id, started_at=NOW)
+        service.engage_writer_fence(fence_id=fence.fence_id, engaged_at=NOW + timedelta(minutes=2))
+        service.verify_writer_fence(
+            fence_id=fence.fence_id,
+            proof={"probe": "rejected", "passed": True},
+            verified_at=NOW + timedelta(minutes=3),
+        )
+        service.mark_fenced(cutover_run_id=run.cutover_run_id, recorded_at=NOW + timedelta(minutes=3))
+        with pytest.raises(ReleaseAuthorityError, match="does not cover"):
+            service.activate_authority(
+                cutover_run_id=run.cutover_run_id,
+                final_asana_closure_id=closure.closure_id,
+                activated_at=NOW + timedelta(minutes=5),
+            )
+
+
+def test_stage7_migration_adds_immutable_final_closure_authority(tmp_path) -> None:
+    config = Config(str((__import__("pathlib").Path(__file__).resolve().parents[2]) / "alembic.ini"))
+    path = tmp_path / "stage7.sqlite3"
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{path}")
+    command.upgrade(config, "head")
+    from sqlalchemy import create_engine
+
+    engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)
+    try:
+        names = set(inspect(engine).get_table_names())
+        assert {
+            "final_asana_closures",
+            "final_asana_closure_invalidations",
+            "cutover_recertifications",
+        }.issubset(names)
+        with engine.connect() as connection:
+            assert connection.exec_driver_sql("SELECT version_num FROM alembic_version").scalar_one() == ALEMBIC_HEAD
+    finally:
+        engine.dispose()
+
+
+def test_stage7_operator_cli_exposes_closure_and_recertification_commands() -> None:
+    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-release"))
+    parser = namespace["_parser"]()
+    assert parser.parse_args([
+        "final-asana-closure-record",
+        "00000000-0000-0000-0000-000000000001",
+        "--file",
+        "/tmp/closure.json",
+    ]).command == "final-asana-closure-record"
+    assert parser.parse_args([
+        "candidate-recertify",
+        "00000000-0000-0000-0000-000000000001",
+        "00000000-0000-0000-0000-000000000002",
+        "--file",
+        "/tmp/recertify.json",
+    ]).command == "candidate-recertify"
+    activation = parser.parse_args([
+        "cutover-activate",
+        "00000000-0000-0000-0000-000000000003",
+        "--final-closure-id",
+        "00000000-0000-0000-0000-000000000002",
+        "--activated-at",
+        "2026-08-02T10:00:00+02:00",
+    ])
+    assert activation.final_closure_id == "00000000-0000-0000-0000-000000000002"
