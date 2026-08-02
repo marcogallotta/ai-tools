@@ -340,6 +340,9 @@ evidence, rehearsal, checkpoint, bundle, validation and abort ordering to the tr
 clock. The rehearsal table also prevents durable completion before start.
 Revision `0011_rollback_bundle_identity` requires a nonblank rollback bundle identity and
 rejects replay unless the exact bundle identity and burn timestamp match the durable activation.
+Revision `0012_task_grant_semantic_identity` adds a dialect-aware partial unique index so
+task-level Marco authorization grants (`operation_id IS NULL`) cannot duplicate the existing
+generation, task, field, before-value and after-value semantic identity.
 
 The Stage 6–8 package remains non-activating by itself. It performs no production Asana read/write,
 installs no credentials, starts no projection worker, records no Marco approval, and cannot invent

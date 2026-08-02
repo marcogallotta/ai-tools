@@ -94,3 +94,19 @@ def test_native_fixture_reset_uses_alembic_history(pglite) -> None:
         assert connection.execute(
             "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal"
         ).fetchone()[0] > 0
+
+
+def test_pglite_rejects_duplicate_task_level_grant(pglite) -> None:
+    command.upgrade(_config(pglite.sqlalchemy_url), "head")
+    with psycopg.connect(pglite.libpq_dsn) as connection:
+        index = connection.execute(
+            """
+            SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND indexname = 'uq_marco_grant_task_semantic_identity'
+            """
+        ).fetchone()
+    assert index is not None
+    assert "UNIQUE INDEX" in index[0]
+    assert "WHERE (operation_id IS NULL)" in index[0]

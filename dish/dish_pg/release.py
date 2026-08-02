@@ -43,7 +43,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0011_rollback_bundle_identity"
+ALEMBIC_HEAD = "0012_task_grant_semantic_identity"
 
 
 class ReleaseCandidateService(

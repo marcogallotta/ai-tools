@@ -558,6 +558,17 @@ class MarcoAuthorizationGrant(Base):
             "generation_id", "task_id", "operation_id", "field_name", "before_value", "after_value",
             name="uq_marco_grant_semantic_identity",
         ),
+        Index(
+            "uq_marco_grant_task_semantic_identity",
+            "generation_id",
+            "task_id",
+            "field_name",
+            "before_value",
+            "after_value",
+            unique=True,
+            postgresql_where=text("operation_id IS NULL"),
+            sqlite_where=text("operation_id IS NULL"),
+        ),
     )
 
 
