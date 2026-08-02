@@ -8,7 +8,7 @@ as exact, digest-bound inputs.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping
 
 from sqlalchemy import func, inspect, select, text
@@ -18,7 +18,7 @@ from . import models
 from . import stage3_models as wf
 from . import stage5_models as tx
 from . import stage6_models as rel
-from .cutover_chronology import _require_at_or_after, _utc_comparable
+from .cutover_chronology import _require_at_or_after, _require_aware, _utc_comparable
 from .cutover_control import CutoverControlAuthority
 from .final_asana_closure import FinalAsanaClosureAuthority
 from .release_evidence import (
@@ -43,7 +43,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0009_candidate_replacement_control"
+ALEMBIC_HEAD = "0010_release_chronology"
 
 
 class ReleaseCandidateService(
@@ -61,14 +61,17 @@ class ReleaseCandidateService(
         self.clock = clock
 
     def _trusted_now(self) -> datetime:
-        if self.clock is not None:
-            return self.clock()
-        value = self.session.scalar(select(func.current_timestamp()))
+        value = self.clock() if self.clock is not None else self.session.scalar(
+            select(func.current_timestamp())
+        )
         if not isinstance(value, datetime):
             raise ReleaseAuthorityError("database clock did not return a timestamp")
-        return value
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
     def _require_not_future(self, value: datetime, field: str) -> None:
+        _require_aware(value, field)
         if _utc_comparable(value) > _utc_comparable(self._trusted_now()):
             raise ReleaseAuthorityError(f"{field} cannot be later than the trusted database clock")
 
@@ -120,8 +123,12 @@ class ReleaseCandidateService(
             "openapi_release": openapi_release,
             "routing_release": routing_release,
         }
+        self._require_not_future(created_at, "created_at")
         if existing is not None:
-            if any(getattr(existing, key) != value for key, value in identity.items()):
+            if (
+                any(getattr(existing, key) != value for key, value in identity.items())
+                or _utc_comparable(existing.created_at) != _utc_comparable(created_at)
+            ):
                 raise ReleaseAuthorityError("release candidate identity conflict")
             return existing
 
@@ -145,6 +152,20 @@ class ReleaseCandidateService(
             raise ReleaseAuthorityError("candidate source commit does not match shadow baseline")
         if schema_head != ALEMBIC_HEAD:
             raise ReleaseAuthorityError(f"candidate schema head must be {ALEMBIC_HEAD}")
+        chronology_floors = {
+            "active generation creation": generation.created_at,
+            "source import completion": batch.completed_at,
+            "shadow baseline closure": baseline.terminal_at,
+            "projection epoch creation": epoch.created_at,
+        }
+        for floor_field, floor in chronology_floors.items():
+            if floor is None:
+                raise ReleaseAuthorityError(
+                    f"release candidate lacks {floor_field} chronology"
+                )
+            _require_at_or_after(
+                created_at, floor, field="created_at", floor_field=floor_field
+            )
 
         row = rel.ReleaseCandidate(
             candidate_id=candidate_id,
@@ -224,6 +245,11 @@ class ReleaseCandidateService(
         candidate = self._candidate(candidate_id)
         if candidate.status != "assembling":
             raise ReleaseAuthorityError("release evidence is frozen after candidate validation")
+        _require_at_or_after(
+            recorded_at, candidate.created_at,
+            field="recorded_at", floor_field="candidate created_at",
+        )
+        self._require_not_future(recorded_at, "recorded_at")
         body = _validate_evidence_payload(
             category=category,
             evidence_key=evidence_key,
@@ -241,8 +267,15 @@ class ReleaseCandidateService(
             .limit(1)
         )
         digest = sha256_json(body)
-        if latest is not None and latest.payload_sha256 == digest and latest.outcome == outcome:
-            return latest
+        if latest is not None:
+            if latest.payload_sha256 == digest and latest.outcome == outcome:
+                if _utc_comparable(latest.recorded_at) != _utc_comparable(recorded_at):
+                    raise ReleaseAuthorityError("release evidence replay timestamp conflict")
+                return latest
+            _require_at_or_after(
+                recorded_at, latest.recorded_at,
+                field="recorded_at", floor_field="prior evidence revision",
+            )
         revision = 1 if latest is None else latest.evidence_revision + 1
         row = rel.ReleaseEvidenceItem(
             evidence_id=self.uuid_factory(),
@@ -271,6 +304,11 @@ class ReleaseCandidateService(
         candidate = self._candidate(candidate_id)
         if candidate.status != "assembling":
             raise ReleaseAuthorityError("rehearsal evidence is frozen after candidate validation")
+        _require_at_or_after(
+            started_at, candidate.created_at,
+            field="started_at", floor_field="candidate created_at",
+        )
+        self._require_not_future(started_at, "started_at")
         if rehearsal_kind not in REQUIRED_REHEARSALS:
             raise ReleaseAuthorityError("unsupported rehearsal kind")
         _require_nonblank(environment_identity, "environment_identity")
@@ -286,6 +324,8 @@ class ReleaseCandidateService(
             )
         )
         if existing is not None:
+            if _utc_comparable(existing.started_at) != _utc_comparable(started_at):
+                raise ReleaseAuthorityError("rehearsal start timestamp conflict")
             return existing
         row = rel.RehearsalRun(
             rehearsal_id=self.uuid_factory(),
@@ -317,6 +357,22 @@ class ReleaseCandidateService(
         rehearsal = self.session.get(rel.RehearsalRun, rehearsal_id)
         if rehearsal is None or rehearsal.status != "running":
             raise ReleaseAuthorityError("rehearsal is not running")
+        _require_at_or_after(
+            recorded_at, rehearsal.started_at,
+            field="recorded_at", floor_field="rehearsal started_at",
+        )
+        self._require_not_future(recorded_at, "recorded_at")
+        latest_checkpoint = self.session.scalar(
+            select(rel.RehearsalCheckpoint)
+            .where(rel.RehearsalCheckpoint.rehearsal_id == rehearsal_id)
+            .order_by(rel.RehearsalCheckpoint.sequence.desc())
+            .limit(1)
+        )
+        if latest_checkpoint is not None:
+            _require_at_or_after(
+                recorded_at, latest_checkpoint.recorded_at,
+                field="recorded_at", floor_field="prior rehearsal checkpoint",
+            )
         existing = self.session.scalar(
             select(rel.RehearsalCheckpoint).where(
                 rel.RehearsalCheckpoint.rehearsal_id == rehearsal_id,
@@ -330,7 +386,10 @@ class ReleaseCandidateService(
         )
         digest = sha256_json(body)
         if existing is not None:
-            if existing.payload_sha256 != digest:
+            if (
+                existing.payload_sha256 != digest
+                or _utc_comparable(existing.recorded_at) != _utc_comparable(recorded_at)
+            ):
                 raise ReleaseAuthorityError("rehearsal checkpoint identity conflict")
             return existing
         sequence = int(
@@ -372,6 +431,16 @@ class ReleaseCandidateService(
             .where(rel.RehearsalCheckpoint.rehearsal_id == rehearsal_id)
             .order_by(rel.RehearsalCheckpoint.sequence)
         ).all()
+        _require_at_or_after(
+            completed_at, row.started_at,
+            field="completed_at", floor_field="rehearsal started_at",
+        )
+        for checkpoint in checkpoints:
+            _require_at_or_after(
+                completed_at, checkpoint.recorded_at,
+                field="completed_at", floor_field=f"checkpoint {checkpoint.checkpoint_kind}",
+            )
+        self._require_not_future(completed_at, "completed_at")
         observed = {checkpoint.checkpoint_kind for checkpoint in checkpoints}
         required = set(REQUIRED_REHEARSAL_CHECKPOINTS[row.rehearsal_kind])
         missing = sorted(required - observed)
@@ -407,7 +476,14 @@ class ReleaseCandidateService(
             raise ReleaseAuthorityError("rehearsal report does not bind exact checkpoint set")
         digest = sha256_json(body)
         if row.status != "running":
-            if row.status != terminal or row.report_sha256 != digest:
+            if (
+                row.status != terminal
+                or row.report_sha256 != digest
+                or row.completed_at is None
+                or _utc_comparable(row.completed_at) != _utc_comparable(completed_at)
+                or row.measured_rpo_seconds != measured_rpo_seconds
+                or row.measured_rto_seconds != measured_rto_seconds
+            ):
                 raise ReleaseAuthorityError("rehearsal terminal result conflict")
             return row
         row.status = terminal
@@ -799,6 +875,30 @@ class ReleaseCandidateService(
         built_at: datetime,
     ) -> rel.EvidenceBundle:
         candidate = self._candidate(candidate_id)
+        _require_at_or_after(
+            built_at, candidate.created_at,
+            field="built_at", floor_field="candidate created_at",
+        )
+        self._require_not_future(built_at, "built_at")
+        latest_evidence_at = self.session.scalar(
+            select(func.max(rel.ReleaseEvidenceItem.recorded_at)).where(
+                rel.ReleaseEvidenceItem.candidate_id == candidate_id
+            )
+        )
+        latest_rehearsal_at = self.session.scalar(
+            select(func.max(rel.RehearsalRun.completed_at)).where(
+                rel.RehearsalRun.candidate_id == candidate_id,
+                rel.RehearsalRun.completed_at.is_not(None),
+            )
+        )
+        for floor_field, floor in (
+            ("latest release evidence", latest_evidence_at),
+            ("latest rehearsal completion", latest_rehearsal_at),
+        ):
+            if floor is not None:
+                _require_at_or_after(
+                    built_at, floor, field="built_at", floor_field=floor_field
+                )
         evaluation = self.evaluate_candidate(candidate_id=candidate_id)
         evidence = self.session.scalars(
             select(rel.ReleaseEvidenceItem)
@@ -1016,6 +1116,38 @@ class ReleaseCandidateService(
         bundle = self.session.get(rel.EvidenceBundle, evidence_bundle_id)
         if bundle is None or bundle.candidate_id != candidate_id or bundle.bundle_kind != "release_candidate":
             raise ReleaseAuthorityError("validation bundle does not belong to release candidate")
+        _require_at_or_after(
+            validated_at, candidate.created_at,
+            field="validated_at", floor_field="candidate created_at",
+        )
+        _require_at_or_after(
+            validated_at, bundle.built_at,
+            field="validated_at", floor_field="evidence bundle built_at",
+        )
+        self._require_not_future(validated_at, "validated_at")
+        for floor_field, floor in (
+            (
+                "latest release evidence",
+                self.session.scalar(
+                    select(func.max(rel.ReleaseEvidenceItem.recorded_at)).where(
+                        rel.ReleaseEvidenceItem.candidate_id == candidate_id
+                    )
+                ),
+            ),
+            (
+                "latest rehearsal completion",
+                self.session.scalar(
+                    select(func.max(rel.RehearsalRun.completed_at)).where(
+                        rel.RehearsalRun.candidate_id == candidate_id,
+                        rel.RehearsalRun.completed_at.is_not(None),
+                    )
+                ),
+            ),
+        ):
+            if floor is not None:
+                _require_at_or_after(
+                    validated_at, floor, field="validated_at", floor_field=floor_field
+                )
         evaluation = self.evaluate_candidate(candidate_id=candidate_id)
         if not evaluation.passed:
             failed = [check.code for check in evaluation.checks if not check.passed]

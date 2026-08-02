@@ -971,7 +971,25 @@ class CutoverControlAuthority:
         }:
             raise ReleaseAuthorityError("ordinary rollback is prohibited after rollback burn")
         if run.state == "aborted":
+            if run.terminal_at is None or _utc_comparable(run.terminal_at) != _utc_comparable(aborted_at):
+                raise ReleaseAuthorityError("cutover abort timestamp conflict")
             return run
+        latest_checkpoint_at = self.session.scalar(
+            select(rel.CutoverCheckpoint.recorded_at)
+            .where(rel.CutoverCheckpoint.cutover_run_id == cutover_run_id)
+            .order_by(rel.CutoverCheckpoint.sequence.desc())
+            .limit(1)
+        )
+        _require_at_or_after(
+            aborted_at, run.started_at,
+            field="aborted_at", floor_field="cutover started_at",
+        )
+        if latest_checkpoint_at is not None:
+            _require_at_or_after(
+                aborted_at, latest_checkpoint_at,
+                field="aborted_at", floor_field="latest cutover checkpoint",
+            )
+        self._require_not_future(aborted_at, "aborted_at")
         self._advance_cutover(run, "aborted", terminal_at=aborted_at)
         candidate.status = "aborted"
         candidate.candidate_revision += 1

@@ -8,7 +8,7 @@ from typing import Any, Mapping
 from sqlalchemy import func, select
 
 from . import stage6_models as rel
-from .cutover_chronology import _require_at_or_after
+from .cutover_chronology import _require_at_or_after, _require_aware
 from .release_evidence import (
     ReleaseAuthorityError,
     _require_nonblank,
@@ -31,6 +31,9 @@ class FinalAsanaClosureAuthority:
         recorded_at: datetime,
     ) -> rel.FinalAsanaClosure:
         candidate = self._candidate(candidate_id)
+        _require_aware(interval_started_at, "interval_started_at")
+        _require_aware(closed_through_at, "closed_through_at")
+        _require_aware(recorded_at, "recorded_at")
         if candidate.status not in {"validated", "approved"}:
             raise ReleaseAuthorityError("final Asana closure requires a validated candidate")
         capture_manifest_sha256 = _require_sha256(
@@ -94,6 +97,8 @@ class FinalAsanaClosureAuthority:
         observed_at: datetime,
         recorded_at: datetime,
     ) -> rel.FinalAsanaClosureInvalidation:
+        _require_aware(observed_at, "observed_at")
+        _require_aware(recorded_at, "recorded_at")
         closure = self.session.get(rel.FinalAsanaClosure, closure_id)
         if closure is None:
             raise ReleaseAuthorityError("unknown final Asana closure")

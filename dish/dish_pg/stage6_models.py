@@ -164,6 +164,10 @@ class RehearsalRun(Base):
             "AND completed_at IS NOT NULL)",
             name="terminal_report_consistent",
         ),
+        CheckConstraint(
+            "completed_at IS NULL OR completed_at >= started_at",
+            name="completion_not_before_start",
+        ),
         UniqueConstraint(
             "candidate_id", "rehearsal_kind", "environment_identity", "source_manifest_sha256",
             name="uq_rehearsal_identity",

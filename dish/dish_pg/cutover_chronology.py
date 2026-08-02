@@ -6,7 +6,17 @@ from datetime import datetime, timezone
 from .release_evidence import ReleaseAuthorityError
 
 
+def _require_aware(value: datetime, field: str) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ReleaseAuthorityError(f"{field} must include an explicit timezone offset")
+    return value
+
+
 def _utc_comparable(value: datetime) -> datetime:
+    # Persisted SQLite timestamps are returned without tzinfo even when the mapped
+    # column is timezone-aware. External inputs are rejected by _require_aware at
+    # the public service boundary; this helper only normalizes trusted/persisted
+    # values for comparison.
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
