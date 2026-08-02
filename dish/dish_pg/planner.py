@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 
 from .command_contract import CommandDefinition, definition_for
+from .command_effects import effect_spec_for
 
 
 class PlanningError(ValueError):
@@ -182,115 +183,37 @@ def plan_command(
                 recovery_guidance={"allowed_actions": allowed},
             )
 
-    mutations: list[PlannedMutation] = []
-    projections: list[Mapping[str, Any]] = []
     command = intent.command_name
     args = dict(intent.arguments)
-
-    if command == "create":
-        mutations.extend(
-            [
-                PlannedMutation("create_task", {"title": args.get("title", "")}),
-                PlannedMutation("activate_initial_document", {}),
-                PlannedMutation("place_research_queue", {}),
-            ]
+    if command in {"recover", "repair-destination"} and snapshot.unresolved_projection_attempt_id is None:
+        return CommandPlan(
+            definition=definition,
+            legal=False,
+            result_code="PROJECTION_ATTEMPT_REQUIRED",
+            fence=snapshot.fence,
+            audit_event_type="projection_target_missing",
         )
-        projections.append({"event_type": "create_task"})
-    elif command == "start" and args.get("kind") == "planning" and not args.get(
-        "intent_challenge_id"
-    ):
-        mutations.append(PlannedMutation("issue_planning_challenge", {}))
-    elif command == "start":
-        mutations.extend(
-            [
-                PlannedMutation("open_operation", {"kind": args.get("kind")}),
-                PlannedMutation("append_actor_fact", {}),
-                PlannedMutation("issue_actor_lease", {}),
-            ]
+    effects = effect_spec_for(command, args)
+    mutations = tuple(
+        PlannedMutation(
+            kind,
+            {"attempt_id": snapshot.unresolved_projection_attempt_id, "route": command}
+            if kind == "settle_projection_attempt"
+            else {},
         )
-    elif command == "inspect":
-        mutations.append(PlannedMutation("record_inspection_occurrence", {}))
-    elif command == "prepare":
-        mutations.extend(
-            [
-                PlannedMutation("activate_content_version", {}),
-                PlannedMutation("advance_operation", {"phase": "await_verification"}),
-            ]
-        )
-        projections.append({"event_type": "update_task_document"})
-    elif command == "approve":
-        mutations.extend(
-            [
-                PlannedMutation("record_verification_signoff", {}),
-                PlannedMutation("advance_operation", {"phase": "await_submission"}),
-            ]
-        )
-        projections.append({"event_type": "update_task_document"})
-    elif command == "reject":
-        route = args.get("route") or args.get("correction") or "large"
-        mutations.append(PlannedMutation("record_verification_rejection", {"route": route}))
-    elif command == "submit":
-        mutations.extend(
-            [
-                PlannedMutation("commit_logical_destination", {}),
-                PlannedMutation("complete_operation", {}),
-            ]
-        )
-        projections.append({"event_type": "move_task"})
-    elif command == "renew-lease":
-        mutations.append(PlannedMutation("renew_actor_lease", {}))
-    elif command in {"recover", "repair-destination"}:
-        if snapshot.unresolved_projection_attempt_id is None:
-            return CommandPlan(
-                definition=definition,
-                legal=False,
-                result_code="PROJECTION_ATTEMPT_REQUIRED",
-                fence=snapshot.fence,
-                audit_event_type="projection_target_missing",
-            )
-        mutations.append(
-            PlannedMutation(
-                "settle_projection_attempt",
-                {"attempt_id": snapshot.unresolved_projection_attempt_id, "route": command},
-            )
-        )
-    elif command == "discard":
-        mutations.append(PlannedMutation("cancel_provably_unapplied_operation", {}))
-    elif command == "abandon-operation":
-        mutations.append(PlannedMutation("begin_abandonment", {}))
-    elif command == "reconcile-abandonment":
-        mutations.append(PlannedMutation("reconcile_abandonment", {}))
-    elif command == "reopen-planning":
-        mutations.append(PlannedMutation("clear_completion_for_planning", {}))
-        projections.append({"event_type": "set_completion"})
-    elif command == "reopen":
-        mutations.append(PlannedMutation("reset_verification_cycle", {}))
-    elif command == "supply-evidence":
-        mutations.append(PlannedMutation("supply_hold_evidence", {}))
-    elif command == "record-human-decision":
-        mutations.append(PlannedMutation("record_human_decision", {}))
-    elif command == "authorize-governed-change":
-        mutations.append(PlannedMutation("create_marco_authorization", {}))
-    elif command in {"recover-lease", "expire-lease"}:
-        mutations.append(PlannedMutation("release_exact_lease", {"route": command}))
-    elif command == "migrate":
-        mutations.extend(
-            [
-                PlannedMutation("activate_migrated_document", {}),
-                PlannedMutation("bind_schema_migration", {}),
-            ]
-        )
-        projections.append({"event_type": "update_task_document"})
-    elif command == "settle-planning-intent":
-        mutations.append(PlannedMutation("settle_planning_challenge", {}))
+        for kind in effects.mutation_kinds
+    )
+    projections = tuple(
+        {"event_type": event_type} for event_type in effects.projection_event_types
+    )
 
     return CommandPlan(
         definition=definition,
         legal=True,
         result_code="PLANNED",
         fence=snapshot.fence,
-        mutations=tuple(mutations),
-        projection_intents=tuple(projections),
+        mutations=mutations,
+        projection_intents=projections,
         audit_event_type=f"{command}_planned",
         causality=(
             {

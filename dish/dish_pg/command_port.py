@@ -19,6 +19,7 @@ from . import models
 from . import stage3_models as wf
 from . import stage5_models as projection
 from .command_contract import definition_for
+from .command_effects import CommandEffectSpec, effect_spec_for
 from .planner import (
     AuthorityFence,
     AuthoritativeSnapshot,
@@ -41,6 +42,10 @@ PORTED_MUTATION_COMMANDS = frozenset({
 
 class CommandPortError(ValueError):
     """Base error for canonical command admission or execution."""
+
+
+class CommandEffectMismatch(RuntimeError):
+    """Committed handler effects disagree with the authoritative command specification."""
 
 
 class CommandRuleError(CommandPortError):
@@ -310,6 +315,14 @@ class PostgresCommandPort:
                 {"message": str(exc), **exc.data},
             )
 
+        self.session.flush()
+        self._assert_committed_effects(
+            call=call,
+            execution=execution,
+            task=task,
+            operation=operation,
+            expected=effect_spec_for(call.command_name, call.arguments),
+        )
         data = {"request_id": str(call.request_id), **data}
         self._store_outcome(
             call=call,
@@ -1103,6 +1116,125 @@ class PostgresCommandPort:
         prior_revision, prior_expiry = lease.lease_revision, lease.expires_at
         lease.state, lease.lease_revision, lease.terminal_at = state, prior_revision + 1, at
         self.session.add(wf.LeaseEvent(lease_event_id=self.uuid_factory(), lease_id=lease.lease_id, event_kind="released", request_id=execution.request_id, command_execution_id=execution.execution_id, prior_revision=prior_revision, resulting_revision=prior_revision + 1, prior_expiry=prior_expiry, resulting_expiry=prior_expiry, reason=reason, occurred_at=at))
+
+    def _assert_committed_effects(
+        self,
+        *,
+        call: CommandCall,
+        execution: wf.CommandExecution,
+        task: models.DishTask | None,
+        operation: wf.WorkflowOperation | None,
+        expected: CommandEffectSpec,
+    ) -> None:
+        projection_types = tuple(
+            self.session.scalars(
+                select(projection.ProjectionOutboxEvent.event_type)
+                .where(
+                    projection.ProjectionOutboxEvent.command_execution_id
+                    == execution.execution_id
+                )
+                .order_by(projection.ProjectionOutboxEvent.aggregate_sequence)
+            ).all()
+        )
+        if projection_types != expected.projection_event_types:
+            raise CommandEffectMismatch(
+                f"{call.command_name} projection effects mismatch: "
+                f"expected {expected.projection_event_types!r}, observed {projection_types!r}"
+            )
+
+        if call.command_name not in {"prepare", "approve", "reject"}:
+            return
+        if task is None or operation is None:
+            raise CommandEffectMismatch(
+                f"{call.command_name} effect verification requires task and operation authority"
+            )
+
+        observed: set[str] = set()
+        execution_id = execution.execution_id
+        if self.session.scalar(
+            select(models.ContentActivation.content_activation_id).where(
+                models.ContentActivation.command_execution_id == execution_id
+            )
+        ) is not None:
+            observed.add(
+                "activate_corrected_content_version"
+                if call.command_name in {"approve", "reject"}
+                else "activate_content_version"
+            )
+        if self.session.scalar(
+            select(models.TaskSectionPlacementEvent.placement_event_id).where(
+                models.TaskSectionPlacementEvent.command_execution_id == execution_id
+            )
+        ) is not None:
+            observed.add("place_verification_queue")
+        if self.session.scalar(
+            select(wf.OperationStep.step_id).where(
+                wf.OperationStep.command_execution_id == execution_id
+            )
+        ) is not None:
+            observed.add("append_operation_step")
+        if self.session.scalar(
+            select(wf.VerificationCycle.cycle_id).where(
+                wf.VerificationCycle.created_by_execution_id == execution_id
+            )
+        ) is not None:
+            observed.add("open_verification_cycle")
+        if self.session.scalar(
+            select(wf.VerificationCorrection.correction_id).where(
+                wf.VerificationCorrection.command_execution_id == execution_id
+            )
+        ) is not None:
+            observed.add("record_verification_correction")
+        if self.session.scalar(
+            select(wf.VerificationSignoff.signoff_id).where(
+                wf.VerificationSignoff.command_execution_id == execution_id
+            )
+        ) is not None:
+            observed.add("record_verification_signoff")
+        if self.session.scalar(
+            select(wf.EvidenceHold.hold_id).where(
+                wf.EvidenceHold.opened_by_execution_id == execution_id
+            )
+        ) is not None:
+            observed.add("open_evidence_hold")
+        if self.session.scalar(
+            select(wf.HumanReviewRequirement.requirement_id).where(
+                wf.HumanReviewRequirement.opened_by_execution_id == execution_id
+            )
+        ) is not None:
+            observed.add("open_human_review")
+
+        if call.command_name == "reject":
+            rejected_cycle = self.session.scalar(
+                select(wf.VerificationCycle.cycle_id).where(
+                    wf.VerificationCycle.operation_id == operation.operation_id,
+                    wf.VerificationCycle.lifecycle == "rejected",
+                    wf.VerificationCycle.outcome == "rejected",
+                    wf.VerificationCycle.terminal_at == call.now,
+                )
+            )
+            if rejected_cycle is not None:
+                observed.add("reject_verification_cycle")
+
+        expected_phase = {
+            "prepare": "await_verification",
+            "approve": "await_submission",
+            "reject": {
+                "large": "await_verification",
+                "evidence": "held_evidence",
+                "human-review": "held_human",
+                "human_review": "held_human",
+            }.get(str(call.arguments.get("route", "large")), "held_human"),
+        }[call.command_name]
+        if operation.phase == expected_phase:
+            observed.add("advance_operation")
+
+        expected_mutations = set(expected.mutation_kinds)
+        if observed != expected_mutations:
+            raise CommandEffectMismatch(
+                f"{call.command_name} authoritative effects mismatch: "
+                f"expected {sorted(expected_mutations)!r}, observed {sorted(observed)!r}"
+            )
 
     def _project(self, generation_id, execution_id, task_id, event_type, payload, at) -> str:
         value = self.projection_recorder.record(

@@ -437,13 +437,17 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 )
             elif cmd == "first-admission-plan":
                 data = _load(args.file)
+                if "expected_projection_events" in data:
+                    raise ValueError(
+                        "expected_projection_events is derived from authoritative command semantics"
+                    )
                 task_id = data.get("task_id")
                 row = service.plan_first_admission(
                     cutover_run_id=_uuid(args.cutover_run_id),
                     request_id=_uuid(data["request_id"]),
                     command_name=data["command_name"],
+                    command_arguments=data.get("command_arguments", {}),
                     task_id=None if task_id is None else _uuid(task_id),
-                    expected_projection_events=int(data["expected_projection_events"]),
                     payload=data.get("payload", {}),
                     recorded_at=_time(data["recorded_at"]),
                 )

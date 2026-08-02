@@ -292,15 +292,20 @@ def test_admission_requires_post_burn_runtime_worker_and_first_request_evidence(
             )
 
         first_request_id = _next(ids)
-        service.plan_first_admission(
+        plan = service.plan_first_admission(
             cutover_run_id=cutover_run_id,
             request_id=first_request_id,
-            command_name="start",
+            command_name="prepare",
+            command_arguments={
+                "task_id": str(task_id),
+                "operation_id": str(_next(ids)),
+            },
             task_id=task_id,
-            expected_projection_events=0,
             payload={"probe": "stage8-first-admission"},
             recorded_at=NOW + timedelta(minutes=6),
         )
+        assert plan.expected_projection_events == 2
+        assert plan.payload["command_arguments"]["task_id"] == str(task_id)
         control = service.open_mutation_admission(
             cutover_run_id=cutover_run_id,
             opened_at=NOW + timedelta(minutes=7),

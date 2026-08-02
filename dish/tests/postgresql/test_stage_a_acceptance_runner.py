@@ -22,6 +22,7 @@ def test_stage_a_acceptance_selection_pins_all_release_safety_owners() -> None:
         "fail_closed_admission_outbox",
         "frozen_migration_history",
         "release_evidence_contracts",
+        "command_effect_authority",
         "stage_a_acceptance_runner",
     )
     assert namespace["FOCUSED_TEST_EXPRESSION"] == " or ".join(selectors)

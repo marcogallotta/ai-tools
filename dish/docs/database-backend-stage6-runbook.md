@@ -415,7 +415,9 @@ scripts/dish-pg-release projection-worker-ready CANDIDATE_UUID \
 ```
 
 Choose one bounded first production request before opening admission. Its plan must bind the request
-UUID, command, optional task UUID, and exact expected projection-event count:
+UUID, command, exact `command_arguments`, optional task UUID, and operator evidence. Do not supply an
+`expected_projection_events` field: the release service derives that count from authoritative command
+semantics and rejects operator-declared counts.
 
 ```sh
 scripts/dish-pg-release first-admission-plan CUTOVER_UUID \

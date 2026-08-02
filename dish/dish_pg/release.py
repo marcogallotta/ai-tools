@@ -22,6 +22,8 @@ from . import models
 from . import stage3_models as wf
 from . import stage5_models as tx
 from . import stage6_models as rel
+from .command_contract import definition_for
+from .command_effects import expected_projection_count
 
 ALEMBIC_HEAD = "0008_fail_closed_admission_outbox"
 
@@ -1989,8 +1991,8 @@ class ReleaseCandidateService:
         cutover_run_id: uuid.UUID,
         request_id: uuid.UUID,
         command_name: str,
+        command_arguments: Mapping[str, Any],
         task_id: uuid.UUID | None,
-        expected_projection_events: int,
         payload: Mapping[str, Any],
         recorded_at: datetime,
     ) -> rel.FirstAdmissionPlan:
@@ -2007,17 +2009,28 @@ class ReleaseCandidateService:
             floor_field="rollback burn",
         )
         self._require_not_future(recorded_at, "recorded_at")
-        if not command_name.strip():
+        normalized_command = command_name.strip()
+        if not normalized_command:
             raise ReleaseAuthorityError("first-admission command must be nonblank")
-        if expected_projection_events < 0:
-            raise ReleaseAuthorityError("first-admission projection count must be nonnegative")
+        try:
+            definition = definition_for(normalized_command)
+        except ValueError as exc:
+            raise ReleaseAuthorityError(str(exc)) from exc
+        if not definition.retained or definition.profile == "Q":
+            raise ReleaseAuthorityError("first admission must be a retained mutation command")
+        arguments = dict(command_arguments)
+        expected_projection_events = expected_projection_count(normalized_command, arguments)
+        plan_payload = {
+            "command_arguments": arguments,
+            "operator_evidence": dict(payload),
+        }
         body = {
             "cutover_run_id": str(cutover_run_id),
             "request_id": str(request_id),
-            "command_name": command_name,
+            "command_name": normalized_command,
             "task_id": None if task_id is None else str(task_id),
             "expected_projection_events": expected_projection_events,
-            "payload": dict(payload),
+            "payload": plan_payload,
         }
         digest = sha256_json(body)
         existing = self.session.scalar(
@@ -2031,10 +2044,10 @@ class ReleaseCandidateService:
             plan_id=self.uuid_factory(),
             cutover_run_id=cutover_run_id,
             request_id=request_id,
-            command_name=command_name.strip(),
+            command_name=normalized_command,
             task_id=task_id,
             expected_projection_events=expected_projection_events,
-            payload=dict(payload),
+            payload=plan_payload,
             plan_sha256=digest,
             recorded_at=recorded_at,
         )
@@ -2218,6 +2231,8 @@ class ReleaseCandidateService:
             or request.generation_id != candidate.generation_id
             or request.admitted_at < control.opened_at
             or request.command_name != plan.command_name
+            or request.canonical_payload.get("arguments")
+            != plan.payload.get("command_arguments")
             or outcome is None
             or outcome.outcome_class != "success"
             or not outcome.immutable_success

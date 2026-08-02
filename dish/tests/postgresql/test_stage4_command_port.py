@@ -107,6 +107,9 @@ def test_planner_delegates_legality_and_adjudicates_exact_effects() -> None:
     assert plan.legal is True
     assert [mutation.kind for mutation in plan.mutations] == [
         "activate_content_version",
+        "place_verification_queue",
+        "append_operation_step",
+        "open_verification_cycle",
         "advance_operation",
     ]
     confirmed = adjudicate_effect(

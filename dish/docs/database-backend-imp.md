@@ -573,6 +573,12 @@ It returns a command plan containing:
 - projection intents;
 - audit/causality requirements.
 
+The mutation and projection claims come from `dish_pg.command_effects`, the branch-sensitive
+command-effect authority shared with execution. The command port flushes each successful handler
+and fails the transaction if its projection outbox events disagree with that specification; the
+drift-prone `prepare`, `approve`, and `reject` paths additionally verify their authoritative rows
+and resulting operation phase before recording success.
+
 ### 7.3 Shared adjudicator
 
 The adjudicator accepts the plan and exact effect observations and returns:
@@ -1047,7 +1053,9 @@ Implemented Stage 6 offline foundation:
   cannot self-attest fencing. Cutover transitions reject impossible, backdated, or future chronology
   against the database/service clock. After rollback burn, admission remains closed until the exact deployed
   release, PostgreSQL route, worker probes, complete active-epoch reconciliation, and bounded first
-  request are durable. First-admission verification requires committed execution, immutable outcome,
+  request are durable. The first-admission plan binds the exact command arguments and derives its
+  projection count from `dish_pg.command_effects`; operators cannot declare that count.
+  First-admission verification requires the planned arguments, committed execution, immutable outcome,
   execution-bound audit, terminal invocation-audit obligation, exact applied projection count, and
   post-request reconciliation of every active mapping.
 - Alembic revision `0008_fail_closed_admission_outbox` treats a missing admission-control row as

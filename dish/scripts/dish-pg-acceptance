@@ -28,6 +28,7 @@ FOCUSED_TEST_SELECTORS = (
     "fail_closed_admission_outbox",
     "frozen_migration_history",
     "release_evidence_contracts",
+    "command_effect_authority",
     "stage_a_acceptance_runner",
 )
 FOCUSED_TEST_EXPRESSION = " or ".join(FOCUSED_TEST_SELECTORS)
