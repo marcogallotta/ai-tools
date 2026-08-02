@@ -1,4 +1,4 @@
-# Live test-project smoke
+# Live test-project rehearsal
 
 Do not run this against production Cooking. Use disposable tasks in the configured test project and
 preserve the complete JSON transcript.
@@ -23,7 +23,7 @@ transcript to the approved rollout record location before relying on it for acti
 
 ## Tracking discipline
 
-Use this file as the current smoke-test ledger. After every live or isolated service smoke pass:
+Use this file as the current rehearsal ledger. After every live or isolated service rehearsal pass:
 
 - update the applicable stage instead of maintaining a separate informal checklist;
 - record the date, tested revision, run ID, fixture task IDs, and durable report/transcript paths;
@@ -47,7 +47,7 @@ Do not turn this ledger into an incident log or paste large responses into it.
 - `DISH_LIVE_MODE=1` and `DISH_MODE=service` are set on CLI/admin clients.
 - Mint one canonical lowercase UUID `run_id` and reuse it throughout that stage.
 
-## Stage 1 — foundation smoke: done
+## Stage 1 — foundation rehearsal: done
 
 Completed against the live test project and isolated copies of its service database:
 
@@ -71,14 +71,14 @@ Completed against the live test project and isolated copies of its service datab
 Disposable live task `1216941434175836` remains in Research Queue and requires Stage 3 cleanup.
 
 Before treating Stage 1 as an activation record, rerun and record the preconditions above. The saved
-smoke reports do not prove that the complete unit/hermetic suites, Asana-project backup, or every
+rehearsal reports do not prove that the complete unit/hermetic suites, Asana-project backup, or every
 service-host environment value were checked in the same run.
 
-## Stage 2 — adversarial admin and resilience smoke: post-fix regression run
+## Stage 2 — adversarial admin and resilience rehearsal: post-fix regression run
 
 Admin identifiers, authority, replay, leases, backups, restore interruption, filesystem failures,
 protocol input boundaries, and database recovery were probed. Reproduce a suspected defect twice
-where safe, apply no code fix during smoke testing, and rerun the affected gate after a fix is
+where safe, apply no code fix during rehearsal, and rerun the affected gate after a fix is
 claimed.
 
 ### Post-fix run 2026-07-28

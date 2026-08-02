@@ -192,7 +192,7 @@ def test_checked_in_contract_documents_current_access_and_deployment():
     readme = (ROOT / "README.md").read_text()
     tailscale = (ROOT / "deploy" / "tailscale" / "README.md").read_text()
     action_guide = (ROOT / "deploy" / "gpt-action.md").read_text()
-    smoke = (ROOT / "deploy" / "live-test-project-smoke.md").read_text()
+    rehearsal = (ROOT / "deploy" / "live-test-project-rehearsal.md").read_text()
 
     assert "one laptop-hosted `dish-service` process" in runtime
     assert "Planning's read-only lookup" in runtime
@@ -213,8 +213,8 @@ def test_checked_in_contract_documents_current_access_and_deployment():
     assert "--https=8444" in tailscale and "--https=443" in tailscale
     assert "port 443 is free" in tailscale and "do not overwrite" in tailscale
     assert "127.0.0.1:8765" in tailscale and "127.0.0.1:8766" in tailscale
-    assert "1216693403164366" in smoke
-    assert "Do not run this against production Cooking" in smoke
+    assert "1216693403164366" in rehearsal
+    assert "Do not run this against production Cooking" in rehearsal
     assert "https://laptop.tail46f0b9.ts.net/openapi/action.json" in action_guide
     assert "Authorization: Bearer <DISH_SERVICE_ACTION_TOKEN>" in action_guide
     assert "client.run_id" in action_guide and "allowed_actions" in action_guide

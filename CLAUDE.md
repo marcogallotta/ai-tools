@@ -64,7 +64,7 @@ schema migration, SQLite concurrency, and backup/restore with production synchro
 Before handing back code or staged archives, also run the complete `.venv/bin/python -m pytest`
 suite. Never package `.venv` in a patch or archive.
 
-## Live Dish smoke-test credentials
+## Live Dish rehearsal credentials
 
 The service host keeps test and production running as separate systemd units. Test owns private and
 Action ports `8765/8766`, production owns `8775/8776`, and the loopback Caddy router on `8786`

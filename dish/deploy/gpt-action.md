@@ -155,7 +155,7 @@ Automated generator and checked-in-schema tests establish local acceptance only.
 is not established until this exact schema is re-imported and the UUID constraints above are visibly
 verified in the GPT editor, followed by the Preview call.
 
-Then run the complete disposable-task procedure in `live-test-project-smoke.md`. Preview success for
+Then run the complete disposable-task procedure in `live-test-project-rehearsal.md`. Preview success for
 `sections` is connectivity proof, not authorization for production Cooking.
 
 ## Token rotation
