@@ -22,7 +22,7 @@ from . import stage3_models as wf
 from . import stage5_models as tx
 from . import stage6_models as rel
 
-ALEMBIC_HEAD = "0006_final_asana_closure"
+ALEMBIC_HEAD = "0007_cutover_evidence_gates"
 
 REQUIRED_EVIDENCE = (
     ("authority_coverage", "current_to_target"),
@@ -37,6 +37,13 @@ REQUIRED_EVIDENCE = (
 )
 REQUIRED_REHEARSALS = ("full", "activation", "restore", "fault_injection")
 
+REQUIRED_REHEARSAL_CHECKPOINTS = {
+    "full": ("source_capture", "import_validation", "semantic_parity", "projection_reconciliation"),
+    "activation": ("writer_fence", "authority_activation", "rollback_burn", "first_admission"),
+    "restore": ("backup_verified", "restore_completed", "generation_rotated", "stale_request_rejected"),
+    "fault_injection": ("precommit_crash", "postcommit_replay", "projection_retry", "restart_recovery"),
+}
+
 
 class ReleaseAuthorityError(ValueError):
     """A release or cutover transition failed closed."""
@@ -46,6 +53,10 @@ def _utc_comparable(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
+
+
+def _is_sha256(value: str) -> bool:
+    return len(value) == 64 and all(character in "0123456789abcdef" for character in value.lower())
 
 
 def canonical_json(value: Any) -> bytes:
@@ -343,6 +354,20 @@ class ReleaseCandidateService:
         body = dict(report)
         digest = sha256_json(body)
         terminal = "passed" if passed else "failed"
+        if passed:
+            observed = set(
+                self.session.scalars(
+                    select(rel.RehearsalCheckpoint.checkpoint_kind).where(
+                        rel.RehearsalCheckpoint.rehearsal_id == rehearsal_id
+                    )
+                ).all()
+            )
+            required = set(REQUIRED_REHEARSAL_CHECKPOINTS[row.rehearsal_kind])
+            missing = sorted(required - observed)
+            if missing:
+                raise ReleaseAuthorityError(
+                    "passed rehearsal lacks required checkpoints: " + ", ".join(missing)
+                )
         if row.status != "running":
             if row.status != terminal or row.report_sha256 != digest:
                 raise ReleaseAuthorityError("rehearsal terminal result conflict")
@@ -418,7 +443,23 @@ class ReleaseCandidateService:
         verified_at: datetime,
     ) -> rel.LegacyWriterFence:
         row = self._fence(fence_id)
-        digest = sha256_json(dict(proof))
+        candidate = self._candidate(row.candidate_id)
+        body = dict(proof)
+        required = {
+            "probe_kind": "authenticated_mutation_rejected_before_body_parse",
+            "candidate_id": str(candidate.candidate_id),
+            "target_identity": row.target_identity,
+            "fence_manifest_sha256": row.manifest_sha256,
+            "result": "pass",
+            "body_loaded": False,
+        }
+        if any(body.get(key) != value for key, value in required.items()):
+            raise ReleaseAuthorityError("writer fence proof does not match the exact candidate and fail-closed probe")
+        token_hash = str(body.get("request_token_sha256", ""))
+        status = body.get("http_status")
+        if len(token_hash) != 64 or not isinstance(status, int) or status < 400:
+            raise ReleaseAuthorityError("writer fence proof lacks a rejected authenticated request identity")
+        digest = sha256_json(body)
         if row.state == "verified":
             if row.proof_sha256 != digest:
                 raise ReleaseAuthorityError("writer fence proof conflict")
@@ -975,6 +1016,36 @@ class ReleaseCandidateService:
                     .order_by(rel.CutoverRecertification.recertification_revision)
                 ).all()
             ]
+        if bundle_kind == "cutover_final":
+            runtime = self.session.scalar(
+                select(rel.RuntimeReleaseAttestation).where(
+                    rel.RuntimeReleaseAttestation.candidate_id == candidate_id
+                )
+            )
+            worker = self.session.scalar(
+                select(rel.ProjectionWorkerReadiness).where(
+                    rel.ProjectionWorkerReadiness.candidate_id == candidate_id
+                )
+            )
+            plan = self.session.scalar(
+                select(rel.FirstAdmissionPlan)
+                .join(rel.CutoverRun, rel.CutoverRun.cutover_run_id == rel.FirstAdmissionPlan.cutover_run_id)
+                .where(rel.CutoverRun.candidate_id == candidate_id)
+            )
+            manifest["runtime_attestation"] = None if runtime is None else {
+                "attestation_id": str(runtime.attestation_id),
+                "sha256": runtime.attestation_sha256,
+            }
+            manifest["projection_worker_readiness"] = None if worker is None else {
+                "readiness_id": str(worker.readiness_id),
+                "sha256": worker.readiness_sha256,
+                "reconciliation_run_id": str(worker.reconciliation_run_id),
+            }
+            manifest["first_admission_plan"] = None if plan is None else {
+                "plan_id": str(plan.plan_id),
+                "request_id": str(plan.request_id),
+                "sha256": plan.plan_sha256,
+            }
         digest = sha256_json(manifest)
         existing = self.session.scalar(
             select(rel.EvidenceBundle).where(
@@ -1430,6 +1501,207 @@ class ReleaseCandidateService:
         self.session.flush()
         return row
 
+    def record_runtime_release_attestation(
+        self,
+        *,
+        candidate_id: uuid.UUID,
+        service_artifact_sha256: str,
+        projection_worker_artifact_sha256: str,
+        route_probe_sha256: str,
+        payload: Mapping[str, Any],
+        recorded_at: datetime,
+    ) -> rel.RuntimeReleaseAttestation:
+        candidate = self._candidate(candidate_id)
+        cutover = self.session.scalar(
+            select(rel.CutoverRun).where(
+                rel.CutoverRun.candidate_id == candidate_id,
+                rel.CutoverRun.state == "rollback_burned",
+            )
+        )
+        if candidate.status != "activated" or cutover is None:
+            raise ReleaseAuthorityError(
+                "runtime attestation requires the exact candidate after durable rollback burn"
+            )
+        if not all(
+            _is_sha256(value)
+            for value in (
+                service_artifact_sha256,
+                projection_worker_artifact_sha256,
+                route_probe_sha256,
+            )
+        ):
+            raise ReleaseAuthorityError("runtime attestation artifact identities must be SHA-256 digests")
+        body = dict(payload)
+        expected = {
+            "dish_release": candidate.dish_release,
+            "protocol_release": candidate.protocol_release,
+            "openapi_release": candidate.openapi_release,
+            "routing_release": candidate.routing_release,
+            "route_target": "postgresql",
+            "health": "pass",
+            "mutation_admission": "closed",
+        }
+        if any(body.get(key) != value for key, value in expected.items()):
+            raise ReleaseAuthorityError("runtime attestation does not match the exact candidate release and closed route")
+        identity = {
+            "candidate_id": str(candidate_id),
+            "service_artifact_sha256": service_artifact_sha256,
+            "projection_worker_artifact_sha256": projection_worker_artifact_sha256,
+            "route_probe_sha256": route_probe_sha256,
+            "payload": body,
+        }
+        digest = sha256_json(identity)
+        existing = self.session.scalar(
+            select(rel.RuntimeReleaseAttestation).where(
+                rel.RuntimeReleaseAttestation.candidate_id == candidate_id
+            )
+        )
+        if existing is not None:
+            if existing.attestation_sha256 != digest:
+                raise ReleaseAuthorityError("runtime release attestation identity conflict")
+            return existing
+        row = rel.RuntimeReleaseAttestation(
+            attestation_id=self.uuid_factory(),
+            candidate_id=candidate_id,
+            service_artifact_sha256=service_artifact_sha256,
+            projection_worker_artifact_sha256=projection_worker_artifact_sha256,
+            route_probe_sha256=route_probe_sha256,
+            payload=body,
+            attestation_sha256=digest,
+            recorded_at=recorded_at,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def record_projection_worker_readiness(
+        self,
+        *,
+        candidate_id: uuid.UUID,
+        reconciliation_run_id: uuid.UUID,
+        worker_identity: str,
+        worker_release: str,
+        payload: Mapping[str, Any],
+        ready_at: datetime,
+    ) -> rel.ProjectionWorkerReadiness:
+        candidate = self._candidate(candidate_id)
+        cutover = self.session.scalar(
+            select(rel.CutoverRun).where(
+                rel.CutoverRun.candidate_id == candidate_id,
+                rel.CutoverRun.state == "rollback_burned",
+            )
+        )
+        activation = self.session.scalar(
+            select(models.AuthorityActivation).where(
+                models.AuthorityActivation.generation_id == candidate.generation_id,
+                models.AuthorityActivation.outcome == "activated",
+            )
+        )
+        reconciliation = self.session.get(tx.ProjectionReconciliationRun, reconciliation_run_id)
+        body = dict(payload)
+        if candidate.status != "activated" or cutover is None or activation is None:
+            raise ReleaseAuthorityError(
+                "projection worker readiness requires the exact candidate after durable rollback burn"
+            )
+        if worker_release.strip() != candidate.dish_release:
+            raise ReleaseAuthorityError("projection worker readiness is for the wrong release")
+        if (
+            reconciliation is None
+            or reconciliation.generation_id != candidate.generation_id
+            or reconciliation.projection_epoch_id != candidate.projection_epoch_id
+            or reconciliation.status != "complete"
+            or reconciliation.processed_items != reconciliation.expected_items
+            or reconciliation.completed_at is None
+            or _utc_comparable(reconciliation.completed_at)
+            < _utc_comparable(activation.rollback_burned_at)
+        ):
+            raise ReleaseAuthorityError("projection worker readiness requires complete exact reconciliation")
+        if any(body.get(key) != "pass" for key in ("claim_probe", "write_probe", "restart_probe")):
+            raise ReleaseAuthorityError("projection worker readiness lacks claim, write, and restart proof")
+        identity = {
+            "candidate_id": str(candidate_id),
+            "projection_epoch_id": str(candidate.projection_epoch_id),
+            "reconciliation_run_id": str(reconciliation_run_id),
+            "worker_identity": worker_identity,
+            "worker_release": worker_release,
+            "payload": body,
+        }
+        digest = sha256_json(identity)
+        existing = self.session.scalar(
+            select(rel.ProjectionWorkerReadiness).where(
+                rel.ProjectionWorkerReadiness.candidate_id == candidate_id
+            )
+        )
+        if existing is not None:
+            if existing.readiness_sha256 != digest:
+                raise ReleaseAuthorityError("projection worker readiness identity conflict")
+            return existing
+        row = rel.ProjectionWorkerReadiness(
+            readiness_id=self.uuid_factory(),
+            candidate_id=candidate_id,
+            projection_epoch_id=candidate.projection_epoch_id,
+            reconciliation_run_id=reconciliation_run_id,
+            worker_identity=worker_identity.strip(),
+            worker_release=worker_release.strip(),
+            payload=body,
+            readiness_sha256=digest,
+            ready_at=ready_at,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def plan_first_admission(
+        self,
+        *,
+        cutover_run_id: uuid.UUID,
+        request_id: uuid.UUID,
+        command_name: str,
+        task_id: uuid.UUID | None,
+        expected_projection_events: int,
+        payload: Mapping[str, Any],
+        recorded_at: datetime,
+    ) -> rel.FirstAdmissionPlan:
+        run = self._cutover(cutover_run_id)
+        if run.state != "rollback_burned":
+            raise ReleaseAuthorityError(
+                "first-admission plan must be recorded after rollback burn and before admission opens"
+            )
+        if not command_name.strip():
+            raise ReleaseAuthorityError("first-admission command must be nonblank")
+        if expected_projection_events < 0:
+            raise ReleaseAuthorityError("first-admission projection count must be nonnegative")
+        body = {
+            "cutover_run_id": str(cutover_run_id),
+            "request_id": str(request_id),
+            "command_name": command_name,
+            "task_id": None if task_id is None else str(task_id),
+            "expected_projection_events": expected_projection_events,
+            "payload": dict(payload),
+        }
+        digest = sha256_json(body)
+        existing = self.session.scalar(
+            select(rel.FirstAdmissionPlan).where(rel.FirstAdmissionPlan.cutover_run_id == cutover_run_id)
+        )
+        if existing is not None:
+            if existing.plan_sha256 != digest:
+                raise ReleaseAuthorityError("first-admission plan identity conflict")
+            return existing
+        row = rel.FirstAdmissionPlan(
+            plan_id=self.uuid_factory(),
+            cutover_run_id=cutover_run_id,
+            request_id=request_id,
+            command_name=command_name.strip(),
+            task_id=task_id,
+            expected_projection_events=expected_projection_events,
+            payload=dict(payload),
+            plan_sha256=digest,
+            recorded_at=recorded_at,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
     def open_mutation_admission(
         self,
         *,
@@ -1445,6 +1717,31 @@ class ReleaseCandidateService:
             return control
         if run.state != "rollback_burned" or control is None or control.state != "closed":
             raise ReleaseAuthorityError("mutation admission opens only after durable rollback burn")
+        runtime = self.session.scalar(
+            select(rel.RuntimeReleaseAttestation).where(
+                rel.RuntimeReleaseAttestation.candidate_id == candidate.candidate_id
+            )
+        )
+        worker = self.session.scalar(
+            select(rel.ProjectionWorkerReadiness).where(
+                rel.ProjectionWorkerReadiness.candidate_id == candidate.candidate_id
+            )
+        )
+        plan = self.session.scalar(
+            select(rel.FirstAdmissionPlan).where(rel.FirstAdmissionPlan.cutover_run_id == cutover_run_id)
+        )
+        if runtime is None or worker is None or plan is None:
+            raise ReleaseAuthorityError(
+                "mutation admission requires runtime attestation, projection-worker readiness, and first-admission plan"
+            )
+        if worker.projection_epoch_id != candidate.projection_epoch_id:
+            raise ReleaseAuthorityError("projection-worker readiness is for the wrong epoch")
+        if (
+            _utc_comparable(runtime.recorded_at) > _utc_comparable(opened_at)
+            or _utc_comparable(worker.ready_at) > _utc_comparable(opened_at)
+            or _utc_comparable(plan.recorded_at) > _utc_comparable(opened_at)
+        ):
+            raise ReleaseAuthorityError("admission evidence must be durable before admission opens")
         control.state = "open"
         control.control_revision += 1
         control.opened_at = opened_at
@@ -1453,7 +1750,12 @@ class ReleaseCandidateService:
         self._checkpoint(
             run,
             "mutation_admission_opened",
-            {"generation_id": str(candidate.generation_id)},
+            {
+                "generation_id": str(candidate.generation_id),
+                "runtime_attestation_id": str(runtime.attestation_id),
+                "projection_worker_readiness_id": str(worker.readiness_id),
+                "first_admission_plan_id": str(plan.plan_id),
+            },
             opened_at,
         )
         self.session.flush()
@@ -1473,25 +1775,123 @@ class ReleaseCandidateService:
             raise ReleaseAuthorityError("first admission can be verified only after admission opens")
         candidate = self._candidate(run.candidate_id)
         control = self.session.get(rel.MutationAdmissionControl, candidate.generation_id)
+        plan = self.session.scalar(
+            select(rel.FirstAdmissionPlan).where(rel.FirstAdmissionPlan.cutover_run_id == cutover_run_id)
+        )
         request = self.session.get(wf.ServiceRequest, request_id)
         outcome = self.session.scalar(
             select(wf.ServiceRequestOutcome).where(wf.ServiceRequestOutcome.request_id == request_id)
         )
+        execution = self.session.scalar(
+            select(wf.CommandExecution).where(wf.CommandExecution.request_id == request_id)
+        )
+        audit = self.session.scalar(
+            select(wf.GovernedAuditEvent).where(wf.GovernedAuditEvent.request_id == request_id)
+        )
+        obligation = self.session.scalar(
+            select(wf.InvocationAuditObligation).where(
+                wf.InvocationAuditObligation.request_id == request_id
+            )
+        )
+        projection_events = self.session.scalars(
+            select(tx.ProjectionOutboxEvent).where(
+                tx.ProjectionOutboxEvent.command_execution_id == (execution.execution_id if execution else None)
+            )
+        ).all() if execution is not None else []
+        reconciliation = (
+            self.session.scalar(
+                select(tx.ProjectionReconciliationRun)
+                .where(
+                    tx.ProjectionReconciliationRun.generation_id == candidate.generation_id,
+                    tx.ProjectionReconciliationRun.projection_epoch_id == candidate.projection_epoch_id,
+                    tx.ProjectionReconciliationRun.status == "complete",
+                    tx.ProjectionReconciliationRun.started_at >= request.admitted_at,
+                )
+                .order_by(tx.ProjectionReconciliationRun.completed_at.desc())
+                .limit(1)
+            )
+            if request is not None
+            else None
+        )
+        active_mapping_ids: set[uuid.UUID] = set()
+        for mapping_model in (
+            tx.ProjectProjectionMapping,
+            tx.SectionProjectionMapping,
+            tx.TaskProjectionMapping,
+        ):
+            active_mapping_ids.update(
+                self.session.scalars(
+                    select(mapping_model.mapping_id).where(
+                        mapping_model.generation_id == candidate.generation_id,
+                        mapping_model.projection_epoch_id == candidate.projection_epoch_id,
+                        mapping_model.state == "active",
+                    )
+                ).all()
+            )
+        reconciliation_items = (
+            self.session.scalars(
+                select(tx.ProjectionReconciliationItem).where(
+                    tx.ProjectionReconciliationItem.reconciliation_run_id
+                    == reconciliation.reconciliation_run_id
+                )
+            ).all()
+            if reconciliation is not None
+            else []
+        )
+        reconciled_mapping_ids = {
+            item.mapping_id
+            for item in reconciliation_items
+            if item.mapping_id is not None and item.outcome in {"matched", "reprojected"}
+        }
         if (
             control is None
             or control.state != "open"
             or control.opened_at is None
+            or plan is None
+            or plan.request_id != request_id
             or request is None
             or request.generation_id != candidate.generation_id
             or request.admitted_at < control.opened_at
+            or request.command_name != plan.command_name
             or outcome is None
+            or outcome.outcome_class != "success"
+            or not outcome.immutable_success
+            or execution is None
+            or execution.status != "committed"
+            or execution.command_name != plan.command_name
+            or execution.task_id != plan.task_id
+            or audit is None
+            or audit.command_execution_id != execution.execution_id
+            or audit.task_id != plan.task_id
+            or obligation is None
+            or obligation.command_execution_id != execution.execution_id
+            or obligation.state not in {"fulfilled", "repaired"}
+            or obligation.terminal_at is None
+            or len(projection_events) != plan.expected_projection_events
+            or any(event.state != "applied" for event in projection_events)
+            or reconciliation is None
+            or reconciliation.processed_items != reconciliation.expected_items
+            or reconciliation.expected_items != len(active_mapping_ids)
+            or len(reconciliation_items) != len(active_mapping_ids)
+            or reconciled_mapping_ids != active_mapping_ids
         ):
-            raise ReleaseAuthorityError("first admission lacks a complete post-open request outcome")
+            raise ReleaseAuthorityError(
+                "first admission lacks exact committed execution, audit, projection, and reconciliation evidence"
+            )
         self._advance_cutover(run, "first_admission_verified")
         self._checkpoint(
             run,
             "first_admission_verified",
-            {"request_id": str(request_id), "outcome_id": str(outcome.outcome_id)},
+            {
+                "request_id": str(request_id),
+                "outcome_id": str(outcome.outcome_id),
+                "execution_id": str(execution.execution_id),
+                "audit_event_id": str(audit.audit_event_id),
+                "invocation_obligation_id": str(obligation.obligation_id),
+                "projection_event_ids": [str(event.projection_event_id) for event in projection_events],
+                "reconciliation_run_id": str(reconciliation.reconciliation_run_id),
+                "reconciled_mapping_ids": sorted(str(value) for value in active_mapping_ids),
+            },
             verified_at,
         )
         return run

@@ -13,7 +13,7 @@ memory.
 
 ## 1. What the repository can prove offline
 
-The repository can migrate an empty target through `0006_final_asana_closure`, execute the Stage 1–6
+The repository can migrate an empty target through `0007_cutover_evidence_gates`, execute the Stage 1–6
 acceptance suites, hash the exact source tree, store immutable evidence revisions and rehearsal
 reports, recompute structural closure from PostgreSQL, build deterministic evidence bundles, fence
 the legacy HTTP writer mechanically, and resume an interrupted cutover from durable checkpoints.
@@ -46,7 +46,7 @@ Freeze and retain these exact identities before candidate creation:
 - closed shadow baseline;
 - active projection epoch and completed reconciliation run;
 - Dish, Honest, protocol, OpenAPI, and routing releases;
-- PostgreSQL schema head `0006_final_asana_closure`.
+- PostgreSQL schema head `0007_cutover_evidence_gates`.
 
 A changed source commit, ledger high-water mark, production object, release, schema head, or proof gap
 requires a new or revised candidate. Do not relabel an old evidence bundle.
@@ -82,7 +82,7 @@ Prepare a mode-0600 JSON file containing exact UUIDs and release identities:
   "source_release": "EXACT_RELEASE",
   "source_commit": "EXACT_COMMIT",
   "ledger_through_commit": "EXACT_COMMIT",
-  "schema_head": "0006_final_asana_closure",
+  "schema_head": "0007_cutover_evidence_gates",
   "dish_release": "EXACT_RELEASE",
   "honest_release": "EXACT_RELEASE",
   "protocol_release": "EXACT_RELEASE",
@@ -195,7 +195,7 @@ Evaluation fails closed unless all of the following are true in authoritative Po
   unresolved;
 - no projection outbox item, attempt, create correlation, or drift item is unresolved;
 - the latest completed reconciliation accounts for every active projection mapping;
-- the database is at `0006_final_asana_closure`;
+- the database is at `0007_cutover_evidence_gates`;
 - every required evidence item and rehearsal class passes.
 
 Bundle identity is deterministic from authoritative contents; build time does not alter its SHA-256.
@@ -299,6 +299,22 @@ Probe at minimum:
 - no current legacy command, admin route, alternate listener, process, or credential can write;
 - the exact fence file survives service restart.
 
+Record the writer-fence proof as a mode-0600 JSON object. It must bind the candidate, target and
+recorded fence manifest and prove that one authenticated mutation was rejected before body parsing:
+
+```json
+{
+  "probe_kind": "authenticated_mutation_rejected_before_body_parse",
+  "candidate_id": "CANDIDATE_UUID",
+  "target_identity": "EXACT_TARGET_IDENTITY",
+  "fence_manifest_sha256": "64_HEX",
+  "request_token_sha256": "64_HEX",
+  "http_status": 503,
+  "body_loaded": false,
+  "result": "pass"
+}
+```
+
 Record exact probe evidence:
 
 ```sh
@@ -331,15 +347,41 @@ scripts/dish-pg-release cutover-burn-rollback CUTOVER_UUID \
 **Stop point:** after this commits, ordinary return to Asana/SQLite authority is prohibited. Recover
 PostgreSQL; do not remove the legacy fence or reverse-import Asana.
 
-Only after confirming the burn row and closed admission control are durable:
+After confirming the burn row and closed admission control are durable, record the exact deployed
+runtime and route while admission is still closed:
+
+```sh
+scripts/dish-pg-release runtime-attestation-record CANDIDATE_UUID \
+  --file /secure/evidence/runtime-attestation.json
+```
+
+Run the projection worker's claim, exact-write and restart probes and complete a reconciliation of
+every active mapping after rollback burn. Record the exact worker release and reconciliation:
+
+```sh
+scripts/dish-pg-release projection-worker-ready CANDIDATE_UUID \
+  --file /secure/evidence/projection-worker-readiness.json
+```
+
+Choose one bounded first production request before opening admission. Its plan must bind the request
+UUID, command, optional task UUID, and exact expected projection-event count:
+
+```sh
+scripts/dish-pg-release first-admission-plan CUTOVER_UUID \
+  --file /secure/evidence/first-admission-plan.json
+```
+
+Only after all three immutable records exist:
 
 ```sh
 scripts/dish-pg-release cutover-open-admission CUTOVER_UUID \
   --opened-at RFC3339_WITH_OFFSET
 ```
 
-Issue one bounded, explicitly selected first request through the target service. Confirm its immutable
-request outcome and all expected authoritative and projection evidence, then record:
+Issue exactly the planned request through the target service. Fulfil or repair its invocation-audit
+obligation and complete a post-request reconciliation covering every active projection mapping.
+Confirm the immutable successful outcome, committed execution, governed audit, exact applied
+projection-event count and complete reconciliation, then record:
 
 ```sh
 scripts/dish-pg-release cutover-verify-first-admission CUTOVER_UUID REQUEST_UUID \
@@ -352,8 +394,10 @@ scripts/dish-pg-release bundle CANDIDATE_UUID \
   --output /secure/evidence/cutover-final.json
 ```
 
-Enable downstream projection workers only at the point approved by the migration plan, with the
-active epoch and reconciliation controls already in place.
+The projection worker may run readiness probes before admission, but it must process production
+outbox work only under the approved active epoch and release. A mismatched worker release, incomplete
+reconciliation, failed claim/write/restart probe, or readiness record created before rollback burn
+keeps admission closed.
 
 ## 10. Abort and fence release before rollback burn
 

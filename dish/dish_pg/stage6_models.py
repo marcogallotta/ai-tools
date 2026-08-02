@@ -399,6 +399,78 @@ class CutoverRecertification(Base):
     )
 
 
+class RuntimeReleaseAttestation(Base):
+    __tablename__ = "runtime_release_attestations"
+
+    attestation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("release_candidates.candidate_id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    service_artifact_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    projection_worker_artifact_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    route_probe_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    attestation_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("length(service_artifact_sha256) = 64", name="service_hash_length"),
+        CheckConstraint("length(projection_worker_artifact_sha256) = 64", name="worker_hash_length"),
+        CheckConstraint("length(route_probe_sha256) = 64", name="route_hash_length"),
+        CheckConstraint("length(attestation_sha256) = 64", name="attestation_hash_length"),
+    )
+
+
+class ProjectionWorkerReadiness(Base):
+    __tablename__ = "projection_worker_readiness"
+
+    readiness_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("release_candidates.candidate_id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    projection_epoch_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("projection_epochs.projection_epoch_id", ondelete="RESTRICT"), nullable=False
+    )
+    reconciliation_run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("projection_reconciliation_runs.reconciliation_run_id", ondelete="RESTRICT"), nullable=False
+    )
+    worker_identity: Mapped[str] = mapped_column(String(256), nullable=False)
+    worker_release: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    readiness_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    ready_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("length(trim(worker_identity)) > 0", name="worker_identity_nonblank"),
+        CheckConstraint("length(trim(worker_release)) > 0", name="worker_release_nonblank"),
+        CheckConstraint("length(readiness_sha256) = 64", name="readiness_hash_length"),
+    )
+
+
+class FirstAdmissionPlan(Base):
+    __tablename__ = "first_admission_plans"
+
+    plan_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    cutover_run_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("cutover_runs.cutover_run_id", ondelete="RESTRICT"), nullable=False, unique=True
+    )
+    request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    command_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("dish_tasks.task_id", ondelete="RESTRICT")
+    )
+    expected_projection_events: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    plan_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("length(trim(command_name)) > 0", name="command_nonblank"),
+        CheckConstraint("expected_projection_events >= 0", name="projection_count_nonnegative"),
+        CheckConstraint("length(plan_sha256) = 64", name="plan_hash_length"),
+    )
+
+
 class MutationAdmissionControl(Base):
     __tablename__ = "mutation_admission_controls"
 
@@ -452,9 +524,17 @@ STAGE7_TABLE_NAMES = (
 
 STAGE7_IMMUTABLE_TABLE_NAMES = STAGE7_TABLE_NAMES
 
+STAGE8_TABLE_NAMES = (
+    "runtime_release_attestations",
+    "projection_worker_readiness",
+    "first_admission_plans",
+)
+
+STAGE8_IMMUTABLE_TABLE_NAMES = STAGE8_TABLE_NAMES
+
 
 def _install_sqlite_immutability_triggers() -> None:
-    for table_name in STAGE6_IMMUTABLE_TABLE_NAMES + STAGE7_IMMUTABLE_TABLE_NAMES:
+    for table_name in STAGE6_IMMUTABLE_TABLE_NAMES + STAGE7_IMMUTABLE_TABLE_NAMES + STAGE8_IMMUTABLE_TABLE_NAMES:
         table = Base.metadata.tables[table_name]
         event.listen(
             table,

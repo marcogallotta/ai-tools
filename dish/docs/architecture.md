@@ -305,7 +305,19 @@ closure identity and digest and rejects a closure that does not remain valid thr
 activation timestamp. Rollback burn revalidates the activation-bound closure; routing cannot stand
 in for authority closure.
 
-The Stage 6–7 package remains non-activating by itself. It performs no production Asana read/write,
+Stage 8 strengthens production evidence through `0007_cutover_evidence_gates`. A passed rehearsal
+must contain the checkpoint set prescribed for its rehearsal class. Writer-fence verification binds
+one authenticated mutation rejection to the exact candidate, target, manifest digest and a proof
+that rejection occurred before body loading. After rollback burn and while admission remains closed,
+the release service records the exact service/worker artifacts and PostgreSQL route probe, a
+projection-worker readiness proof backed by complete post-burn reconciliation, and one immutable
+first-admission plan. Admission cannot open before all three records are durable. First-admission
+verification requires the planned request, a committed execution and immutable successful outcome,
+execution-bound governed audit, fulfilled or repaired invocation-audit obligation, the exact applied
+projection-event count, and a complete post-request reconciliation covering every active mapping.
+The final evidence bundle binds these records and their durable cutover checkpoints.
+
+The Stage 6–8 package remains non-activating by itself. It performs no production Asana read/write,
 installs no credentials, starts no projection worker, records no Marco approval, and cannot invent
 backup/restore measurements or production-corpus evidence. Those exact environment observations and
 Marco's bundle-bound approval are required inputs to the controlled runbook in

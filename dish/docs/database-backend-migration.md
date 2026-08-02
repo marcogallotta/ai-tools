@@ -26,11 +26,11 @@ The migration has three operational phases:
 
 Production cutover is a separate Marco decision based on the recorded evidence.
 
-The repository now contains the offline Stage 6–7 control plane through Alembic revision
-`0006_final_asana_closure`, `dish_pg.release`, `scripts/dish-pg-acceptance`, and
+The repository now contains the offline Stage 6–8 control plane through Alembic revision
+`0007_cutover_evidence_gates`, `dish_pg.release`, `scripts/dish-pg-acceptance`, and
 `scripts/dish-pg-release`. These components record and validate evidence, final Asana closure,
-invalidation and recertification, but do not claim that a production rehearsal or cutover has
-occurred. The executable operator sequence, JSON inputs,
+production fence proof, runtime and worker readiness, and first-admission closure, but do not claim
+that a production rehearsal or cutover has occurred. The executable operator sequence, JSON inputs,
 fail-closed fence order, abort boundary, and environment-only gates are defined in
 `database-backend-stage6-runbook.md`. That runbook remains subordinate to this draft and cannot be
 used as implicit cutover approval.

@@ -1036,12 +1036,20 @@ Implemented Stage 6 offline foundation:
   any relevant intervening Asana change invalidates it. Activation names the closure, requires the
   gap-free interval to include the activation timestamp, and rollback burn revalidates the same
   activation-bound identity.
+- Alembic revision `0007_cutover_evidence_gates` adds immutable runtime-release attestation,
+  projection-worker readiness, and first-admission plan records. Passed rehearsals must contain
+  class-specific checkpoints; writer-fence proof is candidate-, target-, manifest-, request-, and
+  pre-body-parse-bound. After rollback burn, admission remains closed until the exact deployed
+  release, PostgreSQL route, worker probes, complete active-epoch reconciliation, and bounded first
+  request are durable. First-admission verification requires committed execution, immutable outcome,
+  execution-bound audit, terminal invocation-audit obligation, exact applied projection count, and
+  post-request reconciliation of every active mapping.
 - `MutationAdmissionControl` is created closed. Database guards reject target request admission after
   validation until rollback-burn evidence is durable and the exact cutover run opens admission.
 - `dish_service.legacy_writer_fence` supplies an atomic mode-0600 file fence. The legacy HTTP path
   authenticates first and then rejects every POST before loading its body. A malformed fence file is
   still an engaged fence.
-- `scripts/dish-pg-acceptance` runs the focused Stage 1–6 lane, smoke gate, database-boundary gate,
+- `scripts/dish-pg-acceptance` runs the focused Stage A acceptance lane, smoke gate, database-boundary gate,
   and full suite and writes a source-manifest-bound JSON report. `scripts/dish-pg-release` records
   candidate, evidence, rehearsal, final Asana closure, invalidation, recertification, approval, fence, activation, rollback-burn, first-admission, and
   completion transitions through caller-owned transactions.

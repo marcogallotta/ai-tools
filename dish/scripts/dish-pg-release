@@ -118,6 +118,18 @@ def _parser() -> argparse.ArgumentParser:
     burn.add_argument("--legacy-bundle-id", required=True)
     burn.add_argument("--burned-at", required=True)
 
+    runtime = sub.add_parser("runtime-attestation-record")
+    runtime.add_argument("candidate_id")
+    runtime.add_argument("--file", type=Path, required=True)
+
+    worker = sub.add_parser("projection-worker-ready")
+    worker.add_argument("candidate_id")
+    worker.add_argument("--file", type=Path, required=True)
+
+    plan = sub.add_parser("first-admission-plan")
+    plan.add_argument("cutover_run_id")
+    plan.add_argument("--file", type=Path, required=True)
+
     admission = sub.add_parser("cutover-open-admission")
     admission.add_argument("cutover_run_id")
     admission.add_argument("--opened-at", required=True)
@@ -199,6 +211,9 @@ def _row_id(row: Any) -> dict[str, Any]:
         "closure_id",
         "invalidation_id",
         "recertification_id",
+        "attestation_id",
+        "readiness_id",
+        "plan_id",
         "cutover_run_id",
         "activation_id",
         "generation_id",
@@ -387,6 +402,38 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                     cutover_run_id=_uuid(args.cutover_run_id),
                     legacy_bundle_id=args.legacy_bundle_id,
                     burned_at=_time(args.burned_at),
+                )
+            elif cmd == "runtime-attestation-record":
+                data = _load(args.file)
+                row = service.record_runtime_release_attestation(
+                    candidate_id=_uuid(args.candidate_id),
+                    service_artifact_sha256=data["service_artifact_sha256"],
+                    projection_worker_artifact_sha256=data["projection_worker_artifact_sha256"],
+                    route_probe_sha256=data["route_probe_sha256"],
+                    payload=data.get("payload", {}),
+                    recorded_at=_time(data["recorded_at"]),
+                )
+            elif cmd == "projection-worker-ready":
+                data = _load(args.file)
+                row = service.record_projection_worker_readiness(
+                    candidate_id=_uuid(args.candidate_id),
+                    reconciliation_run_id=_uuid(data["reconciliation_run_id"]),
+                    worker_identity=data["worker_identity"],
+                    worker_release=data["worker_release"],
+                    payload=data.get("payload", {}),
+                    ready_at=_time(data["ready_at"]),
+                )
+            elif cmd == "first-admission-plan":
+                data = _load(args.file)
+                task_id = data.get("task_id")
+                row = service.plan_first_admission(
+                    cutover_run_id=_uuid(args.cutover_run_id),
+                    request_id=_uuid(data["request_id"]),
+                    command_name=data["command_name"],
+                    task_id=None if task_id is None else _uuid(task_id),
+                    expected_projection_events=int(data["expected_projection_events"]),
+                    payload=data.get("payload", {}),
+                    recorded_at=_time(data["recorded_at"]),
                 )
             elif cmd == "cutover-open-admission":
                 row = service.open_mutation_admission(

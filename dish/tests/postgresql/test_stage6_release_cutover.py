@@ -20,11 +20,19 @@ from dish_pg.release import (
     ALEMBIC_HEAD,
     REQUIRED_EVIDENCE,
     REQUIRED_REHEARSALS,
+    REQUIRED_REHEARSAL_CHECKPOINTS,
     ReleaseAuthorityError,
     ReleaseCandidateService,
 )
 from dish_pg.transition import ProjectionService, ShadowService, SourceImportService
-from dish_pg.workflow import MutationAdmissionClosed, RequestSpec, WorkflowAuthorityService, sha256_json
+from dish_pg.workflow import (
+    ExecutionSpec,
+    MutationAdmissionClosed,
+    RequestSpec,
+    StoredOutcome,
+    WorkflowAuthorityService,
+    sha256_json,
+)
 from tests.postgresql.test_stage3_workflow_authority import NOW, _next, _register_run, workflow_db
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -149,12 +157,13 @@ def _prepare_candidate(session, ids, context, task_id):
             source_manifest_sha256=HASH_A,
             started_at=NOW,
         )
-        service.record_rehearsal_checkpoint(
-            rehearsal_id=rehearsal.rehearsal_id,
-            checkpoint_kind="completed_checks",
-            payload={"kind": kind, "passed": True},
-            recorded_at=NOW,
-        )
+        for checkpoint_kind in REQUIRED_REHEARSAL_CHECKPOINTS[kind]:
+            service.record_rehearsal_checkpoint(
+                rehearsal_id=rehearsal.rehearsal_id,
+                checkpoint_kind=checkpoint_kind,
+                payload={"kind": kind, "checkpoint": checkpoint_kind, "passed": True},
+                recorded_at=NOW,
+            )
         service.finish_rehearsal(
             rehearsal_id=rehearsal.rehearsal_id,
             passed=True,
@@ -177,6 +186,66 @@ def _record_final_closure(service, ids, candidate_id, *, closed_through_at):
         payload={"tasks": 1, "registry": "closed"},
         recorded_at=closed_through_at,
     )
+
+
+def _writer_fence_proof(fence, candidate_id):
+    return {
+        "probe_kind": "authenticated_mutation_rejected_before_body_parse",
+        "candidate_id": str(candidate_id),
+        "target_identity": fence.target_identity,
+        "fence_manifest_sha256": fence.manifest_sha256,
+        "request_token_sha256": "f" * 64,
+        "http_status": 503,
+        "body_loaded": False,
+        "result": "pass",
+    }
+
+
+def _complete_active_mapping_reconciliation(
+    session,
+    ids,
+    *,
+    generation_id,
+    corpus_identity: str,
+    started_at,
+    completed_at,
+):
+    active_mappings: list[tuple[str, object]] = []
+    for mapping_model, entity_kind in (
+        (tx.ProjectProjectionMapping, "project"),
+        (tx.SectionProjectionMapping, "section"),
+        (tx.TaskProjectionMapping, "task"),
+    ):
+        rows = session.scalars(
+            select(mapping_model).where(
+                mapping_model.generation_id == generation_id,
+                mapping_model.state == "active",
+            )
+        ).all()
+        active_mappings.extend((entity_kind, row) for row in rows)
+
+    projection = ProjectionService(session, uuid_factory=lambda: _next(ids))
+    run = projection.start_reconciliation(
+        generation_id=generation_id,
+        corpus_identity=corpus_identity,
+        expected_items=len(active_mappings),
+        started_at=started_at,
+    )
+    for entity_kind, mapping in active_mappings:
+        projection.record_reconciliation_item(
+            reconciliation_run_id=run.reconciliation_run_id,
+            item_identity=f"{entity_kind}:{mapping.mapping_id}",
+            entity_kind=entity_kind,
+            mapping_id=mapping.mapping_id,
+            outcome="matched",
+            evidence={"source": corpus_identity},
+            recorded_at=started_at,
+        )
+    projection.complete_reconciliation(
+        reconciliation_run_id=run.reconciliation_run_id,
+        completed_at=completed_at,
+    )
+    return run
 
 
 @pytest.mark.database_boundary
@@ -351,7 +420,9 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
         service.engage_writer_fence(fence_id=fence_id, engaged_at=NOW + timedelta(minutes=3))
         service.verify_writer_fence(
             fence_id=fence_id,
-            proof={"probe": "valid token rejected before body parse"},
+            proof=_writer_fence_proof(
+                service._fence(fence_id), candidate_id
+            ),
             verified_at=NOW + timedelta(minutes=4),
         )
         service.mark_fenced(cutover_run_id=cutover_id, recorded_at=NOW + timedelta(minutes=4))
@@ -381,6 +452,7 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
                 )
             )
 
+    first_request_id = _next(ids)
     with session_scope(factory) as session:
         service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
         activation = service.burn_rollback(
@@ -389,13 +461,55 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
             burned_at=NOW + timedelta(minutes=6),
         )
         assert activation.rollback_burned_at is not None
+        candidate = service._candidate(candidate_id)
+        readiness_reconciliation = _complete_active_mapping_reconciliation(
+            session,
+            ids,
+            generation_id=context["generation_id"],
+            corpus_identity="projection-worker-readiness",
+            started_at=NOW + timedelta(minutes=6),
+            completed_at=NOW + timedelta(minutes=6),
+        )
+        service.record_runtime_release_attestation(
+            candidate_id=candidate_id,
+            service_artifact_sha256="1" * 64,
+            projection_worker_artifact_sha256="2" * 64,
+            route_probe_sha256="3" * 64,
+            payload={
+                "dish_release": candidate.dish_release,
+                "protocol_release": candidate.protocol_release,
+                "openapi_release": candidate.openapi_release,
+                "routing_release": candidate.routing_release,
+                "route_target": "postgresql",
+                "health": "pass",
+                "mutation_admission": "closed",
+            },
+            recorded_at=NOW + timedelta(minutes=6),
+        )
+        service.record_projection_worker_readiness(
+            candidate_id=candidate_id,
+            reconciliation_run_id=readiness_reconciliation.reconciliation_run_id,
+            worker_identity="projection-worker@fixture",
+            worker_release=candidate.dish_release,
+            payload={"claim_probe": "pass", "write_probe": "pass", "restart_probe": "pass"},
+            ready_at=NOW + timedelta(minutes=6),
+        )
+        service.plan_first_admission(
+            cutover_run_id=cutover_id,
+            request_id=first_request_id,
+            command_name="start",
+            task_id=task_id,
+            expected_projection_events=0,
+            payload={"probe": "first production mutation"},
+            recorded_at=NOW + timedelta(minutes=6),
+        )
         control = service.open_mutation_admission(
             cutover_run_id=cutover_id, opened_at=NOW + timedelta(minutes=7)
         )
         assert control.state == "open"
 
     with session_scope(factory) as session:
-        run_id, request_id = _next(ids), _next(ids)
+        run_id, request_id = _next(ids), first_request_id
         _register_run(session, generation_id=context["generation_id"], run_id=run_id)
         workflow = WorkflowAuthorityService(session, uuid_factory=lambda: _next(ids))
         workflow.admit_request(
@@ -412,21 +526,83 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
                 admitted_at=NOW + timedelta(minutes=8),
             )
         )
-        payload = {"ok": True, "first_admission": True}
+        binding_id = _next(ids)
         session.add(
-            wf.ServiceRequestOutcome(
-                outcome_id=_next(ids),
+            models.HonestContractBinding(
+                binding_id=binding_id,
+                binding_kind="release",
+                source_identity="honest-pantry@stage6-first-admission",
+                dish_release="dish-pg-stage6",
+                honest_release="honest-1",
+                protocol_release="protocol-1",
+                protocol_sha256=HASH_A,
+                schema_release="schema-1",
+                schema_sha256="b" * 64,
+                migration_id=None,
+                source_schema_version=None,
+                target_schema_version=None,
+                migration_metadata_sha256=None,
+                source_ids={"route": "first-admission"},
+                provenance={"source": "cutover-test"},
+                resolved_at=NOW + timedelta(minutes=8),
+            )
+        )
+        session.flush()
+        execution_id = _next(ids)
+        workflow.begin_execution(
+            ExecutionSpec(
+                execution_id=execution_id,
                 request_id=request_id,
+                generation_id=context["generation_id"],
+                task_id=task_id,
+                operation_id=None,
+                command_name="start",
+                transaction_profile="L",
+                canonical_intent={"command": "start", "task_id": str(task_id)},
+                pinned_inputs={"now": (NOW + timedelta(minutes=8)).isoformat()},
+                contract_binding_id=binding_id,
+                admitted_at=NOW + timedelta(minutes=8),
+            )
+        )
+        payload = {"ok": True, "first_admission": True}
+        workflow.repo.record_outcome(
+            request_id=request_id,
+            outcome=StoredOutcome(
+                outcome_id=_next(ids),
                 outcome_class="success",
                 result_code="OK",
                 http_status=200,
                 result_payload=payload,
-                result_sha256=sha256_json(payload),
                 immutable_success=True,
                 recorded_at=NOW + timedelta(minutes=8),
+            ),
+            execution_id=execution_id,
+            audit_event_id=_next(ids),
+            audit_event_type="first_production_admission",
+            actor="owner-1",
+            audit_payload={"cutover_run_id": str(cutover_id)},
+            task_id=task_id,
+            operation_id=None,
+            obligation_id=_next(ids),
+            invocation_metadata={"surface": "production-cutover"},
+        )
+        obligation = session.scalar(
+            select(wf.InvocationAuditObligation).where(
+                wf.InvocationAuditObligation.request_id == request_id
             )
         )
-        session.flush()
+        assert obligation is not None
+        obligation.state = "fulfilled"
+        obligation.terminal_at = NOW + timedelta(minutes=8)
+
+        post = _complete_active_mapping_reconciliation(
+            session,
+            ids,
+            generation_id=context["generation_id"],
+            corpus_identity="post-first-admission",
+            started_at=NOW + timedelta(minutes=8),
+            completed_at=NOW + timedelta(minutes=9),
+        )
         service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
         service.verify_first_admission(
             cutover_run_id=cutover_id,
@@ -443,7 +619,7 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
             built_at=NOW + timedelta(minutes=10),
         )
         assert final_bundle.manifest["activation"] is not None
-        assert final_bundle.manifest["acceptance"]["passed"]
+        assert final_bundle.manifest["acceptance"]["passed"], [c for c in final_bundle.manifest["acceptance"]["checks"] if not c["passed"]]
         with pytest.raises(ReleaseAuthorityError, match="prohibited"):
             service.abort_cutover(
                 cutover_run_id=cutover_id,

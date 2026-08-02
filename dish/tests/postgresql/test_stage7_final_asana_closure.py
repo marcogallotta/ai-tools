@@ -13,7 +13,13 @@ from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
 from dish_pg.release import ALEMBIC_HEAD, ReleaseAuthorityError, ReleaseCandidateService
 from tests.postgresql.test_stage3_workflow_authority import NOW, _next, workflow_db
-from tests.postgresql.test_stage6_release_cutover import HASH_A, ROOT, _prepare_candidate, _record_final_closure
+from tests.postgresql.test_stage6_release_cutover import (
+    HASH_A,
+    ROOT,
+    _prepare_candidate,
+    _record_final_closure,
+    _writer_fence_proof,
+)
 
 
 def _validate_and_approve(service, ids, candidate_id, closure):
@@ -80,7 +86,7 @@ def test_final_asana_change_invalidates_activation_until_recaptured_and_recertif
         )
         service.verify_writer_fence(
             fence_id=fence.fence_id,
-            proof={"probe": "old writer rejected before request admission", "passed": True},
+            proof=_writer_fence_proof(fence, candidate_id),
             verified_at=NOW + timedelta(minutes=4),
         )
         service.mark_fenced(
@@ -176,7 +182,7 @@ def test_activation_requires_closure_through_exact_activation_timestamp(workflow
         service.engage_writer_fence(fence_id=fence.fence_id, engaged_at=NOW + timedelta(minutes=2))
         service.verify_writer_fence(
             fence_id=fence.fence_id,
-            proof={"probe": "rejected", "passed": True},
+            proof=_writer_fence_proof(fence, candidate_id),
             verified_at=NOW + timedelta(minutes=3),
         )
         service.mark_fenced(cutover_run_id=run.cutover_run_id, recorded_at=NOW + timedelta(minutes=3))
