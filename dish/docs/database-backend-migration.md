@@ -35,6 +35,8 @@ fail-closed fence order, abort boundary, and environment-only gates are defined 
 `database-backend-stage6-runbook.md`. That runbook remains subordinate to this draft and cannot be
 used as implicit cutover approval.
 
+Released revisions `0003_workflow_authority` through `0007_cutover_evidence_gates` are frozen as dialect-specific DDL snapshots. They no longer import live SQLAlchemy model metadata; digest contracts and an empty SQLite downgrade/re-upgrade lane protect historical reproducibility. Real PostgreSQL upgrade and downgrade execution remains a required local certification step.
+
 ## 2. Authority timeline
 
 ### 2.1 Before shadowing

@@ -228,6 +228,8 @@ owned session and never commit independently. Until an explicit authority activa
 current transports and workflow modules must not import `dish_pg` or treat its state as
 production authority.
 
+Historical Alembic revisions `0003` through `0007` execute immutable, dialect-specific DDL snapshots from `migrations/frozen_tables.py`; they do not import live ORM metadata or live stage table-name constants. Revision digests and empty-database downgrade/upgrade tests make accidental historical drift visible. New schema changes belong in a new revision rather than edits to a frozen snapshot.
+
 Stage 2 gives that isolated target the foundational authority model. Alembic revision
 `0002_core_authority_model` owns generation and activation provenance, immutable Honest
 contract bindings, governed project/section registries and aliases, stable Dish task identity,

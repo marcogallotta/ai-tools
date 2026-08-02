@@ -7,8 +7,12 @@ from __future__ import annotations
 
 from alembic import op
 
-from dish_pg.models import Base
-from dish_pg.stage5_models import STAGE5_IMMUTABLE_TABLE_NAMES, STAGE5_TABLE_NAMES
+from dish_pg.migrations.frozen_tables import (
+    FROZEN_IMMUTABLE_TABLE_NAMES,
+    create_frozen_tables,
+    drop_frozen_tables,
+)
+
 
 revision = "0004_transition_projection"
 down_revision = "0003_workflow_authority"
@@ -18,8 +22,7 @@ depends_on = None
 
 def upgrade() -> None:
     bind = op.get_bind()
-    for table_name in STAGE5_TABLE_NAMES:
-        Base.metadata.tables[table_name].create(bind=bind, checkfirst=False)
+    create_frozen_tables("0004_transition_projection")
 
     if bind.dialect.name == "postgresql":
         op.execute(
@@ -32,7 +35,7 @@ def upgrade() -> None:
             $$
             """
         )
-        for table_name in STAGE5_IMMUTABLE_TABLE_NAMES:
+        for table_name in FROZEN_IMMUTABLE_TABLE_NAMES["0004_transition_projection"]:
             op.execute(
                 f"CREATE TRIGGER {table_name}_immutable_update "
                 f"BEFORE UPDATE ON {table_name} FOR EACH ROW "
@@ -183,5 +186,4 @@ def downgrade() -> None:
             "dish_reject_immutable_transition_authority",
         ):
             op.execute(f"DROP FUNCTION IF EXISTS {function_name}() CASCADE")
-    for table_name in reversed(STAGE5_TABLE_NAMES):
-        Base.metadata.tables[table_name].drop(bind=bind, checkfirst=False)
+    drop_frozen_tables("0004_transition_projection")
