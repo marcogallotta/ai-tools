@@ -62,3 +62,17 @@ def test_stage_a_acceptance_report_names_selection_metadata(monkeypatch, tmp_pat
     assert report["format"] == "dish-stage-a-acceptance-report-v2"
     assert report["focused_test_selectors"] == list(namespace["FOCUSED_TEST_SELECTORS"])
     assert report["gates"][0]["command"][-1] == namespace["FOCUSED_TEST_EXPRESSION"]
+
+
+def test_stage_a_source_manifest_excludes_local_generated_state(monkeypatch, tmp_path: Path) -> None:
+    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-acceptance"))
+    (tmp_path / "source.py").write_text("source\n", encoding="utf-8")
+    for directory in (".venv-current", ".test-artifacts", ".pytest_cache"):
+        path = tmp_path / directory
+        path.mkdir()
+        (path / "generated.py").write_text("generated\n", encoding="utf-8")
+    (tmp_path / ".coverage").write_text("coverage\n", encoding="utf-8")
+    source_manifest = namespace["_source_manifest"]
+    monkeypatch.setitem(source_manifest.__globals__, "ROOT", tmp_path)
+    rows, _digest = source_manifest()
+    assert [row["path"] for row in rows] == ["source.py"]

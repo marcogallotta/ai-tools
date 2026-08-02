@@ -1029,6 +1029,11 @@ Implemented Stage 6 offline foundation:
 - Alembic revision `0005_release_cutover` adds release candidates, immutable evidence revisions,
   rehearsal runs and checkpoints, legacy-writer fences, deterministic evidence bundles, exact
   approvals, resumable cutover runs/checkpoints, and mutation-admission controls.
+- `release.py` remains the transactional release-service facade. Pure evidence contracts and digest
+  validation live in `release_evidence.py`, immutable read/evaluation values in `release_status.py`,
+  and trusted chronology comparisons in `cutover_chronology.py`. Transactional final Asana closure
+  and cutover transitions live in `final_asana_closure.py` and `cutover_control.py`; the facade
+  composes those authorities and preserves its existing import surface.
 - `ReleaseCandidateService` derives acceptance from the authoritative Stage 2–5 database state. It
   verifies exact import closure, closed shadow evidence, active registry and projection epoch,
   complete task/registry alias coverage, no unresolved workflow authority, no unresolved projection

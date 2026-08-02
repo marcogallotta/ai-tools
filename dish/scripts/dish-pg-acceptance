@@ -15,7 +15,17 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
-EXCLUDED_PARTS = {".git", ".venv", ".venv-flake", "__pycache__", ".pytest_cache", "artifacts"}
+EXCLUDED_PARTS = {
+    ".git",
+    ".venv",
+    ".venv-current",
+    ".venv-flake",
+    "__pycache__",
+    ".pytest_cache",
+    ".test-artifacts",
+    "artifacts",
+}
+EXCLUDED_FILES = {".coverage"}
 FOCUSED_TEST_SELECTORS = (
     "stage1",
     "stage2",
@@ -55,11 +65,16 @@ def _sha256(path: Path) -> str:
 def _source_manifest() -> tuple[list[dict[str, Any]], str]:
     rows: list[dict[str, Any]] = []
     for path in sorted(ROOT.rglob("*")):
-        if not path.is_file() or any(part in EXCLUDED_PARTS for part in path.relative_to(ROOT).parts):
+        relative = path.relative_to(ROOT)
+        if (
+            not path.is_file()
+            or path.name in EXCLUDED_FILES
+            or any(part in EXCLUDED_PARTS for part in relative.parts)
+        ):
             continue
         rows.append(
             {
-                "path": str(path.relative_to(ROOT)),
+                "path": str(relative),
                 "size": path.stat().st_size,
                 "sha256": _sha256(path),
             }

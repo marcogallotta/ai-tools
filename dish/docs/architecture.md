@@ -285,8 +285,13 @@ reconciliation reports unknown external objects as blocking. No Stage 5 service 
 I/O or commits independently.
 
 Stage 6 adds the offline release-candidate and cutover-control foundation through
-`0005_release_cutover`, `stage6_models.py`, `release.py`, `scripts/dish-pg-release`, and
-`scripts/dish-pg-acceptance`. It owns immutable acceptance evidence, production-shaped rehearsal
+`0005_release_cutover`, `stage6_models.py`, the `release.py` transactional facade,
+`release_evidence.py`, `release_status.py`, `cutover_chronology.py`,
+`final_asana_closure.py`, `cutover_control.py`, `scripts/dish-pg-release`, and
+`scripts/dish-pg-acceptance`. Pure modules own typed evidence contracts, immutable status/evaluation
+values, and trusted chronology comparisons. Transactional mixins own final Asana closure and cutover
+control, while `ReleaseCandidateService` composes them behind the existing caller-owned facade. The
+package owns immutable acceptance evidence, production-shaped rehearsal
 records, deterministic evidence bundles, exact candidate approval binding, fail-closed legacy-writer
 fence evidence, a resumable cutover checkpoint sequence, durable rollback-burn evidence, and a
 per-generation PostgreSQL mutation-admission control. Candidate validation recomputes closure from

@@ -312,7 +312,7 @@ CASES = (
 STAGE_A_CASES = (
     MutationCase(
         mutation_id="stage-a-strict-evidence-sha256",
-        target="dish_pg/release.py",
+        target="dish_pg/release_evidence.py",
         before='_SHA256_RE = re.compile(r"[0-9a-f]{64}\\Z")',
         after='_SHA256_RE = re.compile(r".{64}\\Z")',
         tests=(
@@ -335,7 +335,7 @@ STAGE_A_CASES = (
     ),
     MutationCase(
         mutation_id="stage-a-writer-fence-auth-failure",
-        target="dish_pg/release.py",
+        target="dish_pg/cutover_control.py",
         before='"http_status": 409,\n            "response_code": "CONFLICT",',
         after='"http_status": 401,\n            "response_code": "CONFLICT",',
         tests=(
