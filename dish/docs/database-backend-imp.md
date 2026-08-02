@@ -1058,7 +1058,7 @@ Implemented Stage 6 offline foundation:
 - `dish_service.legacy_writer_fence` supplies an atomic mode-0600 file fence. The legacy HTTP path
   authenticates first and then rejects every POST before loading its body. A malformed fence file is
   still an engaged fence.
-- `scripts/dish-pg-acceptance` runs the focused Stage A acceptance lane, smoke gate, database-boundary gate,
+- `scripts/dish-pg-acceptance` runs a pinned focused Stage A lane covering Stages 1–8 and all subsequent release-safety owners, then the smoke gate and database-boundary gate,
   and full suite and writes a source-manifest-bound JSON report. `scripts/dish-pg-release` records
   candidate, evidence, rehearsal, final Asana closure, invalidation, recertification, approval, fence, activation, rollback-burn, first-admission, and
   completion transitions through caller-owned transactions.

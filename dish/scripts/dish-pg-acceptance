@@ -16,6 +16,21 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 EXCLUDED_PARTS = {".git", ".venv", ".venv-flake", "__pycache__", ".pytest_cache", "artifacts"}
+FOCUSED_TEST_SELECTORS = (
+    "stage1",
+    "stage2",
+    "stage3",
+    "stage4",
+    "stage5",
+    "stage6",
+    "stage7",
+    "stage8",
+    "fail_closed_admission_outbox",
+    "frozen_migration_history",
+    "release_evidence_contracts",
+    "stage_a_acceptance_runner",
+)
+FOCUSED_TEST_EXPRESSION = " or ".join(FOCUSED_TEST_SELECTORS)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -98,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     files, source_sha256 = _source_manifest()
     commands = [
-        [args.python, "-m", "pytest", "-q", "-k", "stage1 or stage2 or stage3 or stage4 or stage5 or stage6"],
+        [args.python, "-m", "pytest", "-q", "-k", FOCUSED_TEST_EXPRESSION],
         [args.python, "-m", "pytest", "--smoke"],
         [args.python, "-m", "pytest", "--database-boundary"],
     ]
@@ -106,9 +121,11 @@ def main(argv: list[str] | None = None) -> int:
         commands.append([args.python, "-m", "pytest"])
     results = [_run(command) for command in commands]
     report = {
-        "format": "dish-stage6-acceptance-report-v1",
+        "format": "dish-stage-a-acceptance-report-v2",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "python": args.python,
+        "focused_test_selectors": list(FOCUSED_TEST_SELECTORS),
+        "focused_test_expression": FOCUSED_TEST_EXPRESSION,
         "source_manifest_sha256": source_sha256,
         "source_files": files,
         "gates": results,

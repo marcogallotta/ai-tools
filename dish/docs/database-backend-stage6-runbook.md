@@ -57,11 +57,12 @@ requires a new or revised candidate. Do not relabel an old evidence bundle.
 scripts/dish-pg-release migrate
 scripts/dish-pg-acceptance \
   --python .venv/bin/python \
-  --output /secure/evidence/stage6-acceptance.json
+  --output /secure/evidence/stage-a-acceptance.json
 ```
 
-The acceptance report contains the complete source-file manifest, source-manifest SHA-256, each gate
-command and exit status, captured output and output hash, and a report SHA-256. A nonzero gate makes
+The acceptance report contains the pinned focused-test selectors (Stages 1–8 plus later release-safety
+owners), complete source-file manifest, source-manifest SHA-256, each gate command and exit status,
+captured output and output hash, and a report SHA-256. A nonzero gate makes
 the report failing evidence; do not edit it into a pass. Rerun after fixing the cause and record a new
 evidence revision.
 
