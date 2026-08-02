@@ -1,5 +1,7 @@
 import { attentionLabels, boardFixture, zeroSectionFixture } from "../../../fixtures/stage1-board.js";
+import { detailForCard } from "../../../fixtures/stage1-details.js";
 import { loadFixtureContinuation, renderBoard } from "../features/board/board.js";
+import { closeTaskDetail, openTaskDetail } from "../features/detail/task-detail.js";
 import { createApplicationFrame } from "../shell/application-shell.js";
 
 export function fixtureForScenario(name) {
@@ -7,6 +9,7 @@ export function fixtureForScenario(name) {
 }
 
 export function renderFixturePrototype(root, scenario = "board") {
+  closeTaskDetail({ restoreFocus: false });
   const { shell, main } = createApplicationFrame();
   shell.dataset.shellState = "fixture-board";
   const live = document.createElement("p");
@@ -17,7 +20,7 @@ export function renderFixturePrototype(root, scenario = "board") {
   const board = fixtureForScenario(scenario);
   const options = {
     attentionLabels,
-    onSelect: () => {},
+    onSelect: (card, origin) => openTaskDetail(detailForCard(card), origin),
     announce: (message) => { live.textContent = message; },
     onLoadMore: (section, region) => {
       const updated = loadFixtureContinuation(section, region, options);

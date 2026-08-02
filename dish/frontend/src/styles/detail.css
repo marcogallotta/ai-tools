@@ -1,1 +1,119 @@
-/* Task-detail rules are intentionally empty in Delivery Stage 0. */
+.task-detail {
+  position: fixed;
+  z-index: 20;
+  inset-block: 0;
+  inset-inline-end: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: var(--panel-width);
+  max-width: calc(100vw - 18rem);
+  border-inline-start: 1px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.task-detail__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  border-block-end: 1px solid var(--color-border);
+}
+
+.task-detail__header h2 {
+  margin-bottom: 0;
+  font-size: 1.15rem;
+  line-height: 1.3;
+}
+
+.task-detail__close {
+  flex: 0 0 auto;
+  min-height: 2.25rem;
+}
+
+.task-detail__body {
+  overflow-y: auto;
+  padding: var(--space-5);
+}
+
+.task-detail__body h3 {
+  margin-block: var(--space-5) var(--space-2);
+  font-size: 0.92rem;
+}
+
+.task-detail__body h4 {
+  margin: 0 0 var(--space-1);
+  font-size: 0.82rem;
+}
+
+.detail-facts {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.detail-fact {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr;
+  gap: var(--space-3);
+  padding-block: var(--space-2);
+  border-block-end: 1px solid var(--color-border);
+}
+
+.detail-fact dt {
+  color: var(--color-ink-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.detail-fact dd {
+  margin: 0;
+  font-size: 0.82rem;
+}
+
+.detail-content {
+  font-size: 0.86rem;
+  line-height: 1.55;
+}
+
+.detail-content h3:first-child,
+.detail-content p:first-child {
+  margin-block-start: 0;
+}
+
+.detail-warning {
+  padding: var(--space-3);
+  border-inline-start: 4px solid var(--color-warning);
+  background: #fff4e4;
+  color: #613b06;
+  font-weight: 700;
+}
+
+.detail-fallback {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-family: var(--font-sans);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.detail-disclosures {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.detail-disclosures section,
+.detail-next-step {
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-muted);
+}
+
+.detail-disclosures p,
+.detail-next-step p {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.45;
+}

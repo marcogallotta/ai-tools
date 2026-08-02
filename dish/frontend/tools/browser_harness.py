@@ -82,6 +82,11 @@ def assert_shells(browser) -> None:
     page.locator('#app[data-shell-state="fixture-board"]').wait_for()
     assert page.locator('[aria-label="Dish task board"]').is_visible()
     assert page.get_by_role("button", name="Load more").is_visible()
+    page.get_by_role("button", name=re.compile("Chicken biryani")).click()
+    assert page.get_by_role("dialog").is_visible()
+    assert page.get_by_text("What needs to happen next").is_visible()
+    page.get_by_role("button", name="Close task detail").click()
+    assert page.get_by_role("dialog").count() == 0
     prepare_page(page, "zero")
     assert page.get_by_text("No active sections").is_visible()
     page.close()
@@ -93,6 +98,12 @@ def capture_shells(browser) -> None:
     for view, filename in (("login", "stage-0-login.png"), ("app", "stage-1a-board.png"), ("zero", "stage-1a-zero-board.png")):
         prepare_page(page, view)
         page.screenshot(path=SCREENSHOTS / filename, full_page=True)
+    prepare_page(page, "app")
+    page.get_by_role("button", name=re.compile("Chicken biryani")).click()
+    page.screenshot(path=SCREENSHOTS / "stage-1b-task-detail.png", full_page=True)
+    prepare_page(page, "app")
+    page.get_by_role("button", name=re.compile("Aubergine")).click()
+    page.screenshot(path=SCREENSHOTS / "stage-1b-render-fallback.png", full_page=True)
     page.close()
 
 
