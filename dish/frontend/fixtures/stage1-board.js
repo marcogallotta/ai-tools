@@ -67,7 +67,7 @@ export const boardFixture = Object.freeze({
           id: "task-fish",
           title: "Crisp-skinned fish with preserved lemon potatoes",
           status: active("Verification", "Human review"),
-          attention: ["verification_attention"],
+          attention: ["verification_attention", "lease_attention"],
         },
         {
           id: "task-gnocchi",

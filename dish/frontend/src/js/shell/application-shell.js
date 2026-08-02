@@ -8,7 +8,6 @@ export function createApplicationFrame() {
 
   const header = document.createElement("header");
   header.className = "app-header";
-
   const identity = document.createElement("div");
   identity.className = "app-header__identity";
   const mark = document.createElement("img");
@@ -19,7 +18,6 @@ export function createApplicationFrame() {
   heading.className = "app-header__title";
   heading.textContent = model.heading;
   identity.append(mark, heading);
-
   const badge = document.createElement("span");
   badge.className = "prototype-badge";
   badge.textContent = model.prototypeLabel;
@@ -27,14 +25,12 @@ export function createApplicationFrame() {
 
   const noticeHost = document.createElement("div");
   noticeHost.id = "notice-host";
-
   const main = document.createElement("main");
   main.className = "shell-main";
   main.id = "board-shell";
   main.tabIndex = -1;
-
   shell.append(header, noticeHost, main);
-  return { shell, main, model };
+  return { shell, main, noticeHost, model };
 }
 
 export function renderApplicationShell(root) {

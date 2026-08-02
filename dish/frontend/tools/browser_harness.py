@@ -67,8 +67,8 @@ def prepare_page(page, view: str) -> None:
     page.add_script_tag(content=bundle)
     if view == "login":
         page.evaluate("renderLoginShell(document.querySelector('#app'))")
-    elif view == "zero":
-        page.evaluate("renderFixturePrototype(document.querySelector('#app'), 'zero')")
+    elif view in {"zero", "loading", "initial-error", "last-safe"}:
+        page.evaluate(f"renderFixturePrototype(document.querySelector('#app'), '{view}')")
     else:
         page.evaluate("renderFixturePrototype(document.querySelector('#app'), 'board')")
 
@@ -82,11 +82,18 @@ def assert_shells(browser) -> None:
     page.locator('#app[data-shell-state="fixture-board"]').wait_for()
     assert page.locator('[aria-label="Dish task board"]').is_visible()
     assert page.get_by_role("button", name="Load more").is_visible()
+    assert page.get_by_text(re.compile("Lease needs attention — 2 tasks")).is_visible()
     page.get_by_role("button", name=re.compile("Chicken biryani")).click()
     assert page.get_by_role("dialog").is_visible()
     assert page.get_by_text("What needs to happen next").is_visible()
     page.get_by_role("button", name="Close task detail").click()
     assert page.get_by_role("dialog").count() == 0
+    prepare_page(page, "loading")
+    assert page.locator('[aria-busy="true"]').is_visible()
+    prepare_page(page, "initial-error")
+    assert page.get_by_role("button", name="Retry board load").is_visible()
+    prepare_page(page, "last-safe")
+    assert page.get_by_text("Refresh unavailable").is_visible()
     prepare_page(page, "zero")
     assert page.get_by_text("No active sections").is_visible()
     page.close()
@@ -104,6 +111,11 @@ def capture_shells(browser) -> None:
     prepare_page(page, "app")
     page.get_by_role("button", name=re.compile("Aubergine")).click()
     page.screenshot(path=SCREENSHOTS / "stage-1b-render-fallback.png", full_page=True)
+    for view in ("loading", "initial-error", "last-safe"):
+        prepare_page(page, view)
+        page.screenshot(path=SCREENSHOTS / f"stage-1c-{view}.png", full_page=True)
+    prepare_page(page, "app")
+    page.screenshot(path=SCREENSHOTS / "stage-1c-grouped-banners.png", full_page=True)
     page.close()
 
 

@@ -2,11 +2,14 @@ import { DOCUMENT_TITLE } from "./config.js";
 import { renderFixturePrototype } from "./prototype/prototype-app.js";
 import { renderLoginShell } from "./shell/login-shell.js";
 
+const scenarios = new Set(["board", "zero", "loading", "initial-error", "last-safe"]);
+
 export function resolveInitialView(search = window.location.search) {
   const parameters = new URLSearchParams(search);
+  const requestedScenario = parameters.get("scenario") ?? "board";
   return {
     view: parameters.get("view") === "login" ? "login" : "app",
-    scenario: parameters.get("scenario") === "zero" ? "zero" : "board",
+    scenario: scenarios.has(requestedScenario) ? requestedScenario : "board",
   };
 }
 
