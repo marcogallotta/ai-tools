@@ -83,6 +83,14 @@ def test_pglite_accepts_service_run_for_active_generation(pglite) -> None:
         ).fetchone()[0] == 1
 
 
+@pytest.mark.quarantined(
+    issue="DISH-STAGE-A-PGLITE",
+    owner="Marco",
+    first_seen="2026-08-02",
+    quarantined_on="2026-08-02",
+    expires="2026-08-09",
+    signature="server closed the connection unexpectedly during PGlite TCP startup under full-suite load",
+)
 def test_native_fixture_reset_uses_alembic_history(pglite) -> None:
     from tests.support.postgresql.core import _reset_postgresql_schema
 
