@@ -381,7 +381,7 @@ class PostgresReadModel:
         cycle = self.session.scalar(
             select(wf.VerificationCycle)
             .where(wf.VerificationCycle.operation_id == operation.operation_id)
-            .order_by(wf.VerificationCycle.cycle_number.desc())
+            .order_by(wf.VerificationCycle.created_at.desc(), wf.VerificationCycle.cycle_id.desc())
             .limit(1)
         )
         inspected = False

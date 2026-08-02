@@ -1037,7 +1037,19 @@ class WorkflowAuthorityService:
         if cycle.lifecycle != "open" or inspection.cycle_id != cycle_id:
             raise WorkflowAuthorityError("signoff inspection/cycle mismatch")
         if inspection.reviewed_content_version_id != signed_content_version_id:
-            raise WorkflowAuthorityError("signoff must bind the inspected content occurrence")
+            correction = self.session.scalar(
+                select(wf.VerificationCorrection).where(
+                    wf.VerificationCorrection.cycle_id == cycle_id,
+                    wf.VerificationCorrection.source_content_version_id
+                    == inspection.reviewed_content_version_id,
+                    wf.VerificationCorrection.corrected_content_version_id
+                    == signed_content_version_id,
+                )
+            )
+            if correction is None:
+                raise WorkflowAuthorityError(
+                    "signoff must bind the inspected occurrence or its exact recorded correction"
+                )
         row = wf.VerificationSignoff(
             signoff_id=signoff_id,
             cycle_id=cycle_id,

@@ -252,9 +252,18 @@ Stage 4 adds the isolated command and service port through `command_contract.py`
 The port owns the complete retained command registry, exact request replay, caller-owned command
 transactions, deterministic planning, exact external-effect adjudication, registry-bound opaque
 pagination, and one-task current-view computation. It delegates workflow legality to
-`workflow_policy` rather than copying the policy matrix. The protocol adapter reuses the established
-route-class bearer model and authenticates before body loading; it introduces no cookie/session
-authority. `section-tasks` is one bounded relational query and does not run workflow policy per row.
+`workflow_policy` rather than copying the policy matrix. Preparation commits the candidate content
+activation and logical Verification Queue placement in the same transaction and emits both document
+and movement projection intents. Verification inspection is bound to an independent verifier actor,
+run, attestation, exact cycle and reviewed content occurrence. Small rejection appends correction
+lineage on the same cycle; Large rejection activates a new corrected occurrence and opens a new
+cycle. Approval and submission require exact current-content, inspection, cycle and signoff lineage.
+`discard` cancels only a provably unapplied open operation at its immutable baseline. Abandonment
+publishes only the route-preserving successor authorized by its exact attempt and baseline. Admin
+continuations target exact recorded operations, cycles and holds rather than inferring a nearby
+open record. The protocol adapter reuses the established route-class bearer model and authenticates
+before body loading; it introduces no cookie/session authority. `section-tasks` is one bounded
+relational query and does not run workflow policy per row.
 
 Stage 5 adds isolated transition and downstream-projection authority through
 `0004_transition_projection`, `stage5_models.py`, and `transition.py`. Exact source-import batches

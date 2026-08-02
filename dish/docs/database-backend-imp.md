@@ -920,6 +920,21 @@ existing Action/private bearer scopes before parsing a body. The checked-in Post
 OpenAPI is generated from the same command registry. Stage 4 emits projection intent only through
 an injected recorder and therefore cannot perform an Asana write before Stage 5 authority exists.
 
+The implemented Stage 4 command contract additionally requires:
+
+- `prepare` to activate one complete candidate occurrence, commit logical Verification Queue
+  placement, and append the corresponding document and movement projection intents atomically;
+- `inspect` to bind an independent verifier actor/run and attestation to the exact current cycle,
+  reviewed occurrence and Verification Queue placement;
+- Small rejection to append exact correction lineage without changing cycle identity, and Large
+  rejection to activate a corrected occurrence and open a fresh cycle;
+- `approve` and `submit` to reject stale cycle, inspection, signoff or current-content lineage;
+- `discard` to prove no completed step, execution or external effect can have applied and to match
+  the originating immutable baseline;
+- abandonment and reconciliation to publish only the prepared route-preserving successor; and
+- administrative continuation commands to name the exact operation, cycle, hold or authorization
+  record they settle.
+
 Stage 4 acceptance covers command inventory closure, retired-command rejection, deterministic
 planning/adjudication, exact replay, atomic bare-task creation, Planning challenge admission and
 consumption, active-registry reads, query-bound pagination, current-view policy delegation,
