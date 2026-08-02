@@ -318,6 +318,7 @@ class CutoverControlAuthority:
         legacy_bundle_id: str,
         burned_at: datetime,
     ) -> models.AuthorityActivation:
+        _require_nonblank(legacy_bundle_id, "legacy_bundle_id")
         run = self._cutover(cutover_run_id)
         candidate = self._candidate(run.candidate_id)
         approval = self.session.scalar(
@@ -332,6 +333,13 @@ class CutoverControlAuthority:
             )
             if existing is None:
                 raise ReleaseAuthorityError("rollback-burn state lacks activation evidence")
+            if (
+                existing.legacy_bundle_id != legacy_bundle_id
+                or existing.rollback_burned_at is None
+                or _utc_comparable(existing.rollback_burned_at)
+                != _utc_comparable(burned_at)
+            ):
+                raise ReleaseAuthorityError("rollback-burn identity conflict")
             return existing
         if run.state != "activated" or approval is None:
             raise ReleaseAuthorityError("rollback burn requires activated approved cutover")

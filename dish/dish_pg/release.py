@@ -43,7 +43,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0010_release_chronology"
+ALEMBIC_HEAD = "0011_rollback_bundle_identity"
 
 
 class ReleaseCandidateService(

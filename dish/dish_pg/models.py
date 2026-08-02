@@ -179,6 +179,9 @@ class AuthorityActivation(Base):
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
+        CheckConstraint(
+            "length(trim(legacy_bundle_id)) > 0", name="legacy_bundle_nonblank"
+        ),
         CheckConstraint("outcome IN ('activated','aborted')", name="outcome_allowed"),
         CheckConstraint(
             "(outcome = 'activated' AND rollback_burned_at IS NOT NULL) OR "

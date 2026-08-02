@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import select
 
 from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg.database import session_scope
-from dish_pg.release import ReleaseAuthorityError, ReleaseCandidateService
+from dish_pg.release import ALEMBIC_HEAD, ReleaseAuthorityError, ReleaseCandidateService
 from dish_pg.workflow import (
     ExecutionSpec,
     MutationAdmissionClosed,
@@ -305,3 +308,70 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
     )
     _record_committed_first_request(factory, ids, context, task_id, cutover_id, request_id)
     _verify_and_complete(factory, ids, context, candidate_id, cutover_id, request_id)
+
+
+def test_rollback_burn_replay_requires_exact_bundle_and_timestamp(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    candidate_id, closure_id, cutover_id, fence_id = _prepare_approved_cutover(
+        factory, ids, context, task_id
+    )
+    _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fence_id)
+
+    burned_at = NOW + timedelta(minutes=6)
+    with session_scope(factory) as session:
+        service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
+        activation = service.burn_rollback(
+            cutover_run_id=cutover_id,
+            legacy_bundle_id="legacy-bundle:" + HASH_A,
+            burned_at=burned_at,
+        )
+        replay = service.burn_rollback(
+            cutover_run_id=cutover_id,
+            legacy_bundle_id="legacy-bundle:" + HASH_A,
+            burned_at=burned_at,
+        )
+        assert replay.activation_id == activation.activation_id
+
+        with pytest.raises(ReleaseAuthorityError, match="identity conflict"):
+            service.burn_rollback(
+                cutover_run_id=cutover_id,
+                legacy_bundle_id="legacy-bundle:" + "b" * 64,
+                burned_at=burned_at,
+            )
+        with pytest.raises(ReleaseAuthorityError, match="identity conflict"):
+            service.burn_rollback(
+                cutover_run_id=cutover_id,
+                legacy_bundle_id="legacy-bundle:" + HASH_A,
+                burned_at=burned_at + timedelta(seconds=1),
+            )
+        with pytest.raises(ReleaseAuthorityError, match="nonblank"):
+            service.burn_rollback(
+                cutover_run_id=cutover_id,
+                legacy_bundle_id="   ",
+                burned_at=burned_at,
+            )
+
+
+@pytest.mark.database_boundary
+def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: Path) -> None:
+    root = Path(__file__).resolve().parents[2]
+    path = tmp_path / "rollback-bundle.sqlite3"
+    config = Config(str(root / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{path}")
+    command.upgrade(config, "head")
+
+    from sqlalchemy import create_engine, inspect
+
+    engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)
+    try:
+        checks = {
+            row["name"]: row["sqltext"]
+            for row in inspect(engine).get_check_constraints("authority_activations")
+        }
+        assert "ck_authority_activations_legacy_bundle_nonblank" in checks
+        assert "trim(legacy_bundle_id)" in checks[
+            "ck_authority_activations_legacy_bundle_nonblank"
+        ]
+        assert ALEMBIC_HEAD == "0011_rollback_bundle_identity"
+    finally:
+        engine.dispose()
