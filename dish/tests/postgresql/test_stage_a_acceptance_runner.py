@@ -32,6 +32,19 @@ def test_stage_a_acceptance_selection_pins_all_release_safety_owners() -> None:
         "stage_a_acceptance_runner",
     )
     assert namespace["FOCUSED_TEST_EXPRESSION"] == " or ".join(selectors)
+    baseline = tuple(namespace["BASELINE_IDENTITY_TEST_SELECTORS"])
+    assert baseline == (
+        "test_frozen_governing_sources_have_exact_hashes",
+        "test_frozen_characterization_corpus_has_exact_hashes",
+    )
+    assert namespace["BASELINE_IDENTITY_TEST_EXPRESSION"] == " or ".join(baseline)
+    assert namespace["REQUIRED_FOCUSED_TEST_EXPRESSION"] == (
+        f"({namespace['FOCUSED_TEST_EXPRESSION']}) and not "
+        f"({namespace['BASELINE_IDENTITY_TEST_EXPRESSION']})"
+    )
+    assert namespace["NON_BASELINE_TEST_EXPRESSION"] == (
+        f"not ({namespace['BASELINE_IDENTITY_TEST_EXPRESSION']})"
+    )
 
 
 def test_stage_a_acceptance_report_names_selection_metadata(monkeypatch, tmp_path: Path) -> None:
@@ -39,12 +52,13 @@ def test_stage_a_acceptance_report_names_selection_metadata(monkeypatch, tmp_pat
     captured: dict[str, object] = {}
 
     def fake_run(command: list[str]) -> dict[str, object]:
+        is_baseline = command[-1] == namespace["BASELINE_IDENTITY_TEST_EXPRESSION"]
         return {
             "command": command,
-            "exit_code": 0,
+            "exit_code": 1 if is_baseline else 0,
             "duration_seconds": 0.0,
             "output_sha256": "0" * 64,
-            "output": "",
+            "output": "stale baseline" if is_baseline else "",
         }
 
     def fake_write(path: Path, value: object) -> None:
@@ -59,9 +73,48 @@ def test_stage_a_acceptance_report_names_selection_metadata(monkeypatch, tmp_pat
     assert result == 0
     report = captured["report"]
     assert isinstance(report, dict)
-    assert report["format"] == "dish-stage-a-acceptance-report-v2"
+    assert report["format"] == "dish-stage-a-acceptance-report-v3"
     assert report["focused_test_selectors"] == list(namespace["FOCUSED_TEST_SELECTORS"])
-    assert report["gates"][0]["command"][-1] == namespace["FOCUSED_TEST_EXPRESSION"]
+    assert report["required_gates"][0]["command"][-1] == namespace[
+        "REQUIRED_FOCUSED_TEST_EXPRESSION"
+    ]
+    assert report["baseline_identity_gate"]["command"][-1] == namespace[
+        "BASELINE_IDENTITY_TEST_EXPRESSION"
+    ]
+    assert report["source_acceptance_passed"] is True
+    assert report["baseline_identity_passed"] is False
+    assert report["production_acceptance_complete"] is False
+    assert report["baseline_identity_gate"]["status"] == (
+        "requires_governed_rebaseline_or_investigation"
+    )
+
+
+
+def test_stage_a_acceptance_fails_when_a_required_gate_fails(monkeypatch, tmp_path: Path) -> None:
+    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-acceptance"))
+
+    def fake_run(command: list[str]) -> dict[str, object]:
+        required_focused = command[-1] == namespace["REQUIRED_FOCUSED_TEST_EXPRESSION"]
+        return {
+            "command": command,
+            "exit_code": 1 if required_focused else 0,
+            "duration_seconds": 0.0,
+            "output_sha256": "0" * 64,
+            "output": "required failure" if required_focused else "",
+        }
+
+    captured: dict[str, object] = {}
+    main = namespace["main"]
+    monkeypatch.setitem(main.__globals__, "_run", fake_run)
+    monkeypatch.setitem(main.__globals__, "_source_manifest", lambda: ([], "a" * 64))
+    monkeypatch.setitem(
+        main.__globals__, "_write_atomic", lambda _path, value: captured.setdefault("report", value)
+    )
+    assert main(["--output", str(tmp_path / "report.json"), "--skip-full"]) == 2
+    report = captured["report"]
+    assert isinstance(report, dict)
+    assert report["source_acceptance_passed"] is False
+    assert report["production_acceptance_complete"] is False
 
 
 def test_stage_a_source_manifest_excludes_local_generated_state(monkeypatch, tmp_path: Path) -> None:

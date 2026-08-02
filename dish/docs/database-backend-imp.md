@@ -192,7 +192,7 @@ The implementation must maintain a row-by-row coverage matrix at re-baseline. Th
 | `operation_actor_facts` | Operation-scoped actor/run lineage. |
 | `marco_authorizations` | Authorization grants, reservations/releases, and single-use consumption. |
 | `command_audit_repairs` | Durable pending/repaired/quarantined invocation-audit repair authority. |
-| `verification_hold_resets` | Verification-hold substantive-reopen evidence. |
+| `two_pass_resets` | Two-pass Human Review reopen evidence. |
 | `service_leases` | Actor lease authority. |
 | `service_requests` | Generation-bound immutable request identity and canonical outcome. |
 | `operation_execution_claims` | Executor-claim authority, distinct from mutation fences. |
@@ -352,7 +352,7 @@ Verification storage must represent:
 - rejection category/reason where applicable;
 - corrected candidate lineage;
 - signed occurrence and signoff evidence;
-- Verification-hold reset or Human Review evidence;
+- two-pass reset or Human Review evidence;
 - inherited signoff for permitted non-material check-ins.
 
 Target `inspect` is a replay-bound evidence mutation. Its idempotency identity includes operation, cycle, reviewed occurrence and identity, verifier actor fact/run, attestation, and exact logical Verification Queue placement provenance. Evidence plus governed audit commits atomically. A changed head, actor fact, cycle, registry/location occurrence, or placement cannot reuse an earlier inspection.
@@ -574,10 +574,12 @@ It returns a command plan containing:
 - audit/causality requirements.
 
 The mutation and projection claims come from `dish_pg.command_effects`, the branch-sensitive
-command-effect authority shared with execution. The command port flushes each successful handler
-and fails the transaction if its projection outbox events disagree with that specification; the
-drift-prone `prepare`, `approve`, and `reject` paths additionally verify their authoritative rows
-and resulting operation phase before recording success.
+command-effect specification shared with execution. Projection event types are an authoritative
+runtime contract for every command. Mutation kinds remain descriptive planner claims unless the
+specification explicitly sets `verify_mutation_effects`; the current observed mutation contract is
+limited to the drift-prone `prepare`, `approve`, and `reject` paths. The command port flushes each
+successful handler, verifies every projection sequence, and verifies authoritative rows plus the
+resulting operation phase only for those explicitly marked mutation-observed paths.
 
 ### 7.3 Shared adjudicator
 
@@ -1058,9 +1060,10 @@ Implemented Stage 6 offline foundation:
   cannot self-attest fencing. Cutover transitions reject impossible, backdated, or future chronology
   against the database/service clock. After rollback burn, admission remains closed until the exact deployed
   release, PostgreSQL route, worker probes, complete active-epoch reconciliation, and bounded first
-  request are durable. The first-admission plan binds the exact command arguments and derives its
-  projection count from `dish_pg.command_effects`; operators cannot declare that count.
-  First-admission verification requires the planned arguments, committed execution, immutable outcome,
+  request are durable. The first-admission plan is deliberately bounded to a fully specified `start` mutation against an
+  existing candidate-generation task, binds the exact arguments, and derives its projection count
+  from `dish_pg.command_effects`; operators cannot declare that count.
+  First-admission verification requires the bounded `start` plan, committed execution, immutable outcome,
   execution-bound audit, terminal invocation-audit obligation, exact applied projection count, and
   post-request reconciliation of every active mapping.
 - Alembic revision `0008_fail_closed_admission_outbox` treats a missing admission-control row as
@@ -1071,13 +1074,24 @@ Implemented Stage 6 offline foundation:
 - `dish_service.legacy_writer_fence` supplies an atomic mode-0600 file fence. The legacy HTTP path
   authenticates first and then rejects every POST before loading its body. A malformed fence file is
   still an engaged fence.
-- `scripts/dish-pg-acceptance` runs a pinned focused Stage A lane covering Stages 1–8 and all subsequent release-safety owners, then the smoke gate and database-boundary gate,
-  and full suite and writes a source-manifest-bound JSON report. `scripts/dish-pg-release` records
+- `scripts/dish-pg-acceptance` runs a pinned focused Stage A lane covering Stages 1–8 and all
+  subsequent release-safety owners, then the smoke gate, database-boundary gate, and complete
+  non-baseline suite. It records the two governed baseline-identity hash tests as a separate gate, so
+  source acceptance can be green without falsely claiming that production re-baselining is complete.
+  `scripts/dish-pg-release` records
   candidate, evidence, rehearsal, final Asana closure, invalidation, recertification, approval, fence, activation, rollback-burn, first-admission, and
   completion transitions through caller-owned transactions.
 - `database-backend-stage6-runbook.md` fixes the operator order and recovery boundary. Filesystem
   fence release records the authorized database transition first, so an I/O failure can only leave
   the legacy writer fenced, never reopen it early.
+- Alembic revision `0009_candidate_replacement_control` permits the generation-level closed
+  admission control to rebind only from an aborted pre-burn candidate to a new assembling candidate;
+  the PostgreSQL transition trigger continues to reject open or post-activation rebinding.
+- Alembic revision `0010_release_chronology` adds durable rehearsal ordering and the release
+  service rejects timezone-naive, future, backward checkpoint, and pre-evidence validation times.
+- Alembic revision `0011_rollback_bundle_identity` requires a nonblank legacy bundle identity and
+  exact identity/timestamp replay after rollback authority is burned.
+
 
 Not completed by the offline implementation: production snapshot capture, production database and
 sidecar hashes, real Asana corpus/registry closure, PostgreSQL backup/PITR setup, measured production

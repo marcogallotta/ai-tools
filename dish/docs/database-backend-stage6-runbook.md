@@ -13,7 +13,7 @@ memory.
 
 ## 1. What the repository can prove offline
 
-The repository can migrate an empty target through `0008_fail_closed_admission_outbox`, execute the Stage 1–6
+The repository can migrate an empty target through `0011_rollback_bundle_identity`, execute the Stage 1–6
 acceptance suites, hash the exact source tree, store immutable evidence revisions and rehearsal
 reports, recompute structural closure from PostgreSQL, build deterministic evidence bundles, fence
 the legacy HTTP writer mechanically, and resume an interrupted cutover from durable checkpoints.
@@ -46,7 +46,7 @@ Freeze and retain these exact identities before candidate creation:
 - closed shadow baseline;
 - active projection epoch and completed reconciliation run;
 - Dish, Honest, protocol, OpenAPI, and routing releases;
-- PostgreSQL schema head `0008_fail_closed_admission_outbox`.
+- PostgreSQL schema head `0011_rollback_bundle_identity`.
 
 A changed source commit, ledger high-water mark, production object, release, schema head, or proof gap
 requires a new or revised candidate. Do not relabel an old evidence bundle.
@@ -62,12 +62,16 @@ scripts/dish-pg-acceptance \
 
 The acceptance report contains the pinned focused-test selectors (Stages 1–8 plus later release-safety
 owners), complete source-file manifest, source-manifest SHA-256, each gate command and exit status,
-captured output and output hash, and a report SHA-256. A nonzero gate makes
-the report failing evidence; do not edit it into a pass. Rerun after fixing the cause and record a new
-evidence revision.
+captured output and output hash, and a report SHA-256. Source acceptance excludes only the two
+governed baseline-identity hash tests from the focused and complete-suite commands and records them
+as a separate `baseline_identity_gate`. A stale baseline may therefore leave
+`source_acceptance_passed=true` while `production_acceptance_complete=false`; it is never relabelled
+as passing evidence. Any nonzero required source gate remains a failing report. Rerun after fixing
+the cause and record a new evidence revision.
 
-The final repository gate is the complete suite. `--skip-full` is for development rehearsal only and
-cannot satisfy production acceptance.
+The final source repository gate is the complete non-baseline suite. `--skip-full` is for development
+rehearsal only and cannot satisfy production acceptance. Governed re-baselining and a passing
+`baseline_identity_gate` remain separately mandatory before production acceptance is complete.
 
 ## 4. Create the release candidate
 
@@ -83,7 +87,7 @@ Prepare a mode-0600 JSON file containing exact UUIDs and release identities:
   "source_release": "EXACT_RELEASE",
   "source_commit": "EXACT_COMMIT",
   "ledger_through_commit": "EXACT_COMMIT",
-  "schema_head": "0008_fail_closed_admission_outbox",
+  "schema_head": "0011_rollback_bundle_identity",
   "dish_release": "EXACT_RELEASE",
   "honest_release": "EXACT_RELEASE",
   "protocol_release": "EXACT_RELEASE",
@@ -97,10 +101,12 @@ Prepare a mode-0600 JSON file containing exact UUIDs and release identities:
 scripts/dish-pg-release candidate-create --file /secure/input/candidate.json
 ```
 
-Candidate creation also creates a closed mutation-admission control for the generation. It does not
-open PostgreSQL mutation authority. Running this against the live production generation halts new
-request admission from that instant — treat it as the first operational step of cutover, not a
-preparatory or read-only one.
+Candidate creation also creates a closed mutation-admission control for the generation. After an
+exact pre-burn abort, a replacement candidate transactionally rebinds that same closed control to
+the replacement identity; it never creates a second control for the generation. Candidate creation
+does not open PostgreSQL mutation authority. Running this against the live production generation
+halts new request admission from that instant — treat it as the first operational step of cutover,
+not a preparatory or read-only one.
 
 ## 5. Record acceptance evidence
 
@@ -221,7 +227,7 @@ Evaluation fails closed unless all of the following are true in authoritative Po
   unresolved;
 - no projection outbox item, attempt, create correlation, or drift item is unresolved;
 - the latest completed reconciliation accounts for every active projection mapping;
-- the database is at `0008_fail_closed_admission_outbox`;
+- the database is at `0011_rollback_bundle_identity`;
 - every required evidence item and rehearsal class passes.
 
 Bundle identity is deterministic from authoritative contents; build time does not alter its SHA-256.
@@ -286,6 +292,11 @@ scripts/dish-pg-release candidate-recertify CANDIDATE_UUID NEW_CLOSURE_UUID \
 ```
 
 Do not activate against an invalidated, superseded, or time-incomplete closure.
+
+
+Rollback-burn replay is exact: the legacy bundle identity must be nonblank, and a repeated burn
+request must match both the stored bundle identity and burn timestamp. A conflicting replay is an
+operator error, not an idempotent success.
 
 ## 8. Prepare and prove the legacy-writer fence
 
@@ -414,10 +425,14 @@ scripts/dish-pg-release projection-worker-ready CANDIDATE_UUID \
   --file /secure/evidence/projection-worker-readiness.json
 ```
 
-Choose one bounded first production request before opening admission. Its plan must bind the request
-UUID, command, exact `command_arguments`, optional task UUID, and operator evidence. Do not supply an
-`expected_projection_events` field: the release service derives that count from authoritative command
-semantics and rejects operator-declared counts.
+Choose one bounded first production request before opening admission. The request must target an
+existing task in the candidate generation and use canonical `task_id`. Commands that require a
+pre-existing open operation are not eligible: candidate validation closes the operation corpus, so
+such a plan could not be executed after admission opens. `create` is also intentionally excluded
+because its newly allocated task identity cannot be prebound. The plan binds the request UUID,
+command, exact `command_arguments`, canonical task identity, and operator evidence. Do not supply
+an `expected_projection_events` field: the release service derives
+that count from authoritative command semantics and rejects operator-declared counts.
 
 ```sh
 scripts/dish-pg-release first-admission-plan CUTOVER_UUID \
@@ -482,7 +497,9 @@ process death:
 2. query the fence file independently;
 3. resume only the next legal transition represented by those exact records;
 4. never infer authority from routing, service reachability, or Asana appearance;
-5. never create a replacement candidate, approval, or cutover UUID to bypass a blocked exact run.
+5. never create a replacement candidate, approval, or cutover UUID to bypass a blocked exact run;
+   replacement is permitted only after the exact run is durably aborted before rollback burn, and
+   the generation admission control must remain closed while it is rebound.
 
 State meanings:
 

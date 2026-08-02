@@ -314,8 +314,10 @@ Run the bounded PostgreSQL Stage A safety lane independently with:
 ```
 
 The Stage A lane is intentionally small. It probes strict external-evidence hashing, mandatory
-transactional projection authority, authenticated writer-fence proof, and command-effect
-verification. Add a mutant only when it represents a realistic release-safety regression and one
+transactional projection authority, authenticated writer-fence proof, and the explicitly scoped
+command-effect verification contract. Projection effects are checked for every command; mutation
+observation is currently pinned only for `prepare`, `approve`, and `reject`. Add a mutant only when
+it represents a realistic release-safety regression and one
 focused authoritative test kills it.
 
 The runner mutates request replay, request/run binding, lease ownership, governed authorization

@@ -181,7 +181,7 @@ claiming that an intermediate identity was independently verified.
 ### Recovery is specific
 
 There is no generic `unblock`. Lease recovery, ambiguous-effect recovery, destination repair,
-discard, Evidence resolution, Human Review, completed-task Planning reopen, and Verification hold reopen
+discard, Evidence resolution, Human Review, completed-task Planning reopen, and two-pass hold reopen
 each have narrow preconditions and preserve different evidence. A completed task cannot directly
 claim a Planning operation: Marco must use `reopen-planning`, which records an exact completion-state
 attempt and audit before the task becomes eligible. Add a new recovery route only when its durable facts and legal continuation
@@ -294,8 +294,10 @@ control, while `ReleaseCandidateService` composes them behind the existing calle
 package owns immutable acceptance evidence, production-shaped rehearsal
 records, deterministic evidence bundles, exact candidate approval binding, fail-closed legacy-writer
 fence evidence, a resumable cutover checkpoint sequence, durable rollback-burn evidence, and a
-per-generation PostgreSQL mutation-admission control. Candidate validation recomputes closure from
-the authoritative Stage 2–5 tables; it does not accept a checklist assertion in place of closed
+per-generation PostgreSQL mutation-admission control. An exact pre-burn abort leaves that control
+closed; a later replacement candidate for the same generation transactionally rebinds the existing
+control instead of attempting to create a second generation-primary row. Candidate validation
+recomputes closure from the authoritative Stage 2–5 tables; it does not accept a checklist assertion in place of closed
 requests, operations, projection attempts, shadow gaps, registry/alias coverage, or mapped-corpus
 reconciliation. Evidence bundles exclude build time from their identity and stale bundles cannot be
 validated. The legacy HTTP service checks its file fence after route-scope authentication and before
@@ -318,7 +320,11 @@ one authenticated mutation rejection to the exact candidate, target, manifest di
 that rejection occurred before body loading. After rollback burn and while admission remains closed,
 the release service records the exact service/worker artifacts and PostgreSQL route probe, a
 projection-worker readiness proof backed by complete post-burn reconciliation, and one immutable
-first-admission plan. The plan binds exact command arguments and derives its projection-event count
+first-admission plan whose canonical task identity is checked against the candidate generation before
+admission can open. Commands requiring a pre-existing open operation are excluded because candidate
+validation closes that corpus; `create` is excluded because a new task identity cannot be prebound.
+The plan binds exact command arguments and
+derives its projection-event count
 from command semantics rather than operator input. Admission cannot open before all three records are
 durable. First-admission verification requires the planned request and arguments, a committed execution and immutable successful outcome,
 execution-bound governed audit, fulfilled or repaired invocation-audit obligation, the exact applied
@@ -326,6 +332,14 @@ projection-event count, and a complete post-request reconciliation covering ever
 The final evidence bundle binds these records and their durable cutover checkpoints.
 
 Revision `0008_fail_closed_admission_outbox` then closes two retained safety gaps: once a release candidate exists, a missing admission-control row is treated as closed, and the command port always retains transactional projection authority instead of permitting a projectionless mutation path. Pre-candidate development generations keep their prior admission behavior.
+Revision `0009_candidate_replacement_control` aligns the PostgreSQL transition guard with the
+pre-burn replacement lifecycle: the existing closed generation control may rebind from one aborted
+candidate to one new assembling candidate, but it cannot rebind after activation or while open.
+Revision `0010_release_chronology` rejects offset-free operator timestamps and pins candidate,
+evidence, rehearsal, checkpoint, bundle, validation and abort ordering to the trusted service/database
+clock. The rehearsal table also prevents durable completion before start.
+Revision `0011_rollback_bundle_identity` requires a nonblank rollback bundle identity and
+rejects replay unless the exact bundle identity and burn timestamp match the durable activation.
 
 The Stage 6–8 package remains non-activating by itself. It performs no production Asana read/write,
 installs no credentials, starts no projection worker, records no Marco approval, and cannot invent
@@ -458,7 +472,7 @@ cannot silently create separate live authorities.
 | operation lifecycle | `operations`, `operation_steps`, `operation_actor_facts` |
 | abandoned-attempt lineage | `abandonment_attempts`, `operation_successions` |
 | exact task state | `task_content_state`, `content_versions` |
-| Verification/signoff | `verification_cycles`, `verification_hold_resets` |
+| Verification/signoff | `verification_cycles`, `two_pass_resets` |
 | external effects | `write_attempts`, `movement_attempts` |
 | governed authority | `marco_authorizations` |
 | execution and ownership | `operation_executions`, `operation_execution_claims`, `service_leases` |
@@ -769,12 +783,3 @@ Current production code calls `savepoint_transaction`, `immediate_transaction`,
 transaction aliases and the forwarding-only `WorkflowRepository` facade are not
 part of the supported architecture. New code must use the authoritative primitive
 owned by the transaction or workflow module rather than add a second name for it.
-
-### Verification hold release
-
-Verification rounds continue through V1 and V2. The third non-approved round ending in a Large correction
-round persists the verifier-corrected candidate and records the threshold-agnostic
-`verification-hold` outcome. The private `dish-admin resolved` continuation releases that exact
-candidate into a fresh Verification cycle without approval, signoff, or a fabricated content edit.
-The separate `dish-admin reopen` route remains the substantive-reset path when Marco intentionally
-authorizes a real candidate change.

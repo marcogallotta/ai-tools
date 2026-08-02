@@ -44,6 +44,15 @@ FOCUSED_TEST_SELECTORS = (
     "stage_a_acceptance_runner",
 )
 FOCUSED_TEST_EXPRESSION = " or ".join(FOCUSED_TEST_SELECTORS)
+BASELINE_IDENTITY_TEST_SELECTORS = (
+    "test_frozen_governing_sources_have_exact_hashes",
+    "test_frozen_characterization_corpus_has_exact_hashes",
+)
+BASELINE_IDENTITY_TEST_EXPRESSION = " or ".join(BASELINE_IDENTITY_TEST_SELECTORS)
+REQUIRED_FOCUSED_TEST_EXPRESSION = (
+    f"({FOCUSED_TEST_EXPRESSION}) and not ({BASELINE_IDENTITY_TEST_EXPRESSION})"
+)
+NON_BASELINE_TEST_EXPRESSION = f"not ({BASELINE_IDENTITY_TEST_EXPRESSION})"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -64,21 +73,25 @@ def _sha256(path: Path) -> str:
 
 def _source_manifest() -> tuple[list[dict[str, Any]], str]:
     rows: list[dict[str, Any]] = []
-    for path in sorted(ROOT.rglob("*")):
-        relative = path.relative_to(ROOT)
-        if (
-            not path.is_file()
-            or path.name in EXCLUDED_FILES
-            or any(part in EXCLUDED_PARTS for part in relative.parts)
-        ):
-            continue
-        rows.append(
-            {
-                "path": str(relative),
-                "size": path.stat().st_size,
-                "sha256": _sha256(path),
-            }
+    for directory, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = sorted(
+            name for name in dirnames if name not in EXCLUDED_PARTS
         )
+        base = Path(directory)
+        for name in sorted(filenames):
+            if name in EXCLUDED_FILES:
+                continue
+            path = base / name
+            if not path.is_file():
+                continue
+            relative = path.relative_to(ROOT)
+            rows.append(
+                {
+                    "path": str(relative),
+                    "size": path.stat().st_size,
+                    "sha256": _sha256(path),
+                }
+            )
     encoded = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return rows, hashlib.sha256(encoded).hexdigest()
 
@@ -130,36 +143,66 @@ def _write_atomic(path: Path, value: Any) -> None:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     files, source_sha256 = _source_manifest()
-    commands = [
-        [args.python, "-m", "pytest", "-q", "-k", FOCUSED_TEST_EXPRESSION],
+    required_commands = [
+        [args.python, "-m", "pytest", "-q", "-k", REQUIRED_FOCUSED_TEST_EXPRESSION],
         [args.python, "-m", "pytest", "--smoke"],
         [args.python, "-m", "pytest", "--database-boundary"],
     ]
     if not args.skip_full:
-        commands.append([args.python, "-m", "pytest"])
-    results = [_run(command) for command in commands]
+        required_commands.append(
+            [args.python, "-m", "pytest", "-k", NON_BASELINE_TEST_EXPRESSION]
+        )
+    required_results = [_run(command) for command in required_commands]
+    baseline_result = _run(
+        [args.python, "-m", "pytest", "-q", "-k", BASELINE_IDENTITY_TEST_EXPRESSION]
+    )
+    source_acceptance_passed = all(
+        result["exit_code"] == 0 for result in required_results
+    )
+    baseline_identity_passed = baseline_result["exit_code"] == 0
     report = {
-        "format": "dish-stage-a-acceptance-report-v2",
+        "format": "dish-stage-a-acceptance-report-v3",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "python": args.python,
         "focused_test_selectors": list(FOCUSED_TEST_SELECTORS),
         "focused_test_expression": FOCUSED_TEST_EXPRESSION,
+        "required_focused_test_expression": REQUIRED_FOCUSED_TEST_EXPRESSION,
+        "baseline_identity_test_selectors": list(BASELINE_IDENTITY_TEST_SELECTORS),
+        "baseline_identity_test_expression": BASELINE_IDENTITY_TEST_EXPRESSION,
+        "non_baseline_test_expression": NON_BASELINE_TEST_EXPRESSION,
         "source_manifest_sha256": source_sha256,
         "source_files": files,
-        "gates": results,
-        "passed": all(result["exit_code"] == 0 for result in results),
+        "required_gates": required_results,
+        "baseline_identity_gate": {
+            **baseline_result,
+            "status": (
+                "passed"
+                if baseline_identity_passed
+                else "requires_governed_rebaseline_or_investigation"
+            ),
+        },
+        "source_acceptance_passed": source_acceptance_passed,
+        "baseline_identity_passed": baseline_identity_passed,
+        "production_acceptance_complete": (
+            source_acceptance_passed and baseline_identity_passed
+        ),
+        # Backward-compatible source-gate summary. Production completion is the
+        # stricter field above and remains false while the governed baseline is stale.
+        "passed": source_acceptance_passed,
     }
     report["report_sha256"] = hashlib.sha256(
         json.dumps(report, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     _write_atomic(args.output, report)
     print(json.dumps({
-        "ok": report["passed"],
+        "ok": report["source_acceptance_passed"],
+        "production_acceptance_complete": report["production_acceptance_complete"],
+        "baseline_identity_status": report["baseline_identity_gate"]["status"],
         "path": str(args.output),
         "report_sha256": report["report_sha256"],
         "source_manifest_sha256": source_sha256,
     }, sort_keys=True, separators=(",", ":")))
-    return 0 if report["passed"] else 2
+    return 0 if report["source_acceptance_passed"] else 2
 
 
 if __name__ == "__main__":
