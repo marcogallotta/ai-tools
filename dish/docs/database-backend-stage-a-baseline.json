@@ -121,6 +121,7 @@
     "tests/test_flake_policy.py": "f5793989bd72f875213cbbf837e276ef5474ab05c66f704a43158e7948b8fb49",
     "tests/test_flake_tooling.py": "7cd242fb125f8defb9d260014f29a65919e0a918a4bed285d51176522d0c423f",
     "tests/test_forced_material_reasons.py": "b63a56f8d9efbbb90556311eb2e3f20ee27cf3799b02f1aad25c02ec9791d24a",
+    "tests/test_frontend_tooling.py": "15c5a0df5116336d27a3eb9601b6b6e42b632999279b99e94f5f0c182293585a",
     "tests/test_generic_asana_guard.py": "5a939dc4aba2f06608ab59ff4853e13d573e61eadf36258b13cc52c71483e26b",
     "tests/test_governed_authority.py": "54427d7835e9206c653147c8b96a10793ff3f4cbc99e52a4fca1768a9f00cc8b",
     "tests/test_hold_resolution_phase1.py": "ec1a64cb83195da26ed61e3b973daf327c4696ff312235fefe00beb012b0a39b",

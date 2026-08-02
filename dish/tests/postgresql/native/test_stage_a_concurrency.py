@@ -188,6 +188,7 @@ def _create_operation_authority(
     return run_id, execution_id, operation.operation_id
 
 
+@pytest.mark.flake_stress
 def test_ten_simultaneous_actor_lease_acquisitions_have_one_winner(core_db) -> None:
     factory, ids = core_db
     contenders: list[_LeaseContender] = []
@@ -262,6 +263,7 @@ def test_ten_simultaneous_actor_lease_acquisitions_have_one_winner(core_db) -> N
         ) == 1
 
 
+@pytest.mark.flake_stress
 def test_ten_simultaneous_marco_reservations_have_one_winner(core_db) -> None:
     factory, ids = core_db
     grant_id, contenders = _prepare_authorization_race(factory, ids)
@@ -284,6 +286,7 @@ def test_ten_simultaneous_marco_reservations_have_one_winner(core_db) -> None:
         assert state.reservation_token == events[0].reservation_token
 
 
+@pytest.mark.flake_stress
 def test_independent_tasks_acquire_authority_without_global_serialization(core_db) -> None:
     factory, ids = core_db
     authorities: list[tuple[uuid.UUID, uuid.UUID, uuid.UUID, uuid.UUID, str]] = []
@@ -350,6 +353,7 @@ def test_independent_tasks_acquire_authority_without_global_serialization(core_d
         ) == 2
 
 
+@pytest.mark.flake_stress
 def test_ten_simultaneous_duplicate_request_admissions_perform_one_logical_execution(
     core_db,
 ) -> None:
