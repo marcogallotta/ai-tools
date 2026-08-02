@@ -18,6 +18,8 @@ If permission is unclear, ask first and name the exact target and action. A bare
 "do it" only authorizes a write when it directly answers a question that already named that target
 and action.
 
+Never run `sudo`/`systemctl` on services — ask Marco.
+
 ## Communication
 
 Before meaningful tool use, briefly state what you are about to do; afterward, report material
