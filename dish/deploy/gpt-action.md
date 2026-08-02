@@ -112,6 +112,9 @@ Add an operating instruction with all of these requirements:
   `reason` instead.
 - A tool pass proves deterministic conformance only; complete the semantic work required by the
   stage protocol returned by Dish.
+- After the third consecutive non-approved Large Verification round, `verification-hold` stops the
+  flow; tell Marco to run `dish-admin resolved <operation-id>`, which releases the unchanged
+  corrected candidate into a fresh Verification round without approving or signing it.
 - After successful Verification approval returns `submit`, call `submit` in the same pass.
 - Never retry `BACKEND_UNCERTAIN`, steal an expired lease, call a private/admin route, or repair an
   Asana task directly. An exact transport replay with the original `client.request_id` is allowed only
