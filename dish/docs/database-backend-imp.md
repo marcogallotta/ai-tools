@@ -150,3 +150,29 @@ Do not implement without separate authorization:
 - direct Asana-to-PostgreSQL ingestion;
 - generic workflow unblock;
 - routine task hard deletion.
+
+## PGlite development lane (non-certification)
+
+The repository includes a separate PGlite lane for fast PostgreSQL-semantic feedback where a
+native PostgreSQL server is unavailable. Run it with:
+
+```sh
+scripts/dish-pg-pglite --python .venv/bin/python --output /tmp/dish-pglite-report.json
+```
+
+The lane starts an isolated PGlite instance over loopback TCP, upgrades an empty database through
+the current Alembic head, verifies that the migrated schema persists across independent client
+connections, and executes a representative PostgreSQL trigger-guarded write through psycopg. Its report always records `certification_evidence=false` and
+`native_postgresql_certified=false`.
+
+PGlite does **not** satisfy the Stage 6 real-PostgreSQL gate. Tests requiring independent backend
+processes, lock/isolation realism, `SKIP LOCKED` contention, trigger-error recovery,
+downgrade/re-upgrade certification, crash/restart durability, WAL, backup/restore/PITR, roles,
+TLS, extensions, or production server configuration remain native
+PostgreSQL work. The certification-oriented `scripts/dish-pg-acceptance` command intentionally does
+not run or consume the PGlite lane.
+
+Runtime tests under `tests/postgresql/pglite/` must carry the `pglite` marker. Future tests that
+require a native server belong under `tests/postgresql/native/` and must carry the
+`native_postgresql` marker. Existing tests directly under `tests/postgresql/` are source contracts
+or SQLite-backed semantic tests; their directory name does not claim native PostgreSQL execution.

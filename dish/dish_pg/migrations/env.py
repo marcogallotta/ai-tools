@@ -39,7 +39,14 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
         future=True,
     )
-    with connectable.connect() as connection:
+    # Own one outer transaction so the explicit version-table bootstrap and
+    # every Alembic revision commit together. A plain connection context rolls
+    # back its implicit transaction on close under PostgreSQL.
+    with connectable.begin() as connection:
+        connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS alembic_version "
+            "(version_num VARCHAR(128) NOT NULL PRIMARY KEY)"
+        )
         context.configure(
             connection=connection,
             target_metadata=target_metadata,

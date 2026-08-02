@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""Run the non-certification PGlite PostgreSQL-semantic development lane."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="dish-pg-pglite")
+    parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--output", type=Path, required=True)
+    return parser
+
+
+def _write_atomic(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    command = [args.python, "-m", "pytest", "--pglite", "-q"]
+    started = time.monotonic()
+    completed = subprocess.run(
+        command,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    output = completed.stdout
+    report = {
+        "format": "dish-pglite-development-report-v1",
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "command": command,
+        "exit_code": completed.returncode,
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "output": output,
+        "output_sha256": hashlib.sha256(output.encode()).hexdigest(),
+        "passed": completed.returncode == 0,
+        "certification_evidence": False,
+        "native_postgresql_certified": False,
+    }
+    report["report_sha256"] = hashlib.sha256(
+        json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    _write_atomic(args.output, report)
+    print(json.dumps({
+        "ok": report["passed"],
+        "certification_evidence": False,
+        "native_postgresql_certified": False,
+        "path": str(args.output),
+        "report_sha256": report["report_sha256"],
+    }, sort_keys=True, separators=(",", ":")))
+    return completed.returncode
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

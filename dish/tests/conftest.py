@@ -114,6 +114,12 @@ def pytest_addoption(parser):
         ),
     )
     parser.addoption(
+        "--pglite",
+        action="store_true",
+        default=False,
+        help="run the non-certification PGlite PostgreSQL-semantic development lane",
+    )
+    parser.addoption(
         "--flake-candidates",
         action="store_true",
         default=False,
@@ -178,16 +184,18 @@ def _select_items(config, items):
     database_boundary_requested = config.getoption("--database-boundary")
     candidates_requested = config.getoption("--flake-candidates")
     quarantine_requested = config.getoption("--quarantine")
+    pglite_requested = config.getoption("--pglite")
     selectors = [
         smoke_requested,
         database_boundary_requested,
         candidates_requested,
         quarantine_requested,
+        pglite_requested,
     ]
     if sum(bool(value) for value in selectors) > 1:
         raise pytest.UsageError(
-            "--smoke, --database-boundary, --flake-candidates, and --quarantine "
-            "are separate test lanes"
+            "--smoke, --database-boundary, --flake-candidates, --quarantine, "
+            "and --pglite are separate test lanes"
         )
 
     if smoke_requested:
@@ -233,6 +241,14 @@ def _select_items(config, items):
             )
         return selected
 
+    if pglite_requested:
+        return [
+            item
+            for item in items
+            if item.get_closest_marker("pglite") is not None
+            and item.get_closest_marker(QUARANTINE_MARKER) is None
+        ]
+
     if candidates_requested:
         return [
             item
@@ -275,7 +291,11 @@ def pytest_sessionfinish(session, exitstatus):
     if exitstatus != pytest.ExitCode.NO_TESTS_COLLECTED:
         return
     config = session.config
-    if config.getoption("--flake-candidates") or config.getoption("--quarantine"):
+    if (
+        config.getoption("--flake-candidates")
+        or config.getoption("--quarantine")
+        or config.getoption("--pglite")
+    ):
         session.exitstatus = pytest.ExitCode.OK
 
 

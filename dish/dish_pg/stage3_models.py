@@ -29,6 +29,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.schema import DDL
 
 from .models import Base
@@ -536,8 +537,8 @@ class MarcoAuthorizationGrant(Base):
         Uuid, ForeignKey("workflow_operations.operation_id", ondelete="RESTRICT")
     )
     field_name: Mapped[str] = mapped_column(String(128), nullable=False)
-    before_value: Mapped[Any] = mapped_column(JSON, nullable=False)
-    after_value: Mapped[Any] = mapped_column(JSON, nullable=False)
+    before_value: Mapped[Any] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
+    after_value: Mapped[Any] = mapped_column(JSON().with_variant(JSONB, "postgresql"), nullable=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     actor: Mapped[str] = mapped_column(String(256), nullable=False)
     run_id: Mapped[uuid.UUID] = mapped_column(

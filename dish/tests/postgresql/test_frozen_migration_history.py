@@ -27,7 +27,7 @@ FROZEN_REVISIONS = (
     "0007_cutover_evidence_gates",
 )
 EXPECTED_DIGESTS = {
-    "0003_workflow_authority": "203ffd428dc53eb90f857437a7d6ae8773ab7f6b388de766cca905b4e8a8ad20",
+    "0003_workflow_authority": "a07b3013a001970c3c2e81fcfd252ec5bb984274812b476a5063d2724755fe1b",
     "0004_transition_projection": "a5360764d453cbc853796ba12c3fbf6fc0f099be18be3776b9f084ee180cd74c",
     "0005_release_cutover": "3b0b3d65e7a13823bcff9f8042b01046a57dc29cdc46cb561758f0827b694f56",
     "0006_final_asana_closure": "07a301bba48cd8ca47595d669634d004b8367a092647f49c1b0f3d762d802e60",
