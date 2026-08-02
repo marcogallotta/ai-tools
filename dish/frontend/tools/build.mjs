@@ -10,5 +10,6 @@ const dist = path.join(root, "dist");
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
 await cp(path.join(root, "src"), dist, { recursive: true });
+await cp(path.join(root, "fixtures"), path.join(dist, "fixtures"), { recursive: true });
 await writeFile(path.join(dist, "build.json"), `${JSON.stringify({ contractVersion: "dish-frontend-v1", fixtureBacked: true }, null, 2)}\n`);
 console.log(`Built frontend at ${dist}`);

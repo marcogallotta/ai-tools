@@ -49,7 +49,11 @@ def module_bundle(entry: Path) -> str:
         source = IMPORT_RE.sub("", source)
         source = re.sub(r"^export\s+", "", source, flags=re.MULTILINE)
         source = source.replace("\nboot();\n", "\n")
-        ordered.append(f"\n// {resolved.relative_to(SRC)}\n{source}")
+        try:
+            label = resolved.relative_to(ROOT)
+        except ValueError:
+            label = resolved.name
+        ordered.append(f"\n// {label}\n{source}")
 
     visit(entry)
     return "\n".join(ordered)
@@ -63,8 +67,10 @@ def prepare_page(page, view: str) -> None:
     page.add_script_tag(content=bundle)
     if view == "login":
         page.evaluate("renderLoginShell(document.querySelector('#app'))")
+    elif view == "zero":
+        page.evaluate("renderFixturePrototype(document.querySelector('#app'), 'zero')")
     else:
-        page.evaluate("renderApplicationShell(document.querySelector('#app'))")
+        page.evaluate("renderFixturePrototype(document.querySelector('#app'), 'board')")
 
 
 def assert_shells(browser) -> None:
@@ -73,17 +79,20 @@ def assert_shells(browser) -> None:
     page.locator('#app[data-shell-state="login"]').wait_for()
     assert page.get_by_label("Shared password").is_disabled()
     prepare_page(page, "app")
-    page.locator('#app[data-shell-state="protected-empty"]').wait_for()
-    assert page.get_by_text("Frontend foundation ready").is_visible()
+    page.locator('#app[data-shell-state="fixture-board"]').wait_for()
+    assert page.locator('[aria-label="Dish task board"]').is_visible()
+    assert page.get_by_role("button", name="Load more").is_visible()
+    prepare_page(page, "zero")
+    assert page.get_by_text("No active sections").is_visible()
     page.close()
 
 
 def capture_shells(browser) -> None:
     SCREENSHOTS.mkdir(parents=True, exist_ok=True)
     page = browser.new_page(viewport={"width": 1440, "height": 900})
-    for view in ("login", "app"):
+    for view, filename in (("login", "stage-0-login.png"), ("app", "stage-1a-board.png"), ("zero", "stage-1a-zero-board.png")):
         prepare_page(page, view)
-        page.screenshot(path=SCREENSHOTS / f"stage-0-{view}.png", full_page=True)
+        page.screenshot(path=SCREENSHOTS / filename, full_page=True)
     page.close()
 
 
@@ -103,7 +112,7 @@ def main() -> None:
                 print("Playwright shell checks passed")
             else:
                 capture_shells(browser)
-                print(f"Captured Stage 0 screenshots in {SCREENSHOTS}")
+                print(f"Captured frontend screenshots in {SCREENSHOTS}")
         finally:
             browser.close()
 
