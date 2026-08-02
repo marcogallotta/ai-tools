@@ -212,7 +212,10 @@ def _evidence_hold_continuation(
         command += f" --resume-status {resume_status}"
     next_action = after_resolution["legal_actions"][0] if after_resolution["legal_actions"] else None
     directive = (
-        f"Tell the human to run: {command}\n"
+        "Tell the human what fact or decision is missing (see this task's Status detail), then "
+        "ask them to run the following command after replacing the angle-bracketed detail text "
+        "with that answer:\n"
+        f"{command}\n"
         "Then wait for confirmation it succeeded before continuing — do not start a new "
         "operation; resume this same submission"
         + (f" with `{next_action}`." if next_action else ".")
