@@ -43,7 +43,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0008_fail_closed_admission_outbox"
+ALEMBIC_HEAD = "0009_candidate_replacement_control"
 
 
 class ReleaseCandidateService(
@@ -173,16 +173,41 @@ class ReleaseCandidateService(
         # Flush the candidate before inserting the FK-dependent admission row;
         # no ORM relationship exists to order these otherwise on SQLite.
         self.session.flush()
-        self.session.add(
-            rel.MutationAdmissionControl(
-                generation_id=generation_id,
-                candidate_id=candidate_id,
-                state="closed",
-                control_revision=1,
-                opened_at=None,
-                updated_at=created_at,
-            )
+        control = self.session.get(
+            rel.MutationAdmissionControl, generation_id, with_for_update=True
         )
+        if control is None:
+            self.session.add(
+                rel.MutationAdmissionControl(
+                    generation_id=generation_id,
+                    candidate_id=candidate_id,
+                    state="closed",
+                    control_revision=1,
+                    opened_at=None,
+                    updated_at=created_at,
+                )
+            )
+        else:
+            prior_candidate = self.session.get(rel.ReleaseCandidate, control.candidate_id)
+            activation = self.session.scalar(
+                select(models.AuthorityActivation).where(
+                    models.AuthorityActivation.generation_id == generation_id,
+                    models.AuthorityActivation.outcome == "activated",
+                )
+            )
+            if (
+                prior_candidate is None
+                or prior_candidate.status != "aborted"
+                or control.state != "closed"
+                or activation is not None
+            ):
+                raise ReleaseAuthorityError(
+                    "generation admission control can be rebound only after an exact pre-burn abort"
+                )
+            control.candidate_id = candidate_id
+            control.control_revision += 1
+            control.opened_at = None
+            control.updated_at = created_at
         self.session.flush()
         return row
 
