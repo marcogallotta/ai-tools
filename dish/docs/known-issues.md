@@ -38,4 +38,21 @@ clear workaround and revisit trigger. For every new or reconsidered issue, recor
 
 ## Known issues, ordered by priority
 
-None currently queued.
+### Large-correction route used for pre-Dish migration backfill, not material recipe change
+
+- Observed: real instance — [Phở gà repeat — pressure-cooker correction](https://app.asana.com/1/1200569426771227/project/1217084805070730/task/1217084919442831).
+  Its own `Material changes` entry states the Large route was triggered by filling in a legacy
+  `WHAT TO BUY` placeholder and aligning the title to satisfy `title.recognition` — pure
+  migration backfill, not a change to what gets cooked. The Large route is specified
+  (`dish-verification-protocol.md:203-207`) for changes that materially affect identity,
+  quantities, safety, sourcing, etc. — not schema completeness left over from the pre-Dish
+  migration.
+- Worst effect: friction only. Observed cost was low in this instance — a second verifier
+  re-verified and approved without incident. Marco: not hard to deal with for now; conceptually
+  mismatched classification, not a functional failure or a current blocker.
+- Agent guidance: none exists distinguishing "real Large content change" from "backfilling what
+  the migration never populated."
+- Recovery: N/A — not a failure mode.
+- Revisit trigger: track recurrence across future corrections. If backfill-only Large
+  corrections keep showing up, consider a lighter route or a distinct `migration-backfill`
+  classification.
