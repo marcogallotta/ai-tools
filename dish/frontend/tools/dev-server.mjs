@@ -32,6 +32,15 @@ export async function startStaticServer({ root, port = 0 } = {}) {
       });
       createReadStream(candidate).pipe(response);
     } catch {
+      if (request.method === "GET" && !path.extname(requestedPath)) {
+        response.writeHead(200, {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        });
+        createReadStream(path.join(resolvedRoot, "index.html")).pipe(response);
+        return;
+      }
       response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" }).end("Not found");
     }
   });

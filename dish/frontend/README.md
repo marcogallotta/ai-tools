@@ -34,3 +34,8 @@ Playwright browser harness that drives the installed Chromium executable.
 
 No Stage 0 or Stage 1 fixture is canonical task data. No frontend route or component is a workflow,
 placement, completion, projection, or content-mutation authority.
+
+## Current delivery status
+
+Delivery Stage 0 and fixture-backed Delivery Stage 1A–1D are implemented. Real authentication and
+canonical-data integration remain intentionally absent and blocked by the governing readiness gates.

@@ -6,7 +6,7 @@ import { walkFiles } from "./files.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const files = (await walkFiles(root)).filter((file) => !file.includes(`${path.sep}dist${path.sep}`));
-const textExtensions = new Set([".js", ".mjs", ".css", ".html", ".json", ".md"]);
+const textExtensions = new Set([".js", ".mjs", ".css", ".html", ".json", ".md", ".py"]);
 const errors = [];
 for (const file of files) {
   if (!textExtensions.has(path.extname(file))) continue;
@@ -28,6 +28,10 @@ for (const file of files) {
 if (!process.argv.includes("--format-only")) {
   for (const file of files.filter((item) => [".js", ".mjs"].includes(path.extname(item)))) {
     const result = spawnSync(process.execPath, ["--check", file], { encoding: "utf8" });
+    if (result.status !== 0) errors.push(`${path.relative(root, file)}: ${result.stderr.trim()}`);
+  }
+  for (const file of files.filter((item) => path.extname(item) === ".py")) {
+    const result = spawnSync(process.env.PYTHON ?? "python3", ["-m", "py_compile", file], { encoding: "utf8" });
     if (result.status !== 0) errors.push(`${path.relative(root, file)}: ${result.stderr.trim()}`);
   }
 }

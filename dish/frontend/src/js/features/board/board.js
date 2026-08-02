@@ -1,3 +1,4 @@
+import { installBoardKeyboard } from "../accessibility/board-keyboard.js";
 import { createTaskCard } from "../cards/card.js";
 import { appendContinuation, loadedTaskText, sectionHeading } from "./board-model.js";
 
@@ -28,9 +29,7 @@ function createSection(section, options) {
     empty.textContent = "No incomplete tasks";
     list.append(empty);
   } else {
-    for (const card of section.cards) {
-      list.append(createTaskCard(card, options));
-    }
+    for (const card of section.cards) list.append(createTaskCard(card, options));
   }
 
   region.append(header, list);
@@ -67,10 +66,9 @@ export function renderBoard(host, board, options) {
 
   const scroller = document.createElement("div");
   scroller.className = "board-scroller";
-  for (const section of board.sections) {
-    scroller.append(createSection(section, options));
-  }
+  for (const section of board.sections) scroller.append(createSection(section, options));
   host.append(scroller);
+  installBoardKeyboard(host);
 }
 
 export function loadFixtureContinuation(section, region, options) {

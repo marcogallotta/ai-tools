@@ -1,15 +1,17 @@
 import { DOCUMENT_TITLE } from "./config.js";
 import { renderFixturePrototype } from "./prototype/prototype-app.js";
+import { parseTaskRoute } from "./features/routing/routes.js";
 import { renderLoginShell } from "./shell/login-shell.js";
 
 const scenarios = new Set(["board", "zero", "loading", "initial-error", "last-safe"]);
 
-export function resolveInitialView(search = window.location.search) {
+export function resolveInitialView(search = window.location.search, pathname = window.location.pathname) {
   const parameters = new URLSearchParams(search);
   const requestedScenario = parameters.get("scenario") ?? "board";
   return {
     view: parameters.get("view") === "login" ? "login" : "app",
     scenario: scenarios.has(requestedScenario) ? requestedScenario : "board",
+    taskId: parseTaskRoute(pathname),
   };
 }
 
@@ -21,7 +23,7 @@ export function boot(root = document.querySelector("#app")) {
     renderLoginShell(root);
     return;
   }
-  renderFixturePrototype(root, initial.scenario);
+  renderFixturePrototype(root, initial.scenario, initial.taskId);
 }
 
 boot();

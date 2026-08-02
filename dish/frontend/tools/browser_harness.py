@@ -59,7 +59,7 @@ def module_bundle(entry: Path) -> str:
     return "\n".join(ordered)
 
 
-def prepare_page(page, view: str) -> None:
+def prepare_page(page, view: str, task_id: str | None = None) -> None:
     page.set_content('<main id="app" class="app-root" aria-live="polite"></main>')
     css = "\n".join((SRC / "styles" / name).read_text(encoding="utf-8") for name in STYLE_FILES)
     page.add_style_tag(content=css)
@@ -70,7 +70,10 @@ def prepare_page(page, view: str) -> None:
     elif view in {"zero", "loading", "initial-error", "last-safe"}:
         page.evaluate(f"renderFixturePrototype(document.querySelector('#app'), '{view}')")
     else:
-        page.evaluate("renderFixturePrototype(document.querySelector('#app'), 'board')")
+        page.evaluate(
+            "taskId => renderFixturePrototype(document.querySelector('#app'), 'board', taskId)",
+            task_id,
+        )
 
 
 def assert_shells(browser) -> None:
@@ -83,13 +86,25 @@ def assert_shells(browser) -> None:
     assert page.locator('[aria-label="Dish task board"]').is_visible()
     assert page.get_by_role("button", name="Load more").is_visible()
     assert page.get_by_text(re.compile("Lease needs attention — 2 tasks")).is_visible()
+    first = page.locator('[data-task-id="task-aubergine"]')
+    first.focus()
+    first.press("ArrowDown")
+    assert page.evaluate("document.activeElement.dataset.taskId") == "task-biryani"
     page.get_by_role("button", name=re.compile("Chicken biryani")).click()
     assert page.get_by_role("dialog").is_visible()
     assert page.get_by_text("What needs to happen next").is_visible()
-    page.get_by_role("button", name="Close task detail").click()
+    assert page.locator("body").get_attribute("data-prototype-route") == "/task/task-biryani"
+    page.keyboard.press("Escape")
     assert page.get_by_role("dialog").count() == 0
+    assert page.evaluate("document.activeElement.dataset.taskId") == "task-biryani"
+    prepare_page(page, "app", "task-biryani")
+    assert page.get_by_role("dialog").is_visible()
+    page.get_by_role("button", name="Close task detail").click()
+    assert page.locator("body").get_attribute("data-prototype-route") == "/"
     prepare_page(page, "loading")
     assert page.locator('[aria-busy="true"]').is_visible()
+    page.emulate_media(reduced_motion="reduce")
+    assert page.locator(".board-skeleton__column").first.evaluate("node => getComputedStyle(node).animationName") == "none"
     prepare_page(page, "initial-error")
     assert page.get_by_role("button", name="Retry board load").is_visible()
     prepare_page(page, "last-safe")
@@ -116,6 +131,9 @@ def capture_shells(browser) -> None:
         page.screenshot(path=SCREENSHOTS / f"stage-1c-{view}.png", full_page=True)
     prepare_page(page, "app")
     page.screenshot(path=SCREENSHOTS / "stage-1c-grouped-banners.png", full_page=True)
+    page.set_viewport_size({"width": 1024, "height": 768})
+    prepare_page(page, "app", "task-biryani")
+    page.screenshot(path=SCREENSHOTS / "stage-1d-minimum-viewport.png", full_page=True)
     page.close()
 
 

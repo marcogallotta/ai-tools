@@ -32,18 +32,26 @@ function renderDisclosures(host, disclosures) {
   host.append(heading, list);
 }
 
+function restorePanelFocus(origin, fallback) {
+  if (origin?.isConnected) {
+    origin.focus({ preventScroll: true });
+    return;
+  }
+  const target = fallback?.isConnected ? fallback : document.querySelector('[aria-label="Dish task board"]');
+  target?.focus({ preventScroll: true });
+}
+
 export function closeTaskDetail({ restoreFocus = true } = {}) {
   if (!activePanel) return;
-  const { panel, origin, onClose, outsideListener, keyListener } = activePanel;
+  const { panel, origin, fallback, outsideListener, keyListener } = activePanel;
   document.removeEventListener("pointerdown", outsideListener, true);
   document.removeEventListener("keydown", keyListener);
   panel.remove();
   activePanel = null;
-  onClose?.();
-  if (restoreFocus && origin?.isConnected) origin.focus({ preventScroll: true });
+  if (restoreFocus) restorePanelFocus(origin, fallback);
 }
 
-export function openTaskDetail(detail, origin, { onClose } = {}) {
+export function openTaskDetail(detail, origin, { onRequestClose, focusFallback } = {}) {
   closeTaskDetail({ restoreFocus: false });
   const panel = document.createElement("aside");
   panel.className = "task-detail";
@@ -67,7 +75,6 @@ export function openTaskDetail(detail, origin, { onClose } = {}) {
   close.type = "button";
   close.setAttribute("aria-label", "Close task detail");
   close.textContent = "Close";
-  close.addEventListener("click", () => closeTaskDetail());
   header.append(identity, close);
 
   const body = document.createElement("div");
@@ -94,13 +101,15 @@ export function openTaskDetail(detail, origin, { onClose } = {}) {
   panel.append(header, body);
   document.body.append(panel);
 
+  const requestClose = () => onRequestClose?.() ?? closeTaskDetail();
+  close.addEventListener("click", requestClose);
   const outsideListener = (event) => {
-    if (!panel.contains(event.target) && !event.target.closest?.(".task-card")) closeTaskDetail();
+    if (!panel.contains(event.target) && !event.target.closest?.(".task-card")) requestClose();
   };
   const keyListener = (event) => {
-    if (event.key === "Escape") closeTaskDetail();
+    if (event.key === "Escape") requestClose();
   };
-  activePanel = { panel, origin, onClose, outsideListener, keyListener };
+  activePanel = { panel, origin, fallback: focusFallback, outsideListener, keyListener };
   document.addEventListener("pointerdown", outsideListener, true);
   document.addEventListener("keydown", keyListener);
   close.focus();

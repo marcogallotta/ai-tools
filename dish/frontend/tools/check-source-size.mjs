@@ -5,7 +5,7 @@ import { walkFiles } from "./files.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const includedRoots = ["src", "tools", "tests"].map((name) => path.join(root, name));
-const extensions = new Set([".js", ".mjs", ".css", ".html"]);
+const extensions = new Set([".js", ".mjs", ".css", ".html", ".py"]);
 const reviewThreshold = 250;
 const hardLimit = 350;
 const failures = [];
