@@ -41,6 +41,21 @@ These commands never rerun a failure. Any failure blocks the gate.
 
 A pass after retry is not a clean pass and must not be reported as one.
 
+### Native PostgreSQL fixture lane
+
+Run PostgreSQL-backed Stage A fixtures with:
+
+```sh
+DISH_TEST_POSTGRESQL_DSN='postgresql+psycopg://...' \
+  .venv/bin/python -m pytest --postgresql
+```
+
+The native branch of `tests/support/postgresql/core.py` drops and recreates the disposable
+`public` schema before each owning test, then runs Alembic through `head`. It must not use
+`Base.metadata.create_all()`: hand-written PostgreSQL triggers and constraints are part of the
+behavior under certification. If per-test migration cost becomes material, measure it first and
+introduce an explicit session-migrate/table-reset strategy; do not silently bypass migration history.
+
 ## Flaky-test classifications
 
 ### Normal

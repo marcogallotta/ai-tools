@@ -81,3 +81,16 @@ def test_pglite_accepts_service_run_for_active_generation(pglite) -> None:
         assert connection.execute(
             "SELECT count(*) FROM service_runs WHERE run_id = %s", (run_id,)
         ).fetchone()[0] == 1
+
+
+def test_native_fixture_reset_uses_alembic_history(pglite) -> None:
+    from tests.support.postgresql.core import _reset_postgresql_schema
+
+    _reset_postgresql_schema(pglite.sqlalchemy_url)
+    with psycopg.connect(pglite.libpq_dsn) as connection:
+        assert connection.execute(
+            "SELECT version_num FROM alembic_version"
+        ).fetchone()[0] == ALEMBIC_HEAD
+        assert connection.execute(
+            "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal"
+        ).fetchone()[0] > 0
