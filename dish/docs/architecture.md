@@ -19,6 +19,7 @@ loading every Dish document.
 | Tailscale Serve or Funnel | [`../deploy/tailscale/README.md`](../deploy/tailscale/README.md) |
 | the protocol's own structure, canonical fields, process records, or change classes | `~/honest-pantry/dish-docs-design.md` and the relevant current Honest assets |
 | work not yet implemented | [`future.md`](future.md) |
+| private frontend product or delivery work | [`frontend.md`](frontend.md) and [`frontend-imp.md`](frontend-imp.md) |
 
 Removed plans remain available in Git history.
 
@@ -65,6 +66,13 @@ GPT Action ─────────────┘          action listener �
 
 Local test mode bypasses HTTP, authentication, and service leases. It still uses the same command
 applications, workflow use cases, database contract, and Asana gateway contract.
+
+The private frontend delivery skeleton lives under `frontend/`. Delivery Stages 0 and 1 are a
+runnable fixture-backed design surface only: they do not add a service listener, frontend principal,
+session authority, canonical read model, or mutation path. `frontend/openapi/frontend.openapi.json`
+is a separate frontend-only synchronization target and must never be merged into the Action schema.
+Real listener, authentication, or PostgreSQL integration remains governed by the readiness gates in
+`frontend-imp.md`.
 
 ## Invariants every change must preserve
 

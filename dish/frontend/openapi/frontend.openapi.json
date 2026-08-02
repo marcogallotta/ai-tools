@@ -1,0 +1,1240 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Dish private frontend API",
+    "version": "dish-frontend-v1",
+    "description": "Private frontend-only contract. Separate from the Dish Action schema."
+  },
+  "servers": [
+    {
+      "url": "/"
+    }
+  ],
+  "paths": {
+    "/frontend/login": {
+      "post": {
+        "operationId": "frontendLogin",
+        "parameters": [
+          {
+            "name": "X-Dish-Frontend-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "const": "dish-frontend-v1"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmptyObject"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/frontend/session": {
+      "get": {
+        "operationId": "getFrontendSession",
+        "security": [
+          {
+            "frontendSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Dish-Frontend-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "const": "dish-frontend-v1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/frontend/logout": {
+      "post": {
+        "operationId": "frontendLogout",
+        "security": [
+          {
+            "frontendSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Dish-Frontend-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "const": "dish-frontend-v1"
+            }
+          },
+          {
+            "name": "X-Dish-CSRF",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 22,
+              "maxLength": 256,
+              "pattern": "^[\\x21-\\x7E]+$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyObject"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmptyObject"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/frontend/board": {
+      "get": {
+        "operationId": "getFrontendBoard",
+        "security": [
+          {
+            "frontendSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Dish-Frontend-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "const": "dish-frontend-v1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Board"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/frontend/sections/{section_id}/tasks": {
+      "get": {
+        "operationId": "getFrontendSectionTasks",
+        "security": [
+          {
+            "frontendSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Dish-Frontend-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "const": "dish-frontend-v1"
+            }
+          },
+          {
+            "name": "section_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SectionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/frontend/tasks/{task_id}": {
+      "get": {
+        "operationId": "getFrontendTaskDetail",
+        "security": [
+          {
+            "frontendSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Dish-Frontend-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "const": "dish-frontend-v1"
+            }
+          },
+          {
+            "name": "task_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetail"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "frontendSession": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-dish_frontend_session"
+      }
+    },
+    "schemas": {
+      "EmptyObject": {
+        "type": "object",
+        "additionalProperties": false,
+        "maxProperties": 0
+      },
+      "Error": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 240
+          },
+          "retry_after_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 3600
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          }
+        }
+      },
+      "Session": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "expires_at",
+          "remaining_seconds",
+          "csrf_proof"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "remaining_seconds": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 604800
+          },
+          "csrf_proof": {
+            "type": "string",
+            "minLength": 22,
+            "maxLength": 256,
+            "pattern": "^[\\x21-\\x7E]+$"
+          }
+        }
+      },
+      "AttentionCode": {
+        "type": "string",
+        "enum": [
+          "lease_attention",
+          "verification_attention",
+          "hold_active",
+          "recovery_required",
+          "abandonment_active",
+          "succession_active",
+          "projection_abnormal"
+        ]
+      },
+      "WorkflowStatus": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "state"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "active_operation",
+              "no_active_operation"
+            ]
+          },
+          "operation": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "phase": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          }
+        }
+      },
+      "Card": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task_id",
+          "title",
+          "section_id",
+          "workflow_status",
+          "attention_codes"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "section_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "workflow_status": {
+            "$ref": "#/components/schemas/WorkflowStatus"
+          },
+          "attention_codes": {
+            "type": "array",
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/AttentionCode"
+            }
+          }
+        }
+      },
+      "Notice": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "task_id",
+          "severity"
+        ],
+        "properties": {
+          "code": {
+            "$ref": "#/components/schemas/AttentionCode"
+          },
+          "task_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "warning",
+              "error"
+            ]
+          }
+        }
+      },
+      "Section": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "section_id",
+          "section_label",
+          "continuity_id",
+          "cards",
+          "next_cursor"
+        ],
+        "properties": {
+          "section_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "section_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "project_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 160
+          },
+          "continuity_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "cards": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/Card"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 1000
+          }
+        }
+      },
+      "Board": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "snapshot_id",
+          "page_size",
+          "sections",
+          "notices"
+        ],
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "page_size": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "sections": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/Section"
+            }
+          },
+          "notices": {
+            "type": "array",
+            "maxItems": 700,
+            "items": {
+              "$ref": "#/components/schemas/Notice"
+            }
+          }
+        }
+      },
+      "SectionPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "section_id",
+          "continuity_id",
+          "cards",
+          "next_cursor",
+          "notices"
+        ],
+        "properties": {
+          "section_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "continuity_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "cards": {
+            "type": "array",
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/Card"
+            }
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 1000
+          },
+          "notices": {
+            "type": "array",
+            "maxItems": 700,
+            "items": {
+              "$ref": "#/components/schemas/Notice"
+            }
+          }
+        }
+      },
+      "ContentBlock": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "text"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "paragraph",
+              "heading",
+              "list_item"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 10000
+          }
+        }
+      },
+      "Disclosure": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "label",
+          "detail"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        }
+      },
+      "TaskDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task_id",
+          "title",
+          "project_label",
+          "section_label",
+          "workflow_status",
+          "attention_codes",
+          "content",
+          "content_mode",
+          "disclosures",
+          "next_step"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "project_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "section_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "destination_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 160
+          },
+          "workflow_status": {
+            "$ref": "#/components/schemas/WorkflowStatus"
+          },
+          "attention_codes": {
+            "type": "array",
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": {
+              "$ref": "#/components/schemas/AttentionCode"
+            }
+          },
+          "content": {
+            "type": "array",
+            "maxItems": 500,
+            "items": {
+              "$ref": "#/components/schemas/ContentBlock"
+            }
+          },
+          "content_mode": {
+            "type": "string",
+            "enum": [
+              "rendered",
+              "plain_text_fallback"
+            ]
+          },
+          "disclosures": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/Disclosure"
+            }
+          },
+          "next_step": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        }
+      }
+    }
+  }
+}

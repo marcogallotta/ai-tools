@@ -3,3 +3,4 @@ pytest==9.1.1
 jsonschema==4.26.0
 py-pglite==0.5.3
 psutil==7.2.2
+playwright==1.57.0
