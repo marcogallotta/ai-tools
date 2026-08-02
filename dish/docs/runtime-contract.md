@@ -439,3 +439,8 @@ A third non-approved Verification round ending in a Large correction returns no 
 the workflow state back to `pending-verification`, creates the next independent Verification cycle,
 and does not approve or sign off the task. `dish-admin reopen` remains available only for an actual
 substantive reset with its existing evidence contract.
+
+
+## Hold observability and resolution binding
+
+`dish-admin holds` is the read-only Marco/admin inventory for every open Evidence or Human Review hold. It classifies pre-construction Research, ordinary Verification Evidence/Human Review, and automatic two-pass Verification holds separately, reports the exact required admin action, task title/GID/link, question, operation and cycle identifiers, and the persisted hold identity. Durable resolution commands must include the displayed task GID and, for Verification holds, the displayed cycle ID and hold identity; Dish rejects stale or mismatched commands before mutation. Quantified-limit blockers are recorded at `reject` time as a complete metric/actual/limit/delta/unit/basis set in the existing operation-step and audit JSON.

@@ -1,6 +1,6 @@
 # Evidence / Human Review hold resolution redesign
 
-Design triage, not implementation authorization — same status as other `*-design.md`
+Phase 1 implemented; Phase 2 remains design triage — same status as other `*-design.md`
 documents referenced from [`future.md`](future.md). Written after a live incident where a
 Human Review report gave no quantified blocker and no clear path for Marco to negotiate
 instead of just approve/reject.

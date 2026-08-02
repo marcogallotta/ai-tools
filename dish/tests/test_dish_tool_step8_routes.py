@@ -1,4 +1,5 @@
 import pytest
+import shlex
 from pathlib import Path
 
 
@@ -65,10 +66,21 @@ def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path)
     assert "provenance-signoff" not in good["data"]["validation_scope"]
     assert good["data"]["continuation_surface"] == "private-admin"
     assert good["data"]["connected_action_available"] is False
-    assert good["data"]["admin_command"] == (
+    command = good["data"]["admin_command"]
+    assert command.startswith(
         f'dish-admin supply-evidence {operation_id} --detail "<summarize the supplied evidence>" '
         "--resume-status pending-verification"
     )
+    argv = shlex.split(command)
+    assert argv[argv.index("--expected-task-gid") + 1] == "t"
+    cycle_id = app.conn.execute(
+        "SELECT cycle_id FROM verification_cycles WHERE operation_id = ? ORDER BY created_at DESC LIMIT 1",
+        (operation_id,),
+    ).fetchone()[0]
+    assert argv[argv.index("--expected-cycle-id") + 1] == cycle_id
+    hold_identity = argv[argv.index("--expected-hold-identity") + 1]
+    assert len(hold_identity) == 64
+    assert all(character in "0123456789abcdef" for character in hold_identity)
     assert good["data"]["after_resolution"] == {
         "legal_actions": ["start"], "required_start_kind": "verification", "phase": "await_verification",
     }

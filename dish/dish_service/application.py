@@ -96,7 +96,7 @@ _OPERATION_ADMIN_COMMANDS = {
     "authorize-governed-change",
     "repair-destination",
 }
-_LEASE_FREE_ADMIN_COMMANDS = {"authorize-governed-change", "abandon-operation", "reconcile-abandonment"}
+_LEASE_FREE_ADMIN_COMMANDS = {"holds", "authorize-governed-change", "abandon-operation", "reconcile-abandonment"}
 
 LOG = logging.getLogger("dish.service.application")
 

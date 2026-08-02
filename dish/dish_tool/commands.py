@@ -242,15 +242,23 @@ def _evidence_hold_continuation(
         except (TypeError, ValueError):
             intended = {}
         resume_status = intended.get("resume_status")
+    cycle = None
     if resume_status is None:
         cycle = conn.execute(
-            """SELECT resume_state FROM verification_cycles
+            """SELECT cycle_id, resume_state, hold_identity FROM verification_cycles
                  WHERE operation_id=? AND route=?
                  ORDER BY cycle_number DESC LIMIT 1""",
             (operation_id, routes["cycle_route"]),
         ).fetchone()
         if cycle is not None:
             resume_status = cycle["resume_state"]
+    elif preconstruction is None:
+        cycle = conn.execute(
+            """SELECT cycle_id, resume_state, hold_identity FROM verification_cycles
+                 WHERE operation_id=? AND route=?
+                 ORDER BY cycle_number DESC LIMIT 1""",
+            (operation_id, routes["cycle_route"]),
+        ).fetchone()
 
     after_resolution: dict[str, Any] = {"legal_actions": []}
     if resume_status == "pending-research":
@@ -265,9 +273,14 @@ def _evidence_hold_continuation(
             "phase": "await_verification",
         }
 
+    op = conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
     command = f'dish-admin {admin_action} {operation_id} --detail "{routes["detail_placeholder"]}"'
     if resume_status:
         command += f" --resume-status {resume_status}"
+    if op is not None:
+        command += f" --expected-task-gid {op['task_gid']}"
+    if cycle is not None:
+        command += f" --expected-cycle-id {cycle['cycle_id']} --expected-hold-identity {cycle['hold_identity']}"
     next_action = after_resolution["legal_actions"][0] if after_resolution["legal_actions"] else None
     directive = (
         "Tell the human what fact or decision is missing (see this task's Status detail), then "
@@ -1116,7 +1129,7 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None =
         validation_scope=trace.validation_scope,
     )
 
-def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None) -> dict[str, Any]:
+def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, blocker_metric: str | None = None, blocker_actual: float | None = None, blocker_limit: float | None = None, blocker_delta: float | None = None, blocker_unit: str | None = None, blocker_basis: str | None = None) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     reason = validate_rejection_reason(reason)
     route_release = self._load_release(None)
@@ -1149,7 +1162,7 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = 
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
     data, view = self.operation_service.current.reject(
         operation_id,
-        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=clean_attestation, request_id=self.invocation_request_id, schema=release.schema, honest_root=release.root),
+        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=clean_attestation, request_id=self.invocation_request_id, schema=release.schema, honest_root=release.root, blocker_metric=blocker_metric, blocker_actual=blocker_actual, blocker_limit=blocker_limit, blocker_delta=blocker_delta, blocker_unit=blocker_unit, blocker_basis=blocker_basis),
         schema=release.schema,
     )
     trace.state = view["status"]

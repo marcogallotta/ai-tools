@@ -49,6 +49,7 @@ def _preconstruction_research_hold(
     request_id: str | None,
     file_path: str | None,
     model: str | None,
+    quantified_blocker: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if route not in {"evidence", "human-review"}:
         raise DishRuleError(
@@ -101,6 +102,7 @@ def _preconstruction_research_hold(
         "resolver": resolver,
         "resume_status": "pending-research",
         "candidate_content_existed": False,
+        "quantified_blocker": quantified_blocker,
     }
     target_phase = "held_evidence" if route == "evidence" else "held_human"
     with savepoint_transaction(conn, "research_preconstruction_hold"):
@@ -723,10 +725,28 @@ def _resume_rejected_cycle(
     }
 
 
-def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, request_id: str | None = None, schema=None, honest_root=None):
+def _validated_quantified_blocker(*, metric=None, actual=None, limit=None, delta=None, unit=None, basis=None):
+    values = {"metric": metric, "actual": actual, "limit": limit, "delta": delta, "unit": unit, "basis": basis}
+    present = {key: value for key, value in values.items() if value is not None and str(value).strip() != ""}
+    if not present:
+        return None
+    if set(present) != set(values):
+        raise DishRuleError("INVALID_ARGUMENT", "quantified blocker fields must be supplied together", rule="quantified_blocker_incomplete", details={"missing": sorted(set(values) - set(present))})
+    try:
+        actual_n, limit_n, delta_n = float(actual), float(limit), float(delta)
+    except (TypeError, ValueError) as exc:
+        raise DishRuleError("INVALID_ARGUMENT", "actual, limit, and delta must be numeric", rule="quantified_blocker_numeric") from exc
+    expected_delta = actual_n - limit_n
+    if abs(expected_delta - delta_n) > 1e-9:
+        raise DishRuleError("INVALID_ARGUMENT", "delta must equal actual minus limit", rule="quantified_blocker_delta_mismatch", details={"expected_delta": expected_delta, "actual_delta": delta_n})
+    return {"metric": str(metric).strip(), "actual": actual_n, "limit": limit_n, "delta": delta_n, "unit": str(unit).strip(), "basis": str(basis).strip()}
+
+
+def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, request_id: str | None = None, schema=None, honest_root=None, blocker_metric=None, blocker_actual=None, blocker_limit=None, blocker_delta=None, blocker_unit=None, blocker_basis=None):
 
     route = str(route or "").strip()
     reason = validate_rejection_reason(reason)
+    quantified_blocker = _validated_quantified_blocker(metric=blocker_metric, actual=blocker_actual, limit=blocker_limit, delta=blocker_delta, unit=blocker_unit, basis=blocker_basis)
     if route not in ROUTES:
         raise DishRuleError("INVALID_ARGUMENT", "route must be large, evidence, or human-review", rule="invalid_rejection_route")
     _validate_rejection_route_arguments(
@@ -767,6 +787,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
             request_id=request_id,
             file_path=file_path,
             model=model,
+            quantified_blocker=quantified_blocker,
         )
     op, cycle = _rows(conn, operation_id)
     authority_attestation = cycle["independence_attestation"]
@@ -859,6 +880,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         "decision_identity": intended_identity,
         "decision_status": document.state.values["Status"],
         "verification_hold": verification_hold,
+        "quantified_blocker": quantified_blocker,
         "actor_agent": agent,
         "actor_run_id": run_id,
         "actor_attestation": authority_attestation,
@@ -913,7 +935,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         else:
             new_cycle = None
         complete_operation_step(conn, operation_id, route_phase_step)
-        record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "verification_hold": verification_hold, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
+        record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "quantified_blocker": quantified_blocker, "verification_hold": verification_hold, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
     return {"operation_id": operation_id, "route": route, "verification_hold": verification_hold, "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"], "task": dataclasses.asdict(confirmed)}
 
 
@@ -1171,6 +1193,9 @@ def resolve_hold(
     editor: str | None = None,
     model: str | None = None,
     run_id: str | None = None,
+    expected_task_gid: str | None = None,
+    expected_cycle_id: str | None = None,
+    expected_hold_identity: str | None = None,
 ):
     """Resolve an Evidence or Human Review hold from exact live state.
 
@@ -1195,6 +1220,8 @@ def resolve_hold(
     op = conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
     if op is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    if expected_task_gid is not None and str(expected_task_gid).strip() != str(op["task_gid"]):
+        raise DishRuleError("CONFLICT", "resolution command does not match the held task", rule="hold_task_mismatch", details={"expected": op["task_gid"], "actual": expected_task_gid})
     expected_phase = "held_evidence" if resolution_kind == "evidence" else "held_human"
     if op["status"] != "open" or op["phase"] != expected_phase:
         raise DishRuleError("WRONG_STATE", "operation is not on the requested hold", rule="hold_not_active")
@@ -1294,6 +1321,10 @@ def resolve_hold(
     ).fetchone()
     if cycle is None:
         raise DishRuleError("WRONG_STATE", "hold has no persisted Verification decision", rule="hold_cycle_missing")
+    if expected_cycle_id is not None and str(expected_cycle_id).strip() != str(cycle["cycle_id"]):
+        raise DishRuleError("CONFLICT", "resolution command does not match the active hold cycle", rule="hold_cycle_mismatch", details={"expected": cycle["cycle_id"], "actual": expected_cycle_id})
+    if expected_hold_identity is not None and str(expected_hold_identity).strip() != str(cycle["hold_identity"]):
+        raise DishRuleError("CONFLICT", "resolution command does not match the active hold identity", rule="hold_identity_mismatch", details={"expected": cycle["hold_identity"], "actual": expected_hold_identity})
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     before_doc = _held_document(conn, cycle=cycle, live=live)
     expected_status = "pending-evidence" if resolution_kind == "evidence" else "pending-human-review"

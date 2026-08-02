@@ -201,7 +201,7 @@ def test_current_dispatch_contract_is_explicit_and_complete():
     assert set(CURRENT_ADMIN_COMMAND_HANDLERS) == {
         "migrate", "reopen-planning", "reopen", "recover", "repair-destination", "supply-evidence",
         "record-human-decision", "resolved", "authorize-governed-change", "discard",
-        "abandon-operation", "reconcile-abandonment",
+        "abandon-operation", "reconcile-abandonment", "holds",
     }
     assert all(callable(handler) for handler in CURRENT_COMMAND_HANDLERS.values())
     assert all(callable(handler) for handler in CURRENT_ADMIN_COMMAND_HANDLERS.values())

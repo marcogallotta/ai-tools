@@ -809,6 +809,24 @@
                             ],
                             "type": "string"
                           },
+                          "blocker_actual": {
+                            "type": "number"
+                          },
+                          "blocker_basis": {
+                            "type": "string"
+                          },
+                          "blocker_delta": {
+                            "type": "number"
+                          },
+                          "blocker_limit": {
+                            "type": "number"
+                          },
+                          "blocker_metric": {
+                            "type": "string"
+                          },
+                          "blocker_unit": {
+                            "type": "string"
+                          },
                           "reason": {
                             "type": "string"
                           },
@@ -850,6 +868,24 @@
                               "gpt",
                               "codex"
                             ],
+                            "type": "string"
+                          },
+                          "blocker_actual": {
+                            "type": "number"
+                          },
+                          "blocker_basis": {
+                            "type": "string"
+                          },
+                          "blocker_delta": {
+                            "type": "number"
+                          },
+                          "blocker_limit": {
+                            "type": "number"
+                          },
+                          "blocker_metric": {
+                            "type": "string"
+                          },
+                          "blocker_unit": {
                             "type": "string"
                           },
                           "reason": {

@@ -27,7 +27,7 @@ from dish_service.task_urls import task_gid_from_url
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
 
-_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "abandon-operation", "reconcile-abandonment", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease", "expire-lease", "backup-create", "backup-restore"}
+_ADMIN_COMMANDS = {"holds", "recover", "repair-destination", "discard", "abandon-operation", "reconcile-abandonment", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease", "expire-lease", "backup-create", "backup-restore"}
 _OPERATION_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "abandon-operation", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease"}
 
 
@@ -50,6 +50,8 @@ def build_parser() -> JsonArgumentParser:
     )
     add_profile_argument(parser)
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("holds", help="list every currently open Evidence or Human Review hold")
 
     _submission_target_help = (
         "exact operation ID, task GID, or supported Asana task URL "
@@ -195,6 +197,9 @@ def build_parser() -> JsonArgumentParser:
         hold.add_argument("--editor", choices=("claude", "gpt", "codex"))
         hold.add_argument("--model")
         hold.add_argument("--run-id")
+        hold.add_argument("--expected-task-gid", required=True)
+        hold.add_argument("--expected-cycle-id")
+        hold.add_argument("--expected-hold-identity")
     return parser
 
 

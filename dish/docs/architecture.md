@@ -340,9 +340,6 @@ evidence, rehearsal, checkpoint, bundle, validation and abort ordering to the tr
 clock. The rehearsal table also prevents durable completion before start.
 Revision `0011_rollback_bundle_identity` requires a nonblank rollback bundle identity and
 rejects replay unless the exact bundle identity and burn timestamp match the durable activation.
-Revision `0012_task_grant_semantic_identity` adds a dialect-aware partial unique index so
-task-level Marco authorization grants (`operation_id IS NULL`) cannot duplicate the existing
-generation, task, field, before-value and after-value semantic identity.
 
 The Stage 6–8 package remains non-activating by itself. It performs no production Asana read/write,
 installs no credentials, starts no projection worker, records no Marco approval, and cannot invent
@@ -786,3 +783,8 @@ Current production code calls `savepoint_transaction`, `immediate_transaction`,
 transaction aliases and the forwarding-only `WorkflowRepository` facade are not
 part of the supported architecture. New code must use the authoritative primitive
 owned by the transaction or workflow module rather than add a second name for it.
+
+
+## Hold observability and resolution binding
+
+`dish-admin holds` is the read-only Marco/admin inventory for every open Evidence or Human Review hold. It classifies pre-construction Research, ordinary Verification Evidence/Human Review, and automatic two-pass Verification holds separately, reports the exact required admin action, task title/GID/link, question, operation and cycle identifiers, and the persisted hold identity. Durable resolution commands must include the displayed task GID and, for Verification holds, the displayed cycle ID and hold identity; Dish rejects stale or mismatched commands before mutation. Quantified-limit blockers are recorded at `reject` time as a complete metric/actual/limit/delta/unit/basis set in the existing operation-step and audit JSON.

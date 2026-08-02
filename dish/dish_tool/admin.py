@@ -214,6 +214,76 @@ class DishAdminApplication:
 
 
 
+
+def _command_holds(self, *, trace: AdminTrace) -> dict[str, Any]:
+    if self.backend is None:
+        raise DishRuleError("INTERNAL_ERROR", "hold listing requires backend access", rule="hold_listing_unavailable")
+    from .constants import COOKING_PROJECT_GID
+    from .task_gateway import read_complete_task
+
+    rows = self.conn.execute(
+        """SELECT * FROM operations
+             WHERE status='open' AND phase IN ('held_evidence','held_human')
+             ORDER BY created_at, operation_id"""
+    ).fetchall()
+    holds = []
+    for op in rows:
+        pre = self.conn.execute(
+            """SELECT intended_json FROM operation_steps
+                 WHERE operation_id=? AND step_name='research_preconstruction_hold'
+                   AND completed_at IS NOT NULL""",
+            (op["operation_id"],),
+        ).fetchone()
+        cycle = self.conn.execute(
+            """SELECT * FROM verification_cycles WHERE operation_id=?
+                 ORDER BY cycle_number DESC LIMIT 1""",
+            (op["operation_id"],),
+        ).fetchone()
+        if pre is not None:
+            payload = json.loads(pre["intended_json"])
+            route = payload.get("route")
+            hold_class = f"research_preconstruction_{'evidence' if route == 'evidence' else 'human'}"
+            question = payload.get("reason")
+            action = "supply-evidence" if route == "evidence" else "record-human-decision"
+            cycle_id = None
+            hold_identity = op["expected_identity"]
+        elif cycle is not None and cycle["outcome"] == "verification-hold":
+            hold_class = "verification_two_pass"
+            question = None
+            action = "reopen"
+            cycle_id = cycle["cycle_id"]
+            hold_identity = cycle["hold_identity"]
+        else:
+            route = None if cycle is None else cycle["route"]
+            hold_class = "verification_evidence" if route == "evidence" else "verification_human"
+            action = "supply-evidence" if route == "evidence" else "record-human-decision"
+            cycle_id = None if cycle is None else cycle["cycle_id"]
+            hold_identity = None if cycle is None else cycle["hold_identity"]
+            question = None
+        live = read_complete_task(self.backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
+        if question is None:
+            try:
+                from .task_document import parse_task_document
+                doc = parse_task_document(f"{live.title}\n{live.notes}")
+                question = doc.state.values.get("Status detail")
+            except Exception:
+                question = None
+        holds.append({
+            "hold_class": hold_class,
+            "required_admin_action": action,
+            "task_title": live.title,
+            "task_gid": op["task_gid"],
+            "asana_url": f"https://app.asana.com/0/0/{op['task_gid']}",
+            "operation_id": op["operation_id"],
+            "cycle_id": cycle_id,
+            "hold_identity": hold_identity,
+            "question": question,
+            "phase": op["phase"],
+            "created_at": op["created_at"],
+        })
+    return result_envelope(command="holds", state="ok", data={"holds": holds, "count": len(holds)})
+
+
 def _step5_admin_migrate(self, *, trace: AdminTrace, task_gid: str) -> dict[str, Any]:
     from .step5 import migrate_live_task
     clean = _clean_required(task_gid, rule="task_gid_required", label="task GID")
@@ -528,6 +598,9 @@ def _resolve_protocol_hold(
     editor: str | None = None,
     model: str | None = None,
     run_id: str | None = None,
+    expected_task_gid: str | None = None,
+    expected_cycle_id: str | None = None,
+    expected_hold_identity: str | None = None,
 ) -> dict[str, Any]:
     if self.backend is None or self.release_loader is None:
         raise DishRuleError("INTERNAL_ERROR", "hold resolution requires backend and Honest release", rule="hold_resolution_unavailable")
@@ -546,6 +619,8 @@ def _resolve_protocol_hold(
             self.conn, self.backend, operation_id=operation_id, resolution_kind=resolution_kind,
             detail=detail, resume_status=resume_status, honest_root=release.root,
             schema=release.schema, file_path=file_path, editor=editor, model=model, run_id=run_id,
+            expected_task_gid=expected_task_gid, expected_cycle_id=expected_cycle_id,
+            expected_hold_identity=expected_hold_identity,
         ),
         schema=release.schema,
     )
@@ -556,16 +631,16 @@ def _resolve_protocol_hold(
     )
 
 
-def _command_supply_evidence(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str, file_path: str | None = None, editor: str | None = None, model: str | None = None, run_id: str | None = None) -> dict[str, Any]:
+def _command_supply_evidence(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str, file_path: str | None = None, editor: str | None = None, model: str | None = None, run_id: str | None = None, expected_task_gid: str | None = None, expected_cycle_id: str | None = None, expected_hold_identity: str | None = None) -> dict[str, Any]:
     return _resolve_protocol_hold(
-        self, trace=trace, submission_id=submission_id, resolution_kind="evidence",
+        self, trace=trace, submission_id=submission_id, resolution_kind="evidence", expected_task_gid=expected_task_gid, expected_cycle_id=expected_cycle_id, expected_hold_identity=expected_hold_identity,
         detail=detail, resume_status=resume_status, file_path=file_path, editor=editor, model=model, run_id=run_id,
     )
 
 
-def _command_record_human_decision(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str, file_path: str | None = None, editor: str | None = None, model: str | None = None, run_id: str | None = None) -> dict[str, Any]:
+def _command_record_human_decision(self, *, trace: AdminTrace, submission_id: str, detail: str, resume_status: str, file_path: str | None = None, editor: str | None = None, model: str | None = None, run_id: str | None = None, expected_task_gid: str | None = None, expected_cycle_id: str | None = None, expected_hold_identity: str | None = None) -> dict[str, Any]:
     return _resolve_protocol_hold(
-        self, trace=trace, submission_id=submission_id, resolution_kind="human_review",
+        self, trace=trace, submission_id=submission_id, resolution_kind="human_review", expected_task_gid=expected_task_gid, expected_cycle_id=expected_cycle_id, expected_hold_identity=expected_hold_identity,
         detail=detail, resume_status=resume_status, file_path=file_path, editor=editor, model=model, run_id=run_id,
     )
 
@@ -1132,7 +1207,7 @@ def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, r
     )
 
 _OPERATION_TARGET_COMMANDS = {
-    "reopen", "recover", "repair-destination", "supply-evidence",
+    "holds", "reopen", "recover", "repair-destination", "supply-evidence",
     "record-human-decision", "resolved", "authorize-governed-change", "discard",
     "abandon-operation",
 }
@@ -1143,6 +1218,7 @@ CURRENT_ADMIN_COMMAND_HANDLERS = {
     "reopen": _step8_admin_reopen,
     "recover": _step9_admin_recover,
     "repair-destination": _step9_admin_repair_destination,
+    "holds": _command_holds,
     "supply-evidence": _command_supply_evidence,
     "record-human-decision": _command_record_human_decision,
     "resolved": _command_resolved,

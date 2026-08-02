@@ -208,6 +208,12 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
                 "enum": ["large", "evidence", "human-review"],
             },
             "file_text": {"type": "string"},
+            "blocker_metric": {"type": "string"},
+            "blocker_actual": {"type": "number"},
+            "blocker_limit": {"type": "number"},
+            "blocker_delta": {"type": "number"},
+            "blocker_unit": {"type": "string"},
+            "blocker_basis": {"type": "string"},
             "resume_status": {
                 "type": "string",
                 "enum": ["pending-research", "pending-verification"],
@@ -341,6 +347,7 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
 
     base = ARGUMENT_SCHEMAS["reject"]["properties"]
     common = {name: deepcopy(base[name]) for name in ("submission_id", "agent", "reason")}
+    blocker_fields = ("blocker_metric", "blocker_actual", "blocker_limit", "blocker_delta", "blocker_unit", "blocker_basis")
 
     def variant(route: str, *, extra: tuple[str, ...], required: tuple[str, ...]) -> dict[str, Any]:
         properties = deepcopy(common)
@@ -367,12 +374,12 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
             ),
             variant(
                 "evidence",
-                extra=("resume_status",),
+                extra=("resume_status", *blocker_fields),
                 required=("resume_status",),
             ),
             variant(
                 "human-review",
-                extra=("resume_status",),
+                extra=("resume_status", *blocker_fields),
                 required=("resume_status",),
             ),
         ],
