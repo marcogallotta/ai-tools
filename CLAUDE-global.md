@@ -18,7 +18,9 @@ If permission is unclear, ask first and name the exact target and action. A bare
 "do it" only authorizes a write when it directly answers a question that already named that target
 and action.
 
-Never run `sudo`/`systemctl` on services — ask Marco.
+`sudo /usr/bin/systemctl {stop,start,restart,status} dish-service-{prod,test}.service` runs
+passwordless (`/etc/sudoers.d/dish-agent`) only if typed exactly — full path, no extra flags. Ask
+Marco for anything else needing sudo.
 
 ## Communication
 
