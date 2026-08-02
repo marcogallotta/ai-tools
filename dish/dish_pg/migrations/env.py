@@ -8,6 +8,7 @@ from sqlalchemy import engine_from_config, pool
 from dish_pg.models import Base
 from dish_pg import stage3_models  # noqa: F401 -- register Stage 3 metadata
 from dish_pg import stage5_models  # noqa: F401 -- register Stage 5 metadata
+from dish_pg import stage6_models  # noqa: F401 -- register Stage 6 metadata
 
 config = context.config
 if config.config_file_name is not None:

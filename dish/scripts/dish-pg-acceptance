@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Run Stage 6 acceptance gates and write a deterministic evidence report."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+EXCLUDED_PARTS = {".git", ".venv", ".venv-flake", "__pycache__", ".pytest_cache", "artifacts"}
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="dish-pg-acceptance")
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--skip-full", action="store_true", help="omit the final full-suite gate")
+    return parser
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _source_manifest() -> tuple[list[dict[str, Any]], str]:
+    rows: list[dict[str, Any]] = []
+    for path in sorted(ROOT.rglob("*")):
+        if not path.is_file() or any(part in EXCLUDED_PARTS for part in path.relative_to(ROOT).parts):
+            continue
+        rows.append(
+            {
+                "path": str(path.relative_to(ROOT)),
+                "size": path.stat().st_size,
+                "sha256": _sha256(path),
+            }
+        )
+    encoded = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return rows, hashlib.sha256(encoded).hexdigest()
+
+
+def _run(command: list[str]) -> dict[str, Any]:
+    started = time.monotonic()
+    completed = subprocess.run(
+        command,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    output = completed.stdout
+    return {
+        "command": command,
+        "exit_code": completed.returncode,
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "output_sha256": hashlib.sha256(output.encode("utf-8")).hexdigest(),
+        "output": output,
+    }
+
+
+def _write_atomic(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    files, source_sha256 = _source_manifest()
+    commands = [
+        [args.python, "-m", "pytest", "-q", "-k", "stage1 or stage2 or stage3 or stage4 or stage5 or stage6"],
+        [args.python, "-m", "pytest", "--smoke"],
+        [args.python, "-m", "pytest", "--database-boundary"],
+    ]
+    if not args.skip_full:
+        commands.append([args.python, "-m", "pytest"])
+    results = [_run(command) for command in commands]
+    report = {
+        "format": "dish-stage6-acceptance-report-v1",
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "python": args.python,
+        "source_manifest_sha256": source_sha256,
+        "source_files": files,
+        "gates": results,
+        "passed": all(result["exit_code"] == 0 for result in results),
+    }
+    report["report_sha256"] = hashlib.sha256(
+        json.dumps(report, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    _write_atomic(args.output, report)
+    print(json.dumps({
+        "ok": report["passed"],
+        "path": str(args.output),
+        "report_sha256": report["report_sha256"],
+        "source_manifest_sha256": source_sha256,
+    }, sort_keys=True, separators=(",", ":")))
+    return 0 if report["passed"] else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

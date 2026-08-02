@@ -37,6 +37,10 @@ class ContentionLost(WorkflowAuthorityError):
     """Another compatible transaction won the exclusive authority race."""
 
 
+class MutationAdmissionClosed(StaleAuthorityError):
+    """Stage 6 has not opened PostgreSQL mutation admission."""
+
+
 def canonical_json(value: Mapping[str, Any] | list[Any] | str | int | bool | None) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -173,6 +177,8 @@ class WorkflowAuthorityRepository:
         try:
             self.session.flush()
         except IntegrityError as exc:
+            if "mutation admission is closed" in str(exc).lower():
+                raise MutationAdmissionClosed("PostgreSQL mutation admission is closed") from exc
             raise ContentionLost("concurrent request admission won") from exc
         return RequestAdmission(row, False, None)
 

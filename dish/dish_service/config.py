@@ -30,6 +30,7 @@ class ServiceConfig:
     admin_token: str | None = None
     action_token: str | None = None
     backup_dir: Path | None = None
+    legacy_writer_fence_path: Path | None = None
 
     def validate_runtime(self, *, require_action: bool = True) -> None:
         """Fail closed before listeners bind or startup reports healthy."""
@@ -148,5 +149,10 @@ class ServiceConfig:
                 Path(os.environ["DISH_SERVICE_BACKUP_DIR"]).expanduser()
                 if os.environ.get("DISH_SERVICE_BACKUP_DIR")
                 else None
+            ),
+            legacy_writer_fence_path=(
+                Path(os.environ["DISH_LEGACY_WRITER_FENCE"]).expanduser()
+                if os.environ.get("DISH_LEGACY_WRITER_FENCE")
+                else DB_PATH.parent / "legacy-writer-fence.json"
             ),
         )

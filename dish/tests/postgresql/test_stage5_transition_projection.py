@@ -89,7 +89,7 @@ def test_stage5_schema_and_migration_reach_transition_head(tmp_path: Path) -> No
     config = Config(str(ROOT / "alembic.ini"))
     buffer = io.StringIO()
     config.attributes["output_buffer"] = buffer
-    command.upgrade(config, "head", sql=True)
+    command.upgrade(config, "0004_transition_projection", sql=True)
     rendered = buffer.getvalue()
     assert "CREATE TABLE source_import_batches" in rendered
     assert "CREATE TABLE shadow_envelopes" in rendered
@@ -100,7 +100,7 @@ def test_stage5_schema_and_migration_reach_transition_head(tmp_path: Path) -> No
     path = tmp_path / "stage5.sqlite3"
     online = Config(str(ROOT / "alembic.ini"))
     online.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{path}")
-    command.upgrade(online, "head")
+    command.upgrade(online, "0004_transition_projection")
     from sqlalchemy import create_engine
 
     engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)

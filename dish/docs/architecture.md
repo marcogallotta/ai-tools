@@ -273,9 +273,29 @@ Drift produces a service-owned reproject event rather than importing an external
 reconciliation reports unknown external objects as blocking. No Stage 5 service performs network
 I/O or commits independently.
 
+Stage 6 adds the offline release-candidate and cutover-control foundation through
+`0005_release_cutover`, `stage6_models.py`, `release.py`, `scripts/dish-pg-release`, and
+`scripts/dish-pg-acceptance`. It owns immutable acceptance evidence, production-shaped rehearsal
+records, deterministic evidence bundles, exact candidate approval binding, fail-closed legacy-writer
+fence evidence, a resumable cutover checkpoint sequence, durable rollback-burn evidence, and a
+per-generation PostgreSQL mutation-admission control. Candidate validation recomputes closure from
+the authoritative Stage 2–5 tables; it does not accept a checklist assertion in place of closed
+requests, operations, projection attempts, shadow gaps, registry/alias coverage, or mapped-corpus
+reconciliation. Evidence bundles exclude build time from their identity and stale bundles cannot be
+validated. The legacy HTTP service checks its file fence after route-scope authentication and before
+request-body loading, so malformed, oversized, or valid mutation bodies cannot bypass a cutover
+fence.
+
+The Stage 6 package remains non-activating by itself. It performs no production Asana read/write,
+installs no credentials, starts no projection worker, records no Marco approval, and cannot invent
+backup/restore measurements or production-corpus evidence. Those exact environment observations and
+Marco's bundle-bound approval are required inputs to the controlled runbook in
+`database-backend-stage6-runbook.md`.
+
 This remains an isolated non-production target. Current production transports and workflow modules
-still do not import `dish_pg`; Stage 5 projection records and adjudicates downstream intent but no
-production worker or credential is activated, and production authority remains closed until Stage 6.
+still do not import `dish_pg`; Stage 5 projection records and adjudicates downstream intent, while
+Stage 6 supplies cutover controls without opening production mutation authority. Production remains
+closed until the environment gates are executed and Marco explicitly approves the exact candidate.
 
 Agent and admin dispatch use the explicit `CURRENT_COMMAND_HANDLERS` and
 `CURRENT_ADMIN_COMMAND_HANDLERS` registries. Do not reintroduce import-time subclass rebinding or a

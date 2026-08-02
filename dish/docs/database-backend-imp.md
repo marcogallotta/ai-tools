@@ -1003,6 +1003,38 @@ Commit result:
 
 > A reproducible release candidate exists with all evidence required for Marco to authorize production cutover.
 
+Implemented Stage 6 offline foundation:
+
+- Alembic revision `0005_release_cutover` adds release candidates, immutable evidence revisions,
+  rehearsal runs and checkpoints, legacy-writer fences, deterministic evidence bundles, exact
+  approvals, resumable cutover runs/checkpoints, and mutation-admission controls.
+- `ReleaseCandidateService` derives acceptance from the authoritative Stage 2–5 database state. It
+  verifies exact import closure, closed shadow evidence, active registry and projection epoch,
+  complete task/registry alias coverage, no unresolved workflow authority, no unresolved projection
+  work, reconciliation coverage for every active mapping, schema head, required acceptance evidence,
+  and all required rehearsal classes.
+- Candidate evidence is append-only until validation. Validation binds the exact current bundle and
+  rejects a stale bundle even when later evidence also passes. Approval is single-use and bound to
+  that validated bundle rather than to a candidate name or release label.
+- `MutationAdmissionControl` is created closed. Database guards reject target request admission after
+  validation until rollback-burn evidence is durable and the exact cutover run opens admission.
+- `dish_service.legacy_writer_fence` supplies an atomic mode-0600 file fence. The legacy HTTP path
+  authenticates first and then rejects every POST before loading its body. A malformed fence file is
+  still an engaged fence.
+- `scripts/dish-pg-acceptance` runs the focused Stage 1–6 lane, smoke gate, database-boundary gate,
+  and full suite and writes a source-manifest-bound JSON report. `scripts/dish-pg-release` records
+  candidate, evidence, rehearsal, approval, fence, activation, rollback-burn, first-admission, and
+  completion transitions through caller-owned transactions.
+- `database-backend-stage6-runbook.md` fixes the operator order and recovery boundary. Filesystem
+  fence release records the authorized database transition first, so an I/O failure can only leave
+  the legacy writer fenced, never reopen it early.
+
+Not completed by the offline implementation: production snapshot capture, production database and
+sidecar hashes, real Asana corpus/registry closure, PostgreSQL backup/PITR setup, measured production
+RPO/RTO, credential/process fencing probes, production routing, projection-worker enablement, Marco
+approval, rollback burn, mutation-admission opening, and first live request validation. These are
+Stage 6 environment actions, not evidence that the repository may synthesize.
+
 The actual production activation is a controlled release event, not a seventh implementation stage.
 
 ### Stage summary

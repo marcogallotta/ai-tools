@@ -26,6 +26,14 @@ The migration has three operational phases:
 
 Production cutover is a separate Marco decision based on the recorded evidence.
 
+The repository now contains the offline Stage 6 control plane in Alembic revision
+`0005_release_cutover`, `dish_pg.release`, `scripts/dish-pg-acceptance`, and
+`scripts/dish-pg-release`. These components record and validate evidence but do not claim that a
+production rehearsal or cutover has occurred. The executable operator sequence, JSON inputs,
+fail-closed fence order, abort boundary, and environment-only gates are defined in
+`database-backend-stage6-runbook.md`. That runbook remains subordinate to this draft and cannot be
+used as implicit cutover approval.
+
 ## 2. Authority timeline
 
 ### 2.1 Before shadowing

@@ -21,6 +21,7 @@ from .auth import authenticate_bearer
 from .identifiers import require_asana_gid, require_dish_uuid, validate_identifier_fields
 from .http_routing import resolve_post_route
 from .leases import ServicePrincipal
+from .legacy_writer_fence import assert_legacy_writer_mutation_allowed
 from .command_spec import ACTION_COMMANDS, REPLAY_CAPABLE_COMMANDS, REPLAY_SAFE_COMMANDS, validate_action_request
 from .openapi import action_openapi
 
@@ -373,6 +374,12 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                     raise DishRuleError("INVALID_ARGUMENT", "command is not exposed to the GPT Action", rule="action_command_forbidden")
             else:
                 credential = self._credential("admin")
+            # The legacy cutover fence is checked after route-scope authentication
+            # but before any request body is read or parsed.  Every legacy POST is
+            # a durable write or write-adjacent evidence mutation and is closed.
+            assert_legacy_writer_mutation_allowed(
+                getattr(self.server.service.config, "legacy_writer_fence_path", None)
+            )
             request = self._read_json()
             self._validate_request_shape(surface, command, request)
             if surface == "action":
@@ -566,6 +573,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 status = HTTPStatus.UNAUTHORIZED
             elif exc.rule == "service_scope_forbidden":
                 status = HTTPStatus.FORBIDDEN
+            elif exc.rule == "legacy_writer_fenced":
+                status = HTTPStatus.CONFLICT
             elif surface == "action":
                 # GPT Actions classify non-2xx responses as transport failures. Expected
                 # Dish rule outcomes must remain readable canonical workflow envelopes.

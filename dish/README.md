@@ -396,6 +396,8 @@ backup/restore, operational health, and private/public surface separation.
 - `docs/testing.md` — authoritative test gates, flake detection, candidate/quarantine policy, and artifact handling.
 - `docs/runtime-contract.md` — JSON meanings, exit statuses, retry rules, and operational recovery.
 - `docs/future.md` — only work that is not already implemented.
+- `docs/database-backend-stage6-runbook.md` — draft PostgreSQL release-candidate, rehearsal,
+  legacy-fence, cutover, and recovery procedure; it does not constitute production approval.
 
 The production migration and cutover are complete. Git history preserves the retired migration
 tooling, evidence, and rollout runbook. Use the managed backup/restore commands above for recovery

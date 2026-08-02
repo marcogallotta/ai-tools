@@ -1,0 +1,416 @@
+#!/usr/bin/env python3
+"""JSON-only Stage 6 release, evidence, fence, and cutover operator tool."""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+import tempfile
+import uuid
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from alembic import command
+from alembic.config import Config
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from dish_pg.database import DatabaseSettings, create_database_engine, session_factory, session_scope
+from dish_pg.release import ALEMBIC_HEAD, ReleaseCandidateService
+from dish_service.legacy_writer_fence import (
+    engage_legacy_writer_fence,
+    read_legacy_writer_fence,
+    release_legacy_writer_fence,
+)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="dish-pg-release")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("migrate")
+
+    create = sub.add_parser("candidate-create")
+    create.add_argument("--file", type=Path, required=True)
+
+    evidence = sub.add_parser("evidence-record")
+    evidence.add_argument("candidate_id")
+    evidence.add_argument("--file", type=Path, required=True)
+
+    rehearsal = sub.add_parser("rehearsal-record")
+    rehearsal.add_argument("candidate_id")
+    rehearsal.add_argument("--file", type=Path, required=True)
+
+    evaluate = sub.add_parser("evaluate")
+    evaluate.add_argument("candidate_id")
+
+    bundle = sub.add_parser("bundle")
+    bundle.add_argument("candidate_id")
+    bundle.add_argument("--kind", choices=("release_candidate", "cutover_final"), required=True)
+    bundle.add_argument("--built-at", required=True)
+    bundle.add_argument("--output", type=Path, required=True)
+
+    validate = sub.add_parser("validate")
+    validate.add_argument("candidate_id")
+    validate.add_argument("bundle_id")
+    validate.add_argument("--validated-at", required=True)
+
+    approve = sub.add_parser("approve")
+    approve.add_argument("candidate_id")
+    approve.add_argument("bundle_id")
+    approve.add_argument("--file", type=Path, required=True)
+
+    fence_prepare = sub.add_parser("writer-fence-prepare")
+    fence_prepare.add_argument("candidate_id")
+    fence_prepare.add_argument("--file", type=Path, required=True)
+
+    fence_engage = sub.add_parser("writer-fence-engage")
+    fence_engage.add_argument("fence_id")
+    fence_engage.add_argument("--path", type=Path, required=True)
+    fence_engage.add_argument("--operator", required=True)
+    fence_engage.add_argument("--engaged-at", required=True)
+
+    fence_verify = sub.add_parser("writer-fence-verify")
+    fence_verify.add_argument("fence_id")
+    fence_verify.add_argument("--proof-file", type=Path, required=True)
+    fence_verify.add_argument("--verified-at", required=True)
+
+    fence_status = sub.add_parser("writer-fence-status")
+    fence_status.add_argument("--path", type=Path, required=True)
+
+    fence_release = sub.add_parser("writer-fence-release")
+    fence_release.add_argument("fence_id")
+    fence_release.add_argument("--path", type=Path, required=True)
+    fence_release.add_argument("--expected-sha256", required=True)
+    fence_release.add_argument("--released-at", required=True)
+
+    cutover_prepare = sub.add_parser("cutover-prepare")
+    cutover_prepare.add_argument("candidate_id")
+    cutover_prepare.add_argument("--started-at", required=True)
+
+    mark_fenced = sub.add_parser("cutover-mark-fenced")
+    mark_fenced.add_argument("cutover_run_id")
+    mark_fenced.add_argument("--recorded-at", required=True)
+
+    activate = sub.add_parser("cutover-activate")
+    activate.add_argument("cutover_run_id")
+    activate.add_argument("--activated-at", required=True)
+
+    burn = sub.add_parser("cutover-burn-rollback")
+    burn.add_argument("cutover_run_id")
+    burn.add_argument("--legacy-bundle-id", required=True)
+    burn.add_argument("--burned-at", required=True)
+
+    admission = sub.add_parser("cutover-open-admission")
+    admission.add_argument("cutover_run_id")
+    admission.add_argument("--opened-at", required=True)
+
+    first = sub.add_parser("cutover-verify-first-admission")
+    first.add_argument("cutover_run_id")
+    first.add_argument("request_id")
+    first.add_argument("--verified-at", required=True)
+
+    complete = sub.add_parser("cutover-complete")
+    complete.add_argument("cutover_run_id")
+    complete.add_argument("--completed-at", required=True)
+
+    abort = sub.add_parser("cutover-abort")
+    abort.add_argument("cutover_run_id")
+    abort.add_argument("--reason", required=True)
+    abort.add_argument("--aborted-at", required=True)
+
+    return parser
+
+
+def _database_url() -> str:
+    value = os.environ.get("DISH_PG_URL", "").strip()
+    if not value:
+        raise ValueError("DISH_PG_URL is required")
+    return value
+
+
+def _time(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("timestamps must include a UTC offset")
+    return parsed
+
+
+def _uuid(value: str) -> uuid.UUID:
+    return uuid.UUID(value)
+
+
+def _load(path: Path) -> dict[str, Any]:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} must contain a JSON object")
+    return value
+
+
+def _write_atomic(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _row_id(row: Any) -> dict[str, Any]:
+    for field in (
+        "candidate_id",
+        "evidence_id",
+        "rehearsal_id",
+        "fence_id",
+        "bundle_id",
+        "approval_id",
+        "cutover_run_id",
+        "activation_id",
+        "generation_id",
+    ):
+        value = getattr(row, field, None)
+        if value is not None:
+            return {field: str(value)}
+    return {}
+
+
+def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
+    engine = create_database_engine(DatabaseSettings(url=_database_url()))
+    factory = session_factory(engine)
+    try:
+        with session_scope(factory) as session:
+            service = ReleaseCandidateService(session)
+            cmd = args.command
+            if cmd == "candidate-create":
+                data = _load(args.file)
+                row = service.create_candidate(
+                    candidate_id=_uuid(data["candidate_id"]),
+                    generation_id=_uuid(data["generation_id"]),
+                    source_import_batch_id=_uuid(data["source_import_batch_id"]),
+                    shadow_baseline_id=_uuid(data["shadow_baseline_id"]),
+                    projection_epoch_id=_uuid(data["projection_epoch_id"]),
+                    source_release=data["source_release"],
+                    source_commit=data["source_commit"],
+                    ledger_through_commit=data["ledger_through_commit"],
+                    schema_head=data.get("schema_head", ALEMBIC_HEAD),
+                    dish_release=data["dish_release"],
+                    honest_release=data["honest_release"],
+                    protocol_release=data["protocol_release"],
+                    openapi_release=data["openapi_release"],
+                    routing_release=data["routing_release"],
+                    created_at=_time(data["created_at"]),
+                )
+                return {"ok": True, **_row_id(row), "status": row.status}, 0
+            if cmd == "evidence-record":
+                data = _load(args.file)
+                row = service.record_evidence(
+                    candidate_id=_uuid(args.candidate_id),
+                    category=data["category"],
+                    evidence_key=data["evidence_key"],
+                    outcome=data["outcome"],
+                    payload=data.get("payload", {}),
+                    recorded_at=_time(data["recorded_at"]),
+                )
+                return {"ok": True, **_row_id(row), "sha256": row.payload_sha256}, 0
+            if cmd == "rehearsal-record":
+                data = _load(args.file)
+                row = service.start_rehearsal(
+                    candidate_id=_uuid(args.candidate_id),
+                    rehearsal_kind=data["rehearsal_kind"],
+                    environment_identity=data["environment_identity"],
+                    source_manifest_sha256=data["source_manifest_sha256"],
+                    started_at=_time(data["started_at"]),
+                )
+                for checkpoint in data.get("checkpoints", []):
+                    service.record_rehearsal_checkpoint(
+                        rehearsal_id=row.rehearsal_id,
+                        checkpoint_kind=checkpoint["kind"],
+                        payload=checkpoint.get("payload", {}),
+                        recorded_at=_time(checkpoint["recorded_at"]),
+                    )
+                row = service.finish_rehearsal(
+                    rehearsal_id=row.rehearsal_id,
+                    passed=bool(data["passed"]),
+                    report=data.get("report", {}),
+                    completed_at=_time(data["completed_at"]),
+                    measured_rpo_seconds=data.get("measured_rpo_seconds"),
+                    measured_rto_seconds=data.get("measured_rto_seconds"),
+                )
+                return {"ok": True, **_row_id(row), "status": row.status, "sha256": row.report_sha256}, 0
+            if cmd == "evaluate":
+                result = service.evaluate_candidate(candidate_id=_uuid(args.candidate_id))
+                return {"ok": result.passed, **result.as_dict()}, 0 if result.passed else 2
+            if cmd == "bundle":
+                row = service.build_evidence_bundle(
+                    candidate_id=_uuid(args.candidate_id),
+                    bundle_kind=args.kind,
+                    built_at=_time(args.built_at),
+                )
+                _write_atomic(args.output, row.manifest)
+                return {"ok": True, **_row_id(row), "sha256": row.manifest_sha256, "path": str(args.output)}, 0
+            if cmd == "validate":
+                result = service.validate_candidate(
+                    candidate_id=_uuid(args.candidate_id),
+                    evidence_bundle_id=_uuid(args.bundle_id),
+                    validated_at=_time(args.validated_at),
+                )
+                return {"ok": True, **result.as_dict()}, 0
+            if cmd == "approve":
+                data = _load(args.file)
+                row = service.approve_candidate(
+                    candidate_id=_uuid(args.candidate_id),
+                    evidence_bundle_id=_uuid(args.bundle_id),
+                    approver=data["approver"],
+                    approval_statement=data["approval_statement"],
+                    approval_payload=data.get("approval_payload", {}),
+                    approved_at=_time(data["approved_at"]),
+                )
+                return {"ok": True, **_row_id(row), "sha256": row.approval_sha256}, 0
+            if cmd == "writer-fence-prepare":
+                data = _load(args.file)
+                row = service.prepare_writer_fence(
+                    candidate_id=_uuid(args.candidate_id),
+                    target_identity=data["target_identity"],
+                    mechanism=data["mechanism"],
+                    manifest=data.get("manifest", {}),
+                    prepared_at=_time(data["prepared_at"]),
+                )
+                return {"ok": True, **_row_id(row), "manifest_sha256": row.manifest_sha256}, 0
+            if cmd == "writer-fence-engage":
+                fence_id = _uuid(args.fence_id)
+                row = service._fence(fence_id)
+                candidate = service._candidate(row.candidate_id)
+                _manifest, digest = engage_legacy_writer_fence(
+                    args.path,
+                    fence_id=str(fence_id),
+                    candidate_id=str(candidate.candidate_id),
+                    source_release=candidate.source_release,
+                    source_commit=candidate.source_commit,
+                    engaged_at=_time(args.engaged_at),
+                    operator=args.operator,
+                )
+                row = service.engage_writer_fence(fence_id=fence_id, engaged_at=_time(args.engaged_at))
+                return {"ok": True, **_row_id(row), "file_sha256": digest, "state": row.state}, 0
+            if cmd == "writer-fence-verify":
+                row = service.verify_writer_fence(
+                    fence_id=_uuid(args.fence_id),
+                    proof=_load(args.proof_file),
+                    verified_at=_time(args.verified_at),
+                )
+                return {"ok": True, **_row_id(row), "proof_sha256": row.proof_sha256, "state": row.state}, 0
+            if cmd == "cutover-prepare":
+                row = service.prepare_cutover(
+                    candidate_id=_uuid(args.candidate_id), started_at=_time(args.started_at)
+                )
+            elif cmd == "cutover-mark-fenced":
+                row = service.mark_fenced(
+                    cutover_run_id=_uuid(args.cutover_run_id), recorded_at=_time(args.recorded_at)
+                )
+            elif cmd == "cutover-activate":
+                row = service.activate_authority(
+                    cutover_run_id=_uuid(args.cutover_run_id), activated_at=_time(args.activated_at)
+                )
+            elif cmd == "cutover-burn-rollback":
+                row = service.burn_rollback(
+                    cutover_run_id=_uuid(args.cutover_run_id),
+                    legacy_bundle_id=args.legacy_bundle_id,
+                    burned_at=_time(args.burned_at),
+                )
+            elif cmd == "cutover-open-admission":
+                row = service.open_mutation_admission(
+                    cutover_run_id=_uuid(args.cutover_run_id), opened_at=_time(args.opened_at)
+                )
+            elif cmd == "cutover-verify-first-admission":
+                row = service.verify_first_admission(
+                    cutover_run_id=_uuid(args.cutover_run_id),
+                    request_id=_uuid(args.request_id),
+                    verified_at=_time(args.verified_at),
+                )
+            elif cmd == "cutover-complete":
+                row = service.complete_cutover(
+                    cutover_run_id=_uuid(args.cutover_run_id), completed_at=_time(args.completed_at)
+                )
+            elif cmd == "cutover-abort":
+                row = service.abort_cutover(
+                    cutover_run_id=_uuid(args.cutover_run_id),
+                    reason=args.reason,
+                    aborted_at=_time(args.aborted_at),
+                )
+            else:
+                raise ValueError(f"unsupported database command: {cmd}")
+            return {"ok": True, **_row_id(row), "state": getattr(row, "state", None)}, 0
+    finally:
+        engine.dispose()
+
+
+
+def _release_fence(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
+    # Verify the exact on-disk fence before changing durable database state.
+    manifest, digest = read_legacy_writer_fence(args.path)
+    if manifest is not None and digest != args.expected_sha256:
+        raise ValueError(f"legacy writer fence digest mismatch: {digest}")
+    engine = create_database_engine(DatabaseSettings(url=_database_url()))
+    factory = session_factory(engine)
+    try:
+        # Commit authorization/state first.  Removing the file afterward can fail
+        # only in the safe direction: the old writer remains mechanically fenced.
+        with session_scope(factory) as session:
+            row = ReleaseCandidateService(session).release_writer_fence(
+                fence_id=_uuid(args.fence_id), released_at=_time(args.released_at)
+            )
+            result = {"ok": True, **_row_id(row), "state": row.state}
+        release_legacy_writer_fence(args.path, expected_sha256=args.expected_sha256)
+        return result, 0
+    finally:
+        engine.dispose()
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        if args.command == "migrate":
+            config = Config(str(ROOT / "alembic.ini"))
+            config.set_main_option("sqlalchemy.url", _database_url())
+            command.upgrade(config, "head")
+            result, status = {"ok": True, "schema_head": ALEMBIC_HEAD}, 0
+        elif args.command == "writer-fence-status":
+            manifest, digest = read_legacy_writer_fence(args.path)
+            result, status = {
+                "ok": True,
+                "engaged": manifest is not None,
+                "sha256": digest,
+                "manifest": manifest,
+            }, 0
+        elif args.command == "writer-fence-release":
+            result, status = _release_fence(args)
+        else:
+            result, status = _service_call(args)
+    except Exception as exc:
+        result, status = {
+            "ok": False,
+            "error": type(exc).__name__,
+            "detail": str(exc),
+        }, 1
+    print(json.dumps(result, sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+    return status
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
