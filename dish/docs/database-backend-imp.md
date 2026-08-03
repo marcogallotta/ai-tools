@@ -24,7 +24,6 @@ still track; it is not "entirely open."
 
 **Local, no production access needed:**
 
-- A full `scripts/dish-pg-acceptance` run without `--skip-full`, against the current schema head.
 - Backup, restore, and PITR rehearsal against a disposable PostgreSQL instance, with measured
   (not inferred) RPO/RTO.
 - Crash/fault rehearsal at each durable checkpoint listed in §2 below.
