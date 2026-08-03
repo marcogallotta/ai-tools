@@ -14,6 +14,7 @@
   ],
   "admin_commands": [
     "abandon-operation",
+    "attention",
     "authorize-governed-change",
     "backup-create",
     "backup-restore",
@@ -54,7 +55,8 @@
     "tests/test_action_surface_identifier_contract.py": "610ca7d467aadf1919aca25aa4ea936d84cdf5fea131dd3d83b19ac68ba0bbe1",
     "tests/test_action_surface_openapi.py": "fef32e515e35013b8e3baef312b8ab35e106d926f9fba35e2597522e0ca6153d",
     "tests/test_actor_lease_attempt_context.py": "61b33e29934a759380e6e48e1028b3e855211592189b84df37ac92846144186b",
-    "tests/test_admin_argument_validation.py": "5e32854dc62461025c9a5ac497b181a69a5d00d92a9c1fd58deebc1dac95882e",
+    "tests/test_admin_argument_validation.py": "f8ef44aa229d8b5fbb0aff59954a82e17618990782b903e96063083abb7d7068",
+    "tests/test_admin_attention.py": "2bdd12672f336e302c17fa13153a6b89d48493f0390e2a5752112f022c13429f",
     "tests/test_admin_task_target_resolution.py": "5df2931608393700369ed97ddfb52599e1f293c523f500729af7134cf844a351",
     "tests/test_application_service.py": "3a1a2093b7e1f0e06cb81826e628492cd6334a1f6394e7e3792ea85f021af728",
     "tests/test_asana_placement_lifecycle.py": "523238d651b592a9a3d14b56faa2f7a7844055d2ac1c2d82a7f892fcca1c2402",
@@ -224,13 +226,13 @@
     "live Asana governed projects/sections/tasks"
   ],
   "governing_source_sha256": {
-    "dish_service/application.py": "8bbeb2826368d7c6bf197d5ce41f7e941a7b2d5f03aeeff438dde7e9a90c09a2",
+    "dish_service/application.py": "b4475d2d2ef43b3e4821e3b5365e6152a60f9acb91d1d9bfc227430e56fa093e",
     "dish_service/command_spec.py": "8f5074d155daa9c88bdf4fadf058492cb5c26391d0afee44a4f344e8b92aa755",
-    "dish_tool/admin_cli.py": "9ca4edf1fed9e6079aefb1601d1a965555efe7cc64dfd70ef231ad6631691c79",
+    "dish_tool/admin_cli.py": "c19db47a7952fce7a5aef0b17795dda18c6ae689934b106bdf129b603eaceedd",
     "dish_tool/database_initialization.py": "1205caa574c78fd7fe73c2be017218d10543a53f1acc66463f96963a7cd06def",
     "dish_tool/database_schema.py": "c7977cea900ef1392309d847b43452b66788b2df895bbe4059f2b356a246ca20",
     "dish_tool/workflow_policy.py": "8f1ccbb4c9c5115834a6ae78c6982cae1e1a1a2557df147e2ba1b34c2493fcc5",
-    "docs/runtime-contract.md": "d0b5e46403c76bb24b01f1053440af2be210ae6ad364216fd9cc4d8346fd9b53",
+    "docs/runtime-contract.md": "07ebd728bdbaba1b6efaaac70c7a90c800d252b5e3a2a60db7185e179bc61777",
     "openapi/dish-action.openapi.json": "c215a90b5aa43f7c9233e4fb81485058fd38724c150bf6961b15ec34b28078ba"
   },
   "notes": [
@@ -299,6 +301,7 @@
     "sections": "retain:Q",
     "start": "retain:L",
     "submit": "retain:L",
-    "supply-evidence": "retain:R"
+    "supply-evidence": "retain:R",
+    "attention": "retain:Q"
   }
 }

@@ -489,6 +489,13 @@ def _command_inspect(
             "outcome": cycle["outcome"],
             "route": cycle["route"],
         },
+        "abandonment": None if abandonment is None else {
+            "abandonment_id": abandonment["abandonment_id"],
+            "status": abandonment["status"],
+            "outcome": abandonment["outcome"],
+            "source_operation_id": abandonment["source_operation_id"],
+            "successor_operation_id": abandonment["successor_operation_id"],
+        },
         "authoritative_view": view,
     }
     return result_envelope(
@@ -497,6 +504,239 @@ def _command_inspect(
         submission_id=operation_id,
         state=operation["status"],
         data=data,
+    )
+
+
+def _attention_category(data: Mapping[str, Any]) -> tuple[str, str]:
+    """Classify one inspect result conservatively for the read-only attention view."""
+
+    status = str(data.get("status") or "")
+    phase = str(data.get("phase") or "")
+    problem = str(data.get("problem") or "")
+    view = data.get("authoritative_view")
+    if not isinstance(view, Mapping):
+        view = {}
+    abandonment = data.get("abandonment")
+    if isinstance(abandonment, Mapping):
+        abandonment_status = str(abandonment.get("status") or "")
+        if abandonment_status == "awaiting_successor_claim":
+            return "healthy", "prepared successor is waiting for an agent"
+        if abandonment_status == "awaiting_hold_resolution":
+            return "needs_marco", "abandonment preserved a real Evidence or Human Review hold"
+        if abandonment_status == "blocked_manual_reconciliation":
+            return "unsafe", "abandonment reached an unsupported or contradictory frontier"
+        return "multi_step_safe", "abandonment has a deterministic continuation"
+
+    if status == "uncertain" or view.get("unresolved_attempts") or view.get("unresolved_execution_ids"):
+        return "unsafe", "an external effect or execution outcome is unresolved"
+    if status not in {"open", "uncertain"} and data.get("service_lease") is not None:
+        return "unsafe", "a terminal operation still has an active actor lease"
+    if phase in {"held_evidence", "held_human"}:
+        return "needs_marco", "the workflow is waiting for Marco's evidence or decision"
+    if view.get("destination_repair_required"):
+        return "needs_marco", "the approved destination requires an explicit Marco repair"
+
+    actions = data.get("human_actions")
+    if not isinstance(actions, list):
+        actions = []
+    kinds = {
+        str(action.get("kind") or "")
+        for action in actions
+        if isinstance(action, Mapping)
+    }
+    if "reconcile-uncertain-effect" in kinds:
+        return "unsafe", "the live outcome must be reconciled before any cleanup"
+    if kinds & {"abandon-dead-verifier", "abandon-dead-agent", "reconcile-abandonment"}:
+        return "multi_step_safe", "the dead run can be retired through supported recovery"
+    if "expire-active-lease" in kinds:
+        return "healthy", "an unexpired lease currently owns the operation"
+    if kinds:
+        return "needs_marco", "the next step requires a Marco-admin decision or input"
+    if (
+        "cannot identify one safe" in problem.lower()
+        or "cannot safely choose" in problem.lower()
+        or "historical attempts do not identify" in problem.lower()
+    ):
+        return "needs_marco", "Dish cannot safely choose between multiple historical attempts"
+    return "healthy", "no administrative blocker is recorded"
+
+
+def _attention_candidate_operation_ids(conn: sqlite3.Connection) -> list[str]:
+    """Return one relevant operation per task, preferring active abandonment sources."""
+
+    selected: list[str] = []
+    seen_tasks: set[str] = set()
+
+    for row in conn.execute(
+        """SELECT task_gid, source_operation_id
+             FROM abandonment_attempts
+            WHERE status!='completed'
+            ORDER BY created_at, abandonment_id"""
+    ):
+        task_gid = str(row["task_gid"])
+        if task_gid in seen_tasks:
+            continue
+        seen_tasks.add(task_gid)
+        selected.append(str(row["source_operation_id"]))
+
+    for row in conn.execute(
+        """SELECT operation_id, task_gid
+             FROM operations
+            WHERE status IN ('open','uncertain')
+            ORDER BY created_at, operation_id"""
+    ):
+        task_gid = str(row["task_gid"])
+        if task_gid in seen_tasks:
+            continue
+        seen_tasks.add(task_gid)
+        selected.append(str(row["operation_id"]))
+
+    for row in conn.execute(
+        """SELECT operation.operation_id, operation.task_gid
+             FROM service_leases AS lease
+             JOIN operations AS operation ON operation.operation_id=lease.operation_id
+            WHERE lease.lease_kind='actor' AND lease.released_at IS NULL
+            ORDER BY lease.acquired_at, lease.lease_id"""
+    ):
+        task_gid = str(row["task_gid"])
+        if task_gid in seen_tasks:
+            continue
+        seen_tasks.add(task_gid)
+        selected.append(str(row["operation_id"]))
+
+    for row in conn.execute(
+        """SELECT operation.operation_id, operation.task_gid
+             FROM operation_executions AS execution
+             JOIN operations AS operation ON operation.operation_id=execution.operation_id
+            WHERE execution.status IN ('started','uncertain')
+            ORDER BY execution.created_at, execution.execution_id"""
+    ):
+        task_gid = str(row["task_gid"])
+        if task_gid in seen_tasks:
+            continue
+        seen_tasks.add(task_gid)
+        selected.append(str(row["operation_id"]))
+    return selected
+
+
+def _command_attention(self, *, trace: AdminTrace) -> dict[str, Any]:
+    """List abnormal workflow state across Dish without mutating any item."""
+
+    if self.backend is None or self.operation_service is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR",
+            "attention scan requires backend access",
+            rule="attention_scan_unavailable",
+        )
+
+    items: list[dict[str, Any]] = []
+    category_counts = {
+        "safe_cleanup": 0,
+        "multi_step_safe": 0,
+        "needs_marco": 0,
+        "unsafe": 0,
+    }
+    healthy_count = 0
+    operation_ids = _attention_candidate_operation_ids(self.conn)
+    for operation_id in operation_ids:
+        try:
+            inspected = _command_inspect(
+                self, trace=AdminTrace(), submission_id=operation_id
+            )
+            data = inspected.get("data")
+            if not inspected.get("ok") or not isinstance(data, Mapping):
+                raise DishRuleError(
+                    str(inspected.get("code") or "INTERNAL_ERROR"),
+                    str(
+                        (data or {}).get("message")
+                        if isinstance(data, Mapping)
+                        else "inspection failed"
+                    ),
+                    rule="attention_item_inspection_failed",
+                )
+            category, category_reason = _attention_category(data)
+            if category == "healthy":
+                healthy_count += 1
+                continue
+            category_counts[category] += 1
+            items.append(
+                {
+                    "category": category,
+                    "category_reason": category_reason,
+                    "task_title": data.get("task_title"),
+                    "task_gid": data.get("task_gid"),
+                    "asana_url": data.get("asana_url"),
+                    "operation_id": data.get("operation_id"),
+                    "status": data.get("status"),
+                    "phase": data.get("phase"),
+                    "problem": data.get("problem"),
+                    "human_actions": data.get("human_actions") or [],
+                    "agent_actions_now": data.get("agent_actions_now") or [],
+                    "service_lease": data.get("service_lease"),
+                    "latest_actor_attempt": data.get("latest_actor_attempt"),
+                    "verification_cycle": data.get("verification_cycle"),
+                    "abandonment": data.get("abandonment"),
+                }
+            )
+        except DishRuleError as exc:
+            operation = self.conn.execute(
+                "SELECT task_gid,status,phase FROM operations WHERE operation_id=?",
+                (operation_id,),
+            ).fetchone()
+            category_counts["unsafe"] += 1
+            items.append(
+                {
+                    "category": "unsafe",
+                    "category_reason": "Dish could not establish a trustworthy inspection result",
+                    "task_title": None,
+                    "task_gid": None if operation is None else operation["task_gid"],
+                    "operation_id": operation_id,
+                    "status": None if operation is None else operation["status"],
+                    "phase": None if operation is None else operation["phase"],
+                    "problem": str(exc),
+                    "errors": [{"rule": exc.rule, **dict(exc.details)}],
+                    "human_actions": [],
+                    "agent_actions_now": [],
+                }
+            )
+        except Exception as exc:
+            category_counts["unsafe"] += 1
+            items.append(
+                {
+                    "category": "unsafe",
+                    "category_reason": "Dish could not complete inspection for this operation",
+                    "task_title": None,
+                    "task_gid": None,
+                    "operation_id": operation_id,
+                    "status": None,
+                    "phase": None,
+                    "problem": "unexpected inspection failure",
+                    "errors": [{"rule": "attention_item_unexpected_failure", "error_type": type(exc).__name__}],
+                    "human_actions": [],
+                    "agent_actions_now": [],
+                }
+            )
+
+    trace.state = "ok"
+    trace.audit_details.update(
+        {
+            "checked_count": len(operation_ids),
+            "attention_count": len(items),
+            "category_counts": dict(category_counts),
+        }
+    )
+    return result_envelope(
+        command="attention",
+        state="ok",
+        data={
+            "checked_count": len(operation_ids),
+            "attention_count": len(items),
+            "healthy_count": healthy_count,
+            "category_counts": category_counts,
+            "attention_items": items,
+            "read_only": True,
+            "message": "Attention scan completed without changing workflow state.",
+        },
     )
 
 def _command_holds(self, *, trace: AdminTrace) -> dict[str, Any]:
@@ -1599,6 +1839,7 @@ _OPERATION_TARGET_COMMANDS = {
 }
 
 CURRENT_ADMIN_COMMAND_HANDLERS = {
+    "attention": _command_attention,
     "inspect": _command_inspect,
     "migrate": _step5_admin_migrate,
     "reopen-planning": _step5_admin_reopen_planning,

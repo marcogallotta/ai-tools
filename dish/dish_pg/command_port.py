@@ -440,6 +440,14 @@ class PostgresCommandPort:
                 "registry_version_id": str(page.registry_version_id),
                 "registry_revision": page.registry_revision,
             }
+        elif call.command_name == "attention":
+            if call.principal_class != "admin":
+                raise CommandRuleError(
+                    "PRINCIPAL_SCOPE_MISMATCH",
+                    "attention is available only on the private admin surface",
+                    http_status=403,
+                )
+            data = self._attention()
         elif call.command_name == "holds":
             if call.principal_class != "admin":
                 raise CommandRuleError(
@@ -465,6 +473,100 @@ class PostgresCommandPort:
         else:
             raise CommandRuleError("NOT_A_QUERY", "command is not a read query")
         return CommandResult(True, call.command_name, "OK", 200, data)
+
+
+    def _attention(self) -> Mapping[str, Any]:
+        """Return a conservative, read-only global workflow attention view."""
+
+        generation = self.reads.active_generation()
+        now = datetime.now().astimezone()
+        operations = self.session.scalars(
+            select(wf.WorkflowOperation)
+            .where(
+                wf.WorkflowOperation.generation_id == generation.generation_id,
+                wf.WorkflowOperation.lifecycle == "open",
+            )
+            .order_by(wf.WorkflowOperation.created_at, wf.WorkflowOperation.operation_id)
+        ).all()
+        items: list[dict[str, Any]] = []
+        healthy_count = 0
+        counts = {"safe_cleanup": 0, "multi_step_safe": 0, "needs_marco": 0, "unsafe": 0}
+        for operation in operations:
+            lease = self.session.scalar(
+                select(wf.ServiceLease)
+                .where(
+                    wf.ServiceLease.operation_id == operation.operation_id,
+                    wf.ServiceLease.lease_kind == "actor",
+                    wf.ServiceLease.state == "active",
+                )
+                .order_by(wf.ServiceLease.issued_at.desc())
+                .limit(1)
+            )
+            abandonment = self.session.scalar(
+                select(wf.AbandonmentAttempt)
+                .where(
+                    wf.AbandonmentAttempt.source_operation_id == operation.operation_id,
+                    wf.AbandonmentAttempt.state.in_(("preparing", "published", "blocked", "reconciling")),
+                )
+                .order_by(wf.AbandonmentAttempt.created_at.desc())
+                .limit(1)
+            )
+            uncertain_execution = self.session.scalar(
+                select(wf.CommandExecution.execution_id)
+                .join(
+                    wf.OperationExecutionFence,
+                    wf.OperationExecutionFence.execution_id == wf.CommandExecution.execution_id,
+                )
+                .where(
+                    wf.OperationExecutionFence.operation_id == operation.operation_id,
+                    wf.CommandExecution.status == "uncertain",
+                )
+                .limit(1)
+            )
+            category: str | None = None
+            reason: str | None = None
+            if uncertain_execution is not None:
+                category, reason = "unsafe", "an execution outcome is uncertain"
+            elif abandonment is not None:
+                if abandonment.state == "blocked":
+                    category, reason = "unsafe", "abandonment is blocked at an unsupported frontier"
+                elif abandonment.state == "published":
+                    category, reason = "multi_step_safe", "an abandonment successor is waiting for continuation"
+                else:
+                    category, reason = "multi_step_safe", "abandonment has a deterministic continuation"
+            elif operation.phase in {"held_evidence", "held_human"}:
+                category, reason = "needs_marco", "the workflow is waiting for Marco"
+            elif lease is not None and lease.expires_at <= now:
+                category, reason = "multi_step_safe", "the actor lease has expired"
+            elif lease is not None:
+                healthy_count += 1
+                continue
+            else:
+                healthy_count += 1
+                continue
+            counts[category] += 1
+            head = self.session.get(models.TaskAuthorityHead, (generation.generation_id, operation.task_id))
+            activation = self.session.get(models.ContentActivation, head.current_content_activation_id) if head else None
+            version = self.session.get(models.ContentVersion, activation.content_version_id) if activation else None
+            items.append({
+                "category": category,
+                "category_reason": reason,
+                "task_id": str(operation.task_id),
+                "task_title": version.title if version is not None else None,
+                "operation_id": str(operation.operation_id),
+                "phase": operation.phase,
+                "lease_id": str(lease.lease_id) if lease is not None else None,
+                "lease_expires_at": lease.expires_at.isoformat() if lease is not None else None,
+                "abandonment_id": str(abandonment.abandonment_id) if abandonment is not None else None,
+            })
+        return {
+            "checked_count": len(operations),
+            "attention_count": len(items),
+            "healthy_count": healthy_count,
+            "category_counts": counts,
+            "attention_items": items,
+            "read_only": True,
+        }
 
     def _holds(self) -> Mapping[str, Any]:
         generation = self.reads.active_generation()

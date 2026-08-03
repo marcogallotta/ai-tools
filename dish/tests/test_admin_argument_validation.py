@@ -192,6 +192,11 @@ def test_admin_inspect_is_a_first_class_human_command():
     assert parsed.submission_id == operation_id
 
 
+def test_admin_attention_is_a_first_class_read_only_command():
+    parsed = build_parser().parse_args(["attention"])
+    assert parsed.command == "attention"
+
+
 def test_human_renderer_surfaces_recovery_actions_from_errors():
     from dish_tool.admin_human import render_admin_result
 
@@ -447,3 +452,49 @@ def test_output_flags_are_accepted_before_or_after_admin_subcommand():
     assert parsed_after.command == "inspect"
     assert parsed_after.json is True
     assert parsed_after.verbose is True
+
+
+def test_human_renderer_summarizes_global_attention_items():
+    from dish_tool.admin_human import render_admin_result
+
+    result = {
+        "ok": True,
+        "command": "attention",
+        "code": "OK",
+        "state": "ok",
+        "retryable": False,
+        "allowed_actions": [],
+        "data": {
+            "checked_count": 3,
+            "attention_count": 1,
+            "healthy_count": 2,
+            "category_counts": {
+                "safe_cleanup": 0,
+                "multi_step_safe": 1,
+                "needs_marco": 0,
+                "unsafe": 0,
+            },
+            "attention_items": [
+                {
+                    "category": "multi_step_safe",
+                    "task_title": "Laap gai",
+                    "operation_id": "operation-1",
+                    "problem": "A dead verifier attempt must be abandoned.",
+                    "human_actions": [
+                        {
+                            "summary": "Abandon the dead verifier attempt.",
+                            "shell_command": "dish-admin abandon-operation operation-1 --lease-id lease-1",
+                        }
+                    ],
+                }
+            ],
+        },
+        "errors": [],
+    }
+
+    rendered = render_admin_result(result, profile="prod")
+
+    assert "Dish attention" in rendered
+    assert "Workflow records checked: 3" in rendered
+    assert "[SAFE MULTI-STEP] Laap gai" in rendered
+    assert "dish-admin abandon-operation operation-1" in rendered

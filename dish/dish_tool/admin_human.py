@@ -153,7 +153,67 @@ def render_admin_result(
 
     ok = bool(result.get("ok"))
     command = _clean(result.get("command")) or "command"
-    if command == "holds" and ok:
+    if command == "attention" and ok:
+        items = (
+            data.get("attention_items")
+            if isinstance(data.get("attention_items"), list)
+            else []
+        )
+        counts = (
+            data.get("category_counts")
+            if isinstance(data.get("category_counts"), Mapping)
+            else {}
+        )
+        lines.append("Dish attention")
+        lines.append(f"Workflow records checked: {int(data.get('checked_count') or 0)}")
+        lines.append(f"Need attention: {int(data.get('attention_count') or 0)}")
+        lines.append(
+            "Safe multi-step: {multi}; Needs Marco: {marco}; Unsafe: {unsafe}".format(
+                multi=int(counts.get("multi_step_safe") or 0),
+                marco=int(counts.get("needs_marco") or 0),
+                unsafe=int(counts.get("unsafe") or 0),
+            )
+        )
+        if not items:
+            lines.append("")
+            lines.append("No abnormal workflow state needs Marco's attention.")
+        category_labels = {
+            "safe_cleanup": "SAFE CLEANUP",
+            "multi_step_safe": "SAFE MULTI-STEP",
+            "needs_marco": "NEEDS MARCO",
+            "unsafe": "UNSAFE / REVIEW",
+        }
+        for index, item in enumerate(items, start=1):
+            if not isinstance(item, Mapping):
+                continue
+            lines.append("")
+            label = category_labels.get(
+                _clean(item.get("category")) or "", "ATTENTION"
+            )
+            title = (
+                _clean(item.get("task_title"))
+                or _clean(item.get("task_gid"))
+                or "Task"
+            )
+            lines.append(f"{index}. [{label}] {title}")
+            problem = _clean(item.get("problem"))
+            if problem:
+                lines.append(f"   Problem: {problem}")
+            operation = _clean(item.get("operation_id"))
+            if operation:
+                lines.append(f"   Operation: {operation}")
+            item_actions = item.get("human_actions")
+            if isinstance(item_actions, list):
+                for action in item_actions:
+                    if not isinstance(action, Mapping):
+                        continue
+                    summary = _clean(action.get("summary"))
+                    shell = _command_from_action(action)
+                    if summary:
+                        lines.append(f"   Next: {summary}")
+                    if shell:
+                        lines.append(f"   Run: {shell}")
+    elif command == "holds" and ok:
         holds = data.get("holds") if isinstance(data.get("holds"), list) else []
         lines.append(f"Open holds: {len(holds)}")
         for index, hold in enumerate(holds, start=1):

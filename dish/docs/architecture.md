@@ -214,6 +214,15 @@ canonical machine envelope and `--verbose` adds technical details.  `dish-admin 
 leases, cycles, holds, abandonments, and exact bindings internally instead of asking Marco to
 interpret those records.
 
+`dish-admin attention` is the global read-only companion to `inspect`. It reuses the same
+authoritative inspection path across active operations, active abandonments, unreleased actor
+leases, and unresolved operation executions, then classifies abnormal records without mutating
+them. It prefers an active abandonment's source operation so one task is not duplicated by its
+prepared successor. Classification is deliberately conservative: ambiguous attempt authority and
+real holds need Marco; unresolved effects and unsupported frontiers are unsafe; active unexpired
+ownership and prepared successors are healthy. This command is an inventory surface only and must
+not become a hidden batch-cleanup authority.
+
 Every agent-relayed admin action is built through `dish_tool.human_actions`.  The structured
 `human_action` is authoritative for command, fixed arguments, human input, plain-language details,
 structured context, effect, and after-success behavior. Agent relay renders those fields before the

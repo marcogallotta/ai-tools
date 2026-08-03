@@ -265,12 +265,15 @@ evidence is fabricated.
 
 `dish-admin` is available to agents only with the test profile; production use is Marco-only.
 On an interactive terminal it is human-readable by default; use `--json` for the canonical envelope
-and `--verbose` for technical details. Start blocked-task diagnosis with `dish-admin inspect
-TASK_GID_OR_OPERATION_ID`; it resolves internal operation, cycle, lease, hold, and abandonment
-bindings and shows the safe next command.
+and `--verbose` for technical details. Start global diagnosis with `dish-admin attention`; it scans
+active workflow records and lists stale ownership, abandonments, holds, and uncertain effects without
+changing anything. Start one blocked task with `dish-admin inspect TASK_GID_OR_OPERATION_ID`; it
+resolves internal operation, cycle, lease, hold, and abandonment bindings and shows the safe next
+command.
 
 In service mode it exposes:
 
+- `attention` to list abnormal workflow state across all active Dish tasks without mutating it;
 - `inspect` to explain what a task is waiting on and show Marco's safe next actions;
 - `recover-lease` to release an expired client/run lease when the same durable run will continue, without transferring workflow ownership to Marco;
 - `abandon-operation` to permanently retire the latest expired or administratively released actor attempt and automatically prepare the safe stage-specific continuation;

@@ -28,7 +28,7 @@ from .errors import DishRuleError
 from .results import error_envelope, exit_status
 from .admin_human import render_admin_result
 
-_ADMIN_COMMANDS = {"inspect", "holds", "recover", "repair-destination", "discard", "abandon-operation", "reconcile-abandonment", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease", "expire-lease", "backup-create", "backup-restore"}
+_ADMIN_COMMANDS = {"attention", "inspect", "holds", "recover", "repair-destination", "discard", "abandon-operation", "reconcile-abandonment", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease", "expire-lease", "backup-create", "backup-restore"}
 _OPERATION_ADMIN_COMMANDS = {"inspect", "recover", "repair-destination", "discard", "abandon-operation", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease"}
 
 
@@ -66,6 +66,14 @@ def build_parser() -> JsonArgumentParser:
         help="include technical rule and response details in human output",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser(
+        "attention",
+        help=(
+            "scan all active Dish workflow records for stale ownership, abandonments, "
+            "holds, and uncertain effects without changing anything"
+        ),
+    )
 
     subparsers.add_parser("holds", help="list every currently open Evidence or Human Review hold")
 

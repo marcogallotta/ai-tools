@@ -33,6 +33,7 @@ COMMAND_DEFINITIONS = {
         CommandDefinition("sections", "Q", "reader", False, False, False, action_exposed=True),
         CommandDefinition("section-tasks", "Q", "reader", False, False, False, action_exposed=True),
         CommandDefinition("read", "Q", "reader", False, True, False, action_exposed=True),
+        CommandDefinition("attention", "Q", "admin", False, False, False),
         CommandDefinition("holds", "Q", "admin", False, False, False),
         CommandDefinition("inspect", "E", "verification", True, True, True, action_exposed=True),
         CommandDefinition("start", "L", "agent", True, True, False, action_exposed=True),

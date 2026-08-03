@@ -439,6 +439,19 @@ It may return a command template only when Marco must supply decision or reason 
 the returned `human_action` and its rendered command exactly; they do not reconstruct flags from
 cycle, hold, lease, or identity fields.
 
+For a global read-only inventory, run:
+
+```sh
+dish-admin attention
+```
+
+The scan checks active operations, non-completed abandonments, unreleased actor leases, and
+unresolved operation executions. It classifies only persisted/current evidence as safe multi-step
+recovery, needing Marco, unsafe/uncertain, or healthy. It never expires, abandons, reconciles, or
+changes workflow state. Ambiguous multiple-attempt authority is reported as needing Marco; the scan
+does not choose a lease ID. One item failing inspection does not suppress unrelated items and is
+reported as unsafe with its exact operation ID.
+
 A recovery-bearing result exposes one structured `human_action` with: command and fixed bindings,
 required human input, summary, plain-language `details`, exact effect, structured `context`, and
 after-success instruction. Agents must relay the details before the command rather than making Marco
