@@ -43,7 +43,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0012_task_grant_semantic_identity"
+ALEMBIC_HEAD = "0013_dark_launch_shadow_capture"
 
 
 class ReleaseCandidateService(

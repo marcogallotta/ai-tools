@@ -198,6 +198,15 @@ class ShadowService:
         source_outcome: Mapping[str, Any],
         source_post_state: Mapping[str, Any],
         captured_at: datetime,
+        rollout_sequence: int | None = None,
+        source_authority_generation: str | None = None,
+        source_execution_identity: str | None = None,
+        principal: Mapping[str, Any] | None = None,
+        source_pre_state: Mapping[str, Any] | None = None,
+        pinned_inputs: Mapping[str, Any] | None = None,
+        source_effects: Mapping[str, Any] | None = None,
+        capture_qualification: str = "legacy",
+        envelope_schema_version: int = 1,
     ) -> tx.ShadowEnvelope:
         baseline = self.session.get(tx.ShadowBaseline, shadow_baseline_id)
         if baseline is None or baseline.status != "open":
@@ -209,12 +218,26 @@ class ShadowService:
             )
         )
         input_payload, outcome_payload = dict(canonical_input), dict(source_outcome)
+        pre_payload = None if source_pre_state is None else dict(source_pre_state)
+        post_payload = dict(source_post_state)
+        principal_payload = None if principal is None else dict(principal)
+        pinned_payload = None if pinned_inputs is None else dict(pinned_inputs)
+        effects_payload = None if source_effects is None else dict(source_effects)
         if existing is not None:
             if (
                 existing.command_name != command_name
                 or existing.canonical_input_sha256 != sha256_json(input_payload)
                 or existing.source_outcome_sha256 != sha256_json(outcome_payload)
-                or existing.source_post_state != dict(source_post_state)
+                or existing.source_post_state != post_payload
+                or existing.rollout_sequence != rollout_sequence
+                or existing.source_authority_generation != source_authority_generation
+                or existing.source_execution_identity != source_execution_identity
+                or existing.principal != principal_payload
+                or existing.source_pre_state != pre_payload
+                or existing.pinned_inputs != pinned_payload
+                or existing.source_effects != effects_payload
+                or existing.capture_qualification != capture_qualification
+                or existing.envelope_schema_version != envelope_schema_version
             ):
                 raise TransitionAuthorityError("shadow source request identity conflict")
             return existing
@@ -227,7 +250,18 @@ class ShadowService:
             canonical_input_sha256=sha256_json(input_payload),
             source_outcome=outcome_payload,
             source_outcome_sha256=sha256_json(outcome_payload),
-            source_post_state=dict(source_post_state),
+            source_post_state=post_payload,
+            rollout_sequence=rollout_sequence,
+            source_authority_generation=source_authority_generation,
+            source_execution_identity=source_execution_identity,
+            principal=principal_payload,
+            source_pre_state=pre_payload,
+            source_pre_state_sha256=None if pre_payload is None else sha256_json(pre_payload),
+            pinned_inputs=pinned_payload,
+            source_effects=effects_payload,
+            capture_qualification=capture_qualification,
+            source_post_state_sha256=sha256_json(post_payload),
+            envelope_schema_version=envelope_schema_version,
             captured_at=captured_at,
         )
         delivery = tx.ShadowDelivery(
@@ -519,6 +553,7 @@ class ProjectionService:
         generation_id: uuid.UUID,
         activation_reason: str,
         created_at: datetime,
+        external_effects_enabled: bool = False,
     ) -> tx.ProjectionEpoch:
         generation = self.session.get(models.AuthorityGeneration, generation_id)
         if generation is None or generation.status != "active":
@@ -530,6 +565,8 @@ class ProjectionService:
             )
         )
         if active is not None:
+            if active.external_effects_enabled != external_effects_enabled:
+                raise TransitionAuthorityError("active projection epoch effect mode does not match")
             return active
         number = int(
             self.session.scalar(
@@ -545,12 +582,36 @@ class ProjectionService:
             epoch_number=number,
             status="active",
             activation_reason=activation_reason,
+            external_effects_enabled=external_effects_enabled,
             created_at=created_at,
             retired_at=None,
         )
         self.session.add(row)
         self.session.flush()
         return row
+
+
+    def set_external_effects_enabled(
+        self,
+        *,
+        projection_epoch_id: uuid.UUID,
+        enabled: bool,
+        reason: str,
+    ) -> tx.ProjectionEpoch:
+        """Explicitly gate whether projection workers may claim this epoch.
+
+        Dark-launch epochs start disabled. Enabling is a distinct operator
+        decision and cannot be inferred from epoch activation.
+        """
+
+        epoch = self.session.get(tx.ProjectionEpoch, projection_epoch_id)
+        if epoch is None or epoch.status != "active":
+            raise TransitionAuthorityError("projection epoch is not active")
+        if not str(reason).strip():
+            raise TransitionAuthorityError("projection effect-mode change requires a reason")
+        epoch.external_effects_enabled = bool(enabled)
+        self.session.flush()
+        return epoch
 
     def retire_epoch(self, *, projection_epoch_id: uuid.UUID, retired_at: datetime) -> None:
         epoch = self.session.get(tx.ProjectionEpoch, projection_epoch_id)
@@ -861,6 +922,7 @@ class ProjectionService:
             )
             .where(
                 tx.ProjectionEpoch.status == "active",
+                tx.ProjectionEpoch.external_effects_enabled.is_(True),
                 models.AuthorityGeneration.status == "active",
                 (tx.ProjectionOutboxEvent.state == "pending")
                 | (

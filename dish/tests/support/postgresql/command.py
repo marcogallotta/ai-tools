@@ -24,6 +24,7 @@ def _port(session, ids) -> PostgresCommandPort:
         generation_id=generation_id,
         activation_reason="Stage 4 command-port test authority",
         created_at=NOW,
+        external_effects_enabled=True,
     )
     return PostgresCommandPort(
         session,

@@ -136,6 +136,17 @@ class ShadowEnvelope(Base):
     source_outcome: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     source_outcome_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     source_post_state: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    rollout_sequence: Mapped[int | None] = mapped_column(BigInteger)
+    source_authority_generation: Mapped[str | None] = mapped_column(String(256))
+    source_execution_identity: Mapped[str | None] = mapped_column(String(256))
+    principal: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    source_pre_state: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    source_pre_state_sha256: Mapped[str | None] = mapped_column(String(64))
+    pinned_inputs: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    source_effects: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
+    capture_qualification: Mapped[str] = mapped_column(String(24), nullable=False, default="legacy")
+    source_post_state_sha256: Mapped[str | None] = mapped_column(String(64))
+    envelope_schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -143,8 +154,33 @@ class ShadowEnvelope(Base):
             "length(canonical_input_sha256) = 64 AND length(source_outcome_sha256) = 64",
             name="hash_lengths",
         ),
+        CheckConstraint(
+            "source_pre_state_sha256 IS NULL OR length(source_pre_state_sha256) = 64",
+            name="pre_state_hash_length",
+        ),
+        CheckConstraint(
+            "source_post_state_sha256 IS NULL OR length(source_post_state_sha256) = 64",
+            name="post_state_hash_length",
+        ),
+        CheckConstraint(
+            "rollout_sequence IS NULL OR rollout_sequence > 0",
+            name="positive_rollout_sequence",
+        ),
+        CheckConstraint(
+            "capture_qualification IN ('legacy','execute','capture_only','excluded')",
+            name="capture_qualification_allowed",
+        ),
+        CheckConstraint("envelope_schema_version > 0", name="positive_schema_version"),
         UniqueConstraint(
             "shadow_baseline_id", "source_request_identity", name="uq_shadow_source_request"
+        ),
+        Index(
+            "uq_shadow_rollout_sequence",
+            "shadow_baseline_id",
+            "rollout_sequence",
+            unique=True,
+            postgresql_where=text("rollout_sequence IS NOT NULL"),
+            sqlite_where=text("rollout_sequence IS NOT NULL"),
         ),
     )
 
@@ -248,6 +284,7 @@ class ProjectionEpoch(Base):
     epoch_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     activation_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    external_effects_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 

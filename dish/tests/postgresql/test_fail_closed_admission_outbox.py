@@ -35,6 +35,7 @@ def _activate_projection(session, ids, generation_id: uuid.UUID) -> None:
         generation_id=generation_id,
         activation_reason="fail-closed command-port test",
         created_at=NOW,
+        external_effects_enabled=True,
     )
 
 

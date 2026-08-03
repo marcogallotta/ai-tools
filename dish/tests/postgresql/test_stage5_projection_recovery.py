@@ -31,7 +31,8 @@ def test_uncertain_projection_can_be_settled_later_by_exact_admin_recovery(workf
     with session_scope(factory) as session:
         projection = _projection(session, ids)
         projection.activate_epoch(
-            generation_id=context["generation_id"], activation_reason="recovery", created_at=NOW
+            generation_id=context["generation_id"], activation_reason="recovery", created_at=NOW,
+            external_effects_enabled=True,
         )
         execution_id = _claimed_execution(session, ids, context, task_id)
         event_id = projection.record(
@@ -117,7 +118,8 @@ def test_retired_epoch_fences_stale_workers_and_drift_reprojects_authority(workf
     with session_scope(factory) as session:
         projection = _projection(session, ids)
         epoch = projection.activate_epoch(
-            generation_id=context["generation_id"], activation_reason="epoch one", created_at=NOW
+            generation_id=context["generation_id"], activation_reason="epoch one", created_at=NOW,
+            external_effects_enabled=True,
         )
         projection.bind_imported_mappings(generation_id=context["generation_id"], bound_at=NOW)
         mapping = session.scalar(
@@ -146,7 +148,8 @@ def test_reconciliation_blocks_unknown_external_objects(workflow_db) -> None:
     with session_scope(factory) as session:
         projection = _projection(session, ids)
         projection.activate_epoch(
-            generation_id=context["generation_id"], activation_reason="corpus", created_at=NOW
+            generation_id=context["generation_id"], activation_reason="corpus", created_at=NOW,
+            external_effects_enabled=True,
         )
         run = projection.start_reconciliation(
             generation_id=context["generation_id"],
@@ -189,6 +192,7 @@ def test_authoritative_create_and_projection_outbox_roll_back_together(workflow_
             generation_id=context["generation_id"],
             activation_reason="atomic rollback",
             created_at=NOW,
+            external_effects_enabled=True,
         )
 
     with pytest.raises(RuntimeError, match="force rollback"):
@@ -240,6 +244,7 @@ def test_projection_mapping_cannot_transfer_an_alias_between_tasks(workflow_db) 
                 generation_id=context["generation_id"],
                 activation_reason="mapping identity",
                 created_at=NOW,
+                external_effects_enabled=True,
             )
             projection.bind_imported_mappings(
                 generation_id=context["generation_id"], bound_at=NOW
@@ -256,6 +261,7 @@ def test_projection_mapping_cannot_transfer_an_alias_between_tasks(workflow_db) 
                 generation_id=context["generation_id"],
                 activation_reason="mapping identity retry",
                 created_at=NOW,
+                external_effects_enabled=True,
             )
             session.add(
                 tx.TaskProjectionMapping(

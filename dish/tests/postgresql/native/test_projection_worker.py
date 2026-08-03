@@ -89,7 +89,8 @@ def _seed_pending_event(factory, ids) -> tuple[uuid.UUID, uuid.UUID]:
 
         projection = ProjectionService(session, uuid_factory=lambda: _next(ids))
         projection.activate_epoch(
-            generation_id=generation_id, activation_reason="worker rehearsal", created_at=NOW
+            generation_id=generation_id, activation_reason="worker rehearsal", created_at=NOW,
+            external_effects_enabled=True,
         )
         event_id = projection.record(
             generation_id=generation_id,

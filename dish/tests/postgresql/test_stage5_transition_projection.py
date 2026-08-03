@@ -179,7 +179,8 @@ def test_imported_mappings_bind_once_to_the_active_epoch(workflow_db) -> None:
     with session_scope(factory) as session:
         service = _projection(session, ids)
         epoch = service.activate_epoch(
-            generation_id=context["generation_id"], activation_reason="stage5 test", created_at=NOW
+            generation_id=context["generation_id"], activation_reason="stage5 test", created_at=NOW,
+            external_effects_enabled=True,
         )
         assert service.bind_imported_mappings(
             generation_id=context["generation_id"], bound_at=NOW
@@ -199,7 +200,8 @@ def test_projection_outbox_is_idempotent_and_preserves_per_task_order(workflow_d
     with session_scope(factory) as session:
         service = _projection(session, ids)
         service.activate_epoch(
-            generation_id=context["generation_id"], activation_reason="ordering", created_at=NOW
+            generation_id=context["generation_id"], activation_reason="ordering", created_at=NOW,
+            external_effects_enabled=True,
         )
         execution_id = _claimed_execution(session, ids, context, task_id)
         first_id = service.record(
@@ -263,7 +265,8 @@ def test_lost_create_response_binds_one_marker_and_blocks_multiple_matches(workf
         _register_run(session, generation_id=context["generation_id"], run_id=run_id)
         projection = _projection(session, ids)
         projection.activate_epoch(
-            generation_id=context["generation_id"], activation_reason="create correlation", created_at=NOW
+            generation_id=context["generation_id"], activation_reason="create correlation", created_at=NOW,
+            external_effects_enabled=True,
         )
         port = PostgresCommandPort(
             session, cursor_secret=SECRET, uuid_factory=lambda: _next(ids), projection_recorder=projection

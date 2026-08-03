@@ -32,6 +32,7 @@ def test_reconciliation_worker_completes_one_corpus_against_real_postgresql(core
             generation_id=context["generation_id"],
             activation_reason="reconciliation worker rehearsal",
             created_at=NOW,
+            external_effects_enabled=True,
         )
     generation_id = context["generation_id"]
 

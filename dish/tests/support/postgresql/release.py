@@ -62,7 +62,8 @@ def _prepare_candidate(session, ids, context, task_id):
 
     projection = ProjectionService(session, uuid_factory=lambda: _next(ids))
     epoch = projection.activate_epoch(
-        generation_id=context["generation_id"], activation_reason="stage6 rehearsal", created_at=NOW
+        generation_id=context["generation_id"], activation_reason="stage6 rehearsal", created_at=NOW,
+        external_effects_enabled=True,
     )
     assert projection.bind_imported_mappings(
         generation_id=context["generation_id"], bound_at=NOW

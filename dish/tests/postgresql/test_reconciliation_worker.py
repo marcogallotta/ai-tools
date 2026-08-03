@@ -23,6 +23,7 @@ def _activate_epoch(factory, ids, generation_id: uuid.UUID) -> None:
             generation_id=generation_id,
             activation_reason="reconciliation worker contract",
             created_at=NOW,
+            external_effects_enabled=True,
         )
 
 

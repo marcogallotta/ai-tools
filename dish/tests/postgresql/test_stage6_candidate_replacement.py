@@ -75,6 +75,7 @@ def _replacement_authorities(session, ids, context, task_id):
         generation_id=context["generation_id"],
         activation_reason="replacement candidate",
         created_at=NOW + timedelta(minutes=10),
+        external_effects_enabled=True,
     )
     return batch_id, baseline.shadow_baseline_id, epoch.projection_epoch_id, source_commit
 
