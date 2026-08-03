@@ -212,3 +212,10 @@ Gate A may be marked passed only when all of the following are true:
 - Private/action route-isolation, graceful drain, origin validation, duplicate security headers/cookies,
   response headers, and cache behavior have tests.
 - The reviewer records an exact commit/build and a clear pass decision in the review record.
+
+## Prepared implementation and test handoff
+
+The blocked implementation sequence is recorded in `frontend-stage2-implementation-checklist.md`.
+Executable acceptance ownership is predeclared in
+`../frontend/contracts/stage2-acceptance-cases.json`. These artifacts reduce Stage 2 startup work but
+are not implementation evidence and do not alter the Gate A pass conditions.

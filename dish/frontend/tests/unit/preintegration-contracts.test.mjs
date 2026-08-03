@@ -72,3 +72,28 @@ test("frontend support tables remain explicitly unimplemented before migration",
   }
   assert.equal(stage3.blockers["B-12"], "independent-review-pending");
 });
+
+const stage2Cases = JSON.parse(await readFile(new URL("../../contracts/stage2-acceptance-cases.json", import.meta.url)));
+const stage3Cases = JSON.parse(await readFile(new URL("../../contracts/stage3-acceptance-cases.json", import.meta.url)));
+
+function assertAcceptanceManifest(manifest, prefix, allowedBlockers) {
+  assert.match(manifest.status, /scaffold-only/);
+  assert.ok(manifest.cases.length >= 15);
+  const ids = manifest.cases.map((item) => item.id);
+  assert.equal(new Set(ids).size, ids.length);
+  for (const item of manifest.cases) {
+    assert.ok(item.id.startsWith(prefix));
+    assert.ok(item.level.length > 0);
+    assert.ok(item.assertion.length >= 40);
+    assert.ok(item.blockers.length > 0);
+    assert.ok(item.blockers.every((blocker) => allowedBlockers.has(blocker)));
+  }
+}
+
+test("Stage 2 acceptance scaffold covers only Gate A dependencies", () => {
+  assertAcceptanceManifest(stage2Cases, "S2-", new Set(Object.keys(contract.blockers)));
+});
+
+test("Stage 3 acceptance scaffold covers only Gate B dependencies", () => {
+  assertAcceptanceManifest(stage3Cases, "S3-", new Set(Object.keys(stage3.blockers)));
+});

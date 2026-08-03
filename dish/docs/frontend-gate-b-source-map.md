@@ -355,3 +355,10 @@ The Stage 3 portion may pass only when:
 
 The Stage 4 portion may pass only after the same reviewer process covers the detail map, including the
 previously unresolved destination, disclosure, advisory, rendering, and projection facts.
+
+## Prepared implementation and test handoff
+
+The blocked Stage 3 sequence is recorded in `frontend-stage3-implementation-checklist.md`. The
+acceptance families are instantiated as stable case identifiers in
+`../frontend/contracts/stage3-acceptance-cases.json`. They are scaffolding only; no case is counted as
+passed until it runs against the accepted production-candidate schema and implementation.
