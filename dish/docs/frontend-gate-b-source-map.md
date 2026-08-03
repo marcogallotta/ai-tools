@@ -27,13 +27,14 @@ the review record in `frontend-gate-b-review.md` records a pass for that scope.
 - Fixture frontend DTO shapes, notice registry, detail fixtures, and frontend OpenAPI document.
 
 The current checked-in models are treated as design evidence, not proof that the same schema is live in
-production. The migration reconciliation checklist below is mandatory.
+production. The checked-in `0012_task_grant_semantic_identity` reconciliation is recorded in
+`frontend-db-migration-reconciliation.md`; final production rollout reconciliation remains mandatory.
 
 ## Material findings blocking Gate B
 
 | ID | Finding | Required resolution |
 |---|---|---|
-| B-01 | The pending PostgreSQL rollout has not been reconciled against this map. | Record the exact migration/schema revision and verify every named table, constraint, index, and lifecycle value after rollout. |
+| B-01 | The map is reconciled to checked-in Alembic head `0012_task_grant_semantic_identity`, but that schema is not yet the recorded live production authority and the Verification-hold ledger marker remains open. | Re-run the reconciliation against the exact activated migration/schema revision and closed production-change ledger. |
 | B-02 | `PostgresReadModel.section_tasks()` is a per-section list query, includes completed tasks, exposes raw technical/external identities, and cannot produce a coherent all-section bootstrap with attention facts. | Add a frontend-owned board query service and DTO builder; do not extend the browser from this method directly. |
 | B-03 | The current read model has no browser-safe task/section route-identity authority. | Add a bounded environment/type-scoped route-identity codec or frontend-owned alias mapping with normalization tests. |
 | B-04 | The English terms **invalid lease** and **contested lease** have no exact named PostgreSQL predicate in the current schema. | Add a versioned frontend predicate registry backed by accepted durable facts, or approve a targeted contract amendment. |

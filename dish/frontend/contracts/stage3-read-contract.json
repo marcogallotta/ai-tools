@@ -1,0 +1,105 @@
+{
+  "contract_version": "dish-frontend-v1",
+  "gate": "B",
+  "status": "schema-reconciled-production-and-predicates-blocked",
+  "checked_in_schema": {
+    "alembic_head": "0012_task_grant_semantic_identity",
+    "migration_file": "dish_pg/migrations/versions/0012_task_grant_semantic_identity.py",
+    "production_status": "not-yet-activated"
+  },
+  "eligibility_inputs_present": {
+    "active_generation": "authority_generations.status",
+    "active_registry": "active_section_registries",
+    "ordered_sections": "section_registry_entries.ordinal",
+    "task_existence": "dish_tasks.existence_state",
+    "current_completion": "current_task_completion.completed",
+    "current_project_membership": "current_task_project_memberships.is_member",
+    "current_section_placement": "current_task_section_placements",
+    "current_content": "task_authority_heads.current_content_activation_id",
+    "open_operation": "workflow_operations.lifecycle"
+  },
+  "attention_sources": {
+    "lease_attention": {
+      "present": ["service_leases.state", "service_leases.expires_at"],
+      "exact_now": ["expired"],
+      "unresolved": ["invalid", "contested"]
+    },
+    "verification_attention": {
+      "present": ["verification_cycles.lifecycle", "verification_cycles.outcome"],
+      "exact_now": ["awaiting-human-review-through-human_review_requirements"],
+      "unresolved": ["failed", "disputed", "outcome-registry"]
+    },
+    "hold_attention": {
+      "present": ["evidence_holds.state", "human_review_requirements.state"],
+      "exact_now": ["open-evidence-hold", "open-human-review"],
+      "unresolved": []
+    },
+    "recovery_required": {
+      "present": [],
+      "exact_now": [],
+      "unresolved": ["task-scoped-named-unresolved-recovery-fact"]
+    },
+    "abandonment_active": {
+      "present": ["abandonment_attempts.state"],
+      "exact_now": ["active"],
+      "unresolved": []
+    },
+    "succession_active": {
+      "present": ["operation_succession_edges", "abandonment_attempts.state"],
+      "exact_now": ["published-successor-for-active-abandonment"],
+      "unresolved": []
+    },
+    "projection_abnormal": {
+      "present": [
+        "projection_epochs.status",
+        "task_projection_mappings.state",
+        "projection_outbox_events.state",
+        "projection_attempts.state",
+        "projection_observations",
+        "projection_adjudications.outcome",
+        "projection_drift_events.state"
+      ],
+      "exact_now": ["open-drift"],
+      "unresolved": ["delay-threshold", "failed-precedence", "unknown-precedence", "unavailable-readiness-source"]
+    }
+  },
+  "frontend_migration_requirements": {
+    "stage2": [
+      "frontend_security_generations",
+      "frontend_sessions",
+      "frontend_login_limiter_buckets",
+      "frontend_security_audit_events",
+      "frontend_password_state"
+    ],
+    "stage3": [
+      "frontend_route_identities",
+      "frontend_recovery_requirements"
+    ],
+    "conditional": [
+      "frontend_cursor_handles-if-stateful-cursors-are-selected",
+      "frontend_read_projection-if-query-plans-require-materialization"
+    ]
+  },
+  "decisions_required": [
+    "isolated-task-eligibility",
+    "invalid-and-contested-lease-product-meaning",
+    "verification-failed-and-disputed-predicates",
+    "projection-reducer-and-delay-threshold",
+    "route-identity-lifetime-and-rotation",
+    "stateful-versus-stateless-cursor-representation"
+  ],
+  "blockers": {
+    "B-01": "checked-in-0012-reconciled-production-activation-pending",
+    "B-02": "frontend-board-query-service-pending",
+    "B-03": "route-identity-support-pending",
+    "B-04": "product-predicate-decision-pending",
+    "B-05": "workflow-predicate-decision-pending",
+    "B-06": "frontend-recovery-support-migration-pending",
+    "B-07": "projection-reducer-decision-pending",
+    "B-08": "frontend-detail-query-service-pending",
+    "B-09": "backend-registries-pending",
+    "B-10": "query-plan-and-capacity-evidence-pending",
+    "B-11": "snapshot-continuity-and-cursor-services-pending",
+    "B-12": "independent-review-pending"
+  }
+}

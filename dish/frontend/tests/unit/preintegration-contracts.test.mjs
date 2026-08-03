@@ -38,3 +38,37 @@ test("initial authority policy does not trust forwarded identity", () => {
   assert.equal(contract.authority_policy.forwarded_client_address_headers, "ignored");
   assert.equal(contract.authority_policy.cors, "disabled");
 });
+
+const stage3 = JSON.parse(await readFile(new URL("../../contracts/stage3-read-contract.json", import.meta.url)));
+const migrationHead = await readFile(new URL("../../../dish_pg/migrations/versions/0012_task_grant_semantic_identity.py", import.meta.url), "utf8");
+const modelSources = await Promise.all([
+  "../../../dish_pg/models.py",
+  "../../../dish_pg/stage3_models.py",
+  "../../../dish_pg/stage5_models.py",
+  "../../../dish_pg/stage6_models.py",
+].map((path) => readFile(new URL(path, import.meta.url), "utf8")));
+const allModels = modelSources.join("\n");
+
+test("Stage 3 contract is reconciled to the checked-in migration head", () => {
+  assert.match(migrationHead, /revision\s*=\s*["']0012_task_grant_semantic_identity["']/);
+  assert.equal(stage3.checked_in_schema.alembic_head, "0012_task_grant_semantic_identity");
+  assert.equal(stage3.checked_in_schema.production_status, "not-yet-activated");
+});
+
+test("Stage 3 canonical source inventory names real current tables", () => {
+  for (const source of Object.values(stage3.eligibility_inputs_present)) {
+    const table = source.split(".")[0];
+    assert.ok(allModels.includes(`__tablename__ = "${table}"`), `${table} must exist in current models`);
+  }
+});
+
+test("frontend support tables remain explicitly unimplemented before migration", () => {
+  const futureTables = [
+    ...stage3.frontend_migration_requirements.stage2,
+    ...stage3.frontend_migration_requirements.stage3,
+  ];
+  for (const table of futureTables) {
+    assert.ok(!allModels.includes(`__tablename__ = "${table}"`), `${table} unexpectedly exists; update the reconciliation contract`);
+  }
+  assert.equal(stage3.blockers["B-12"], "independent-review-pending");
+});
