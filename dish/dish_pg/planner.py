@@ -109,6 +109,7 @@ def _requires_current_action(command_name: str) -> bool:
         "reopen",
         "supply-evidence",
         "record-human-decision",
+        "resolved",
     }
 
 

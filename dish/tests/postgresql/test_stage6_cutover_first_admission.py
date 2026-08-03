@@ -372,6 +372,6 @@ def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: P
         assert "trim(legacy_bundle_id)" in checks[
             "ck_authority_activations_legacy_bundle_nonblank"
         ]
-        assert ALEMBIC_HEAD == "0014_projection_outbox_origin"
+        assert ALEMBIC_HEAD == "0015_verification_cycle_sequence"
     finally:
         engine.dispose()

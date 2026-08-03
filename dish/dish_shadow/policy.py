@@ -28,6 +28,7 @@ _ROWS = (
     DarkLaunchTreatment("sections", "excluded", "read-only query"),
     DarkLaunchTreatment("section-tasks", "excluded", "read-only query"),
     DarkLaunchTreatment("read", "excluded", "read-only query"),
+    DarkLaunchTreatment("holds", "excluded", "read-only administrative query"),
     # Create remains capture-only until exact lost-response correlation is
     # proved for the production Asana topology.
     DarkLaunchTreatment("create", "capture_only", "pre-cutover create correlation is not qualified"),
@@ -46,11 +47,12 @@ _ROWS = (
     DarkLaunchTreatment("reopen", "execute", "target continuation authority is internal"),
     DarkLaunchTreatment("supply-evidence", "execute", "target Evidence continuation is internal"),
     DarkLaunchTreatment("record-human-decision", "execute", "target Human Review decision is internal"),
+    DarkLaunchTreatment("resolved", "execute", "target Verification-hold continuation is internal"),
     DarkLaunchTreatment("authorize-governed-change", "execute", "target authorization authority is internal"),
     DarkLaunchTreatment("recover-lease", "execute", "target lease recovery is internal"),
     DarkLaunchTreatment("expire-lease", "execute", "target lease expiry is internal"),
     DarkLaunchTreatment("migrate", "execute", "target migration command is internal"),
-    DarkLaunchTreatment("settle-planning-intent", "execute", "target Planning challenge settlement is internal"),
+    DarkLaunchTreatment("planning-intent-settlement", "execute", "target Planning challenge settlement is internal"),
     # These routes adjudicate downstream projection attempts. The legacy and
     # target attempt identities cannot be assumed equivalent during shadowing.
     DarkLaunchTreatment("recover", "capture_only", "projection-attempt identity is target-specific"),

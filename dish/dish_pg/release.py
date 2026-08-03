@@ -43,7 +43,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0014_projection_outbox_origin"
+ALEMBIC_HEAD = "0015_verification_cycle_sequence"
 
 
 class ReleaseCandidateService(

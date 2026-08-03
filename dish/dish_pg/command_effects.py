@@ -20,7 +20,12 @@ class CommandEffectSpec:
     verify_mutation_effects: bool = False
 
 
-def effect_spec_for(command_name: str, arguments: Mapping[str, Any]) -> CommandEffectSpec:
+def effect_spec_for(
+    command_name: str,
+    arguments: Mapping[str, Any],
+    *,
+    verification_hold: bool = False,
+) -> CommandEffectSpec:
     args = dict(arguments)
     if command_name == "create":
         return CommandEffectSpec(
@@ -64,30 +69,49 @@ def effect_spec_for(command_name: str, arguments: Mapping[str, Any]) -> CommandE
                 verify_mutation_effects=True,
             )
         return CommandEffectSpec(
-            ("record_verification_signoff", "advance_operation"),
+            (
+                "activate_corrected_content_version",
+                "record_verification_signoff",
+                "advance_operation",
+            ),
+            ("update_task_document",),
             verify_mutation_effects=True,
         )
     if command_name == "reject":
         route = str(args.get("route", "large")).replace("_", "-")
         if route == "large":
+            mutations = [
+                "reject_verification_cycle",
+                "activate_corrected_content_version",
+                "record_verification_correction",
+            ]
+            if not verification_hold:
+                mutations.append("open_verification_cycle")
+            mutations.append("advance_operation")
             return CommandEffectSpec(
-                (
-                    "reject_verification_cycle",
-                    "activate_corrected_content_version",
-                    "record_verification_correction",
-                    "open_verification_cycle",
-                    "advance_operation",
-                ),
+                tuple(mutations),
                 ("update_task_document",),
                 verify_mutation_effects=True,
             )
         if route == "evidence":
             return CommandEffectSpec(
-                ("reject_verification_cycle", "open_evidence_hold", "advance_operation"),
+                (
+                    "reject_verification_cycle",
+                    "activate_corrected_content_version",
+                    "open_evidence_hold",
+                    "advance_operation",
+                ),
+                ("update_task_document",),
                 verify_mutation_effects=True,
             )
         return CommandEffectSpec(
-            ("reject_verification_cycle", "open_human_review", "advance_operation"),
+            (
+                "reject_verification_cycle",
+                "activate_corrected_content_version",
+                "open_human_review",
+                "advance_operation",
+            ),
+            ("update_task_document",),
             verify_mutation_effects=True,
         )
     if command_name == "submit":
@@ -107,16 +131,30 @@ def effect_spec_for(command_name: str, arguments: Mapping[str, Any]) -> CommandE
     if command_name == "reopen-planning":
         return CommandEffectSpec(("clear_completion_for_planning",), ("set_completion",))
     if command_name == "reopen":
-        return CommandEffectSpec(("reset_verification_cycle",))
+        return CommandEffectSpec(
+            ("reset_verification_cycle", "activate_resumed_content_version"),
+            ("update_task_document",),
+        )
+    if command_name == "resolved":
+        return CommandEffectSpec(
+            ("release_verification_hold", "activate_resumed_content_version"),
+            ("update_task_document",),
+        )
     if command_name == "supply-evidence":
-        return CommandEffectSpec(("supply_hold_evidence",))
+        return CommandEffectSpec(
+            ("supply_hold_evidence", "activate_resumed_content_version"),
+            ("update_task_document",),
+        )
     if command_name == "record-human-decision":
-        return CommandEffectSpec(("record_human_decision",))
+        return CommandEffectSpec(
+            ("record_human_decision", "activate_resumed_content_version"),
+            ("update_task_document",),
+        )
     if command_name == "authorize-governed-change":
         return CommandEffectSpec(("create_marco_authorization",))
     if command_name in {"recover-lease", "expire-lease"}:
         return CommandEffectSpec(("release_exact_lease",))
-    if command_name == "settle-planning-intent":
+    if command_name == "planning-intent-settlement":
         return CommandEffectSpec(("settle_planning_challenge",))
     return CommandEffectSpec()
 

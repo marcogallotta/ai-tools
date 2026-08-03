@@ -31,7 +31,12 @@ def test_effect_spec_is_the_exact_branch_sensitive_authority() -> None:
         "move_task",
     )
     assert effect_spec_for("approve", {"correction": "none"}) == CommandEffectSpec(
-        ("record_verification_signoff", "advance_operation"),
+        (
+            "activate_corrected_content_version",
+            "record_verification_signoff",
+            "advance_operation",
+        ),
+        ("update_task_document",),
         verify_mutation_effects=True,
     )
     assert effect_spec_for("approve", {"correction": "small"}).projection_event_types == (
@@ -40,8 +45,8 @@ def test_effect_spec_is_the_exact_branch_sensitive_authority() -> None:
     assert effect_spec_for("reject", {"route": "large"}).projection_event_types == (
         "update_task_document",
     )
-    assert expected_projection_count("reject", {"route": "evidence"}) == 0
-    assert expected_projection_count("reject", {"route": "human_review"}) == 0
+    assert expected_projection_count("reject", {"route": "evidence"}) == 1
+    assert expected_projection_count("reject", {"route": "human_review"}) == 1
     assert expected_projection_count("migrate", {}) == 2
 
     verified = {
@@ -142,8 +147,10 @@ def test_execution_rejects_and_rolls_back_mutation_spec_drift(workflow_db, monke
 
     monkeypatch.setattr(
         "dish_pg.command_port.effect_spec_for",
-        lambda _command, _arguments: CommandEffectSpec(
-            ("advance_operation",), verify_mutation_effects=True
+        lambda _command, _arguments, **_kwargs: CommandEffectSpec(
+            ("advance_operation",),
+            ("update_task_document",),
+            verify_mutation_effects=True,
         ),
     )
     with pytest.raises(CommandEffectMismatch, match="authoritative effects mismatch"):
@@ -165,6 +172,7 @@ def test_execution_rejects_and_rolls_back_mutation_spec_drift(workflow_db, monke
                         "task_id": str(task_id),
                         "operation_id": operation_id,
                         "agent": "codex",
+                        "model": "o3",
                         "correction": "none",
                         "reviewed_identity": reviewed.content_identity,
                         "semantic_review_complete": True,

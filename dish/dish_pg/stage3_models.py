@@ -653,6 +653,7 @@ class VerificationCycle(Base):
     contract_binding_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT"), nullable=False
     )
+    cycle_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
     lifecycle: Mapped[str] = mapped_column(String(24), nullable=False, default="open")
     outcome: Mapped[str | None] = mapped_column(String(32))
     created_by_execution_id: Mapped[uuid.UUID] = mapped_column(
@@ -662,11 +663,17 @@ class VerificationCycle(Base):
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
+        CheckConstraint("cycle_sequence > 0", name="positive_cycle_sequence"),
         CheckConstraint("lifecycle IN ('open','approved','rejected','reset','abandoned')", name="lifecycle_allowed"),
         CheckConstraint(
             "(lifecycle = 'open' AND outcome IS NULL AND terminal_at IS NULL) OR "
             "(lifecycle <> 'open' AND outcome IS NOT NULL AND terminal_at IS NOT NULL)",
             name="terminal_state_consistent",
+        ),
+        UniqueConstraint(
+            "operation_id",
+            "cycle_sequence",
+            name="uq_verification_cycle_sequence",
         ),
         Index(
             "uq_verification_cycles_one_open_per_operation",

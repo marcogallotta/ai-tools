@@ -20,6 +20,14 @@ from . import stage3_models as wf
 from . import stage5_models as projection
 from .command_contract import definition_for
 from .command_effects import CommandEffectSpec, effect_spec_for
+from .document_authority import (
+    CanonicalDocumentError,
+    destination_gid,
+    held_document,
+    parse_canonical_document,
+    ready_document,
+    resumed_document,
+)
 from .planner import (
     AuthorityFence,
     AuthoritativeSnapshot,
@@ -28,7 +36,14 @@ from .planner import (
 )
 from .read_model import PostgresReadModel, ReadModelError
 from .transition import ProjectionService
-from .workflow import ExecutionSpec, RequestSpec, StoredOutcome, WorkflowAuthorityService
+from .workflow import (
+    ContentionLost,
+    ExecutionSpec,
+    RequestSpec,
+    StoredOutcome,
+    WorkflowAuthorityError,
+    WorkflowAuthorityService,
+)
 
 
 PORTED_MUTATION_COMMANDS = frozenset({
@@ -36,7 +51,8 @@ PORTED_MUTATION_COMMANDS = frozenset({
     "renew-lease", "recover", "repair-destination", "discard",
     "abandon-operation", "reconcile-abandonment", "reopen-planning", "reopen",
     "supply-evidence", "record-human-decision", "authorize-governed-change",
-    "recover-lease", "expire-lease", "migrate", "settle-planning-intent",
+    "recover-lease", "expire-lease", "migrate", "planning-intent-settlement",
+    "resolved",
 })
 
 
@@ -153,7 +169,9 @@ class PostgresCommandPort:
         if definition.profile == "Q":
             return self._execute_read(call)
         if call.request_id is None:
-            raise CommandRuleError("REQUEST_ID_REQUIRED", "mutation requires request_id", http_status=400)
+            raise CommandRuleError(
+                "REQUEST_ID_REQUIRED", "mutation requires request_id", http_status=400
+            )
 
         generation = self.reads.active_generation()
         binding = self._binding_for(generation)
@@ -199,135 +217,169 @@ class PostgresCommandPort:
                 request_replayed=True,
             )
 
-        task, operation = self._resolve_targets(call)
-        if call.command_name == "start" and call.arguments.get("kind") == "planning" and not call.arguments.get("intent_challenge_id"):
-            if task is None:
-                raise CommandRuleError("TASK_REQUIRED", "planning start requires a task")
-            challenge = self.workflow.issue_planning_challenge(
-                challenge_id=self.uuid_factory(),
-                issuing_request_id=call.request_id,
-                task_id=task.task_id,
-                issued_at=call.now,
-            )
-            data = {
-                "request_id": str(call.request_id),
-                "intent_challenge_id": str(challenge.challenge_id),
-                "required_intent_basis": ["user_requested", "agent_override"],
-            }
-            self._store_outcome(
-                call=call,
-                execution_id=None,
-                task_id=task.task_id,
-                operation_id=None,
-                ok=False,
-                code="CONFIRMATION_REQUIRED",
-                http_status=409,
-                data=data,
-                audit_event_type="planning_intent_challenge_issued",
-            )
-            return CommandResult(False, call.command_name, "CONFIRMATION_REQUIRED", 409, data)
-
-        execution_id = self.uuid_factory()
-        execution = self.workflow.begin_execution(
-            ExecutionSpec(
-                execution_id=execution_id,
-                request_id=call.request_id,
-                generation_id=generation.generation_id,
-                task_id=task.task_id if task else None,
-                operation_id=operation.operation_id if operation else None,
-                command_name=call.command_name,
-                transaction_profile=definition.profile,
-                canonical_intent=payload,
-                pinned_inputs={"now": call.now.isoformat()},
-                contract_binding_id=binding.binding_id,
-                admitted_at=call.now,
-            )
-        )
-        self.workflow.repo.claim_execution(
-            execution_id=execution_id,
-            claimant=f"{call.owner_id}:{call.run_id}",
-            claim_token=self.uuid_factory(),
-            now=call.now,
-            ttl=timedelta(minutes=2),
-        )
-        if task is not None:
-            self.workflow.repo.capture_task_fence(
-                execution_id=execution_id,
-                generation_id=generation.generation_id,
-                task_id=task.task_id,
-                at=call.now,
-            )
-        if operation is not None:
-            self.workflow.repo.capture_operation_fence(
-                execution_id=execution_id,
-                operation_id=operation.operation_id,
-                at=call.now,
-            )
-
-        snapshot = self._planner_snapshot(generation.generation_id, task, operation)
-        plan = plan_command(
-            snapshot=snapshot,
-            intent=CanonicalCommandIntent(
-                command_name=call.command_name,
-                arguments={**dict(call.arguments), "request_id": str(call.request_id)},
-                principal_class=call.principal_class,
-                owner_id=call.owner_id,
-                run_id=str(call.run_id),
-            ),
-            pinned_now=call.now,
-        )
-        if not plan.legal:
-            data = {"guidance": dict(plan.recovery_guidance)}
-            self._store_outcome(
-                call=call,
-                execution_id=execution_id,
-                task_id=task.task_id if task else None,
-                operation_id=operation.operation_id if operation else None,
-                ok=False,
-                code=plan.result_code,
-                http_status=409,
-                data=data,
-                audit_event_type=plan.audit_event_type,
-            )
-            return CommandResult(False, call.command_name, plan.result_code, 409, data)
-
+        task: models.DishTask | None = None
+        operation: wf.WorkflowOperation | None = None
+        execution: wf.CommandExecution | None = None
+        execution_id: uuid.UUID | None = None
         try:
-            data = self._apply(
-                call=call,
-                generation=generation,
-                binding=binding,
-                execution=execution,
-                task=task,
-                operation=operation,
+            task, operation = self._resolve_targets(call)
+            if (
+                call.command_name == "start"
+                and call.arguments.get("kind") == "planning"
+                and not call.arguments.get("intent_challenge_id")
+            ):
+                if task is None:
+                    raise CommandRuleError("TASK_REQUIRED", "planning start requires a task")
+                self._validate_planning_intent_basis(call, initial=True)
+                self._validate_planning_agent(
+                    generation_id=generation.generation_id, call=call
+                )
+                challenge = self.workflow.issue_planning_challenge(
+                    challenge_id=self.uuid_factory(),
+                    issuing_request_id=call.request_id,
+                    task_id=task.task_id,
+                    issued_at=call.now,
+                )
+                data = {
+                    "request_id": str(call.request_id),
+                    "intent_challenge_id": str(challenge.challenge_id),
+                    "required_intent_basis": ["user_requested", "agent_override"],
+                }
+                self._store_outcome(
+                    call=call,
+                    execution_id=None,
+                    task_id=task.task_id,
+                    operation_id=None,
+                    ok=False,
+                    code="CONFIRMATION_REQUIRED",
+                    http_status=409,
+                    data=data,
+                    audit_event_type="planning_intent_challenge_issued",
+                )
+                return CommandResult(
+                    False, call.command_name, "CONFIRMATION_REQUIRED", 409, data
+                )
+
+            execution_id = self.uuid_factory()
+            execution = self.workflow.begin_execution(
+                ExecutionSpec(
+                    execution_id=execution_id,
+                    request_id=call.request_id,
+                    generation_id=generation.generation_id,
+                    task_id=task.task_id if task else None,
+                    operation_id=operation.operation_id if operation else None,
+                    command_name=call.command_name,
+                    transaction_profile=definition.profile,
+                    canonical_intent=payload,
+                    pinned_inputs={"now": call.now.isoformat()},
+                    contract_binding_id=binding.binding_id,
+                    admitted_at=call.now,
+                )
+            )
+            self.workflow.repo.claim_execution(
+                execution_id=execution_id,
+                claimant=f"{call.owner_id}:{call.run_id}",
+                claim_token=self.uuid_factory(),
+                now=call.now,
+                ttl=timedelta(minutes=2),
+            )
+            if task is not None:
+                self.workflow.repo.capture_task_fence(
+                    execution_id=execution_id,
+                    generation_id=generation.generation_id,
+                    task_id=task.task_id,
+                    at=call.now,
+                )
+            if operation is not None:
+                self.workflow.repo.capture_operation_fence(
+                    execution_id=execution_id,
+                    operation_id=operation.operation_id,
+                    at=call.now,
+                )
+
+            snapshot = self._planner_snapshot(generation.generation_id, task, operation)
+            plan = plan_command(
+                snapshot=snapshot,
+                intent=CanonicalCommandIntent(
+                    command_name=call.command_name,
+                    arguments={**dict(call.arguments), "request_id": str(call.request_id)},
+                    principal_class=call.principal_class,
+                    owner_id=call.owner_id,
+                    run_id=str(call.run_id),
+                ),
+                pinned_now=call.now,
+            )
+            if not plan.legal:
+                data = {"guidance": dict(plan.recovery_guidance)}
+                self._store_outcome(
+                    call=call,
+                    execution_id=execution_id,
+                    task_id=task.task_id if task else None,
+                    operation_id=operation.operation_id if operation else None,
+                    ok=False,
+                    code=plan.result_code,
+                    http_status=409,
+                    data=data,
+                    audit_event_type=plan.audit_event_type,
+                )
+                return CommandResult(
+                    False, call.command_name, plan.result_code, 409, data
+                )
+
+            with self.session.begin_nested():
+                data = self._apply(
+                    call=call,
+                    generation=generation,
+                    binding=binding,
+                    execution=execution,
+                    task=task,
+                    operation=operation,
+                )
+                self.session.flush()
+                self._assert_committed_effects(
+                    call=call,
+                    execution=execution,
+                    task=task,
+                    operation=operation,
+                    expected=effect_spec_for(
+                        call.command_name,
+                        call.arguments,
+                        verification_hold=bool(data.get("verification_hold")),
+                    ),
+                    result_data=data,
+                )
+        except CanonicalDocumentError as exc:
+            rule_error = CommandRuleError(
+                "VALIDATION_FAILED",
+                str(exc),
+                http_status=400,
+                data={"errors": list(exc.errors)},
+            )
+            return self._record_rule_failure(
+                call, rule_error, execution_id, task, operation
             )
         except CommandRuleError as exc:
-            self._store_outcome(
-                call=call,
-                execution_id=execution_id,
-                task_id=task.task_id if task else None,
-                operation_id=operation.operation_id if operation else None,
-                ok=False,
-                code=exc.code,
-                http_status=exc.http_status,
-                data={"message": str(exc), **exc.data},
-                audit_event_type=f"{call.command_name}_rejected",
+            return self._record_rule_failure(
+                call, exc, execution_id, task, operation
             )
-            return CommandResult(
-                False,
-                call.command_name,
-                exc.code,
-                exc.http_status,
-                {"message": str(exc), **exc.data},
+        except ContentionLost as exc:
+            return self._record_rule_failure(
+                call,
+                CommandRuleError("AUTHORITY_CONTENTION", str(exc)),
+                execution_id,
+                task,
+                operation,
+            )
+        except WorkflowAuthorityError as exc:
+            return self._record_rule_failure(
+                call,
+                CommandRuleError("AUTHORITY_MISMATCH", str(exc)),
+                execution_id,
+                task,
+                operation,
             )
 
-        self.session.flush()
-        self._assert_committed_effects(
-            call=call,
-            execution=execution,
-            task=task,
-            operation=operation,
-            expected=effect_spec_for(call.command_name, call.arguments),
-        )
+        assert execution is not None and execution_id is not None
         data = {"request_id": str(call.request_id), **data}
         self._store_outcome(
             call=call,
@@ -341,6 +393,30 @@ class PostgresCommandPort:
             audit_event_type=f"{call.command_name}_committed",
         )
         return CommandResult(True, call.command_name, "OK", 200, data)
+
+    def _record_rule_failure(
+        self,
+        call: CommandCall,
+        exc: CommandRuleError,
+        execution_id: uuid.UUID | None,
+        task: models.DishTask | None,
+        operation: wf.WorkflowOperation | None,
+    ) -> CommandResult:
+        data = {"message": str(exc), **exc.data}
+        self._store_outcome(
+            call=call,
+            execution_id=execution_id,
+            task_id=task.task_id if task else None,
+            operation_id=operation.operation_id if operation else None,
+            ok=False,
+            code=exc.code,
+            http_status=exc.http_status,
+            data=data,
+            audit_event_type=f"{call.command_name}_rejected",
+        )
+        return CommandResult(
+            False, call.command_name, exc.code, exc.http_status, data
+        )
 
     def _execute_read(self, call: CommandCall) -> CommandResult:
         if call.request_id is not None:
@@ -364,6 +440,14 @@ class PostgresCommandPort:
                 "registry_version_id": str(page.registry_version_id),
                 "registry_revision": page.registry_revision,
             }
+        elif call.command_name == "holds":
+            if call.principal_class != "admin":
+                raise CommandRuleError(
+                    "PRINCIPAL_SCOPE_MISMATCH",
+                    "holds is available only on the private admin surface",
+                    http_status=403,
+                )
+            data = self._holds()
         elif call.command_name == "read":
             reference = call.arguments.get("task_id") or call.arguments.get("task_gid")
             if reference is None:
@@ -382,6 +466,112 @@ class PostgresCommandPort:
             raise CommandRuleError("NOT_A_QUERY", "command is not a read query")
         return CommandResult(True, call.command_name, "OK", 200, data)
 
+    def _holds(self) -> Mapping[str, Any]:
+        generation = self.reads.active_generation()
+        operations = self.session.scalars(
+            select(wf.WorkflowOperation)
+            .where(
+                wf.WorkflowOperation.generation_id == generation.generation_id,
+                wf.WorkflowOperation.lifecycle == "open",
+                wf.WorkflowOperation.phase.in_(("held_evidence", "held_human")),
+            )
+            .order_by(wf.WorkflowOperation.created_at, wf.WorkflowOperation.operation_id)
+        ).all()
+        rows: list[dict[str, Any]] = []
+        for operation in operations:
+            task = self.session.get(models.DishTask, operation.task_id)
+            head = self.session.get(
+                models.TaskAuthorityHead,
+                (generation.generation_id, operation.task_id),
+            )
+            activation = (
+                self.session.get(
+                    models.ContentActivation, head.current_content_activation_id
+                )
+                if head is not None
+                else None
+            )
+            version = (
+                self.session.get(models.ContentVersion, activation.content_version_id)
+                if activation is not None
+                else None
+            )
+            cycle = self.session.scalar(
+                select(wf.VerificationCycle)
+                .where(wf.VerificationCycle.operation_id == operation.operation_id)
+                .order_by(wf.VerificationCycle.cycle_sequence.desc())
+                .limit(1)
+            )
+            hold = self.session.scalar(
+                select(wf.EvidenceHold)
+                .where(
+                    wf.EvidenceHold.operation_id == operation.operation_id,
+                    wf.EvidenceHold.state == "open",
+                )
+                .order_by(wf.EvidenceHold.opened_at.desc())
+                .limit(1)
+            )
+            requirement = self.session.scalar(
+                select(wf.HumanReviewRequirement)
+                .where(wf.HumanReviewRequirement.operation_id == operation.operation_id)
+                .order_by(wf.HumanReviewRequirement.opened_at.desc())
+                .limit(1)
+            )
+            if cycle is not None and cycle.outcome == "verification-hold":
+                hold_class = "verification_two_pass"
+                required_action = "resolved"
+            elif operation.phase == "held_evidence":
+                hold_class = (
+                    "research_preconstruction_evidence"
+                    if hold is not None and hold.cycle_id is None
+                    else "verification_evidence"
+                )
+                required_action = "supply-evidence"
+            else:
+                hold_class = (
+                    "research_preconstruction_human"
+                    if requirement is not None and requirement.cycle_id is None
+                    else "verification_human"
+                )
+                required_action = (
+                    "reopen"
+                    if requirement is not None and requirement.state == "decided"
+                    else "record-human-decision"
+                )
+            status_detail = None
+            if version is not None:
+                try:
+                    parts = parse_canonical_document(
+                        title=version.title, body=version.body
+                    )
+                    status_detail = parts.document.state.values.get("Status detail")
+                except CanonicalDocumentError:
+                    status_detail = None
+            rows.append(
+                {
+                    "hold_class": hold_class,
+                    "required_admin_action": required_action,
+                    "task_id": str(operation.task_id),
+                    "task_title": version.title if version is not None else None,
+                    "operation_id": str(operation.operation_id),
+                    "cycle_id": str(cycle.cycle_id) if cycle is not None else None,
+                    "hold_id": str(hold.hold_id) if hold is not None else None,
+                    "requirement_id": (
+                        str(requirement.requirement_id)
+                        if requirement is not None
+                        else None
+                    ),
+                    "hold_identity": (
+                        version.content_identity if version is not None else None
+                    ),
+                    "question": status_detail,
+                    "phase": operation.phase,
+                    "created_at": operation.created_at.isoformat(),
+                    "task_exists": task is not None,
+                }
+            )
+        return {"holds": rows, "count": len(rows)}
+
     def _binding_for(self, generation: models.AuthorityGeneration) -> models.HonestContractBinding:
         binding = self.session.scalar(
             select(models.HonestContractBinding)
@@ -397,8 +587,19 @@ class PostgresCommandPort:
         self, call: CommandCall
     ) -> tuple[models.DishTask | None, wf.WorkflowOperation | None]:
         definition = definition_for(call.command_name)
+        verification_start = (
+            call.command_name == "start"
+            and str(call.arguments.get("kind", "")) == "verification"
+        )
         operation = None
         operation_ref = call.arguments.get("operation_id") or call.arguments.get("submission_id")
+        if verification_start and operation_ref is not None:
+            raise CommandRuleError(
+                "ARGUMENT_UNEXPECTED",
+                "Verification start accepts only the exact target_operation_id/target_cycle_id pair returned by Dish, or neither for an ordinary start",
+                http_status=400,
+                data={"field": "operation_id" if "operation_id" in call.arguments else "submission_id"},
+            )
         if operation_ref:
             try:
                 operation = self.session.get(wf.WorkflowOperation, uuid.UUID(str(operation_ref)))
@@ -417,15 +618,80 @@ class PostgresCommandPort:
             task = self.session.get(models.DishTask, operation.task_id)
         if definition.task_required and task is None:
             raise CommandRuleError("TASK_REQUIRED", "command requires a task", http_status=400)
-        if definition.operation_required and operation is None:
-            operation = self.session.scalar(
-                select(wf.WorkflowOperation).where(
-                    wf.WorkflowOperation.task_id == task.task_id,
-                    wf.WorkflowOperation.lifecycle == "open",
+        if verification_start:
+            target_operation = call.arguments.get("target_operation_id")
+            target_cycle = call.arguments.get("target_cycle_id")
+            if (target_operation is None) != (target_cycle is None):
+                missing = (
+                    "target_cycle_id"
+                    if target_operation is not None
+                    else "target_operation_id"
                 )
-            ) if task is not None else None
-            if operation is None:
-                raise CommandRuleError("OPEN_OPERATION_REQUIRED", "command requires an open operation")
+                raise CommandRuleError(
+                    "VERIFICATION_TARGET_PAIR_REQUIRED",
+                    "Verification targets are only for an exact Dish-returned abandonment continuation; supply both returned values together, or omit both for an ordinary Verification start",
+                    http_status=400,
+                    data={"field": missing},
+                )
+            if target_operation is not None:
+                try:
+                    operation = self.session.get(
+                        wf.WorkflowOperation, uuid.UUID(str(target_operation))
+                    )
+                except ValueError as exc:
+                    raise CommandRuleError(
+                        "INVALID_OPERATION_ID",
+                        "target operation identifier must be a UUID",
+                        http_status=400,
+                    ) from exc
+                try:
+                    uuid.UUID(str(target_cycle))
+                except ValueError as exc:
+                    raise CommandRuleError(
+                        "INVALID_CYCLE_ID",
+                        "target cycle identifier must be a UUID",
+                        http_status=400,
+                    ) from exc
+                if operation is None or operation.task_id != task.task_id:
+                    raise CommandRuleError(
+                        "VERIFICATION_TARGET_STALE",
+                        "Verification start target no longer belongs to this task",
+                    )
+            else:
+                active_generation_id = self.reads.active_generation().generation_id
+                operations = list(
+                    self.session.scalars(
+                        select(wf.WorkflowOperation)
+                        .where(
+                            wf.WorkflowOperation.generation_id
+                            == active_generation_id,
+                            wf.WorkflowOperation.task_id == task.task_id,
+                            wf.WorkflowOperation.lifecycle == "open",
+                        )
+                        .order_by(
+                            wf.WorkflowOperation.created_at.desc(),
+                            wf.WorkflowOperation.operation_id.desc(),
+                        )
+                        .limit(2)
+                    )
+                )
+                if not operations:
+                    raise CommandRuleError(
+                        "OPEN_OPERATION_REQUIRED",
+                        "task has no open Verification operation",
+                    )
+                if len(operations) != 1:
+                    raise CommandRuleError(
+                        "VERIFICATION_OPERATION_AMBIGUOUS",
+                        "task does not have one unique open Verification operation",
+                    )
+                operation = operations[0]
+        if definition.operation_required and operation is None:
+            raise CommandRuleError(
+                "OPERATION_ID_REQUIRED",
+                "command requires the exact operation identifier",
+                http_status=400,
+            )
         if task is not None and operation is not None and operation.task_id != task.task_id:
             raise CommandRuleError("TARGET_MISMATCH", "task and operation do not match")
         return task, operation
@@ -444,6 +710,7 @@ class PostgresCommandPort:
             workflow_snapshot = self.reads._workflow_snapshot(
                 generation_id=generation_id,
                 task_id=task.task_id,
+                title=view.title,
                 body=view.body,
                 operation=operation,
             )
@@ -493,6 +760,81 @@ class PostgresCommandPort:
         )
         return str(value) if value else None
 
+    def _validate_planning_intent_basis(
+        self, call: CommandCall, *, initial: bool
+    ) -> None:
+        basis = call.arguments.get("intent_basis")
+        reason = call.arguments.get("override_reason")
+        if initial:
+            if basis is not None or reason is not None:
+                raise CommandRuleError(
+                    "PLANNING_CONFIRMATION_NOT_YET_ISSUED",
+                    "the first Planning request cannot supply intent confirmation fields",
+                    http_status=400,
+                )
+            return
+        if basis not in {"user_requested", "agent_override"}:
+            raise CommandRuleError(
+                "PLANNING_INTENT_BASIS_REQUIRED",
+                "Planning confirmation requires user_requested or agent_override",
+                http_status=400,
+            )
+        if basis == "agent_override" and not str(reason or "").strip():
+            raise CommandRuleError(
+                "PLANNING_OVERRIDE_REASON_REQUIRED",
+                "agent_override requires a non-blank override_reason",
+                http_status=400,
+            )
+        if basis == "user_requested" and reason is not None:
+            raise CommandRuleError(
+                "PLANNING_OVERRIDE_REASON_NOT_ALLOWED",
+                "override_reason is not allowed with user_requested",
+                http_status=400,
+            )
+
+    def _validate_planning_agent(
+        self, *, generation_id: uuid.UUID, call: CommandCall
+    ) -> str:
+        agent = str(call.arguments.get("agent", "")).strip()
+        if not agent:
+            raise CommandRuleError(
+                "AGENT_REQUIRED",
+                "Planning start requires the exact registered agent",
+                http_status=400,
+            )
+        run = self.workflow.repo.require_active_run(
+            generation_id=generation_id, run_id=call.run_id, owner_id=call.owner_id
+        )
+        if run.agent != agent:
+            raise CommandRuleError(
+                "PLANNING_AGENT_MISMATCH",
+                "Planning start agent does not match the registered service run",
+            )
+        return agent
+
+    def _assert_planning_challenge_target(
+        self, *, challenge: wf.PlanningIntentChallenge, call: CommandCall
+    ) -> None:
+        issuing = self.session.get(wf.ServiceRequest, challenge.issuing_request_id)
+        if issuing is None:
+            raise CommandRuleError(
+                "PLANNING_CHALLENGE_EVIDENCE_MISSING",
+                "the challenge issuing request is missing",
+            )
+        issued_arguments = dict(issuing.canonical_payload.get("arguments") or {})
+        confirming_arguments = dict(call.arguments)
+        for key in ("intent_challenge_id", "intent_basis", "override_reason"):
+            confirming_arguments.pop(key, None)
+        if issued_arguments != confirming_arguments:
+            raise CommandRuleError(
+                "PLANNING_CHALLENGE_MISMATCH",
+                "Planning confirmation does not match the exact issued target",
+                data={
+                    "issuing_request_id": str(challenge.issuing_request_id),
+                    "challenge_id": str(challenge.challenge_id),
+                },
+            )
+
     def _apply(
         self,
         *,
@@ -521,11 +863,12 @@ class PostgresCommandPort:
             "reopen": self._reopen,
             "supply-evidence": self._supply_evidence,
             "record-human-decision": self._record_human_decision,
+            "resolved": self._resolved,
             "authorize-governed-change": self._authorize,
             "recover-lease": self._release_lease,
             "expire-lease": self._release_lease,
             "migrate": self._migrate,
-            "settle-planning-intent": self._settle_planning,
+            "planning-intent-settlement": self._settle_planning,
         }
         handler = handlers.get(call.command_name)
         if handler is None:
@@ -576,47 +919,257 @@ class PostgresCommandPort:
         projection_id = self._project(generation.generation_id, execution.execution_id, task_id, "create_task", {"title": title}, call.now)
         return {"task_id": str(task_id), "content_version_id": str(version_id), "projection_event_id": projection_id}
 
-    def _start(self, call, generation, binding, execution, task, _operation) -> dict[str, Any]:
+    def _start(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None
         kind = str(call.arguments.get("kind", ""))
+        phases = {
+            "planning": "prepare_required",
+            "initial": "prepare_required",
+            "change": "prepare_required",
+            "verification": "await_verification",
+        }
+        if kind not in phases:
+            raise CommandRuleError(
+                "INVALID_OPERATION_KIND", "unsupported operation kind", http_status=400
+            )
+
+        agent = str(call.arguments.get("agent", "")).strip()
+        if not agent:
+            raise CommandRuleError(
+                "AGENT_REQUIRED", "start requires an exact agent", http_status=400
+            )
+
         challenge_id = call.arguments.get("intent_challenge_id")
         if kind == "planning" and challenge_id:
-            self.workflow.claim_planning_challenge(challenge_id=uuid.UUID(str(challenge_id)), claiming_request_id=call.request_id, intent_basis=str(call.arguments.get("intent_basis", "")), override_reason=call.arguments.get("override_reason"))
-        phases = {"planning": "prepare_required", "initial": "prepare_required", "change": "prepare_required", "verification": "await_verification"}
-        if kind not in phases:
-            raise CommandRuleError("INVALID_OPERATION_KIND", "unsupported operation kind", http_status=400)
-        operation_id = self.uuid_factory()
-        operation = self.workflow.create_operation(operation_id=operation_id, execution_id=execution.execution_id, task_id=task.task_id, kind=kind, phase=phases[kind], persisted_actions=["prepare"] if kind != "verification" else ["inspect"], created_at=call.now)
-        sequence = int(self.session.scalar(select(func.coalesce(func.max(wf.OperationActorFact.actor_attempt_sequence), 0)).where(wf.OperationActorFact.task_id == task.task_id)) or 0) + 1
-        actor_fact = self.workflow.create_actor_fact(actor_fact_id=self.uuid_factory(), execution_id=execution.execution_id, operation_id=operation_id, run_id=call.run_id, owner_id=call.owner_id, actor_role="verification" if kind == "verification" else "author", agent=str(call.arguments.get("agent", "service")), actor_attempt_sequence=sequence, recorded_at=call.now)
-        lease = self.workflow.acquire_actor_lease(lease_id=self.uuid_factory(), execution_id=execution.execution_id, operation_id=operation_id, run_id=call.run_id, owner_id=call.owner_id, actor_role=actor_fact.actor_role, actor_attempt_sequence=sequence, issued_at=call.now, expires_at=call.now + self.lease_duration)
-        if kind == "planning" and challenge_id:
-            self.workflow.consume_planning_challenge(challenge_id=uuid.UUID(str(challenge_id)), operation_id=operation_id, consumed_at=call.now)
+            self._validate_planning_intent_basis(call, initial=False)
+            self._validate_planning_agent(
+                generation_id=generation.generation_id, call=call
+            )
+            try:
+                challenge_uuid = uuid.UUID(str(challenge_id))
+            except ValueError as exc:
+                raise CommandRuleError(
+                    "INVALID_CHALLENGE_ID",
+                    "intent challenge identifier must be a UUID",
+                    http_status=400,
+                ) from exc
+            challenge = self.session.get(wf.PlanningIntentChallenge, challenge_uuid)
+            if (
+                challenge is None
+                or challenge.task_id != task.task_id
+                or challenge.agent != agent
+                or challenge.target_kind != kind
+            ):
+                raise CommandRuleError(
+                    "PLANNING_CHALLENGE_MISMATCH",
+                    "Planning confirmation does not match the issued task, agent, and target",
+                )
+            self._assert_planning_challenge_target(challenge=challenge, call=call)
+            self.workflow.claim_planning_challenge(
+                challenge_id=challenge_uuid,
+                claiming_request_id=call.request_id,
+                intent_basis=str(call.arguments.get("intent_basis", "")),
+                override_reason=call.arguments.get("override_reason"),
+            )
+
         if kind == "verification":
-            head = self.session.get(models.TaskAuthorityHead, (generation.generation_id, task.task_id))
-            activation = self.session.get(models.ContentActivation, head.current_content_activation_id)
-            self.workflow.open_verification_cycle(cycle_id=self.uuid_factory(), execution_id=execution.execution_id, operation_id=operation_id, reviewed_content_version_id=activation.content_version_id, created_at=call.now)
-        return {"operation_id": str(operation_id), "lease_id": str(lease.lease_id), "phase": operation.phase}
+            if operation is None or operation.lifecycle != "open":
+                raise CommandRuleError(
+                    "OPEN_OPERATION_REQUIRED",
+                    "Verification start requires the existing open operation",
+                )
+            if operation.phase != "await_verification":
+                raise CommandRuleError(
+                    "VERIFICATION_NOT_READY",
+                    "the existing operation is not awaiting Verification",
+                )
+            cycle = self._latest_cycle(operation.operation_id)
+            self._assert_cycle_is_current(generation.generation_id, task.task_id, cycle)
+            target_cycle = call.arguments.get("target_cycle_id")
+            if target_cycle is not None:
+                try:
+                    target_cycle_uuid = uuid.UUID(str(target_cycle))
+                except ValueError as exc:
+                    raise CommandRuleError(
+                        "INVALID_CYCLE_ID",
+                        "target cycle identifier must be a UUID",
+                        http_status=400,
+                    ) from exc
+                if target_cycle_uuid != cycle.cycle_id:
+                    raise CommandRuleError(
+                        "VERIFICATION_CYCLE_MISMATCH",
+                        "Verification start does not target the current cycle",
+                    )
+            attestation = str(
+                call.arguments.get("independence_attestation", "")
+            ).strip()
+            if not attestation:
+                raise CommandRuleError(
+                    "INDEPENDENCE_ATTESTATION_REQUIRED",
+                    "Verification start requires independence_attestation",
+                    http_status=400,
+                )
+            conflicting = self.session.scalar(
+                select(wf.OperationActorFact)
+                .where(
+                    wf.OperationActorFact.operation_id == operation.operation_id,
+                    wf.OperationActorFact.actor_role != "verification",
+                    (wf.OperationActorFact.run_id == call.run_id)
+                    | (wf.OperationActorFact.agent == agent),
+                )
+                .limit(1)
+            )
+            if conflicting is not None:
+                raise CommandRuleError(
+                    "VERIFIER_NOT_INDEPENDENT",
+                    "the author or material editor cannot verify this candidate",
+                    data={"conflicting_actor_fact_id": str(conflicting.actor_fact_id)},
+                )
+            sequence = int(
+                self.session.scalar(
+                    select(
+                        func.coalesce(
+                            func.max(wf.OperationActorFact.actor_attempt_sequence), 0
+                        )
+                    ).where(wf.OperationActorFact.task_id == task.task_id)
+                )
+                or 0
+            ) + 1
+            actor_fact = self.workflow.create_actor_fact(
+                actor_fact_id=self.uuid_factory(),
+                execution_id=execution.execution_id,
+                operation_id=operation.operation_id,
+                run_id=call.run_id,
+                owner_id=call.owner_id,
+                actor_role="verification",
+                agent=agent,
+                actor_attempt_sequence=sequence,
+                recorded_at=call.now,
+            )
+            lease = self.workflow.acquire_actor_lease(
+                lease_id=self.uuid_factory(),
+                execution_id=execution.execution_id,
+                operation_id=operation.operation_id,
+                run_id=call.run_id,
+                owner_id=call.owner_id,
+                actor_role="verification",
+                actor_attempt_sequence=sequence,
+                issued_at=call.now,
+                expires_at=call.now + self.lease_duration,
+                verification_cycle_id=cycle.cycle_id,
+            )
+            operation.persisted_actions = ["inspect"]
+            operation.operation_revision += 1
+            step_sequence = self._next_step(operation.operation_id)
+            self.session.add(
+                wf.OperationStep(
+                    step_id=self.uuid_factory(),
+                    operation_id=operation.operation_id,
+                    step_name=f"verification-start-{step_sequence}",
+                    step_sequence=step_sequence,
+                    outcome="complete",
+                    command_execution_id=execution.execution_id,
+                    evidence={
+                        "cycle_id": str(cycle.cycle_id),
+                        "actor_fact_id": str(actor_fact.actor_fact_id),
+                        "lease_id": str(lease.lease_id),
+                        "independence_attestation": attestation,
+                    },
+                    occurred_at=call.now,
+                )
+            )
+            return {
+                "operation_id": str(operation.operation_id),
+                "cycle_id": str(cycle.cycle_id),
+                "lease_id": str(lease.lease_id),
+                "phase": operation.phase,
+            }
+
+        operation_id = self.uuid_factory()
+        operation = self.workflow.create_operation(
+            operation_id=operation_id,
+            execution_id=execution.execution_id,
+            task_id=task.task_id,
+            kind=kind,
+            phase=phases[kind],
+            persisted_actions=["prepare"],
+            created_at=call.now,
+        )
+        sequence = int(
+            self.session.scalar(
+                select(
+                    func.coalesce(
+                        func.max(wf.OperationActorFact.actor_attempt_sequence), 0
+                    )
+                ).where(wf.OperationActorFact.task_id == task.task_id)
+            )
+            or 0
+        ) + 1
+        actor_fact = self.workflow.create_actor_fact(
+            actor_fact_id=self.uuid_factory(),
+            execution_id=execution.execution_id,
+            operation_id=operation_id,
+            run_id=call.run_id,
+            owner_id=call.owner_id,
+            actor_role="author",
+            agent=agent,
+            actor_attempt_sequence=sequence,
+            recorded_at=call.now,
+        )
+        lease = self.workflow.acquire_actor_lease(
+            lease_id=self.uuid_factory(),
+            execution_id=execution.execution_id,
+            operation_id=operation_id,
+            run_id=call.run_id,
+            owner_id=call.owner_id,
+            actor_role=actor_fact.actor_role,
+            actor_attempt_sequence=sequence,
+            issued_at=call.now,
+            expires_at=call.now + self.lease_duration,
+        )
+        if kind == "planning" and challenge_id:
+            self.workflow.consume_planning_challenge(
+                challenge_id=uuid.UUID(str(challenge_id)),
+                operation_id=operation_id,
+                consumed_at=call.now,
+            )
+        return {
+            "operation_id": str(operation_id),
+            "lease_id": str(lease.lease_id),
+            "phase": operation.phase,
+        }
 
     def _prepare(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         self.workflow.repo.assert_task_fence(execution.execution_id)
         self.workflow.repo.assert_operation_fence(execution.execution_id)
-        head = self.session.get(models.TaskAuthorityHead, (generation.generation_id, task.task_id))
-        prior_activation = self.session.get(models.ContentActivation, head.current_content_activation_id)
-        prior = self.session.get(models.ContentVersion, prior_activation.content_version_id)
-        body = str(call.arguments.get("file_text", call.arguments.get("body", prior.body)))
-        title = str(call.arguments.get("title", prior.title)).strip() or prior.title
-        version_id, activation_id = self.uuid_factory(), self.uuid_factory()
-        identity = hashlib.sha256((title + "\0" + body).encode()).hexdigest()
-        revision = head.task_revision + 1
-        self.session.add(models.ContentVersion(content_version_id=version_id, generation_id=generation.generation_id, task_id=task.task_id, representation_kind="document", title=title, body=body, identity_scheme="sha256-title-body-v1", content_identity=identity, creator_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, predecessor_content_version_id=prior.content_version_id, contract_binding_id=binding.binding_id, created_at=call.now))
-        self.session.flush()
-        self.session.add(models.ContentActivation(content_activation_id=activation_id, generation_id=generation.generation_id, task_id=task.task_id, content_version_id=version_id, activation_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, task_revision=revision, activated_at=call.now))
-        self.session.flush()
-        head.current_content_activation_id = activation_id
-        head.task_revision = revision
-        head.updated_at = call.now
+        head = self.session.get(
+            models.TaskAuthorityHead, (generation.generation_id, task.task_id)
+        )
+        prior_activation = self.session.get(
+            models.ContentActivation, head.current_content_activation_id
+        )
+        prior = self.session.get(
+            models.ContentVersion, prior_activation.content_version_id
+        )
+        file_text = call.arguments.get("file_text")
+        body_value = call.arguments.get("body")
+        parts = parse_canonical_document(
+            file_text=str(file_text) if file_text is not None else None,
+            title=str(call.arguments.get("title", prior.title)),
+            body=str(body_value) if body_value is not None else None,
+            expected_status="pending-verification",
+        )
+        version_id = self._activate_document(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            binding_id=binding.binding_id,
+            execution_id=execution.execution_id,
+            title=parts.title,
+            body=parts.body,
+            predecessor_content_version_id=prior.content_version_id,
+            at=call.now,
+        )
         verification_section_id = self._section_for_role(
             generation.generation_id,
             "verification_queue",
@@ -630,190 +1183,598 @@ class PostgresCommandPort:
             execution.execution_id,
             call.now,
         )
+        author_lease = self.session.scalar(
+            select(wf.ServiceLease).where(
+                wf.ServiceLease.operation_id == operation.operation_id,
+                wf.ServiceLease.state == "active",
+                wf.ServiceLease.actor_role == "author",
+            )
+        )
+        if author_lease is not None:
+            self._terminalize_lease(
+                author_lease,
+                "released",
+                execution,
+                call.now,
+                "candidate prepared for Verification",
+            )
         operation.phase = "await_verification"
         operation.persisted_actions = ["inspect"]
         operation.operation_revision += 1
-        self.session.add(wf.OperationStep(step_id=self.uuid_factory(), operation_id=operation.operation_id, step_name=f"prepare-{operation.operation_revision}", step_sequence=self._next_step(operation.operation_id), outcome="complete", command_execution_id=execution.execution_id, evidence={"content_version_id": str(version_id), "section_id": str(verification_section_id)}, occurred_at=call.now))
-        cycle = self.workflow.open_verification_cycle(cycle_id=self.uuid_factory(), execution_id=execution.execution_id, operation_id=operation.operation_id, reviewed_content_version_id=version_id, created_at=call.now)
+        self.session.add(
+            wf.OperationStep(
+                step_id=self.uuid_factory(),
+                operation_id=operation.operation_id,
+                step_name=f"prepare-{operation.operation_revision}",
+                step_sequence=self._next_step(operation.operation_id),
+                outcome="complete",
+                command_execution_id=execution.execution_id,
+                evidence={
+                    "content_version_id": str(version_id),
+                    "section_id": str(verification_section_id),
+                },
+                occurred_at=call.now,
+            )
+        )
+        cycle = self.workflow.open_verification_cycle(
+            cycle_id=self.uuid_factory(),
+            execution_id=execution.execution_id,
+            operation_id=operation.operation_id,
+            reviewed_content_version_id=version_id,
+            created_at=call.now,
+        )
         self.session.flush()
-        projection_id = self._project(generation.generation_id, execution.execution_id, task.task_id, "update_task_document", {"content_version_id": str(version_id)}, call.now)
-        placement_projection_id = self._project(generation.generation_id, execution.execution_id, task.task_id, "move_task", {"section_id": str(verification_section_id)}, call.now)
-        return {"content_version_id": str(version_id), "cycle_id": str(cycle.cycle_id), "projection_event_id": projection_id, "placement_projection_event_id": placement_projection_id}
+        projection_id = self._project(
+            generation.generation_id,
+            execution.execution_id,
+            task.task_id,
+            "update_task_document",
+            {"content_version_id": str(version_id)},
+            call.now,
+        )
+        placement_projection_id = self._project(
+            generation.generation_id,
+            execution.execution_id,
+            task.task_id,
+            "move_task",
+            {"section_id": str(verification_section_id)},
+            call.now,
+        )
+        return {
+            "content_version_id": str(version_id),
+            "cycle_id": str(cycle.cycle_id),
+            "projection_event_id": projection_id,
+            "placement_projection_event_id": placement_projection_id,
+        }
 
     def _inspect(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         cycle = self._latest_cycle(operation.operation_id)
         self._assert_cycle_is_current(generation.generation_id, task.task_id, cycle)
         agent = str(call.arguments.get("agent", "")).strip()
-        attestation = str(call.arguments.get("attestation", call.arguments.get("independence_attestation", ""))).strip()
+        attestation = str(
+            call.arguments.get(
+                "attestation", call.arguments.get("independence_attestation", "")
+            )
+        ).strip()
         if not agent or not attestation:
             raise CommandRuleError(
                 "VERIFIER_IDENTITY_REQUIRED",
                 "inspect requires the exact verifier agent and independence attestation",
                 http_status=400,
             )
-        conflicting = self.session.scalar(
-            select(wf.OperationActorFact).where(
-                wf.OperationActorFact.operation_id == operation.operation_id,
-                wf.OperationActorFact.actor_role != "verification",
-                (wf.OperationActorFact.run_id == call.run_id)
-                | (wf.OperationActorFact.agent == agent),
-            ).limit(1)
-        )
-        if conflicting is not None:
-            raise CommandRuleError(
-                "VERIFIER_NOT_INDEPENDENT",
-                "the author or material editor cannot inspect the same candidate",
-                data={"conflicting_actor_fact_id": str(conflicting.actor_fact_id)},
-            )
+
         actor = self.session.scalar(
-            select(wf.OperationActorFact).where(
+            select(wf.OperationActorFact)
+            .where(
                 wf.OperationActorFact.operation_id == operation.operation_id,
                 wf.OperationActorFact.run_id == call.run_id,
+                wf.OperationActorFact.owner_id == call.owner_id,
                 wf.OperationActorFact.actor_role == "verification",
-            ).order_by(wf.OperationActorFact.recorded_at.desc()).limit(1)
-        )
-        if actor is not None and (actor.owner_id != call.owner_id or actor.agent != agent):
-            raise CommandRuleError(
-                "VERIFIER_IDENTITY_MISMATCH",
-                "the verifier actor fact does not match the exact owner, run, and agent",
+                wf.OperationActorFact.agent == agent,
             )
+            .order_by(wf.OperationActorFact.recorded_at.desc())
+            .limit(1)
+        )
         if actor is None:
-            sequence = int(self.session.scalar(select(func.coalesce(func.max(wf.OperationActorFact.actor_attempt_sequence), 0)).where(wf.OperationActorFact.task_id == task.task_id)) or 0) + 1
-            actor = self.workflow.create_actor_fact(actor_fact_id=self.uuid_factory(), execution_id=execution.execution_id, operation_id=operation.operation_id, run_id=call.run_id, owner_id=call.owner_id, actor_role="verification", agent=agent, actor_attempt_sequence=sequence, recorded_at=call.now)
-        inspection = self.workflow.record_inspection(inspection_id=self.uuid_factory(), execution_id=execution.execution_id, cycle_id=cycle.cycle_id, actor_fact_id=actor.actor_fact_id, verifier_run_id=call.run_id, attestation=attestation, inspected_at=call.now)
+            raise CommandRuleError(
+                "VERIFICATION_START_REQUIRED",
+                "inspect requires the exact verifier occurrence created by Verification start",
+            )
+        lease = self.session.scalar(
+            select(wf.ServiceLease)
+            .where(
+                wf.ServiceLease.operation_id == operation.operation_id,
+                wf.ServiceLease.run_id == call.run_id,
+                wf.ServiceLease.owner_id == call.owner_id,
+                wf.ServiceLease.actor_role == "verification",
+                wf.ServiceLease.actor_attempt_sequence
+                == actor.actor_attempt_sequence,
+                wf.ServiceLease.verification_cycle_id == cycle.cycle_id,
+                wf.ServiceLease.state == "active",
+            )
+            .order_by(wf.ServiceLease.issued_at.desc())
+            .limit(1)
+        )
+        lease_expiry = lease.expires_at if lease is not None else None
+        if (
+            lease_expiry is not None
+            and lease_expiry.tzinfo is None
+            and call.now.tzinfo is not None
+        ):
+            lease_expiry = lease_expiry.replace(tzinfo=call.now.tzinfo)
+        if lease is None or lease_expiry is None or lease_expiry <= call.now:
+            raise CommandRuleError(
+                "VERIFICATION_LEASE_REQUIRED",
+                "inspect requires the exact active Verification lease for this cycle",
+            )
+
+        start_attestation = None
+        steps = self.session.scalars(
+            select(wf.OperationStep)
+            .where(wf.OperationStep.operation_id == operation.operation_id)
+            .order_by(wf.OperationStep.step_sequence.desc())
+        ).all()
+        for step in steps:
+            evidence = dict(step.evidence or {})
+            if (
+                evidence.get("cycle_id") == str(cycle.cycle_id)
+                and evidence.get("actor_fact_id") == str(actor.actor_fact_id)
+                and evidence.get("lease_id") == str(lease.lease_id)
+            ):
+                start_attestation = str(
+                    evidence.get("independence_attestation") or ""
+                ).strip()
+                break
+        if not start_attestation or attestation != start_attestation:
+            raise CommandRuleError(
+                "VERIFIER_ATTESTATION_MISMATCH",
+                "inspect must repeat the exact attestation bound by Verification start",
+            )
+
+        inspection = self.workflow.record_inspection(
+            inspection_id=self.uuid_factory(),
+            execution_id=execution.execution_id,
+            cycle_id=cycle.cycle_id,
+            actor_fact_id=actor.actor_fact_id,
+            verifier_run_id=call.run_id,
+            attestation=attestation,
+            inspected_at=call.now,
+        )
         operation.persisted_actions = ["approve", "reject"]
         operation.operation_revision += 1
-        return {"inspection_id": str(inspection.inspection_id), "cycle_id": str(cycle.cycle_id)}
+        return {
+            "inspection_id": str(inspection.inspection_id),
+            "cycle_id": str(cycle.cycle_id),
+            "lease_id": str(lease.lease_id),
+        }
 
     def _approve(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         cycle = self._latest_cycle(operation.operation_id)
         self._assert_cycle_is_current(generation.generation_id, task.task_id, cycle)
-        inspection, _actor = self._exact_verifier_inspection(call, cycle)
-        if call.arguments.get("semantic_review_complete") is False or call.arguments.get("provenance_complete") is False:
+        inspection, actor = self._exact_verifier_inspection(call, cycle)
+
+        agent = str(call.arguments.get("agent", "")).strip()
+        model = str(call.arguments.get("model", "")).strip()
+        correction = call.arguments.get("correction")
+        reviewed_identity = call.arguments.get("reviewed_identity")
+        if not agent or not model:
             raise CommandRuleError(
-                "VERIFICATION_INPUTS_INCOMPLETE",
-                "semantic review and provenance completion are required",
+                "VERIFIER_MODEL_REQUIRED",
+                "approve requires the exact verifier agent and self-reported model",
+                http_status=400,
             )
+        if correction not in {"none", "small"}:
+            raise CommandRuleError(
+                "INVALID_CORRECTION_CLASS",
+                "correction is required and must be none or small",
+                http_status=400,
+            )
+        if reviewed_identity is None:
+            raise CommandRuleError(
+                "REVIEWED_IDENTITY_REQUIRED",
+                "approve requires the exact inspected content identity",
+                http_status=400,
+            )
+        if call.arguments.get("semantic_review_complete") is not True:
+            raise CommandRuleError(
+                "SEMANTIC_REVIEW_REQUIRED",
+                "semantic_review_complete must be true",
+                http_status=400,
+            )
+        if call.arguments.get("provenance_complete") is not True:
+            raise CommandRuleError(
+                "PROVENANCE_REVIEW_REQUIRED",
+                "provenance_complete must be true",
+                http_status=400,
+            )
+
         reviewed = self.session.get(models.ContentVersion, cycle.reviewed_content_version_id)
         if reviewed is None:
-            raise CommandRuleError("REVIEWED_CONTENT_MISSING", "reviewed content version is missing")
-        supplied_identity = call.arguments.get("reviewed_identity")
-        if supplied_identity is not None and str(supplied_identity) != reviewed.content_identity:
+            raise CommandRuleError(
+                "REVIEWED_CONTENT_MISSING", "reviewed content version is missing"
+            )
+        if str(reviewed_identity) != reviewed.content_identity:
             raise CommandRuleError(
                 "REVIEWED_IDENTITY_MISMATCH",
                 "the supplied reviewed identity does not match the inspected occurrence",
             )
-        correction = str(call.arguments.get("correction", "none"))
-        signed_version_id = cycle.reviewed_content_version_id
-        projection_id = None
-        signoff_kind = "direct"
+        reviewed_parts = parse_canonical_document(
+            title=reviewed.title,
+            body=reviewed.body,
+            expected_status="pending-verification",
+        )
+
+        source_parts = reviewed_parts
         if correction == "small":
-            body = call.arguments.get("file_text", call.arguments.get("body"))
-            if body is None:
-                raise CommandRuleError("SMALL_CORRECTION_CONTENT_REQUIRED", "small correction requires file_text", http_status=400)
-            head = self.session.get(models.TaskAuthorityHead, (generation.generation_id, task.task_id))
-            prior_activation = self.session.get(models.ContentActivation, head.current_content_activation_id)
-            if prior_activation is None or prior_activation.content_version_id != cycle.reviewed_content_version_id:
-                raise CommandRuleError("STALE_VERIFIER_REVIEW", "the current task no longer matches the inspected candidate")
-            title = str(call.arguments.get("title", reviewed.title)).strip() or reviewed.title
-            corrected_body = str(body)
-            identity = hashlib.sha256((title + "\0" + corrected_body).encode()).hexdigest()
-            if identity == reviewed.content_identity:
-                raise CommandRuleError("SMALL_CORRECTION_REQUIRED", "small correction must create a distinct content occurrence")
-            signed_version_id = self.uuid_factory()
-            activation_id = self.uuid_factory()
-            revision = head.task_revision + 1
-            self.session.add(models.ContentVersion(content_version_id=signed_version_id, generation_id=generation.generation_id, task_id=task.task_id, representation_kind="document", title=title, body=corrected_body, identity_scheme="sha256-title-body-v1", content_identity=identity, creator_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, predecessor_content_version_id=reviewed.content_version_id, contract_binding_id=binding.binding_id, created_at=call.now))
+            file_text = call.arguments.get("file_text")
+            if file_text is None:
+                raise CommandRuleError(
+                    "SMALL_CORRECTION_CONTENT_REQUIRED",
+                    "small correction requires a complete canonical file_text",
+                    http_status=400,
+                )
+            source_parts = parse_canonical_document(
+                file_text=str(file_text), expected_status="pending-verification"
+            )
+            candidate_identity = hashlib.sha256(
+                (source_parts.title + "\0" + source_parts.body).encode()
+            ).hexdigest()
+            if candidate_identity == reviewed.content_identity:
+                raise CommandRuleError(
+                    "SMALL_CORRECTION_REQUIRED",
+                    "small correction must create a distinct canonical candidate",
+                )
+
+        signed_parts = ready_document(
+            source_parts.document,
+            agent=agent,
+            model=model,
+            at=call.now,
+        )
+        signed_version_id = self._activate_document(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            binding_id=binding.binding_id,
+            execution_id=execution.execution_id,
+            title=signed_parts.title,
+            body=signed_parts.body,
+            predecessor_content_version_id=reviewed.content_version_id,
+            at=call.now,
+        )
+        if correction == "small":
+            self.session.add(
+                wf.VerificationCorrection(
+                    correction_id=self.uuid_factory(),
+                    cycle_id=cycle.cycle_id,
+                    source_content_version_id=cycle.reviewed_content_version_id,
+                    corrected_content_version_id=signed_version_id,
+                    correction_class="small",
+                    reason=str(
+                        call.arguments.get("reason", "exact Small correction")
+                    ),
+                    command_execution_id=execution.execution_id,
+                    recorded_at=call.now,
+                )
+            )
             self.session.flush()
-            self.session.add(models.ContentActivation(content_activation_id=activation_id, generation_id=generation.generation_id, task_id=task.task_id, content_version_id=signed_version_id, activation_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, task_revision=revision, activated_at=call.now))
-            self.session.flush()
-            self.session.add(wf.VerificationCorrection(correction_id=self.uuid_factory(), cycle_id=cycle.cycle_id, source_content_version_id=cycle.reviewed_content_version_id, corrected_content_version_id=signed_version_id, correction_class="small", reason=str(call.arguments.get("reason", "exact Small correction")), command_execution_id=execution.execution_id, recorded_at=call.now))
-            self.session.flush()
-            head.current_content_activation_id = activation_id
-            head.task_revision = revision
-            head.updated_at = call.now
-            projection_id = self._project(generation.generation_id, execution.execution_id, task.task_id, "update_task_document", {"content_version_id": str(signed_version_id)}, call.now)
-        elif correction != "none":
-            raise CommandRuleError("INVALID_CORRECTION_CLASS", "correction must be none or small", http_status=400)
-        signoff = self.workflow.signoff_verification(signoff_id=self.uuid_factory(), execution_id=execution.execution_id, cycle_id=cycle.cycle_id, inspection_id=inspection.inspection_id, signed_content_version_id=signed_version_id, signoff_kind=signoff_kind, signed_at=call.now)
+
+        signoff = self.workflow.signoff_verification(
+            signoff_id=self.uuid_factory(),
+            execution_id=execution.execution_id,
+            cycle_id=cycle.cycle_id,
+            inspection_id=inspection.inspection_id,
+            signed_content_version_id=signed_version_id,
+            signoff_kind="direct",
+            signed_at=call.now,
+        )
+        self._release_verifier_lease(
+            call=call, execution=execution, cycle=cycle, actor=actor, reason="verification approved"
+        )
         operation.phase = "await_submission"
         operation.persisted_actions = ["submit"]
         operation.operation_revision += 1
-        return {"signoff_id": str(signoff.signoff_id), "cycle_id": str(cycle.cycle_id), "signed_content_version_id": str(signed_version_id), "correction": correction, "projection_event_id": projection_id}
+        projection_id = self._project(
+            generation.generation_id,
+            execution.execution_id,
+            task.task_id,
+            "update_task_document",
+            {"content_version_id": str(signed_version_id)},
+            call.now,
+        )
+        return {
+            "signoff_id": str(signoff.signoff_id),
+            "cycle_id": str(cycle.cycle_id),
+            "signed_content_version_id": str(signed_version_id),
+            "correction": correction,
+            "projection_event_id": projection_id,
+        }
 
     def _reject(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         cycle = self._latest_cycle(operation.operation_id)
         self._assert_cycle_is_current(generation.generation_id, task.task_id, cycle)
-        self._exact_verifier_inspection(call, cycle)
-        route = str(call.arguments.get("route", "large"))
-        if route not in {"large", "evidence", "human-review", "human_review"}:
-            raise CommandRuleError("INVALID_REJECTION_ROUTE", "route must be large, evidence, or human-review", http_status=400)
+        _inspection, actor = self._exact_verifier_inspection(call, cycle)
+        route = str(call.arguments.get("route", "large")).replace("_", "-")
+        if route not in {"large", "evidence", "human-review"}:
+            raise CommandRuleError(
+                "INVALID_REJECTION_ROUTE",
+                "route must be large, evidence, or human-review",
+                http_status=400,
+            )
+        reason = str(call.arguments.get("reason", "")).strip()
+        if not reason:
+            raise CommandRuleError(
+                "REJECTION_REASON_REQUIRED",
+                "reject requires a non-blank reason",
+                http_status=400,
+            )
+        reviewed = self.session.get(models.ContentVersion, cycle.reviewed_content_version_id)
+        if reviewed is None:
+            raise CommandRuleError(
+                "REVIEWED_CONTENT_MISSING", "reviewed content version is missing"
+            )
+        reviewed_parts = parse_canonical_document(
+            title=reviewed.title,
+            body=reviewed.body,
+            expected_status="pending-verification",
+        )
+
+        prior_nonapproved_cycles = int(
+            self.session.scalar(
+                select(func.count())
+                .select_from(wf.VerificationCycle)
+                .where(
+                    wf.VerificationCycle.operation_id == operation.operation_id,
+                    wf.VerificationCycle.cycle_id != cycle.cycle_id,
+                    wf.VerificationCycle.lifecycle != "open",
+                    wf.VerificationCycle.outcome != "approved",
+                )
+            )
+            or 0
+        )
+        verification_hold = route == "large" and prior_nonapproved_cycles + 1 >= 3
         cycle.lifecycle = "rejected"
-        cycle.outcome = "rejected"
+        cycle.outcome = "verification-hold" if verification_hold else "rejected"
         cycle.terminal_at = call.now
         if route == "large":
-            body = call.arguments.get("file_text", call.arguments.get("body"))
-            if body is None:
-                raise CommandRuleError("LARGE_CORRECTION_CONTENT_REQUIRED", "large rejection requires file_text", http_status=400)
-            reviewed = self.session.get(models.ContentVersion, cycle.reviewed_content_version_id)
-            head = self.session.get(models.TaskAuthorityHead, (generation.generation_id, task.task_id))
-            title = str(call.arguments.get("title", reviewed.title)).strip() or reviewed.title
-            corrected_body = str(body)
-            version_id, activation_id = self.uuid_factory(), self.uuid_factory()
-            identity = hashlib.sha256((title + "\0" + corrected_body).encode()).hexdigest()
+            file_text = call.arguments.get("file_text")
+            if file_text is None:
+                raise CommandRuleError(
+                    "LARGE_CORRECTION_CONTENT_REQUIRED",
+                    "large rejection requires a complete canonical file_text",
+                    http_status=400,
+                )
+            corrected = parse_canonical_document(
+                file_text=str(file_text), expected_status="pending-verification"
+            )
+            identity = hashlib.sha256(
+                (corrected.title + "\0" + corrected.body).encode()
+            ).hexdigest()
             if identity == reviewed.content_identity:
-                raise CommandRuleError("LARGE_CORRECTION_REQUIRED", "large rejection must create a distinct candidate")
-            revision = head.task_revision + 1
-            self.session.add(models.ContentVersion(content_version_id=version_id, generation_id=generation.generation_id, task_id=task.task_id, representation_kind="document", title=title, body=corrected_body, identity_scheme="sha256-title-body-v1", content_identity=identity, creator_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, predecessor_content_version_id=reviewed.content_version_id, contract_binding_id=binding.binding_id, created_at=call.now))
+                raise CommandRuleError(
+                    "LARGE_CORRECTION_REQUIRED",
+                    "large rejection must create a distinct canonical candidate",
+                )
+            target_parts = corrected
+            if verification_hold:
+                target_parts = held_document(
+                    corrected.document,
+                    target="pending-human-review",
+                    detail=(
+                        "Three consecutive Verification rounds ended without a "
+                        f"signable task: {reason}"
+                    ),
+                )
+            version_id = self._activate_document(
+                generation_id=generation.generation_id,
+                task_id=task.task_id,
+                binding_id=binding.binding_id,
+                execution_id=execution.execution_id,
+                title=target_parts.title,
+                body=target_parts.body,
+                predecessor_content_version_id=reviewed.content_version_id,
+                at=call.now,
+            )
+            self.session.add(
+                wf.VerificationCorrection(
+                    correction_id=self.uuid_factory(),
+                    cycle_id=cycle.cycle_id,
+                    source_content_version_id=cycle.reviewed_content_version_id,
+                    corrected_content_version_id=version_id,
+                    correction_class="large",
+                    reason=reason,
+                    command_execution_id=execution.execution_id,
+                    recorded_at=call.now,
+                )
+            )
             self.session.flush()
-            self.session.add(models.ContentActivation(content_activation_id=activation_id, generation_id=generation.generation_id, task_id=task.task_id, content_version_id=version_id, activation_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, task_revision=revision, activated_at=call.now))
-            self.session.flush()
-            self.session.add(wf.VerificationCorrection(correction_id=self.uuid_factory(), cycle_id=cycle.cycle_id, source_content_version_id=cycle.reviewed_content_version_id, corrected_content_version_id=version_id, correction_class="large", reason=str(call.arguments.get("reason", "large Verification correction")), command_execution_id=execution.execution_id, recorded_at=call.now))
-            self.session.flush()
-            head.current_content_activation_id = activation_id
-            head.task_revision = revision
-            head.updated_at = call.now
-            next_cycle = self.workflow.open_verification_cycle(cycle_id=self.uuid_factory(), execution_id=execution.execution_id, operation_id=operation.operation_id, reviewed_content_version_id=version_id, created_at=call.now)
-            operation.phase, operation.persisted_actions = "await_verification", ["inspect"]
-            projection_id = self._project(generation.generation_id, execution.execution_id, task.task_id, "update_task_document", {"content_version_id": str(version_id)}, call.now)
-            result = {"route": "large", "corrected_content_version_id": str(version_id), "new_cycle_id": str(next_cycle.cycle_id), "projection_event_id": projection_id}
-        elif route == "evidence":
-            hold = self.workflow.open_evidence_hold(hold_id=self.uuid_factory(), execution_id=execution.execution_id, operation_id=operation.operation_id, baseline_content_version_id=cycle.reviewed_content_version_id, reason=str(call.arguments.get("reason", "evidence required")), opened_at=call.now, cycle_id=cycle.cycle_id)
-            operation.phase, operation.persisted_actions = "held_evidence", ["supply-evidence"]
-            result = {"route": "evidence", "hold_id": str(hold.hold_id)}
+            next_cycle = None
+            if verification_hold:
+                operation.phase = "held_human"
+                operation.persisted_actions = ["resolved", "reopen"]
+            else:
+                next_cycle = self.workflow.open_verification_cycle(
+                    cycle_id=self.uuid_factory(),
+                    execution_id=execution.execution_id,
+                    operation_id=operation.operation_id,
+                    reviewed_content_version_id=version_id,
+                    created_at=call.now,
+                )
+                operation.phase = "await_verification"
+                operation.persisted_actions = ["inspect"]
+            projection_id = self._project(
+                generation.generation_id,
+                execution.execution_id,
+                task.task_id,
+                "update_task_document",
+                {"content_version_id": str(version_id)},
+                call.now,
+            )
+            result = {
+                "route": "large",
+                "corrected_content_version_id": str(version_id),
+                "new_cycle_id": str(next_cycle.cycle_id) if next_cycle else None,
+                "verification_hold": verification_hold,
+                "projection_event_id": projection_id,
+            }
         else:
-            requirement = self.workflow.open_human_review(requirement_id=self.uuid_factory(), execution_id=execution.execution_id, operation_id=operation.operation_id, route="human_review", question=str(call.arguments.get("reason", "Marco decision required")), baseline_content_version_id=cycle.reviewed_content_version_id, opened_at=call.now, cycle_id=cycle.cycle_id)
-            operation.phase, operation.persisted_actions = "held_human", ["record-human-decision"]
-            result = {"route": "human-review", "requirement_id": str(requirement.requirement_id)}
+            target_status = (
+                "pending-evidence" if route == "evidence" else "pending-human-review"
+            )
+            held_parts = held_document(
+                reviewed_parts.document, target=target_status, detail=reason
+            )
+            held_version_id = self._activate_document(
+                generation_id=generation.generation_id,
+                task_id=task.task_id,
+                binding_id=binding.binding_id,
+                execution_id=execution.execution_id,
+                title=held_parts.title,
+                body=held_parts.body,
+                predecessor_content_version_id=reviewed.content_version_id,
+                at=call.now,
+            )
+            projection_id = self._project(
+                generation.generation_id,
+                execution.execution_id,
+                task.task_id,
+                "update_task_document",
+                {"content_version_id": str(held_version_id)},
+                call.now,
+            )
+            if route == "evidence":
+                hold = self.workflow.open_evidence_hold(
+                    hold_id=self.uuid_factory(),
+                    execution_id=execution.execution_id,
+                    operation_id=operation.operation_id,
+                    baseline_content_version_id=held_version_id,
+                    reason=reason,
+                    opened_at=call.now,
+                    cycle_id=cycle.cycle_id,
+                )
+                operation.phase = "held_evidence"
+                operation.persisted_actions = ["supply-evidence"]
+                result = {
+                    "route": "evidence",
+                    "hold_id": str(hold.hold_id),
+                    "held_content_version_id": str(held_version_id),
+                    "projection_event_id": projection_id,
+                }
+            else:
+                requirement = self.workflow.open_human_review(
+                    requirement_id=self.uuid_factory(),
+                    execution_id=execution.execution_id,
+                    operation_id=operation.operation_id,
+                    route="human_review",
+                    question=reason,
+                    baseline_content_version_id=held_version_id,
+                    opened_at=call.now,
+                    cycle_id=cycle.cycle_id,
+                )
+                operation.phase = "held_human"
+                operation.persisted_actions = ["record-human-decision"]
+                result = {
+                    "route": "human-review",
+                    "requirement_id": str(requirement.requirement_id),
+                    "held_content_version_id": str(held_version_id),
+                    "projection_event_id": projection_id,
+                }
+        result["cycle_id"] = str(cycle.cycle_id)
+        self._release_verifier_lease(
+            call=call, execution=execution, cycle=cycle, actor=actor, reason=f"verification rejected: {route}"
+        )
         operation.operation_revision += 1
         return result
 
     def _submit(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
+        forbidden = {
+            key: call.arguments[key]
+            for key in ("destination_section_id", "destination_section_gid")
+            if key in call.arguments
+        }
+        if forbidden:
+            raise CommandRuleError(
+                "UNEXPECTED_DESTINATION_ARGUMENT",
+                "submit destination is derived exclusively from the signed document",
+                http_status=400,
+                data={"unexpected": sorted(forbidden)},
+            )
         cycle = self._latest_cycle(operation.operation_id)
-        signoff = self.session.scalar(select(wf.VerificationSignoff).where(wf.VerificationSignoff.cycle_id == cycle.cycle_id))
-        head = self.session.get(models.TaskAuthorityHead, (generation.generation_id, task.task_id))
-        activation = self.session.get(models.ContentActivation, head.current_content_activation_id) if head else None
-        if cycle.lifecycle != "approved" or signoff is None or activation is None or signoff.signed_content_version_id != activation.content_version_id:
-            raise CommandRuleError("SIGNED_STATE_REQUIRED", "submit requires the exact approved current content occurrence")
-        inspection = self.session.get(wf.VerificationInspectionOccurrence, signoff.inspection_id)
-        if inspection is None or inspection.cycle_id != cycle.cycle_id or signoff.verifier_actor_fact_id != inspection.verifier_actor_fact_id:
-            raise CommandRuleError("SIGNOFF_LINEAGE_INVALID", "submit signoff lineage is incomplete")
-        target = call.arguments.get("destination_section_id") or call.arguments.get("destination_section_gid")
-        if not target:
-            raise CommandRuleError("DESTINATION_REQUIRED", "submit requires an exact destination section", http_status=400)
-        section = self.reads.resolve_section(str(target))
-        self._set_placement(generation.generation_id, task.task_id, section.section_id, execution.execution_id, call.now)
+        signoff = self.session.scalar(
+            select(wf.VerificationSignoff).where(
+                wf.VerificationSignoff.cycle_id == cycle.cycle_id
+            )
+        )
+        head = self.session.get(
+            models.TaskAuthorityHead, (generation.generation_id, task.task_id)
+        )
+        activation = (
+            self.session.get(models.ContentActivation, head.current_content_activation_id)
+            if head
+            else None
+        )
+        if (
+            cycle.lifecycle != "approved"
+            or signoff is None
+            or activation is None
+            or signoff.signed_content_version_id != activation.content_version_id
+        ):
+            raise CommandRuleError(
+                "SIGNED_STATE_REQUIRED",
+                "submit requires the exact approved current content occurrence",
+            )
+        inspection = self.session.get(
+            wf.VerificationInspectionOccurrence, signoff.inspection_id
+        )
+        if (
+            inspection is None
+            or inspection.cycle_id != cycle.cycle_id
+            or signoff.verifier_actor_fact_id != inspection.verifier_actor_fact_id
+        ):
+            raise CommandRuleError(
+                "SIGNOFF_LINEAGE_INVALID", "submit signoff lineage is incomplete"
+            )
+        signed = self.session.get(models.ContentVersion, activation.content_version_id)
+        if signed is None:
+            raise CommandRuleError(
+                "SIGNED_CONTENT_MISSING", "signed content occurrence is missing"
+            )
+        signed_parts = parse_canonical_document(
+            title=signed.title, body=signed.body, expected_status="ready"
+        )
+        section = self.reads.resolve_section(destination_gid(signed_parts.document))
+        self._set_placement(
+            generation.generation_id,
+            task.task_id,
+            section.section_id,
+            execution.execution_id,
+            call.now,
+        )
         operation.lifecycle = "completed"
         operation.phase = "completed"
         operation.terminal_outcome = "submitted"
         operation.terminal_at = call.now
         operation.operation_revision += 1
-        projection_id = self._project(generation.generation_id, execution.execution_id, task.task_id, "move_task", {"destination_section_id": str(section.section_id)}, call.now)
-        return {"operation_id": str(operation.operation_id), "destination_section_id": str(section.section_id), "projection_event_id": projection_id}
+        projection_id = self._project(
+            generation.generation_id,
+            execution.execution_id,
+            task.task_id,
+            "move_task",
+            {
+                "destination_section_id": str(section.section_id),
+                "signed_content_version_id": str(signed.content_version_id),
+            },
+            call.now,
+        )
+        return {
+            "operation_id": str(operation.operation_id),
+            "destination_section_id": str(section.section_id),
+            "signed_content_version_id": str(signed.content_version_id),
+            "projection_event_id": projection_id,
+        }
 
     def _renew_lease(self, call, _generation, _binding, execution, _task, operation) -> dict[str, Any]:
         lease_ref = call.arguments.get("lease_id")
@@ -916,53 +1877,463 @@ class PostgresCommandPort:
         projection_id = self._project(generation.generation_id, execution.execution_id, task.task_id, "set_completion", {"completed": False}, call.now)
         return {"task_id": str(task.task_id), "completed": False, "projection_event_id": projection_id}
 
-    def _reopen(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
+    def _reopen(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         if operation.phase != "held_human":
-            raise CommandRuleError("HUMAN_REVIEW_HOLD_REQUIRED", "reopen requires the exact Human Review hold")
+            raise CommandRuleError(
+                "HUMAN_REVIEW_HOLD_REQUIRED",
+                "reopen requires the exact Human Review hold",
+            )
+        cycle = self._latest_cycle(operation.operation_id)
+        if cycle.outcome == "verification-hold":
+            self._assert_exact_verification_hold_target(
+                call=call, generation_id=generation.generation_id, task_id=task.task_id, cycle=cycle
+            )
+            return self._reopen_verification_hold(
+                call=call,
+                generation=generation,
+                binding=binding,
+                execution=execution,
+                task=task,
+                operation=operation,
+                cycle=cycle,
+            )
         requirement_id = call.arguments.get("requirement_id")
         if not requirement_id:
-            raise CommandRuleError("REQUIREMENT_ID_REQUIRED", "reopen requires requirement_id", http_status=400)
-        requirement = self.session.get(wf.HumanReviewRequirement, uuid.UUID(str(requirement_id)))
-        decision = self.session.scalar(select(wf.HumanReviewDecision).where(wf.HumanReviewDecision.requirement_id == requirement.requirement_id)) if requirement else None
-        if requirement is None or requirement.operation_id != operation.operation_id or requirement.state != "decided" or decision is None:
-            raise CommandRuleError("DECIDED_HUMAN_REVIEW_REQUIRED", "the exact Human Review requirement is not decided")
-        self._assert_baseline_content_current(generation.generation_id, task.task_id, requirement.baseline_content_version_id)
-        prior = self.session.get(wf.VerificationCycle, requirement.cycle_id) if requirement.cycle_id else self._latest_cycle(operation.operation_id)
-        cycle = self.workflow.open_verification_cycle(cycle_id=self.uuid_factory(), execution_id=execution.execution_id, operation_id=operation.operation_id, reviewed_content_version_id=requirement.baseline_content_version_id, created_at=call.now)
-        operation.phase, operation.persisted_actions = "await_verification", ["inspect"]
-        operation.operation_revision += 1
-        return {"cycle_id": str(cycle.cycle_id), "reopened_from": str(prior.cycle_id), "requirement_id": str(requirement.requirement_id)}
+            raise CommandRuleError(
+                "REQUIREMENT_ID_REQUIRED",
+                "reopen requires requirement_id",
+                http_status=400,
+            )
+        try:
+            requirement_uuid = uuid.UUID(str(requirement_id))
+        except ValueError as exc:
+            raise CommandRuleError(
+                "INVALID_REQUIREMENT_ID",
+                "requirement identifier must be a UUID",
+                http_status=400,
+            ) from exc
+        requirement = self.session.get(wf.HumanReviewRequirement, requirement_uuid)
+        decision = (
+            self.session.scalar(
+                select(wf.HumanReviewDecision).where(
+                    wf.HumanReviewDecision.requirement_id == requirement.requirement_id
+                )
+            )
+            if requirement
+            else None
+        )
+        if (
+            requirement is None
+            or requirement.operation_id != operation.operation_id
+            or requirement.state != "decided"
+            or decision is None
+        ):
+            raise CommandRuleError(
+                "DECIDED_HUMAN_REVIEW_REQUIRED",
+                "the exact Human Review requirement is not decided",
+            )
+        if requirement.cycle_id is None:
+            raise CommandRuleError(
+                "VERIFICATION_HOLD_REQUIRED",
+                "reopen currently requires a Verification-cycle Human Review hold",
+            )
+        result = self._resume_held_document(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            operation=operation,
+            execution=execution,
+            binding_id=binding.binding_id,
+            baseline_content_version_id=requirement.baseline_content_version_id,
+            expected_status="pending-human-review",
+            decision_line=(
+                f"Human — Marco: Human Review resolved for cycle "
+                f"{requirement.cycle_id} — {decision.decision}"
+            ),
+            at=call.now,
+        )
+        result.update(
+            {
+                "requirement_id": str(requirement.requirement_id),
+                "reopened_from": str(requirement.cycle_id),
+            }
+        )
+        return result
 
-    def _supply_evidence(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
+    def _reopen_verification_hold(
+        self,
+        *,
+        call: CommandCall,
+        generation: models.AuthorityGeneration,
+        binding: models.HonestContractBinding,
+        execution: wf.CommandExecution,
+        task: models.DishTask,
+        operation: wf.WorkflowOperation,
+        cycle: wf.VerificationCycle,
+    ) -> dict[str, Any]:
+        file_text = call.arguments.get("file_text")
+        category = str(call.arguments.get("category", "")).strip()
+        before = str(call.arguments.get("before", "")).strip()
+        after = str(call.arguments.get("after", "")).strip()
+        editor = str(call.arguments.get("editor", "")).strip()
+        model = str(call.arguments.get("model", "")).strip()
+        if (
+            file_text is None
+            or category not in {"evidence", "premise", "method", "scope"}
+            or not before
+            or not after
+            or before == after
+            or editor not in {"claude", "gpt", "codex"}
+            or not model
+        ):
+            raise CommandRuleError(
+                "SUBSTANTIVE_RESET_REQUIRED",
+                "reopen requires a canonical corrected candidate and exact substantive reset proof",
+                http_status=400,
+            )
+        baseline_id = self._current_content_version_id(
+            generation.generation_id, task.task_id
+        )
+        baseline = self.session.get(models.ContentVersion, baseline_id)
+        if baseline is None:
+            raise CommandRuleError(
+                "HOLD_BASELINE_MISSING", "Verification hold content is missing"
+            )
+        parse_canonical_document(
+            title=baseline.title,
+            body=baseline.body,
+            expected_status="pending-human-review",
+        )
+        candidate = parse_canonical_document(
+            file_text=str(file_text), expected_status="pending-verification"
+        )
+        baseline_text = f"{baseline.title}\n{baseline.body}"
+        candidate_text = f"{candidate.title}\n{candidate.body}"
+        if before not in baseline_text or after not in candidate_text:
+            raise CommandRuleError(
+                "SUBSTANTIVE_RESET_NOT_PROVED",
+                "before must occur in the held document and after in the corrected candidate",
+            )
+        version_id = self._activate_document(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            binding_id=binding.binding_id,
+            execution_id=execution.execution_id,
+            title=candidate.title,
+            body=candidate.body,
+            predecessor_content_version_id=baseline_id,
+            at=call.now,
+        )
+        next_cycle = self.workflow.open_verification_cycle(
+            cycle_id=self.uuid_factory(),
+            execution_id=execution.execution_id,
+            operation_id=operation.operation_id,
+            reviewed_content_version_id=version_id,
+            created_at=call.now,
+        )
+        operation.phase = "await_verification"
+        operation.persisted_actions = ["inspect"]
+        operation.operation_revision += 1
+        projection_id = self._project(
+            generation.generation_id,
+            execution.execution_id,
+            task.task_id,
+            "update_task_document",
+            {"content_version_id": str(version_id)},
+            call.now,
+        )
+        return {
+            "source_cycle_id": str(cycle.cycle_id),
+            "new_cycle_id": str(next_cycle.cycle_id),
+            "corrected_content_version_id": str(version_id),
+            "category": category,
+            "editor": editor,
+            "model": model,
+            "projection_event_id": projection_id,
+        }
+
+    def _supply_evidence(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         hold_id = call.arguments.get("hold_id")
-        if not hold_id:
-            raise CommandRuleError("HOLD_ID_REQUIRED", "supply-evidence requires hold_id", http_status=400)
-        hold = self.session.get(wf.EvidenceHold, uuid.UUID(str(hold_id)))
-        if hold is None or hold.operation_id != operation.operation_id or hold.state != "open" or operation.phase != "held_evidence":
-            raise CommandRuleError("OPEN_EVIDENCE_HOLD_REQUIRED", "the exact Evidence hold is not open")
-        self._assert_baseline_content_current(generation.generation_id, task.task_id, hold.baseline_content_version_id)
-        self.workflow.supply_evidence(hold_id=hold.hold_id, execution_id=execution.execution_id, evidence_payload=dict(call.arguments.get("evidence", {})), supplied_at=call.now)
-        operation.phase, operation.persisted_actions = "prepare_required", ["prepare"]
-        operation.operation_revision += 1
-        return {"hold_id": str(hold.hold_id), "state": hold.state}
+        if hold_id not in {None, ""}:
+            try:
+                hold_uuid = uuid.UUID(str(hold_id))
+            except ValueError as exc:
+                raise CommandRuleError(
+                    "INVALID_HOLD_ID",
+                    "hold identifier must be a UUID",
+                    http_status=400,
+                ) from exc
+            hold = self.session.get(wf.EvidenceHold, hold_uuid)
+        else:
+            holds = list(
+                self.session.scalars(
+                    select(wf.EvidenceHold)
+                    .where(
+                        wf.EvidenceHold.operation_id == operation.operation_id,
+                        wf.EvidenceHold.state == "open",
+                    )
+                    .order_by(wf.EvidenceHold.opened_at.desc())
+                    .limit(2)
+                )
+            )
+            hold = holds[0] if len(holds) == 1 else None
+        if (
+            hold is None
+            or hold.operation_id != operation.operation_id
+            or hold.state != "open"
+            or operation.phase != "held_evidence"
+        ):
+            raise CommandRuleError(
+                "OPEN_EVIDENCE_HOLD_REQUIRED", "the exact Evidence hold is not open"
+            )
 
-    def _record_human_decision(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
+        detail = str(call.arguments.get("detail", "")).strip()
+        evidence = call.arguments.get("evidence")
+        if not detail and isinstance(evidence, Mapping) and evidence:
+            detail = str(evidence.get("detail") or evidence.get("finding") or "").strip()
+        if not detail:
+            raise CommandRuleError(
+                "EVIDENCE_REQUIRED",
+                "supply-evidence requires a non-blank detail or evidence finding",
+                http_status=400,
+            )
+        if detail.startswith("<") and detail.endswith(">"):
+            raise CommandRuleError(
+                "EVIDENCE_PLACEHOLDER",
+                "evidence detail still contains the unfilled command placeholder",
+                http_status=400,
+            )
+        resume_status = str(
+            call.arguments.get("resume_status", "pending-verification")
+        ).strip()
+        if resume_status not in {"pending-research", "pending-verification"}:
+            raise CommandRuleError(
+                "INVALID_RESUME_STATUS",
+                "resume_status must be pending-research or pending-verification",
+                http_status=400,
+            )
+        candidate_file_text = call.arguments.get("file_text")
+        if call.arguments.get("file_path") and candidate_file_text is None:
+            raise CommandRuleError(
+                "MATERIAL_CONTENT_REQUIRED",
+                "shadow-safe hold resolution requires complete canonical file_text, not a filesystem path",
+                http_status=400,
+            )
+        editor = call.arguments.get("editor")
+        model = call.arguments.get("model")
+        if candidate_file_text is not None and (
+            editor not in {"claude", "gpt", "codex"} or not str(model or "").strip()
+        ):
+            raise CommandRuleError(
+                "MATERIAL_EDITOR_REQUIRED",
+                "material hold resolution requires editor and model",
+                http_status=400,
+            )
+        self._assert_hold_resolution_target(
+            call=call,
+            generation_id=generation.generation_id,
+            task=task,
+            baseline_content_version_id=hold.baseline_content_version_id,
+            cycle_id=hold.cycle_id,
+        )
+        evidence_payload = (
+            dict(evidence) if isinstance(evidence, Mapping) and evidence else {"detail": detail}
+        )
+        evidence_payload.update(
+            {
+                "detail": detail,
+                "resume_status": resume_status,
+                "material": candidate_file_text is not None,
+            }
+        )
+        self.workflow.supply_evidence(
+            hold_id=hold.hold_id,
+            execution_id=execution.execution_id,
+            evidence_payload=evidence_payload,
+            supplied_at=call.now,
+        )
+        result = self._resume_held_document(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            operation=operation,
+            execution=execution,
+            binding_id=binding.binding_id,
+            baseline_content_version_id=hold.baseline_content_version_id,
+            expected_status="pending-evidence",
+            decision_line=f"Human — Marco: evidence resolved — {detail}",
+            at=call.now,
+            resume_status=resume_status,
+            candidate_file_text=(
+                str(candidate_file_text) if candidate_file_text is not None else None
+            ),
+            editor=str(editor) if editor is not None else None,
+            model=str(model) if model is not None else None,
+            terminal_outcome_prefix="evidence",
+        )
+        result.update({"hold_id": str(hold.hold_id), "state": hold.state})
+        return result
+
+    def _record_human_decision(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         requirement_id = call.arguments.get("requirement_id")
-        if not requirement_id:
-            raise CommandRuleError("REQUIREMENT_ID_REQUIRED", "record-human-decision requires requirement_id", http_status=400)
-        requirement = self.session.get(wf.HumanReviewRequirement, uuid.UUID(str(requirement_id)))
-        if requirement is None or requirement.operation_id != operation.operation_id or requirement.state != "open" or operation.phase != "held_human":
-            raise CommandRuleError("OPEN_HUMAN_REVIEW_REQUIRED", "the exact Human Review requirement is not open")
-        self._assert_baseline_content_current(generation.generation_id, task.task_id, requirement.baseline_content_version_id)
-        decision_value = str(call.arguments.get("decision", "")).strip()
-        rationale = str(call.arguments.get("rationale", "")).strip()
+        if requirement_id not in {None, ""}:
+            try:
+                requirement_uuid = uuid.UUID(str(requirement_id))
+            except ValueError as exc:
+                raise CommandRuleError(
+                    "INVALID_REQUIREMENT_ID",
+                    "requirement identifier must be a UUID",
+                    http_status=400,
+                ) from exc
+            requirement = self.session.get(wf.HumanReviewRequirement, requirement_uuid)
+        else:
+            requirements = list(
+                self.session.scalars(
+                    select(wf.HumanReviewRequirement)
+                    .where(
+                        wf.HumanReviewRequirement.operation_id == operation.operation_id,
+                        wf.HumanReviewRequirement.state == "open",
+                    )
+                    .order_by(wf.HumanReviewRequirement.opened_at.desc())
+                    .limit(2)
+                )
+            )
+            requirement = requirements[0] if len(requirements) == 1 else None
+        if (
+            requirement is None
+            or requirement.operation_id != operation.operation_id
+            or requirement.state != "open"
+            or operation.phase != "held_human"
+        ):
+            raise CommandRuleError(
+                "OPEN_HUMAN_REVIEW_REQUIRED",
+                "the exact Human Review requirement is not open",
+            )
+
+        decision_value = str(
+            call.arguments.get("detail", call.arguments.get("decision", ""))
+        ).strip()
+        rationale = str(call.arguments.get("rationale", decision_value)).strip()
         if not decision_value or not rationale:
-            raise CommandRuleError("HUMAN_DECISION_INCOMPLETE", "decision and rationale are required", http_status=400)
-        decision = self.workflow.record_human_decision(decision_id=self.uuid_factory(), requirement_id=requirement.requirement_id, execution_id=execution.execution_id, decision=decision_value, rationale=rationale, actor=call.owner_id, decided_at=call.now)
-        return {"decision_id": str(decision.decision_id), "requirement_id": str(requirement.requirement_id), "state": requirement.state}
+            raise CommandRuleError(
+                "HUMAN_DECISION_INCOMPLETE",
+                "decision detail and rationale are required",
+                http_status=400,
+            )
+        if decision_value.startswith("<") and decision_value.endswith(">"):
+            raise CommandRuleError(
+                "HUMAN_DECISION_PLACEHOLDER",
+                "human decision still contains the unfilled command placeholder",
+                http_status=400,
+            )
+        resume_status = str(
+            call.arguments.get("resume_status", "pending-verification")
+        ).strip()
+        if resume_status not in {"pending-research", "pending-verification"}:
+            raise CommandRuleError(
+                "INVALID_RESUME_STATUS",
+                "resume_status must be pending-research or pending-verification",
+                http_status=400,
+            )
+        candidate_file_text = call.arguments.get("file_text")
+        if call.arguments.get("file_path") and candidate_file_text is None:
+            raise CommandRuleError(
+                "MATERIAL_CONTENT_REQUIRED",
+                "shadow-safe hold resolution requires complete canonical file_text, not a filesystem path",
+                http_status=400,
+            )
+        editor = call.arguments.get("editor")
+        model = call.arguments.get("model")
+        if candidate_file_text is not None and (
+            editor not in {"claude", "gpt", "codex"} or not str(model or "").strip()
+        ):
+            raise CommandRuleError(
+                "MATERIAL_EDITOR_REQUIRED",
+                "material hold resolution requires editor and model",
+                http_status=400,
+            )
+        self._assert_hold_resolution_target(
+            call=call,
+            generation_id=generation.generation_id,
+            task=task,
+            baseline_content_version_id=requirement.baseline_content_version_id,
+            cycle_id=requirement.cycle_id,
+        )
+        decision = self.workflow.record_human_decision(
+            decision_id=self.uuid_factory(),
+            requirement_id=requirement.requirement_id,
+            execution_id=execution.execution_id,
+            decision=decision_value,
+            rationale=rationale,
+            actor=call.owner_id,
+            decided_at=call.now,
+        )
+        result = self._resume_held_document(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            operation=operation,
+            execution=execution,
+            binding_id=binding.binding_id,
+            baseline_content_version_id=requirement.baseline_content_version_id,
+            expected_status="pending-human-review",
+            decision_line=f"Human — Marco: human_review resolved — {decision_value}",
+            at=call.now,
+            resume_status=resume_status,
+            candidate_file_text=(
+                str(candidate_file_text) if candidate_file_text is not None else None
+            ),
+            editor=str(editor) if editor is not None else None,
+            model=str(model) if model is not None else None,
+            terminal_outcome_prefix="human_review",
+        )
+        result.update(
+            {
+                "decision_id": str(decision.decision_id),
+                "requirement_id": str(requirement.requirement_id),
+                "state": requirement.state,
+            }
+        )
+        return result
+
+    def _resolved(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
+        assert task is not None and operation is not None
+        if operation.phase != "held_human":
+            raise CommandRuleError(
+                "VERIFICATION_HOLD_REQUIRED",
+                "resolved requires the exact current Verification hold",
+            )
+        cycle = self._latest_cycle(operation.operation_id)
+        if cycle.outcome != "verification-hold":
+            raise CommandRuleError(
+                "VERIFICATION_HOLD_REQUIRED",
+                "the latest Verification cycle is not a Verification hold",
+            )
+        self._assert_exact_verification_hold_target(
+            call=call, generation_id=generation.generation_id, task_id=task.task_id, cycle=cycle
+        )
+        baseline_version_id = self._current_content_version_id(
+            generation.generation_id, task.task_id
+        )
+        result = self._resume_held_document(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            operation=operation,
+            execution=execution,
+            binding_id=binding.binding_id,
+            baseline_content_version_id=baseline_version_id,
+            expected_status="pending-human-review",
+            decision_line=f"Human — Marco: Verification hold {cycle.cycle_id} resolved",
+            at=call.now,
+        )
+        result.update(
+            {
+                "source_cycle_id": str(cycle.cycle_id),
+                "approved": False,
+                "signed_off": False,
+            }
+        )
+        return result
 
     def _authorize(self, call, _generation, _binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None
@@ -1003,6 +2374,287 @@ class PostgresCommandPort:
             raise CommandRuleError("CHALLENGE_REQUIRED", "challenge_id is required", http_status=400)
         challenge = self.workflow.settle_planning_challenge(challenge_id=uuid.UUID(str(challenge_id)), actor=call.owner_id, reason=str(call.arguments.get("reason", "settled by Marco")), settled_at=call.now)
         return {"challenge_id": str(challenge.challenge_id), "state": challenge.state}
+
+    def _assert_exact_verification_hold_target(
+        self,
+        *,
+        call: CommandCall,
+        generation_id: uuid.UUID,
+        task_id: uuid.UUID,
+        cycle: wf.VerificationCycle,
+    ) -> None:
+        cycle_id = call.arguments.get("cycle_id")
+        hold_identity = str(call.arguments.get("hold_identity", "")).strip()
+        if bool(cycle_id) != bool(hold_identity):
+            raise CommandRuleError(
+                "VERIFICATION_HOLD_TARGET_PAIR_REQUIRED",
+                "cycle_id and hold_identity must be supplied together when an explicit hold target is used",
+                http_status=400,
+            )
+        current_version_id = self._current_content_version_id(generation_id, task_id)
+        current_version = self.session.get(models.ContentVersion, current_version_id)
+        if current_version is None:
+            raise CommandRuleError(
+                "EXACT_VERIFICATION_HOLD_REQUIRED",
+                "the current Verification hold content is missing",
+            )
+        parse_canonical_document(
+            title=current_version.title,
+            body=current_version.body,
+            expected_status="pending-human-review",
+        )
+        if not cycle_id:
+            return
+        try:
+            target_cycle_id = uuid.UUID(str(cycle_id))
+        except ValueError as exc:
+            raise CommandRuleError(
+                "INVALID_CYCLE_ID",
+                "cycle identifier must be a UUID",
+                http_status=400,
+            ) from exc
+        if (
+            target_cycle_id != cycle.cycle_id
+            or current_version.content_identity != hold_identity
+        ):
+            raise CommandRuleError(
+                "EXACT_VERIFICATION_HOLD_REQUIRED",
+                "cycle_id or hold_identity does not match the current Verification hold",
+            )
+
+    def _assert_hold_resolution_target(
+        self,
+        *,
+        call: CommandCall,
+        generation_id: uuid.UUID,
+        task: models.DishTask,
+        baseline_content_version_id: uuid.UUID,
+        cycle_id: uuid.UUID | None,
+    ) -> None:
+        expected_task_gid = call.arguments.get("expected_task_gid")
+        if expected_task_gid not in {None, ""}:
+            actual_task_gid = self.session.scalar(
+                select(models.TaskExternalAlias.external_id).where(
+                    models.TaskExternalAlias.task_id == task.task_id,
+                    models.TaskExternalAlias.external_system == "asana",
+                    models.TaskExternalAlias.state == "active",
+                )
+            )
+            if str(expected_task_gid).strip() != str(actual_task_gid or ""):
+                raise CommandRuleError(
+                    "HOLD_TASK_MISMATCH",
+                    "resolution command does not match the held task",
+                )
+
+        expected_cycle_id = call.arguments.get("expected_cycle_id")
+        if expected_cycle_id not in {None, ""}:
+            try:
+                parsed_cycle_id = uuid.UUID(str(expected_cycle_id))
+            except ValueError as exc:
+                raise CommandRuleError(
+                    "INVALID_CYCLE_ID",
+                    "expected cycle identifier must be a UUID",
+                    http_status=400,
+                ) from exc
+            if cycle_id is None or parsed_cycle_id != cycle_id:
+                raise CommandRuleError(
+                    "HOLD_CYCLE_MISMATCH",
+                    "resolution command does not match the active hold cycle",
+                )
+
+        self._assert_baseline_content_current(
+            generation_id, task.task_id, baseline_content_version_id
+        )
+        expected_identity = call.arguments.get("expected_hold_identity")
+        if expected_identity not in {None, ""}:
+            baseline = self.session.get(
+                models.ContentVersion, baseline_content_version_id
+            )
+            if (
+                baseline is None
+                or str(expected_identity).strip() != baseline.content_identity
+            ):
+                raise CommandRuleError(
+                    "HOLD_IDENTITY_MISMATCH",
+                    "resolution command does not match the active hold identity",
+                )
+
+    def _resume_held_document(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        task_id: uuid.UUID,
+        operation: wf.WorkflowOperation,
+        execution: wf.CommandExecution,
+        binding_id: uuid.UUID,
+        baseline_content_version_id: uuid.UUID,
+        expected_status: str,
+        decision_line: str,
+        at: datetime,
+        resume_status: str | None = None,
+        candidate_file_text: str | None = None,
+        editor: str | None = None,
+        model: str | None = None,
+        terminal_outcome_prefix: str = "hold",
+    ) -> dict[str, Any]:
+        self._assert_baseline_content_current(
+            generation_id, task_id, baseline_content_version_id
+        )
+        baseline = self.session.get(models.ContentVersion, baseline_content_version_id)
+        if baseline is None:
+            raise CommandRuleError(
+                "HOLD_BASELINE_MISSING", "held content occurrence is missing"
+            )
+        held_parts = parse_canonical_document(
+            title=baseline.title, body=baseline.body, expected_status=expected_status
+        )
+        candidate = (
+            parse_canonical_document(file_text=candidate_file_text).document
+            if candidate_file_text is not None
+            else None
+        )
+        resumed_parts = resumed_document(
+            held_parts.document,
+            decision_line=decision_line,
+            resume_status=resume_status,
+            candidate=candidate,
+            editor=editor,
+            model=model,
+            at=at,
+        )
+        resumed_status = resumed_parts.document.state.values["Status"]
+        version_id = self._activate_document(
+            generation_id=generation_id,
+            task_id=task_id,
+            binding_id=binding_id,
+            execution_id=execution.execution_id,
+            title=resumed_parts.title,
+            body=resumed_parts.body,
+            predecessor_content_version_id=baseline_content_version_id,
+            at=at,
+        )
+        projection_id = self._project(
+            generation_id,
+            execution.execution_id,
+            task_id,
+            "update_task_document",
+            {"content_version_id": str(version_id)},
+            at,
+        )
+        if resumed_status == "pending-verification":
+            cycle = self.workflow.open_verification_cycle(
+                cycle_id=self.uuid_factory(),
+                execution_id=execution.execution_id,
+                operation_id=operation.operation_id,
+                reviewed_content_version_id=version_id,
+                created_at=at,
+            )
+            operation.phase = "await_verification"
+            operation.persisted_actions = ["inspect"]
+            cycle_id = str(cycle.cycle_id)
+        elif resumed_status == "pending-research":
+            operation.lifecycle = "completed"
+            operation.phase = "terminal"
+            operation.terminal_outcome = f"{terminal_outcome_prefix}_resolved_to_research"
+            operation.terminal_at = at
+            operation.persisted_actions = []
+            cycle_id = None
+        else:
+            raise CommandRuleError(
+                "HOLD_RESUME_STATUS_INVALID",
+                "held document does not resume to a supported workflow status",
+                data={"resume_status": resumed_status},
+            )
+        operation.operation_revision += 1
+        return {
+            "resumed_content_version_id": str(version_id),
+            "resume_status": resumed_status,
+            "cycle_id": cycle_id,
+            "projection_event_id": projection_id,
+        }
+
+    def _activate_document(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        task_id: uuid.UUID,
+        binding_id: uuid.UUID,
+        execution_id: uuid.UUID,
+        title: str,
+        body: str,
+        predecessor_content_version_id: uuid.UUID,
+        at: datetime,
+    ) -> uuid.UUID:
+        head = self.session.get(models.TaskAuthorityHead, (generation_id, task_id))
+        if head is None:
+            raise CommandRuleError(
+                "CONTENT_AUTHORITY_MISSING", "task has no current authority head"
+            )
+        activation = self.session.get(
+            models.ContentActivation, head.current_content_activation_id
+        )
+        if (
+            activation is None
+            or activation.content_version_id != predecessor_content_version_id
+        ):
+            raise CommandRuleError(
+                "CONTENT_AUTHORITY_DRIFT",
+                "the predecessor is not the exact current content occurrence",
+            )
+        identity = hashlib.sha256((title + "\0" + body).encode()).hexdigest()
+        if self.session.scalar(
+            select(models.ContentVersion.content_version_id).where(
+                models.ContentVersion.generation_id == generation_id,
+                models.ContentVersion.task_id == task_id,
+                models.ContentVersion.identity_scheme == "sha256-title-body-v1",
+                models.ContentVersion.content_identity == identity,
+            )
+        ) is not None:
+            raise CommandRuleError(
+                "CONTENT_OCCURRENCE_NOT_DISTINCT",
+                "the candidate is identical to an existing task content occurrence",
+            )
+        version_id = self.uuid_factory()
+        self.session.add(
+            models.ContentVersion(
+                content_version_id=version_id,
+                generation_id=generation_id,
+                task_id=task_id,
+                representation_kind="document",
+                title=title,
+                body=body,
+                identity_scheme="sha256-title-body-v1",
+                content_identity=identity,
+                creator_route="command_execution",
+                import_run_id=None,
+                command_execution_id=execution_id,
+                predecessor_content_version_id=predecessor_content_version_id,
+                contract_binding_id=binding_id,
+                created_at=at,
+            )
+        )
+        self.session.flush()
+        activation_id = self.uuid_factory()
+        revision = head.task_revision + 1
+        self.session.add(
+            models.ContentActivation(
+                content_activation_id=activation_id,
+                generation_id=generation_id,
+                task_id=task_id,
+                content_version_id=version_id,
+                activation_route="command_execution",
+                import_run_id=None,
+                command_execution_id=execution_id,
+                task_revision=revision,
+                activated_at=at,
+            )
+        )
+        self.session.flush()
+        head.current_content_activation_id = activation_id
+        head.task_revision = revision
+        head.updated_at = at
+        self.session.flush()
+        return version_id
 
     def _current_content_version_id(self, generation_id: uuid.UUID, task_id: uuid.UUID) -> uuid.UUID:
         head = self.session.get(models.TaskAuthorityHead, (generation_id, task_id))
@@ -1058,7 +2710,12 @@ class PostgresCommandPort:
         return successor
 
     def _latest_cycle(self, operation_id: uuid.UUID) -> wf.VerificationCycle:
-        cycle = self.session.scalar(select(wf.VerificationCycle).where(wf.VerificationCycle.operation_id == operation_id).order_by(wf.VerificationCycle.created_at.desc()).limit(1))
+        cycle = self.session.scalar(
+            select(wf.VerificationCycle)
+            .where(wf.VerificationCycle.operation_id == operation_id)
+            .order_by(wf.VerificationCycle.cycle_sequence.desc())
+            .limit(1)
+        )
         if cycle is None:
             raise CommandRuleError("VERIFICATION_CYCLE_REQUIRED", "operation has no Verification cycle")
         return cycle
@@ -1117,6 +2774,36 @@ class PostgresCommandPort:
         current.completed, current.latest_event_id, current.completion_revision, current.updated_at = completed, event_id, revision, at
         head.completion_revision, head.updated_at = revision, at
 
+    def _release_verifier_lease(
+        self,
+        *,
+        call: CommandCall,
+        execution: wf.CommandExecution,
+        cycle: wf.VerificationCycle,
+        actor: wf.OperationActorFact,
+        reason: str,
+    ) -> None:
+        lease = self.session.scalar(
+            select(wf.ServiceLease)
+            .where(
+                wf.ServiceLease.operation_id == cycle.operation_id,
+                wf.ServiceLease.run_id == actor.run_id,
+                wf.ServiceLease.owner_id == actor.owner_id,
+                wf.ServiceLease.actor_role == "verification",
+                wf.ServiceLease.actor_attempt_sequence == actor.actor_attempt_sequence,
+                wf.ServiceLease.verification_cycle_id == cycle.cycle_id,
+                wf.ServiceLease.state == "active",
+            )
+            .order_by(wf.ServiceLease.issued_at.desc())
+            .limit(1)
+        )
+        if lease is None:
+            raise CommandRuleError(
+                "VERIFICATION_LEASE_REQUIRED",
+                f"{call.command_name} requires the exact active Verification lease",
+            )
+        self._terminalize_lease(lease, "released", execution, call.now, reason)
+
     def _terminalize_lease(self, lease, state, execution, at, reason) -> None:
         prior_revision, prior_expiry = lease.lease_revision, lease.expires_at
         lease.state, lease.lease_revision, lease.terminal_at = state, prior_revision + 1, at
@@ -1130,6 +2817,7 @@ class PostgresCommandPort:
         task: models.DishTask | None,
         operation: wf.WorkflowOperation | None,
         expected: CommandEffectSpec,
+        result_data: Mapping[str, Any],
     ) -> None:
         projection_types = tuple(
             self.session.scalars(
@@ -1214,7 +2902,7 @@ class PostgresCommandPort:
                 select(wf.VerificationCycle.cycle_id).where(
                     wf.VerificationCycle.operation_id == operation.operation_id,
                     wf.VerificationCycle.lifecycle == "rejected",
-                    wf.VerificationCycle.outcome == "rejected",
+                    wf.VerificationCycle.outcome.in_(("rejected", "verification-hold")),
                     wf.VerificationCycle.terminal_at == call.now,
                 )
             )
@@ -1224,12 +2912,16 @@ class PostgresCommandPort:
         expected_phase = {
             "prepare": "await_verification",
             "approve": "await_submission",
-            "reject": {
-                "large": "await_verification",
-                "evidence": "held_evidence",
-                "human-review": "held_human",
-                "human_review": "held_human",
-            }.get(str(call.arguments.get("route", "large")), "held_human"),
+            "reject": (
+                "held_human"
+                if result_data.get("verification_hold")
+                else {
+                    "large": "await_verification",
+                    "evidence": "held_evidence",
+                    "human-review": "held_human",
+                    "human_review": "held_human",
+                }.get(str(call.arguments.get("route", "large")), "held_human")
+            ),
         }[call.command_name]
         if operation.phase == expected_phase:
             observed.add("advance_operation")

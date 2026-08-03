@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
 
-from sqlalchemy import and_, select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -1011,6 +1011,14 @@ class WorkflowAuthorityService:
             raise WorkflowAuthorityError("verification cycle authority is incomplete")
         if execution.task_id != operation.task_id or version.task_id != operation.task_id:
             raise WorkflowAuthorityError("verification cycle task mismatch")
+        cycle_sequence = int(
+            self.session.scalar(
+                select(func.coalesce(func.max(wf.VerificationCycle.cycle_sequence), 0)).where(
+                    wf.VerificationCycle.operation_id == operation_id
+                )
+            )
+            or 0
+        ) + 1
         row = wf.VerificationCycle(
             cycle_id=cycle_id,
             generation_id=execution.generation_id,
@@ -1018,6 +1026,7 @@ class WorkflowAuthorityService:
             operation_id=operation_id,
             reviewed_content_version_id=reviewed_content_version_id,
             contract_binding_id=execution.contract_binding_id,
+            cycle_sequence=cycle_sequence,
             lifecycle="open",
             outcome=None,
             created_by_execution_id=execution_id,
@@ -1057,9 +1066,18 @@ class WorkflowAuthorityService:
                     == signed_content_version_id,
                 )
             )
-            if correction is None:
+            signed = self.session.get(models.ContentVersion, signed_content_version_id)
+            direct_status_transition = (
+                signoff_kind == "direct"
+                and signed is not None
+                and signed.generation_id == cycle.generation_id
+                and signed.task_id == cycle.task_id
+                and signed.predecessor_content_version_id
+                == inspection.reviewed_content_version_id
+            )
+            if correction is None and not direct_status_transition:
                 raise WorkflowAuthorityError(
-                    "signoff must bind the inspected occurrence or its exact recorded correction"
+                    "signoff must bind the inspected occurrence, its exact canonical status transition, or its recorded correction"
                 )
         row = wf.VerificationSignoff(
             signoff_id=signoff_id,

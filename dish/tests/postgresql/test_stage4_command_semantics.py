@@ -17,6 +17,7 @@ from tests.support.postgresql.command import (
     _port,
     _prepare_for_verification,
     _start_initial,
+    _start_verification,
     _verification_ready,
 )
 
@@ -46,13 +47,12 @@ def test_inspection_rejects_author_or_same_agent_as_verifier(workflow_db) -> Non
         )
         same_run = port.execute(
             _call(
-                "inspect",
+                "start",
                 run_id=author_run,
                 request_id=_next(ids),
-                principal="verification",
                 arguments={
                     "task_id": str(task_id),
-                    "operation_id": started.data["operation_id"],
+                    "kind": "verification",
                     "agent": "codex",
                     "independence_attestation": "independent",
                 },
@@ -60,14 +60,13 @@ def test_inspection_rejects_author_or_same_agent_as_verifier(workflow_db) -> Non
         )
         same_agent = port.execute(
             _call(
-                "inspect",
+                "start",
                 run_id=other_run,
                 request_id=_next(ids),
                 owner="other-owner",
-                principal="verification",
                 arguments={
                     "task_id": str(task_id),
-                    "operation_id": started.data["operation_id"],
+                    "kind": "verification",
                     "agent": "claude",
                     "independence_attestation": "independent",
                 },
@@ -96,8 +95,12 @@ def test_small_correction_binds_inspection_correction_activation_and_signoff(wor
                     "task_id": str(task_id),
                     "operation_id": started.data["operation_id"],
                     "agent": "codex",
+                    "model": "o3",
                     "correction": "small",
-                    "file_text": "Small corrected body\n---\nStatus: pending-verification\n",
+                    "file_text": __import__("tests.support.canonical", fromlist=["TASK"]).TASK.replace(
+                        "A compact side dish for testing texture.",
+                        "A compact corrected side dish for testing texture.",
+                    ),
                     "reviewed_identity": reviewed.content_identity,
                     "semantic_review_complete": True,
                     "provenance_complete": True,
@@ -134,7 +137,10 @@ def test_large_rejection_creates_exact_corrected_occurrence_and_new_cycle(workfl
                     "agent": "codex",
                     "route": "large",
                     "reason": "material correction",
-                    "file_text": "Large corrected body\n---\nStatus: pending-verification\n",
+                    "file_text": __import__("tests.support.canonical", fromlist=["TASK"]).TASK.replace(
+                        "A compact side dish for testing texture.",
+                        "A materially corrected side dish for testing texture.",
+                    ),
                 },
             )
         )
@@ -171,6 +177,7 @@ def test_submit_rejects_when_current_content_no_longer_matches_signoff(workflow_
                     "task_id": str(task_id),
                     "operation_id": started.data["operation_id"],
                     "agent": "codex",
+                    "model": "o3",
                     "correction": "none",
                     "reviewed_identity": reviewed.content_identity,
                     "semantic_review_complete": True,

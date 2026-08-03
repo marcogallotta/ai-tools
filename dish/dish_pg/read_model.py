@@ -5,7 +5,6 @@ import base64
 import hashlib
 import hmac
 import json
-import re
 import uuid
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -17,8 +16,7 @@ from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 
 from . import models
 from . import stage3_models as wf
-
-_STATUS_RE = re.compile(r"^Status:\s*([^\r\n]+?)\s*$", re.MULTILINE)
+from .document_authority import CanonicalDocumentError, parse_canonical_document
 
 
 class ReadModelError(ValueError):
@@ -94,9 +92,12 @@ class CursorCodec:
         return decoded
 
 
-def _status_from_body(body: str) -> str | None:
-    matches = list(_STATUS_RE.finditer(body))
-    return matches[-1].group(1).strip() if matches else None
+def _status_from_document(title: str, body: str) -> str | None:
+    try:
+        parts = parse_canonical_document(title=title, body=body)
+    except CanonicalDocumentError:
+        return None
+    return parts.document.state.values["Status"]
 
 
 class PostgresReadModel:
@@ -349,6 +350,7 @@ class PostgresReadModel:
         *,
         generation_id: uuid.UUID,
         task_id: uuid.UUID,
+        title: str,
         body: str,
         operation: wf.WorkflowOperation,
     ) -> WorkflowSnapshot:
@@ -381,7 +383,7 @@ class PostgresReadModel:
         cycle = self.session.scalar(
             select(wf.VerificationCycle)
             .where(wf.VerificationCycle.operation_id == operation.operation_id)
-            .order_by(wf.VerificationCycle.created_at.desc(), wf.VerificationCycle.cycle_id.desc())
+            .order_by(wf.VerificationCycle.cycle_sequence.desc())
             .limit(1)
         )
         inspected = False
@@ -397,28 +399,63 @@ class PostgresReadModel:
                 .select_from(wf.VerificationSignoff)
                 .where(wf.VerificationSignoff.cycle_id == cycle.cycle_id)
             ) > 0
-        open_hold = self.session.scalar(
-            select(wf.EvidenceHold.hold_id).where(
-                wf.EvidenceHold.operation_id == operation.operation_id,
-                wf.EvidenceHold.state == "open",
-            )
+        latest_hold = self.session.scalar(
+            select(wf.EvidenceHold)
+            .where(wf.EvidenceHold.operation_id == operation.operation_id)
+            .order_by(wf.EvidenceHold.opened_at.desc(), wf.EvidenceHold.hold_id.desc())
+            .limit(1)
         )
-        open_human = self.session.scalar(
-            select(wf.HumanReviewRequirement.requirement_id).where(
-                wf.HumanReviewRequirement.operation_id == operation.operation_id,
-                wf.HumanReviewRequirement.state == "open",
+        latest_human = self.session.scalar(
+            select(wf.HumanReviewRequirement)
+            .where(wf.HumanReviewRequirement.operation_id == operation.operation_id)
+            .order_by(
+                wf.HumanReviewRequirement.opened_at.desc(),
+                wf.HumanReviewRequirement.requirement_id.desc(),
             )
+            .limit(1)
+        )
+        active_hold = (
+            latest_hold
+            if latest_hold is not None and latest_hold.state == "open"
+            else None
+        )
+        active_human = (
+            latest_human
+            if latest_human is not None and latest_human.state == "open"
+            else None
+        )
+        latest_route = None
+        if cycle is not None:
+            if latest_hold is not None and latest_hold.cycle_id == cycle.cycle_id:
+                latest_route = "evidence"
+            elif latest_human is not None and latest_human.cycle_id == cycle.cycle_id:
+                latest_route = latest_human.route
+        head = self.session.get(models.TaskAuthorityHead, (generation_id, task_id))
+        activation = (
+            self.session.get(models.ContentActivation, head.current_content_activation_id)
+            if head is not None
+            else None
+        )
+        current_version_id = activation.content_version_id if activation is not None else None
+        baseline = None
+        if operation.phase == "held_evidence" and latest_hold is not None:
+            baseline = latest_hold.baseline_content_version_id
+        elif operation.phase == "held_human" and latest_human is not None:
+            baseline = latest_human.baseline_content_version_id
+        preconstruction_hold = bool(
+            (active_hold is not None and active_hold.cycle_id is None)
+            or (active_human is not None and active_human.cycle_id is None)
         )
         return WorkflowSnapshot(
             operation_status=operation.lifecycle,
             operation_phase=operation.phase,
             persisted_actions=tuple(operation.persisted_actions),
-            live_status=_status_from_body(body),
+            live_status=_status_from_document(title, body),
             live_section_gid=live_section_gid,
             verification_queue_gid=verification_gid,
             cycle_reviewed=inspected,
             latest_cycle_outcome=cycle.outcome if cycle else None,
-            latest_cycle_route=None,
+            latest_cycle_route=latest_route,
             validation_rules=(),
             operation_kind=operation.kind,
             pending_steps=(),
@@ -428,8 +465,8 @@ class PostgresReadModel:
             placement_matches=True,
             required_cycle_exists=cycle is not None,
             signoff_bound=signoff_bound,
-            held_baseline_matches=True,
-            preconstruction_hold=open_hold is not None or open_human is not None,
+            held_baseline_matches=(baseline is None or baseline == current_version_id),
+            preconstruction_hold=preconstruction_hold,
             destination_repair_required=operation.phase == "ready_move_failed",
             dish_inspect_current=inspected,
         )
@@ -470,6 +507,7 @@ class PostgresReadModel:
                     self._workflow_snapshot(
                         generation_id=generation.generation_id,
                         task_id=task.task_id,
+                        title=version.title,
                         body=version.body,
                         operation=operation,
                     )

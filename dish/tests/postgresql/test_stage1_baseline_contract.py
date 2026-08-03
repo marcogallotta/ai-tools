@@ -62,7 +62,13 @@ def test_frozen_command_inventory_matches_current_surfaces() -> None:
 
     expected_treatments = set(baseline["action_commands"]) | set(baseline["admin_commands"])
     expected_treatments.add("planning-intent-settlement")
-    assert set(baseline["target_treatments"]) == expected_treatments
+    treatments = baseline["target_treatments"]
+    assert isinstance(treatments, dict)
+    assert set(treatments) == expected_treatments
+    assert all(
+        re.fullmatch(r"(?:retain|retire|add):[A-Z]", treatment)
+        for treatment in treatments.values()
+    )
 
 
 def test_frozen_sqlite_authority_inventory_matches_schema() -> None:

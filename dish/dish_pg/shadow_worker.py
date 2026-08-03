@@ -50,6 +50,7 @@ _IDENTIFIER_ROLES = {
     "successor_operation_id": ("successor_operation_id", "operation"),
     "lease_id": ("lease_id", "lease"),
     "cycle_id": ("cycle_id", "verification_cycle"),
+    "expected_cycle_id": ("cycle_id", "verification_cycle"),
     "verification_cycle_id": ("cycle_id", "verification_cycle"),
     "new_cycle_id": ("cycle_id", "verification_cycle"),
     "prepared_cycle_id": ("prepared_cycle_id", "verification_cycle"),

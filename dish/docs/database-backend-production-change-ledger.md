@@ -78,3 +78,30 @@ reviewed source commit `32cd14e4d85761dceaf83c65728e5848a149c006`.
 This ledger must be extended for every further in-scope commit through the exact
 source commit/release selected for production cutover, per `database-backend-imp.md`
 §1.1 and §14.10.
+
+## 2026-08-03 PostgreSQL authority audit remediation worktree
+
+The supplied post-dark-launch archive contained no Git metadata, so this entry uses the source
+marker `WORKTREE-AUDIT-REMEDIATION-20260803` until the changes are committed in the authoritative
+repository. The worktree closes the reproduced PostgreSQL authority defects found in the 2026-08-03
+audit without enabling PostgreSQL authority or Asana projection:
+
+- canonical Dish document parsing and exact rendering now gate authority activation and read-side
+  workflow derivation;
+- ordinary Verification start attaches the exact independent verifier occurrence and lease to the
+  current operation/cycle, while paired targets remain limited to exact continuation targeting;
+- approval requires complete reviewed-identity and semantic/provenance evidence, creates a signed
+  canonical `ready` occurrence, and submission derives its destination from that signed document;
+- deterministic command failures after request admission are stored as immutable replay outcomes,
+  and expected handler failures roll back partial domain effects before the outcome is recorded;
+- operation-targeted mutations require an exact operation identifier rather than inferring one;
+- Planning confirmation is bound to the registered agent and complete issued target;
+- retained `holds`, `resolved`, and `planning-intent-settlement` command inventories are aligned;
+- Evidence, Human Review, and Verification holds produce canonical held/resumed occurrences with
+  exact hold identity and legal continuation;
+- migration `0015_verification_cycle_sequence` adds deterministic per-operation Verification-cycle
+  ordering so same-timestamp cycles cannot select stale evidence.
+
+The Stage A baseline hashes and command inventories are refreshed to this exact worktree. Replace the
+worktree marker with the final commit identifier before using this baseline as release, dark-launch
+comparison, rollback-burn, or cutover evidence.
