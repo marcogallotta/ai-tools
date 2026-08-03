@@ -10,6 +10,7 @@ from typing import Any, Mapping, Sequence
 from .errors import DishRuleError
 from .transactions import immediate_transaction
 from .models import ProcessIdentity, utc_now
+from .human_actions import PromptField, relay_text, template_action
 from .recovery import current_process_identity, process_identity_is_live
 
 
@@ -23,20 +24,32 @@ class OperationExecutionClaim:
     resuming_uncertain: bool = False
 
 
-def _recover_command_guidance(operation_id: str) -> dict[str, str]:
-    command = (
-        f"dish-admin recover {operation_id} --outcome <inspect|not-applied|applied> "
-        '--reason "<summarize what the live reread showed>"'
+def _recover_command_guidance(operation_id: str) -> dict[str, object]:
+    spec = template_action(
+        kind="reconcile-uncertain-effect",
+        command="recover",
+        positional=(operation_id,),
+        options=(
+            ("--outcome", "<inspect|not-applied|applied>"),
+            ("--reason", "<summarize what the live reread showed>"),
+        ),
+        prompt_fields=(
+            PromptField("outcome", "Observed outcome", "<inspect|not-applied|applied>"),
+            PromptField("reason", "What the live reread showed", "<summarize what the live reread showed>"),
+        ),
+        summary="Reconcile an interrupted external effect from a fresh live reread.",
+        effect="Record only the outcome proven by the live task; do not create a replacement operation.",
+        after_success={"instruction": "Refresh the same operation and follow its returned continuation."},
     )
-    directive = (
-        "Tell the human to run the following command after replacing the angle-bracketed "
-        "--outcome choice and --reason text:\n"
-        f"{command}\n"
-        "Start with --outcome inspect if the live state is not yet confirmed. Then wait "
-        "for confirmation it succeeded before continuing — do not create a replacement "
-        "operation, change run identity, or use any other private admin route."
+    payload = spec.payload()
+    payload["directive"] = relay_text(
+        spec,
+        instruction=(
+            "Use `inspect` first when the live outcome is not yet known. Wait for confirmation "
+            "before continuing; do not create a replacement operation or change run identity."
+        ),
     )
-    return {"admin_command": command, "directive": directive}
+    return payload
 
 
 _OPERATION_FIELDS = (

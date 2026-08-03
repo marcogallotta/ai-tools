@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import shlex
 import sqlite3
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
@@ -19,6 +18,7 @@ from .database import (
 )
 from .transactions import immediate_transaction
 from .errors import BackendFailure, DishRuleError
+from .human_actions import exact_action, relay_text
 from .recovery import (
     begin_movement_attempt,
     begin_operation_write_attempt,
@@ -212,19 +212,25 @@ def planning_reopen_recovery_details(
             ),
         })
         return details
-    replay_command = (
-        "dish-admin reopen-planning "
-        f"{shlex.quote(task_gid)} --reason {shlex.quote(reason)} "
-        f"--request-id {shlex.quote(request_id)}"
+    spec = exact_action(
+        kind="replay-reopen-planning",
+        command="reopen-planning",
+        positional=(task_gid,),
+        options=(("--reason", reason), ("--request-id", request_id)),
+        summary="Replay the exact interrupted Planning reopen request.",
+        effect="Resolve the original request journal without creating a replacement operation.",
+        after_success={"instruction": "Retry the original Planning request."},
     )
     details.update({
         "required_admin_action": "reopen-planning",
         "resolver": "Marco/admin replay the original reopen-planning request",
-        "admin_command": replay_command,
-        "directive": (
-            f"Tell the human to run: {replay_command}\n"
-            "Then wait for confirmation it succeeded before continuing — do not create a "
-            "replacement operation; retry the original request once it succeeds."
+        **spec.payload(),
+        "directive": relay_text(
+            spec,
+            instruction=(
+                "Wait for confirmation it succeeded; do not create a replacement operation. "
+                "Retry the original request once it succeeds."
+            ),
         ),
     })
     return details

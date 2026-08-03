@@ -20,6 +20,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
+from dish_tool.transactions import begin_immediate
+
 
 class ShadowSpoolError(RuntimeError):
     pass
@@ -295,7 +297,7 @@ class ShadowSpool:
         )
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             existing = conn.execute(
                 "SELECT * FROM shadow_capture_registrations WHERE source_request_identity=?",
                 (identity,),
@@ -387,7 +389,7 @@ class ShadowSpool:
         effects_json = _canonical_json(source_effects)
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             row = conn.execute(
                 "SELECT * FROM shadow_capture_registrations WHERE registration_id=?",
                 (registration_id,),
@@ -437,7 +439,7 @@ class ShadowSpool:
         gap_json = _canonical_json(gap)
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             row = conn.execute(
                 "SELECT * FROM shadow_capture_registrations WHERE registration_id=?",
                 (registration_id,),
@@ -488,7 +490,7 @@ class ShadowSpool:
             ).fetchone()
             if candidate is None:
                 return 0
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             result = conn.execute(
                 """UPDATE shadow_capture_registrations
                       SET state='gap', gap_json=?, completed_at=?
@@ -552,7 +554,7 @@ class ShadowSpool:
             ]
             if not candidate_ids:
                 return 0
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             placeholders = ",".join("?" for _ in candidate_ids)
             rows = conn.execute(
                 f"""SELECT * FROM shadow_capture_registrations
@@ -615,7 +617,7 @@ class ShadowSpool:
     def mark_delivery_failed(self, registration_id: str, *, error: str) -> None:
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             result = conn.execute(
                 """UPDATE shadow_capture_registrations
                       SET delivery_attempts=delivery_attempts+1, last_delivery_error=?
@@ -634,7 +636,7 @@ class ShadowSpool:
     def mark_delivered(self, registration_id: str, *, delivered_at: datetime) -> None:
         conn = self._connect()
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            begin_immediate(conn)
             result = conn.execute(
                 """UPDATE shadow_capture_registrations
                       SET state='delivered', delivered_at=?, delivery_attempts=delivery_attempts+1,

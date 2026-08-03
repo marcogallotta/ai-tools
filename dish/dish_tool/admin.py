@@ -26,6 +26,7 @@ from .invocation_audit import record_invocation_audit
 from .transactions import immediate_transaction, savepoint_transaction
 from .errors import DishRuleError
 from .results import error_envelope, result_envelope
+from .human_actions import PromptField, exact_action, relay_text, template_action
 
 
 @dataclass
@@ -215,12 +216,280 @@ class DishAdminApplication:
 
 
 
+
+def _inspect_expired_or_released_cycle_lease(
+    conn: sqlite3.Connection, *, operation_id: str, cycle_id: str, run_id: str
+) -> sqlite3.Row | None:
+    return conn.execute(
+        """SELECT * FROM service_leases
+             WHERE operation_id=? AND lease_kind='actor'
+               AND context_cycle_id=? AND run_id=?
+               AND (released_at IS NOT NULL OR julianday(expires_at)<=julianday('now'))
+             ORDER BY actor_attempt_seq DESC LIMIT 1""",
+        (operation_id, cycle_id, run_id),
+    ).fetchone()
+
+
+def _command_inspect(
+    self, *, trace: AdminTrace, submission_id: str
+) -> dict[str, Any]:
+    """Return a compact, human-oriented diagnostic over authoritative state."""
+
+    if self.backend is None or self.operation_service is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR",
+            "admin inspection requires backend access",
+            rule="admin_inspect_unavailable",
+        )
+    operation_id = _clean_required(
+        submission_id, rule="operation_id_required", label="operation ID or task"
+    )
+    operation = self.conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if operation is None:
+        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+
+    from .constants import COOKING_PROJECT_GID
+    from .task_store import read_complete_task
+    from .commands import (
+        _evidence_hold_continuation,
+        _repair_destination_continuation,
+        expose_authoritative_view,
+    )
+
+    release = None if self.release_loader is None else self.release_loader()
+    schema = None if release is None else release.schema
+    live = read_complete_task(
+        self.backend, task_gid=operation["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    view = expose_authoritative_view(
+        self.operation_service.authoritative_view(operation_id, schema=schema)
+    )
+    cycle = self.conn.execute(
+        """SELECT * FROM verification_cycles WHERE operation_id=?
+             ORDER BY cycle_number DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    active_lease = self.conn.execute(
+        """SELECT * FROM service_leases
+             WHERE operation_id=? AND lease_kind='actor' AND released_at IS NULL
+               AND julianday(expires_at)>julianday('now')
+             ORDER BY actor_attempt_seq DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    latest_lease = self.conn.execute(
+        """SELECT * FROM service_leases
+             WHERE operation_id=? AND lease_kind='actor'
+             ORDER BY actor_attempt_seq DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    abandonment = self.conn.execute(
+        """SELECT * FROM abandonment_attempts
+             WHERE task_gid=? AND status!='completed'
+             ORDER BY created_at DESC LIMIT 1""",
+        (operation["task_gid"],),
+    ).fetchone()
+
+    actions: list[dict[str, Any]] = []
+    problem = "No administrative blocker is currently recorded."
+    waiting_for = str(view.get("phase") or operation["phase"])
+
+    if abandonment is not None:
+        decorated = _decorate_abandonment_result(
+            self.conn, {"abandonment_id": abandonment["abandonment_id"]}
+        )
+        required = decorated.get("required_action")
+        if isinstance(required, Mapping):
+            human_action = required.get("human_action")
+            if isinstance(human_action, Mapping):
+                actions.append(dict(human_action))
+        if abandonment["status"] == "awaiting_successor_claim":
+            problem = "Abandonment is complete and a prepared successor is waiting for an agent claim."
+        elif abandonment["status"] == "awaiting_hold_resolution":
+            problem = "Abandonment preserved a governed hold that Marco must resolve."
+        else:
+            problem = "A permanent-run abandonment is active and must be reconciled."
+    elif operation["status"] == "uncertain" or view.get("unresolved_attempts"):
+        spec = template_action(
+            kind="reconcile-uncertain-effect",
+            command="recover",
+            positional=(operation_id,),
+            options=(
+                ("--outcome", "<inspect|not-applied|applied>"),
+                ("--reason", "<what the live reread proved>"),
+            ),
+            prompt_fields=(
+                PromptField("outcome", "Observed outcome", "<inspect|not-applied|applied>"),
+                PromptField("reason", "What the live reread proved", "<what the live reread proved>"),
+            ),
+            summary="Reconcile an interrupted external effect.",
+            effect="Record only what a fresh live reread proves.",
+            after_success={"instruction": "Rerun dish-admin inspect."},
+        )
+        actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
+        problem = "An external write or movement has an unresolved outcome."
+    elif active_lease is not None:
+        spec = template_action(
+            kind="expire-active-lease",
+            command="expire-lease",
+            positional=(active_lease["lease_id"],),
+            options=(("--reason", "<why the active run is no longer available>"),),
+            prompt_fields=(
+                PromptField("reason", "Why the active run is unavailable", "<why the active run is no longer available>"),
+            ),
+            summary="Release the active lease only if its agent run is gone.",
+            effect="This does not transfer cycle ownership; rerun inspect afterward to abandon the dead attempt if needed.",
+            after_success={"instruction": "Rerun dish-admin inspect on this task."},
+        )
+        actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
+        problem = "An agent run currently holds the operation lease."
+    elif operation["phase"] in {"held_evidence", "held_human"}:
+        continuation = _evidence_hold_continuation(self.conn, operation_id, view)
+        human_action = continuation.get("human_action")
+        if isinstance(human_action, dict):
+            actions.append(dict(human_action) | {
+                "shell_command": continuation.get("admin_command")
+                or continuation.get("admin_command_template")
+            })
+        problem = "The operation is waiting for Marco-supplied evidence or a binding decision."
+    elif view.get("destination_repair_required"):
+        continuation = _repair_destination_continuation(operation_id, view)
+        human_action = continuation.get("human_action")
+        if isinstance(human_action, dict):
+            actions.append(dict(human_action) | {
+                "shell_command": continuation.get("admin_command")
+                or continuation.get("admin_command_template")
+            })
+        problem = "The final destination move needs an explicit repair."
+    elif (
+        operation["phase"] == "await_verification"
+        and cycle is not None
+        and cycle["completed_at"] is None
+        and str(cycle["run_id"] or "").strip()
+    ):
+        lease = _inspect_expired_or_released_cycle_lease(
+            self.conn,
+            operation_id=operation_id,
+            cycle_id=cycle["cycle_id"],
+            run_id=cycle["run_id"],
+        )
+        if lease is not None:
+            spec = template_action(
+                kind="abandon-dead-verifier",
+                command="abandon-operation",
+                positional=(operation_id,),
+                options=(
+                    ("--lease-id", lease["lease_id"]),
+                    ("--reason", "<why the verifier run is permanently unavailable>"),
+                ),
+                prompt_fields=(
+                    PromptField("reason", "Why the verifier run is permanently unavailable", "<why the verifier run is permanently unavailable>"),
+                ),
+                summary="Abandon the dead verifier attempt.",
+                effect="Preserve the candidate and prepare a fresh Verification continuation.",
+                after_success={"instruction": "Follow the exact continuation returned by Dish."},
+            )
+            actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
+            problem = "The open Verification cycle belongs to a prior run with no active lease."
+        else:
+            problem = (
+                "The open Verification cycle is bound to another run, but Dish cannot identify "
+                "one safe abandonment lease from current records."
+            )
+    elif latest_lease is not None:
+        try:
+            lease = _select_abandonment_lease(
+                self.conn, operation_id=operation_id, lease_id=None
+            )
+        except DishRuleError:
+            problem = (
+                "The operation has no active lease, but its historical attempts do not "
+                "identify one safe automatic abandonment authority."
+            )
+        else:
+            spec = template_action(
+                kind="abandon-dead-agent",
+                command="abandon-operation",
+                positional=(operation_id,),
+                options=(
+                    ("--lease-id", lease["lease_id"]),
+                    ("--reason", "<why the agent run is permanently unavailable>"),
+                ),
+                prompt_fields=(
+                    PromptField(
+                        "reason",
+                        "Why the agent run is permanently unavailable",
+                        "<why the agent run is permanently unavailable>",
+                    ),
+                ),
+                summary="Abandon the dead agent attempt.",
+                effect="Preserve confirmed work and prepare the stage's safe successor.",
+                after_success={
+                    "instruction": "Follow the exact continuation returned by Dish."
+                },
+            )
+            actions.append(spec.payload()["human_action"])
+            problem = "The operation belongs to a prior agent run with no active lease."
+    trace.submission_id = operation_id
+    trace.task_gid = operation["task_gid"]
+    trace.state = operation["status"]
+    data = {
+        "task_title": live.title,
+        "task_gid": operation["task_gid"],
+        "asana_url": f"https://app.asana.com/0/0/{operation['task_gid']}",
+        "operation_id": operation_id,
+        "operation_kind": operation["operation_kind"],
+        "status": operation["status"],
+        "phase": operation["phase"],
+        "waiting_for": waiting_for,
+        "problem": problem,
+        "human_actions": actions,
+        "agent_actions_now": [] if actions else list(view.get("legal_actions") or []),
+        "service_lease": None if active_lease is None else {
+            "lease_id": active_lease["lease_id"],
+            "owner_id": active_lease["owner_id"],
+            "run_id": active_lease["run_id"],
+            "expires_at": active_lease["expires_at"],
+        },
+        "latest_actor_attempt": None if latest_lease is None else {
+            "lease_id": latest_lease["lease_id"],
+            "run_id": latest_lease["run_id"],
+            "released_at": latest_lease["released_at"],
+            "expires_at": latest_lease["expires_at"],
+            "cycle_id": latest_lease["context_cycle_id"],
+        },
+        "verification_cycle": None if cycle is None else {
+            "cycle_id": cycle["cycle_id"],
+            "run_id": cycle["run_id"],
+            "verifier_agent": cycle["verifier_agent"],
+            "completed_at": cycle["completed_at"],
+            "outcome": cycle["outcome"],
+            "route": cycle["route"],
+        },
+        "authoritative_view": view,
+    }
+    return result_envelope(
+        command="inspect",
+        task_gid=operation["task_gid"],
+        submission_id=operation_id,
+        state=operation["status"],
+        data=data,
+    )
+
 def _command_holds(self, *, trace: AdminTrace) -> dict[str, Any]:
-    if self.backend is None:
-        raise DishRuleError("INTERNAL_ERROR", "hold listing requires backend access", rule="hold_listing_unavailable")
+    if self.backend is None or self.operation_service is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR",
+            "hold listing requires backend access",
+            rule="hold_listing_unavailable",
+        )
+    from .commands import _evidence_hold_continuation, expose_authoritative_view
     from .constants import COOKING_PROJECT_GID
     from .task_gateway import read_complete_task
 
+    release = None if self.release_loader is None else self.release_loader()
+    schema = None if release is None else release.schema
     rows = self.conn.execute(
         """SELECT * FROM operations
              WHERE status='open' AND phase IN ('held_evidence','held_human')
@@ -228,6 +497,12 @@ def _command_holds(self, *, trace: AdminTrace) -> dict[str, Any]:
     ).fetchall()
     holds = []
     for op in rows:
+        view = expose_authoritative_view(
+            self.operation_service.authoritative_view(op["operation_id"], schema=schema)
+        )
+        continuation = _evidence_hold_continuation(
+            self.conn, op["operation_id"], view
+        )
         pre = self.conn.execute(
             """SELECT intended_json FROM operation_steps
                  WHERE operation_id=? AND step_name='research_preconstruction_hold'
@@ -242,46 +517,69 @@ def _command_holds(self, *, trace: AdminTrace) -> dict[str, Any]:
         if pre is not None:
             payload = json.loads(pre["intended_json"])
             route = payload.get("route")
-            hold_class = f"research_preconstruction_{'evidence' if route == 'evidence' else 'human'}"
+            hold_class = (
+                "research_preconstruction_evidence"
+                if route == "evidence"
+                else "research_preconstruction_human"
+            )
             question = payload.get("reason")
-            action = "supply-evidence" if route == "evidence" else "record-human-decision"
             cycle_id = None
             hold_identity = op["expected_identity"]
         elif cycle is not None and cycle["outcome"] == "verification-hold":
             hold_class = "verification_two_pass"
             question = None
-            action = "reopen"
             cycle_id = cycle["cycle_id"]
             hold_identity = cycle["hold_identity"]
         else:
             route = None if cycle is None else cycle["route"]
-            hold_class = "verification_evidence" if route == "evidence" else "verification_human"
-            action = "supply-evidence" if route == "evidence" else "record-human-decision"
+            hold_class = (
+                "verification_evidence"
+                if route == "evidence"
+                else "verification_human"
+            )
             cycle_id = None if cycle is None else cycle["cycle_id"]
             hold_identity = None if cycle is None else cycle["hold_identity"]
             question = None
-        live = read_complete_task(self.backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
+        live = read_complete_task(
+            self.backend,
+            task_gid=op["task_gid"],
+            project_gid=COOKING_PROJECT_GID,
+        )
         if question is None:
             try:
                 from .task_document import parse_task_document
+
                 doc = parse_task_document(f"{live.title}\n{live.notes}")
                 question = doc.state.values.get("Status detail")
             except Exception:
                 question = None
-        holds.append({
-            "hold_class": hold_class,
-            "required_admin_action": action,
-            "task_title": live.title,
-            "task_gid": op["task_gid"],
-            "asana_url": f"https://app.asana.com/0/0/{op['task_gid']}",
-            "operation_id": op["operation_id"],
-            "cycle_id": cycle_id,
-            "hold_identity": hold_identity,
-            "question": question,
-            "phase": op["phase"],
-            "created_at": op["created_at"],
-        })
-    return result_envelope(command="holds", state="ok", data={"holds": holds, "count": len(holds)})
+        holds.append(
+            {
+                "hold_class": hold_class,
+                "required_admin_action": continuation.get("required_admin_action"),
+                "task_title": live.title,
+                "task_gid": op["task_gid"],
+                "asana_url": f"https://app.asana.com/0/0/{op['task_gid']}",
+                "operation_id": op["operation_id"],
+                "cycle_id": cycle_id,
+                "hold_identity": hold_identity,
+                "question": question,
+                "phase": op["phase"],
+                "created_at": op["created_at"],
+                "human_action": continuation.get("human_action"),
+                "admin_command": continuation.get("admin_command"),
+                "admin_command_is_template": continuation.get(
+                    "admin_command_is_template"
+                ),
+                "admin_command_template": continuation.get(
+                    "admin_command_template"
+                ),
+                "after_resolution": continuation.get("after_resolution"),
+            }
+        )
+    return result_envelope(
+        command="holds", state="ok", data={"holds": holds, "count": len(holds)}
+    )
 
 
 def _step5_admin_migrate(self, *, trace: AdminTrace, task_gid: str) -> dict[str, Any]:
@@ -722,42 +1020,68 @@ def _command_authorize_governed_change(self, *, trace: AdminTrace, submission_id
 
 
 def _abandonment_reconcile_action(abandonment_id: str) -> dict[str, Any]:
-    command = f"dish-admin reconcile-abandonment {abandonment_id}"
+    spec = exact_action(
+        kind="reconcile-abandonment",
+        command="reconcile-abandonment",
+        positional=(abandonment_id,),
+        summary="Continue a previously interrupted or blocked abandonment.",
+        effect="Reclassify the persisted abandonment and prepare its safe continuation.",
+        after_success={
+            "start_new_operation": False,
+            "instruction": "Refresh Dish and follow the exact continuation returned.",
+        },
+    )
+    payload = spec.payload()
     return {
         "surface": "private-admin",
         "command": "reconcile-abandonment",
         "arguments": {"abandonment_id": abandonment_id},
-        "admin_command": command,
-        "relay_text": (
-            f"Tell the human to run: {command}\n"
-            "Then wait for confirmation it succeeded before continuing."
+        **payload,
+        "relay_text": relay_text(
+            spec,
+            instruction="Wait for confirmation it succeeded, then refresh the authoritative Dish action.",
         ),
-        "after_success": {
-            "start_new_operation": False,
-            "instruction": (
-                "Refresh the authoritative Dish action, then follow the exact "
-                "continuation returned."
-            ),
-        },
+        "after_success": dict(spec.after_success or {}),
     }
 
 
-def _abandonment_hold_action(operation: sqlite3.Row) -> dict[str, Any]:
+def _abandonment_hold_action(conn: sqlite3.Connection, operation: sqlite3.Row) -> dict[str, Any]:
     if operation["phase"] == "held_evidence":
         command = "supply-evidence"
         detail = "<summarize the supplied evidence>"
+        summary = "Record Marco-supplied evidence and release the preserved hold."
     else:
         command = "record-human-decision"
         detail = "<summarize the human decision and reasoning>"
-    template = (
-        f'dish-admin {command} {operation["operation_id"]} '
-        f'--detail "{detail}" --resume-status pending-research'
-    )
-    relay = (
-        "Tell the human to run the following command after replacing the "
-        "angle-bracketed detail text:\n"
-        f"{template}\n"
-        "Then wait for confirmation it succeeded before continuing."
+        summary = "Record Marco's binding decision and release the preserved hold."
+    cycle = conn.execute(
+        """SELECT cycle_id,hold_identity FROM verification_cycles
+             WHERE operation_id=? AND completed_at IS NOT NULL
+             ORDER BY cycle_number DESC LIMIT 1""",
+        (operation["operation_id"],),
+    ).fetchone()
+    options: list[tuple[str, object | None]] = [
+        ("--detail", detail),
+        ("--resume-status", "pending-research"),
+        ("--expected-task-gid", operation["task_gid"]),
+    ]
+    if cycle is not None and cycle["hold_identity"]:
+        options.extend((
+            ("--expected-cycle-id", cycle["cycle_id"]),
+            ("--expected-hold-identity", cycle["hold_identity"]),
+        ))
+    spec = template_action(
+        kind=command,
+        command=command,
+        positional=(operation["operation_id"],),
+        options=tuple(options),
+        prompt_fields=(PromptField("detail", "Decision or evidence detail", detail),),
+        summary=summary,
+        effect="Resume the preserved Research operation without creating a replacement operation.",
+        after_success={
+            "start_new_operation": False,
+            "instruction": "Refresh Dish and follow the exact continuation returned.",
+        },
     )
     return {
         "surface": "private-admin",
@@ -765,17 +1089,18 @@ def _abandonment_hold_action(operation: sqlite3.Row) -> dict[str, Any]:
         "arguments": {
             "submission_id": operation["operation_id"],
             "resume_status": "pending-research",
+            "expected_task_gid": operation["task_gid"],
+            **({
+                "expected_cycle_id": cycle["cycle_id"],
+                "expected_hold_identity": cycle["hold_identity"],
+            } if cycle is not None and cycle["hold_identity"] else {}),
         },
-        "admin_command": None,
-        "admin_command_template": template,
-        "relay_text": relay,
-        "after_success": {
-            "start_new_operation": False,
-            "instruction": (
-                "Refresh the authoritative Dish action, then follow the exact "
-                "continuation returned."
-            ),
-        },
+        **spec.payload(),
+        "relay_text": relay_text(
+            spec,
+            instruction="Wait for confirmation it succeeded, then refresh the authoritative Dish action.",
+        ),
+        "after_success": dict(spec.after_success or {}),
     }
 
 
@@ -798,7 +1123,7 @@ def _decorate_abandonment_result(
             (abandonment["source_operation_id"],),
         ).fetchone()
         if operation is not None:
-            data["required_action"] = _abandonment_hold_action(operation)
+            data["required_action"] = _abandonment_hold_action(conn, operation)
     return data
 
 
@@ -861,16 +1186,53 @@ def _select_abandonment_lease(
         ):
             eligible.append(row)
     if len(eligible) != 1:
-        candidate_ids = [row["lease_id"] for row in rows if row["lease_kind"] == "actor"]
+        candidates = [
+            {
+                "lease_id": row["lease_id"],
+                "run_id": row["run_id"],
+                "cycle_id": row["context_cycle_id"],
+                "actor_attempt_seq": row["actor_attempt_seq"],
+                "released_at": row["released_at"],
+                "expires_at": row["expires_at"],
+            }
+            for row in rows
+            if row["lease_kind"] == "actor"
+        ]
+        spec = exact_action(
+            kind="inspect-abandonment-authority",
+            command="inspect",
+            positional=(operation_id,),
+            summary="Inspect which dead attempt can safely authorize abandonment.",
+            effect=(
+                "Show the exact cycle owner and one safe abandonment command; do not guess "
+                "between lease IDs."
+            ),
+            after_success={"instruction": "Run the recommended action returned by inspect."},
+        )
         raise DishRuleError(
             "CONFLICT",
-            "abandonment requires exactly one latest expired or released actor lease",
+            (
+                "the supplied lease cannot authorize abandonment"
+                if clean_lease_id is not None
+                else "Dish cannot safely choose one abandonment lease without inspection"
+            ),
             rule=(
                 "abandonment_lease_not_eligible"
                 if clean_lease_id is not None
                 else "abandonment_lease_selection_required"
             ),
-            details={"eligible_lease_ids": candidate_ids},
+            details={
+                "candidate_leases": candidates,
+                "required_admin_action": "inspect",
+                **spec.payload(),
+                "directive": relay_text(
+                    spec,
+                    instruction=(
+                        "Wait for Marco to run the one recommended abandonment action. "
+                        "Do not ask him to choose a lease ID from raw records."
+                    ),
+                ),
+            },
         )
     return eligible[0]
 
@@ -998,9 +1360,7 @@ def _command_abandon_operation(
                 details={
                     "abandonment_id": existing["abandonment_id"],
                     "required_admin_action": "reconcile-abandonment",
-                    "admin_command": (
-                        f'dish-admin reconcile-abandonment {existing["abandonment_id"]}'
-                    ),
+                    **_abandonment_reconcile_action(existing["abandonment_id"]),
                 },
             )
         abandonment_id = str(uuid.uuid4())
@@ -1211,12 +1571,13 @@ def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, r
     )
 
 _OPERATION_TARGET_COMMANDS = {
-    "holds", "reopen", "recover", "repair-destination", "supply-evidence",
+    "holds", "inspect", "reopen", "recover", "repair-destination", "supply-evidence",
     "record-human-decision", "resolved", "authorize-governed-change", "discard",
     "abandon-operation",
 }
 
 CURRENT_ADMIN_COMMAND_HANDLERS = {
+    "inspect": _command_inspect,
     "migrate": _step5_admin_migrate,
     "reopen-planning": _step5_admin_reopen_planning,
     "reopen": _step8_admin_reopen,

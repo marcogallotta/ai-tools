@@ -263,9 +263,15 @@ evidence is fabricated.
 
 ## Administrative operations
 
-`dish-admin` is available to agents only with the test profile; production use is Marco-only. In
-service mode it exposes:
+`dish-admin` is available to agents only with the test profile; production use is Marco-only.
+On an interactive terminal it is human-readable by default; use `--json` for the canonical envelope
+and `--verbose` for technical details. Start blocked-task diagnosis with `dish-admin inspect
+TASK_GID_OR_OPERATION_ID`; it resolves internal operation, cycle, lease, hold, and abandonment
+bindings and shows the safe next command.
 
+In service mode it exposes:
+
+- `inspect` to explain what a task is waiting on and show Marco's safe next actions;
 - `recover-lease` to release an expired client/run lease when the same durable run will continue, without transferring workflow ownership to Marco;
 - `abandon-operation` to permanently retire the latest expired or administratively released actor attempt and automatically prepare the safe stage-specific continuation;
 - `reconcile-abandonment` to reclassify a blocked or interrupted abandonment after the live task has been inspected or repaired;
@@ -275,7 +281,8 @@ service mode it exposes:
 - `repair-destination` to replace only an approved Planning destination after an unrecoverable final movement failure, while preserving the original Verification evidence;
 - `discard` for a provably unapplied stale operation;
 - `reopen`, `supply-evidence`, and `record-human-decision` for the existing protocol-specific hold routes;
-- `authorize-governed-change` for one exact governed-field change;
+- `authorize-governed-change` for one exact governed-field change; unused exact grants carry
+  across abandonment succession for the same task and typed before/after values;
 - `migrate` for explicit task-schema migration;
 - `backup-create` and `backup-restore` for managed shared-database snapshots.
 

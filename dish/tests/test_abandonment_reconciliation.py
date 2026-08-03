@@ -185,12 +185,12 @@ def test_abandoned_hold_relay_includes_generated_command_template():
 
     action = result["data"]["required_action"]
     template = action["admin_command_template"]
-    assert action["admin_command"] is None
+    assert action["admin_command"] == template
     assert template.startswith("dish-admin supply-evidence")
     assert source["operation_id"] in template
     assert "--resume-status pending-research" in template
     assert template in action["relay_text"]
-    assert "replacing the angle-bracketed detail text" in action["relay_text"]
+    assert "replacing the placeholder text" in action["relay_text"]
 @pytest.mark.smoke
 def test_abandoned_human_review_hold_relay_includes_generated_command_template():
     conn = initialize_database(":memory:")
@@ -220,12 +220,12 @@ def test_abandoned_human_review_hold_relay_includes_generated_command_template()
 
     action = result["data"]["required_action"]
     template = action["admin_command_template"]
-    assert action["admin_command"] is None
+    assert action["admin_command"] == template
     assert template.startswith("dish-admin record-human-decision")
     assert source["operation_id"] in template
     assert "--resume-status pending-research" in template
     assert template in action["relay_text"]
-    assert "replacing the angle-bracketed detail text" in action["relay_text"]
+    assert "replacing the placeholder text" in action["relay_text"]
 @pytest.mark.smoke
 @pytest.mark.parametrize(
     ("drift_content", "drift_section"),

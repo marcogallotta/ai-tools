@@ -51,6 +51,7 @@ from dish_tool.task_store import (
 )
 from dish_tool.releases import resolve_release
 from dish_tool.results import error_envelope, result_envelope
+from dish_tool.human_actions import PromptField, exact_action, relay_text, template_action
 from dish_tool.validation_scope import scope_for_command
 from dish_tool.transactions import immediate_transaction
 
@@ -87,6 +88,7 @@ _RUN_ID_AGENT_COMMANDS = {"start", "prepare", "approve", "reject"}
 _RUN_ID_ADMIN_COMMANDS = {"repair-destination"}
 _HANDOFF_PHASES = {"await_verification", "held_evidence", "held_human"}
 _OPERATION_ADMIN_COMMANDS = {
+    "inspect",
     "recover",
     "abandon-operation",
     "reconcile-abandonment",
@@ -97,7 +99,7 @@ _OPERATION_ADMIN_COMMANDS = {
     "authorize-governed-change",
     "repair-destination",
 }
-_LEASE_FREE_ADMIN_COMMANDS = {"holds", "authorize-governed-change", "abandon-operation", "reconcile-abandonment"}
+_LEASE_FREE_ADMIN_COMMANDS = {"inspect", "holds", "authorize-governed-change", "abandon-operation", "reconcile-abandonment"}
 
 LOG = logging.getLogger("dish.service.application")
 
@@ -105,18 +107,26 @@ LOG = logging.getLogger("dish.service.application")
 def _lease_recovery_details(
     operation_id: str, after_recovery_actions: list[str]
 ) -> dict[str, Any]:
-    command = (
-        f'dish-admin recover-lease {operation_id} '
-        '--reason "<summarize why the lease is being recovered>"'
+    spec = template_action(
+        kind="recover-expired-lease",
+        command="recover-lease",
+        positional=(operation_id,),
+        options=(("--reason", "<why the same run is resuming>"),),
+        prompt_fields=(
+            PromptField("reason", "Why the same run is resuming", "<why the same run is resuming>"),
+        ),
+        summary="Release an expired lease so the same durable run can resume.",
+        effect="This does not transfer workflow ownership to a different run.",
+        after_success={"agent_actions": list(after_recovery_actions)},
     )
     next_action = after_recovery_actions[0] if after_recovery_actions else None
-    directive = (
-        "Tell the human to run the following command after replacing the angle-bracketed "
-        "reason text:\n"
-        f"{command}\n"
-        "Then wait for confirmation it succeeded before continuing — do not start a new "
-        "operation; resume this same submission"
-        + (f" with `{next_action}`." if next_action else ".")
+    directive = relay_text(
+        spec,
+        instruction=(
+            "Use this only when the original agent run will continue. Wait for confirmation; "
+            "do not start a replacement operation"
+            + (f". Resume this same submission with `{next_action}`." if next_action else ".")
+        ),
     )
     return {
         "recovery_required": True,
@@ -124,11 +134,98 @@ def _lease_recovery_details(
         "resolver": "Marco/admin recover-lease",
         "continuation_surface": "private-admin",
         "connected_action_available": False,
-        "admin_command": command,
+        **spec.payload(),
         "admin_route": f"POST /v1/admin/leases/{operation_id}/recover",
         "directive": directive,
         "legal_next_actions": [],
         "after_recovery": {"legal_actions": list(after_recovery_actions)},
+    }
+
+
+def _admin_inspect_guidance(operation_id: str, *, summary: str, effect: str) -> dict[str, Any]:
+    spec = exact_action(
+        kind="inspect-admin-state",
+        command="inspect",
+        positional=(operation_id,),
+        summary=summary,
+        effect=effect,
+        after_success={"instruction": "Follow the exact human options returned by dish-admin inspect."},
+    )
+    return {
+        "recovery_required": True,
+        "required_admin_action": "inspect",
+        "resolver": "Marco/admin inspect",
+        "continuation_surface": "private-admin",
+        "connected_action_available": False,
+        **spec.payload(),
+        "directive": relay_text(
+            spec,
+            instruction="Wait for Marco to choose and complete one of the returned safe actions.",
+        ),
+        "legal_next_actions": [],
+    }
+
+
+def _abandon_dead_verifier_guidance(conn, operation_id: str) -> dict[str, Any]:
+    cycle = conn.execute(
+        """SELECT cycle_id,run_id FROM verification_cycles
+             WHERE operation_id=? AND completed_at IS NULL
+             ORDER BY cycle_number DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    lease = None
+    if cycle is not None and str(cycle["run_id"] or "").strip():
+        lease = conn.execute(
+            """SELECT * FROM service_leases
+                 WHERE operation_id=? AND lease_kind='actor'
+                   AND context_cycle_id=? AND run_id=?
+                   AND (released_at IS NOT NULL OR julianday(expires_at)<=julianday('now'))
+                 ORDER BY actor_attempt_seq DESC LIMIT 1""",
+            (operation_id, cycle["cycle_id"], cycle["run_id"]),
+        ).fetchone()
+    if lease is None:
+        return _admin_inspect_guidance(
+            operation_id,
+            summary="Inspect a Verification cycle owned by another run.",
+            effect="Dish will show whether the original run can resume or must be abandoned.",
+        )
+    spec = template_action(
+        kind="abandon-dead-verifier",
+        command="abandon-operation",
+        positional=(operation_id,),
+        options=(
+            ("--lease-id", lease["lease_id"]),
+            ("--reason", "<why the verifier run is permanently unavailable>"),
+        ),
+        prompt_fields=(
+            PromptField(
+                "reason",
+                "Why the verifier run is permanently unavailable",
+                "<why the verifier run is permanently unavailable>",
+            ),
+        ),
+        summary="Abandon the dead verifier attempt and prepare a fresh continuation.",
+        effect="Preserve the current candidate, close only the dead attempt, and prepare a new Verification cycle.",
+        after_success={"instruction": "Run the returned reconcile command if one is required, then start fresh Verification."},
+    )
+    return {
+        "recovery_required": True,
+        "required_admin_action": "abandon-operation",
+        "resolver": "Marco/admin abandon-operation",
+        "continuation_surface": "private-admin",
+        "connected_action_available": False,
+        **spec.payload(),
+        "directive": relay_text(
+            spec,
+            instruction=(
+                "Use this only if the recorded verifier conversation is permanently unavailable. "
+                "Wait for confirmation and follow the exact continuation returned."
+            ),
+        ),
+        "legal_next_actions": [],
+        "abandoned_cycle_id": None if cycle is None else cycle["cycle_id"],
+        "abandoned_run_id": None if cycle is None else cycle["run_id"],
+        "abandoned_lease_id": lease["lease_id"],
     }
 
 
@@ -1216,9 +1313,15 @@ class DishService:
             # error there. Only a still-blocked abandonment needs the human to
             # run admin reconciliation.
             return
-        command_text = (
-            f'dish-admin reconcile-abandonment {abandonment["abandonment_id"]}'
+        spec = exact_action(
+            kind="reconcile-abandonment",
+            command="reconcile-abandonment",
+            positional=(abandonment["abandonment_id"],),
+            summary="Continue the active abandonment reconciliation.",
+            effect="Settle the abandonment before connected work continues.",
+            after_success={"instruction": "Refresh Dish and follow the returned continuation."},
         )
+        command_text = spec.shell_command()
         raise DishRuleError(
             "WRONG_STATE",
             "task is fenced by an active permanent-run abandonment",
@@ -1227,11 +1330,10 @@ class DishService:
                 "abandonment_id": abandonment["abandonment_id"],
                 "abandonment_status": abandonment["status"],
                 "required_admin_action": "reconcile-abandonment",
-                "admin_command": command_text,
-                "directive": (
-                    f"Tell the human to run: {command_text}\n"
-                    "Then wait for confirmation it succeeded and refresh the "
-                    "authoritative Dish action."
+                **spec.payload(),
+                "directive": relay_text(
+                    spec,
+                    instruction="Wait for confirmation it succeeded, then refresh the authoritative Dish action.",
                 ),
             },
         )
@@ -1258,9 +1360,15 @@ class DishService:
             # resolve_verification_start_target and _resolve_agent_operation),
             # so no further argument echo is required here.
             return
-        command_text = (
-            f'dish-admin reconcile-abandonment {abandonment["abandonment_id"]}'
+        spec = exact_action(
+            kind="reconcile-abandonment",
+            command="reconcile-abandonment",
+            positional=(abandonment["abandonment_id"],),
+            summary="Continue the active abandonment reconciliation.",
+            effect="Settle the abandonment before connected work continues.",
+            after_success={"instruction": "Refresh Dish and follow the returned continuation."},
         )
+        command_text = spec.shell_command()
         raise DishRuleError(
             "WRONG_STATE",
             "task is fenced by an active permanent-run abandonment",
@@ -1269,11 +1377,10 @@ class DishService:
                 "abandonment_id": abandonment["abandonment_id"],
                 "abandonment_status": abandonment["status"],
                 "required_admin_action": "reconcile-abandonment",
-                "admin_command": command_text,
-                "directive": (
-                    f"Tell the human to run: {command_text}\n"
-                    "Then wait for confirmation it succeeded and refresh the "
-                    "authoritative Dish action."
+                **spec.payload(),
+                "directive": relay_text(
+                    spec,
+                    instruction="Wait for confirmation it succeeded, then refresh the authoritative Dish action.",
                 ),
             },
         )
@@ -1338,6 +1445,7 @@ class DishService:
         data["service_lease"] = self._lease_payload(active)
         actions = list(result.get("allowed_actions") or [])
         after_recovery_actions: list[str] = []
+        access_guidance: dict[str, Any] | None = None
 
         access: dict[str, Any] = {"state": "available"}
         if op["status"] == "uncertain":
@@ -1359,7 +1467,7 @@ class DishService:
                 actions = []
                 access = {"state": "terminal"}
         elif active is not None:
-            if leases.is_expired(active):
+            if leases.is_expired(active) and leases.is_owned_by(active, principal):
                 after_recovery_actions = list(actions)
                 actions = []
                 access = {
@@ -1372,13 +1480,35 @@ class DishService:
                 access = {"state": "owned"}
             else:
                 actions = []
+                access_guidance = _admin_inspect_guidance(
+                    operation_id,
+                    summary=(
+                        "Inspect an expired operation lease owned by another run."
+                        if leases.is_expired(active)
+                        else "Inspect an operation currently owned by another agent run."
+                    ),
+                    effect=(
+                        "Dish will show whether Marco should wait, expire the lease, or abandon "
+                        "the unavailable run. A different run cannot use recover-lease."
+                    ),
+                )
                 access = {
-                    "state": "held_by_other_run",
-                    "rule": "service_lease_owner_mismatch",
+                    "state": (
+                        "expired_other_run"
+                        if leases.is_expired(active)
+                        else "held_by_other_run"
+                    ),
+                    "rule": (
+                        "service_lease_expired_other_run"
+                        if leases.is_expired(active)
+                        else "service_lease_owner_mismatch"
+                    ),
                     "owner_id": active["owner_id"],
                     "run_id": active["run_id"],
                     "expires_at": active["expires_at"],
+                    "required_admin_action": access_guidance["required_admin_action"],
                 }
+                data["recovery_required"] = True
         else:
             filtered: list[str] = []
             for action in actions:
@@ -1391,13 +1521,37 @@ class DishService:
             actions = filtered
             if actions:
                 access = {"state": "claimable_by_run"}
-            elif op["phase"] in _HANDOFF_PHASES:
+            elif op["phase"] == "await_verification":
+                cycle = conn.execute(
+                    """SELECT run_id FROM verification_cycles
+                         WHERE operation_id=? AND completed_at IS NULL
+                         ORDER BY cycle_number DESC LIMIT 1""",
+                    (operation_id,),
+                ).fetchone()
+                bound_run = None if cycle is None else str(cycle["run_id"] or "").strip() or None
+                if bound_run is not None and bound_run != principal.run_id:
+                    access_guidance = _abandon_dead_verifier_guidance(conn, operation_id)
+                    access = {
+                        "state": "owned_by_inactive_verifier_run",
+                        "rule": "verification_run_ownership_required",
+                        "run_id": bound_run,
+                        "required_admin_action": access_guidance["required_admin_action"],
+                    }
+                    data["recovery_required"] = True
+                else:
+                    access = {"state": "handoff"}
+            elif op["phase"] in {"held_evidence", "held_human"}:
                 access = {"state": "handoff"}
             else:
+                access_guidance = _admin_inspect_guidance(
+                    operation_id,
+                    summary="Inspect an operation whose durable ownership is missing.",
+                    effect="Dish will identify the safe recovery route; recover-lease is not valid without a lease.",
+                )
                 access = {
                     "state": "recovery_required",
                     "rule": "service_lease_missing",
-                    "required_admin_action": "recover-lease",
+                    "required_admin_action": access_guidance["required_admin_action"],
                 }
                 data["recovery_required"] = True
 
@@ -1409,6 +1563,16 @@ class DishService:
             data["required_admin_action"] = required_admin_action
         elif workflow_required_admin_action is None:
             data.pop("required_admin_action", None)
+        if access_guidance is not None:
+            data.update(access_guidance)
+            data["service_access"] = {**access, **{
+                key: value for key, value in access_guidance.items()
+                if key in {
+                    "required_admin_action", "resolver", "continuation_surface",
+                    "connected_action_available", "admin_command",
+                    "admin_command_is_template", "admin_command_template", "human_action",
+                }
+            }}
         if access.get("rule") == "service_lease_expired":
             return self._apply_expired_lease_guidance(
                 result,
@@ -1975,15 +2139,29 @@ class DishService:
                 return
             if active is None:
                 if not self._may_claim_missing_lease(
-                    state.conn, operation_id, state.principal, command
+                    state.conn, operation_id, state.principal, command,
+                    agent=str(prepared.get("agent") or "") or None,
                 ):
+                    guidance = (
+                        _abandon_dead_verifier_guidance(state.conn, operation_id)
+                        if operation["phase"] == "await_verification"
+                        else _admin_inspect_guidance(
+                            operation_id,
+                            summary="Inspect an operation whose durable ownership belongs elsewhere.",
+                            effect="Dish will identify the safe recovery route before any mutation is retried.",
+                        )
+                    )
                     raise DishRuleError(
                         "AGENT_MISMATCH",
-                        "operation has no lease and this run has no durable workflow ownership",
+                        (
+                            "this run cannot mutate the operation because durable workflow ownership "
+                            "belongs to another or unavailable run"
+                        ),
                         rule="service_lease_claim_forbidden",
                         details={
                             "operation_id": operation_id,
                             "run_id": state.principal.run_id,
+                            **guidance,
                         },
                     )
                 cycle_id = self._reclaimed_lease_cycle_id(

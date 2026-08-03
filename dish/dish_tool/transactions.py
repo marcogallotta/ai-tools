@@ -37,6 +37,12 @@ def _rollback_connection(conn: sqlite3.Connection) -> None:
         conn.execute("ROLLBACK")
 
 
+def begin_immediate(conn: sqlite3.Connection) -> None:
+    """Begin an immediate SQLite transaction for explicit boundary owners."""
+
+    conn.execute("BEGIN IMMEDIATE")
+
+
 @contextlib.contextmanager
 def read_transaction(conn: sqlite3.Connection) -> Iterator[None]:
     """Own one stable deferred-read snapshot on a dedicated connection."""

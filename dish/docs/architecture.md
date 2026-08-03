@@ -205,6 +205,32 @@ non-completed abandonment) before dispatch, in the shared layer both the local a
 already-exact ID is never reinterpreted. `expire-lease`'s task GID/URL target and `recover-lease`
 (a path-parameter, service-only route) are unchanged and out of scope for this resolution.
 
+### Human administration is a product boundary
+
+`dish-admin` is Marco's operator interface, not an exposed service envelope.  On an interactive
+terminal it renders a short human explanation and the safe next action; `--json` preserves the
+canonical machine envelope and `--verbose` adds technical details.  `dish-admin inspect
+<TASK-OR-OPERATION>` is the read-only entry point for a blocked task.  It derives operations,
+leases, cycles, holds, abandonments, and exact bindings internally instead of asking Marco to
+interpret those records.
+
+Every agent-relayed admin action is built through `dish_tool.human_actions`.  The structured
+`human_action` is authoritative for command, fixed arguments, human input, effect, and
+after-success behavior.  Legacy `admin_command*` and directive fields are compatibility views of
+that same object; callers must not hand-build a second command string.  Generated commands are
+parser-tested.  A deterministic failure that requires Marco must return either one exact safe
+action or `dish-admin inspect`; it must not expose raw candidate IDs as a choice.
+
+Lease eligibility and mutation ownership remain distinct.  A fresh independent verifier does not
+inherit an already-open cycle owned by a dead run.  Such a run receives no `approve`/`reject`
+actions and is directed to the exact abandonment route.  `recover-lease` is only for the same
+durable run; it never transfers cycle ownership.
+
+Operation-bound, unused Marco authorizations survive exact abandonment succession by append-only
+inheritance onto the successor.  The inherited grant preserves task, field, typed before/after
+values, reason, and Marco provenance, records its source authorization and succession in audit,
+and remains single-use.  Consumed grants never transfer.
+
 ### Compatibility does not become a second engine
 
 The executable workflow supports the current Honest protocol/schema pair. Historical records may be

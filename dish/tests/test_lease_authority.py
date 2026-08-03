@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import shlex
+import uuid
+
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import LeaseManager, ServicePrincipal
@@ -91,6 +94,88 @@ def test_expired_recovery_releases_admin_and_original_run_may_reclaim(tmp_path):
     assert resumed["ok"]
     assert resumed["data"]["service_lease"] is None
 
+
+
+def test_fresh_run_cannot_see_terminal_actions_for_prior_owned_verification_cycle(tmp_path):
+    clock = Clock()
+    service, backend = _service(tmp_path, clock=clock, ttl=30)
+    constructor = _principal("action", "constructor-run")
+    started = _start(service, constructor)
+    operation_id = started["submission_id"]
+    prepared = service.execute_agent(
+        "prepare",
+        {
+            "agent": "gpt",
+            "model": "gpt-5.6-sol",
+            "submission_id": operation_id,
+            "file_text": TASK,
+        },
+        principal=constructor,
+    )
+    assert prepared["ok"]
+
+    verifier = _principal("action", "verifier-run")
+    started_verification = service.execute_agent(
+        "start",
+        {
+            "agent": "codex",
+            "task_gid": "t",
+            "kind": "verification",
+            "independence_attestation": "independent verification run",
+        },
+        principal=verifier,
+        request_id=str(uuid.uuid4()),
+    )
+    assert started_verification["ok"]
+    inspected = service.execute_agent(
+        "inspect",
+        {"agent": "codex", "submission_id": operation_id},
+        principal=verifier,
+    )
+    assert inspected["allowed_actions"] == ["approve", "reject"]
+
+    clock.advance(31)
+    released = service.recover_lease(
+        operation_id, _principal("admin", "admin-run"), reason="verifier ended"
+    )
+    assert released["ok"]
+
+    fresh = _principal("action", "fresh-verifier-run")
+    fresh_view = service.execute_agent(
+        "inspect",
+        {"agent": "gpt", "submission_id": operation_id},
+        principal=fresh,
+    )
+    assert fresh_view["allowed_actions"] == []
+    assert fresh_view["data"]["service_access"]["state"] == (
+        "owned_by_inactive_verifier_run"
+    )
+    assert fresh_view["data"]["required_admin_action"] == "abandon-operation"
+    argv = shlex.split(fresh_view["data"]["admin_command"])
+    assert argv[:3] == ["dish-admin", "abandon-operation", operation_id]
+    assert "--lease-id" in argv
+    assert "--reason" in argv
+
+    forbidden = service.execute_agent(
+        "reject",
+        {
+            "agent": "gpt",
+            "submission_id": operation_id,
+            "route": "large",
+            "reason": "material correction",
+            "file_text": TASK,
+        },
+        principal=fresh,
+        request_id=str(uuid.uuid4()),
+    )
+    assert forbidden["code"] == "AGENT_MISMATCH"
+    error = forbidden["errors"][0]
+    assert error["rule"] == "service_lease_claim_forbidden"
+    assert error["required_admin_action"] == "abandon-operation"
+    assert shlex.split(error["admin_command"])[:3] == [
+        "dish-admin", "abandon-operation", operation_id
+    ]
+    assert backend.writes == 1
 
 def test_authorization_does_not_take_or_replace_live_actor_lease(tmp_path):
     service, _backend = _service(tmp_path)

@@ -89,8 +89,8 @@ def test_blocked_abandonment_returns_exact_private_relay_and_fences_agents(tmp_p
     assert action["admin_command"] == (
         f"dish-admin reconcile-abandonment {abandonment_id}"
     )
-    assert "wait for confirmation" in action["relay_text"]
-    assert "Refresh the authoritative Dish action" in action["after_success"]["instruction"]
+    assert "wait for confirmation" in action["relay_text"].lower()
+    assert "Refresh Dish" in action["after_success"]["instruction"]
     view = app.operation_service.current.authoritative_view(source["operation_id"])
     assert view["legal_actions"] == []
     assert view["required_action"]["admin_command"] == action["admin_command"]
@@ -219,6 +219,8 @@ def test_cli_parses_abandonment_commands():
         )
     )
     assert abandon == {
+        "json": False,
+        "verbose": False,
         "command": "abandon-operation",
         "submission_id": "operation-id",
         "reason": "gone",
@@ -228,6 +230,8 @@ def test_cli_parses_abandonment_commands():
         build_parser().parse_args(["reconcile-abandonment", "abandonment-id"])
     )
     assert reconcile == {
+        "json": False,
+        "verbose": False,
         "command": "reconcile-abandonment",
         "abandonment_id": "abandonment-id",
     }

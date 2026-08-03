@@ -20,6 +20,7 @@ from .operation_execution import (
 )
 from .task_gateway import ExactTaskGateway
 from .workflow_policy import WorkflowSnapshot, legal_actions
+from .human_actions import exact_action, relay_text
 
 T = TypeVar("T")
 
@@ -474,13 +475,21 @@ class CurrentWorkflowService:
         facts["legal_actions"] = []
         facts["connected_action_available"] = False
         if abandonment["status"] in {"started", "blocked_manual_reconciliation"}:
-            command = (
-                f'dish-admin reconcile-abandonment {abandonment["abandonment_id"]}'
+            spec = exact_action(
+                kind="reconcile-abandonment",
+                command="reconcile-abandonment",
+                positional=(abandonment["abandonment_id"],),
+                summary="Continue a blocked abandonment reconciliation.",
+                effect="Reclassify the persisted abandonment and prepare its safe continuation.",
+                after_success={"instruction": "Refresh Dish and follow the returned continuation."},
             )
-            directive = (
-                f"Tell the human to run: {command}\n"
-                "Then wait for confirmation it succeeded before continuing. "
-                "Refresh the authoritative Dish action before doing anything else."
+            command = spec.shell_command()
+            directive = relay_text(
+                spec,
+                instruction=(
+                    "Wait for confirmation it succeeded, then refresh the authoritative Dish "
+                    "action before doing anything else."
+                ),
             )
             facts.update({
                 "recovery_required": True,
@@ -488,7 +497,7 @@ class CurrentWorkflowService:
                 "required_admin_action": "reconcile-abandonment",
                 "resolver": "Marco/admin reconcile-abandonment",
                 "continuation_surface": "private-admin",
-                "admin_command": command,
+                **spec.payload(),
                 "directive": directive,
                 "required_action": {
                     "surface": "private-admin",
@@ -496,7 +505,7 @@ class CurrentWorkflowService:
                     "arguments": {
                         "abandonment_id": abandonment["abandonment_id"]
                     },
-                    "admin_command": command,
+                    **spec.payload(),
                     "relay_text": directive,
                     "after_success": {
                         "start_new_operation": False,

@@ -67,11 +67,10 @@ def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path)
     assert good["data"]["continuation_surface"] == "private-admin"
     assert good["data"]["connected_action_available"] is False
     command = good["data"]["admin_command"]
-    assert command.startswith(
-        f'dish-admin supply-evidence {operation_id} --detail "<summarize the supplied evidence>" '
-        "--resume-status pending-verification"
-    )
     argv = shlex.split(command)
+    assert argv[:3] == ["dish-admin", "supply-evidence", operation_id]
+    assert argv[argv.index("--detail") + 1] == "<summarize the supplied evidence>"
+    assert argv[argv.index("--resume-status") + 1] == "pending-verification"
     assert argv[argv.index("--expected-task-gid") + 1] == "t"
     cycle_id = app.conn.execute(
         "SELECT cycle_id FROM verification_cycles WHERE operation_id = ? ORDER BY created_at DESC LIMIT 1",

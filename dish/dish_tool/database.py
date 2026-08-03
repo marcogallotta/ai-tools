@@ -16,6 +16,7 @@ from .database_schema import MIGRATIONS, migrate_database
 from .errors import DishRuleError
 from .execution_provenance import current_operation_execution_id
 from .models import ContentIdentity, OperationActors, agent_family, utc_now
+from .human_actions import PromptField, exact_action, relay_text, template_action
 from .transactions import immediate_transaction, savepoint_transaction
 
 
@@ -501,10 +502,15 @@ def create_operation(
             (task_gid,),
         ).fetchone()
         if abandonment is not None:
-            command = (
-                f"dish-admin reconcile-abandonment "
-                f"{abandonment['abandonment_id']}"
+            spec = exact_action(
+                kind="reconcile-abandonment",
+                command="reconcile-abandonment",
+                positional=(abandonment["abandonment_id"],),
+                summary="Continue the active abandonment reconciliation.",
+                effect="Settle the abandonment before another operation is opened.",
+                after_success={"instruction": "Refresh Dish before continuing."},
             )
+            command = spec.shell_command()
             raise DishRuleError(
                 "WRONG_STATE",
                 "task is fenced by an active permanent-run abandonment",
@@ -515,11 +521,13 @@ def create_operation(
                     "source_operation_id": abandonment["source_operation_id"],
                     "successor_operation_id": abandonment["successor_operation_id"],
                     "required_admin_action": "reconcile-abandonment",
-                    "admin_command": command,
-                    "directive": (
-                        f"Tell the human to run: {command}\n"
-                        "Then wait for confirmation it succeeded and refresh the authoritative "
-                        "Dish action before doing anything else."
+                    **spec.payload(),
+                    "directive": relay_text(
+                        spec,
+                        instruction=(
+                            "Wait for confirmation it succeeded, then refresh the authoritative "
+                            "Dish action before doing anything else."
+                        ),
                     ),
                 },
             )
@@ -1167,6 +1175,77 @@ def _insert_abandonment_successor_cycle(
     )
 
 
+def _inherit_unused_marco_authorizations_for_succession(
+    conn: sqlite3.Connection,
+    *,
+    spec: AbandonmentSuccessionSpec,
+    abandonment: Mapping[str, Any],
+    source: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Clone unused source-bound Marco grants onto the exact successor.
+
+    Operation-bound grants are immutable capabilities.  Abandonment succession
+    changes the operation identity without changing the task, candidate, or
+    authorized before/after fact.  Copying the still-unused grant preserves
+    Marco's authority while keeping the source record append-only and auditable.
+    """
+
+    rows = conn.execute(
+        """SELECT * FROM marco_authorizations
+             WHERE task_gid=? AND operation_id=? AND consumed_at IS NULL
+               AND (reserved_by_operation_id IS NULL OR reserved_by_operation_id=?)
+             ORDER BY created_at, authorization_id""",
+        (abandonment["task_gid"], source["operation_id"], source["operation_id"]),
+    ).fetchall()
+    inherited: list[str] = []
+    for row in rows:
+        authorization_id = str(uuid.uuid4())
+        conn.execute(
+            """INSERT INTO marco_authorizations(
+                   authorization_id,task_gid,operation_id,field_name,before_json,
+                   after_json,reason,actor_run_id,created_at
+               ) VALUES (?,?,?,?,?,?,?,?,?)""",
+            (
+                authorization_id,
+                row["task_gid"],
+                spec.successor_operation_id,
+                row["field_name"],
+                row["before_json"],
+                row["after_json"],
+                row["reason"],
+                row["actor_run_id"],
+                spec.created_at,
+            ),
+        )
+        before = json.loads(row["before_json"])
+        after = json.loads(row["after_json"])
+        record_audit(
+            conn,
+            submission_id=None,
+            task_gid=row["task_gid"],
+            operation_id=spec.successor_operation_id,
+            event_type="marco.authorization",
+            actor_agent=None,
+            details={
+                "authorization_id": authorization_id,
+                "field": row["field_name"],
+                "reason": row["reason"],
+                "inherited_from_authorization_id": row["authorization_id"],
+                "succession_id": spec.succession_id,
+                "source_operation_id": source["operation_id"],
+            },
+            result_code="OK",
+            result_ok=True,
+            governed_kind="decision",
+            before_state={row["field_name"]: before},
+            after_state={row["field_name"]: after},
+            actor_run_id=row["actor_run_id"],
+            actor_source="abandonment-succession",
+        )
+        inherited.append(authorization_id)
+    return tuple(inherited)
+
+
 def _publish_abandonment_succession(
     conn: sqlite3.Connection,
     *,
@@ -1273,6 +1352,9 @@ def apply_operation_abandonment_succession_in_transaction(
     _insert_abandonment_successor_cycle(
         conn, spec=spec, abandonment=abandonment
     )
+    _inherit_unused_marco_authorizations_for_succession(
+        conn, spec=spec, abandonment=abandonment, source=source
+    )
     _publish_abandonment_succession(
         conn, spec=spec, abandonment=abandonment, source=source
     )
@@ -1350,7 +1432,15 @@ def claim_prepared_stage_successor_in_transaction(
             "expected_section_gid": row["expected_section_gid"],
             "actual_section_gid": live_section_gid,
         }
-        command = f'dish-admin reconcile-abandonment {row["abandonment_id"]}'
+        spec = exact_action(
+            kind="reconcile-abandonment",
+            command="reconcile-abandonment",
+            positional=(row["abandonment_id"],),
+            summary="Reconcile a prepared successor whose baseline changed before claim.",
+            effect="Reclassify the abandonment against the current live task before any agent continues.",
+            after_success={"instruction": "Refresh Dish and follow the returned continuation."},
+        )
+        command = spec.shell_command()
         blocked_result = {
             "abandonment_id": row["abandonment_id"],
             "classification": {
@@ -1363,11 +1453,10 @@ def claim_prepared_stage_successor_in_transaction(
                 "surface": "private-admin",
                 "command": "reconcile-abandonment",
                 "arguments": {"abandonment_id": row["abandonment_id"]},
-                "admin_command": command,
-                "relay_text": (
-                    f"Tell the human to run: {command}\n"
-                    "Then wait for confirmation it succeeded and refresh the "
-                    "authoritative Dish action."
+                **spec.payload(),
+                "relay_text": relay_text(
+                    spec,
+                    instruction="Wait for confirmation it succeeded, then refresh the authoritative Dish action.",
                 ),
                 "after_success": {
                     "start_new_operation": False,
@@ -1391,7 +1480,14 @@ def claim_prepared_stage_successor_in_transaction(
                 **drift,
                 "abandonment_id": row["abandonment_id"],
                 "required_admin_action": "reconcile-abandonment",
-                "admin_command": command,
+                **spec.payload(),
+                "relay_text": relay_text(
+                    spec,
+                    instruction=(
+                        "Wait for confirmation it succeeded, then refresh the "
+                        "authoritative Dish action."
+                    ),
+                ),
             },
         )
     prior_schema_version = row["schema_version"]
@@ -2301,11 +2397,51 @@ def reserve_marco_authorizations(
                 )
             row = candidates[0] if candidates else None
             if row is None:
+                spec = template_action(
+                    kind="authorize-governed-change",
+                    command="authorize-governed-change",
+                    positional=(operation_id,),
+                    options=(
+                        ("--field", change["field"]),
+                        ("--before", before_json),
+                        ("--after", after_json),
+                        ("--reason", "<why Marco approves this exact change>"),
+                    ),
+                    prompt_fields=(
+                        PromptField(
+                            "reason",
+                            "Why Marco approves this exact change",
+                            "<why Marco approves this exact change>",
+                        ),
+                    ),
+                    summary=f"Authorize the exact change to {change['field']}.",
+                    effect=(
+                        "Create one operation-bound authorization; it does not edit the task. "
+                        "The agent must retry the same candidate afterward."
+                    ),
+                    after_success={
+                        "agent_actions": ["retry the same candidate mutation"],
+                        "operation_id": operation_id,
+                    },
+                )
                 raise DishRuleError(
                     "VALIDATION_FAILED",
                     "candidate changes governed facts without persisted Marco authorization",
                     rule="governed_change_unauthorized",
-                    details={"field": change["field"]},
+                    details={
+                        "field": change["field"],
+                        "before": change["before"],
+                        "after": change["after"],
+                        "required_admin_action": "authorize-governed-change",
+                        **spec.payload(),
+                        "directive": relay_text(
+                            spec,
+                            instruction=(
+                                "Wait for Marco to confirm success, then retry the same candidate "
+                                "against this operation. Do not change the proposed values."
+                            ),
+                        ),
+                    },
                 )
             rows.append(row)
         now = utc_now()

@@ -33,6 +33,7 @@ from .models import (
     validate_rejection_reason,
 )
 from .results import error_envelope, result_envelope
+from .human_actions import PromptField, exact_action, relay_text, template_action
 from .validation_scope import scope_for_command
 
 
@@ -196,7 +197,15 @@ _HOLD_ADMIN_ACTIONS = {
 def _verification_hold_continuation(operation_id: str, view: Mapping[str, Any]) -> dict[str, Any]:
     """Describe the private release continuation for a Verification hold."""
 
-    command = f"dish-admin resolved {operation_id}"
+    spec = exact_action(
+        kind="release-verification-hold",
+        command="resolved",
+        positional=(operation_id,),
+        summary="Release the unchanged Verification hold.",
+        effect="Open a fresh Verification round without approving or editing the candidate.",
+        after_success={"agent_action": "start", "required_start_kind": "verification"},
+    )
+    command = spec.shell_command()
     return {
         "phase": str(view.get("phase") or ""),
         "submission_id": operation_id,
@@ -205,10 +214,13 @@ def _verification_hold_continuation(operation_id: str, view: Mapping[str, Any]) 
         "resolver": "Marco/admin resolved",
         "continuation_surface": "private-admin",
         "connected_action_available": False,
-        "admin_command": command,
-        "directive": (
-            "The Verification hold may be released without changing or approving the held "
-            f"candidate. Run `{command}`, then start a fresh Verification round on this same submission."
+        **spec.payload(),
+        "directive": relay_text(
+            spec,
+            instruction=(
+                "Wait for confirmation it succeeded, then start a fresh Verification round "
+                "on this same submission."
+            ),
         ),
         "after_resolution": {
             "legal_actions": ["verify"],
@@ -220,18 +232,29 @@ def _verification_hold_continuation(operation_id: str, view: Mapping[str, Any]) 
 def _repair_destination_continuation(operation_id: str, view: Mapping[str, Any]) -> dict[str, Any]:
     """Describe the reachable private continuation for a stuck destination move."""
 
-    command = (
-        f"dish-admin repair-destination {operation_id} "
-        '--destination-section-gid <SECTION_GID> --reason "<why this destination is correct>"'
+    spec = template_action(
+        kind="repair-destination",
+        command="repair-destination",
+        positional=(operation_id,),
+        options=(
+            ("--destination-section-gid", "<SECTION_GID>"),
+            ("--reason", "<why this destination is correct>"),
+        ),
+        prompt_fields=(
+            PromptField("destination_section_gid", "Destination section GID", "<SECTION_GID>"),
+            PromptField("reason", "Why this destination is correct", "<why this destination is correct>"),
+        ),
+        summary="Repair the recorded destination after a failed final move.",
+        effect="Change only the approved destination binding, then allow submit to resume.",
+        after_success={"agent_action": "submit"},
     )
-    directive = (
-        "The final destination move failed and cannot be retried automatically (see this task's "
-        "Status detail). Tell the human the correct destination section must be determined by "
-        "inspecting live section state, then ask them to run the following command after "
-        "replacing the section GID and reason placeholders:\n"
-        f"{command}\n"
-        "Then wait for confirmation it succeeded before continuing — do not start a new "
-        "operation; resume this same submission with `submit`."
+    command = spec.shell_command()
+    directive = relay_text(
+        spec,
+        instruction=(
+            "Wait for confirmation it succeeded; do not start a new operation. Resume this "
+            "same submission with `submit`."
+        ),
     )
     return {
         "phase": str(view.get("phase") or ""),
@@ -241,7 +264,7 @@ def _repair_destination_continuation(operation_id: str, view: Mapping[str, Any])
         "resolver": "Marco/admin repair-destination",
         "continuation_surface": "private-admin",
         "connected_action_available": False,
-        "admin_command": command,
+        **spec.payload(),
         "directive": directive,
         "after_resolution": {"legal_actions": ["submit"], "phase": "await_submission"},
     }
@@ -306,13 +329,40 @@ def _evidence_hold_continuation(
         }
 
     op = conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
-    command = f'dish-admin {admin_action} {operation_id} --detail "{routes["detail_placeholder"]}"'
+    options: list[tuple[str, object | None]] = [
+        ("--detail", routes["detail_placeholder"]),
+    ]
     if resume_status:
-        command += f" --resume-status {resume_status}"
+        options.append(("--resume-status", resume_status))
     if op is not None:
-        command += f" --expected-task-gid {op['task_gid']}"
+        options.append(("--expected-task-gid", op["task_gid"]))
     if cycle is not None:
-        command += f" --expected-cycle-id {cycle['cycle_id']} --expected-hold-identity {cycle['hold_identity']}"
+        options.extend((
+            ("--expected-cycle-id", cycle["cycle_id"]),
+            ("--expected-hold-identity", cycle["hold_identity"]),
+        ))
+    spec = template_action(
+        kind=admin_action,
+        command=admin_action,
+        positional=(operation_id,),
+        options=tuple(options),
+        prompt_fields=(
+            PromptField("detail", "Decision or evidence detail", routes["detail_placeholder"]),
+        ),
+        summary=(
+            "Record Marco's binding decision and release the hold."
+            if admin_action == "record-human-decision"
+            else "Record Marco-supplied evidence and release the hold."
+        ),
+        effect=(
+            "Record the authenticated decision and release the hold; this does not edit "
+            "or authorize governed fields."
+            if admin_action == "record-human-decision"
+            else "Record the supplied evidence, release the hold, and resume the operation."
+        ),
+        after_success=after_resolution,
+    )
+    command = spec.shell_command()
     next_action = after_resolution["legal_actions"][0] if after_resolution["legal_actions"] else None
     resume_clause = f" with `{next_action}`." if next_action else "."
     if admin_action == "record-human-decision":
@@ -362,9 +412,7 @@ def _evidence_hold_continuation(
         "resolver": f"Marco/admin {admin_action}",
         "continuation_surface": "private-admin",
         "connected_action_available": False,
-        "admin_command": command,
-        "admin_command_is_template": True,
-        "admin_command_template": command,
+        **spec.payload(),
         "resolution_effect": resolution_effect,
         "directive": directive,
         "after_resolution": after_resolution,
@@ -474,8 +522,17 @@ class DishApplication:
                 if exc.details.get(key):
                     result.setdefault("data", {})[key] = exc.details[key]
             if exc.rule != "open_operation_exists":
-                for key in ("admin_command", "directive"):
-                    if exc.details.get(key):
+                for key in (
+                    "admin_command",
+                    "admin_command_is_template",
+                    "admin_command_template",
+                    "human_action",
+                    "directive",
+                    "continuation_surface",
+                    "connected_action_available",
+                    "after_resolution",
+                ):
+                    if key in exc.details and exc.details.get(key) is not None:
                         result.setdefault("data", {})[key] = exc.details[key]
             if exc.rule == "planning_handoff_requires_initial":
                 result["allowed_actions"] = ["start"]
@@ -792,10 +849,25 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
     diag = diagnostics_for(live, release)
     if kind == "planning":
         if live.completed:
-            reopen_command = (
-                f'dish-admin reopen-planning {task_gid} '
-                '--reason "<summarize why the task must be reopened>"'
+            spec = template_action(
+                kind="reopen-planning",
+                command="reopen-planning",
+                positional=(task_gid,),
+                options=(("--reason", "<why this completed task must be reopened>"),),
+                prompt_fields=(
+                    PromptField(
+                        "reason",
+                        "Why this completed task must be reopened",
+                        "<why this completed task must be reopened>",
+                    ),
+                ),
+                summary="Reopen the completed task for a new Planning operation.",
+                effect="Make the task eligible for Planning without creating a replacement task.",
+                after_success={
+                    "agent_actions": ["retry start with kind=planning using a fresh request ID"]
+                },
             )
+            reopen_command = spec.shell_command()
             raise DishRuleError(
                 "WRONG_STATE",
                 "completed tasks require Marco to reopen them before Planning",
@@ -803,16 +875,18 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
                 details={
                     "required_admin_action": "reopen-planning",
                     "resolver": _admin_resolver("reopen-planning"),
-                    "admin_command": reopen_command,
+                    **spec.payload(),
                     "legal_next_step": (
                         "Marco/admin runs reopen-planning with a reason; after it succeeds, "
                         "retry start with kind=planning using a fresh client.request_id"
                     ),
-                    "directive": (
-                        f"Tell the human to run: {reopen_command}\n"
-                        "Then wait for confirmation it succeeded before continuing — retry "
-                        "start with kind=planning using a fresh client.request_id; do not "
-                        "create a replacement operation."
+                    "directive": relay_text(
+                        spec,
+                        instruction=(
+                            "Wait for confirmation it succeeded, then retry start with "
+                            "kind=planning using a fresh client.request_id. Do not create a "
+                            "replacement operation."
+                        ),
                     ),
                 },
             )
@@ -910,7 +984,6 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
                 not successor_operation_id
                 or exc.details.get("abandonment_status") != "awaiting_successor_claim"
             ):
-                admin_command = exc.details.get("admin_command")
                 raise DishRuleError(
                     exc.code,
                     str(exc),
@@ -920,11 +993,6 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
                         **exc.details,
                         "resolver": _admin_resolver(
                             exc.details.get("required_admin_action")
-                        ),
-                        "directive": (
-                            f"Tell the human to run: {admin_command}\n"
-                            "Then wait for confirmation it succeeded before "
-                            "retrying start with a fresh client.request_id."
                         ),
                     },
                 ) from exc

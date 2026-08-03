@@ -147,3 +147,45 @@ def test_reject_cli_rejects_removed_compatibility_flags():
             assert exc.rule == "invalid_arguments"
         else:
             raise AssertionError(f"{flag} was accepted despite having no consumer")
+
+
+class HumanAdminClient:
+    def execute(self, command, **_arguments):
+        assert command == "holds"
+        return {
+            "ok": True,
+            "command": "holds",
+            "code": "OK",
+            "task_gid": None,
+            "submission_id": None,
+            "state": "ok",
+            "retryable": False,
+            "allowed_actions": [],
+            "data": {"count": 0, "holds": []},
+            "errors": [],
+        }
+
+
+def test_admin_cli_defaults_to_human_output_on_a_terminal(monkeypatch, capsys):
+    monkeypatch.setattr(admin_cli.sys.stdout, "isatty", lambda: True)
+
+    status = admin_cli.main(["holds"], application=HumanAdminClient())
+
+    output = capsys.readouterr().out
+    assert status == 0
+    assert "Environment: PROD" in output
+    assert "Open holds: 0" in output
+    assert not output.lstrip().startswith("{")
+
+
+def test_admin_cli_json_flag_preserves_machine_envelope_on_a_terminal(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(admin_cli.sys.stdout, "isatty", lambda: True)
+
+    status = admin_cli.main(["holds", "--json"], application=HumanAdminClient())
+
+    output = json.loads(capsys.readouterr().out)
+    assert status == 0
+    assert output["command"] == "holds"
+    assert output["data"]["count"] == 0

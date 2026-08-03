@@ -115,6 +115,10 @@ Add an operating instruction with all of these requirements:
 - `pending-human-review` is only for a durable, scoped decision future runs must preserve, per the
   protocol's eligibility test — not any question Marco could answer. Resolve routine clarification,
   agent-owned correction, and the brief's settled fields (e.g. `Role`) directly instead.
+- When Dish returns `human_action`, treat it as the authoritative Marco instruction. Relay its
+  summary, effect, required input, and rendered command exactly. Do not rebuild a command from raw
+  operation, cycle, hold, lease, or identity fields. If Dish returns `required_admin_action:
+  inspect`, tell Marco to run the exact `dish-admin inspect` command and wait for the result.
 - `record-human-decision` only records the decision and releases the hold; it never mutates or
   authorizes `Exemptions`/`Locks`/other governed fields. Give Marco complete decision wording, not
   the placeholder. If the decision requires a governed-field change, say so and give the separate
@@ -140,7 +144,7 @@ a fresh `client.request_id`. Do not supply the operation UUID as a top-level or 
 handoff may release the actor lease while leaving
 the task operation active; follow the returned actions rather than renewing after handoff.
 
-If a lease expires, stop. If the same chat/run will continue, only Marco may use `dish-admin recover-lease`; the GPT must not change run identity to bypass ownership. If the original chat/run is permanently unavailable, tell Marco to use the exact `dish-admin abandon-operation` or `reconcile-abandonment` command returned by Dish. Relay the command exactly, wait for confirmation it succeeded, then refresh the authoritative Dish action and follow the exact continuation. Never invent a replacement operation or target.
+If a lease expires, stop. `recover-lease` is only for the same durable chat/run; it never transfers an open Verification cycle to a fresh run. A fresh run must not act merely because semantic `current_run.eligible` is true. Follow `service_access` and `allowed_actions`: when ownership belongs to an unavailable run, Dish suppresses `approve`/`reject` and returns an exact `abandon-operation` or `dish-admin inspect` action. Relay it exactly, wait for confirmation, then refresh the authoritative Dish action. Never invent a replacement operation, lease ID, or target.
 
 ## Preview gate
 

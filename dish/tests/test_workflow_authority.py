@@ -1,3 +1,4 @@
+import shlex
 import pytest
 
 from dish_tool.admin import DishAdminApplication
@@ -188,7 +189,19 @@ def test_post_planning_priors_change_requires_exact_marco_authorization(tmp_path
         material_classification="non-material",
     )
     assert blocked["code"] == "VALIDATION_FAILED"
-    assert blocked["errors"][0]["rule"] == "governed_change_unauthorized"
+    error = blocked["errors"][0]
+    assert error["rule"] == "governed_change_unauthorized"
+    assert error["required_admin_action"] == "authorize-governed-change"
+    argv = shlex.split(error["admin_command"])
+    assert argv[:3] == [
+        "dish-admin", "authorize-governed-change", started["submission_id"]
+    ]
+    assert argv[argv.index("--field") + 1] == "Priors"
+    assert argv[argv.index("--before") + 1] == '"None"'
+    assert argv[argv.index("--after") + 1] == '"Earlier steamed route was too soft"'
+    assert error["human_action"]["effect"].startswith(
+        "Create one operation-bound authorization"
+    )
 
     admin = DishAdminApplication(
         app.conn, backend=backend, release_loader=lambda: app._load_release("verification")

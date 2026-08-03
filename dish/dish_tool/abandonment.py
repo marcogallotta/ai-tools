@@ -32,6 +32,7 @@ from .database import (
 from .errors import DishRuleError
 from .hold_resolution import resolve_preconstruction_hold_to_successor
 from .models import SectionRegistry, utc_now
+from .human_actions import exact_action, relay_text
 from .transactions import immediate_transaction
 from .task_store import LiveTask, move_exact, read_complete_task, write_exact_content
 
@@ -942,7 +943,15 @@ def _post_succession_block_result(
     reason: str,
     details: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    command = f'dish-admin reconcile-abandonment {abandonment["abandonment_id"]}'
+    spec = exact_action(
+        kind="reconcile-abandonment",
+        command="reconcile-abandonment",
+        positional=(abandonment["abandonment_id"],),
+        summary="Continue a blocked abandonment reconciliation.",
+        effect="Reclassify the persisted abandonment and prepare the safe continuation.",
+        after_success={"instruction": "Refresh Dish and follow the returned continuation."},
+    )
+    command = spec.shell_command()
     return {
         "abandonment_id": abandonment["abandonment_id"],
         "classification": {
@@ -960,11 +969,10 @@ def _post_succession_block_result(
             "surface": "private-admin",
             "command": "reconcile-abandonment",
             "arguments": {"abandonment_id": abandonment["abandonment_id"]},
-            "admin_command": command,
-            "relay_text": (
-                f"Tell the human to run: {command}\n"
-                "Then wait for confirmation it succeeded and refresh the "
-                "authoritative Dish action."
+            **spec.payload(),
+            "relay_text": relay_text(
+                spec,
+                instruction="Wait for confirmation it succeeded, then refresh the authoritative Dish action.",
             ),
             "after_success": {
                 "start_new_operation": False,

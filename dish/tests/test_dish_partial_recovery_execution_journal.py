@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import threading
 from pathlib import Path
 
@@ -467,11 +468,17 @@ def test_dead_claim_with_local_state_change_requires_recover_without_pending_ste
             )
         assert blocked.value.rule == "operation_mutation_recovery_required"
         assert blocked.value.details["required_admin_action"] == "recover"
-        assert blocked.value.details["admin_command"] == (
-            f"dish-admin recover {operation_id} --outcome <inspect|not-applied|applied> "
-            '--reason "<summarize what the live reread showed>"'
-        )
-        assert "Tell the human to run the following command" in blocked.value.details["directive"]
+        assert shlex.split(blocked.value.details["admin_command"]) == [
+            "dish-admin",
+            "recover",
+            operation_id,
+            "--outcome",
+            "<inspect|not-applied|applied>",
+            "--reason",
+            "<summarize what the live reread showed>",
+        ]
+        assert "Tell Marco" in blocked.value.details["directive"]
+        assert blocked.value.details["admin_command"] in blocked.value.details["directive"]
 
         recovery_claim = claim_operation_execution(
             application.conn,

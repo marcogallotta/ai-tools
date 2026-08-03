@@ -168,3 +168,80 @@ def test_supply_evidence_help_stays_route_specific(capsys):
         parser.parse_args(["supply-evidence", "--help"])
     help_text = capsys.readouterr().out
     assert "governed" not in help_text
+
+
+def test_recover_parser_accepts_generated_inspect_outcome():
+    operation_id = str(uuid.uuid4())
+    parsed = build_parser().parse_args(
+        [
+            "recover",
+            operation_id,
+            "--outcome",
+            "inspect",
+            "--reason",
+            "fresh live reread required",
+        ]
+    )
+    assert parsed.outcome == "inspect"
+
+
+def test_admin_inspect_is_a_first_class_human_command():
+    operation_id = str(uuid.uuid4())
+    parsed = build_parser().parse_args(["inspect", operation_id])
+    assert parsed.command == "inspect"
+    assert parsed.submission_id == operation_id
+
+
+def test_human_renderer_surfaces_recovery_actions_from_errors():
+    from dish_tool.admin_human import render_admin_result
+
+    result = {
+        "ok": False,
+        "command": "authorize-governed-change",
+        "code": "VALIDATION_FAILED",
+        "task_gid": "121",
+        "submission_id": "operation-1",
+        "state": "open",
+        "retryable": True,
+        "allowed_actions": [],
+        "data": {"message": "authorization required"},
+        "errors": [
+            {
+                "rule": "governed_change_unauthorized",
+                "human_action": {
+                    "kind": "authorize-governed-change",
+                    "summary": "Authorize the exact Exemptions change.",
+                    "effect": "Create one authorization without editing the task.",
+                    "shell_command": "dish-admin authorize-governed-change operation-1 --field Exemptions",
+                },
+            }
+        ],
+    }
+    rendered = render_admin_result(result, profile="prod")
+    assert "Could not authorize-governed-change" in rendered
+    assert "Authorize the exact Exemptions change." in rendered
+    assert "dish-admin authorize-governed-change operation-1" in rendered
+    assert '"errors"' not in rendered
+
+
+def test_human_renderer_explains_authorization_success_without_claiming_a_write():
+    from dish_tool.admin_human import render_admin_result
+
+    result = {
+        "ok": True,
+        "command": "authorize-governed-change",
+        "code": "OK",
+        "task_gid": "121",
+        "submission_id": "operation-1",
+        "state": "open",
+        "retryable": False,
+        "allowed_actions": [],
+        "data": {"field": "Exemptions"},
+        "errors": [],
+    }
+
+    rendered = render_admin_result(result, profile="prod")
+
+    assert "Authorization recorded" in rendered
+    assert "task itself was not changed" in rendered
+    assert "retry the same exact candidate" in rendered

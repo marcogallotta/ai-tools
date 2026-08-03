@@ -422,6 +422,43 @@ During a fresh initial Research operation, `reject --route evidence|human-review
 - Approval never implies final movement. Planning and Verification handoffs use their own movement purposes; only a confirmed `destination_submission` attempt satisfies final submission movement.
 - A final destination failure leaves approved content intact in recoverable `ready_move_failed` state. When live evidence proves the move was not applied, unchanged `submit` is the only legal retry. When the destination is unresolved or illegal, the agent receives no mutation action and `data.required_admin_action: repair-destination`; Marco runs `dish-admin repair-destination OPERATION_ID --destination-section-gid GID --reason TEXT`. The command validates the live section, changes only `Planning brief / Destination section`, preserves the immutable approved identity, records a linked repaired identity, and returns `submit`. The later `submit` uses that repaired identity and must not repeat the content write or approval.
 
+## Human admin response contract
+
+`dish-admin` defaults to human-readable output when stdout is an interactive terminal.  Use
+`--json` for the canonical service envelope and `--verbose` to include rule IDs and the raw
+envelope beneath the human explanation.  Output flags may appear before or after the subcommand.
+
+Start blocked-task diagnosis with:
+
+```sh
+dish-admin inspect TASK_GID_OR_OPERATION_ID
+```
+
+The result states what the task is waiting for, who owns it, and the safe action Marco can take.
+It may return a command template only when Marco must supply decision or reason text.  Agents relay
+the returned `human_action` and its rendered command exactly; they do not reconstruct flags from
+cycle, hold, lease, or identity fields.
+
+A recovery-bearing result exposes one structured `human_action` with: command and fixed bindings,
+required human input, summary, exact effect, and after-success instruction.  Compatibility fields
+`admin_command`, `admin_command_is_template`, and `admin_command_template` describe the same action.
+Generated commands must parse on the current `dish-admin` CLI.  When exact recovery cannot be
+chosen safely, the response directs Marco to `dish-admin inspect` rather than listing internal IDs
+for manual selection.
+
+For leases:
+
+- `recover-lease` is valid only when the same durable agent run will continue;
+- another run never receives `recover-lease` as ownership transfer;
+- an open Verification cycle bound to an unavailable run exposes no `approve` or `reject`;
+- `inspect` returns the exact `abandon-operation --lease-id ...` route when one is provable.
+
+A governed-change rejection includes the exact field, typed before and after values, and a complete
+`authorize-governed-change` command template.  Authorization creates permission only; it does not
+edit the task.  The agent retries the unchanged candidate after Marco confirms success.  An unused
+operation-bound authorization is inherited by an exact abandonment successor and does not need to
+be granted again.
+
 ## Troubleshooting checklist
 
 1. Save the complete JSON result and process exit status.

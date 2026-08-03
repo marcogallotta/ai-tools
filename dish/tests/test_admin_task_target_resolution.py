@@ -12,15 +12,17 @@ from dish_service.http import build_server
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.admin import DishAdminApplication
 from dish_tool.database import (
+    complete_operation_step,
     confirm_task_content,
     create_abandonment_attempt_in_transaction,
     create_operation,
+    declare_operation_step,
 )
 from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
 from tests.support.thread_teardown import join_thread, start_server_thread, stop_server
-from tests.support.abandonment import Backend
+from tests.support.abandonment import Backend, _source
 from tests.support.abandonment_admin import _released_actor_lease
 from tests.support.service_foundation import _release_loader
 
@@ -238,3 +240,50 @@ def test_resolve_admin_operation_target_passes_through_exact_operation_id():
     from dish_tool.database import resolve_admin_operation_target
 
     assert resolve_admin_operation_target(conn, source["operation_id"]) == source["operation_id"]
+
+
+def test_admin_inspect_resolves_task_gid_and_explains_current_operation():
+    conn = initialize_database(":memory:")
+    backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
+    source = _numeric_task_source(conn, backend)
+    app = DishAdminApplication(conn, backend=backend)
+
+    result = app.execute("inspect", submission_id=_NUMERIC_TASK_GID)
+
+    assert result["ok"]
+    assert result["submission_id"] == source["operation_id"]
+    assert result["task_gid"] == _NUMERIC_TASK_GID
+    assert result["data"]["task_title"] == backend.title
+    assert result["data"]["problem"]
+    assert isinstance(result["data"]["human_actions"], list)
+
+
+def test_admin_inspect_prioritizes_hold_resolution_over_historical_lease():
+    conn = initialize_database(":memory:")
+    backend = Backend(section="rq")
+    source = _source(conn, backend, kind="initial", phase="held_human")
+    declare_operation_step(
+        conn,
+        source["operation_id"],
+        "research_preconstruction_hold",
+        {
+            "route": "human-review",
+            "resume_status": "pending-research",
+            "candidate_content_existed": False,
+        },
+    )
+    complete_operation_step(
+        conn, source["operation_id"], "research_preconstruction_hold"
+    )
+    _released_actor_lease(conn, source["operation_id"])
+
+    result = DishAdminApplication(conn, backend=backend).execute(
+        "inspect", submission_id=source["operation_id"]
+    )
+
+    assert result["ok"], result
+    assert result["data"]["agent_actions_now"] == []
+    actions = result["data"]["human_actions"]
+    assert len(actions) == 1
+    assert actions[0]["command"] == "record-human-decision"
+    assert "abandon-operation" not in actions[0]["shell_command"]

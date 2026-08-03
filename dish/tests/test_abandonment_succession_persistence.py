@@ -16,6 +16,8 @@ from dish_tool.database import (
     create_operation,
     create_verification_cycle,
     declare_operation_step,
+    record_marco_authorization,
+    reserve_marco_authorizations,
 )
 from dish_tool.database_initialization import initialize_database
 from dish_tool.database_schema import (
@@ -93,6 +95,78 @@ def test_clean_succession_is_one_atomic_source_successor_baseline_transition():
     assert succession["abandonment_id"] == abandonment["abandonment_id"]
     assert released["released_at"] is not None
     assert released["release_reason"] == "stale actor released"
+
+def test_succession_inherits_unused_operation_bound_marco_authorization():
+    conn = initialize_database(":memory:")
+    operation, lease, _, source_version_id = _source(conn)
+    granted = record_marco_authorization(
+        conn,
+        task_gid=operation["task_gid"],
+        operation_id=operation["operation_id"],
+        field_name="Exemptions",
+        before="None",
+        after="[nutrition-protein] [nutrition-kcal] — controlled tasting repeat",
+        reason="Marco approved the controlled tasting exemptions",
+        actor_run_id="marco-run",
+    )
+    _start_abandonment(conn, operation=operation, lease=lease)
+
+    conn.execute("BEGIN IMMEDIATE")
+    _, successor, _ = apply_operation_abandonment_succession_in_transaction(
+        conn,
+        AbandonmentSuccessionSpec(
+            abandonment_id="abandonment-1",
+            succession_id="authorization-succession",
+            successor_operation_id="authorization-successor",
+            source_content_version_id=source_version_id,
+            successor_content_version_id="authorization-baseline",
+            successor_operation_kind="initial",
+            successor_phase="prepare_required",
+            successor_expected_section_gid="section-1",
+            successor_schema_version="2",
+            successor_claim_mode="stage_actor",
+            transition_reason="agent unavailable",
+            candidate_transfer_kind="restored_stage_baseline",
+        ),
+    )
+    conn.execute("COMMIT")
+
+    inherited = conn.execute(
+        """SELECT * FROM marco_authorizations
+             WHERE operation_id=? AND field_name='Exemptions'""",
+        (successor["operation_id"],),
+    ).fetchall()
+    assert len(inherited) == 1
+    assert inherited[0]["authorization_id"] != granted["authorization_id"]
+    assert inherited[0]["before_json"] == granted["before_json"]
+    assert inherited[0]["after_json"] == granted["after_json"]
+    audit = conn.execute(
+        """SELECT details,actor_provenance FROM audit_events
+             WHERE operation_id=? AND event_type='marco.authorization'""",
+        (successor["operation_id"],),
+    ).fetchone()
+    details = json.loads(audit["details"])
+    provenance = json.loads(audit["actor_provenance"])
+    assert details["inherited_from_authorization_id"] == granted["authorization_id"]
+    assert details["succession_id"] == "authorization-succession"
+    assert provenance["source"] == "abandonment-succession"
+
+    reserved = reserve_marco_authorizations(
+        conn,
+        task_gid=operation["task_gid"],
+        operation_id=successor["operation_id"],
+        changes=(
+            {
+                "field": "Exemptions",
+                "before": "None",
+                "after": "[nutrition-protein] [nutrition-kcal] — controlled tasting repeat",
+            },
+        ),
+    )
+    assert [row["authorization_id"] for row in reserved] == [
+        inherited[0]["authorization_id"]
+    ]
+
 def test_clean_restart_rejects_pending_steps_and_unresolved_effects():
     conn = initialize_database(":memory:")
     operation, lease, _, source_version_id = _source(conn)

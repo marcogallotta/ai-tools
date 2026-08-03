@@ -229,10 +229,12 @@ def test_post_signoff_non_material_request_is_forced_material_for_dish_candidate
     assert unauthorized["code"] == "VALIDATION_FAILED"
     assert unauthorized["retryable"] is True
     assert unauthorized["allowed_actions"] == ["prepare"]
-    assert unauthorized["errors"][0] == {
-        "rule": "governed_change_unauthorized",
-        "field": "Dish candidate",
-    }
+    error = unauthorized["errors"][0]
+    assert error["rule"] == "governed_change_unauthorized"
+    assert error["field"] == "Dish candidate"
+    assert error["before"] == "Test dish"
+    assert error["after"] == "Different dish"
+    assert error["required_admin_action"] == "authorize-governed-change"
 
     _authorize_dish_candidate(app, backend, started["submission_id"])
     prepared = app.execute(

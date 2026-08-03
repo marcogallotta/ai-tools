@@ -1,4 +1,4 @@
-"""JSON-only argparse surface for the environment-scoped ``dish-admin`` executable."""
+"""Human-first argparse surface for the environment-scoped ``dish-admin`` executable."""
 
 from __future__ import annotations
 
@@ -26,9 +26,10 @@ from dish_service.identifiers import require_asana_gid, require_dish_uuid
 from dish_service.task_urls import task_gid_from_url
 from .errors import DishRuleError
 from .results import error_envelope, exit_status
+from .admin_human import render_admin_result
 
-_ADMIN_COMMANDS = {"holds", "recover", "repair-destination", "discard", "abandon-operation", "reconcile-abandonment", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease", "expire-lease", "backup-create", "backup-restore"}
-_OPERATION_ADMIN_COMMANDS = {"recover", "repair-destination", "discard", "abandon-operation", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease"}
+_ADMIN_COMMANDS = {"inspect", "holds", "recover", "repair-destination", "discard", "abandon-operation", "reconcile-abandonment", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease", "expire-lease", "backup-create", "backup-restore"}
+_OPERATION_ADMIN_COMMANDS = {"inspect", "recover", "repair-destination", "discard", "abandon-operation", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease"}
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -49,6 +50,14 @@ def build_parser() -> JsonArgumentParser:
         ),
     )
     add_profile_argument(parser)
+    parser.add_argument(
+        "--json", action="store_true",
+        help="emit the raw machine-readable response instead of human terminal output",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="include technical rule and response details in human output",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("holds", help="list every currently open Evidence or Human Review hold")
@@ -58,6 +67,12 @@ def build_parser() -> JsonArgumentParser:
         "(a task GID/URL resolves to that task's open operation)"
     )
 
+    inspect_admin = subparsers.add_parser(
+        "inspect",
+        help="explain what a task is waiting on and show Marco's safe next actions",
+    )
+    inspect_admin.add_argument("submission_id", help=_submission_target_help)
+
     recover = subparsers.add_parser(
         "recover",
         help="reconcile an interrupted write/movement against a fresh live Asana reread",
@@ -66,7 +81,7 @@ def build_parser() -> JsonArgumentParser:
     recover.add_argument(
         "--outcome",
         required=True,
-        choices=("not-applied", "applied"),
+        choices=("inspect", "not-applied", "applied"),
         help="record only what the live reread proves; a contradictory outcome fails closed",
     )
     recover.add_argument("--reason", default="no reason given")
@@ -315,6 +330,42 @@ def _build_expire_lease_client(profile: str | None = None) -> DishAdminServiceCl
     )
 
 
+def _normalize_output_flags(arguments: Sequence[str]) -> list[str]:
+    """Allow global output flags before or after the subcommand."""
+
+    values = list(arguments)
+    flags = [flag for flag in ("--json", "--verbose") if flag in values]
+    if not flags:
+        return values
+    values = [token for token in values if token not in flags]
+    profile_prefix: list[str] = []
+    if "--profile" in values:
+        index = values.index("--profile")
+        if index + 1 < len(values):
+            profile_prefix = values[index : index + 2]
+            del values[index : index + 2]
+    return [*profile_prefix, *flags, *values]
+
+
+def _output_profile(arguments: Sequence[str]) -> str:
+    return profile_from_argv(arguments) or os.environ.get("DISH_PROFILE", "prod") or "prod"
+
+
+def _emit_result(result: dict[str, object], *, arguments: Sequence[str]) -> None:
+    force_json = "--json" in arguments or not sys.stdout.isatty()
+    if force_json:
+        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        return
+    print(
+        render_admin_result(
+            result,
+            profile=_output_profile(arguments),
+            verbose="--verbose" in arguments,
+        ),
+        end="",
+    )
+
+
 def _normalize_expire_target(target: str) -> tuple[str | None, str | None]:
     clean = str(target or "").strip()
     if clean.isdecimal():
@@ -328,7 +379,7 @@ def _run_expire_lease(
     arguments: Sequence[str], *, application: object | None
 ) -> int:
     try:
-        parsed = vars(build_parser().parse_args(list(arguments)))
+        parsed = vars(build_parser().parse_args(_normalize_output_flags(arguments)))
         lease_id, task_gid = _normalize_expire_target(parsed["target"])
         reason = parsed["reason"].strip()
         if not reason:
@@ -384,23 +435,28 @@ def _run_expire_lease(
             ),
             task_gid=locals().get("task_gid"),
         )
-    print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+    _emit_result(result, arguments=arguments)
     return exit_status(result["code"])
 
 
 def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
     argv = argv_without_profile(argv)
-    command = argv[0] if argv and not argv[0].startswith("-") else "unknown"
+    command_index = next(
+        (index for index, token in enumerate(argv) if token in _ADMIN_COMMANDS),
+        None,
+    )
+    command = "unknown" if command_index is None else argv[command_index]
+    command_argv = [] if command_index is None else argv[command_index:]
     submission_id = None
     task_gid = None
     if (
         command in _OPERATION_ADMIN_COMMANDS
-        and len(argv) > 1
-        and not argv[1].startswith("-")
+        and len(command_argv) > 1
+        and not command_argv[1].startswith("-")
     ):
-        submission_id = argv[1]
-    if command in {"migrate", "reopen-planning"} and len(argv) > 1 and not argv[1].startswith("-"):
-        task_gid = argv[1]
+        submission_id = command_argv[1]
+    if command in {"migrate", "reopen-planning"} and len(command_argv) > 1 and not command_argv[1].startswith("-"):
+        task_gid = command_argv[1]
     return {"command": command, "submission_id": submission_id, "task_gid": task_gid}
 
 
@@ -409,7 +465,7 @@ def main(
     *,
     application: DishAdminApplication | None = None,
 ) -> int:
-    arguments = list(sys.argv[1:] if argv is None else argv)
+    arguments = _normalize_output_flags(sys.argv[1:] if argv is None else argv)
     command_arguments = argv_without_profile(arguments)
 
     if "-h" in arguments or "--help" in arguments:
@@ -434,7 +490,7 @@ def main(
             task_gid=context["task_gid"],
             submission_id=context["submission_id"],
         )
-        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        _emit_result(result, arguments=arguments)
         return exit_status(result["code"])
     except Exception as exc:
         error = DishRuleError(
@@ -444,7 +500,7 @@ def main(
             details={"error_type": type(exc).__name__},
         )
         result = error_envelope(context["command"] or "unknown", error)
-        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        _emit_result(result, arguments=arguments)
         return exit_status(result["code"])
 
     try:
@@ -459,6 +515,8 @@ def main(
         else:
             command = parsed.pop("command")
             parsed.pop("profile", None)
+            parsed.pop("json", None)
+            parsed.pop("verbose", None)
             if command == "recover-lease":
                 method = getattr(app, "recover_lease", None)
                 if method is None:
@@ -539,7 +597,7 @@ def main(
             submission_id=context["submission_id"],
         )
     try:
-        print(json.dumps(result, sort_keys=True, separators=(",", ":")))
+        _emit_result(result, arguments=arguments)
         return exit_status(result["code"])
     finally:
         if owned_application:
