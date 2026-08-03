@@ -35,6 +35,14 @@ still track; it is not "entirely open."
   `migrations.py` (Alembic schema migration); no importer module, CLI, or script exists anywhere in
   the repository. "Final production import and reconciliation" below cannot run, and the runtime
   wiring rehearsal above cannot exercise it, until an importer is built.
+- **Deployment blocker**: neither worker has an executable local target either. `dish_service/__main__.py`
+  starts only the private and Action HTTP listeners; there is no projection-worker or
+  reconciliation-worker process, script, or CLI anywhere in the repository, and no corresponding
+  systemd unit in `deploy/systemd/` (only one unit per profile, for the service itself). Every
+  `Worker`-named reference found (`dish_pg/stage6_models.py`, `dish_pg/release.py`,
+  `dish_pg/cutover_control.py`, migration table definitions) is a data/schema reference, not runnable
+  code. The runtime wiring rehearsal above cannot exercise projection claim, settlement,
+  reconciliation, or worker restart/takeover until both workers are built.
 - Production-shaped rehearsal (migration, activation, fault-injection, backup, restore) against
   sanitized or copied production-shaped data.
 
