@@ -10,6 +10,7 @@ Run from `dish/frontend`:
 ```sh
 npm run build
 npm run dev
+npm run review
 npm run lint
 npm run schema:check
 npm run test:unit
@@ -17,6 +18,8 @@ npm run test:browser
 npm run screenshots
 npm run check
 ```
+
+`npm run review` creates a fresh fixture-only static build and serves the stable visual-review scenarios documented in `review-guide.md`. Review mode rejects backend and cross-origin browser requests.
 
 The implementation uses browser-native ES modules, Node's built-in unit-test runner, and a
 Playwright browser harness that drives the installed Chromium executable.
@@ -37,5 +40,5 @@ placement, completion, projection, or content-mutation authority.
 
 ## Current delivery status
 
-Delivery Stage 0 and fixture-backed Delivery Stage 1A–1D are implemented. Real authentication and
+Delivery Stage 0 and fixture-backed Delivery Stage 1A–1E are implemented. Real authentication and
 canonical-data integration remain intentionally absent and blocked by the governing readiness gates.

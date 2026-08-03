@@ -1,0 +1,6 @@
+{
+  "contractVersion": "dish-frontend-v1",
+  "fixtureBacked": true,
+  "networkMode": "fixture-only",
+  "reviewCatalogue": true
+}

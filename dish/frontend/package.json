@@ -12,6 +12,7 @@
     "test:unit": "node --test tests/unit/*.test.mjs",
     "test:browser": "npm run build && python3 tools/browser_harness.py test",
     "screenshots": "npm run build && python3 tools/browser_harness.py screenshots",
-    "check": "npm run format:check && npm run lint && npm run schema:check && npm run test:unit && npm run build"
+    "check": "npm run format:check && npm run lint && npm run schema:check && npm run test:unit && npm run build",
+    "review": "npm run build && node tools/dev-server.mjs"
   }
 }

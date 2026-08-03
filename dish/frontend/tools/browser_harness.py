@@ -20,6 +20,7 @@ STYLE_FILES = (
     "board.css",
     "detail.css",
     "notices.css",
+    "review.css",
 )
 IMPORT_RE = re.compile(r'^import\s+.*?\s+from\s+["\'](.+?)["\'];?\s*$', re.MULTILINE)
 
@@ -59,7 +60,7 @@ def module_bundle(entry: Path) -> str:
     return "\n".join(ordered)
 
 
-def prepare_page(page, view: str, task_id: str | None = None) -> None:
+def prepare_page(page, view: str, task_id: str | None = None, review_mode: bool = False) -> None:
     page.set_content('<main id="app" class="app-root" aria-live="polite"></main>')
     css = "\n".join((SRC / "styles" / name).read_text(encoding="utf-8") for name in STYLE_FILES)
     page.add_style_tag(content=css)
@@ -68,11 +69,11 @@ def prepare_page(page, view: str, task_id: str | None = None) -> None:
     if view == "login":
         page.evaluate("renderLoginShell(document.querySelector('#app'))")
     elif view in {"zero", "loading", "initial-error", "last-safe"}:
-        page.evaluate(f"renderFixturePrototype(document.querySelector('#app'), '{view}')")
+        page.evaluate(f"renderFixturePrototype(document.querySelector('#app'), '{view}', null, {{ reviewMode: {str(review_mode).lower()} }})")
     else:
         page.evaluate(
-            "taskId => renderFixturePrototype(document.querySelector('#app'), 'board', taskId)",
-            task_id,
+            "args => renderFixturePrototype(document.querySelector('#app'), args.scenario, args.taskId, { reviewMode: args.reviewMode })",
+            {"scenario": view if view == "extreme" else "board", "taskId": task_id, "reviewMode": review_mode},
         )
 
 
@@ -111,6 +112,11 @@ def assert_shells(browser) -> None:
     assert page.get_by_text("Refresh unavailable").is_visible()
     prepare_page(page, "zero")
     assert page.get_by_text("No active sections").is_visible()
+    prepare_page(page, "extreme", "task-extreme", review_mode=True)
+    assert page.get_by_role("navigation", name="Fixture review scenarios").is_visible()
+    assert page.get_by_role("dialog").is_visible()
+    blocked = page.evaluate("fetch('/api/board').then(() => false).catch(error => error.message.includes('blocks backend'))")
+    assert blocked
     page.close()
 
 
@@ -131,6 +137,8 @@ def capture_shells(browser) -> None:
         page.screenshot(path=SCREENSHOTS / f"stage-1c-{view}.png", full_page=True)
     prepare_page(page, "app")
     page.screenshot(path=SCREENSHOTS / "stage-1c-grouped-banners.png", full_page=True)
+    prepare_page(page, "extreme", "task-extreme", review_mode=True)
+    page.screenshot(path=SCREENSHOTS / "stage-1e-review-extreme.png", full_page=True)
     page.set_viewport_size({"width": 1024, "height": 768})
     prepare_page(page, "app", "task-biryani")
     page.screenshot(path=SCREENSHOTS / "stage-1d-minimum-viewport.png", full_page=True)
