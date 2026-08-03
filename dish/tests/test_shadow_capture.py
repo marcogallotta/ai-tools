@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 
 from dish_service.shadow_capture import LegacyShadowCapture, ShadowCaptureSettings
@@ -67,3 +68,37 @@ def test_unknown_command_and_legacy_exception_preserve_live_semantics(tmp_path):
     else:
         raise AssertionError("live exception was swallowed")
     assert capture.spool.get_by_source_identity("r5").state == "gap"
+
+
+def test_locked_spool_fails_open_without_live_path_stall(tmp_path):
+    db = tmp_path / "live.sqlite3"; _db(db)
+    capture = LegacyShadowCapture(
+        ShadowCaptureSettings(
+            "capture",
+            tmp_path / "spool.sqlite3",
+            tmp_path / "emergency",
+            "legacy-1",
+            busy_timeout_ms=25,
+        ),
+        db_path=db,
+    )
+    blocker = sqlite3.connect(capture.spool.path, isolation_level=None)
+    blocker.execute("PRAGMA journal_mode=WAL")
+    blocker.execute("BEGIN IMMEDIATE")
+    try:
+        expected = {"ok": True, "data": {"live": True}}
+        started = time.monotonic()
+        result = capture.execute(
+            command="start",
+            arguments={"task_gid": "t1"},
+            principal=None,
+            request_id="locked-spool",
+            call=lambda: expected,
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        blocker.rollback()
+        blocker.close()
+    assert result is expected
+    assert elapsed < 0.75
+    assert list((tmp_path / "emergency").glob("*.json"))

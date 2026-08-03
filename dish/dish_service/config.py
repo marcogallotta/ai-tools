@@ -36,6 +36,7 @@ class ServiceConfig:
     dark_launch_emergency_dir: Path | None = None
     dark_launch_source_generation: str = "legacy-sqlite"
     dark_launch_kill_switch_path: Path | None = None
+    dark_launch_busy_timeout_ms: int = 50
 
     def validate_runtime(self, *, require_action: bool = True) -> None:
         """Fail closed before listeners bind or startup reports healthy."""
@@ -106,6 +107,7 @@ class ServiceConfig:
             ("max_body_bytes", self.max_body_bytes),
             ("request_timeout_seconds", self.request_timeout_seconds),
             ("lease_ttl_seconds", self.lease_ttl_seconds),
+            ("dark_launch_busy_timeout_ms", self.dark_launch_busy_timeout_ms),
         ):
             if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise DishRuleError(
@@ -197,5 +199,8 @@ class ServiceConfig:
                 Path(os.environ["DISH_DARK_LAUNCH_KILL_SWITCH"]).expanduser()
                 if os.environ.get("DISH_DARK_LAUNCH_KILL_SWITCH")
                 else DB_PATH.parent / "dark-launch.disabled"
+            ),
+            dark_launch_busy_timeout_ms=int(
+                os.environ.get("DISH_DARK_LAUNCH_BUSY_TIMEOUT_MS", "50")
             ),
         )

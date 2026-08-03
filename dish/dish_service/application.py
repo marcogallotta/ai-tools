@@ -454,6 +454,7 @@ class DishService:
                 emergency_dir=config.dark_launch_emergency_dir or config.db_path.with_name("dark-launch-emergency"),
                 source_authority_generation=config.dark_launch_source_generation,
                 kill_switch_path=config.dark_launch_kill_switch_path,
+                busy_timeout_ms=config.dark_launch_busy_timeout_ms,
             ),
             db_path=config.db_path,
         )

@@ -378,6 +378,9 @@ read or write. Every outbox row carries an immutable ``live`` or ``shadow`` orig
 evaluator records only ``shadow`` rows, and projection workers exclude them unconditionally even if
 the shared epoch later enables external effects. Epoch effects still default disabled as a second,
 independent guard for ordinary live projection rows.
+Legacy capture initializes its non-authoritative WAL spool before request handling and uses a short,
+configurable SQLite busy timeout plus `synchronous=NORMAL`. Snapshot and spool contention therefore
+fail open quickly to emergency-gap evidence instead of inheriting the live request timeout.
 The same owner-only filesystem kill switch gates both legacy capture and shadow-worker draining;
 the worker exits cleanly before reading further spool entries while it is engaged. Shadow execution
 namespaces legacy request and run identities by baseline, registers one deterministic target

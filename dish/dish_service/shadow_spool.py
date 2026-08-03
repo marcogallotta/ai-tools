@@ -12,6 +12,7 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -125,20 +126,43 @@ CREATE INDEX IF NOT EXISTS shadow_capture_pending_idx
 
 
 class ShadowSpool:
-    def __init__(self, path: Path, *, busy_timeout_ms: int = 5000) -> None:
+    def __init__(self, path: Path, *, busy_timeout_ms: int = 50) -> None:
+        if busy_timeout_ms <= 0:
+            raise ValueError("busy_timeout_ms must be positive")
         self.path = Path(path).expanduser()
         self.busy_timeout_ms = busy_timeout_ms
+        self._initialize_lock = threading.Lock()
+        self._initialized = False
 
-    def _connect(self) -> sqlite3.Connection:
+    def _open(self) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(self.path), timeout=self.busy_timeout_ms / 1000, isolation_level=None)
+        conn = sqlite3.connect(
+            str(self.path), timeout=self.busy_timeout_ms / 1000, isolation_level=None
+        )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=FULL")
-        conn.executescript(_SCHEMA)
+        conn.execute("PRAGMA synchronous=NORMAL")
         return conn
+
+    def initialize(self) -> None:
+        """Create/upgrade the non-authoritative spool outside the live request path."""
+        if self._initialized:
+            return
+        with self._initialize_lock:
+            if self._initialized:
+                return
+            conn = self._open()
+            try:
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.executescript(_SCHEMA)
+            finally:
+                conn.close()
+            self._initialized = True
+
+    def _connect(self) -> sqlite3.Connection:
+        self.initialize()
+        return self._open()
 
     @staticmethod
     def _identity_payload(

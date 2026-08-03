@@ -30,7 +30,9 @@ should still remain `external_effects_enabled = false` as an independent operati
 
 ## Enable capture first
 
-1. Set `DISH_DARK_LAUNCH_MODE=capture` in the production legacy-service environment.
+1. Set `DISH_DARK_LAUNCH_MODE=capture` in the production legacy-service environment. Keep
+   `DISH_DARK_LAUNCH_BUSY_TIMEOUT_MS=50` unless host contention testing justifies another small,
+   positive value; capture must fail open well before the live request timeout.
 2. Restart only the legacy service and issue representative normal commands.
 3. Check local spool status before starting PostgreSQL execution:
 

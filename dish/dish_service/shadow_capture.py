@@ -52,6 +52,7 @@ def authoritative_snapshot(
     *,
     arguments: Mapping[str, Any],
     request_id: str | None,
+    busy_timeout_ms: int = 50,
 ) -> dict[str, Any]:
     """Capture a bounded SQLite-only authority snapshot for one command.
 
@@ -63,8 +64,9 @@ def authoritative_snapshot(
         arguments.get("submission_id") or arguments.get("operation_id") or ""
     ).strip() or None
     uri = f"file:{Path(db_path).expanduser().resolve()}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, timeout=5)
+    conn = sqlite3.connect(uri, uri=True, timeout=busy_timeout_ms / 1000)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout={busy_timeout_ms}")
     try:
         tables = {
             row[0]
@@ -117,6 +119,7 @@ class ShadowCaptureSettings:
     emergency_dir: Path
     source_authority_generation: str
     kill_switch_path: Path | None = None
+    busy_timeout_ms: int = 50
 
     @property
     def enabled(self) -> bool:
@@ -131,8 +134,15 @@ class LegacyShadowCapture:
     def __init__(self, settings: ShadowCaptureSettings, *, db_path: Path) -> None:
         self.settings = settings
         self.db_path = Path(db_path)
-        self.spool = ShadowSpool(settings.spool_path)
+        self.spool = ShadowSpool(
+            settings.spool_path, busy_timeout_ms=settings.busy_timeout_ms
+        )
         self.emergency = EmergencyGapWriter(settings.emergency_dir)
+        if settings.enabled:
+            try:
+                self.spool.initialize()
+            except BaseException:
+                LOGGER.exception("dark-launch spool initialization failed; capture remains fail-open")
 
     @staticmethod
     def _principal(principal: Any) -> dict[str, Any]:
@@ -186,7 +196,10 @@ class LegacyShadowCapture:
             if existing is not None and existing.state in {"complete", "gap", "delivered"}:
                 return call()
             pre_state = authoritative_snapshot(
-                self.db_path, arguments=arguments, request_id=request_id
+                self.db_path,
+                arguments=arguments,
+                request_id=request_id,
+                busy_timeout_ms=self.settings.busy_timeout_ms,
             )
             reservation = self.spool.reserve(
                 source_request_identity=identity,
@@ -222,7 +235,10 @@ class LegacyShadowCapture:
             raise
         try:
             post_state = authoritative_snapshot(
-                self.db_path, arguments=arguments, request_id=request_id
+                self.db_path,
+                arguments=arguments,
+                request_id=request_id,
+                busy_timeout_ms=self.settings.busy_timeout_ms,
             )
             effects = {
                 "legacy_result_sha256": hashlib.sha256(
