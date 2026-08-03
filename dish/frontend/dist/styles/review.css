@@ -3,10 +3,15 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
+  min-height: 2.75rem;
   padding: var(--space-2) var(--space-5);
   border-block-end: 1px solid #d6ad7c;
   background: #fff4e4;
   color: #613b06;
+}
+
+body[data-detail-open="true"] .application-shell > .review-toolbar {
+  padding-inline-end: calc(var(--panel-width) + var(--space-5));
 }
 
 .review-toolbar__identity {
@@ -17,25 +22,30 @@
 }
 
 .review-toolbar__identity strong {
-  font-size: 0.78rem;
+  flex: 0 0 auto;
+  font-size: 0.76rem;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
 
 .review-toolbar__identity span,
 .review-toolbar__field span {
-  font-size: 0.72rem;
+  overflow: hidden;
+  font-size: 0.7rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .review-toolbar__field {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: var(--space-2);
   font-weight: 700;
 }
 
 .review-toolbar select {
-  max-width: 18rem;
+  width: 13rem;
   min-height: 2rem;
   padding-inline: var(--space-2);
   border: 1px solid #c69a65;
@@ -44,7 +54,6 @@
   color: var(--color-ink);
 }
 
-.login-layout + .review-toolbar,
 .app-root > .review-toolbar {
   position: fixed;
   z-index: 30;

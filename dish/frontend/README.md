@@ -40,5 +40,5 @@ placement, completion, projection, or content-mutation authority.
 
 ## Current delivery status
 
-Delivery Stage 0 and fixture-backed Delivery Stage 1A–1E are implemented. Real authentication and
+Delivery Stage 0 and fixture-backed Delivery Stage 1A–1F are implemented. Real authentication and
 canonical-data integration remain intentionally absent and blocked by the governing readiness gates.

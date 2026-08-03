@@ -120,6 +120,39 @@ def assert_shells(browser) -> None:
     page.close()
 
 
+
+def assert_visual_resilience(browser) -> None:
+    for width, height in ((1024, 768), (1280, 800), (1440, 900), (1920, 1080)):
+        page = browser.new_page(viewport={"width": width, "height": height})
+        prepare_page(page, "extreme", "task-extreme", review_mode=True)
+        page.get_by_role("dialog").wait_for()
+        metrics = page.evaluate("""() => {
+          const panel = document.querySelector('.task-detail').getBoundingClientRect();
+          const select = document.querySelector('.review-toolbar select').getBoundingClientRect();
+          const notices = document.querySelector('.notice-stack');
+          const cards = document.querySelector('.board-column__cards');
+          return {
+            pageWidth: document.documentElement.scrollWidth,
+            pageHeight: document.documentElement.scrollHeight,
+            panelLeft: panel.left,
+            panelWidth: panel.width,
+            selectRight: select.right,
+            noticesClient: notices.clientHeight,
+            noticesScroll: notices.scrollHeight,
+            cardsClient: cards.clientHeight,
+            cardsScroll: cards.scrollHeight,
+          };
+        }""")
+        assert metrics["pageWidth"] <= width
+        assert metrics["pageHeight"] <= height
+        assert 400 <= metrics["panelWidth"] <= 500
+        assert metrics["selectRight"] <= metrics["panelLeft"]
+        assert metrics["noticesClient"] <= 216
+        assert metrics["noticesScroll"] >= metrics["noticesClient"]
+        assert metrics["cardsScroll"] >= metrics["cardsClient"]
+        page.close()
+
+
 def capture_shells(browser) -> None:
     SCREENSHOTS.mkdir(parents=True, exist_ok=True)
     page = browser.new_page(viewport={"width": 1440, "height": 900})
@@ -139,9 +172,12 @@ def capture_shells(browser) -> None:
     page.screenshot(path=SCREENSHOTS / "stage-1c-grouped-banners.png", full_page=True)
     prepare_page(page, "extreme", "task-extreme", review_mode=True)
     page.screenshot(path=SCREENSHOTS / "stage-1e-review-extreme.png", full_page=True)
+    page.screenshot(path=SCREENSHOTS / "stage-1f-polished-extreme.png", full_page=True)
     page.set_viewport_size({"width": 1024, "height": 768})
     prepare_page(page, "app", "task-biryani")
     page.screenshot(path=SCREENSHOTS / "stage-1d-minimum-viewport.png", full_page=True)
+    prepare_page(page, "extreme", "task-extreme", review_mode=True)
+    page.screenshot(path=SCREENSHOTS / "stage-1f-minimum-viewport.png", full_page=True)
     page.close()
 
 
@@ -158,7 +194,8 @@ def main() -> None:
         try:
             if args.mode == "test":
                 assert_shells(browser)
-                print("Playwright shell checks passed")
+                assert_visual_resilience(browser)
+                print("Playwright shell and visual-resilience checks passed")
             else:
                 capture_shells(browser)
                 print(f"Captured frontend screenshots in {SCREENSHOTS}")
