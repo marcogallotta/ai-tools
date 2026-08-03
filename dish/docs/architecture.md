@@ -244,7 +244,10 @@ contract bindings, governed project/section registries and aliases, stable Dish 
 immutable complete task documents and activations, and append-only membership, placement, and
 completion occurrences with validated current pointers. `CoreAuthorityService` may assemble an
 imported task only as one caller-owned transaction with exact import provenance; it fabricates no
-request or command execution.
+request or command execution. `dish_pg/importer.py` is the runnable one-shot importer CLI: it reads
+NDJSON source records and calls `CoreAuthorityService.import_task_document` once per record in its
+own transaction, so one failed record cannot hide a later valid one; import-run preparation and the
+idempotency check are injected callables rather than logic this module invents.
 
 Stage 3 adds the isolated workflow and concurrency authority through
 `0003_workflow_authority`, `stage3_models.py`, and `workflow.py`. It owns generation-bound runs,
@@ -291,6 +294,14 @@ matches block automation, and zero matches do not imply retry safety without a c
 Drift produces a service-owned reproject event rather than importing an external edit, and corpus
 reconciliation reports unknown external objects as blocking. No Stage 5 service performs network
 I/O or commits independently.
+
+`dish_pg/projection_worker.py` is the runnable projection-outbox worker: it owns transaction
+boundaries and the external call, driving `ProjectionService.claim_next`/`begin_attempt`/
+`record_observation_and_adjudicate` as three separately committed steps per event so a crash between
+any two leaves recoverable state, and never reimplements outbox claim/apply/adjudicate logic itself.
+A corresponding reconciliation-worker process (driving `start_reconciliation`/
+`record_reconciliation_item`/`complete_reconciliation`) does not exist yet; see
+`database-backend-imp.md` for that outstanding blocker.
 
 Stage 6 adds the offline release-candidate and cutover-control foundation through
 `0005_release_cutover`, `stage6_models.py`, the `release.py` transactional facade,

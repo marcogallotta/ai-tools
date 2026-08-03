@@ -37,6 +37,7 @@ class ProjectionClaim:
     aggregate_sequence: int
     event_type: str
     payload: Mapping[str, Any]
+    idempotency_key: str
 
 
 class SourceImportService:
@@ -911,6 +912,7 @@ class ProjectionService:
                     event.aggregate_sequence,
                     event.event_type,
                     dict(event.intent_payload),
+                    event.idempotency_key,
                 )
         return None
 
