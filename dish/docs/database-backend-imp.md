@@ -27,18 +27,14 @@ still track; it is not "entirely open."
 - Backup, restore, and PITR rehearsal against a disposable PostgreSQL instance, with measured
   (not inferred) RPO/RTO.
 - Crash/fault rehearsal at each durable checkpoint listed in §2 below.
-- Runtime wiring rehearsal: start the deployable service and both workers against a disposable
-  PostgreSQL target and prove cross-process behavior — projection claim, external-attempt
-  settlement, reconciliation, worker restart, and worker takeover — not just that each process
-  starts and connects in isolation.
-- The importer (`dish_pg/importer.py`), projection worker (`dish_pg/projection_worker.py`), and
-  reconciliation worker (`dish_pg/reconciliation_worker.py`) now exist and are each verified against
-  real PostgreSQL (`tests/postgresql/native/test_importer.py`,
+- Runtime wiring rehearsal (`database-backend-postgresql-test-plan.md` §3): the importer
+  (`dish_pg/importer.py`), projection worker (`dish_pg/projection_worker.py`), and reconciliation
+  worker (`dish_pg/reconciliation_worker.py`) now exist and are each verified against real
+  PostgreSQL (`tests/postgresql/native/test_importer.py`,
   `tests/postgresql/native/test_projection_worker.py`,
   `tests/postgresql/native/test_reconciliation_worker.py`), flake-checked clean. None has a systemd
   unit yet, and none has been exercised as a real separate OS process talking to another live
-  process — the runtime wiring rehearsal above still requires that, not just that each process
-  starts and connects in isolation.
+  process — that cross-process proof is what test plan §3 still requires.
 - Production-shaped rehearsal (migration, activation, fault-injection, backup, restore) against
   sanitized or copied production-shaped data.
 
@@ -79,7 +75,7 @@ executions, cutover admission, etc).
 ## 2. Transaction checkpoints for fault injection
 
 The outstanding crash/fault rehearsal must inject failures at these boundaries (referenced by
-`database-backend-postgresql-test-plan.md` Layer 3):
+`database-backend-postgresql-test-plan.md` §1):
 
 - before the authoritative commit of a local command (must expose none of the command bundle);
 - after authoritative commit but before response (replay must return the committed outcome);
