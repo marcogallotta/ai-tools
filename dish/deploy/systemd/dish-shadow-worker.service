@@ -1,0 +1,30 @@
+[Unit]
+Description=Dish PostgreSQL dark-launch shadow worker
+After=network-online.target dish-service-prod.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=marco
+WorkingDirectory=/home/marco/ai-tools/dish
+EnvironmentFile=/home/marco/.config/dish-service/dark-launch.env
+ExecStart=/home/marco/ai-tools/dish/.venv/bin/python -m dish_pg.shadow_worker --database-url ${DISH_PG_DATABASE_URL} --spool-path ${DISH_DARK_LAUNCH_SPOOL_PATH} --baseline-id ${DISH_DARK_LAUNCH_BASELINE_ID} --worker-id ${DISH_DARK_LAUNCH_WORKER_ID} --cursor-secret-file ${DISH_PG_CURSOR_SECRET_FILE} --comparator-release ${DISH_DARK_LAUNCH_COMPARATOR_RELEASE}
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=2min
+NoNewPrivileges=true
+UMask=0077
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/marco/.local/state/dish/prod
+
+[Install]
+WantedBy=multi-user.target

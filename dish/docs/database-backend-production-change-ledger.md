@@ -56,6 +56,13 @@ SQLite characterization, migration/recovery fixtures, command inventory, and tar
 updated in this worktree. Replace the `WORKTREE` baseline source marker with the final commit before
 release or cutover evidence is closed.
 
+
+The current dark-launch worktree adds a fail-open local completion capture, durable spool, explicit
+command-treatment registry, effect-disabled projection epochs, PostgreSQL shadow worker, status and
+kill-switch controls, and deterministic legacy-source export. Record each staged archive's final
+commit identifier here before selecting a dark-launch source release. These changes do not transfer
+production authority or enable Asana projection.
+
 ## Ongoing obligation
 
 This ledger must be extended for every further in-scope commit through the exact

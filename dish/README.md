@@ -50,6 +50,23 @@ Override `sqlalchemy.url` or supply a test configuration when the database is no
 `127.0.0.1:55432`. The Compose database is development/test state only; it is not a
 production authority or migration source.
 
+## PostgreSQL dark launch
+
+The dark launch mirrors completed legacy commands into PostgreSQL while SQLite/Asana remains the
+sole production authority. It consists of a local durable spool in `dish-service` and the separate
+`dish_pg.shadow_worker`; it does not reuse the projection or reconciliation workers and cannot call
+Asana. Start with `docs/database-backend-dark-launch-runbook.md`. Install
+`deploy/systemd/dish-shadow-worker.service` only after its owner-only environment file is populated.
+The projection epoch must remain external-effect disabled.
+
+Operator entry points:
+
+```sh
+scripts/dish-pg-export-legacy --help
+scripts/dish-pg-dark-launch --help
+.venv/bin/python -m dish_pg.shadow_worker --help
+```
+
 ## Service-host configuration
 
 Start from `deploy/systemd/service-test.env.example` and `service-prod.env.example`. Each instance

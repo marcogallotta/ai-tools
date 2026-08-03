@@ -367,8 +367,21 @@ backup/restore measurements or production-corpus evidence. Those exact environme
 Marco's bundle-bound approval are required inputs to the controlled runbook in
 `database-backend-stage6-runbook.md`.
 
+Dark-launch integration adds a one-way bridge without changing current authority. `dish_shadow.policy`
+owns command eligibility only; it does not duplicate workflow legality. The legacy service writes
+bounded SQLite-only pre/post snapshots and exact outcomes to `dish_service.shadow_spool`, with an
+owner-only emergency ledger and a filesystem kill switch. Capture failure never replaces the live
+SQLite/Asana result. `dish_pg.shadow_worker` is distinct from projection and reconciliation workers:
+it delivers spool envelopes to one explicit shadow baseline, executes only `execute` treatments
+through `PostgresCommandPort`, records capture-only work as an explicit gap, and performs no Asana
+read or write. Dark-launch projection epochs default to external effects disabled, and projection
+workers cannot claim their outbox events until a separate explicit effect-enable decision.
+`dish_pg.dark_launch` supplies baseline creation, bounded status, and capture enable/disable controls;
+`dish_pg.legacy_source` deterministically exports importer input from SQLite content heads plus a
+complete externally supplied location manifest.
+
 This remains an isolated non-production target. Current production transports and workflow modules
-still do not import `dish_pg`; Stage 5 projection records and adjudicates downstream intent, while
+still do not import `dish_pg`; the legacy process imports only the local capture/spool bridge, Stage 5 projection records and adjudicates downstream intent, while
 Stage 6 supplies cutover controls without opening production mutation authority. Production remains
 closed until the environment gates are executed and Marco explicitly approves the exact candidate.
 
