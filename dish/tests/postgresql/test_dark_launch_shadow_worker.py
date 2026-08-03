@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import uuid
+
+import pytest
 from sqlalchemy import select
 
 from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
-from dish_pg.shadow_worker import ShadowWorker
+from dish_pg.shadow_worker import (
+    ShadowIdentityMappingError,
+    ShadowWorker,
+    _translate_workflow_identifiers,
+)
 from dish_pg.transition import ShadowService
+from dish_pg.workflow import sha256_json
 from dish_service.shadow_spool import ShadowSpool
 from tests.support.postgresql.workflow import NOW, _next, workflow_db
 
@@ -160,3 +168,77 @@ def test_real_shadow_evaluator_tags_outbox_and_projection_claim_refuses_it(workf
             now=NOW,
             ttl=timedelta(minutes=2),
         ) is None
+
+
+def test_shadow_identifier_translation_uses_prior_comparison_bindings(workflow_db):
+    factory, ids, context, _task = workflow_db
+    source_operation, target_operation = uuid.uuid4(), uuid.uuid4()
+    source_lease, target_lease = uuid.uuid4(), uuid.uuid4()
+    with session_scope(factory) as session:
+        service = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = service.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        prior = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="start",
+            source_request_identity="source-start",
+            canonical_input={"command": "start", "arguments": {}},
+            source_outcome={
+                "submission_id": str(source_operation),
+                "data": {"operation_id": str(source_operation), "lease_id": str(source_lease)},
+            },
+            source_post_state={"phase": "research"},
+            rollout_sequence=1,
+            source_authority_generation="legacy-1",
+            captured_at=NOW,
+        )
+        target_result = {
+            "ok": True,
+            "command": "start",
+            "code": "OK",
+            "http_status": 200,
+            "data": {"operation_id": str(target_operation), "lease_id": str(target_lease)},
+            "retryable": False,
+        }
+        session.add(
+            tx.ShadowComparison(
+                comparison_id=_next(ids),
+                envelope_id=prior.envelope_id,
+                target_result=target_result,
+                target_result_sha256=sha256_json(target_result),
+                parity_class="mismatch",
+                differences=[],
+                comparator_release="test",
+                compared_at=NOW,
+            )
+        )
+        current = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="renew-lease",
+            source_request_identity="source-renew",
+            canonical_input={"command": "renew-lease", "arguments": {}},
+            source_outcome={"ok": True},
+            source_post_state={"phase": "research"},
+            rollout_sequence=2,
+            source_authority_generation="legacy-1",
+            captured_at=NOW,
+        )
+        translated = _translate_workflow_identifiers(
+            session,
+            current,
+            {"submission_id": str(source_operation), "lease_id": str(source_lease)},
+        )
+        assert translated == {
+            "submission_id": str(target_operation),
+            "lease_id": str(target_lease),
+        }
+        with pytest.raises(ShadowIdentityMappingError, match="no unique target operation"):
+            _translate_workflow_identifiers(
+                session,
+                current,
+                {"submission_id": str(uuid.uuid4())},
+            )

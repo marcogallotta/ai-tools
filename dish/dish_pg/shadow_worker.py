@@ -19,6 +19,8 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Mapping, Protocol
 
+from sqlalchemy import select
+
 from dish_service.shadow_spool import ShadowSpool, ShadowSpoolItem
 
 from . import stage3_models as wf
@@ -30,6 +32,30 @@ from .workflow import WorkflowAuthorityService
 
 LOGGER = logging.getLogger("dish.shadow_worker")
 _NAMESPACE = uuid.UUID("b40de1df-43e5-445c-9eed-c87f17d2b526")
+_IDENTIFIER_ROLES = {
+    "submission_id": ("operation_id", "operation"),
+    "operation_id": ("operation_id", "operation"),
+    "existing_submission_id": ("operation_id", "operation"),
+    "prepared_operation_id": ("successor_operation_id", "operation"),
+    "successor_operation_id": ("successor_operation_id", "operation"),
+    "lease_id": ("lease_id", "lease"),
+    "cycle_id": ("cycle_id", "verification_cycle"),
+    "verification_cycle_id": ("cycle_id", "verification_cycle"),
+    "new_cycle_id": ("cycle_id", "verification_cycle"),
+    "prepared_cycle_id": ("prepared_cycle_id", "verification_cycle"),
+    "intent_challenge_id": ("challenge_id", "planning_challenge"),
+    "challenge_id": ("challenge_id", "planning_challenge"),
+    "attempt_id": ("abandonment_id", "abandonment"),
+    "abandonment_id": ("abandonment_id", "abandonment"),
+    "requirement_id": ("requirement_id", "human_review_requirement"),
+    "hold_id": ("hold_id", "evidence_hold"),
+    "grant_id": ("grant_id", "authorization_grant"),
+}
+
+
+
+class ShadowIdentityMappingError(ValueError):
+    """A captured source authority identifier has no unique target binding."""
 
 
 def _utcnow() -> datetime:
@@ -105,6 +131,91 @@ def _ensure_shadow_run(
     )
 
 
+def _collect_identifiers(value: Any) -> dict[str, set[str]]:
+    found: dict[str, set[str]] = {}
+
+    def visit(item: Any) -> None:
+        if isinstance(item, Mapping):
+            for key, child in item.items():
+                role = _IDENTIFIER_ROLES.get(str(key))
+                if (
+                    role is not None
+                    and child is not None
+                    and child != ""
+                    and not isinstance(child, (Mapping, list, tuple))
+                ):
+                    found.setdefault(role[0], set()).add(str(child))
+                visit(child)
+        elif isinstance(item, (list, tuple)):
+            for child in item:
+                visit(child)
+
+    visit(value)
+    return found
+
+
+def _identifier_bindings(session, envelope: tx.ShadowEnvelope) -> dict[str, dict[str, str]]:
+    query = (
+        select(tx.ShadowEnvelope, tx.ShadowComparison)
+        .join(tx.ShadowComparison, tx.ShadowComparison.envelope_id == tx.ShadowEnvelope.envelope_id)
+        .where(tx.ShadowEnvelope.shadow_baseline_id == envelope.shadow_baseline_id)
+    )
+    if envelope.rollout_sequence is not None:
+        query = query.where(
+            tx.ShadowEnvelope.rollout_sequence.is_not(None),
+            tx.ShadowEnvelope.rollout_sequence < envelope.rollout_sequence,
+        ).order_by(tx.ShadowEnvelope.rollout_sequence)
+    else:
+        query = query.where(tx.ShadowEnvelope.captured_at < envelope.captured_at).order_by(
+            tx.ShadowEnvelope.captured_at, tx.ShadowEnvelope.envelope_id
+        )
+
+    bindings: dict[str, dict[str, str]] = {}
+    conflicts: set[tuple[str, str]] = set()
+    for prior, comparison in session.execute(query):
+        source = _collect_identifiers(prior.source_outcome)
+        target = _collect_identifiers(comparison.target_result)
+        for role in source.keys() & target.keys():
+            source_values, target_values = source[role], target[role]
+            if len(source_values) != 1 or len(target_values) != 1:
+                continue
+            source_value, target_value = next(iter(source_values)), next(iter(target_values))
+            family = next(family for candidate, family in _IDENTIFIER_ROLES.values() if candidate == role)
+            family_bindings = bindings.setdefault(family, {})
+            existing = family_bindings.get(source_value)
+            if existing is not None and existing != target_value:
+                conflicts.add((family, source_value))
+                family_bindings.pop(source_value, None)
+            elif (family, source_value) not in conflicts:
+                family_bindings[source_value] = target_value
+    return bindings
+
+
+def _translate_workflow_identifiers(
+    session,
+    envelope: tx.ShadowEnvelope,
+    arguments: Mapping[str, Any],
+) -> dict[str, Any]:
+    translated = dict(arguments)
+    needed = {
+        key: _IDENTIFIER_ROLES[key][1]
+        for key, value in arguments.items()
+        if key in _IDENTIFIER_ROLES and value is not None and value != ""
+    }
+    if not needed:
+        return translated
+    bindings = _identifier_bindings(session, envelope)
+    for key, family in needed.items():
+        source_value = str(arguments[key])
+        target_value = bindings.get(family, {}).get(source_value)
+        if target_value is None:
+            raise ShadowIdentityMappingError(
+                f"no unique target {family} binding for captured field {key}"
+            )
+        translated[key] = target_value
+    return translated
+
+
 def _result_payload(result: CommandResult) -> dict[str, Any]:
     return {
         "ok": result.ok,
@@ -166,7 +277,7 @@ class CommandPortShadowEvaluator:
         result = port.execute(
             CommandCall(
                 command_name=envelope.command_name,
-                arguments=dict(arguments),
+                arguments=_translate_workflow_identifiers(session, envelope, arguments),
                 owner_id=owner_id,
                 principal_class=str(principal.get("principal_class") or "agent"),
                 run_id=target_run_id,

@@ -383,7 +383,9 @@ the worker exits cleanly before reading further spool entries while it is engage
 namespaces legacy request and run identities by baseline, registers one deterministic target
 `service_runs` row for each captured source run, and never reuses a source UUID directly in target
 authority. This keeps source lineage stable across envelopes without colliding with current or future
-PostgreSQL live requests.
+PostgreSQL live requests. Generated workflow identifiers are translated only through immutable,
+earlier comparison evidence from the same baseline and rollout order. Unknown or conflicting source
+to target bindings fail the shadow delivery instead of leaking a legacy UUID into PostgreSQL authority.
 `dish_pg.dark_launch` supplies baseline creation, bounded status, and capture enable/disable controls;
 `dish_pg.legacy_source` deterministically exports importer input from SQLite content heads plus a
 complete externally supplied location manifest.
