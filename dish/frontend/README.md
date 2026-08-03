@@ -42,3 +42,11 @@ placement, completion, projection, or content-mutation authority.
 
 Delivery Stage 0 and fixture-backed Delivery Stage 1A–1F are implemented. Real authentication and
 canonical-data integration remain intentionally absent and blocked by the governing readiness gates.
+## Integration readiness
+
+- Gate A authoring review: `../docs/frontend-gate-a-readiness.md`
+- Independent Gate A record: `../docs/frontend-gate-a-review.md`
+
+Gate A is not passed until an independent reviewer accepts the packet and its material findings are
+resolved. Delivery Stage 2 remains blocked.
+
