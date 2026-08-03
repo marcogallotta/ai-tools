@@ -31,18 +31,14 @@ still track; it is not "entirely open."
   PostgreSQL target and prove cross-process behavior — projection claim, external-attempt
   settlement, reconciliation, worker restart, and worker takeover — not just that each process
   starts and connects in isolation.
-- **Deployment blocker**: the importer has no executable local target. `dish_tool/` contains only
-  `migrations.py` (Alembic schema migration); no importer module, CLI, or script exists anywhere in
-  the repository. "Final production import and reconciliation" below cannot run, and the runtime
-  wiring rehearsal above cannot exercise it, until an importer is built.
-- **Deployment blocker**: neither worker has an executable local target either. `dish_service/__main__.py`
-  starts only the private and Action HTTP listeners; there is no projection-worker or
-  reconciliation-worker process, script, or CLI anywhere in the repository, and no corresponding
-  systemd unit in `deploy/systemd/` (only one unit per profile, for the service itself). Every
-  `Worker`-named reference found (`dish_pg/stage6_models.py`, `dish_pg/release.py`,
-  `dish_pg/cutover_control.py`, migration table definitions) is a data/schema reference, not runnable
-  code. The runtime wiring rehearsal above cannot exercise projection claim, settlement,
-  reconciliation, or worker restart/takeover until both workers are built.
+- The importer (`dish_pg/importer.py`), projection worker (`dish_pg/projection_worker.py`), and
+  reconciliation worker (`dish_pg/reconciliation_worker.py`) now exist and are each verified against
+  real PostgreSQL (`tests/postgresql/native/test_importer.py`,
+  `tests/postgresql/native/test_projection_worker.py`,
+  `tests/postgresql/native/test_reconciliation_worker.py`), flake-checked clean. None has a systemd
+  unit yet, and none has been exercised as a real separate OS process talking to another live
+  process — the runtime wiring rehearsal above still requires that, not just that each process
+  starts and connects in isolation.
 - Production-shaped rehearsal (migration, activation, fault-injection, backup, restore) against
   sanitized or copied production-shaped data.
 

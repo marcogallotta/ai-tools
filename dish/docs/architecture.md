@@ -299,9 +299,10 @@ I/O or commits independently.
 boundaries and the external call, driving `ProjectionService.claim_next`/`begin_attempt`/
 `record_observation_and_adjudicate` as three separately committed steps per event so a crash between
 any two leaves recoverable state, and never reimplements outbox claim/apply/adjudicate logic itself.
-A corresponding reconciliation-worker process (driving `start_reconciliation`/
-`record_reconciliation_item`/`complete_reconciliation`) does not exist yet; see
-`database-backend-imp.md` for that outstanding blocker.
+`dish_pg/reconciliation_worker.py` is the runnable corpus-reconciliation worker: it fetches one
+complete external corpus before opening any transaction, then drives
+`start_reconciliation`/`record_reconciliation_item`/`complete_reconciliation` as one governed run;
+it does not inspect or mutate projection outbox rows directly.
 
 Stage 6 adds the offline release-candidate and cutover-control foundation through
 `0005_release_cutover`, `stage6_models.py`, the `release.py` transactional facade,
