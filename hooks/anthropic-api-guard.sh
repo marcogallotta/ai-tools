@@ -21,9 +21,24 @@ ask() {
   exit 0
 }
 
-# (a) known API-calling scripts        (b) direct Anthropic API signals
+# (a) known API-calling scripts        (b) direct Anthropic API signals that
+# always mean spend, regardless of context.
 if printf '%s' "$cmd" | grep -Eiq \
-  '(tag_eval|submit_tagging_batch|ingest_tagging_batch|agreement_gate)([._[:space:]]|$)|anthropic|ANTHROPIC_API_KEY|api\.anthropic\.com|messages\.(create|batches)|claude-(sonnet|opus|haiku)'; then
+  '(tag_eval|submit_tagging_batch|ingest_tagging_batch|agreement_gate)([._[:space:]]|$)|anthropic|ANTHROPIC_API_KEY|api\.anthropic\.com|messages\.(create|batches)'; then
+  ask "Anthropic API spend — limited prepaid budget; explicit per-run approval required (\$ leaves the budget). A --dry/no-spend run is safe to approve."
+fi
+
+# (c) a bare Claude model id (e.g. --model claude-sonnet-5) is only a spend
+# signal on its own when the command is NOT a `dish` CLI invocation: dish's
+# --agent/--model flags are caller-supplied, self-reported display metadata
+# (see dish_tool/cli.py prepare/approve help text) and never reach the
+# Anthropic API themselves.
+first_word=$(printf '%s' "$cmd" | sed -E 's/^\s*(\S+=\S+\s+)*//' | awk '{print $1}')
+if printf '%s' "$first_word" | grep -Eq '(^|/)dish(-admin)?$'; then
+  exit 0
+fi
+
+if printf '%s' "$cmd" | grep -Eiq 'claude-(sonnet|opus|haiku)'; then
   ask "Anthropic API spend — limited prepaid budget; explicit per-run approval required (\$ leaves the budget). A --dry/no-spend run is safe to approve."
 fi
 
