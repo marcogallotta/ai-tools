@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+from dish_pg.dark_launch import main
+raise SystemExit(main())

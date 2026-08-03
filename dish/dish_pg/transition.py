@@ -290,10 +290,15 @@ class ShadowService:
         claim_token: uuid.UUID,
         now: datetime,
         ttl: timedelta,
+        shadow_baseline_id: uuid.UUID | None = None,
     ) -> tx.ShadowDelivery | None:
+        query = select(tx.ShadowDelivery)
+        if shadow_baseline_id is not None:
+            query = query.join(
+                tx.ShadowEnvelope, tx.ShadowEnvelope.envelope_id == tx.ShadowDelivery.envelope_id
+            ).where(tx.ShadowEnvelope.shadow_baseline_id == shadow_baseline_id)
         candidates = self.session.scalars(
-            select(tx.ShadowDelivery)
-            .where(
+            query.where(
                 (tx.ShadowDelivery.state == "pending")
                 | (
                     (tx.ShadowDelivery.state == "claimed")
