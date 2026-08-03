@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy import select
 
+from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
 from dish_pg.shadow_worker import ShadowWorker
@@ -100,13 +101,11 @@ def test_real_shadow_evaluator_tags_outbox_and_projection_claim_refuses_it(workf
 
     from dish_pg.shadow_worker import CommandPortShadowEvaluator
     from dish_pg.transition import ProjectionService
-    from tests.support.postgresql.workflow import _register_run
 
     factory, ids, context, _task = workflow_db
     run_id = _next(ids)
     request_id = _next(ids)
     with session_scope(factory) as session:
-        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
         projection = ProjectionService(session, uuid_factory=lambda: _next(ids))
         epoch = projection.activate_epoch(
             generation_id=context["generation_id"],
@@ -141,8 +140,17 @@ def test_real_shadow_evaluator_tags_outbox_and_projection_claim_refuses_it(workf
             session, envelope
         )
         event = session.scalar(select(tx.ProjectionOutboxEvent))
+        registered_run = session.scalar(select(wf.ServiceRun))
+        request = session.scalar(select(wf.ServiceRequest))
 
         assert target["ok"] is True
+        assert registered_run is not None
+        assert registered_run.run_id != run_id
+        assert registered_run.owner_id == "owner-1"
+        assert registered_run.agent == "service"
+        assert request is not None
+        assert request.run_id == registered_run.run_id
+        assert request.request_id != request_id
         assert epoch.external_effects_enabled is True
         assert event is not None
         assert event.origin == "shadow"

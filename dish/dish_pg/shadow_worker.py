@@ -9,6 +9,7 @@ shared filesystem kill switch stops both new legacy capture and this worker.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import signal
 import time
@@ -20,10 +21,12 @@ from typing import Any, Mapping, Protocol
 
 from dish_service.shadow_spool import ShadowSpool, ShadowSpoolItem
 
+from . import stage3_models as wf
 from . import stage5_models as tx
 from .command_port import CommandCall, CommandResult, PostgresCommandPort
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .transition import ShadowService
+from .workflow import WorkflowAuthorityService
 
 LOGGER = logging.getLogger("dish.shadow_worker")
 _NAMESPACE = uuid.UUID("b40de1df-43e5-445c-9eed-c87f17d2b526")
@@ -33,11 +36,73 @@ def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _uuid(value: Any, *, label: str) -> uuid.UUID:
-    try:
-        return uuid.UUID(str(value))
-    except (TypeError, ValueError, AttributeError):
-        return uuid.uuid5(_NAMESPACE, f"{label}:{value}")
+def _shadow_uuid(envelope: tx.ShadowEnvelope, *, label: str, value: Any) -> uuid.UUID:
+    """Namespace source identities so shadow rows cannot collide with live authority."""
+    return uuid.uuid5(
+        _NAMESPACE,
+        ":".join(
+            (
+                label,
+                str(envelope.shadow_baseline_id),
+                str(envelope.source_authority_generation or "unknown-source-generation"),
+                str(value),
+            )
+        ),
+    )
+
+
+def _shadow_agent(arguments: Mapping[str, Any], owner_id: str) -> str:
+    allowed = {"claude", "gpt", "codex", "marco", "service"}
+    candidates = (arguments.get("agent"), owner_id.rsplit(":", 1)[-1])
+    for candidate in candidates:
+        normalized = str(candidate or "").strip().lower()
+        if normalized in allowed:
+            return normalized
+    return "service"
+
+
+def _ensure_shadow_run(
+    session,
+    *,
+    envelope: tx.ShadowEnvelope,
+    arguments: Mapping[str, Any],
+    owner_id: str,
+    source_run_identity: Any,
+    target_run_id: uuid.UUID,
+    generation_id: uuid.UUID,
+) -> wf.ServiceRun:
+    agent = _shadow_agent(arguments, owner_id)
+    capability_digest = hashlib.sha256(
+        "\0".join(
+            (
+                "dish-shadow-run-v1",
+                str(envelope.shadow_baseline_id),
+                str(envelope.source_authority_generation or ""),
+                owner_id,
+                str(source_run_identity),
+                agent,
+            )
+        ).encode("utf-8")
+    ).digest()
+    existing = session.get(wf.ServiceRun, target_run_id)
+    if existing is not None:
+        if (
+            existing.generation_id != generation_id
+            or existing.owner_id != owner_id
+            or existing.agent != agent
+            or existing.capability_digest != capability_digest
+            or existing.status != "active"
+        ):
+            raise ValueError("shadow run identity conflicts with existing target authority")
+        return existing
+    return WorkflowAuthorityService(session).register_run(
+        run_id=target_run_id,
+        generation_id=generation_id,
+        owner_id=owner_id,
+        agent=agent,
+        capability_digest=capability_digest,
+        registered_at=envelope.captured_at,
+    )
 
 
 def _result_payload(result: CommandResult) -> dict[str, Any]:
@@ -80,17 +145,34 @@ class CommandPortShadowEvaluator:
         if not isinstance(arguments, Mapping):
             raise ValueError("shadow envelope arguments are missing")
         principal = dict(envelope.principal or {})
+        owner_id = str(principal.get("owner_id") or "legacy-shadow")
+        source_run_identity = principal.get("run_id") or f"request:{envelope.source_request_identity}"
+        target_run_id = _shadow_uuid(
+            envelope, label="run", value=f"{owner_id}:{source_run_identity}"
+        )
         port = PostgresCommandPort(
             session, cursor_secret=self.cursor_secret, projection_origin="shadow"
+        )
+        generation = port.reads.active_generation()
+        _ensure_shadow_run(
+            session,
+            envelope=envelope,
+            arguments=arguments,
+            owner_id=owner_id,
+            source_run_identity=source_run_identity,
+            target_run_id=target_run_id,
+            generation_id=generation.generation_id,
         )
         result = port.execute(
             CommandCall(
                 command_name=envelope.command_name,
                 arguments=dict(arguments),
-                owner_id=str(principal.get("owner_id") or "legacy-shadow"),
+                owner_id=owner_id,
                 principal_class=str(principal.get("principal_class") or "agent"),
-                run_id=_uuid(principal.get("run_id"), label="run"),
-                request_id=_uuid(envelope.source_request_identity, label="request"),
+                run_id=target_run_id,
+                request_id=_shadow_uuid(
+                    envelope, label="request", value=envelope.source_request_identity
+                ),
                 now=envelope.captured_at,
             )
         )

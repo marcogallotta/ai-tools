@@ -379,7 +379,11 @@ evaluator records only ``shadow`` rows, and projection workers exclude them unco
 the shared epoch later enables external effects. Epoch effects still default disabled as a second,
 independent guard for ordinary live projection rows.
 The same owner-only filesystem kill switch gates both legacy capture and shadow-worker draining;
-the worker exits cleanly before reading further spool entries while it is engaged.
+the worker exits cleanly before reading further spool entries while it is engaged. Shadow execution
+namespaces legacy request and run identities by baseline, registers one deterministic target
+`service_runs` row for each captured source run, and never reuses a source UUID directly in target
+authority. This keeps source lineage stable across envelopes without colliding with current or future
+PostgreSQL live requests.
 `dish_pg.dark_launch` supplies baseline creation, bounded status, and capture enable/disable controls;
 `dish_pg.legacy_source` deterministically exports importer input from SQLite content heads plus a
 complete externally supplied location manifest.
