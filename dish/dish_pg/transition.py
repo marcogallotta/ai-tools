@@ -379,6 +379,49 @@ class ShadowService:
         self.session.flush()
         return comparison
 
+    def skip_delivery(
+        self,
+        *,
+        delivery_id: uuid.UUID,
+        claim_token: uuid.UUID,
+        reason: str,
+        comparator_release: str,
+        completed_at: datetime,
+    ) -> tx.ShadowComparison:
+        """Settle a deliberately capture-only envelope as an explicit gap."""
+        delivery = self.session.get(tx.ShadowDelivery, delivery_id)
+        if delivery is None or delivery.state != "claimed" or delivery.claim_token != claim_token:
+            raise TransitionAuthorityError("shadow delivery claim does not match")
+        envelope = self.session.get(tx.ShadowEnvelope, delivery.envelope_id)
+        target = {"shadow_execution": "skipped", "reason": reason}
+        comparison = tx.ShadowComparison(
+            comparison_id=self.uuid_factory(),
+            envelope_id=envelope.envelope_id,
+            target_result=target,
+            target_result_sha256=sha256_json(target),
+            parity_class="gap",
+            differences=[{"reason": reason}],
+            comparator_release=comparator_release,
+            compared_at=completed_at,
+        )
+        self.session.add(comparison)
+        delivery.state = "delivered"
+        delivery.claim_owner = None
+        delivery.claim_token = None
+        delivery.claim_expires_at = None
+        delivery.delivery_revision += 1
+        delivery.terminal_at = completed_at
+        self._open_gap(
+            baseline_id=envelope.shadow_baseline_id,
+            envelope_id=envelope.envelope_id,
+            identity=f"uncomparable:{envelope.source_request_identity}",
+            kind="uncomparable",
+            details={"reason": reason},
+            at=completed_at,
+        )
+        self.session.flush()
+        return comparison
+
     def fail_delivery(
         self,
         *,
