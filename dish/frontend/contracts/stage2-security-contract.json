@@ -1,0 +1,128 @@
+{
+  "contract_version": "dish-frontend-v1",
+  "gate": "A",
+  "status": "design-closed-implementation-blocked",
+  "route_families": {
+    "unauthenticated": [
+      "GET /login",
+      "GET /frontend/assets/{asset}",
+      "POST /frontend/login"
+    ],
+    "protected_html": [
+      "GET /",
+      "GET /task/{task_id}"
+    ],
+    "protected_api": [
+      "GET /frontend/session",
+      "GET /frontend/board",
+      "GET /frontend/sections/{section_id}/tasks",
+      "GET /frontend/tasks/{task_id}",
+      "GET /openapi/frontend.json"
+    ],
+    "lifecycle": [
+      "POST /frontend/logout"
+    ]
+  },
+  "authority_policy": {
+    "canonical_origin_env": "DISH_FRONTEND_ORIGIN",
+    "required_scheme": "https",
+    "dedicated_hostname_required": true,
+    "action_hostname_must_differ": true,
+    "forwarded_authority_headers": "ignored",
+    "forwarded_client_address_headers": "ignored",
+    "initial_trusted_proxy_mode": "none",
+    "cors": "disabled"
+  },
+  "request_contract": {
+    "contract_header": "X-Dish-Frontend-Contract",
+    "csrf_header": "X-Dish-CSRF",
+    "json_media_type": "application/json",
+    "singleton_headers": [
+      "Host",
+      "Origin",
+      "X-Dish-Frontend-Contract",
+      "X-Dish-CSRF"
+    ],
+    "fetch_metadata": {
+      "state_changing_sec_fetch_site": "same-origin",
+      "state_changing_sec_fetch_mode": "cors",
+      "state_changing_sec_fetch_dest": "empty"
+    }
+  },
+  "password_policy": {
+    "counting_rule": "unicode-code-points",
+    "minimum_characters": 16,
+    "maximum_characters": 1024,
+    "trim": false,
+    "normalize": false,
+    "case_fold": false,
+    "verifier": "argon2id",
+    "plaintext_storage": "forbidden"
+  },
+  "session_policy": {
+    "cookie_name": "__Host-dish_frontend_session",
+    "cookie_attributes": [
+      "Secure",
+      "HttpOnly",
+      "SameSite=Strict",
+      "Path=/"
+    ],
+    "domain_attribute": "forbidden",
+    "lifetime_seconds": 604800,
+    "sliding": false,
+    "token_random_bits_minimum": 256,
+    "csrf_effective_bits_minimum": 128,
+    "csrf_client_storage": "memory-only",
+    "protected_data_client_storage": "memory-only",
+    "service_worker": "forbidden"
+  },
+  "response_policy": {
+    "all_frontend": {
+      "X-Content-Type-Options": "nosniff",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "Referrer-Policy": "no-referrer"
+    },
+    "html": {
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Permissions-Policy": "accelerometer=(), ambient-light-sensor=(), autoplay=(), camera=(), display-capture=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), publickey-credentials-get=(), screen-wake-lock=(), serial=(), usb=(), xr-spatial-tracking=()",
+      "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; manifest-src 'none'; worker-src 'none'"
+    },
+    "no_store": [
+      "login response",
+      "protected HTML",
+      "protected API response",
+      "session response",
+      "logout response"
+    ],
+    "immutable": [
+      "versioned public static asset"
+    ],
+    "hsts_owner": "trusted-https-termination"
+  },
+  "browser_lifecycle": {
+    "local_expiry_inputs": [
+      "expires_at",
+      "request-start-relative remaining_seconds"
+    ],
+    "cross_tab_clear_seconds": 2,
+    "active_revocation_discovery_seconds": 30,
+    "page_restore_requires_bootstrap": true,
+    "suspension_return_requires_bootstrap": true,
+    "logout_failure_state": "concealed-explicit-retry",
+    "api_redirects": "rejected"
+  },
+  "blockers": {
+    "A-01": "design-closed-code-pending",
+    "A-02": "design-closed-code-pending",
+    "A-03": "partially-design-closed-code-and-db-pending",
+    "A-04": "database-migration-pending",
+    "A-05": "external-restore-fence-design-pending",
+    "A-06": "design-closed-code-pending",
+    "A-07": "design-closed-code-pending",
+    "A-08": "design-closed-code-pending",
+    "A-09": "dependency-and-tuning-review-pending",
+    "A-10": "deployment-provisioning-pending",
+    "A-11": "design-closed-code-and-db-pending",
+    "A-12": "independent-review-pending"
+  }
+}

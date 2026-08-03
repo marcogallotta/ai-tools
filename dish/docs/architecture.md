@@ -19,7 +19,7 @@ loading every Dish document.
 | Tailscale Serve or Funnel | [`../deploy/tailscale/README.md`](../deploy/tailscale/README.md) |
 | the protocol's own structure, canonical fields, process records, or change classes | `~/honest-pantry/dish-docs-design.md` and the relevant current Honest assets |
 | work not yet implemented | [`future.md`](future.md) |
-| private frontend product or delivery work | [`frontend.md`](frontend.md), [`frontend-imp.md`](frontend-imp.md), the current Gate A packet for authentication/runtime integration, and the current Gate B source map for canonical board/detail integration |
+| private frontend product or delivery work | [`frontend.md`](frontend.md), [`frontend-imp.md`](frontend-imp.md), [`frontend-stage2-runtime-decisions.md`](frontend-stage2-runtime-decisions.md), the current Gate A packet for authentication/runtime integration, and the current Gate B source map for canonical board/detail integration |
 
 Removed plans remain available in Git history.
 
