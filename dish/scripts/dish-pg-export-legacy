@@ -1,0 +1,3 @@
+#!/usr/bin/env python3
+from dish_pg.legacy_source import main
+raise SystemExit(main())
