@@ -3,7 +3,8 @@
 This worker is separate from projection_worker and reconciliation_worker. It
 never calls Asana. PostgreSQL command execution may create transactional
 projection intents tagged with origin ``shadow``. Projection workers reject
-those rows unconditionally, independent of epoch effect configuration.
+those rows unconditionally, independent of epoch effect configuration. The
+shared filesystem kill switch stops both new legacy capture and this worker.
 """
 from __future__ import annotations
 
@@ -106,6 +107,7 @@ class ShadowWorker:
         evaluator: ShadowEvaluator,
         worker_id: str,
         comparator_release: str,
+        kill_switch_path: Path,
         claim_ttl: timedelta = timedelta(minutes=2),
         idle_seconds: float = 1.0,
         clock=_utcnow,
@@ -116,6 +118,7 @@ class ShadowWorker:
         self.evaluator = evaluator
         self.worker_id = worker_id
         self.comparator_release = comparator_release
+        self.kill_switch_path = Path(kill_switch_path)
         self.claim_ttl = claim_ttl
         self.idle_seconds = idle_seconds
         self.clock = clock
@@ -124,12 +127,23 @@ class ShadowWorker:
     def request_shutdown(self) -> None:
         self._stop = True
 
+    def _kill_switch_engaged(self) -> bool:
+        return self.kill_switch_path.exists()
+
     def run_forever(self) -> None:
         while not self._stop:
+            if self._kill_switch_engaged():
+                LOGGER.warning(
+                    "dark-launch kill switch engaged; shadow worker exiting",
+                    extra={"kill_switch": str(self.kill_switch_path)},
+                )
+                return
             if not self.run_once():
                 time.sleep(self.idle_seconds)
 
     def run_once(self) -> bool:
+        if self._kill_switch_engaged():
+            return False
         pending = self.spool.pending(limit=1)
         if pending:
             item = pending[0]
@@ -236,6 +250,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--worker-id", required=True)
     parser.add_argument("--cursor-secret-file", required=True, type=Path)
     parser.add_argument("--comparator-release", required=True)
+    parser.add_argument("--kill-switch", required=True, type=Path)
     parser.add_argument("--idle-seconds", type=float, default=1.0)
     parser.add_argument("--log-level", default="INFO")
     return parser
@@ -255,6 +270,7 @@ def main(argv: list[str] | None = None) -> int:
         evaluator=CommandPortShadowEvaluator(cursor_secret=secret),
         worker_id=args.worker_id,
         comparator_release=args.comparator_release,
+        kill_switch_path=args.kill_switch,
         idle_seconds=args.idle_seconds,
     )
     def stop(signum: int, frame: FrameType | None) -> None:

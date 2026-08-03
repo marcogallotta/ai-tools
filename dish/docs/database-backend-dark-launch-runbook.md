@@ -64,13 +64,17 @@ scripts/dish-pg-dark-launch disable \
   --reason "operator reason"
 ```
 
-This stops new legacy capture on the next request. Then stop `dish-shadow-worker`. Existing spool and
-PostgreSQL evidence remain intact. Re-enable capture only by explicit operator action:
+This stops new legacy capture on the next request and causes `dish-shadow-worker` to exit before
+delivering or evaluating further envelopes. Existing spool and PostgreSQL evidence remain intact.
+Re-enable capture only by explicit operator action:
 
 ```sh
 scripts/dish-pg-dark-launch enable-capture \
   --kill-switch "$DISH_DARK_LAUNCH_KILL_SWITCH"
 ```
+
+After removing the switch, restart `dish-shadow-worker` explicitly; the systemd unit exits cleanly
+while disabled and therefore does not restart itself.
 
 ## Not part of dark launch
 

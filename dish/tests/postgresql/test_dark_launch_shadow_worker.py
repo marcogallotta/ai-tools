@@ -39,7 +39,7 @@ def test_shadow_worker_delivers_executes_and_compares(workflow_db, tmp_path):
     spool=_spool(tmp_path)
     worker=ShadowWorker(spool=spool, session_maker=factory, baseline_id=baseline_id,
                         evaluator=Evaluator(), worker_id="shadow-1", comparator_release="test",
-                        clock=lambda:NOW)
+                        kill_switch_path=tmp_path/"dark-launch.disabled", clock=lambda:NOW)
     assert worker.run_once() is True
     with session_scope(factory) as session:
         comparison=session.scalar(select(tx.ShadowComparison))
@@ -56,11 +56,43 @@ def test_capture_only_is_settled_as_explicit_uncomparable_gap(workflow_db, tmp_p
         baseline_id=baseline.shadow_baseline_id
     worker=ShadowWorker(spool=_spool(tmp_path,treatment="capture_only"), session_maker=factory,
                         baseline_id=baseline_id, evaluator=Evaluator(), worker_id="shadow-1",
-                        comparator_release="test", clock=lambda:NOW)
+                        comparator_release="test", kill_switch_path=tmp_path/"dark-launch.disabled",
+                        clock=lambda:NOW)
     worker.run_once()
     with session_scope(factory) as session:
         assert session.scalar(select(tx.ShadowComparison)).parity_class == "gap"
         assert session.scalar(select(tx.ShadowGap)).gap_kind == "uncomparable"
+
+
+def test_kill_switch_stops_worker_before_spool_delivery(workflow_db, tmp_path):
+    factory, ids, context, _task = workflow_db
+    with session_scope(factory) as session:
+        baseline = ShadowService(session, uuid_factory=lambda: _next(ids)).create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        baseline_id = baseline.shadow_baseline_id
+
+    spool = _spool(tmp_path)
+    kill_switch = tmp_path / "dark-launch.disabled"
+    kill_switch.write_text("disabled\n")
+    worker = ShadowWorker(
+        spool=spool,
+        session_maker=factory,
+        baseline_id=baseline_id,
+        evaluator=Evaluator(),
+        worker_id="shadow-1",
+        comparator_release="test",
+        kill_switch_path=kill_switch,
+        clock=lambda: NOW,
+    )
+
+    assert worker.run_once() is False
+    assert spool.status()["counts"]["complete"] == 1
+    with session_scope(factory) as session:
+        assert session.scalar(select(tx.ShadowEnvelope)) is None
 
 
 def test_real_shadow_evaluator_tags_outbox_and_projection_claim_refuses_it(workflow_db):

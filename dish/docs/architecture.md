@@ -378,6 +378,8 @@ read or write. Every outbox row carries an immutable ``live`` or ``shadow`` orig
 evaluator records only ``shadow`` rows, and projection workers exclude them unconditionally even if
 the shared epoch later enables external effects. Epoch effects still default disabled as a second,
 independent guard for ordinary live projection rows.
+The same owner-only filesystem kill switch gates both legacy capture and shadow-worker draining;
+the worker exits cleanly before reading further spool entries while it is engaged.
 `dish_pg.dark_launch` supplies baseline creation, bounded status, and capture enable/disable controls;
 `dish_pg.legacy_source` deterministically exports importer input from SQLite content heads plus a
 complete externally supplied location manifest.
