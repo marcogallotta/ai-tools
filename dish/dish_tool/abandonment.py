@@ -89,11 +89,16 @@ def _assert_current_abandonment_authority(
             rule="abandonment_authority_changed",
         )
     later = conn.execute(
-        """SELECT lease_id FROM service_leases
-             WHERE task_gid=? AND lease_kind='actor'
-               AND actor_attempt_seq>?
-             ORDER BY actor_attempt_seq LIMIT 1""",
-        (operation["task_gid"], lease["actor_attempt_seq"]),
+        """SELECT lease_id FROM service_leases AS later
+             WHERE later.task_gid=? AND later.lease_kind='actor'
+               AND later.actor_attempt_seq>?
+               AND EXISTS (
+                   SELECT 1 FROM operation_actor_facts AS fact
+                    WHERE fact.operation_id=?
+                      AND fact.run_id=later.run_id
+               )
+             ORDER BY later.actor_attempt_seq LIMIT 1""",
+        (operation["task_gid"], lease["actor_attempt_seq"], operation["operation_id"]),
     ).fetchone()
     successor = conn.execute(
         "SELECT successor_operation_id FROM operation_successions WHERE source_operation_id=?",

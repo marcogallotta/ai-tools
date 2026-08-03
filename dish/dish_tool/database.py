@@ -733,19 +733,21 @@ def bind_abandonment_execution_in_transaction(
             rule="abandonment_not_reconcilable",
             details={"status": abandonment["status"]},
         )
-    if (
-        abandonment["current_execution_id"] is not None
-        and abandonment["current_execution_id"] != execution_id
-    ):
-        raise DishRuleError(
-            "CONFLICT",
-            "another admin execution is already bound to this abandonment",
-            rule="abandonment_execution_conflict",
-            details={
-                "current_execution_id": abandonment["current_execution_id"],
-                "requested_execution_id": execution_id,
-            },
-        )
+    if abandonment["current_execution_id"] is not None and abandonment["current_execution_id"] != execution_id:
+        current_execution = conn.execute(
+            "SELECT status FROM operation_executions WHERE execution_id=?",
+            (abandonment["current_execution_id"],),
+        ).fetchone()
+        if current_execution is not None and current_execution["status"] in {"started", "uncertain"}:
+            raise DishRuleError(
+                "CONFLICT",
+                "another admin execution is already bound to this abandonment",
+                rule="abandonment_execution_conflict",
+                details={
+                    "current_execution_id": abandonment["current_execution_id"],
+                    "requested_execution_id": execution_id,
+                },
+            )
     stamp = resumed_at or utc_now()
     was_blocked = abandonment["status"] == "blocked_manual_reconciliation"
     conn.execute(
