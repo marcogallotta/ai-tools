@@ -399,3 +399,18 @@ or amended for frontend-driven work.
 The original direction was drafted inside the former single-file database design and later restored
 as a separate frontend proposal. This design records the approved Stage 1 product and authority
 behavior. Implementation mechanics are isolated in [`frontend-imp.md`](frontend-imp.md).
+
+## 10. Needs spec
+
+Some product questions are not yet assigned to an approved or future stage above because no design
+exists for them at all. Listing a question here does not approve, scope, or schedule it; it exists so
+that a future contract update starts from a named question rather than silent invention during
+implementation of some other stage.
+
+- **Admin action exposure.** Whether, and under what principal and authority model, any `dish-admin`
+  action (for example `recover-lease`, `abandon-operation`, `reconcile-abandonment`,
+  `repair-destination`, or hold resolution) is ever invoked from the frontend, rather than remaining a
+  Marco-only terminal tool. Today `dish-admin` production use is Marco-only and the frontend has no
+  administrative-intervention surface at all. No scope, principal model, mutation shape, or stage
+  assignment is decided by this entry; a dedicated design must resolve it before any related
+  implementation begins.
