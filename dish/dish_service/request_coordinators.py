@@ -71,91 +71,115 @@ class AgentRequestCoordinator:
             command, arguments
         ):
             explicit_principal = principal is not None
-            principal = principal or service._default_principal(arguments)
-            task_gid = str(arguments.get("task_gid") or "").strip() or None
-            requested_operation_id = (
-                str(arguments.get("submission_id") or "").strip() or None
-            )
-            try:
-                conn = service._initialize_database(
-                    surface="agent",
-                    command=command,
-                    request_id=request_id,
-                    principal=principal,
-                    task_gid=task_gid,
-                    operation_id=requested_operation_id,
-                )
-            except Exception as exc:
-                return error_envelope(
+            effective_principal = principal or service._default_principal(arguments)
+            return service._shadow_capture.execute(
+                command=command,
+                arguments=arguments,
+                principal=effective_principal,
+                request_id=request_id,
+                call=lambda: self._execute_locked(
                     command,
-                    self.initialization_error(exc),
-                    task_gid=task_gid,
-                    submission_id=requested_operation_id,
-                )
-            invocation_run_id = (
-                principal.run_id
-                if explicit_principal
-                else str(arguments.get("run_id") or "").strip() or None
-            )
-            state = AgentExecutionState(
-                conn=conn,
-                principal=principal,
-                leases=service._lease_manager(conn),
-                invocation_run_id=invocation_run_id,
-                prepared_arguments={},
-            )
-            try:
-                state.prepared_arguments = service._arguments_for_principal(
-                    command, arguments, run_id=invocation_run_id
-                )
-                early = service._begin_agent_execution(
-                    state, command=command, request_id=request_id
-                )
-                if early is not None:
-                    return early
-                service._build_agent_application(
-                    state, command=command, request_id=request_id
-                )
-                if (
-                    state.request_row is not None
-                    and not state.replay_started
-                    and command == "start"
-                ):
-                    resumable_planning = bool(
-                        state.prepared_arguments.get("kind") == "planning"
-                        and planning_start_may_resume(
-                            state.conn,
-                            request_id=str(request_id),
-                            arguments=state.prepared_arguments,
-                        )
-                    )
-                    if not resumable_planning:
-                        return service._reconcile_pending_start(
-                            conn=state.conn,
-                            backend=state.backend,
-                            app=state.app,
-                            leases=state.leases,
-                            principal=state.principal,
-                            arguments=state.prepared_arguments,
-                            request_id=str(request_id),
-                        )
-                service._resolve_agent_operation(state, command=command)
-                service._acquire_agent_lease(state, command=command)
-                result = service._dispatch_agent_command(state, command=command)
-                return service._finish_agent_result(
-                    state, command=command, request_id=request_id, result=result
-                )
-            except DishRuleError as exc:
-                return service._agent_rule_error_result(
-                    state,
-                    command=command,
-                    arguments=arguments,
+                    arguments,
+                    principal=effective_principal,
                     request_id=request_id,
-                    error=exc,
+                    explicit_principal=explicit_principal,
+                ),
+            )
+
+    def _execute_locked(
+        self,
+        command: str,
+        arguments: Mapping[str, Any],
+        *,
+        principal: ServicePrincipal,
+        request_id: str | None,
+        explicit_principal: bool,
+    ) -> dict[str, Any]:
+        service = self.service
+        task_gid = str(arguments.get("task_gid") or "").strip() or None
+        requested_operation_id = (
+            str(arguments.get("submission_id") or "").strip() or None
+        )
+        try:
+            conn = service._initialize_database(
+                surface="agent",
+                command=command,
+                request_id=request_id,
+                principal=principal,
+                task_gid=task_gid,
+                operation_id=requested_operation_id,
+            )
+        except Exception as exc:
+            return error_envelope(
+                command,
+                self.initialization_error(exc),
+                task_gid=task_gid,
+                submission_id=requested_operation_id,
+            )
+        invocation_run_id = (
+            principal.run_id
+            if explicit_principal
+            else str(arguments.get("run_id") or "").strip() or None
+        )
+        state = AgentExecutionState(
+            conn=conn,
+            principal=principal,
+            leases=service._lease_manager(conn),
+            invocation_run_id=invocation_run_id,
+            prepared_arguments={},
+        )
+        try:
+            state.prepared_arguments = service._arguments_for_principal(
+                command, arguments, run_id=invocation_run_id
+            )
+            early = service._begin_agent_execution(
+                state, command=command, request_id=request_id
+            )
+            if early is not None:
+                return early
+            service._build_agent_application(
+                state, command=command, request_id=request_id
+            )
+            if (
+                state.request_row is not None
+                and not state.replay_started
+                and command == "start"
+            ):
+                resumable_planning = bool(
+                    state.prepared_arguments.get("kind") == "planning"
+                    and planning_start_may_resume(
+                        state.conn,
+                        request_id=str(request_id),
+                        arguments=state.prepared_arguments,
+                    )
                 )
-            finally:
-                service._close_backend(state.backend)
-                conn.close()
+                if not resumable_planning:
+                    return service._reconcile_pending_start(
+                        conn=state.conn,
+                        backend=state.backend,
+                        app=state.app,
+                        leases=state.leases,
+                        principal=state.principal,
+                        arguments=state.prepared_arguments,
+                        request_id=str(request_id),
+                    )
+            service._resolve_agent_operation(state, command=command)
+            service._acquire_agent_lease(state, command=command)
+            result = service._dispatch_agent_command(state, command=command)
+            return service._finish_agent_result(
+                state, command=command, request_id=request_id, result=result
+            )
+        except DishRuleError as exc:
+            return service._agent_rule_error_result(
+                state,
+                command=command,
+                arguments=arguments,
+                request_id=request_id,
+                error=exc,
+            )
+        finally:
+            service._close_backend(state.backend)
+            conn.close()
 
 
 class AdminRequestCoordinator:
@@ -180,62 +204,86 @@ class AdminRequestCoordinator:
     ) -> dict[str, Any]:
         service = self.service
         with service._maintenance_gate.request():
-            principal = principal or service._default_principal(arguments, admin=True)
-            requested_operation_id = (
-                str(arguments.get("submission_id") or "").strip() or None
+            effective_principal = principal or service._default_principal(
+                arguments, admin=True
             )
-            try:
-                conn = service._initialize_database(
-                    surface="admin",
-                    command=command,
-                    request_id=request_id,
-                    principal=principal,
-                    operation_id=requested_operation_id,
-                )
-            except Exception as exc:
-                return error_envelope(
+            return service._shadow_capture.execute(
+                command=command,
+                arguments=arguments,
+                principal=effective_principal,
+                request_id=request_id,
+                call=lambda: self._execute_locked(
                     command,
-                    self.initialization_error(exc),
-                    submission_id=requested_operation_id,
-                )
-            try:
-                state = service._prepare_admin_execution_state(
-                    conn,
-                    command=command,
-                    arguments=arguments,
-                    principal=principal,
-                    requested_operation_id=requested_operation_id,
-                )
-            except DishRuleError as exc:
-                conn.close()
-                return error_envelope(
-                    command, exc, submission_id=requested_operation_id
-                )
-            try:
-                early = service._begin_admin_execution(
-                    state, command=command, request_id=request_id
-                )
-                if early is not None:
-                    return early
-                early = service._build_admin_backend(
-                    state, command=command, request_id=request_id
-                )
-                if early is not None:
-                    return early
-                service._acquire_admin_execution_lease(state, command=command)
-                result = service._dispatch_admin_command(
-                    state, command=command, request_id=request_id
-                )
-                return service._finish_admin_result(
-                    state, command=command, request_id=request_id, result=result
-                )
-            except DishRuleError as exc:
-                return service._admin_rule_error_result(
-                    state,
-                    command=command,
+                    arguments,
+                    principal=effective_principal,
                     request_id=request_id,
-                    error=exc,
-                )
-            finally:
-                service._close_backend(state.backend)
-                conn.close()
+                ),
+            )
+
+    def _execute_locked(
+        self,
+        command: str,
+        arguments: Mapping[str, Any],
+        *,
+        principal: ServicePrincipal,
+        request_id: str | None,
+    ) -> dict[str, Any]:
+        service = self.service
+        requested_operation_id = (
+            str(arguments.get("submission_id") or "").strip() or None
+        )
+        try:
+            conn = service._initialize_database(
+                surface="admin",
+                command=command,
+                request_id=request_id,
+                principal=principal,
+                operation_id=requested_operation_id,
+            )
+        except Exception as exc:
+            return error_envelope(
+                command,
+                self.initialization_error(exc),
+                submission_id=requested_operation_id,
+            )
+        try:
+            state = service._prepare_admin_execution_state(
+                conn,
+                command=command,
+                arguments=arguments,
+                principal=principal,
+                requested_operation_id=requested_operation_id,
+            )
+        except DishRuleError as exc:
+            conn.close()
+            return error_envelope(
+                command, exc, submission_id=requested_operation_id
+            )
+        try:
+            early = service._begin_admin_execution(
+                state, command=command, request_id=request_id
+            )
+            if early is not None:
+                return early
+            early = service._build_admin_backend(
+                state, command=command, request_id=request_id
+            )
+            if early is not None:
+                return early
+            service._acquire_admin_execution_lease(state, command=command)
+            result = service._dispatch_admin_command(
+                state, command=command, request_id=request_id
+            )
+            return service._finish_admin_result(
+                state, command=command, request_id=request_id, result=result
+            )
+        except DishRuleError as exc:
+            return service._admin_rule_error_result(
+                state,
+                command=command,
+                request_id=request_id,
+                error=exc,
+            )
+        finally:
+            service._close_backend(state.backend)
+            conn.close()

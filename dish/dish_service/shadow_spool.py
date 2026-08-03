@@ -373,6 +373,17 @@ class ShadowSpool:
         finally:
             conn.close()
 
+    def get_by_source_identity(self, source_request_identity: str) -> ShadowSpoolItem | None:
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM shadow_capture_registrations WHERE source_request_identity=?",
+                (source_request_identity,),
+            ).fetchone()
+            return None if row is None else self._item(row)
+        finally:
+            conn.close()
+
     def pending(self, *, limit: int = 100) -> tuple[ShadowSpoolItem, ...]:
         if limit <= 0:
             raise ValueError("limit must be positive")

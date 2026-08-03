@@ -31,6 +31,11 @@ class ServiceConfig:
     action_token: str | None = None
     backup_dir: Path | None = None
     legacy_writer_fence_path: Path | None = None
+    dark_launch_mode: str = "off"
+    dark_launch_spool_path: Path | None = None
+    dark_launch_emergency_dir: Path | None = None
+    dark_launch_source_generation: str = "legacy-sqlite"
+    dark_launch_kill_switch_path: Path | None = None
 
     def validate_runtime(self, *, require_action: bool = True) -> None:
         """Fail closed before listeners bind or startup reports healthy."""
@@ -78,6 +83,25 @@ class ServiceConfig:
                     details={"tokens": sorted([other, name])},
                 )
             seen[value] = name
+        if self.dark_launch_mode not in {"off", "capture", "execute"}:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "dark_launch_mode must be off, capture, or execute",
+                rule="dark_launch_mode_invalid",
+            )
+        if self.dark_launch_mode != "off":
+            if self.dark_launch_spool_path is None or self.dark_launch_emergency_dir is None:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    "dark-launch spool and emergency paths are required when enabled",
+                    rule="dark_launch_paths_required",
+                )
+            if not self.dark_launch_source_generation.strip():
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    "dark-launch source generation is required",
+                    rule="dark_launch_generation_required",
+                )
         for field, value in (
             ("max_body_bytes", self.max_body_bytes),
             ("request_timeout_seconds", self.request_timeout_seconds),
@@ -154,5 +178,24 @@ class ServiceConfig:
                 Path(os.environ["DISH_LEGACY_WRITER_FENCE"]).expanduser()
                 if os.environ.get("DISH_LEGACY_WRITER_FENCE")
                 else DB_PATH.parent / "legacy-writer-fence.json"
+            ),
+            dark_launch_mode=os.environ.get("DISH_DARK_LAUNCH_MODE", "off").strip().lower(),
+            dark_launch_spool_path=(
+                Path(os.environ["DISH_DARK_LAUNCH_SPOOL_PATH"]).expanduser()
+                if os.environ.get("DISH_DARK_LAUNCH_SPOOL_PATH")
+                else DB_PATH.parent / "dark-launch-spool.sqlite3"
+            ),
+            dark_launch_emergency_dir=(
+                Path(os.environ["DISH_DARK_LAUNCH_EMERGENCY_DIR"]).expanduser()
+                if os.environ.get("DISH_DARK_LAUNCH_EMERGENCY_DIR")
+                else DB_PATH.parent / "dark-launch-emergency"
+            ),
+            dark_launch_source_generation=os.environ.get(
+                "DISH_DARK_LAUNCH_SOURCE_GENERATION", "legacy-sqlite"
+            ).strip(),
+            dark_launch_kill_switch_path=(
+                Path(os.environ["DISH_DARK_LAUNCH_KILL_SWITCH"]).expanduser()
+                if os.environ.get("DISH_DARK_LAUNCH_KILL_SWITCH")
+                else DB_PATH.parent / "dark-launch.disabled"
             ),
         )

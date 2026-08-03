@@ -61,6 +61,7 @@ from .backup_creation_journal import (
     reserve_backup_creation,
 )
 from .config import ServiceConfig
+from .shadow_capture import LegacyShadowCapture, ShadowCaptureSettings
 from .identifiers import require_asana_gid, require_dish_uuid
 from .leases import LeaseManager, ServicePrincipal
 from .maintenance import MaintenanceGate
@@ -445,6 +446,16 @@ class DishService:
         )
         self._admin_requests = AdminRequestCoordinator(
             self, initialization_error=_database_initialization_error
+        )
+        self._shadow_capture = LegacyShadowCapture(
+            ShadowCaptureSettings(
+                mode=config.dark_launch_mode,
+                spool_path=config.dark_launch_spool_path or config.db_path.with_name("dark-launch-spool.sqlite3"),
+                emergency_dir=config.dark_launch_emergency_dir or config.db_path.with_name("dark-launch-emergency"),
+                source_authority_generation=config.dark_launch_source_generation,
+                kill_switch_path=config.dark_launch_kill_switch_path,
+            ),
+            db_path=config.db_path,
         )
 
     def _planning_intent_execution_lock(
@@ -2309,6 +2320,23 @@ class DishService:
         *,
         request_id: str | None = None,
     ) -> dict[str, Any]:
+        return self._shadow_capture.execute(
+            command="renew-lease",
+            arguments={"operation_id": operation_id},
+            principal=principal,
+            request_id=request_id,
+            call=lambda: self._renew_lease(
+                operation_id, principal, request_id=request_id
+            ),
+        )
+
+    def _renew_lease(
+        self,
+        operation_id: str,
+        principal: ServicePrincipal,
+        *,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
         with self._maintenance_gate.request():
             try:
                 conn = self._initialize_database(
@@ -2410,6 +2438,24 @@ class DishService:
                 conn.close()
 
     def recover_lease(
+        self,
+        operation_id: str,
+        principal: ServicePrincipal,
+        *,
+        reason: str,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._shadow_capture.execute(
+            command="recover-lease",
+            arguments={"operation_id": operation_id, "reason": reason},
+            principal=principal,
+            request_id=request_id,
+            call=lambda: self._recover_lease(
+                operation_id, principal, reason=reason, request_id=request_id
+            ),
+        )
+
+    def _recover_lease(
         self,
         operation_id: str,
         principal: ServicePrincipal,
@@ -2521,6 +2567,31 @@ class DishService:
                 conn.close()
 
     def expire_lease(
+        self,
+        principal: ServicePrincipal,
+        *,
+        lease_id: str | None = None,
+        task_gid: str | None = None,
+        reason: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        arguments = {
+            **({"lease_id": lease_id} if lease_id is not None else {}),
+            **({"task_gid": task_gid} if task_gid is not None else {}),
+            "reason": reason,
+        }
+        return self._shadow_capture.execute(
+            command="expire-lease",
+            arguments=arguments,
+            principal=principal,
+            request_id=request_id,
+            call=lambda: self._expire_lease(
+                principal, lease_id=lease_id, task_gid=task_gid, reason=reason,
+                request_id=request_id,
+            ),
+        )
+
+    def _expire_lease(
         self,
         principal: ServicePrincipal,
         *,
