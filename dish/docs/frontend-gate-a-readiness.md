@@ -217,5 +217,6 @@ Gate A may be marked passed only when all of the following are true:
 
 The blocked implementation sequence is recorded in `frontend-stage2-implementation-checklist.md`.
 Executable acceptance ownership is predeclared in
-`../frontend/contracts/stage2-acceptance-cases.json`. These artifacts reduce Stage 2 startup work but
+`../frontend/contracts/stage2-acceptance-cases.json`; test deployment entry and rollback are recorded
+in `frontend-test-deployment-readiness.md`. These artifacts reduce Stage 2 startup work but
 are not implementation evidence and do not alter the Gate A pass conditions.

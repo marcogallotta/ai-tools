@@ -97,3 +97,14 @@ test("Stage 2 acceptance scaffold covers only Gate A dependencies", () => {
 test("Stage 3 acceptance scaffold covers only Gate B dependencies", () => {
   assertAcceptanceManifest(stage3Cases, "S3-", new Set(Object.keys(stage3.blockers)));
 });
+
+const readiness = JSON.parse(await readFile(new URL("../../contracts/pre-db-readiness.json", import.meta.url)));
+
+test("pre-database readiness record keeps integrated stages unauthorized", () => {
+  assert.equal(readiness.checked_in_postgresql_head, stage3.checked_in_schema.alembic_head);
+  assert.equal(readiness.authorization.stage2, false);
+  assert.equal(readiness.authorization.stage3, false);
+  assert.ok(readiness.stage2_go_conditions.length >= 5);
+  assert.ok(readiness.stage3_go_conditions.length >= 6);
+  assert.ok(readiness.forbidden_shortcuts.includes("fixture-backed production API routes"));
+});

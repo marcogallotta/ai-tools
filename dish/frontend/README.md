@@ -53,3 +53,16 @@ Gate A is not passed until an independent reviewer accepts the packet and its ma
 resolved. Gate B is not passed until its source predicates are reconciled against the final migrated
 schema and independently accepted. Delivery Stages 2 and 3 remain blocked by their respective gates.
 
+
+## Pre-integration contracts
+
+`contracts/` contains machine-checked plans for blocked future integration. They are not runtime
+configuration or authority:
+
+- `stage2-security-contract.json` records implementation-local authentication/runtime decisions;
+- `stage3-read-contract.json` reconciles the board source map to the checked-in PostgreSQL head;
+- `stage2-acceptance-cases.json` and `stage3-acceptance-cases.json` reserve stable acceptance IDs;
+- `pre-db-readiness.json` records the current go/no-go boundary.
+
+The unit suite checks these files against the frontend OpenAPI and checked-in model/migration source so
+schema or contract drift must be reconciled explicitly.

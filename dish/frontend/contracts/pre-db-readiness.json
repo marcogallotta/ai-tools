@@ -1,0 +1,44 @@
+{
+  "baseline": "ai-tools-venv(98).tgz",
+  "frontend_contract_version": "dish-frontend-v1",
+  "checked_in_postgresql_head": "0012_task_grant_semantic_identity",
+  "completed_pre_db_work": [
+    "fixture visual review environment",
+    "visual and interaction hardening",
+    "Gate A readiness packet",
+    "Gate B source map",
+    "Stage 2 runtime decisions",
+    "checked-in schema reconciliation",
+    "Stage 2 acceptance scaffold",
+    "Stage 3 acceptance scaffold",
+    "test deployment checklist"
+  ],
+  "authorization": {
+    "stage2": false,
+    "stage3": false
+  },
+  "stage2_go_conditions": [
+    "frontend security support migration accepted and available",
+    "restore/PITR fence accepted and provisioned",
+    "Argon2id dependency and production parameters accepted",
+    "dedicated HTTPS frontend hostname and HSTS termination provisioned",
+    "Gate A independently reviewed and passed"
+  ],
+  "stage3_go_conditions": [
+    "Stage 2 complete",
+    "final production PostgreSQL head and schema fingerprint recorded",
+    "production-change ledger closed without WORKTREE markers",
+    "six migration-shape decisions in frontend-db-migration-reconciliation.md accepted",
+    "required route identity and recovery support migrations available",
+    "Gate B Stage 3 scope independently reviewed and passed"
+  ],
+  "forbidden_shortcuts": [
+    "in-memory production authentication",
+    "fixture-backed production API routes",
+    "queries against the legacy schema",
+    "raw UUID or Asana GID browser identities",
+    "attention inferred from English labels or free text",
+    "frontend code that calls Asana",
+    "temporary workflow policy in route handlers or browser code"
+  ]
+}

@@ -46,3 +46,16 @@ Before activation:
 
 Do not point Funnel at a private or direct Action listener. The same Tailscale HTTPS port cannot be
 both private Serve and public Funnel at once; the most recent configuration wins.
+
+## Future private browser frontend
+
+The authenticated browser frontend is not currently exposed. Its contract requires a dedicated
+private HTTPS hostname distinct from the Action/Funnel hostname; reusing the node hostname on port
+8444 or 8445 is not sufficient because browser cookies are not port-scoped.
+
+Before Stage 2 deployment, provision and document a tailnet-only hostname/certificate path that maps
+to the existing environment's private listener without creating a third service listener. The initial
+frontend implementation ignores forwarded authority and client-address headers, so do not depend on
+`Forwarded` or `X-Forwarded-*` values for Host, scheme, origin, or throttling authority. Follow
+`docs/frontend-test-deployment-readiness.md` and do not expose the fixture-only build as an
+authenticated application.
