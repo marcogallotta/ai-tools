@@ -69,7 +69,7 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     assert envelope_submission["format"] == "uuid"
     assert envelope_submission["pattern"] == EXPECTED_DISH_UUID_SCHEMA["pattern"]
     finding_current = spec["components"]["schemas"]["ResultEnvelope"]["properties"]["errors"]["items"]["properties"]["current"]
-    assert finding_current["type"] == ["string", "null"]
+    assert finding_current["type"] == ["string", "object", "null"]
     assert "exact submitted value" in finding_current["description"].lower()
 
     reject = spec["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]

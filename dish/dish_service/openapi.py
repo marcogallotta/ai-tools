@@ -178,10 +178,12 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                     "additionalProperties": True,
                     "properties": {
                         "current": {
-                            "type": ["string", "null"],
+                            "type": ["string", "object", "null"],
                             "description": (
-                                "Exact submitted value for a deterministic document finding "
-                                "when one clean value exists; null otherwise."
+                                "Exact submitted value or local context for a deterministic "
+                                "document finding when one clean value exists; null otherwise. "
+                                "May be a string or a structured object (e.g. adjacent header "
+                                "lines) for multi-part context."
                             ),
                         }
                     },

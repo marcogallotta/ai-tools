@@ -51,7 +51,7 @@
     "tests/test_action_router_switch.py": "cea2943594efb79a85dbfcd64318180a59f342d408fb3c683b7c3e3c8a2fc004",
     "tests/test_action_surface.py": "d7f8ccfacedc67f2fd998557b82989c38f014fb3b67d17111c355aa723ccb4b5",
     "tests/test_action_surface_identifier_contract.py": "610ca7d467aadf1919aca25aa4ea936d84cdf5fea131dd3d83b19ac68ba0bbe1",
-    "tests/test_action_surface_openapi.py": "73d47265693d10cebe1d5d6f5cf5ff34f47bb1160a2d9fef6e9802668f4269a0",
+    "tests/test_action_surface_openapi.py": "fef32e515e35013b8e3baef312b8ab35e106d926f9fba35e2597522e0ca6153d",
     "tests/test_actor_lease_attempt_context.py": "61b33e29934a759380e6e48e1028b3e855211592189b84df37ac92846144186b",
     "tests/test_admin_argument_validation.py": "f2092ad32d306eb67307657ba18f797ae63f54fcdab5169079e1878a85ff1be1",
     "tests/test_admin_task_target_resolution.py": "9b033b2316dc2f09384aeda998e98785709e984ed09344a5166f0c3e1a426f4b",
@@ -227,7 +227,7 @@
     "dish_tool/database_schema.py": "e487a273088501ec131e897b74bb66c140668332c1d0435f3b989d6a48186e8b",
     "dish_tool/workflow_policy.py": "8f1ccbb4c9c5115834a6ae78c6982cae1e1a1a2557df147e2ba1b34c2493fcc5",
     "docs/runtime-contract.md": "645c7c6365df95b90000a26ee0162fbdb9cb0f68639e3cafe1f1d0754d369e5f",
-    "openapi/dish-action.openapi.json": "5785bfc9a55087471d7ee51c254f173569a8f05d2b157b2c6988e33bb047778d"
+    "openapi/dish-action.openapi.json": "c215a90b5aa43f7c9233e4fb81485058fd38724c150bf6961b15ec34b28078ba"
   },
   "notes": [
     "The baseline records current authority only; PostgreSQL is not production authority.",
