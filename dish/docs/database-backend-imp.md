@@ -28,9 +28,11 @@ plumbing, or real-database fixture. The full certification plan is in
 - Backup, restore, and PITR rehearsal against a disposable PostgreSQL instance, with measured
   (not inferred) RPO/RTO.
 - Crash/fault rehearsal at each durable checkpoint listed in §2 below.
-- Process-wiring verification: confirm the deployable service, projection worker, reconciliation
-  worker, importer, routing, and legacy writer-fence actually exist and connect, not just that the
-  control logic compiles.
+- Runtime wiring rehearsal: start the deployable service and both workers against a disposable
+  PostgreSQL target and prove cross-process behavior — projection claim, external-attempt
+  settlement, reconciliation, worker restart, and worker takeover — not just that each process
+  starts and connects in isolation. If the importer has no executable local target yet, record
+  that as a deployment blocker rather than substituting static inspection.
 - Production-shaped rehearsal (migration, activation, fault-injection, backup, restore) against
   sanitized or copied production-shaped data.
 
