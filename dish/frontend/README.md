@@ -46,7 +46,10 @@ canonical-data integration remain intentionally absent and blocked by the govern
 
 - Gate A authoring review: `../docs/frontend-gate-a-readiness.md`
 - Independent Gate A record: `../docs/frontend-gate-a-review.md`
+- Gate B canonical-data source map: `../docs/frontend-gate-b-source-map.md`
+- Independent Gate B record: `../docs/frontend-gate-b-review.md`
 
 Gate A is not passed until an independent reviewer accepts the packet and its material findings are
-resolved. Delivery Stage 2 remains blocked.
+resolved. Gate B is not passed until its source predicates are reconciled against the final migrated
+schema and independently accepted. Delivery Stages 2 and 3 remain blocked by their respective gates.
 
