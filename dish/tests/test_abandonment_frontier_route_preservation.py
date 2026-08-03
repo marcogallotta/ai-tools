@@ -148,6 +148,73 @@ def test_completed_rejection_route_preserves_existing_unbound_cycle_exactly():
         "SELECT outcome FROM verification_cycles WHERE cycle_id=?",
         (old_cycle["cycle_id"],),
     ).fetchone()[0] == "rejected"
+def test_prior_cycle_completed_route_steps_do_not_block_next_cycle_clean_restart():
+    conn = initialize_database(":memory:")
+    backend = Backend(title="Candidate", notes="candidate", section="vq")
+    operation = _operation(conn, backend, kind="initial", phase="await_verification")
+    old_cycle = create_verification_cycle(
+        conn,
+        operation_id=operation["operation_id"],
+        task_gid="task",
+        cycle_number=1,
+        protocol_release="verification-v1",
+        protocol_text="protocol",
+        verifier_agent="claude",
+        run_id="dead-run-1",
+        independence_attestation="independent",
+    )
+    for suffix in ("route_write", "route_cycle_finalize", "route_phase"):
+        step_name = f"{suffix}:{old_cycle['cycle_id']}"
+        declare_operation_step(conn, operation["operation_id"], step_name, {})
+        complete_operation_step(conn, operation["operation_id"], step_name)
+    conn.execute(
+        """UPDATE verification_cycles
+              SET outcome='rejected', correction_class='large', completed_at='2026-08-03T07:21:57Z'
+            WHERE cycle_id=?""",
+        (old_cycle["cycle_id"],),
+    )
+
+    next_cycle = create_verification_cycle(
+        conn,
+        operation_id=operation["operation_id"],
+        task_gid="task",
+        cycle_number=2,
+        protocol_release="verification-v1",
+        protocol_text="protocol",
+        verifier_agent="gpt",
+        run_id="dead-run",
+        independence_attestation="independent",
+    )
+    identity = confirm_task_content(
+        conn,
+        task_gid="task",
+        operation_id=operation["operation_id"],
+        boundary="reviewed",
+        title=backend.title,
+        notes=backend.notes,
+        schema_version="2",
+    )
+    version = conn.execute(
+        """SELECT content_version_id FROM content_versions
+             WHERE task_gid=? AND operation_id=? AND identity=? AND confirmed=1
+             ORDER BY created_at DESC LIMIT 1""",
+        ("task", operation["operation_id"], identity.digest),
+    ).fetchone()
+    conn.execute(
+        """UPDATE verification_cycles
+              SET reviewed_content_version_id=?, reviewed_identity=?
+            WHERE cycle_id=?""",
+        (version["content_version_id"], identity.digest, next_cycle["cycle_id"]),
+    )
+    _abandonment(conn, operation, cycle=next_cycle)
+
+    frontier = CurrentWorkflowService(conn, backend).classify_abandonment("abandonment")
+
+    assert frontier.outcome == "restart_prepared"
+    assert frontier.stage == "verification"
+    assert frontier.source_cycle_id == next_cycle["cycle_id"]
+
+
 def test_applied_large_rejection_suffix_recovers_without_repeating_external_write(
     tmp_path, monkeypatch
 ):

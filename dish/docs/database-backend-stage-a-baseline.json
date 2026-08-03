@@ -33,9 +33,9 @@
   ],
   "baseline_id": "stage-a-current-system-verification-hold-20260802",
   "characterization_test_sha256": {
-    "tests/test_abandonment_admin_workflow.py": "ae2163f69578d09438bc0e366a593e6807c2fadb6396d56bd32e011c7b50267d",
+    "tests/test_abandonment_admin_workflow.py": "9b5638b325657ae27333c103a6549959397c607e3e749aac2a726f2af597f047",
     "tests/test_abandonment_fencing_and_reconciliation.py": "616fa856e9ed5f42d3bfdf4a2eb9b485825f5100d200fc578c1c8926ed572e39",
-    "tests/test_abandonment_frontier_route_preservation.py": "1b2e7f89d3e30fe3c7bc68c1e61157188f01c5fa56d23051b82eba98410cdfaa",
+    "tests/test_abandonment_frontier_route_preservation.py": "da857070b166c399e3ab627c7a9f79435742ffd0557cb79360fbe78b51986996",
     "tests/test_abandonment_frontiers.py": "9e4ef936ad239831808ab5f1c8b3ff93eb1ab4d19592a38d4cb53e4a3e64dde0",
     "tests/test_abandonment_persistence.py": "5225f1bf712369299fe6144c085b63c94ad69ed3fb781e6b9ec732140aa4532a",
     "tests/test_abandonment_reconciliation.py": "46af7ac5a9c9f1fa3baa18787675536594c678060e097d221c5b89bf322f0a33",

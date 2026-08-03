@@ -523,10 +523,10 @@ def _clean_restart_frontier(
             """SELECT 1 FROM operation_steps
                  WHERE operation_id=? AND (
                      step_name LIKE 'small_%'
-                     OR step_name LIKE 'route_%'
+                     OR (step_name LIKE 'route_%' AND step_name LIKE '%:' || ?)
                      OR step_name IN ('signoff_write','signoff_finalize')
                  ) LIMIT 1""",
-            (operation["operation_id"],),
+            (operation["operation_id"], cycle["cycle_id"]),
         ).fetchone()
         clean = (
             cycle["completed_at"] is None

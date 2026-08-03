@@ -116,36 +116,56 @@ def test_blocked_abandonment_returns_exact_private_relay_and_fences_agents(tmp_p
     check.close()
 
 
-def test_reconcile_abandonment_rebinds_after_creating_execution_completed(tmp_path):
+def test_reconcile_abandonment_rebinds_after_creating_execution_completed(
+    tmp_path, monkeypatch
+):
     db_path = tmp_path / "dish.db"
     conn = initialize_database(db_path)
     backend = Backend(section="pi")
     source = _source(conn, backend, kind="planning")
     lease = _released_actor_lease(conn, source["operation_id"])
-    declare_operation_step(conn, source["operation_id"], "unfinished", {"x": 1})
     app = DishAdminApplication(conn, backend=backend)
 
-    blocked = app.execute(
+    original_settle = CurrentWorkflowService.settle_abandonment_frontier
+
+    def controlled_failure_after_creation(self, abandonment_id: str, *, reason: str):
+        from dish_tool.errors import DishRuleError
+
+        raise DishRuleError(
+            "CONFLICT",
+            "simulated classification failure after abandonment creation",
+            rule="simulated_controlled_failure",
+        )
+
+    monkeypatch.setattr(
+        CurrentWorkflowService,
+        "settle_abandonment_frontier",
+        controlled_failure_after_creation,
+    )
+    failed = app.execute(
         "abandon-operation",
         submission_id=source["operation_id"],
         lease_id=lease["lease_id"],
         reason="the original conversation is permanently unavailable",
     )
-    assert blocked["ok"]
-    abandonment_id = blocked["data"]["abandonment_id"]
+    assert failed["code"] == "CONFLICT"
+    monkeypatch.setattr(
+        CurrentWorkflowService, "settle_abandonment_frontier", original_settle
+    )
 
     abandonment = conn.execute(
-        "SELECT current_execution_id,status FROM abandonment_attempts WHERE abandonment_id=?",
-        (abandonment_id,),
+        "SELECT abandonment_id,current_execution_id,status FROM abandonment_attempts"
     ).fetchone()
     creating_execution = conn.execute(
         "SELECT status FROM operation_executions WHERE execution_id=?",
         (abandonment["current_execution_id"],),
     ).fetchone()
-    assert abandonment["status"] == "blocked_manual_reconciliation"
+    assert abandonment["status"] == "started"
     assert creating_execution["status"] == "completed"
 
-    reconciled = app.execute("reconcile-abandonment", abandonment_id=abandonment_id)
+    reconciled = app.execute(
+        "reconcile-abandonment", abandonment_id=abandonment["abandonment_id"]
+    )
     assert reconciled["ok"], reconciled
 
 
