@@ -202,6 +202,21 @@ def test_post_planning_priors_change_requires_exact_marco_authorization(tmp_path
     assert error["human_action"]["effect"].startswith(
         "Create one operation-bound authorization"
     )
+    assert error["human_action"]["details"]
+    assert error["human_action"]["context"]["governed_change"] == {
+        "field": "Priors",
+        "before": "None",
+        "after": "Earlier steamed route was too soft",
+        "added_tokens": [],
+        "removed_tokens": [],
+        "scope": "this task, operation, and exact proposed values",
+        "modifies_task": False,
+        "after_success": "retry the same unchanged candidate",
+    }
+    assert "Before the command, explain plainly" in error["directive"]
+    assert error["directive"].index("Before the command") < error["directive"].index(
+        "dish-admin authorize-governed-change"
+    )
 
     admin = DishAdminApplication(
         app.conn, backend=backend, release_loader=lambda: app._load_release("verification")

@@ -45,8 +45,15 @@ def build_parser() -> JsonArgumentParser:
     parser = JsonArgumentParser(
         prog="dish-admin",
         description=(
-            "Recovery and override commands for Dish. Agents may use them only against the "
-            "test profile; production administration remains Marco-only."
+            "Human administration for blocked or exceptional Dish workflows. Start with "
+            "`dish-admin inspect TASK_OR_OPERATION`; use low-level mutation commands only when "
+            "Dish returns them as the safe next action. Agents may use this tool only against "
+            "the test profile; production administration remains Marco-only."
+        ),
+        epilog=(
+            "Common recovery rule: recover-lease lets the same durable agent run continue; "
+            "expire-lease only releases an active lease; abandon-operation is for a run that "
+            "will not return. None of these commands approves or submits a dish."
         ),
     )
     add_profile_argument(parser)
@@ -75,7 +82,10 @@ def build_parser() -> JsonArgumentParser:
 
     recover = subparsers.add_parser(
         "recover",
-        help="reconcile an interrupted write/movement against a fresh live Asana reread",
+        help=(
+            "reconcile an uncertain external write or movement from a fresh live reread; "
+            "this is not lease recovery"
+        ),
     )
     recover.add_argument("submission_id", help=_submission_target_help)
     recover.add_argument(
@@ -101,7 +111,10 @@ def build_parser() -> JsonArgumentParser:
 
     abandon = subparsers.add_parser(
         "abandon-operation",
-        help="retire the latest expired or released actor attempt and prepare its safe continuation",
+        help=(
+            "declare that a prior agent run will not return, retire its exact attempt, and "
+            "prepare the safe continuation returned by Dish"
+        ),
     )
     abandon.add_argument("submission_id", help=_submission_target_help)
     abandon.add_argument("--reason", default="no reason given")
@@ -112,7 +125,10 @@ def build_parser() -> JsonArgumentParser:
 
     reconcile_abandonment = subparsers.add_parser(
         "reconcile-abandonment",
-        help="reclassify a blocked or interrupted permanent-run abandonment",
+        help=(
+            "continue an abandonment that Dish could not finish automatically after rereading "
+            "the current task and durable evidence"
+        ),
     )
     reconcile_abandonment.add_argument(
         "abandonment_id",
@@ -163,14 +179,21 @@ def build_parser() -> JsonArgumentParser:
     )
 
     recover_lease = subparsers.add_parser(
-        "recover-lease", help="reclaim an expired service lease before an admin operation"
+        "recover-lease",
+        help=(
+            "release an expired lease only so the same durable agent run can resume; this never "
+            "transfers workflow or Verification-cycle ownership to a fresh run"
+        )
     )
     recover_lease.add_argument("submission_id")
     recover_lease.add_argument("--reason", default="no reason given")
 
     expire_lease = subparsers.add_parser(
         "expire-lease",
-        help="release an active service lease by lease ID, task GID, or supported Asana task URL",
+        help=(
+            "release an active lease when its process is gone; this does not transfer durable "
+            "workflow ownership, so rerun dish-admin inspect afterward"
+        ),
     )
     expire_lease.add_argument("target")
     expire_lease.add_argument("--reason", default="no reason given")
@@ -189,14 +212,23 @@ def build_parser() -> JsonArgumentParser:
     )
     backup_restore.add_argument("backup_id")
 
+    authorize_description = (
+        "Record Marco's authorization for one exact governed-field before/after change. "
+        "This does not edit the task, approve Verification, or submit the dish."
+    )
     authorize = subparsers.add_parser(
-        "authorize-governed-change", help="authorize a single field change the tool would otherwise block"
+        "authorize-governed-change",
+        help=authorize_description,
+        description=authorize_description,
     )
     authorize.add_argument("submission_id", help=_submission_target_help)
-    authorize.add_argument("--field", required=True)
+    authorize.add_argument("--field", required=True, help="exact governed field named by Dish")
     authorize.add_argument("--before", required=True, type=json.loads, help="typed JSON value before the change")
     authorize.add_argument("--after", required=True, type=json.loads, help="typed JSON value after the change")
-    authorize.add_argument("--reason", default="no reason given")
+    authorize.add_argument(
+        "--reason", default="no reason given",
+        help="why Marco approves this exact task-scoped change",
+    )
     authorize.add_argument("--run-id")
 
     _hold_help = {

@@ -440,7 +440,9 @@ the returned `human_action` and its rendered command exactly; they do not recons
 cycle, hold, lease, or identity fields.
 
 A recovery-bearing result exposes one structured `human_action` with: command and fixed bindings,
-required human input, summary, exact effect, and after-success instruction.  Compatibility fields
+required human input, summary, plain-language `details`, exact effect, structured `context`, and
+after-success instruction. Agents must relay the details before the command rather than making Marco
+infer approval scope or consequences from shell arguments. Compatibility fields
 `admin_command`, `admin_command_is_template`, and `admin_command_template` describe the same action.
 Generated commands must parse on the current `dish-admin` CLI.  When exact recovery cannot be
 chosen safely, the response directs Marco to `dish-admin inspect` rather than listing internal IDs
@@ -453,9 +455,12 @@ For leases:
 - an open Verification cycle bound to an unavailable run exposes no `approve` or `reject`;
 - `inspect` returns the exact `abandon-operation --lease-id ...` route when one is provable.
 
-A governed-change rejection includes the exact field, typed before and after values, and a complete
-`authorize-governed-change` command template.  Authorization creates permission only; it does not
-edit the task.  The agent retries the unchanged candidate after Marco confirms success.  An unused
+A governed-change rejection includes the exact field, typed before and after values, added/removed
+enumerable tokens where available, task-and-candidate scope, affected rule limits where known, and a
+complete `authorize-governed-change` command template. The agent must explain all of that before the
+command, including the reason and next step. Authorization creates permission only; it does not edit
+the task, approve Verification, or submit the dish. The agent retries the unchanged candidate after
+Marco confirms success. An unused
 operation-bound authorization is inherited by an exact abandonment successor and does not need to
 be granted again.
 

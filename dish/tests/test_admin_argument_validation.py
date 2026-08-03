@@ -245,3 +245,205 @@ def test_human_renderer_explains_authorization_success_without_claiming_a_write(
     assert "Authorization recorded" in rendered
     assert "task itself was not changed" in rendered
     assert "retry the same exact candidate" in rendered
+
+
+def _parse_generated_human_action(action):
+    import re
+    import shlex
+
+    argv = shlex.split(action["shell_command"])
+    assert argv[0] == "dish-admin"
+    filled = [
+        re.sub(r"<[^>]+>", "operator supplied reason", token)
+        for token in argv[1:]
+    ]
+    return build_parser().parse_args(filled)
+
+
+def test_governed_exemptions_action_explains_approval_and_roundtrips_parser():
+    from dish_tool.human_actions import governed_change_action, relay_text
+
+    after = (
+        "[nutrition-kcal] Scope: this tasting may remain below 700 kcal. | "
+        "[nutrition-protein] Scope: this tasting may remain below 35g protein."
+    )
+    spec = governed_change_action(
+        operation_id=str(uuid.uuid4()),
+        field="Exemptions",
+        before="None",
+        after=after,
+    )
+    action = spec.payload()["human_action"]
+
+    parsed = _parse_generated_human_action(action)
+    assert parsed.command == "authorize-governed-change"
+    assert parsed.field == "Exemptions"
+    assert parsed.before == "None"
+    assert parsed.after == after
+    assert action["context"]["governed_change"]["added_tokens"] == [
+        "nutrition-kcal",
+        "nutrition-protein",
+    ]
+    details = "\n".join(action["details"])
+    assert "700–1,000 kcal" in details
+    assert "minimum 35 g protein" in details
+    assert "this task, this operation" in details
+    assert "does not edit the task or approve Verification" in details
+    assert "retry the same unchanged candidate" in details
+
+    relay = relay_text(spec, instruction="Wait for Marco, then retry.")
+    assert relay.index("Before the command") < relay.index("dish-admin authorize-governed-change")
+    assert "[nutrition-kcal]" in relay
+    assert "[nutrition-protein]" in relay
+
+
+def test_human_renderer_shows_governed_change_details_before_command():
+    from dish_tool.admin_human import render_admin_result
+    from dish_tool.human_actions import governed_change_action
+
+    spec = governed_change_action(
+        operation_id="operation-1",
+        field="Exemptions",
+        before="None",
+        after="[nutrition-kcal] controlled tasting",
+    )
+    result = {
+        "ok": False,
+        "command": "reject",
+        "code": "VALIDATION_FAILED",
+        "task_gid": "121",
+        "submission_id": "operation-1",
+        "state": "open",
+        "retryable": True,
+        "allowed_actions": [],
+        "data": {"message": "authorization required"},
+        "errors": [{"rule": "governed_change_unauthorized", **spec.payload()}],
+    }
+
+    rendered = render_admin_result(result, profile="prod")
+    assert rendered.index("Change this task's Exemptions") < rendered.index(
+        "Run: dish-admin authorize-governed-change"
+    )
+    assert "Scope: this task, this operation" in rendered
+    assert "does not edit the task or approve Verification" in rendered
+
+
+def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--help"])
+    root_help = " ".join(capsys.readouterr().out.split())
+    assert "Start with `dish-admin inspect TASK_OR_OPERATION`" in root_help
+    assert "recover-lease lets the same durable agent run continue" in root_help
+    assert "expire-lease only releases an active lease" in root_help
+    assert "abandon-operation is for a run that will not return" in root_help
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["authorize-governed-change", "--help"])
+    auth_help = " ".join(capsys.readouterr().out.split())
+    assert "does not edit the task" in auth_help
+    assert "approve Verification" in auth_help
+
+
+def test_representative_generated_admin_commands_roundtrip_the_real_parser():
+    import re
+    import shlex
+
+    from dish_tool.human_actions import exact_action, template_action, PromptField
+
+    operation_id = str(uuid.uuid4())
+    cycle_id = str(uuid.uuid4())
+    lease_id = str(uuid.uuid4())
+    abandonment_id = str(uuid.uuid4())
+    task_gid = "1217091891356716"
+    specs = [
+        exact_action(
+            kind="inspect-admin-state", command="inspect", positional=(operation_id,),
+            summary="Inspect.", effect="Read only.",
+        ),
+        template_action(
+            kind="reconcile-uncertain-effect", command="recover", positional=(operation_id,),
+            options=(("--outcome", "<outcome>"), ("--reason", "<reason>")),
+            prompt_fields=(PromptField("outcome", "Outcome", "<outcome>"), PromptField("reason", "Reason", "<reason>")),
+            summary="Recover.", effect="Reconcile.",
+        ),
+        template_action(
+            kind="repair-destination", command="repair-destination", positional=(operation_id,),
+            options=(("--destination-section-gid", "<section>"), ("--reason", "<reason>")),
+            prompt_fields=(PromptField("section", "Section", "<section>"), PromptField("reason", "Reason", "<reason>")),
+            summary="Repair.", effect="Repair destination.",
+        ),
+        template_action(
+            kind="abandon-dead-run", command="abandon-operation", positional=(operation_id,),
+            options=(("--lease-id", lease_id), ("--reason", "<reason>")),
+            prompt_fields=(PromptField("reason", "Reason", "<reason>"),),
+            summary="Abandon.", effect="Prepare successor.",
+        ),
+        exact_action(
+            kind="reconcile-abandonment", command="reconcile-abandonment", positional=(abandonment_id,),
+            summary="Reconcile.", effect="Continue abandonment.",
+        ),
+        template_action(
+            kind="reopen-planning", command="reopen-planning", positional=(task_gid,),
+            options=(("--reason", "<reason>"),),
+            prompt_fields=(PromptField("reason", "Reason", "<reason>"),),
+            summary="Reopen.", effect="Reopen Planning.",
+        ),
+        template_action(
+            kind="supply-evidence", command="supply-evidence", positional=(operation_id,),
+            options=(("--detail", "<detail>"), ("--resume-status", "pending-verification"),
+                     ("--expected-task-gid", task_gid), ("--expected-cycle-id", cycle_id),
+                     ("--expected-hold-identity", "identity")),
+            prompt_fields=(PromptField("detail", "Detail", "<detail>"),),
+            summary="Evidence.", effect="Release hold.",
+        ),
+        template_action(
+            kind="record-human-decision", command="record-human-decision", positional=(operation_id,),
+            options=(("--detail", "<detail>"), ("--resume-status", "pending-verification"),
+                     ("--expected-task-gid", task_gid), ("--expected-cycle-id", cycle_id),
+                     ("--expected-hold-identity", "identity")),
+            prompt_fields=(PromptField("detail", "Detail", "<detail>"),),
+            summary="Decision.", effect="Release hold.",
+        ),
+        exact_action(
+            kind="resolved", command="resolved", positional=(operation_id,),
+            summary="Resolve.", effect="Release unchanged.",
+        ),
+        template_action(
+            kind="recover-lease", command="recover-lease", positional=(operation_id,),
+            options=(("--reason", "<reason>"),),
+            prompt_fields=(PromptField("reason", "Reason", "<reason>"),),
+            summary="Recover lease.", effect="Same run resumes.",
+        ),
+        template_action(
+            kind="expire-lease", command="expire-lease", positional=(lease_id,),
+            options=(("--reason", "<reason>"),),
+            prompt_fields=(PromptField("reason", "Reason", "<reason>"),),
+            summary="Expire lease.", effect="Release lease.",
+        ),
+    ]
+
+    replacements = {
+        "<outcome>": "inspect",
+        "<reason>": "operator supplied reason",
+        "<section>": "1217091890481531",
+        "<detail>": "operator supplied detail",
+    }
+    for spec in specs:
+        argv = shlex.split(spec.shell_command())
+        filled = [replacements.get(token, re.sub(r"<[^>]+>", "operator supplied", token)) for token in argv[1:]]
+        parsed = build_parser().parse_args(filled)
+        assert parsed.command == spec.command
+
+
+def test_output_flags_are_accepted_before_or_after_admin_subcommand():
+    from dish_tool.admin_cli import _normalize_output_flags
+
+    operation_id = str(uuid.uuid4())
+    before = _normalize_output_flags(["--json", "--verbose", "inspect", operation_id])
+    after = _normalize_output_flags(["inspect", operation_id, "--verbose", "--json"])
+    assert build_parser().parse_args(before).command == "inspect"
+    parsed_after = build_parser().parse_args(after)
+    assert parsed_after.command == "inspect"
+    assert parsed_after.json is True
+    assert parsed_after.verbose is True

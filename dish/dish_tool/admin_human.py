@@ -180,6 +180,9 @@ def render_admin_result(
         waiting = _clean(data.get("waiting_for"))
         if waiting:
             lines.append(f"Waiting for: {waiting}")
+        operator_instruction = _clean(data.get("operator_instruction"))
+        if operator_instruction:
+            lines.append(f"Next: {operator_instruction}")
         lease = data.get("service_lease")
         if isinstance(lease, Mapping):
             owner = _clean(lease.get("run_id")) or "unknown"
@@ -206,9 +209,15 @@ def render_admin_result(
                 or "Administrative action"
             )
             effect = _clean(action.get("effect"))
+            details = action.get("details")
             shell = _command_from_action(action)
             prefix = f"{index}. " if len(actions) > 1 else ""
             lines.append(f"{prefix}{summary}")
+            if isinstance(details, list):
+                for detail in details:
+                    clean_detail = _clean(detail)
+                    if clean_detail:
+                        lines.append(f"   {clean_detail}")
             if effect:
                 lines.append(f"   This will: {effect}")
             if shell:

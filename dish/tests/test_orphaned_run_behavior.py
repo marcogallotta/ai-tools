@@ -395,3 +395,70 @@ def test_large_reject_still_rejects_a_fresh_run_on_ownership_not_attestation(tmp
         file_path=str(candidate), run_id="verifier-a",
     )
     assert same_run_corrected["ok"]
+
+
+def test_dead_verifier_failure_and_admin_inspect_return_same_parseable_abandonment_action(tmp_path):
+    import re
+    import shlex
+
+    from dish_tool.admin_cli import build_parser
+
+    clock = Clock()
+    service, _backend = _service(tmp_path, clock=clock, ttl=60)
+    constructor = _agent("gpt", "constructor-run-guidance")
+    started = service.execute_agent(
+        "start", {"agent": "gpt", "task_gid": "t", "kind": "initial"}, principal=constructor,
+    )
+    operation_id = started["submission_id"]
+    assert service.execute_agent(
+        "prepare", _prepare_args(operation_id), principal=constructor,
+    )["ok"]
+
+    verifier_a = _agent("codex", "verifier-run-guidance-a")
+    assert service.execute_agent(
+        "start",
+        {
+            "agent": "codex",
+            "task_gid": "t",
+            "kind": "verification",
+            "independence_attestation": "independent",
+        },
+        principal=verifier_a,
+    )["ok"]
+    clock.advance(61)
+    expired = service.execute_agent(
+        "reject", _reject_large_args(operation_id), principal=verifier_a,
+    )
+    assert expired["errors"][0]["rule"] == "service_lease_expired"
+    assert service.recover_lease(
+        operation_id, _admin("admin-guidance"), reason="original run ended"
+    )["ok"]
+
+    verifier_b = _agent("codex", "verifier-run-guidance-b")
+    blocked = service.execute_agent(
+        "reject", _reject_large_args(operation_id), principal=verifier_b,
+    )
+    assert blocked["errors"][0]["rule"] == "service_lease_claim_forbidden"
+    blocked_action = blocked["errors"][0]["human_action"]
+    assert blocked_action["command"] == "abandon-operation"
+
+    inspected = service.execute_admin(
+        "inspect", {"submission_id": operation_id}, principal=_admin("admin-inspect")
+    )
+    assert inspected["ok"], inspected
+    inspect_actions = inspected["data"]["human_actions"]
+    assert len(inspect_actions) == 1
+    inspect_action = inspect_actions[0]
+    assert inspect_action["command"] == "abandon-operation"
+    assert inspect_action["arguments"]["options"][0] == blocked_action["arguments"]["options"][0]
+
+    for action in (blocked_action, inspect_action):
+        argv = shlex.split(action["shell_command"])
+        filled = [
+            re.sub(r"<[^>]+>", "agent run is permanently unavailable", token)
+            for token in argv[1:]
+        ]
+        parsed = build_parser().parse_args(filled)
+        assert parsed.command == "abandon-operation"
+        assert parsed.submission_id == operation_id
+        assert parsed.lease_id

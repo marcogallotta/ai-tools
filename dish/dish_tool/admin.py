@@ -292,10 +292,13 @@ def _command_inspect(
     ).fetchone()
 
     actions: list[dict[str, Any]] = []
+    administrative_blocker = False
+    operator_instruction: str | None = None
     problem = "No administrative blocker is currently recorded."
     waiting_for = str(view.get("phase") or operation["phase"])
 
     if abandonment is not None:
+        administrative_blocker = True
         decorated = _decorate_abandonment_result(
             self.conn, {"abandonment_id": abandonment["abandonment_id"]}
         )
@@ -311,6 +314,7 @@ def _command_inspect(
         else:
             problem = "A permanent-run abandonment is active and must be reconciled."
     elif operation["status"] == "uncertain" or view.get("unresolved_attempts"):
+        administrative_blocker = True
         spec = template_action(
             kind="reconcile-uncertain-effect",
             command="recover",
@@ -330,6 +334,7 @@ def _command_inspect(
         actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
         problem = "An external write or movement has an unresolved outcome."
     elif active_lease is not None:
+        administrative_blocker = True
         spec = template_action(
             kind="expire-active-lease",
             command="expire-lease",
@@ -345,6 +350,7 @@ def _command_inspect(
         actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
         problem = "An agent run currently holds the operation lease."
     elif operation["phase"] in {"held_evidence", "held_human"}:
+        administrative_blocker = True
         continuation = _evidence_hold_continuation(self.conn, operation_id, view)
         human_action = continuation.get("human_action")
         if isinstance(human_action, dict):
@@ -354,6 +360,7 @@ def _command_inspect(
             })
         problem = "The operation is waiting for Marco-supplied evidence or a binding decision."
     elif view.get("destination_repair_required"):
+        administrative_blocker = True
         continuation = _repair_destination_continuation(operation_id, view)
         human_action = continuation.get("human_action")
         if isinstance(human_action, dict):
@@ -368,6 +375,7 @@ def _command_inspect(
         and cycle["completed_at"] is None
         and str(cycle["run_id"] or "").strip()
     ):
+        administrative_blocker = True
         lease = _inspect_expired_or_released_cycle_lease(
             self.conn,
             operation_id=operation_id,
@@ -397,7 +405,13 @@ def _command_inspect(
                 "The open Verification cycle is bound to another run, but Dish cannot identify "
                 "one safe abandonment lease from current records."
             )
+            operator_instruction = (
+                "Dish cannot safely generate an abandonment command for this state. Do not guess "
+                "a lease ID; run this inspect command with --verbose and report the result for a "
+                "code or data repair."
+            )
     elif latest_lease is not None:
+        administrative_blocker = True
         try:
             lease = _select_abandonment_lease(
                 self.conn, operation_id=operation_id, lease_id=None
@@ -406,6 +420,10 @@ def _command_inspect(
             problem = (
                 "The operation has no active lease, but its historical attempts do not "
                 "identify one safe automatic abandonment authority."
+            )
+            operator_instruction = (
+                "Dish cannot safely generate an abandonment command. Do not choose a lease from "
+                "raw records; rerun inspect with --verbose and report the result for repair."
             )
         else:
             spec = template_action(
@@ -444,8 +462,12 @@ def _command_inspect(
         "phase": operation["phase"],
         "waiting_for": waiting_for,
         "problem": problem,
+        "operator_instruction": operator_instruction,
+        "administrative_blocker": administrative_blocker,
         "human_actions": actions,
-        "agent_actions_now": [] if actions else list(view.get("legal_actions") or []),
+        "agent_actions_now": (
+            [] if administrative_blocker else list(view.get("legal_actions") or [])
+        ),
         "service_lease": None if active_lease is None else {
             "lease_id": active_lease["lease_id"],
             "owner_id": active_lease["owner_id"],

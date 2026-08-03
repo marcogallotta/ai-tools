@@ -16,7 +16,9 @@ from .database_schema import MIGRATIONS, migrate_database
 from .errors import DishRuleError
 from .execution_provenance import current_operation_execution_id
 from .models import ContentIdentity, OperationActors, agent_family, utc_now
-from .human_actions import PromptField, exact_action, relay_text, template_action
+from .human_actions import (
+    PromptField, exact_action, governed_change_action, relay_text, template_action,
+)
 from .transactions import immediate_transaction, savepoint_transaction
 
 
@@ -2397,32 +2399,11 @@ def reserve_marco_authorizations(
                 )
             row = candidates[0] if candidates else None
             if row is None:
-                spec = template_action(
-                    kind="authorize-governed-change",
-                    command="authorize-governed-change",
-                    positional=(operation_id,),
-                    options=(
-                        ("--field", change["field"]),
-                        ("--before", before_json),
-                        ("--after", after_json),
-                        ("--reason", "<why Marco approves this exact change>"),
-                    ),
-                    prompt_fields=(
-                        PromptField(
-                            "reason",
-                            "Why Marco approves this exact change",
-                            "<why Marco approves this exact change>",
-                        ),
-                    ),
-                    summary=f"Authorize the exact change to {change['field']}.",
-                    effect=(
-                        "Create one operation-bound authorization; it does not edit the task. "
-                        "The agent must retry the same candidate afterward."
-                    ),
-                    after_success={
-                        "agent_actions": ["retry the same candidate mutation"],
-                        "operation_id": operation_id,
-                    },
+                spec = governed_change_action(
+                    operation_id=operation_id,
+                    field=change["field"],
+                    before=change["before"],
+                    after=change["after"],
                 )
                 raise DishRuleError(
                     "VALIDATION_FAILED",
@@ -2437,8 +2418,10 @@ def reserve_marco_authorizations(
                         "directive": relay_text(
                             spec,
                             instruction=(
-                                "Wait for Marco to confirm success, then retry the same candidate "
-                                "against this operation. Do not change the proposed values."
+                                "State the concrete reason from the proposed change or Human Review "
+                                "record before the command. Wait for Marco to confirm success, then "
+                                "retry the same candidate against this operation without changing any "
+                                "proposed value."
                             ),
                         ),
                     },

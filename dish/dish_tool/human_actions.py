@@ -1,6 +1,6 @@
 """Shared human/admin action specifications and shell rendering.
 
-This module is the single source for agent-relayed ``dish-admin`` commands.  It
+This module is the single source for agent-relayed ``dish-admin`` commands. It
 keeps fixed workflow bindings separate from human-supplied text, renders shell
 arguments safely, and preserves the legacy response keys while exposing one
 structured ``human_action`` payload for newer callers.
@@ -8,6 +8,8 @@ structured ``human_action`` payload for newer callers.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
+import re
 import shlex
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -29,6 +31,8 @@ class AdminActionSpec:
     effect: str = ""
     prompt_fields: tuple[PromptField, ...] = ()
     after_success: Mapping[str, Any] | None = None
+    details: tuple[str, ...] = ()
+    context: Mapping[str, Any] | None = None
     recommended: bool = True
 
     @property
@@ -66,6 +70,8 @@ class AdminActionSpec:
                 for field in self.prompt_fields
             ],
             "after_success": dict(self.after_success or {}),
+            "details": list(self.details),
+            "context": dict(self.context or {}),
             "shell_command": shell,
         }
         payload: dict[str, Any] = {
@@ -89,6 +95,8 @@ def exact_action(
     summary: str,
     effect: str,
     after_success: Mapping[str, Any] | None = None,
+    details: Sequence[str] = (),
+    context: Mapping[str, Any] | None = None,
     recommended: bool = True,
 ) -> AdminActionSpec:
     return AdminActionSpec(
@@ -101,6 +109,8 @@ def exact_action(
         summary=summary,
         effect=effect,
         after_success=after_success,
+        details=tuple(str(item) for item in details),
+        context=context,
         recommended=recommended,
     )
 
@@ -115,6 +125,8 @@ def template_action(
     summary: str,
     effect: str,
     after_success: Mapping[str, Any] | None = None,
+    details: Sequence[str] = (),
+    context: Mapping[str, Any] | None = None,
     recommended: bool = True,
 ) -> AdminActionSpec:
     return AdminActionSpec(
@@ -128,13 +140,123 @@ def template_action(
         effect=effect,
         prompt_fields=tuple(prompt_fields),
         after_success=after_success,
+        details=tuple(str(item) for item in details),
+        context=context,
         recommended=recommended,
+    )
+
+
+_EXEMPTION_LABELS = {
+    "nutrition-kcal": "the normal 700–1,000 kcal main-meal range",
+    "nutrition-protein": "the normal minimum 35 g protein target",
+    "nutrition-fat": "the normal maximum 40 g fat limit",
+}
+
+
+def _bracket_tags(value: object) -> tuple[str, ...]:
+    if not isinstance(value, str):
+        return ()
+    return tuple(dict.fromkeys(re.findall(r"\[([a-z0-9-]+)\]", value)))
+
+
+def governed_change_action(
+    *,
+    operation_id: str,
+    field: str,
+    before: object,
+    after: object,
+    reason_placeholder: str = "<why Marco approves this exact change>",
+) -> AdminActionSpec:
+    """Build the canonical human action for an exact governed-field approval."""
+
+    before_json = json.dumps(before, sort_keys=True)
+    after_json = json.dumps(after, sort_keys=True)
+    before_tags = set(_bracket_tags(before))
+    after_tags = set(_bracket_tags(after))
+    added = sorted(after_tags - before_tags)
+    removed = sorted(before_tags - after_tags)
+
+    if field == "Exemptions" and (added or removed):
+        parts: list[str] = []
+        if added:
+            parts.append("add " + ", ".join(f"[{tag}]" for tag in added))
+        if removed:
+            parts.append("remove " + ", ".join(f"[{tag}]" for tag in removed))
+        change_text = f"Change this task's Exemptions: {'; '.join(parts)}."
+        proposed_wording = f"Proposed Exemptions wording: {after}"
+        consequences = [
+            f"[{tag}] permits this exact candidate to depart from {_EXEMPTION_LABELS[tag]}."
+            for tag in added
+            if tag in _EXEMPTION_LABELS
+        ]
+    else:
+        change_text = (
+            f"Change the governed {field} field from {before_json} to {after_json}."
+        )
+        proposed_wording = None
+        consequences = []
+
+    details = (
+        change_text,
+        *(() if proposed_wording is None else (proposed_wording,)),
+        *consequences,
+        "Scope: this task, this operation, and these exact before/after values only.",
+        "This command records authorization only; it does not edit the task or approve Verification.",
+        "After success, the agent must retry the same unchanged candidate.",
+    )
+    return template_action(
+        kind="authorize-governed-change",
+        command="authorize-governed-change",
+        positional=(operation_id,),
+        options=(
+            ("--field", field),
+            ("--before", before_json),
+            ("--after", after_json),
+            ("--reason", reason_placeholder),
+        ),
+        prompt_fields=(
+            PromptField(
+                "reason",
+                "Why Marco approves this exact change",
+                reason_placeholder,
+            ),
+        ),
+        summary=f"Authorize the exact change to {field}.",
+        effect=(
+            "Create one operation-bound authorization; it does not edit the task. "
+            "The agent must retry the same candidate afterward."
+        ),
+        after_success={
+            "agent_actions": ["retry the same candidate mutation"],
+            "operation_id": operation_id,
+        },
+        details=details,
+        context={
+            "governed_change": {
+                "field": field,
+                "before": before,
+                "after": after,
+                "added_tokens": added,
+                "removed_tokens": removed,
+                "scope": "this task, operation, and exact proposed values",
+                "modifies_task": False,
+                "after_success": "retry the same unchanged candidate",
+            }
+        },
     )
 
 
 def relay_text(spec: AdminActionSpec, *, instruction: str) -> str:
     if spec.is_template:
-        intro = "Tell Marco what decision or information is required, then give him this command after replacing the placeholder text:"
+        intro = (
+            "Tell Marco what decision or information is required, then give him "
+            "this command after replacing the placeholder text:"
+        )
     else:
         intro = "Tell Marco to run this exact command:"
-    return f"{intro}\n{spec.shell_command()}\n{instruction}"
+    detail_text = ""
+    if spec.details:
+        detail_text = "\nBefore the command, explain plainly:\n" + "\n".join(
+            f"- {detail}" for detail in spec.details
+        )
+    return f"{intro}{detail_text}\n{spec.shell_command()}\n{instruction}"
