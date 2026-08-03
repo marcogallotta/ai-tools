@@ -166,6 +166,8 @@ def governed_change_action(
     before: object,
     after: object,
     reason_placeholder: str = "<why Marco approves this exact change>",
+    proposal_reason: str | None = None,
+    linked_changes: Sequence[Mapping[str, object]] = (),
 ) -> AdminActionSpec:
     """Build the canonical human action for an exact governed-field approval."""
 
@@ -196,7 +198,19 @@ def governed_change_action(
         proposed_wording = None
         consequences = []
 
+    explanation = []
+    if proposal_reason:
+        explanation.extend((
+            f"Why the agent wants this: {proposal_reason}",
+            "Before asking Marco, explain why ordinary correction is not preferable and why this exact governed change follows from the task's settled intent.",
+        ))
+    if linked_changes:
+        explanation.append(
+            "Linked candidate changes reviewed in the same proposal: "
+            + "; ".join(str(item.get("path") or item.get("field")) for item in linked_changes)
+        )
     details = (
+        *explanation,
         change_text,
         *(() if proposed_wording is None else (proposed_wording,)),
         *consequences,
@@ -241,6 +255,8 @@ def governed_change_action(
                 "scope": "this task, operation, and exact proposed values",
                 "modifies_task": False,
                 "after_success": "retry the same unchanged candidate",
+                "proposal_reason": proposal_reason,
+                "linked_changes": [dict(item) for item in linked_changes],
             }
         },
     )

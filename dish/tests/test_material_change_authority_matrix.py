@@ -299,3 +299,61 @@ def test_post_signoff_internal_comma_remains_non_material(tmp_path):
     assert "Verified by: Codex" in backend.notes
 
 
+
+
+def test_governed_authorization_reports_complete_linked_change_set(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    _approve_and_submit(app, operation_id)
+    started = app.execute(
+        "start", agent="codex", task_gid="t", kind="change",
+        change_level="large", change_reason="align settled identity", run_id="linked-editor",
+    )
+    candidate = tmp_path / "linked-candidate.txt"
+    candidate.write_text(
+        f"{backend.title}\n{backend.notes}"
+        .replace("Dish candidate: Test dish", "Dish candidate: Different dish")
+        .replace("Purpose: Compare texture", "Purpose: Compare the settled route")
+    )
+    result = app.execute(
+        "prepare", agent="codex", model="gpt-5.6-sol",
+        submission_id=started["submission_id"], file_path=str(candidate),
+        material_classification="material",
+    )
+    assert result["code"] == "VALIDATION_FAILED"
+    error = result["errors"][0]
+    assert error["rule"] == "governed_change_unauthorized"
+    assert [item["field"] for item in error["missing_authorizations"]] == [
+        "Dish candidate", "Purpose",
+    ]
+    assert len(error["human_actions"]) == 2
+    assert error["directive"].startswith("Before showing any command")
+    assert {item["path"] for item in error["linked_candidate_changes"]} >= {
+        "planning.Dish candidate", "planning.Purpose",
+    }
+
+
+def test_semantic_proposal_gate_rejects_non_main_with_nutrition_exemption(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    _approve_and_submit(app, operation_id)
+    started = app.execute(
+        "start", agent="codex", task_gid="t", kind="change",
+        change_level="large", change_reason="reclassify tasting", run_id="semantic-editor",
+    )
+    candidate = tmp_path / "incoherent-candidate.txt"
+    text = f"{backend.title}\n{backend.notes}"
+    lines = text.splitlines()
+    lines[0] = "[non-main] " + lines[0]
+    text = "\n".join(lines)
+    text = text.replace("Role: main", "Role: non-main — controlled tasting portion")
+    text = text.replace("Exemptions: None", "Exemptions: [nutrition-kcal] — tasting portion")
+    candidate.write_text(text)
+    result = app.execute(
+        "prepare", agent="codex", model="gpt-5.6-sol",
+        submission_id=started["submission_id"], file_path=str(candidate),
+        material_classification="material",
+    )
+    assert result["code"] == "VALIDATION_FAILED"
+    error = result["errors"][0]
+    assert error["rule"] == "semantic_proposal_incoherent"
+    assert "non-main role cannot rely" in error["contradictions"][0]
+    assert "resolve every linked contradiction" in error["required_action"]

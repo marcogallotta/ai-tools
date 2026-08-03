@@ -53,13 +53,51 @@ def governed_changes(before, after) -> tuple[GovernedChange, ...]:
     return tuple(changes)
 
 
-def require_governed_authorization(conn, before, after, *, task_gid: str, operation_id: str) -> tuple[str, ...]:
+
+def validate_semantic_proposal(before, after) -> None:
+    """Reject mechanically coherent but internally contradictory governed proposals."""
+    role = str(after.planning_brief.values.get("Role", ""))
+    exemptions = str(after.planning_brief.values.get("Exemptions", ""))
+    title = str(after.title)
+    non_main_role = "non-main" in role.casefold()
+    non_main_marker = "[non-main]" in title.casefold()
+    nutrition_exemption = any(tag in exemptions for tag in (
+        "[nutrition-kcal]", "[nutrition-protein]", "[nutrition-fat]"
+    ))
+    contradictions = []
+    if non_main_role and nutrition_exemption:
+        contradictions.append("non-main role cannot rely on main-meal nutrition exemptions")
+    if non_main_role and not non_main_marker:
+        contradictions.append("non-main Role requires the [non-main] title marker")
+    if non_main_marker and not non_main_role:
+        contradictions.append("[non-main] title marker requires a matching non-main Role")
+    if contradictions:
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "proposed governed changes are semantically inconsistent",
+            rule="semantic_proposal_incoherent",
+            details={
+                "contradictions": contradictions,
+                "required_action": (
+                    "Reinterpret Marco's intent, resolve every linked contradiction in one candidate, "
+                    "and only then request governed authorization."
+                ),
+            },
+        )
+
+def require_governed_authorization(conn, before, after, *, task_gid: str, operation_id: str, proposal_reason: str | None = None) -> tuple[str, ...]:
+    validate_semantic_proposal(before, after)
     changes = governed_changes(before, after)
     if not changes:
         return ()
     rows = reserve_marco_authorizations(
         conn, task_gid=task_gid, operation_id=operation_id,
         changes=tuple({"field": c.field, "before": c.before, "after": c.after} for c in changes),
+        proposal_reason=proposal_reason,
+        linked_changes=tuple(
+            {"path": path, "before": old, "after": new}
+            for path, (old, new) in canonical_diff(before, after).items()
+        ),
     )
     return tuple(row["authorization_id"] for row in rows)
 

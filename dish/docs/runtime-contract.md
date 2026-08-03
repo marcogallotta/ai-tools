@@ -468,14 +468,18 @@ For leases:
 - an open Verification cycle bound to an unavailable run exposes no `approve` or `reject`;
 - `inspect` returns the exact `abandon-operation --lease-id ...` route when one is provable.
 
-A governed-change rejection includes the exact field, typed before and after values, added/removed
-enumerable tokens where available, task-and-candidate scope, affected rule limits where known, and a
-complete `authorize-governed-change` command template. The agent must explain all of that before the
-command, including the reason and next step. Authorization creates permission only; it does not edit
-the task, approve Verification, or submit the dish. The agent retries the unchanged candidate after
-Marco confirms success. An unused
-operation-bound authorization is inherited by an exact abandonment successor and does not need to
-be granted again.
+A governed-change rejection includes the complete missing authorization set, not only the first
+field: exact typed before/after values, every linked candidate path changed by the same proposal,
+added/removed enumerable tokens where available, task-and-candidate scope, affected rule limits
+where known, and complete `authorize-governed-change` command templates. Before any command, the
+agent must explain why the candidate fails, what causes the failure, why ordinary correction is not
+preferred, why the proposed resolution follows from settled intent, alternatives considered, and
+all linked contradictions resolved by the same candidate. Dish rejects mechanically coherent but
+semantically inconsistent proposals, including non-main role plus main-meal nutrition exemptions or
+a non-main title marker that disagrees with `Role`. Authorization creates permission only; it does
+not edit the task, approve Verification, or submit the dish. The agent retries the unchanged
+candidate after Marco confirms success. An unused operation-bound authorization is inherited by an
+exact abandonment successor and does not need to be granted again.
 
 ## Troubleshooting checklist
 

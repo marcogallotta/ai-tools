@@ -2339,6 +2339,8 @@ def reserve_marco_authorizations(
     task_gid: str,
     operation_id: str,
     changes: Sequence[Mapping[str, Any]],
+    proposal_reason: str | None = None,
+    linked_changes: Sequence[Mapping[str, Any]] = (),
 ) -> tuple[sqlite3.Row, ...]:
     """Resolve and reserve the full authorization set atomically.
 
@@ -2367,6 +2369,7 @@ def reserve_marco_authorizations(
                 details={"actual": operation["status"]},
             )
         rows: list[sqlite3.Row] = []
+        missing: list[tuple[Mapping[str, Any], Any]] = []
         for change in changes:
             before_json = json.dumps(change["before"], sort_keys=True)
             after_json = json.dumps(change["after"], sort_keys=True)
@@ -2399,34 +2402,45 @@ def reserve_marco_authorizations(
                 )
             row = candidates[0] if candidates else None
             if row is None:
-                spec = governed_change_action(
-                    operation_id=operation_id,
-                    field=change["field"],
-                    before=change["before"],
-                    after=change["after"],
-                )
-                raise DishRuleError(
-                    "VALIDATION_FAILED",
-                    "candidate changes governed facts without persisted Marco authorization",
-                    rule="governed_change_unauthorized",
-                    details={
-                        "field": change["field"],
-                        "before": change["before"],
-                        "after": change["after"],
-                        "required_admin_action": "authorize-governed-change",
-                        **spec.payload(),
-                        "directive": relay_text(
-                            spec,
-                            instruction=(
-                                "State the concrete reason from the proposed change or Human Review "
-                                "record before the command. Wait for Marco to confirm success, then "
-                                "retry the same candidate against this operation without changing any "
-                                "proposed value."
-                            ),
-                        ),
-                    },
-                )
-            rows.append(row)
+                missing.append((change, governed_change_action(
+                    operation_id=operation_id, field=change["field"],
+                    before=change["before"], after=change["after"],
+                    proposal_reason=proposal_reason, linked_changes=linked_changes,
+                )))
+            else:
+                rows.append(row)
+        if missing:
+            specs = [spec for _, spec in missing]
+            actions = [spec.payload()["human_action"] for spec in specs]
+            directive = (
+                "Before showing any command, explain: why the candidate fails, what causes it, "
+                "why ordinary correction is not preferred, why this exact resolution follows, "
+                "and every linked contradiction corrected by the same proposal. "
+                "Then present all required authorizations together; do not request them one field at a time."
+            )
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "candidate changes governed facts without the complete persisted Marco authorization set",
+                rule="governed_change_unauthorized",
+                details={
+                    "field": missing[0][0]["field"],
+                    "before": missing[0][0]["before"],
+                    "after": missing[0][0]["after"],
+                    "missing_authorizations": [
+                        {"field": change["field"], "before": change["before"], "after": change["after"]}
+                        for change, _ in missing
+                    ],
+                    "linked_candidate_changes": [dict(item) for item in linked_changes],
+                    "proposal_reason": proposal_reason,
+                    "required_admin_action": "authorize-governed-change",
+                    "human_actions": actions,
+                    "human_action": actions[0],
+                    "admin_command": specs[0].shell_command(),
+                    "admin_command_is_template": True,
+                    "admin_command_template": specs[0].shell_command(),
+                    "directive": directive,
+                },
+            )
         now = utc_now()
         for row in rows:
             conn.execute(

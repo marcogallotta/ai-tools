@@ -848,6 +848,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     authorization_ids = require_governed_authorization(
         conn, parse_task_document(f"{live.title}\n{live.notes}"), document,
         task_gid=op["task_gid"], operation_id=operation_id,
+        proposal_reason=reason,
     )
     intended_title, intended_notes = _render(document)
     intended_identity = content_identity(intended_title, intended_notes).digest
