@@ -112,6 +112,9 @@ Add an operating instruction with all of these requirements:
   `reason` instead.
 - A tool pass proves deterministic conformance only; complete the semantic work required by the
   stage protocol returned by Dish.
+- `pending-human-review` is only for a durable, scoped decision future runs must preserve, per the
+  protocol's eligibility test — not any question Marco could answer. Resolve routine clarification,
+  agent-owned correction, and the brief's settled fields (e.g. `Role`) directly instead.
 - After the third consecutive non-approved Large Verification round, `verification-hold` stops the
   flow; tell Marco to run `dish-admin resolved <operation-id>`, which releases the unchanged
   corrected candidate into a fresh Verification round without approving or signing it.

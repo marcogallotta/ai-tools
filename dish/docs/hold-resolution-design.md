@@ -82,3 +82,10 @@ custom-GPT instructions (per this repo's `CLAUDE.md` sync requirement). "Talk fi
 and "synchronous is the default" (#3, #4) also need the corresponding wording in
 `dish-verification-protocol.md`/`-compact.md` and the live GPT instructions, since the tool
 cannot verify a conversation happened — that part is enforced by protocol text, not code.
+
+This design begins only after a case has independently passed the Human Review eligibility
+test (real substantive judgment/exception/route-ruling, future relevance, need for durable
+Marco authority) defined in `dish-research-protocol.md` and `dish-verification-protocol.md`.
+It reduces ceremony for a genuine, already-warranted Human Review decision; it must not be
+read as license to route ordinary clarification or agent-owned correction into Human Review
+just because inline resolution makes that route cheaper.
