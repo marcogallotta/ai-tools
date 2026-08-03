@@ -22,6 +22,7 @@ from typing import Any, Mapping, Protocol
 from sqlalchemy import select
 
 from dish_service.shadow_spool import ShadowSpool, ShadowSpoolItem
+from dish_tool.constants import RECOVERY_QUARANTINE_SECONDS
 
 from . import stage3_models as wf
 from . import stage5_models as tx
@@ -302,6 +303,7 @@ class ShadowWorker:
         comparator_release: str,
         kill_switch_path: Path,
         claim_ttl: timedelta = timedelta(minutes=2),
+        reservation_ttl: timedelta = timedelta(seconds=RECOVERY_QUARANTINE_SECONDS),
         delivered_retention: timedelta = timedelta(days=7),
         idle_seconds: float = 1.0,
         clock=_utcnow,
@@ -313,9 +315,14 @@ class ShadowWorker:
         self.worker_id = worker_id
         self.comparator_release = comparator_release
         self.kill_switch_path = Path(kill_switch_path)
+        if reservation_ttl.total_seconds() < RECOVERY_QUARANTINE_SECONDS:
+            raise ValueError(
+                f"reservation_ttl must be at least {RECOVERY_QUARANTINE_SECONDS} seconds"
+            )
         if delivered_retention.total_seconds() < 0:
             raise ValueError("delivered_retention must not be negative")
         self.claim_ttl = claim_ttl
+        self.reservation_ttl = reservation_ttl
         self.delivered_retention = delivered_retention
         self.idle_seconds = idle_seconds
         self.clock = clock
@@ -341,9 +348,15 @@ class ShadowWorker:
     def run_once(self) -> bool:
         if self._kill_switch_engaged():
             return False
+        now = self.clock()
+        try:
+            self.spool.recover_stale_reservations(now=now, older_than=self.reservation_ttl)
+        except BaseException:
+            LOGGER.exception("shadow spool stale-reservation recovery failed")
+            return False
         try:
             self.spool.compact_delivered(
-                now=self.clock(), older_than=self.delivered_retention, limit=1000
+                now=now, older_than=self.delivered_retention, limit=1000
             )
         except BaseException:
             LOGGER.exception("shadow spool delivered-payload compaction failed")
@@ -462,6 +475,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--comparator-release", required=True)
     parser.add_argument("--kill-switch", required=True, type=Path)
     parser.add_argument("--idle-seconds", type=float, default=1.0)
+    parser.add_argument(
+        "--reservation-ttl-seconds", type=int, default=RECOVERY_QUARANTINE_SECONDS
+    )
     parser.add_argument("--delivered-retention-seconds", type=int, default=7 * 24 * 60 * 60)
     parser.add_argument("--log-level", default="INFO")
     return parser
@@ -482,6 +498,7 @@ def main(argv: list[str] | None = None) -> int:
         worker_id=args.worker_id,
         comparator_release=args.comparator_release,
         kill_switch_path=args.kill_switch,
+        reservation_ttl=timedelta(seconds=args.reservation_ttl_seconds),
         delivered_retention=timedelta(seconds=args.delivered_retention_seconds),
         idle_seconds=args.idle_seconds,
     )

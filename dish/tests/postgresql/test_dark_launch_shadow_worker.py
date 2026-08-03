@@ -271,3 +271,67 @@ def test_shadow_worker_compacts_delivered_payload_after_retention(workflow_db, t
     assert worker.run_once() is True
     assert spool.status()["counts"]["delivered"] == 0
     assert spool.status()["counts"]["archived"] == 1
+
+
+def test_shadow_worker_recovers_stale_reservation_before_later_delivery(workflow_db, tmp_path):
+    from datetime import timedelta
+
+    factory, ids, context, _task = workflow_db
+    with session_scope(factory) as session:
+        baseline = ShadowService(session, uuid_factory=lambda: _next(ids)).create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        baseline_id = baseline.shadow_baseline_id
+    spool = ShadowSpool(tmp_path / "spool.sqlite3", min_free_bytes=1)
+    first = spool.reserve(
+        source_request_identity="request-first",
+        source_authority_generation="legacy-1",
+        command_name="prepare",
+        treatment="execute",
+        canonical_input={"command": "prepare", "arguments": {}},
+        principal={},
+        source_pre_state={},
+        pinned_inputs={"rollout_mode": "execute"},
+        created_at=NOW,
+    )
+    second = spool.reserve(
+        source_request_identity="request-second",
+        source_authority_generation="legacy-1",
+        command_name="prepare",
+        treatment="execute",
+        canonical_input={"command": "prepare", "arguments": {}},
+        principal={},
+        source_pre_state={},
+        pinned_inputs={"rollout_mode": "execute"},
+        created_at=NOW,
+    )
+    spool.complete(
+        second.registration_id,
+        source_outcome={"ok": True},
+        source_post_state={"phase": "verification"},
+        source_effects={},
+        completed_at=NOW,
+    )
+    worker = ShadowWorker(
+        spool=spool,
+        session_maker=factory,
+        baseline_id=baseline_id,
+        evaluator=Evaluator(),
+        worker_id="shadow-1",
+        comparator_release="test",
+        kill_switch_path=tmp_path / "dark-launch.disabled",
+        reservation_ttl=timedelta(seconds=90),
+        clock=lambda: NOW + timedelta(seconds=91),
+    )
+    assert worker.run_once() is True
+    status = spool.status()["counts"]
+    assert status["delivered"] == 1
+    assert status["complete"] == 1
+    with session_scope(factory) as session:
+        gap = session.scalar(select(tx.ShadowGap))
+        assert gap is not None
+        assert gap.gap_identity == "capture:request-first"
+    assert first.rollout_sequence < second.rollout_sequence

@@ -57,8 +57,10 @@ uncomparable gaps. It must not receive `ASANA_ENV`, `ASANA_PAT`, or any projecti
 
 Inspect status repeatedly, including `spool.capacity.accepting_new_records`. The worker compacts
 old delivered payloads after `DISH_DARK_LAUNCH_DELIVERED_RETENTION_SECONDS` while preserving replay
-fingerprints. Mismatch and gap counts are evidence, not authority failures; disabling the dark launch
-must not affect the live service.
+fingerprints. Keep `DISH_DARK_LAUNCH_RESERVATION_TTL_SECONDS` at or above the legacy recovery
+quarantine (currently 90 seconds). An earlier unresolved reservation blocks all later spool delivery
+until it completes or ages into an explicit proof gap. Mismatch and gap counts are evidence, not
+authority failures; disabling the dark launch must not affect the live service.
 
 ## Immediate disable
 

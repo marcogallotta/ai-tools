@@ -128,3 +128,26 @@ def test_compaction_removes_payload_but_preserves_replay_identity(tmp_path) -> N
             created_at=NOW,
         )
     assert spool.status()["counts"]["archived"] == 1
+
+
+def test_pending_stops_at_earliest_reserved_sequence_until_recovered(tmp_path) -> None:
+    spool = ShadowSpool(tmp_path / "shadow.sqlite3", min_free_bytes=1)
+    first = _reserve(spool, "request-1")
+    second = _reserve(spool, "request-2")
+    spool.complete(
+        second.registration_id,
+        source_outcome={"ok": True},
+        source_post_state={"phase": "later"},
+        source_effects={},
+        completed_at=NOW + timedelta(seconds=1),
+    )
+    assert spool.pending() == ()
+    assert spool.recover_stale_reservations(
+        now=NOW + timedelta(seconds=91), older_than=timedelta(seconds=90)
+    ) == 1
+    pending = spool.pending()
+    assert [item.registration_id for item in pending] == [
+        first.registration_id,
+        second.registration_id,
+    ]
+    assert [item.state for item in pending] == ["gap", "complete"]

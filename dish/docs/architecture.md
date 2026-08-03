@@ -384,6 +384,9 @@ fail open quickly to emergency-gap evidence instead of inheriting the live reque
 capture is admitted only while configured byte, record-count, and filesystem free-space bounds hold;
 a capacity breach atomically engages the shared kill switch. Delivered payloads age into compact
 replay tombstones that retain identity hashes and rollout sequence without retaining task content.
+The earliest unresolved reservation is a hard delivery barrier. The worker first converts reservations
+older than the recovery quarantine into explicit permanent gaps; it never skips them to replay a later
+rollout sequence.
 The same owner-only filesystem kill switch gates both legacy capture and shadow-worker draining;
 the worker exits cleanly before reading further spool entries while it is engaged. Shadow execution
 namespaces legacy request and run identities by baseline, registers one deterministic target

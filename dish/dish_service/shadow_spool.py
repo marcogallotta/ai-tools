@@ -481,6 +481,13 @@ class ShadowSpool:
         })
         conn = self._connect()
         try:
+            candidate = conn.execute(
+                """SELECT 1 FROM shadow_capture_registrations
+                    WHERE state='reserved' AND created_at <= ? LIMIT 1""",
+                (cutoff,),
+            ).fetchone()
+            if candidate is None:
+                return 0
             conn.execute("BEGIN IMMEDIATE")
             result = conn.execute(
                 """UPDATE shadow_capture_registrations
@@ -592,6 +599,12 @@ class ShadowSpool:
             rows = conn.execute(
                 """SELECT * FROM shadow_capture_registrations
                     WHERE state IN ('complete','gap')
+                      AND rollout_sequence < COALESCE(
+                          (SELECT MIN(rollout_sequence)
+                             FROM shadow_capture_registrations
+                            WHERE state='reserved'),
+                          9223372036854775807
+                      )
                     ORDER BY rollout_sequence LIMIT ?""",
                 (limit,),
             ).fetchall()
