@@ -31,8 +31,11 @@ still track; it is not "entirely open."
 - Runtime wiring rehearsal: start the deployable service and both workers against a disposable
   PostgreSQL target and prove cross-process behavior — projection claim, external-attempt
   settlement, reconciliation, worker restart, and worker takeover — not just that each process
-  starts and connects in isolation. If the importer has no executable local target yet, record
-  that as a deployment blocker rather than substituting static inspection.
+  starts and connects in isolation.
+- **Deployment blocker**: the importer has no executable local target. `dish_tool/` contains only
+  `migrations.py` (Alembic schema migration); no importer module, CLI, or script exists anywhere in
+  the repository. "Final production import and reconciliation" below cannot run, and the runtime
+  wiring rehearsal above cannot exercise it, until an importer is built.
 - Production-shaped rehearsal (migration, activation, fault-injection, backup, restore) against
   sanitized or copied production-shaped data.
 
