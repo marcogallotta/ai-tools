@@ -60,11 +60,13 @@ def test_frozen_command_inventory_matches_current_surfaces() -> None:
     assert list(action_values["ACTION_COMMANDS"]) == baseline["action_commands"]
     assert sorted(admin_values["_ADMIN_COMMANDS"]) == sorted(baseline["admin_commands"])
 
-    expected_treatments = set(baseline["action_commands"]) | set(baseline["admin_commands"])
-    expected_treatments.add("planning-intent-settlement")
+    current_surface = set(baseline["action_commands"]) | set(baseline["admin_commands"])
+    source_only = set(baseline.get("source_only_commands", ()))
     treatments = baseline["target_treatments"]
     assert isinstance(treatments, dict)
-    assert set(treatments) == expected_treatments
+    assert source_only <= current_surface
+    assert current_surface - source_only <= set(treatments)
+    assert set(treatments) - {"planning-intent-settlement"} <= current_surface
     assert all(
         re.fullmatch(r"(?:retain|retire|add):[A-Z]", treatment)
         for treatment in treatments.values()

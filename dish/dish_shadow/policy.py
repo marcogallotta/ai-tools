@@ -28,10 +28,17 @@ _ROWS = (
     DarkLaunchTreatment("sections", "excluded", "read-only query"),
     DarkLaunchTreatment("section-tasks", "excluded", "read-only query"),
     DarkLaunchTreatment("read", "excluded", "read-only query"),
+    DarkLaunchTreatment("proposals", "excluded", "read-only source semantic-proposal queue"),
+    DarkLaunchTreatment("attention", "excluded", "read-only administrative query"),
     DarkLaunchTreatment("holds", "excluded", "read-only administrative query"),
+    DarkLaunchTreatment("review-queue", "excluded", "read-only source semantic-proposal queue"),
+    DarkLaunchTreatment("review-inspect", "excluded", "read-only source semantic-proposal detail"),
     # Create remains capture-only until exact lost-response correlation is
     # proved for the production Asana topology.
     DarkLaunchTreatment("create", "capture_only", "pre-cutover create correlation is not qualified"),
+    DarkLaunchTreatment("apply-proposal", "capture_only", "target semantic-proposal authority is not implemented"),
+    DarkLaunchTreatment("review-approve", "capture_only", "target semantic-proposal authority is not implemented"),
+    DarkLaunchTreatment("review-reject", "capture_only", "target semantic-proposal authority is not implemented"),
     # Workflow mutations whose target semantics are fully local to PostgreSQL.
     DarkLaunchTreatment("start", "execute", "target workflow mutation is shadow-safe"),
     DarkLaunchTreatment("prepare", "execute", "target document and placement intents remain internal"),

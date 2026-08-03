@@ -169,7 +169,7 @@ includes the command, canonical arguments, authenticated owner identity, and run
 | Surface | Replay-bound mutations |
 |---|---|
 | Agent Action/private CLI | `create`, `start`, `prepare`, `approve`, `reject`, `submit` |
-| Marco admin workflow | `migrate`, `reopen`, `recover`, `repair-destination`, `supply-evidence`, `record-human-decision`, `authorize-governed-change`, `discard`, `abandon-operation`, `reconcile-abandonment` |
+| Marco admin workflow | `attention`, `inspect`, `holds`, `review-queue`, `review-inspect`, `review-approve`, `review-reject`, `migrate`, `reopen`, `recover`, `repair-destination`, `supply-evidence`, `record-human-decision`, `authorize-governed-change`, `discard`, `abandon-operation`, `reconcile-abandonment` |
 | Lease lifecycle | private agent lease renewal; Action `renew-lease`; Marco-admin `recover-lease` and `expire-lease` |
 | Backup lifecycle | `backup-create`, `backup-restore` |
 
@@ -468,18 +468,31 @@ For leases:
 - an open Verification cycle bound to an unavailable run exposes no `approve` or `reject`;
 - `inspect` returns the exact `abandon-operation --lease-id ...` route when one is provable.
 
-A governed-change rejection includes the complete missing authorization set, not only the first
-field: exact typed before/after values, every linked candidate path changed by the same proposal,
-added/removed enumerable tokens where available, task-and-candidate scope, affected rule limits
-where known, and complete `authorize-governed-change` command templates. Before any command, the
-agent must explain why the candidate fails, what causes the failure, why ordinary correction is not
-preferred, why the proposed resolution follows from settled intent, alternatives considered, and
-all linked contradictions resolved by the same candidate. Dish rejects mechanically coherent but
-semantically inconsistent proposals, including non-main role plus main-meal nutrition exemptions or
-a non-main title marker that disagrees with `Role`. Authorization creates permission only; it does
-not edit the task, approve Verification, or submit the dish. The agent retries the unchanged
-candidate after Marco confirms success. An unused operation-bound authorization is inherited by an
-exact abandonment successor and does not need to be granted again.
+When a Large correction needs governed authority, Dish validates the candidate as one semantic
+proposal. The response includes the full rationale and linked change set: why the candidate fails,
+the concrete cause, why ordinary correction is not preferred, why the proposal follows Marco's
+settled intent, alternatives considered, and every title, Planning, Decision, or Research
+contradiction resolved by that same candidate. Dish rejects mechanically coherent but semantically
+inconsistent proposals, including non-main role plus main-meal nutrition exemptions or a non-main
+title marker that disagrees with `Role`.
+
+If authority is missing, Dish stores the exact candidate and all governed before/after values once,
+returns `semantic_proposal_queued`, releases proposer lease ownership, and marks the task safely
+parked. The proposing agent may continue unrelated batch work when `batch_may_continue=true`; it must
+not keep mutating the parked operation. Marco reviews pending items with `dish-admin review-queue`
+and `dish-admin review-inspect PROPOSAL_ID`, then uses `review-approve` or `review-reject`. Approval
+is atomic across the complete displayed bundle and does not edit, approve, or submit the task.
+
+Approved proposals are detached from the proposing run. `dish proposals --agent AGENT` lists
+claimable approved bundles. A fresh invocation runs `dish apply-proposal PROPOSAL_ID --agent AGENT
+--model MODEL`; Dish claims the bundle, verifies the original baseline, installs only the immutable
+stored candidate, consumes the linked authorizations, closes the interrupted cycle as Large, and
+opens a fresh Verification cycle. The applying invocation does not inherit the proposer's run
+identity or Verification independence. A rejected proposal creates no authorizations or task edit;
+Dish closes the proposing cycle against the unchanged baseline and opens a fresh Verification cycle
+for a different proposal. The same semantic change bundle cannot be requeued unchanged after Marco
+rejects it. An unused standalone operation-bound authorization still inherits across an exact
+abandonment successor.
 
 ## Troubleshooting checklist
 

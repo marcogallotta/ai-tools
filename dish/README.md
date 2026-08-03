@@ -284,10 +284,32 @@ In service mode it exposes:
 - `repair-destination` to replace only an approved Planning destination after an unrecoverable final movement failure, while preserving the original Verification evidence;
 - `discard` for a provably unapplied stale operation;
 - `reopen`, `supply-evidence`, and `record-human-decision` for the existing protocol-specific hold routes;
-- `authorize-governed-change` for one exact governed-field change; unused exact grants carry
-  across abandonment succession for the same task and typed before/after values;
+- `authorize-governed-change` for a standalone exact governed-field change; unused exact grants
+  carry across abandonment succession for the same task and typed before/after values;
+- `review-queue` and `review-inspect` to review durable semantic proposals parked by agents;
+- `review-approve` and `review-reject` to decide one complete linked proposal bundle atomically;
 - `migrate` for explicit task-schema migration;
 - `backup-create` and `backup-restore` for managed shared-database snapshots.
+
+Agents can continue batch review after Dish parks a task on a semantic proposal. Marco reviews the
+queue with:
+
+```sh
+dish-admin review-queue
+dish-admin review-inspect PROPOSAL_ID
+dish-admin review-approve PROPOSAL_ID --reason "approved exact linked correction"
+```
+
+A later fresh invocation lists and applies approved work without inheriting the proposing run:
+
+```sh
+dish proposals --agent gpt
+dish apply-proposal PROPOSAL_ID --agent gpt --model MODEL
+```
+
+Application installs only the exact stored candidate and opens a fresh Verification cycle. It never
+signs or submits the task. Rejecting a proposal leaves the live task unchanged, opens a fresh
+Verification cycle, and prevents an agent from immediately requeueing the same rejected bundle.
 
 For destination repair, use the exact admin continuation returned by `dish inspect`:
 

@@ -12,11 +12,14 @@ def test_dark_launch_registry_covers_current_command_surfaces() -> None:
     from dish_pg.command_contract import COMMAND_DEFINITIONS
     from dish_service.command_spec import ACTION_COMMANDS
 
-    assert set(COMMAND_DEFINITIONS) == set(DARK_LAUNCH_TREATMENTS)
+    assert set(COMMAND_DEFINITIONS).issubset(DARK_LAUNCH_TREATMENTS)
     assert set(ACTION_COMMANDS).issubset(DARK_LAUNCH_TREATMENTS)
     assert treatment_for("create").treatment == "capture_only"
     assert treatment_for("prepare").treatment == "execute"
     assert treatment_for("recover").treatment == "capture_only"
+    assert treatment_for("proposals").treatment == "excluded"
+    assert treatment_for("apply-proposal").treatment == "capture_only"
+    assert treatment_for("review-approve").treatment == "capture_only"
     assert all(not row.external_effects_allowed for row in DARK_LAUNCH_TREATMENTS.values())
 
 

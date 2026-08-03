@@ -81,10 +81,10 @@ from .request_coordinators import (
 from .restore_fault import RestoreFaultMarker
 from .restore_request_journal import RestoreRequestJournal
 
-_READ_ONLY_AGENT_COMMANDS = {"sections", "section-tasks", "read", "inspect"}
-_LEASED_AGENT_COMMANDS = {"prepare", "approve", "reject", "submit"}
+_READ_ONLY_AGENT_COMMANDS = {"sections", "section-tasks", "read", "inspect", "proposals"}
+_LEASED_AGENT_COMMANDS = {"prepare", "approve", "reject", "submit", "apply-proposal"}
 _MUTATING_AGENT_COMMANDS = {"create", "start", *_LEASED_AGENT_COMMANDS}
-_RUN_ID_AGENT_COMMANDS = {"start", "prepare", "approve", "reject"}
+_RUN_ID_AGENT_COMMANDS = {"start", "prepare", "approve", "reject", "apply-proposal"}
 _RUN_ID_ADMIN_COMMANDS = {"repair-destination"}
 _HANDOFF_PHASES = {"await_verification", "held_evidence", "held_human"}
 _OPERATION_ADMIN_COMMANDS = {
@@ -98,8 +98,10 @@ _OPERATION_ADMIN_COMMANDS = {
     "record-human-decision",
     "authorize-governed-change",
     "repair-destination",
+    "review-approve",
+    "review-reject",
 }
-_LEASE_FREE_ADMIN_COMMANDS = {"attention", "inspect", "holds", "authorize-governed-change", "abandon-operation", "reconcile-abandonment"}
+_LEASE_FREE_ADMIN_COMMANDS = {"attention", "inspect", "holds", "authorize-governed-change", "abandon-operation", "reconcile-abandonment", "review-queue", "review-inspect", "review-approve", "review-reject"}
 
 LOG = logging.getLogger("dish.service.application")
 
@@ -710,6 +712,14 @@ class DishService:
         operation_id = str(arguments.get("submission_id") or "").strip()
         if operation_id:
             return operation_id
+        if command == "apply-proposal":
+            proposal_id = str(arguments.get("proposal_id") or "").strip()
+            if proposal_id:
+                row = conn.execute(
+                    "SELECT operation_id FROM semantic_proposals WHERE proposal_id=?",
+                    (proposal_id,),
+                ).fetchone()
+                return None if row is None else str(row["operation_id"])
         if command == "start" and arguments.get("prepared_operation_id"):
             return str(arguments.get("prepared_operation_id") or "").strip() or None
         if command == "start" and arguments.get("target_operation_id"):
@@ -1245,6 +1255,7 @@ class DishService:
         op,
         *,
         agent: str | None = None,
+        proposal_id: str | None = None,
     ) -> bool:
         expected_agent = (
             op["researcher_agent"]
@@ -1393,6 +1404,7 @@ class DishService:
         command: str,
         *,
         agent: str | None = None,
+        proposal_id: str | None = None,
     ) -> bool:
         op = self._operation_row(conn, operation_id)
         if op is None or op["status"] != "open":
@@ -1402,6 +1414,12 @@ class DishService:
         ):
             return self._stage_actor_may_claim_missing_lease(
                 conn, operation_id, principal, op, agent=agent
+            )
+        if command == "apply-proposal":
+            from dish_tool.semantic_proposals import claimable_proposal_for_run
+            return bool(proposal_id) and claimable_proposal_for_run(
+                conn, proposal_id=str(proposal_id), operation_id=operation_id,
+                run_id=principal.run_id,
             )
         if command in {"approve", "reject", "submit"}:
             if agent and op["verifier_agent"] and agent != op["verifier_agent"]:
@@ -1417,9 +1435,17 @@ class DishService:
         operation_id: str,
         principal: ServicePrincipal,
         command: str,
+        *,
+        proposal_id: str | None = None,
     ) -> str | None:
         if command == "prepare":
             return None
+        if command == "apply-proposal" and proposal_id:
+            row = conn.execute(
+                "SELECT cycle_id FROM semantic_proposals WHERE proposal_id=? AND operation_id=?",
+                (proposal_id, operation_id),
+            ).fetchone()
+            return None if row is None else str(row["cycle_id"])
         op = self._operation_row(conn, operation_id)
         if op is not None and self._is_preconstruction_research_reject(op, command):
             return None
@@ -1443,6 +1469,21 @@ class DishService:
         data = result.setdefault("data", {})
         active = leases.active_for_operation(operation_id)
         data["service_lease"] = self._lease_payload(active)
+        proposal = conn.execute(
+            """SELECT proposal_id,status,candidate_identity,claimed_agent,claimed_run_id
+                 FROM semantic_proposals
+                WHERE operation_id=? AND status IN ('pending','approved','claimed')
+                ORDER BY created_at,proposal_id LIMIT 1""",
+            (operation_id,),
+        ).fetchone()
+        if proposal is not None:
+            data["semantic_proposal"] = {
+                "proposal_id": proposal["proposal_id"],
+                "status": proposal["status"],
+                "candidate_identity": proposal["candidate_identity"],
+                "claimed_agent": proposal["claimed_agent"],
+                "claimed_run_id": proposal["claimed_run_id"],
+            }
         actions = list(result.get("allowed_actions") or [])
         after_recovery_actions: list[str] = []
         access_guidance: dict[str, Any] | None = None
@@ -1466,6 +1507,74 @@ class DishService:
             else:
                 actions = []
                 access = {"state": "terminal"}
+        elif proposal is not None:
+            proposal_id = str(proposal["proposal_id"])
+            proposal_status = str(proposal["status"])
+            if proposal_status == "pending":
+                actions = []
+                spec = exact_action(
+                    kind="inspect-semantic-proposal",
+                    command="review-inspect",
+                    positional=(proposal_id,),
+                    summary="Review the queued semantic proposal.",
+                    effect="Show Marco the rationale and every linked edit before approval or rejection.",
+                    after_success={"instruction": "Approve, reject, or defer the proposal."},
+                )
+                access_guidance = {
+                    "required_admin_action": "review-inspect",
+                    **spec.payload(),
+                    "directive": relay_text(
+                        spec,
+                        instruction=(
+                            "This task is safely parked. Continue unrelated batch work and leave "
+                            "this task for Marco's review queue."
+                        ),
+                    ),
+                }
+                access = {
+                    "state": "awaiting_semantic_proposal_review",
+                    "rule": "semantic_proposal_pending",
+                    "proposal_id": proposal_id,
+                    "required_admin_action": "review-inspect",
+                }
+            elif proposal_status == "approved":
+                actions = ["apply-proposal"]
+                data["agent_action"] = {
+                    "command": "apply-proposal",
+                    "arguments": {"proposal_id": proposal_id},
+                }
+                access = {
+                    "state": "approved_semantic_proposal_available",
+                    "proposal_id": proposal_id,
+                }
+            elif proposal["claimed_run_id"] == principal.run_id:
+                actions = ["apply-proposal"]
+                data["agent_action"] = {
+                    "command": "apply-proposal",
+                    "arguments": {"proposal_id": proposal_id},
+                }
+                access = {
+                    "state": "semantic_proposal_claimed_by_run",
+                    "proposal_id": proposal_id,
+                }
+            else:
+                actions = []
+                access_guidance = _admin_inspect_guidance(
+                    operation_id,
+                    summary="Inspect an approved proposal claimed by another agent run.",
+                    effect=(
+                        "Dish will show whether the applying run is active or requires "
+                        "deterministic recovery."
+                    ),
+                )
+                access = {
+                    "state": "semantic_proposal_claimed_by_other_run",
+                    "rule": "semantic_proposal_claimed",
+                    "proposal_id": proposal_id,
+                    "run_id": proposal["claimed_run_id"],
+                    "required_admin_action": "inspect",
+                }
+                data["recovery_required"] = True
         elif active is not None:
             if leases.is_expired(active) and leases.is_owned_by(active, principal):
                 after_recovery_actions = list(actions)
@@ -1645,7 +1754,7 @@ class DishService:
                         principal,
                         reason="admin_operation_terminal" if admin else "operation_terminal",
                     )
-                elif not admin and op["phase"] in _HANDOFF_PHASES and command in {"prepare", "reject"}:
+                elif not admin and op["phase"] in _HANDOFF_PHASES and command in {"prepare", "reject", "apply-proposal"}:
                     leases.release_for_handoff(
                         operation_id,
                         principal,
@@ -1699,7 +1808,7 @@ class DishService:
                         or (
                             not admin
                             and op["phase"] in _HANDOFF_PHASES
-                            and command in {"prepare", "reject"}
+                            and command in {"prepare", "reject", "apply-proposal"}
                         )
                     )
                 )
@@ -2141,6 +2250,7 @@ class DishService:
                 if not self._may_claim_missing_lease(
                     state.conn, operation_id, state.principal, command,
                     agent=str(prepared.get("agent") or "") or None,
+                    proposal_id=str(prepared.get("proposal_id") or "").strip() or None,
                 ):
                     guidance = (
                         _abandon_dead_verifier_guidance(state.conn, operation_id)
@@ -2165,7 +2275,8 @@ class DishService:
                         },
                     )
                 cycle_id = self._reclaimed_lease_cycle_id(
-                    state.conn, operation_id, state.principal, command
+                    state.conn, operation_id, state.principal, command,
+                    proposal_id=str(prepared.get("proposal_id") or "").strip() or None,
                 )
                 state.leases.acquire(
                     operation_id, state.principal, context_cycle_id=cycle_id
@@ -3087,6 +3198,15 @@ class DishService:
                 prepared["submission_id"] = resolve_admin_operation_target(
                     conn, raw_submission_id
                 )
+        if command in {"review-approve", "review-reject"}:
+            proposal_id = str(prepared.get("proposal_id") or "").strip()
+            if proposal_id:
+                proposal = conn.execute(
+                    "SELECT operation_id FROM semantic_proposals WHERE proposal_id=?",
+                    (proposal_id,),
+                ).fetchone()
+                if proposal is not None:
+                    requested_operation_id = str(proposal["operation_id"])
         supplied_run_id = str(prepared.get("run_id") or "").strip()
         if command in _RUN_ID_ADMIN_COMMANDS and not supplied_run_id:
             prepared["run_id"] = principal.run_id

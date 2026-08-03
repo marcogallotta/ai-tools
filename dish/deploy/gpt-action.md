@@ -120,18 +120,15 @@ Add an operating instruction with all of these requirements:
   plain language. Then relay the rendered command exactly. Do not rebuild a command from raw
   operation, cycle, hold, lease, or identity fields. If Dish returns `required_admin_action:
   inspect`, tell Marco to run the exact `dish-admin inspect` command and wait for the result.
-- `record-human-decision` only records the decision and releases the hold; it never mutates or
-  authorizes `Exemptions`/`Locks`/other governed fields. Give Marco complete decision wording, not
-  the placeholder. If the decision requires a governed-field change, say so and give the separate
-  exact `authorize-governed-change` command. Before any command, state why the candidate fails,
-  what causes it, why ordinary correction is not preferred, why this exact governed change is the
-  recommended consequence of Marco's settled intent, and what alternatives were considered. Review
-  every contradiction linked to the same clarification and present the complete missing
-  authorization set together; never ask Marco field by field while knowingly leaving linked stale
-  title, Role, Exemptions, Decisions, Planning, or Research text. State what each field changes,
-  which exemptions or limits are affected, that the scope is this exact task/candidate, what the
-  commands do not do, and what you will retry afterward. Never call the field change approved until
-  every required command succeeds and an agent installs the unchanged authorized candidate.
+- `record-human-decision` records a decision and releases its hold; it does not mutate governed
+  fields. When Dish returns `semantic_proposal_queued`, the exact candidate and every linked governed
+  change are durably parked for Marco review. Relay the rationale, proposal ID, and exact
+  `dish-admin review-inspect` command. Do not reconstruct field commands. If
+  `batch_may_continue=true`, continue unrelated queue tasks. In a later run, use `dish proposals` and
+  `dish apply-proposal` to install an approved bundle exactly as stored; never edit it or reuse the
+  proposer run ID. Application opens a fresh Verification cycle and does not sign or submit. If
+  Marco rejects a proposal, do not resubmit the same semantic bundle; a fresh Verification round may
+  propose a materially different correction that addresses his rejection.
 - After the third consecutive non-approved Large Verification round, `verification-hold` stops the
   flow; tell Marco to run `dish-admin resolved <operation-id>`, which releases the unchanged
   corrected candidate into a fresh Verification round without approving or signing it.

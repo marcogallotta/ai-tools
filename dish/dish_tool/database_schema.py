@@ -2434,7 +2434,137 @@ WHEN NOT EXISTS (
 BEGIN SELECT RAISE(ABORT, 'abandonment attempt authority binding is invalid'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37}
+_MIGRATION_38 = """
+CREATE TABLE semantic_proposals (
+    proposal_id TEXT PRIMARY KEY,
+    task_gid TEXT NOT NULL,
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    cycle_id TEXT NOT NULL REFERENCES verification_cycles(cycle_id),
+    baseline_identity TEXT NOT NULL,
+    candidate_identity TEXT NOT NULL,
+    candidate_title TEXT NOT NULL,
+    candidate_notes TEXT NOT NULL,
+    proposal_reason TEXT NOT NULL,
+    explanation_json TEXT NOT NULL CHECK (json_valid(explanation_json)),
+    linked_changes_json TEXT NOT NULL CHECK (json_valid(linked_changes_json)),
+    protocol_release TEXT NOT NULL,
+    protocol_text TEXT NOT NULL,
+    correction_class TEXT NOT NULL CHECK (correction_class IN ('large')),
+    proposer_agent TEXT NOT NULL CHECK (proposer_agent IN ('claude','gpt','codex')),
+    proposer_run_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected','claimed','applied','stale')),
+    created_at TEXT NOT NULL,
+    reviewed_at TEXT,
+    review_reason TEXT,
+    approved_by TEXT,
+    claimed_at TEXT,
+    claimed_agent TEXT CHECK (claimed_agent IS NULL OR claimed_agent IN ('claude','gpt','codex')),
+    claimed_run_id TEXT,
+    claim_request_id TEXT,
+    applied_at TEXT,
+    applied_identity TEXT,
+    CHECK (length(baseline_identity)=64),
+    CHECK (length(candidate_identity)=64),
+    CHECK (length(trim(candidate_title))>0),
+    CHECK (length(trim(proposal_reason))>0),
+    CHECK (length(trim(proposer_run_id))>0),
+    CHECK (
+        (status='pending'
+         AND reviewed_at IS NULL AND review_reason IS NULL AND approved_by IS NULL
+         AND claimed_at IS NULL AND claimed_agent IS NULL AND claimed_run_id IS NULL
+         AND claim_request_id IS NULL AND applied_at IS NULL AND applied_identity IS NULL)
+     OR (status='approved'
+         AND reviewed_at IS NOT NULL AND review_reason IS NOT NULL AND approved_by IS NOT NULL
+         AND claimed_at IS NULL AND claimed_agent IS NULL AND claimed_run_id IS NULL
+         AND claim_request_id IS NULL AND applied_at IS NULL AND applied_identity IS NULL)
+     OR (status='rejected'
+         AND reviewed_at IS NOT NULL AND review_reason IS NOT NULL AND approved_by IS NOT NULL
+         AND claimed_at IS NULL AND claimed_agent IS NULL AND claimed_run_id IS NULL
+         AND claim_request_id IS NULL AND applied_at IS NULL AND applied_identity IS NULL)
+     OR (status='stale'
+         AND reviewed_at IS NOT NULL AND review_reason IS NOT NULL
+         AND claimed_at IS NULL AND claimed_agent IS NULL AND claimed_run_id IS NULL
+         AND claim_request_id IS NULL AND applied_at IS NULL AND applied_identity IS NULL)
+     OR (status='claimed'
+         AND reviewed_at IS NOT NULL AND review_reason IS NOT NULL AND approved_by IS NOT NULL
+         AND claimed_at IS NOT NULL AND claimed_agent IS NOT NULL AND claimed_run_id IS NOT NULL
+         AND applied_at IS NULL AND applied_identity IS NULL)
+     OR (status='applied'
+         AND reviewed_at IS NOT NULL AND review_reason IS NOT NULL AND approved_by IS NOT NULL
+         AND claimed_at IS NOT NULL AND claimed_agent IS NOT NULL AND claimed_run_id IS NOT NULL
+         AND applied_at IS NOT NULL AND length(applied_identity)=64)
+    )
+);
+CREATE INDEX semantic_proposals_queue_idx
+    ON semantic_proposals(status, created_at, task_gid);
+CREATE INDEX semantic_proposals_operation_idx
+    ON semantic_proposals(operation_id, status, created_at);
+CREATE UNIQUE INDEX semantic_proposals_active_operation_idx
+    ON semantic_proposals(operation_id)
+    WHERE status IN ('pending','approved','claimed');
+
+CREATE TABLE semantic_proposal_changes (
+    proposal_id TEXT NOT NULL REFERENCES semantic_proposals(proposal_id),
+    ordinal INTEGER NOT NULL CHECK (ordinal >= 0),
+    field_name TEXT NOT NULL,
+    before_json TEXT NOT NULL CHECK (json_valid(before_json)),
+    after_json TEXT NOT NULL CHECK (json_valid(after_json)),
+    CHECK (length(trim(field_name))>0),
+    CHECK (before_json<>after_json),
+    PRIMARY KEY(proposal_id, ordinal)
+);
+CREATE INDEX semantic_proposal_changes_field_idx
+    ON semantic_proposal_changes(field_name, proposal_id);
+
+CREATE TRIGGER semantic_proposals_core_immutable_update
+BEFORE UPDATE ON semantic_proposals
+WHEN NEW.proposal_id IS NOT OLD.proposal_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.cycle_id IS NOT OLD.cycle_id
+  OR NEW.baseline_identity IS NOT OLD.baseline_identity
+  OR NEW.candidate_identity IS NOT OLD.candidate_identity
+  OR NEW.candidate_title IS NOT OLD.candidate_title
+  OR NEW.candidate_notes IS NOT OLD.candidate_notes
+  OR NEW.proposal_reason IS NOT OLD.proposal_reason
+  OR NEW.explanation_json IS NOT OLD.explanation_json
+  OR NEW.linked_changes_json IS NOT OLD.linked_changes_json
+  OR NEW.protocol_release IS NOT OLD.protocol_release
+  OR NEW.protocol_text IS NOT OLD.protocol_text
+  OR NEW.correction_class IS NOT OLD.correction_class
+  OR NEW.proposer_agent IS NOT OLD.proposer_agent
+  OR NEW.proposer_run_id IS NOT OLD.proposer_run_id
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'semantic proposal core is immutable'); END;
+
+CREATE TRIGGER semantic_proposals_status_transition_update
+BEFORE UPDATE OF status ON semantic_proposals
+WHEN NOT (
+    (OLD.status='pending' AND NEW.status IN ('approved','rejected','stale'))
+ OR (OLD.status='approved' AND NEW.status IN ('claimed','stale'))
+ OR (OLD.status='claimed' AND NEW.status IN ('approved','applied','stale'))
+ OR (OLD.status=NEW.status)
+)
+BEGIN SELECT RAISE(ABORT, 'semantic proposal status transition is invalid'); END;
+
+CREATE TRIGGER semantic_proposals_terminal_immutable_update
+BEFORE UPDATE ON semantic_proposals
+WHEN OLD.status IN ('rejected','applied','stale')
+BEGIN SELECT RAISE(ABORT, 'terminal semantic proposal is immutable'); END;
+
+CREATE TRIGGER semantic_proposals_delete
+BEFORE DELETE ON semantic_proposals
+BEGIN SELECT RAISE(ABORT, 'semantic proposals are append-only'); END;
+
+CREATE TRIGGER semantic_proposal_changes_update
+BEFORE UPDATE ON semantic_proposal_changes
+BEGIN SELECT RAISE(ABORT, 'semantic proposal changes are immutable'); END;
+CREATE TRIGGER semantic_proposal_changes_delete
+BEFORE DELETE ON semantic_proposal_changes
+BEGIN SELECT RAISE(ABORT, 'semantic proposal changes are append-only'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37, 38: _MIGRATION_38}
 
 
 def _backup_legacy_database(db_path: Path) -> None:

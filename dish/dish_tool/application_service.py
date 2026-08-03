@@ -818,6 +818,12 @@ class CurrentWorkflowService:
     def reject(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         return self.mutate(operation_id, "reject", executor, schema=schema)
 
+    def apply_proposal(self, operation_id: str, executor: Callable[[], T], *, schema=None):
+        self.operation(operation_id)
+        return self._execute_claimed(
+            operation_id, "apply-proposal", executor, schema=schema, assert_action=False
+        )
+
     def submit(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         return self.mutate(operation_id, "submit", executor, schema=schema)
 

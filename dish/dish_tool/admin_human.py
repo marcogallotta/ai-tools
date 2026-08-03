@@ -72,6 +72,13 @@ def _success_lines(command: str, data: Mapping[str, Any]) -> list[str]:
                 "Authorization recorded. The task itself was not changed.",
                 "Have the agent retry the same exact candidate.",
             ),
+            "review-approve": (
+                "The exact linked change bundle was approved.",
+                "Any fresh eligible agent may now claim and apply the stored candidate.",
+            ),
+            "review-reject": (
+                "The proposal was rejected. No task content or governed authorization changed.",
+            ),
             "record-human-decision": (
                 "Marco's decision was recorded and the Human Review hold was released.",
                 "This did not edit or authorize governed fields.",
@@ -153,7 +160,69 @@ def render_admin_result(
 
     ok = bool(result.get("ok"))
     command = _clean(result.get("command")) or "command"
-    if command == "attention" and ok:
+    if command in {"review-queue", "review-inspect"} and ok:
+        if command == "review-queue":
+            proposals = data.get("proposals") if isinstance(data.get("proposals"), list) else []
+            lines.append(f"Review proposals: {len(proposals)}")
+            if not proposals:
+                lines.append("No semantic proposals match this filter.")
+            for index, proposal in enumerate(proposals, start=1):
+                if not isinstance(proposal, Mapping):
+                    continue
+                lines.append("")
+                proposal_id = _clean(proposal.get("proposal_id")) or "unknown"
+                status = (_clean(proposal.get("status")) or "unknown").upper()
+                title = _clean(proposal.get("candidate_title")) or _clean(proposal.get("task_gid")) or "Task"
+                lines.append(f"{index}. [{status}] {title}")
+                lines.append(f"   Proposal: {proposal_id}")
+                reason = _clean(proposal.get("proposal_reason"))
+                if reason:
+                    lines.append(f"   Why: {reason}")
+                changes = proposal.get("changes") if isinstance(proposal.get("changes"), list) else []
+                if changes:
+                    fields = ", ".join(str(item.get("field")) for item in changes if isinstance(item, Mapping))
+                    if fields:
+                        lines.append(f"   Changes: {fields}")
+                lines.append(f"   Review: dish-admin review-inspect {proposal_id}")
+        else:
+            proposal = data.get("proposal") if isinstance(data.get("proposal"), Mapping) else {}
+            proposal_id = _clean(proposal.get("proposal_id")) or "unknown"
+            lines.append(f"Proposal {proposal_id}")
+            lines.append(f"Status: {_clean(proposal.get('status')) or 'unknown'}")
+            explanation = proposal.get("explanation") if isinstance(proposal.get("explanation"), Mapping) else {}
+            for label, key in (("Problem", "problem"), ("Cause", "cause"), ("Why this route", "why_not_ordinary_correction"), ("Recommended", "recommended_resolution"), ("Scope", "scope"), ("After approval", "after_success")):
+                value = _clean(explanation.get(key))
+                if value:
+                    lines.append(f"{label}: {value}")
+            changes = proposal.get("changes") if isinstance(proposal.get("changes"), list) else []
+            if changes:
+                lines.append("")
+                lines.append("Governed changes requiring Marco approval")
+                for item in changes:
+                    if not isinstance(item, Mapping):
+                        continue
+                    lines.append(f"- {item.get('field')}: {json.dumps(item.get('before'), ensure_ascii=False)} -> {json.dumps(item.get('after'), ensure_ascii=False)}")
+            linked = proposal.get("linked_changes") if isinstance(proposal.get("linked_changes"), list) else []
+            if linked:
+                lines.append("")
+                lines.append("Complete linked candidate change set")
+                for item in linked:
+                    if not isinstance(item, Mapping):
+                        continue
+                    path = item.get("path") or item.get("field") or "unknown"
+                    lines.append(
+                        f"- {path}: {json.dumps(item.get('before'), ensure_ascii=False)} "
+                        f"-> {json.dumps(item.get('after'), ensure_ascii=False)}"
+                    )
+            status = _clean(proposal.get("status"))
+            if status == "pending":
+                lines.append("")
+                lines.append(f"Approve: dish-admin review-approve {proposal_id}")
+                lines.append(f"Reject: dish-admin review-reject {proposal_id} --reason '<why>'")
+            elif status == "approved":
+                lines.append("")
+                lines.append(f"Agent next: dish apply-proposal {proposal_id} --agent <agent> --model <model>")
+    elif command == "attention" and ok:
         items = (
             data.get("attention_items")
             if isinstance(data.get("attention_items"), list)

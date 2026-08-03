@@ -13,7 +13,7 @@ from .identifiers import (
     require_dish_uuid,
 )
 
-AGENT_MUTATION_COMMANDS = {"create", "start", "prepare", "approve", "reject", "submit"}
+AGENT_MUTATION_COMMANDS = {"create", "start", "prepare", "approve", "reject", "submit", "apply-proposal"}
 ACTION_LEASE_COMMAND = "renew-lease"
 REPLAY_SAFE_COMMANDS = AGENT_MUTATION_COMMANDS | {ACTION_LEASE_COMMAND}
 REPLAY_CAPABLE_COMMANDS = REPLAY_SAFE_COMMANDS
@@ -51,6 +51,8 @@ ACTION_COMMANDS = (
     "sections",
     "section-tasks",
     "read",
+    "proposals",
+    "apply-proposal",
     "inspect",
     "start",
     "prepare",
@@ -101,6 +103,20 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
         "properties": {
             "submission_id": dict(DISH_UUID_SCHEMA),
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
+        },
+    },
+    "proposals": {
+        "required": ["agent"],
+        "properties": {
+            "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
+        },
+    },
+    "apply-proposal": {
+        "required": ["proposal_id", "agent", "model"],
+        "properties": {
+            "proposal_id": dict(DISH_UUID_SCHEMA),
+            "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
+            "model": {"type": "string"},
         },
     },
     "start": {

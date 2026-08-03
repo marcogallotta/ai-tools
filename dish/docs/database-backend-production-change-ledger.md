@@ -105,3 +105,16 @@ audit without enabling PostgreSQL authority or Asana projection:
 The Stage A baseline hashes and command inventories are refreshed to this exact worktree. Replace the
 worktree marker with the final commit identifier before using this baseline as release, dark-launch
 comparison, rollback-burn, or cutover evidence.
+
+## 2026-08-03 semantic-proposal review queue worktree
+
+Source marker: `WORKTREE-SEMANTIC-PROPOSALS-20260803` until committed in the authoritative
+repository. This worktree adds source-authority-only durable semantic proposal bundles for Large
+Verification corrections that require Marco approval. It adds a review queue, atomic linked
+authorization, claimable fresh-run application, exact candidate persistence, rejection-to-fresh-cycle
+continuation, and append-only proposal/audit evidence. The current PostgreSQL authority target does
+not yet implement these commands; `proposals`, `apply-proposal`, and `review-*` are therefore listed
+explicitly in the Stage A baseline as `source_only_commands` rather than falsely treated as ported.
+Before PostgreSQL authority activation, add target tables, transition semantics, command treatments,
+shadow characterization, and migration evidence for this workflow, then remove the source-only
+classification.

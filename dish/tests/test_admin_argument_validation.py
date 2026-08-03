@@ -498,3 +498,73 @@ def test_human_renderer_summarizes_global_attention_items():
     assert "Workflow records checked: 3" in rendered
     assert "[SAFE MULTI-STEP] Laap gai" in rendered
     assert "dish-admin abandon-operation operation-1" in rendered
+
+
+def test_semantic_review_queue_commands_are_first_class_admin_commands():
+    proposal_id = str(uuid.uuid4())
+    assert build_parser().parse_args(["review-queue"]).command == "review-queue"
+    assert build_parser().parse_args(["review-inspect", proposal_id]).proposal_id == proposal_id
+    approved = build_parser().parse_args(["review-approve", proposal_id])
+    assert approved.command == "review-approve"
+    rejected = build_parser().parse_args([
+        "review-reject", proposal_id, "--reason", "wrong interpretation"
+    ])
+    assert rejected.reason == "wrong interpretation"
+
+
+def test_human_renderer_explains_semantic_proposal_before_approval_commands():
+    from dish_tool.admin_human import render_admin_result
+
+    proposal_id = str(uuid.uuid4())
+    result = {
+        "ok": True,
+        "command": "review-inspect",
+        "code": "OK",
+        "state": "pending",
+        "retryable": False,
+        "allowed_actions": [],
+        "data": {
+            "proposal": {
+                "proposal_id": proposal_id,
+                "status": "pending",
+                "explanation": {
+                    "problem": "The title still requires home-grown scallion greens.",
+                    "cause": "A settled Marco decision made shop-bought whole scallion the default.",
+                    "why_not_ordinary_correction": "Dish candidate is governed.",
+                    "recommended_resolution": "Remove the stale harvest dependency everywhere it appears.",
+                    "scope": "This task and exact candidate only.",
+                    "after_success": "A fresh agent applies the exact stored candidate.",
+                },
+                "changes": [
+                    {
+                        "field": "Dish candidate",
+                        "before": "[Scallion greens] Vietnamese scallion egg",
+                        "after": "Vietnamese scallion egg",
+                    },
+                    {
+                        "field": "Locks",
+                        "before": "Harvest home-grown greens",
+                        "after": "Use shop-bought whole scallion",
+                    },
+                ],
+                "linked_changes": [
+                    {
+                        "path": "title",
+                        "before": "[Scallion greens] Vietnamese scallion egg",
+                        "after": "Vietnamese scallion egg",
+                    },
+                    {
+                        "path": "planning.Locks",
+                        "before": "Harvest home-grown greens",
+                        "after": "Use shop-bought whole scallion",
+                    },
+                ],
+            }
+        },
+        "errors": [],
+    }
+    rendered = render_admin_result(result, profile="prod")
+    assert rendered.index("Problem:") < rendered.index("Governed changes requiring Marco approval")
+    assert "Dish candidate" in rendered and "Locks" in rendered
+    assert "Complete linked candidate change set" in rendered
+    assert rendered.index("Complete linked candidate change set") < rendered.index("Approve: dish-admin review-approve")

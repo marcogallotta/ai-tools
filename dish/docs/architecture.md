@@ -529,6 +529,10 @@ create
 → start verification
 → inspect the exact current reviewed candidate
 → approve or reject
+→ when a Large candidate needs Marco authority, queue one exact semantic proposal
+→ Marco approves or rejects the complete linked bundle
+→ any fresh eligible run applies the exact approved candidate
+→ start fresh verification on the applied candidate
 → submit after approval
 ```
 
@@ -543,8 +547,20 @@ Dish owns canonical Material-change history after the first baseline. A later ca
 or omit prior entries but cannot rewrite them; Dish appends from durable intent and independent
 approval finalizes every pending entry in the reviewed correction chain. Changes to the governed
 Planning facts—including `Dish candidate`, Purpose, Role, Locks, Exemptions, Research emphasis,
-Destination section, and Decisions—require an exact persisted Marco authorization before any
-candidate write. Caller-supplied `model` is display metadata, never authenticated provenance.
+Destination section, and Decisions—require exact persisted Marco authority before any candidate
+write. When one Large correction changes governed facts, Dish stores the complete candidate and all
+linked governed diffs as one immutable semantic proposal rather than asking Marco field by field.
+The proposal is the durable continuation point: queuing it releases proposer lease ownership; Marco
+approves or rejects the exact bundle atomically; approval creates all exact authorizations in one
+transaction; and any fresh eligible run may claim and install only the stored candidate. Rejection
+creates no authorization or content write: it closes the proposing cycle, preserves the unchanged
+live baseline, and opens a fresh Verification cycle so another agent can propose a different route.
+The exact rejected change bundle cannot be queued again without a materially different proposal or
+new evidence. The applying run never inherits the proposer run identity or independent-review
+status. The proposer remains the material editor of an approved candidate, the interrupted cycle
+closes as a Large correction, and Dish opens a fresh Verification cycle for independent review.
+Pending proposals safely park their task, so a batch agent may continue unrelated work.
+Caller-supplied `model` is display metadata, never authenticated provenance.
 
 Specialized client-visible rules for material classification, audit normalization, pre-construction
 Research holds, destination repair, and reruns belong in the corresponding sections of
@@ -564,6 +580,7 @@ cannot silently create separate live authorities.
 | Verification/signoff | `verification_cycles`, `two_pass_resets` |
 | external effects | `write_attempts`, `movement_attempts` |
 | governed authority | `marco_authorizations` |
+| semantic proposals and approval queue | `semantic_proposals`, `semantic_proposal_changes` |
 | execution and ownership | `operation_executions`, `operation_execution_claims`, `service_leases` |
 | request replay | `service_requests`; sibling identity, checkpoint, and result journal for `backup-restore` |
 | Planning intent confirmation | `planning_intent_challenges` |
@@ -589,10 +606,14 @@ service, lease, request-journal, recovery, migration, or audit-repair module iss
 making commit ownership reviewable in one module and ensuring process-exit exceptions roll back the
 unit they own.
 
-A Marco authorization
-grant is one `BEGIN IMMEDIATE` unit: the operation-open check, exact semantic deduplication,
-authorization row, and `marco.authorization` audit either all commit or all roll back. Reservation
-never treats an unaudited historical row as a usable capability.
+A standalone Marco authorization grant is one `BEGIN IMMEDIATE` unit: the operation-open check,
+exact semantic deduplication, authorization row, and `marco.authorization` audit either all commit
+or all roll back. Semantic-proposal approval is the bundled equivalent: proposal baseline validation,
+every linked authorization, proposal status transition, and approval audit commit together or all
+roll back. Proposal candidate text and linked diffs are immutable after queueing. Claim and apply are
+separate durable states; only one fresh run may claim, application must match the stored candidate
+identity exactly, and an uncertain application remains fail-closed rather than becoming claimable by
+another run. Reservation never treats an unaudited historical row as a usable capability.
 
 An unresolved `uncertain` operation execution remains an operation-scoped mutation fence even after
 its active process claim is gone. Only exact replay of that request or explicit authoritative

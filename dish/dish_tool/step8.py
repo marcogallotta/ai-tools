@@ -27,11 +27,19 @@ from .task_document import DocumentParseError, TaskState, document_parse_error_p
 from .task_store import read_complete_task, write_exact_content
 from .releases import current_verification_protocol_release
 from .governed_diff import (
+    canonical_diff,
+    governed_changes,
     require_governed_authorization,
     preserve_material_change_history,
     require_small_scope,
 )
 from .step7 import approve_live, assert_verifier_authority
+from .human_actions import exact_action, relay_text
+from .semantic_proposals import (
+    claim_semantic_proposal, get_semantic_proposal, mark_semantic_proposal_applied,
+    proposal_changes, proposal_payload, queue_semantic_proposal,
+    release_semantic_proposal_claim,
+)
 
 ROUTES = {"large", "evidence", "human-review"}
 RESET_CATEGORIES = {"evidence", "premise", "method", "scope"}
@@ -845,13 +853,86 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     precheck = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not precheck.ok:
         raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[finding_payload(f) for f in precheck.findings])
-    authorization_ids = require_governed_authorization(
-        conn, parse_task_document(f"{live.title}\n{live.notes}"), document,
-        task_gid=op["task_gid"], operation_id=operation_id,
-        proposal_reason=reason,
-    )
+    before_document = parse_task_document(f"{live.title}\n{live.notes}")
     intended_title, intended_notes = _render(document)
     intended_identity = content_identity(intended_title, intended_notes).digest
+    try:
+        authorization_ids = require_governed_authorization(
+            conn, before_document, document,
+            task_gid=op["task_gid"], operation_id=operation_id,
+            proposal_reason=reason,
+        )
+    except DishRuleError as exc:
+        if exc.rule != "governed_change_unauthorized" or route != "large":
+            raise
+        changes_for_proposal = tuple(
+            {"field": item.field, "before": item.before, "after": item.after}
+            for item in governed_changes(before_document, document)
+        )
+        linked_for_proposal = tuple(
+            {"path": path, "before": old, "after": new}
+            for path, (old, new) in canonical_diff(before_document, document).items()
+        )
+        proposal = queue_semantic_proposal(
+            conn,
+            task_gid=op["task_gid"],
+            operation_id=operation_id,
+            cycle_id=cycle["cycle_id"],
+            baseline_identity=live.identity,
+            candidate_identity=intended_identity,
+            candidate_title=intended_title,
+            candidate_notes=intended_notes,
+            proposal_reason=reason,
+            explanation={
+                "problem": reason,
+                "cause": reason,
+                "why_not_ordinary_correction": (
+                    "The proposer classified the exact linked candidate change as Large and "
+                    "cannot apply governed facts without Marco's approval."
+                ),
+                "recommended_resolution": "Approve or reject the exact linked semantic proposal.",
+                "scope": "This task, this exact baseline, and this exact candidate only.",
+                "command_effect": "Approval authorizes the complete bundle; it does not sign the dish.",
+                "after_success": "Any fresh eligible run may claim and apply the exact stored candidate.",
+            },
+            linked_changes=linked_for_proposal,
+            changes=changes_for_proposal,
+            protocol_release=snapshot.identity,
+            protocol_text=snapshot.text,
+            proposer_agent=agent,
+            proposer_run_id=str(cycle["run_id"] or run_id or ""),
+        )
+        review_action = exact_action(
+            kind="inspect-semantic-proposal",
+            command="review-inspect",
+            positional=(proposal["proposal_id"],),
+            summary="Review the queued semantic proposal.",
+            effect="Show Marco the rationale and every linked governed change before approval.",
+            after_success={"instruction": "Approve, reject, or defer the proposal from the review queue."},
+        )
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "candidate requires Marco approval; the complete semantic proposal was queued",
+            rule="semantic_proposal_queued",
+            retryable=False,
+            errors=exc.errors,
+            details={
+                **exc.details,
+                "proposal_id": proposal["proposal_id"],
+                "proposal_status": proposal["status"],
+                "proposal_queued": True,
+                "batch_may_continue": True,
+                "required_admin_action": "review-inspect",
+                **review_action.payload(),
+                "directive": relay_text(
+                    review_action,
+                    instruction=(
+                        "This task is safely parked in the review queue. The agent may continue "
+                        "reviewing unrelated tasks instead of waiting for Marco."
+                    ),
+                ),
+            },
+        ) from exc
     outcome = "verification-hold" if verification_hold else "rejected"
     target_phase = "held_human" if (verification_hold or route == "human-review") else ("held_evidence" if route == "evidence" else "await_verification")
     route_suffix = cycle["cycle_id"]
@@ -939,6 +1020,221 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "quantified_blocker": quantified_blocker, "verification_hold": verification_hold, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
     return {"operation_id": operation_id, "route": route, "verification_hold": verification_hold, "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"], "task": dataclasses.asdict(confirmed)}
 
+
+
+def apply_semantic_proposal(
+    conn: sqlite3.Connection,
+    backend: Any,
+    *,
+    proposal_id: str,
+    agent: str,
+    model: str,
+    run_id: str,
+    request_id: str | None,
+    schema=None,
+) -> dict[str, Any]:
+    """Claim and install one exact Marco-approved Large-correction bundle."""
+    clean_id = str(proposal_id or "").strip()
+    if not clean_id:
+        raise DishRuleError(
+            "INVALID_ARGUMENT", "proposal ID is required",
+            rule="semantic_proposal_id_required",
+        )
+    proposal = claim_semantic_proposal(
+        conn, proposal_id=clean_id, agent=agent, run_id=run_id,
+        request_id=request_id,
+    )
+    write_confirmed = False
+    try:
+        op, cycle = _rows(conn, str(proposal["operation_id"]))
+        if str(cycle["cycle_id"]) != str(proposal["cycle_id"]):
+            raise DishRuleError(
+                "CONFLICT", "the proposal's Verification cycle is no longer current",
+                rule="semantic_proposal_cycle_stale",
+                details={
+                    "proposal_cycle_id": proposal["cycle_id"],
+                    "current_cycle_id": cycle["cycle_id"],
+                },
+            )
+        live = read_complete_task(
+            backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
+        )
+        if live.identity != proposal["baseline_identity"]:
+            raise DishRuleError(
+                "CONFLICT", "the live task changed after the proposal was created",
+                rule="semantic_proposal_stale",
+                details={
+                    "expected_identity": proposal["baseline_identity"],
+                    "actual_identity": live.identity,
+                },
+            )
+        try:
+            before_document = parse_task_document(f"{live.title}\n{live.notes}")
+            document = parse_task_document(
+                f"{proposal['candidate_title']}\n{proposal['candidate_notes']}"
+            )
+        except DocumentParseError as exc:
+            raise DishRuleError(
+                "VALIDATION_FAILED", "stored semantic proposal is not canonical",
+                errors=document_parse_error_payloads(exc),
+            ) from exc
+        intended = content_identity(
+            str(proposal["candidate_title"]), str(proposal["candidate_notes"])
+        )
+        if intended.digest != proposal["candidate_identity"]:
+            raise DishRuleError(
+                "CONFLICT", "stored proposal identity does not match its exact candidate",
+                rule="semantic_proposal_identity_invalid",
+            )
+        rendered_title, rendered_notes = _render(document)
+        rendered = content_identity(rendered_title, rendered_notes)
+        if rendered.digest != proposal["candidate_identity"]:
+            raise DishRuleError(
+                "CONFLICT", "stored proposal no longer renders to the approved identity",
+                rule="semantic_proposal_render_drift",
+            )
+        actual_linked = [
+            {"path": path, "before": old, "after": new}
+            for path, (old, new) in canonical_diff(before_document, document).items()
+        ]
+        expected_linked = json.loads(proposal["linked_changes_json"])
+        if actual_linked != expected_linked:
+            raise DishRuleError(
+                "CONFLICT",
+                "stored proposal linked-change evidence does not match its exact candidate",
+                rule="semantic_proposal_linked_changes_invalid",
+                details={"proposal_id": clean_id},
+            )
+        actual_governed = [
+            {"ordinal": index, "field": item.field, "before": item.before, "after": item.after}
+            for index, item in enumerate(governed_changes(before_document, document))
+        ]
+        stored_governed = list(proposal_changes(conn, clean_id))
+        if actual_governed != stored_governed:
+            raise DishRuleError(
+                "CONFLICT",
+                "stored proposal governed-change evidence does not match its exact candidate",
+                rule="semantic_proposal_governed_changes_invalid",
+                details={"proposal_id": clean_id},
+            )
+        authorization_ids = require_governed_authorization(
+            conn, before_document, document,
+            task_gid=op["task_gid"], operation_id=op["operation_id"],
+            proposal_reason=proposal["proposal_reason"],
+        )
+        step_suffix = clean_id
+        write_step = f"semantic_proposal_write:{step_suffix}"
+        actor_step = f"semantic_proposal_actor:{step_suffix}"
+        cycle_step = f"semantic_proposal_cycle:{step_suffix}"
+        new_cycle_step = f"semantic_proposal_new_cycle:{step_suffix}"
+        proposal_step = f"semantic_proposal_applied:{step_suffix}"
+        declare_operation_step(conn, op["operation_id"], write_step, {
+            "proposal_id": clean_id,
+            "baseline_identity": proposal["baseline_identity"],
+            "candidate_identity": proposal["candidate_identity"],
+        })
+        declare_operation_step(conn, op["operation_id"], actor_step, {
+            "role": "material_editor", "agent": proposal["proposer_agent"],
+            "run_id": proposal["proposer_run_id"],
+            "candidate_identity": proposal["candidate_identity"],
+            "source_cycle_id": cycle["cycle_id"],
+        })
+        declare_operation_step(conn, op["operation_id"], cycle_step, {
+            "cycle_id": cycle["cycle_id"], "outcome": "rejected",
+            "correction_class": "large", "proposal_id": clean_id,
+        })
+        declare_operation_step(conn, op["operation_id"], new_cycle_step, {
+            "protocol_release": proposal["protocol_release"],
+            "proposal_id": clean_id,
+        })
+        declare_operation_step(conn, op["operation_id"], proposal_step, {
+            "proposal_id": clean_id, "applying_agent": agent,
+            "applying_run_id": run_id,
+        })
+        confirmed = _write_document(
+            conn, backend, op, live, document, schema=schema,
+            authorization_ids=authorization_ids,
+        )
+        write_confirmed = True
+        with savepoint_transaction(conn, "semantic_proposal_apply_finalize"):
+            complete_operation_step(conn, op["operation_id"], write_step)
+            record_actor_fact(
+                conn, operation_id=op["operation_id"], task_gid=op["task_gid"],
+                role="material_editor", agent=proposal["proposer_agent"],
+                run_id=proposal["proposer_run_id"],
+                independence_attestation=cycle["independence_attestation"],
+                candidate_identity=confirmed.identity,
+                source_cycle_id=cycle["cycle_id"],
+            )
+            complete_operation_step(conn, op["operation_id"], actor_step)
+            conn.execute(
+                """UPDATE operations
+                      SET editor_agent=?, verifier_agent=NULL, run_id=?,
+                          independence_attestation=?
+                    WHERE operation_id=?""",
+                (
+                    proposal["proposer_agent"], proposal["proposer_run_id"],
+                    cycle["independence_attestation"], op["operation_id"],
+                ),
+            )
+            conn.execute(
+                """UPDATE verification_cycles
+                      SET correction_class='large', outcome='rejected', route=NULL,
+                          resume_state=NULL, completed_at=?
+                    WHERE cycle_id=? AND completed_at IS NULL""",
+                (utc_now(), cycle["cycle_id"]),
+            )
+            complete_operation_step(conn, op["operation_id"], cycle_step)
+            next_number = conn.execute(
+                "SELECT COALESCE(MAX(cycle_number),0)+1 FROM verification_cycles WHERE task_gid=?",
+                (op["task_gid"],),
+            ).fetchone()[0]
+            new_cycle = create_verification_cycle(
+                conn, operation_id=op["operation_id"], task_gid=op["task_gid"],
+                cycle_number=next_number,
+                protocol_release=proposal["protocol_release"],
+                protocol_text=proposal["protocol_text"], route=None,
+            )
+            complete_operation_step(conn, op["operation_id"], new_cycle_step)
+            transition_operation(conn, op["operation_id"], phase="await_verification")
+            applied = mark_semantic_proposal_applied(
+                conn, proposal_id=clean_id, run_id=run_id,
+                applied_identity=confirmed.identity,
+            )
+            complete_operation_step(conn, op["operation_id"], proposal_step)
+            record_audit(
+                conn, submission_id=None, task_gid=op["task_gid"],
+                operation_id=op["operation_id"],
+                event_type="semantic_proposal.application_completed",
+                actor_agent=agent, actor_run_id=run_id,
+                details={
+                    "proposal_id": clean_id,
+                    "proposer_agent": proposal["proposer_agent"],
+                    "proposer_run_id": proposal["proposer_run_id"],
+                    "applied_identity": confirmed.identity,
+                    "new_cycle_id": new_cycle["cycle_id"],
+                    "model": model,
+                }, result_code="OK", result_ok=True,
+            )
+        return {
+            "proposal": proposal_payload(conn, applied),
+            "operation_id": op["operation_id"],
+            "completed_cycle_id": cycle["cycle_id"],
+            "new_cycle_id": new_cycle["cycle_id"],
+            "applied_identity": confirmed.identity,
+            "task": dataclasses.asdict(confirmed),
+            "next_step": (
+                "The exact approved candidate is installed. A later genuinely fresh "
+                "Verification run must independently review the new cycle."
+            ),
+        }
+    except DishRuleError as exc:
+        if not write_confirmed and exc.code != "BACKEND_UNCERTAIN":
+            release_semantic_proposal_claim(
+                conn, proposal_id=clean_id, run_id=run_id,
+                reason=f"application failed before a confirmed write: {exc.rule or exc.code}",
+            )
+        raise
 
 
 

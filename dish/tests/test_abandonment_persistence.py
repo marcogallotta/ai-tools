@@ -36,7 +36,7 @@ from tests.support.abandonment_scenarios import (
 
 def test_schema_33_adds_abandonment_lineage_and_prepared_claim_state():
     conn = initialize_database(":memory:")
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 38
     tables = {
         row[0]
         for row in conn.execute(
@@ -86,7 +86,7 @@ def test_migration_32_preserves_stage_2_actor_attempt_context(tmp_path):
 
     upgraded = initialize_database(db_path)
     try:
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 37
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 38
         assert upgraded.execute(
             "SELECT successor_claim_mode FROM operations WHERE operation_id='op'"
         ).fetchone()[0] == "none"

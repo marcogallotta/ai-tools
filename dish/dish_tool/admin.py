@@ -27,6 +27,14 @@ from .transactions import immediate_transaction, savepoint_transaction
 from .errors import DishRuleError
 from .results import error_envelope, result_envelope
 from .human_actions import PromptField, exact_action, relay_text, template_action
+from .semantic_proposals import (
+    active_proposal_for_operation,
+    approve_semantic_proposal,
+    get_semantic_proposal,
+    list_semantic_proposals,
+    proposal_payload,
+    reject_semantic_proposal,
+)
 
 
 @dataclass
@@ -47,6 +55,33 @@ def _clean_required(value: Any, *, rule: str, label: str) -> str:
             rule=rule,
         )
     return clean
+
+
+def _assert_no_active_semantic_proposal(
+    conn: sqlite3.Connection, operation_id: str, *, requested_command: str
+) -> None:
+    proposal = active_proposal_for_operation(conn, operation_id)
+    if proposal is None:
+        return
+    next_command = (
+        "review-inspect" if proposal["status"] == "pending" else "apply-proposal"
+    )
+    raise DishRuleError(
+        "WRONG_STATE",
+        "the operation is parked on a durable semantic proposal",
+        rule="semantic_proposal_application_required",
+        details={
+            "proposal_id": proposal["proposal_id"],
+            "proposal_status": proposal["status"],
+            "requested_command": requested_command,
+            "required_action": next_command,
+            "instruction": (
+                f"Review proposal {proposal['proposal_id']} before other admin recovery."
+                if proposal["status"] == "pending"
+                else f"Have a fresh agent apply proposal {proposal['proposal_id']} exactly as stored."
+            ),
+        },
+    )
 
 
 class DishAdminApplication:
@@ -290,14 +325,26 @@ def _command_inspect(
              ORDER BY created_at DESC LIMIT 1""",
         (operation["task_gid"],),
     ).fetchone()
+    proposal = active_proposal_for_operation(self.conn, operation_id)
 
     actions: list[dict[str, Any]] = []
+    agent_actions_override: list[dict[str, Any] | str] | None = None
     administrative_blocker = False
     operator_instruction: str | None = None
     problem = "No administrative blocker is currently recorded."
     waiting_for = str(view.get("phase") or operation["phase"])
 
-    if abandonment is not None:
+    if abandonment is not None and proposal is not None:
+        administrative_blocker = True
+        problem = (
+            "The operation has both an active semantic proposal and an active abandonment. "
+            "Dish cannot safely choose a continuation."
+        )
+        operator_instruction = (
+            "Do not abandon, approve, or apply anything further. Report this conflicting "
+            "state for reconciliation."
+        )
+    elif abandonment is not None:
         administrative_blocker = True
         decorated = _decorate_abandonment_result(
             self.conn, {"abandonment_id": abandonment["abandonment_id"]}
@@ -333,6 +380,55 @@ def _command_inspect(
         )
         actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
         problem = "An external write or movement has an unresolved outcome."
+    elif proposal is not None and proposal["status"] == "pending":
+        administrative_blocker = True
+        waiting_for = "Marco review of the queued semantic proposal"
+        spec = exact_action(
+            kind="inspect-semantic-proposal",
+            command="review-inspect",
+            positional=(proposal["proposal_id"],),
+            summary="Review the exact linked semantic change bundle.",
+            effect="Show Marco the rationale and every linked edit before approval or rejection.",
+            after_success={"instruction": "Approve, reject, or defer the proposal."},
+        )
+        actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
+        problem = "This Verification attempt is safely parked while Marco reviews a semantic proposal."
+    elif proposal is not None and proposal["status"] == "approved":
+        waiting_for = "a fresh agent to apply Marco's approved proposal"
+        problem = "Marco approved the exact proposal bundle; it is ready for a fresh agent to apply."
+        agent_actions_override = [
+            {
+                "command": "apply-proposal",
+                "arguments": {"proposal_id": proposal["proposal_id"]},
+            }
+        ]
+    elif proposal is not None and proposal["status"] == "claimed":
+        administrative_blocker = True
+        waiting_for = "the agent currently applying Marco's approved proposal"
+        problem = "An agent run has claimed the approved proposal for exact application."
+        if active_lease is not None:
+            spec = template_action(
+                kind="expire-active-lease",
+                command="expire-lease",
+                positional=(active_lease["lease_id"],),
+                options=(("--reason", "<why the applying run is no longer available>"),),
+                prompt_fields=(
+                    PromptField(
+                        "reason",
+                        "Why the applying run is unavailable",
+                        "<why the applying run is no longer available>",
+                    ),
+                ),
+                summary="Release the applying run's lease only if that run is gone.",
+                effect="This does not discard the approved proposal; inspect again afterward.",
+                after_success={"instruction": "Rerun dish-admin inspect on this operation."},
+            )
+            actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
+        else:
+            operator_instruction = (
+                "The proposal claim has no active lease. Do not abandon the operation or guess a "
+                "replacement run; report this claim for deterministic recovery."
+            )
     elif active_lease is not None:
         administrative_blocker = True
         spec = template_action(
@@ -466,8 +562,21 @@ def _command_inspect(
         "administrative_blocker": administrative_blocker,
         "human_actions": actions,
         "agent_actions_now": (
-            [] if administrative_blocker else list(view.get("legal_actions") or [])
+            []
+            if administrative_blocker
+            else (
+                agent_actions_override
+                if agent_actions_override is not None
+                else list(view.get("legal_actions") or [])
+            )
         ),
+        "semantic_proposal": None if proposal is None else {
+            "proposal_id": proposal["proposal_id"],
+            "status": proposal["status"],
+            "candidate_identity": proposal["candidate_identity"],
+            "claimed_agent": proposal["claimed_agent"],
+            "claimed_run_id": proposal["claimed_run_id"],
+        },
         "service_lease": None if active_lease is None else {
             "lease_id": active_lease["lease_id"],
             "owner_id": active_lease["owner_id"],
@@ -517,6 +626,17 @@ def _attention_category(data: Mapping[str, Any]) -> tuple[str, str]:
     if not isinstance(view, Mapping):
         view = {}
     abandonment = data.get("abandonment")
+    proposal = data.get("semantic_proposal")
+    if isinstance(proposal, Mapping):
+        proposal_status = str(proposal.get("status") or "")
+        if proposal_status == "pending":
+            return "needs_marco", "a semantic proposal is waiting for Marco's review"
+        if proposal_status == "approved":
+            return "healthy", "an approved proposal is ready for a fresh agent to apply"
+        if proposal_status == "claimed":
+            if data.get("service_lease") is not None:
+                return "healthy", "an agent is applying an approved proposal"
+            return "unsafe", "an approved proposal claim exists without an active applying lease"
     if isinstance(abandonment, Mapping):
         abandonment_status = str(abandonment.get("status") or "")
         if abandonment_status == "awaiting_successor_claim":
@@ -1227,12 +1347,150 @@ def _command_resolved(self, *, trace: AdminTrace, submission_id: str) -> dict[st
     return result_envelope(command="resolved", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
 
 
+
+def _command_review_queue(
+    self, *, trace: AdminTrace, status: str = "active"
+) -> dict[str, Any]:
+    status_map = {
+        "active": ("pending", "approved", "claimed"),
+        "pending": ("pending",),
+        "approved": ("approved", "claimed"),
+        "all": ("pending", "approved", "claimed", "applied", "rejected", "stale"),
+    }
+    statuses = status_map.get(str(status or "active").strip())
+    if statuses is None:
+        raise DishRuleError(
+            "INVALID_ARGUMENT", "unsupported review queue status",
+            rule="semantic_proposal_status_invalid",
+            details={"allowed": sorted(status_map)},
+        )
+    proposals = list_semantic_proposals(self.conn, statuses=statuses)
+    return result_envelope(
+        command="review-queue", state="ok",
+        data={
+            "count": len(proposals),
+            "status_filter": status,
+            "proposals": list(proposals),
+        },
+    )
+
+
+def _command_review_inspect(
+    self, *, trace: AdminTrace, proposal_id: str
+) -> dict[str, Any]:
+    clean_id = _clean_required(
+        proposal_id, rule="semantic_proposal_id_required", label="proposal ID"
+    )
+    row = get_semantic_proposal(self.conn, clean_id)
+    trace.task_gid = row["task_gid"]
+    trace.submission_id = row["operation_id"]
+    trace.state = row["status"]
+    return result_envelope(
+        command="review-inspect", task_gid=row["task_gid"],
+        submission_id=row["operation_id"], state=row["status"],
+        data={"proposal": proposal_payload(self.conn, row)},
+    )
+
+
+def _command_review_approve(
+    self, *, trace: AdminTrace, proposal_id: str, reason: str
+) -> dict[str, Any]:
+    if self.backend is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR", "proposal approval requires the live task backend",
+            rule="semantic_proposal_backend_required",
+        )
+    from .constants import COOKING_PROJECT_GID
+    from .task_store import read_complete_task
+
+    clean_id = _clean_required(
+        proposal_id, rule="semantic_proposal_id_required", label="proposal ID"
+    )
+    row = get_semantic_proposal(self.conn, clean_id)
+    live = read_complete_task(
+        self.backend, task_gid=row["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    approved = approve_semantic_proposal(
+        self.conn, proposal_id=clean_id, live_identity=live.identity, reason=reason
+    )
+    trace.task_gid = approved["task_gid"]
+    trace.submission_id = approved["operation_id"]
+    trace.state = approved["status"]
+    return result_envelope(
+        command="review-approve", task_gid=approved["task_gid"],
+        submission_id=approved["operation_id"], state=approved["status"],
+        data={
+            "proposal": proposal_payload(self.conn, approved),
+            "effect": (
+                "The complete linked change bundle is approved and detached from the proposer run."
+            ),
+            "next_step": (
+                f"An eligible agent may run `dish apply-proposal {clean_id}` to install the exact stored candidate."
+            ),
+            "agent_action": {
+                "command": "apply-proposal",
+                "arguments": {"proposal_id": clean_id},
+            },
+        },
+    )
+
+
+def _command_review_reject(
+    self, *, trace: AdminTrace, proposal_id: str, reason: str
+) -> dict[str, Any]:
+    if self.backend is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR", "proposal rejection requires the live task backend",
+            rule="semantic_proposal_backend_required",
+        )
+    from .constants import COOKING_PROJECT_GID
+    from .task_store import read_complete_task
+
+    clean_id = _clean_required(
+        proposal_id, rule="semantic_proposal_id_required", label="proposal ID"
+    )
+    row = get_semantic_proposal(self.conn, clean_id)
+    live = read_complete_task(
+        self.backend, task_gid=row["task_gid"], project_gid=COOKING_PROJECT_GID
+    )
+    rejected, new_cycle = reject_semantic_proposal(
+        self.conn, proposal_id=clean_id, reason=reason, live_identity=live.identity
+    )
+    trace.task_gid = rejected["task_gid"]
+    trace.submission_id = rejected["operation_id"]
+    trace.state = rejected["status"]
+    return result_envelope(
+        command="review-reject", task_gid=rejected["task_gid"],
+        submission_id=rejected["operation_id"], state=rejected["status"],
+        allowed_actions=["start"],
+        data={
+            "proposal": proposal_payload(self.conn, rejected),
+            "completed_cycle_id": rejected["cycle_id"],
+            "new_cycle_id": new_cycle["cycle_id"],
+            "effect": (
+                "The proposal was rejected. No governed authorization or task edit was made, "
+                "and the unchanged live candidate was released into a fresh Verification round."
+            ),
+            "next_step": (
+                "A later genuinely fresh agent may start Verification and propose a different "
+                "correction that respects Marco's rejection."
+            ),
+            "agent_action": {
+                "command": "start",
+                "arguments": {"kind": "verification", "task_gid": rejected["task_gid"]},
+            },
+        },
+    )
+
 def _command_authorize_governed_change(self, *, trace: AdminTrace, submission_id: str, field: str, before: Any, after: Any, reason: str, run_id: str | None = None) -> dict[str, Any]:
     from .database import record_marco_authorization
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     op = self.conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
     if op is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    _assert_no_active_semantic_proposal(
+        self.conn, operation_id, requested_command="authorize-governed-change"
+    )
     if op["status"] != "open":
         raise DishRuleError(
             "WRONG_STATE",
@@ -1591,6 +1849,9 @@ def _command_abandon_operation(
     ).fetchone()
     if operation is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    _assert_no_active_semantic_proposal(
+        self.conn, operation_id, requested_command="abandon-operation"
+    )
     trace.submission_id = operation_id
     trace.task_gid = operation["task_gid"]
     trace.state = operation["status"]
@@ -1763,6 +2024,9 @@ def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, r
     op = self.conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
     if op is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    _assert_no_active_semantic_proposal(
+        self.conn, operation_id, requested_command="discard"
+    )
     if op["status"] not in {"open", "uncertain"}:
         raise DishRuleError("WRONG_STATE", "operation is not cancellable", rule="operation_not_cancellable", details={"actual": op["status"]})
     if self.backend is None:
@@ -1840,6 +2104,10 @@ _OPERATION_TARGET_COMMANDS = {
 
 CURRENT_ADMIN_COMMAND_HANDLERS = {
     "attention": _command_attention,
+    "review-queue": _command_review_queue,
+    "review-inspect": _command_review_inspect,
+    "review-approve": _command_review_approve,
+    "review-reject": _command_review_reject,
     "inspect": _command_inspect,
     "migrate": _step5_admin_migrate,
     "reopen-planning": _step5_admin_reopen_planning,

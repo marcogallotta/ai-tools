@@ -39,7 +39,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_stage4_ports_every_retained_mutation_and_action_path() -> None:
-    queries = {"sections", "section-tasks", "read", "holds"}
+    queries = {"sections", "section-tasks", "read", "holds", "attention"}
     assert PORTED_MUTATION_COMMANDS == set(RETAINED_COMMANDS) - queries
     document = postgres_action_openapi()
     assert set(document["paths"]) == {f"/v1/action/{name}" for name in ACTION_COMMANDS}

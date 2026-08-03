@@ -110,7 +110,7 @@ def test_schema_34_and_35_upgrade_existing_database_with_current_journals(tmp_pa
 
     upgraded = initialize_database(db_path)
     try:
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 37
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 38
         planning_table = upgraded.execute(
             "SELECT name FROM sqlite_master "
             "WHERE type='table' AND name='planning_intent_challenges'"
@@ -155,7 +155,7 @@ def test_schema_35_upgrades_schema_34_audit_journal(tmp_path):
 
     upgraded = initialize_database(db_path)
     try:
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 37
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 38
         assert "operation_execution_id" in {
             row[1] for row in upgraded.execute("PRAGMA table_info(audit_events)")
         }
