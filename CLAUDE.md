@@ -80,6 +80,19 @@ owner-only service environment files. Claude and Codex inherit those tokens, but
 admin prohibition above still applies; their settings pin only non-secret URLs and the production
 default. Never print, log, or include any token value in a transcript or report.
 
+## Dark launch (dish_pg shadow capture)
+
+Dark launch mirrors legacy command completions into PostgreSQL via a shadow envelope so real
+data accumulates for validation; it does not make PostgreSQL authoritative or SQLite/Asana any
+less so. Treat a live dark-launch instance as read-only evidence, never as production authority,
+until the separate, explicit activation event described in `dish/docs/architecture.md`.
+
+Agents may run `scripts/dish-pg-dark-launch status` (read-only) to check backlog, lag, and
+mismatch counts. Never flip `DISH_DARK_LAUNCH_MODE`, install/start/stop
+`dish-shadow-worker.service`, or touch the kill switch without Marco's explicit authorization —
+each changes live legacy-service configuration. Operating steps live in
+`dish/docs/database-backend-dark-launch-runbook.md`.
+
 When architecture changes, update `architecture.md` in the same commit. Do not add
 executable legacy mutation paths, duplicate workflow authority in transports or CLIs, or
 preserve a state solely because a test can construct it. A compatibility path needs a real
