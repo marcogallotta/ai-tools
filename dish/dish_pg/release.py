@@ -43,7 +43,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0013_dark_launch_shadow_capture"
+ALEMBIC_HEAD = "0014_projection_outbox_origin"
 
 
 class ReleaseCandidateService(

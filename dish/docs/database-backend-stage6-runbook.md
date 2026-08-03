@@ -13,7 +13,7 @@ memory.
 
 ## 1. What the repository can prove offline
 
-The repository can migrate an empty target through `0013_dark_launch_shadow_capture`, execute the Stage 1–6
+The repository can migrate an empty target through `0014_projection_outbox_origin`, execute the Stage 1–6
 acceptance suites, hash the exact source tree, store immutable evidence revisions and rehearsal
 reports, recompute structural closure from PostgreSQL, build deterministic evidence bundles, fence
 the legacy HTTP writer mechanically, and resume an interrupted cutover from durable checkpoints.
@@ -46,7 +46,7 @@ Freeze and retain these exact identities before candidate creation:
 - closed shadow baseline;
 - active projection epoch and completed reconciliation run;
 - Dish, Honest, protocol, OpenAPI, and routing releases;
-- PostgreSQL schema head `0013_dark_launch_shadow_capture`.
+- PostgreSQL schema head `0014_projection_outbox_origin`.
 
 A changed source commit, ledger high-water mark, production object, release, schema head, or proof gap
 requires a new or revised candidate. Do not relabel an old evidence bundle.
@@ -87,7 +87,7 @@ Prepare a mode-0600 JSON file containing exact UUIDs and release identities:
   "source_release": "EXACT_RELEASE",
   "source_commit": "EXACT_COMMIT",
   "ledger_through_commit": "EXACT_COMMIT",
-  "schema_head": "0013_dark_launch_shadow_capture",
+  "schema_head": "0014_projection_outbox_origin",
   "dish_release": "EXACT_RELEASE",
   "honest_release": "EXACT_RELEASE",
   "protocol_release": "EXACT_RELEASE",
@@ -227,7 +227,7 @@ Evaluation fails closed unless all of the following are true in authoritative Po
   unresolved;
 - no projection outbox item, attempt, create correlation, or drift item is unresolved;
 - the latest completed reconciliation accounts for every active projection mapping;
-- the database is at `0013_dark_launch_shadow_capture`;
+- the database is at `0014_projection_outbox_origin`;
 - every required evidence item and rehearsal class passes.
 
 Bundle identity is deterministic from authoritative contents; build time does not alter its SHA-256.

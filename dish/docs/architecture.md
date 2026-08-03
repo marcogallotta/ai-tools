@@ -374,8 +374,10 @@ owner-only emergency ledger and a filesystem kill switch. Capture failure never 
 SQLite/Asana result. `dish_pg.shadow_worker` is distinct from projection and reconciliation workers:
 it delivers spool envelopes to one explicit shadow baseline, executes only `execute` treatments
 through `PostgresCommandPort`, records capture-only work as an explicit gap, and performs no Asana
-read or write. Dark-launch projection epochs default to external effects disabled, and projection
-workers cannot claim their outbox events until a separate explicit effect-enable decision.
+read or write. Every outbox row carries an immutable ``live`` or ``shadow`` origin. The shadow
+evaluator records only ``shadow`` rows, and projection workers exclude them unconditionally even if
+the shared epoch later enables external effects. Epoch effects still default disabled as a second,
+independent guard for ordinary live projection rows.
 `dish_pg.dark_launch` supplies baseline creation, bounded status, and capture enable/disable controls;
 `dish_pg.legacy_source` deterministically exports importer input from SQLite content heads plus a
 complete externally supplied location manifest.

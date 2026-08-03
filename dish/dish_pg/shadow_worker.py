@@ -2,8 +2,8 @@
 
 This worker is separate from projection_worker and reconciliation_worker. It
 never calls Asana. PostgreSQL command execution may create transactional
-projection intents, but dark-launch projection epochs remain effect-disabled,
-so no downstream worker can claim those intents.
+projection intents tagged with origin ``shadow``. Projection workers reject
+those rows unconditionally, independent of epoch effect configuration.
 """
 from __future__ import annotations
 
@@ -79,7 +79,9 @@ class CommandPortShadowEvaluator:
         if not isinstance(arguments, Mapping):
             raise ValueError("shadow envelope arguments are missing")
         principal = dict(envelope.principal or {})
-        port = PostgresCommandPort(session, cursor_secret=self.cursor_secret)
+        port = PostgresCommandPort(
+            session, cursor_secret=self.cursor_secret, projection_origin="shadow"
+        )
         result = port.execute(
             CommandCall(
                 command_name=envelope.command_name,

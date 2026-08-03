@@ -474,6 +474,8 @@ class ShadowService:
             )
         )
         if existing is not None:
+            if existing.origin != origin:
+                raise TransitionAuthorityError("projection event origin conflict")
             return existing
         row = tx.ShadowGap(
             gap_id=self.uuid_factory(),
@@ -714,6 +716,7 @@ class ProjectionService:
         task_id: uuid.UUID,
         event_type: str,
         payload: Mapping[str, Any],
+        origin: str = "live",
         created_at: datetime,
     ) -> uuid.UUID:
         return self._record_event(
@@ -723,6 +726,7 @@ class ProjectionService:
             event_type=event_type,
             payload=payload,
             source_route="command",
+            origin=origin,
             created_at=created_at,
         ).projection_event_id
 
@@ -735,6 +739,7 @@ class ProjectionService:
         event_type: str,
         payload: Mapping[str, Any],
         source_route: str,
+        origin: str,
         created_at: datetime,
     ) -> tx.ProjectionOutboxEvent:
         epoch = self.session.scalar(
@@ -745,6 +750,8 @@ class ProjectionService:
         )
         if epoch is None:
             raise TransitionAuthorityError("no active projection epoch")
+        if origin not in {"live", "shadow"}:
+            raise TransitionAuthorityError("projection origin must be live or shadow")
         generation = self.session.get(models.AuthorityGeneration, generation_id)
         if generation is None or generation.status != "active":
             raise TransitionAuthorityError("projection event requires active authority generation")
@@ -796,6 +803,7 @@ class ProjectionService:
             generation_id=generation_id,
             projection_epoch_id=epoch.projection_epoch_id,
             source_route=source_route,
+            origin=origin,
             command_execution_id=execution_id,
             task_id=task_id,
             event_type=event_type,
@@ -971,6 +979,7 @@ class ProjectionService:
             .where(
                 tx.ProjectionEpoch.status == "active",
                 tx.ProjectionEpoch.external_effects_enabled.is_(True),
+                tx.ProjectionOutboxEvent.origin == "live",
                 models.AuthorityGeneration.status == "active",
                 (tx.ProjectionOutboxEvent.state == "pending")
                 | (
@@ -990,6 +999,7 @@ class ProjectionService:
                     tx.ProjectionOutboxEvent.generation_id == event.generation_id,
                     tx.ProjectionOutboxEvent.task_id == event.task_id,
                     tx.ProjectionOutboxEvent.aggregate_sequence < event.aggregate_sequence,
+                    tx.ProjectionOutboxEvent.origin == "live",
                     tx.ProjectionOutboxEvent.state.not_in(("applied", "superseded")),
                 )
             )
@@ -1356,6 +1366,7 @@ class ProjectionService:
             event_type="reproject",
             payload={"drift_kind": drift_kind, "authoritative_snapshot": dict(authoritative_snapshot)},
             source_route="service",
+            origin="live",
             created_at=detected_at,
         )
         drift = tx.ProjectionDriftEvent(

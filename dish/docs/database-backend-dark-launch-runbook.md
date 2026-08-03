@@ -4,8 +4,9 @@
 
 The dark launch leaves SQLite/Asana authoritative. The legacy service captures command completion
 to an owner-only local spool; a separate worker delivers and evaluates those envelopes in
-PostgreSQL. The worker has no Asana adapter or credential. Projection epochs must remain
-`external_effects_enabled = false`.
+PostgreSQL. The worker has no Asana adapter or credential. Shadow replay writes immutable
+`origin = shadow` outbox evidence that projection workers refuse unconditionally. Projection epochs
+should still remain `external_effects_enabled = false` as an independent operational guard.
 
 ## Prepare
 

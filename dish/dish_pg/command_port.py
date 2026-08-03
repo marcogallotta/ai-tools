@@ -95,6 +95,7 @@ class ProjectionAuthority(Protocol):
         task_id: uuid.UUID,
         event_type: str,
         payload: Mapping[str, Any],
+        origin: str,
         created_at: datetime,
     ) -> uuid.UUID: ...
 
@@ -124,12 +125,16 @@ class PostgresCommandPort:
         cursor_secret: bytes,
         uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4,
         projection_recorder: ProjectionAuthority | None = None,
+        projection_origin: str = "live",
         lease_duration: timedelta = timedelta(minutes=15),
     ) -> None:
         self.session = session
         self.uuid_factory = uuid_factory
         self.reads = PostgresReadModel(session, cursor_secret=cursor_secret)
         self.workflow = WorkflowAuthorityService(session, uuid_factory=uuid_factory)
+        if projection_origin not in {"live", "shadow"}:
+            raise ValueError("projection_origin must be 'live' or 'shadow'")
+        self.projection_origin = projection_origin
         self.projection_recorder: ProjectionAuthority = projection_recorder or ProjectionService(
             session, uuid_factory=uuid_factory
         )
@@ -1243,6 +1248,7 @@ class PostgresCommandPort:
             task_id=task_id,
             event_type=event_type,
             payload=payload,
+            origin=self.projection_origin,
             created_at=at,
         )
         return str(value)

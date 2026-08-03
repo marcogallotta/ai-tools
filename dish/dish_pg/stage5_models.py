@@ -459,6 +459,7 @@ class ProjectionOutboxEvent(Base):
         Uuid, ForeignKey("projection_epochs.projection_epoch_id", ondelete="RESTRICT"), nullable=False
     )
     source_route: Mapped[str] = mapped_column(String(16), nullable=False)
+    origin: Mapped[str] = mapped_column(String(16), nullable=False, default="live")
     command_execution_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("command_executions.execution_id", ondelete="RESTRICT")
     )
@@ -484,6 +485,7 @@ class ProjectionOutboxEvent(Base):
             name="event_type_allowed",
         ),
         CheckConstraint("source_route IN ('command','service')", name="source_route_allowed"),
+        CheckConstraint("origin IN ('live','shadow')", name="origin_allowed"),
         CheckConstraint(
             "(source_route = 'command' AND command_execution_id IS NOT NULL) OR "
             "(source_route = 'service' AND command_execution_id IS NULL)",

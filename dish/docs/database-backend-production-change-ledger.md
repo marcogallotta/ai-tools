@@ -59,9 +59,11 @@ release or cutover evidence is closed.
 
 The current dark-launch worktree adds a fail-open local completion capture, durable spool, explicit
 command-treatment registry, effect-disabled projection epochs, PostgreSQL shadow worker, status and
-kill-switch controls, and deterministic legacy-source export. Record each staged archive's final
-commit identifier here before selecting a dark-launch source release. These changes do not transfer
-production authority or enable Asana projection.
+kill-switch controls, and deterministic legacy-source export. A subsequent safety fix adds immutable
+`live`/`shadow` projection-outbox origin and makes projection claims exclude shadow rows regardless
+of epoch effect state. Record each staged archive's final commit identifier here before selecting a
+dark-launch source release. These changes do not transfer production authority or enable Asana
+projection.
 
 ## Ongoing obligation
 

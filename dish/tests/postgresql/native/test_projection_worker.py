@@ -129,3 +129,81 @@ def test_projection_worker_drains_one_pending_event_against_real_postgresql(core
 
     # Nothing left to claim: a second run finds no pending work.
     assert worker.run_once() is False
+
+
+def test_projection_worker_never_claims_real_shadow_evaluator_outbox(core_db) -> None:
+    from dish_pg.shadow_worker import CommandPortShadowEvaluator
+    from dish_pg.transition import ShadowService
+
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(session, ids, generation_status="active")
+        generation_id = context["generation_id"]
+        run_id = _next(ids)
+        request_id = _next(ids)
+        _register_run(session, generation_id=generation_id, run_id=run_id)
+
+        projection = ProjectionService(session, uuid_factory=lambda: _next(ids))
+        epoch = projection.activate_epoch(
+            generation_id=generation_id,
+            activation_reason="native shadow-origin isolation",
+            created_at=NOW,
+            external_effects_enabled=True,
+        )
+        shadow = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = shadow.create_baseline(
+            generation_id=generation_id,
+            source_generation_identity="legacy-native",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        envelope = shadow.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="create",
+            source_request_identity=str(request_id),
+            canonical_input={
+                "command": "create",
+                "arguments": {"title": "Native shadow only"},
+            },
+            source_outcome={"ok": True},
+            source_post_state={"captured": True},
+            principal={
+                "owner_id": "owner-1",
+                "principal_class": "agent",
+                "run_id": str(run_id),
+            },
+            pinned_inputs={"rollout_mode": "execute"},
+            capture_qualification="execute",
+            captured_at=NOW,
+        )
+        target = CommandPortShadowEvaluator(
+            cursor_secret=b"native-shadow-cursor-secret-32b!"
+        ).evaluate(session, envelope)
+        event = session.scalar(
+            select(tx.ProjectionOutboxEvent).where(
+                tx.ProjectionOutboxEvent.origin == "shadow"
+            )
+        )
+        assert target["ok"] is True
+        assert epoch.external_effects_enabled is True
+        assert event is not None
+        event_id = event.projection_event_id
+
+    adapter = _StubAdapter()
+    worker = ProjectionWorker(
+        session_maker=factory,
+        adapter=adapter,
+        worker_id="projection-worker-shadow-isolation",
+        claim_ttl=timedelta(minutes=2),
+        clock=lambda: NOW,
+    )
+
+    assert worker.run_once() is False
+    assert adapter.prepared == []
+    assert adapter.observed == []
+    with session_scope(factory) as session:
+        row = session.get(tx.ProjectionOutboxEvent, event_id)
+        assert row.origin == "shadow"
+        assert row.state == "pending"
+        assert row.claim_owner is None
+        assert row.claim_token is None
