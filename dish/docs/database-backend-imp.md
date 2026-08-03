@@ -14,16 +14,16 @@ Migration and operational cutover procedures belong in `database-backend-migrati
 
 ## Outstanding work for Stage A
 
-Nothing in this repository has run against a real PostgreSQL server. `tests/support/postgresql/core.py`
-still builds `sqlite+pysqlite:///:memory:`, and `tests/conftest.py` has no `postgresql` marker, DSN
-plumbing, or real-database fixture. The full certification plan is in
-`database-backend-postgresql-test-plan.md`; it remains entirely open.
+`tests/conftest.py` has a `postgresql` marker and `--postgresql` flag, and
+`tests/support/postgresql/core.py` has a native branch (`DISH_TEST_POSTGRESQL_DSN`) alongside the
+intentional SQLite-rendered lane. Real Alembic migrations, constraints, triggers, and same-task
+concurrency have already been exercised against a real PostgreSQL instance and confirmed
+first-attempt-clean via flake detection — see `database-backend-postgresql-test-plan.md`'s "Covered
+elsewhere" section. The remaining certification and rehearsal work is what that plan's Sections 1-4
+still track; it is not "entirely open."
 
 **Local, no production access needed:**
 
-- Real PostgreSQL certification: run actual Alembic migrations, constraints, triggers, and
-  concurrency against a real PostgreSQL instance instead of SQLite-rendered fixtures. This is the
-  largest single gap.
 - A full `scripts/dish-pg-acceptance` run without `--skip-full`, against the current schema head.
 - Backup, restore, and PITR rehearsal against a disposable PostgreSQL instance, with measured
   (not inferred) RPO/RTO.
