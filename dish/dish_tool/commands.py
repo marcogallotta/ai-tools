@@ -147,6 +147,38 @@ def _admin_resolver(action: str | None) -> str | None:
     return f"Marco/admin {action}"
 
 
+_AGENT_CORRECTABLE_FINDING_KINDS = {
+    "syntax", "agent-correctable", "illegal-combination",
+}
+
+
+def _attach_validation_retry_guidance(
+    result: dict[str, Any], *, command: str
+) -> None:
+    """Describe a safe corrected retry only when live policy still permits it."""
+    if result.get("code") != "VALIDATION_FAILED":
+        return
+    findings = [
+        item for item in result.get("errors", [])
+        if isinstance(item, Mapping) and item.get("kind") in _AGENT_CORRECTABLE_FINDING_KINDS
+    ]
+    if not findings or command not in result.get("allowed_actions", []):
+        return
+    result.setdefault("data", {})["retry"] = {
+        "mode": "correct_then_retry",
+        "action": command,
+        "same_operation": True,
+        "same_cycle": command in {"approve", "reject"},
+        "fresh_request_id": True,
+        "mutation_occurred": False,
+        "instruction": (
+            f"Correct the submitted candidate using the validation findings, then retry `{command}` "
+            "on this same open operation"
+            + (" and Verification cycle." if command in {"approve", "reject"} else ".")
+        ),
+    }
+
+
 _HOLD_ADMIN_ACTIONS = {
     "supply-evidence": {
         "cycle_route": "evidence",
@@ -461,6 +493,7 @@ class DishApplication:
                     result["state"] = view["status"]
                     result["allowed_actions"] = actions
                     result["data"] = exposed_data
+                    _attach_validation_retry_guidance(result, command=command)
                 except Exception:
                     # Error reporting must not hide the original governed failure.
                     pass

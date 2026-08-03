@@ -6,7 +6,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 PLANNING_FIELDS = (
     "Dish candidate", "Purpose", "Role", "Priors", "Locks", "Exemptions",
@@ -73,25 +73,116 @@ class FindingKind(str, Enum):
 
 
 @dataclass(frozen=True)
+class RecoverySpec:
+    expected: Any | None = None
+    example: Any | None = None
+    recovery: str | None = None
+
+
+RECOVERY_SPECS: Mapping[str, RecoverySpec] = {
+    "document.recognition-empty": RecoverySpec(
+        expected={
+            "line": 2,
+            "syntax": "<what the dish is, how it eats, and its meal role>",
+        },
+        example=[
+            "Dish name — short identity phrase",
+            "A concise sentence describing what it is, how it eats, and its meal role.",
+        ],
+        recovery="Insert one non-empty dish-summary sentence immediately after the title line.",
+    ),
+    "document.required-section": RecoverySpec(
+        expected="A non-empty required canonical section with the reported heading.",
+        recovery="Insert the missing required section in canonical section order and populate it with non-empty content.",
+    ),
+    "quantities.portions-required": RecoverySpec(
+        expected="Portions: <non-empty serving count or yield>",
+        example="Portions: 2",
+        recovery="Add or complete a non-empty `Portions:` line inside QUANTITIES.",
+    ),
+    "planning.field-empty": RecoverySpec(
+        expected="<field name>: <non-empty value>",
+        recovery="Populate the reported Planning brief field with a non-empty value.",
+    ),
+    "decisions.human-format": RecoverySpec(
+        expected="Human — Marco: <decision text>",
+        example="Human — Marco: Approved the scoped nutrition exemptions for this controlled tasting repeat.",
+        recovery="Rewrite the Decision entry using the exact `Human — Marco:` prefix followed by non-empty decision text.",
+    ),
+    "state.actor-format": RecoverySpec(
+        expected="<agent>, <self-reported model: model>, <YYYY-MM-DD>",
+        example="Claude, self-reported model: Claude, 2026-08-03",
+        recovery="Rewrite the reported actor field using the canonical actor, model, and date grammar.",
+    ),
+    "research-basis.classification": RecoverySpec(
+        expected={"prefix": "Classification:", "allowed_values": list(RESEARCH_BASIS_PREFIXES)},
+        recovery="Add or correct one Research basis line so `Classification:` begins with an approved classification value.",
+    ),
+    "title.recognition": RecoverySpec(
+        expected="<dish name> — <short identity phrase>",
+        example="Laap gai — controlled chicken-thigh pork-replacement repeat",
+        recovery="Rewrite line 1 so the dish name and short identity phrase are separated by a spaced em dash (` — `).",
+    ),
+    "state.illegal-combination": RecoverySpec(
+        expected="State fields must match the canonical combination for the current Status.",
+        recovery="Correct only the conflicting PROCESS RECORD state fields to the canonical combination for the reported Status.",
+    ),
+    "role.title-brief-disagreement": RecoverySpec(
+        expected="The title role tag and Planning brief `Role` must describe the same meal role.",
+        recovery="Make the title role tag and Planning brief `Role` agree; changing the governed Planning field still requires authorization.",
+    ),
+    "title.destination-marker": RecoverySpec(
+        expected="The title and Planning brief `Destination section` must contain the same destination-defect marker, or neither may contain one.",
+        recovery="Make the destination marker agree between the title and Planning brief without changing the intended destination.",
+    ),
+    "material-changes.format": RecoverySpec(
+        expected=MATERIAL_CHANGE_ACCEPTED_SYNTAX,
+        recovery="Rewrite the complete Material changes entry using the canonical seven-field grammar.",
+    ),
+}
+
+
+@dataclass(frozen=True)
 class DocumentFinding:
     rule: str
     kind: FindingKind
     message: str
-    location: str | None = None
-    current: str | None = None
+    location: Any | None = None
+    current: Any | None = None
+    expected: Any | None = None
+    example: Any | None = None
+    recovery: str | None = None
+    related: Mapping[str, Any] | None = None
 
 
+def _default_recovery(finding: DocumentFinding) -> str | None:
+    if finding.kind is FindingKind.SYNTAX:
+        return "Correct the reported canonical syntax and rerun deterministic validation."
+    if finding.kind is FindingKind.AGENT_CORRECTABLE:
+        return "Correct the reported candidate defect without changing human-owned intent, then rerun deterministic validation."
+    if finding.kind is FindingKind.ILLEGAL_COMBINATION:
+        return "Correct the conflicting values so they form one legal canonical combination, then rerun deterministic validation."
+    return None
 
 
-def finding_payload(finding: DocumentFinding) -> dict[str, str | None]:
-    """Serialize a validation finding without discarding actionable context."""
-    return {
+def finding_payload(finding: DocumentFinding) -> dict[str, Any]:
+    """Serialize a finding with deterministic repair guidance when agent-correctable."""
+    spec = RECOVERY_SPECS.get(finding.rule)
+    payload: dict[str, Any] = {
         "rule": finding.rule,
         "kind": finding.kind.value,
         "message": finding.message,
         "location": finding.location,
         "current": finding.current,
     }
+    optional = {
+        "expected": finding.expected if finding.expected is not None else (spec.expected if spec else None),
+        "example": finding.example if finding.example is not None else (spec.example if spec else None),
+        "recovery": finding.recovery if finding.recovery is not None else (spec.recovery if spec else _default_recovery(finding)),
+        "related": dict(finding.related) if finding.related is not None else None,
+    }
+    payload.update({key: value for key, value in optional.items() if value is not None})
+    return payload
 
 
 @dataclass(frozen=True)
@@ -955,8 +1046,9 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
         findings.append(DocumentFinding(
             "document.recognition-empty",
             FindingKind.SYNTAX,
-            "recognition line requires non-empty text",
-            "recognition",
+            "canonical line 2 requires a non-empty dish-summary/meal-role sentence",
+            {"section": "canonical-header", "line": 2, "after": "title"},
+            current={"line_1": document.title, "line_2": document.recognition},
         ))
     if document.is_non_main:
         if not document.title.startswith("[non-main] "):
@@ -996,6 +1088,7 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
                 "destination marker must agree between title and Destination section",
                 "title",
                 current=document.title,
+                related={"title": document.title, "Destination section": destination},
             ))
 
     status = document.state.values["Status"]
@@ -1028,7 +1121,13 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
         elif status == "pending-verification": illegal = not (_none(detail) and _none(resume) and not _none(release) and _none(verified) and not _none(self_verified))
         elif status == "ready": illegal = not (_none(detail) and _none(resume) and not _none(release) and not _none(verified) and not _none(self_verified))
         if illegal:
-            findings.append(DocumentFinding("state.illegal-combination", FindingKind.ILLEGAL_COMBINATION, f"state fields are illegal for {status}", "PROCESS RECORD"))
+            findings.append(DocumentFinding(
+                "state.illegal-combination",
+                FindingKind.ILLEGAL_COMBINATION,
+                f"state fields are illegal for {status}",
+                "PROCESS RECORD",
+                related={name: document.state.values[name] for name in STATE_FIELDS},
+            ))
     for field_name in ("Researched by", "Verified by", "Self-verified"):
         value = document.state.values[field_name]
         if value != "None" and not ACTOR_RE.match(value):
@@ -1079,5 +1178,6 @@ def validate_task_document(document: CanonicalTaskDocument, *, expected_schema_v
             "title role and Planning brief Role disagree",
             "title",
             current=document.title,
+            related={"title": document.title, "Role": document.planning_brief.values["Role"]},
         ))
     return DocumentValidation(tuple(findings))

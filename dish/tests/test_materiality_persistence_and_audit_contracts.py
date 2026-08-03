@@ -116,7 +116,7 @@ def test_document_findings_echo_the_submitted_value(candidate, rule, current):
     assert finding_payload(finding)["current"] == current
 
 
-def test_document_finding_payload_uses_null_without_a_single_current_value():
+def test_document_finding_payload_locates_missing_summary_line_and_explains_recovery():
     candidate = CANONICAL_TASK.replace(
         "A compact side dish for testing texture.",
         "",
@@ -128,8 +128,11 @@ def test_document_finding_payload_uses_null_without_a_single_current_value():
         if item.rule == "document.recognition-empty"
     )
 
-    assert finding.current is None
-    assert finding_payload(finding)["current"] is None
+    payload = finding_payload(finding)
+    assert payload["location"] == {"section": "canonical-header", "line": 2, "after": "title"}
+    assert payload["current"]["line_2"] == ""
+    assert payload["expected"]["line"] == 2
+    assert "immediately after the title line" in payload["recovery"]
 
 
 def test_schema_v16_and_audit_repair_table(tmp_path):

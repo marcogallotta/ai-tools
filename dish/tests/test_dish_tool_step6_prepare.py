@@ -122,9 +122,21 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
             {
                 "rule": "document.recognition-empty",
                 "kind": "syntax",
-                "message": "recognition line requires non-empty text",
-                "location": "recognition",
-                "current": None,
+                "message": "canonical line 2 requires a non-empty dish-summary/meal-role sentence",
+                "location": {"section": "canonical-header", "line": 2, "after": "title"},
+                "current": {
+                    "line_1": "[non-main] Test dish — crisp comparison side",
+                    "line_2": "",
+                },
+                "expected": {
+                    "line": 2,
+                    "syntax": "<what the dish is, how it eats, and its meal role>",
+                },
+                "example": [
+                    "Dish name — short identity phrase",
+                    "A concise sentence describing what it is, how it eats, and its meal role.",
+                ],
+                "recovery": "Insert one non-empty dish-summary sentence immediately after the title line.",
             },
         ),
         (
@@ -136,6 +148,9 @@ def test_research_prepare_writes_pending_then_moves_and_freezes_cycle(tmp_path):
                 "message": "QUANTITIES requires a non-empty Portions: line",
                 "location": "QUANTITIES",
                 "current": None,
+                "expected": "Portions: <non-empty serving count or yield>",
+                "example": "Portions: 2",
+                "recovery": "Add or complete a non-empty `Portions:` line inside QUANTITIES.",
             },
         ),
         (
@@ -269,8 +284,19 @@ def test_planning_prepare_rejects_empty_required_values_before_write(
             "message": f"{field_name} requires a non-empty value",
             "location": field_name,
             "current": None,
+            "expected": "<field name>: <non-empty value>",
+            "recovery": "Populate the reported Planning brief field with a non-empty value.",
         }
     ]
+    assert result["data"]["retry"] == {
+        "mode": "correct_then_retry",
+        "action": "prepare",
+        "same_operation": True,
+        "same_cycle": False,
+        "fresh_request_id": True,
+        "mutation_occurred": False,
+        "instruction": "Correct the submitted candidate using the validation findings, then retry `prepare` on this same open operation.",
+    }
     assert b.writes == 0
 @pytest.mark.smoke
 def test_planning_prepare_rejects_unsupported_exemption_before_write(tmp_path):

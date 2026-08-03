@@ -446,3 +446,19 @@ substantive reset with its existing evidence contract.
 ## Hold observability and resolution binding
 
 `dish-admin holds` is the read-only Marco/admin inventory for every open Evidence or Human Review hold. It classifies pre-construction Research, ordinary Verification Evidence/Human Review, and automatic two-pass Verification holds separately, reports the exact required admin action, task title/GID/link, question, operation and cycle identifiers, and the persisted hold identity. Durable resolution commands must include the displayed task GID and, for Verification holds, the displayed cycle ID and hold identity; Dish rejects stale or mismatched commands before mutation. Quantified-limit blockers are recorded at `reject` time as a complete metric/actual/limit/delta/unit/basis set in the existing operation-step and audit JSON.
+
+## Deterministic validation recovery metadata
+
+Agent-correctable deterministic document findings include the submitted value or local context plus
+optional `expected`, `example`, `recovery`, and `related` fields. Existing `rule` identifiers remain
+stable; human-facing messages use document-facing terms and locations. For example,
+`document.recognition-empty` identifies canonical line 2 as the dish-summary/meal-role sentence and
+returns the submitted first two header lines, the accepted shape, and the exact insertion point.
+
+When a `VALIDATION_FAILED` result contains only correctable document findings and the same command is
+still present in authoritative `allowed_actions`, `data.retry` describes the safe continuation:
+`mode=correct_then_retry`, the command to retry, whether the same operation and Verification cycle
+remain usable, whether a fresh request ID is required, and whether any mutation occurred. This is
+not permission to repeat the unchanged request. Correct the candidate first and follow the returned
+retry metadata. The retry block is omitted when live policy no longer permits the command or the
+failure is not an agent-owned document correction.

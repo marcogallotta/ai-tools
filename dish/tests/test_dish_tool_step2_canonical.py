@@ -144,8 +144,8 @@ def test_complete_task_rejects_empty_recognition_line():
         (
             "document.recognition-empty",
             FindingKind.SYNTAX,
-            "recognition line requires non-empty text",
-            "recognition",
+            "canonical line 2 requires a non-empty dish-summary/meal-role sentence",
+            {"section": "canonical-header", "line": 2, "after": "title"},
         )
     ]
 
