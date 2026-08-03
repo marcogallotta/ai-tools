@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import tempfile
 import threading
@@ -25,6 +26,10 @@ class ShadowSpoolError(RuntimeError):
 
 
 class ShadowSpoolConflict(ShadowSpoolError):
+    pass
+
+
+class ShadowSpoolCapacityError(ShadowSpoolError):
     pass
 
 
@@ -122,15 +127,47 @@ CREATE TABLE IF NOT EXISTS shadow_capture_registrations (
 );
 CREATE INDEX IF NOT EXISTS shadow_capture_pending_idx
     ON shadow_capture_registrations(state, rollout_sequence);
+
+CREATE TABLE IF NOT EXISTS shadow_capture_tombstones (
+    registration_id TEXT PRIMARY KEY,
+    source_request_identity TEXT NOT NULL UNIQUE,
+    rollout_sequence INTEGER NOT NULL UNIQUE CHECK (rollout_sequence > 0),
+    source_authority_generation TEXT NOT NULL,
+    command_name TEXT NOT NULL,
+    treatment TEXT NOT NULL CHECK (treatment IN ('execute','capture_only','excluded')),
+    canonical_input_sha256 TEXT NOT NULL CHECK (length(canonical_input_sha256)=64),
+    principal_sha256 TEXT NOT NULL CHECK (length(principal_sha256)=64),
+    source_pre_state_sha256 TEXT NOT NULL CHECK (length(source_pre_state_sha256)=64),
+    pinned_inputs_sha256 TEXT NOT NULL CHECK (length(pinned_inputs_sha256)=64),
+    delivered_at TEXT NOT NULL,
+    compacted_at TEXT NOT NULL
+);
 """
 
 
 class ShadowSpool:
-    def __init__(self, path: Path, *, busy_timeout_ms: int = 50) -> None:
-        if busy_timeout_ms <= 0:
-            raise ValueError("busy_timeout_ms must be positive")
+    def __init__(
+        self,
+        path: Path,
+        *,
+        busy_timeout_ms: int = 50,
+        max_bytes: int = 512 * 1024 * 1024,
+        max_records: int = 100_000,
+        min_free_bytes: int = 1024 * 1024 * 1024,
+    ) -> None:
+        for name, value in (
+            ("busy_timeout_ms", busy_timeout_ms),
+            ("max_bytes", max_bytes),
+            ("max_records", max_records),
+            ("min_free_bytes", min_free_bytes),
+        ):
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
         self.path = Path(path).expanduser()
         self.busy_timeout_ms = busy_timeout_ms
+        self.max_bytes = max_bytes
+        self.max_records = max_records
+        self.min_free_bytes = min_free_bytes
         self._initialize_lock = threading.Lock()
         self._initialized = False
 
@@ -163,6 +200,45 @@ class ShadowSpool:
     def _connect(self) -> sqlite3.Connection:
         self.initialize()
         return self._open()
+
+    def _capacity_state(self, conn: sqlite3.Connection) -> dict[str, int]:
+        page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+        page_count = int(conn.execute("PRAGMA page_count").fetchone()[0])
+        free_pages = int(conn.execute("PRAGMA freelist_count").fetchone()[0])
+        sidecar_bytes = sum(
+            candidate.stat().st_size if candidate.exists() else 0
+            for candidate in (Path(f"{self.path}-wal"), Path(f"{self.path}-shm"))
+        )
+        active_records = int(
+            conn.execute("SELECT COUNT(*) FROM shadow_capture_registrations").fetchone()[0]
+        )
+        archived_records = int(
+            conn.execute("SELECT COUNT(*) FROM shadow_capture_tombstones").fetchone()[0]
+        )
+        return {
+            "logical_bytes": max(0, page_count - free_pages) * page_size + sidecar_bytes,
+            "physical_bytes": sum(
+                candidate.stat().st_size if candidate.exists() else 0
+                for candidate in (self.path, Path(f"{self.path}-wal"), Path(f"{self.path}-shm"))
+            ),
+            "free_bytes": shutil.disk_usage(self.path.parent).free,
+            "active_records": active_records,
+            "archived_records": archived_records,
+            "total_records": active_records + archived_records,
+        }
+
+    def _assert_capacity(self, conn: sqlite3.Connection, *, incoming_bytes: int) -> None:
+        state = self._capacity_state(conn)
+        if state["total_records"] >= self.max_records:
+            raise ShadowSpoolCapacityError("dark-launch spool record limit reached")
+        if state["logical_bytes"] + incoming_bytes > self.max_bytes:
+            raise ShadowSpoolCapacityError("dark-launch spool byte limit reached")
+        if state["free_bytes"] - incoming_bytes < self.min_free_bytes:
+            raise ShadowSpoolCapacityError("dark-launch spool free-space floor reached")
+
+    @staticmethod
+    def _identity_fingerprint(values: tuple[str, ...]) -> tuple[str, ...]:
+        return (values[0], values[1], values[2], values[4], values[6], values[8], values[10])
 
     @staticmethod
     def _identity_payload(
@@ -245,6 +321,29 @@ class ShadowSpool:
                     existing["registration_id"], identity, int(existing["rollout_sequence"]),
                     existing["command_name"], existing["treatment"], existing["state"],
                 )
+            archived = conn.execute(
+                "SELECT * FROM shadow_capture_tombstones WHERE source_request_identity=?",
+                (identity,),
+            ).fetchone()
+            if archived is not None:
+                observed = (
+                    archived["source_authority_generation"],
+                    archived["command_name"],
+                    archived["treatment"],
+                    archived["canonical_input_sha256"],
+                    archived["principal_sha256"],
+                    archived["source_pre_state_sha256"],
+                    archived["pinned_inputs_sha256"],
+                )
+                if observed != self._identity_fingerprint(values):
+                    raise ShadowSpoolConflict("source request identity conflicts with compacted evidence")
+                conn.commit()
+                return ShadowReservation(
+                    archived["registration_id"], identity, int(archived["rollout_sequence"]),
+                    archived["command_name"], archived["treatment"], "delivered",
+                )
+            incoming_bytes = sum(len(value.encode("utf-8")) for value in values) + 2048
+            self._assert_capacity(conn, incoming_bytes=incoming_bytes)
             next_row = conn.execute(
                 "SELECT value FROM shadow_spool_metadata WHERE key='next_rollout_sequence'"
             ).fetchone()
@@ -408,6 +507,83 @@ class ShadowSpool:
         finally:
             conn.close()
 
+    def has_source_identity(self, source_request_identity: str) -> bool:
+        conn = self._connect()
+        try:
+            return conn.execute(
+                """SELECT 1 FROM shadow_capture_registrations WHERE source_request_identity=?
+                   UNION ALL
+                   SELECT 1 FROM shadow_capture_tombstones WHERE source_request_identity=?
+                   LIMIT 1""",
+                (source_request_identity, source_request_identity),
+            ).fetchone() is not None
+        finally:
+            conn.close()
+
+    def compact_delivered(
+        self,
+        *,
+        now: datetime,
+        older_than: timedelta,
+        limit: int = 1000,
+    ) -> int:
+        if older_than.total_seconds() < 0:
+            raise ValueError("older_than must not be negative")
+        if limit <= 0:
+            raise ValueError("limit must be positive")
+        cutoff = _stamp(now - older_than)
+        conn = self._connect()
+        try:
+            candidate_ids = [
+                row["registration_id"]
+                for row in conn.execute(
+                    """SELECT registration_id FROM shadow_capture_registrations
+                        WHERE state='delivered' AND delivered_at <= ?
+                        ORDER BY rollout_sequence LIMIT ?""",
+                    (cutoff, limit),
+                ).fetchall()
+            ]
+            if not candidate_ids:
+                return 0
+            conn.execute("BEGIN IMMEDIATE")
+            placeholders = ",".join("?" for _ in candidate_ids)
+            rows = conn.execute(
+                f"""SELECT * FROM shadow_capture_registrations
+                     WHERE state='delivered' AND delivered_at <= ?
+                       AND registration_id IN ({placeholders})
+                     ORDER BY rollout_sequence""",
+                (cutoff, *candidate_ids),
+            ).fetchall()
+            for row in rows:
+                conn.execute(
+                    """INSERT INTO shadow_capture_tombstones(
+                           registration_id, source_request_identity, rollout_sequence,
+                           source_authority_generation, command_name, treatment,
+                           canonical_input_sha256, principal_sha256,
+                           source_pre_state_sha256, pinned_inputs_sha256,
+                           delivered_at, compacted_at
+                       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        row["registration_id"], row["source_request_identity"],
+                        row["rollout_sequence"], row["source_authority_generation"],
+                        row["command_name"], row["treatment"],
+                        row["canonical_input_sha256"], row["principal_sha256"],
+                        row["source_pre_state_sha256"], row["pinned_inputs_sha256"],
+                        row["delivered_at"], _stamp(now),
+                    ),
+                )
+                conn.execute(
+                    "DELETE FROM shadow_capture_registrations WHERE registration_id=? AND state='delivered'",
+                    (row["registration_id"],),
+                )
+            conn.commit()
+            return len(rows)
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def pending(self, *, limit: int = 100) -> tuple[ShadowSpoolItem, ...]:
         if limit <= 0:
             raise ValueError("limit must be positive")
@@ -484,9 +660,24 @@ class ShadowSpool:
             next_sequence = int(conn.execute(
                 "SELECT value FROM shadow_spool_metadata WHERE key='next_rollout_sequence'"
             ).fetchone()["value"])
+            capacity = self._capacity_state(conn)
             return {
                 "path": str(self.path),
-                "counts": {key: counts.get(key, 0) for key in ("reserved", "complete", "gap", "delivered")},
+                "counts": {
+                    **{key: counts.get(key, 0) for key in ("reserved", "complete", "gap", "delivered")},
+                    "archived": capacity["archived_records"],
+                },
+                "capacity": {
+                    **capacity,
+                    "max_bytes": self.max_bytes,
+                    "max_records": self.max_records,
+                    "min_free_bytes": self.min_free_bytes,
+                    "accepting_new_records": (
+                        capacity["total_records"] < self.max_records
+                        and capacity["logical_bytes"] < self.max_bytes
+                        and capacity["free_bytes"] >= self.min_free_bytes
+                    ),
+                },
                 "next_rollout_sequence": next_sequence,
                 "oldest_pending_sequence": None if oldest is None else int(oldest["rollout_sequence"]),
                 "oldest_pending_at": None if oldest is None else oldest["created_at"],

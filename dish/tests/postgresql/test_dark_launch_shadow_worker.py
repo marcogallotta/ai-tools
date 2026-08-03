@@ -242,3 +242,32 @@ def test_shadow_identifier_translation_uses_prior_comparison_bindings(workflow_d
                 current,
                 {"submission_id": str(uuid.uuid4())},
             )
+
+
+def test_shadow_worker_compacts_delivered_payload_after_retention(workflow_db, tmp_path):
+    from datetime import timedelta
+
+    factory, ids, context, _task = workflow_db
+    with session_scope(factory) as session:
+        baseline = ShadowService(session, uuid_factory=lambda: _next(ids)).create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        baseline_id = baseline.shadow_baseline_id
+    spool = _spool(tmp_path)
+    worker = ShadowWorker(
+        spool=spool,
+        session_maker=factory,
+        baseline_id=baseline_id,
+        evaluator=Evaluator(),
+        worker_id="shadow-1",
+        comparator_release="test",
+        kill_switch_path=tmp_path / "dark-launch.disabled",
+        delivered_retention=timedelta(0),
+        clock=lambda: NOW,
+    )
+    assert worker.run_once() is True
+    assert spool.status()["counts"]["delivered"] == 0
+    assert spool.status()["counts"]["archived"] == 1

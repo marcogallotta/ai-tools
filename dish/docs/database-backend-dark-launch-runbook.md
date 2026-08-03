@@ -32,7 +32,9 @@ should still remain `external_effects_enabled = false` as an independent operati
 
 1. Set `DISH_DARK_LAUNCH_MODE=capture` in the production legacy-service environment. Keep
    `DISH_DARK_LAUNCH_BUSY_TIMEOUT_MS=50` unless host contention testing justifies another small,
-   positive value; capture must fail open well before the live request timeout.
+   positive value; capture must fail open well before the live request timeout. Set explicit host
+   limits for `DISH_DARK_LAUNCH_MAX_SPOOL_BYTES`, `DISH_DARK_LAUNCH_MAX_SPOOL_RECORDS`, and
+   `DISH_DARK_LAUNCH_MIN_FREE_BYTES`; reaching any bound automatically creates the shared kill switch.
 2. Restart only the legacy service and issue representative normal commands.
 3. Check local spool status before starting PostgreSQL execution:
 
@@ -53,8 +55,10 @@ after capture is visibly accumulating. Envelopes captured while mode was `captur
 evidence. The worker drains in rollout sequence, evaluates only commands marked `execute`, and records `capture_only` commands as explicit
 uncomparable gaps. It must not receive `ASANA_ENV`, `ASANA_PAT`, or any projection adapter.
 
-Inspect status repeatedly. Mismatch and gap counts are evidence, not authority failures; disabling
-the dark launch must not affect the live service.
+Inspect status repeatedly, including `spool.capacity.accepting_new_records`. The worker compacts
+old delivered payloads after `DISH_DARK_LAUNCH_DELIVERED_RETENTION_SECONDS` while preserving replay
+fingerprints. Mismatch and gap counts are evidence, not authority failures; disabling the dark launch
+must not affect the live service.
 
 ## Immediate disable
 

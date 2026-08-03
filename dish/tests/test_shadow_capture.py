@@ -102,3 +102,39 @@ def test_locked_spool_fails_open_without_live_path_stall(tmp_path):
     assert result is expected
     assert elapsed < 0.75
     assert list((tmp_path / "emergency").glob("*.json"))
+
+
+def test_capacity_guard_engages_kill_switch_without_changing_live_result(tmp_path):
+    db = tmp_path / "live.sqlite3"; _db(db)
+    switch = tmp_path / "dark-launch.disabled"
+    capture = LegacyShadowCapture(
+        ShadowCaptureSettings(
+            "capture",
+            tmp_path / "spool.sqlite3",
+            tmp_path / "emergency",
+            "legacy-1",
+            switch,
+            max_spool_records=1,
+            min_free_bytes=1,
+        ),
+        db_path=db,
+    )
+    capture.execute(
+        command="start",
+        arguments={"task_gid": "t1"},
+        principal=None,
+        request_id="capacity-1",
+        call=lambda: {"ok": True},
+    )
+    expected = {"ok": True, "data": {"live": "unchanged"}}
+    result = capture.execute(
+        command="start",
+        arguments={"task_gid": "t1"},
+        principal=None,
+        request_id="capacity-2",
+        call=lambda: expected,
+    )
+    assert result is expected
+    assert switch.exists()
+    assert "capacity guard" in switch.read_text()
+    assert list((tmp_path / "emergency").glob("*.json"))

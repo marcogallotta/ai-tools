@@ -4,7 +4,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from dish_service.shadow_spool import ShadowSpool, ShadowSpoolConflict
+from dish_service.shadow_spool import (
+    ShadowSpool,
+    ShadowSpoolCapacityError,
+    ShadowSpoolConflict,
+)
 
 NOW = datetime(2026, 8, 3, 10, 0, tzinfo=timezone.utc)
 
@@ -77,3 +81,50 @@ def test_stale_reservation_becomes_permanent_gap(tmp_path) -> None:
     assert item.registration_id == reservation.registration_id
     assert item.state == "gap"
     assert item.gap["failure_stage"] == "command_completion_capture"
+
+
+def test_spool_record_limit_rejects_new_identity_but_allows_exact_replay(tmp_path) -> None:
+    spool = ShadowSpool(
+        tmp_path / "shadow.sqlite3",
+        max_records=1,
+        min_free_bytes=1,
+    )
+    first = _reserve(spool)
+    assert _reserve(spool) == first
+    with pytest.raises(ShadowSpoolCapacityError, match="record limit"):
+        _reserve(spool, "request-2")
+    assert spool.status()["capacity"]["accepting_new_records"] is False
+
+
+def test_compaction_removes_payload_but_preserves_replay_identity(tmp_path) -> None:
+    spool = ShadowSpool(tmp_path / "shadow.sqlite3", min_free_bytes=1)
+    reservation = _reserve(spool)
+    spool.complete(
+        reservation.registration_id,
+        source_outcome={"ok": True, "large": "x" * 10_000},
+        source_post_state={"phase": "done"},
+        source_effects={},
+        completed_at=NOW,
+    )
+    spool.mark_delivered(reservation.registration_id, delivered_at=NOW)
+    assert spool.compact_delivered(
+        now=NOW + timedelta(days=8), older_than=timedelta(days=7)
+    ) == 1
+    assert spool.get_by_source_identity("request-1") is None
+    assert spool.has_source_identity("request-1") is True
+    replay = _reserve(spool)
+    assert replay.registration_id == reservation.registration_id
+    assert replay.state == "delivered"
+    with pytest.raises(ShadowSpoolConflict, match="compacted evidence"):
+        spool.reserve(
+            source_request_identity="request-1",
+            source_authority_generation="legacy-prod@generation-1",
+            command_name="submit",
+            treatment="execute",
+            canonical_input={"command": "submit"},
+            principal={"owner_id": "owner-1", "run_id": "run-1", "scope": "agent"},
+            source_pre_state={},
+            pinned_inputs={"now": NOW.isoformat()},
+            created_at=NOW,
+        )
+    assert spool.status()["counts"]["archived"] == 1

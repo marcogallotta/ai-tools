@@ -302,6 +302,7 @@ class ShadowWorker:
         comparator_release: str,
         kill_switch_path: Path,
         claim_ttl: timedelta = timedelta(minutes=2),
+        delivered_retention: timedelta = timedelta(days=7),
         idle_seconds: float = 1.0,
         clock=_utcnow,
     ) -> None:
@@ -312,7 +313,10 @@ class ShadowWorker:
         self.worker_id = worker_id
         self.comparator_release = comparator_release
         self.kill_switch_path = Path(kill_switch_path)
+        if delivered_retention.total_seconds() < 0:
+            raise ValueError("delivered_retention must not be negative")
         self.claim_ttl = claim_ttl
+        self.delivered_retention = delivered_retention
         self.idle_seconds = idle_seconds
         self.clock = clock
         self._stop = False
@@ -337,6 +341,12 @@ class ShadowWorker:
     def run_once(self) -> bool:
         if self._kill_switch_engaged():
             return False
+        try:
+            self.spool.compact_delivered(
+                now=self.clock(), older_than=self.delivered_retention, limit=1000
+            )
+        except BaseException:
+            LOGGER.exception("shadow spool delivered-payload compaction failed")
         pending = self.spool.pending(limit=1)
         if pending:
             item = pending[0]
@@ -346,7 +356,14 @@ class ShadowWorker:
                 LOGGER.exception("shadow spool delivery failed")
                 self.spool.mark_delivery_failed(item.registration_id, error=str(exc))
                 return True
-            self.spool.mark_delivered(item.registration_id, delivered_at=self.clock())
+            delivered_at = self.clock()
+            self.spool.mark_delivered(item.registration_id, delivered_at=delivered_at)
+            try:
+                self.spool.compact_delivered(
+                    now=delivered_at, older_than=self.delivered_retention, limit=1000
+                )
+            except BaseException:
+                LOGGER.exception("shadow spool delivered-payload compaction failed")
             if item.state == "gap":
                 return True
         return self._evaluate_one() or bool(pending)
@@ -445,6 +462,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--comparator-release", required=True)
     parser.add_argument("--kill-switch", required=True, type=Path)
     parser.add_argument("--idle-seconds", type=float, default=1.0)
+    parser.add_argument("--delivered-retention-seconds", type=int, default=7 * 24 * 60 * 60)
     parser.add_argument("--log-level", default="INFO")
     return parser
 
@@ -464,6 +482,7 @@ def main(argv: list[str] | None = None) -> int:
         worker_id=args.worker_id,
         comparator_release=args.comparator_release,
         kill_switch_path=args.kill_switch,
+        delivered_retention=timedelta(seconds=args.delivered_retention_seconds),
         idle_seconds=args.idle_seconds,
     )
     def stop(signum: int, frame: FrameType | None) -> None:

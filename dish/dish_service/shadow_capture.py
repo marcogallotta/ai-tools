@@ -9,7 +9,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import sqlite3
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,7 +20,11 @@ from typing import Any, Callable, Mapping
 
 from dish_shadow.policy import treatment_for
 
-from .shadow_spool import EmergencyGapWriter, ShadowSpool
+from .shadow_spool import (
+    EmergencyGapWriter,
+    ShadowSpool,
+    ShadowSpoolCapacityError,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -120,6 +126,9 @@ class ShadowCaptureSettings:
     source_authority_generation: str
     kill_switch_path: Path | None = None
     busy_timeout_ms: int = 50
+    max_spool_bytes: int = 512 * 1024 * 1024
+    max_spool_records: int = 100_000
+    min_free_bytes: int = 1024 * 1024 * 1024
 
     @property
     def enabled(self) -> bool:
@@ -135,7 +144,11 @@ class LegacyShadowCapture:
         self.settings = settings
         self.db_path = Path(db_path)
         self.spool = ShadowSpool(
-            settings.spool_path, busy_timeout_ms=settings.busy_timeout_ms
+            settings.spool_path,
+            busy_timeout_ms=settings.busy_timeout_ms,
+            max_bytes=settings.max_spool_bytes,
+            max_records=settings.max_spool_records,
+            min_free_bytes=settings.min_free_bytes,
         )
         self.emergency = EmergencyGapWriter(settings.emergency_dir)
         if settings.enabled:
@@ -153,6 +166,39 @@ class LegacyShadowCapture:
             "run_id": getattr(principal, "run_id", None),
             "principal_class": getattr(principal, "principal_class", None),
         }
+
+    def _engage_capacity_kill_switch(self, error: ShadowSpoolCapacityError) -> None:
+        path = self.settings.kill_switch_path
+        if path is None:
+            return
+        path = Path(path).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(
+            {
+                "disabled": True,
+                "reason": "dark-launch spool capacity guard",
+                "error": str(error),
+                "at": _utcnow().isoformat(),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ) + "\n"
+        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8", closefd=True) as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, path)
+            directory_fd = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
 
     def _emergency(self, *, identity: str, command: str, phase: str, error: BaseException) -> None:
         try:
@@ -195,6 +241,8 @@ class LegacyShadowCapture:
             existing = self.spool.get_by_source_identity(identity)
             if existing is not None and existing.state in {"complete", "gap", "delivered"}:
                 return call()
+            if existing is None and self.spool.has_source_identity(identity):
+                return call()
             pre_state = authoritative_snapshot(
                 self.db_path,
                 arguments=arguments,
@@ -212,6 +260,13 @@ class LegacyShadowCapture:
                 pinned_inputs={"capture_schema": 1, "rollout_mode": self.settings.mode},
                 created_at=_utcnow(),
             )
+        except ShadowSpoolCapacityError as exc:
+            try:
+                self._engage_capacity_kill_switch(exc)
+            except BaseException:
+                LOGGER.exception("dark-launch capacity kill-switch write failed")
+            self._emergency(identity=identity, command=command, phase="capacity", error=exc)
+            return call()
         except BaseException as exc:
             self._emergency(identity=identity, command=command, phase="reserve", error=exc)
             return call()

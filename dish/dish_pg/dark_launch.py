@@ -125,6 +125,21 @@ def _parser() -> argparse.ArgumentParser:
         child.add_argument("--spool-path", required=True, type=Path)
     status_p = sub.choices["status"]
     status_p.add_argument("--baseline-id", type=uuid.UUID)
+    status_p.add_argument(
+        "--max-spool-bytes",
+        type=int,
+        default=int(os.environ.get("DISH_DARK_LAUNCH_MAX_SPOOL_BYTES", str(512 * 1024 * 1024))),
+    )
+    status_p.add_argument(
+        "--max-spool-records",
+        type=int,
+        default=int(os.environ.get("DISH_DARK_LAUNCH_MAX_SPOOL_RECORDS", "100000")),
+    )
+    status_p.add_argument(
+        "--min-free-bytes",
+        type=int,
+        default=int(os.environ.get("DISH_DARK_LAUNCH_MIN_FREE_BYTES", str(1024 * 1024 * 1024))),
+    )
     create = sub.choices["baseline-create"]
     create.add_argument("--generation-id", required=True, type=uuid.UUID)
     create.add_argument("--source-generation", required=True)
@@ -161,7 +176,16 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 value = {"shadow_baseline_id": str(baseline.shadow_baseline_id)}
         else:
-            value = status(session_maker=factory, spool=ShadowSpool(args.spool_path), baseline_id=args.baseline_id)
+            value = status(
+                session_maker=factory,
+                spool=ShadowSpool(
+                    args.spool_path,
+                    max_bytes=args.max_spool_bytes,
+                    max_records=args.max_spool_records,
+                    min_free_bytes=args.min_free_bytes,
+                ),
+                baseline_id=args.baseline_id,
+            )
         print(json.dumps(value, sort_keys=True, indent=2))
     finally:
         engine.dispose()

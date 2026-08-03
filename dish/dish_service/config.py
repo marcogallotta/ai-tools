@@ -37,6 +37,9 @@ class ServiceConfig:
     dark_launch_source_generation: str = "legacy-sqlite"
     dark_launch_kill_switch_path: Path | None = None
     dark_launch_busy_timeout_ms: int = 50
+    dark_launch_max_spool_bytes: int = 512 * 1024 * 1024
+    dark_launch_max_spool_records: int = 100_000
+    dark_launch_min_free_bytes: int = 1024 * 1024 * 1024
 
     def validate_runtime(self, *, require_action: bool = True) -> None:
         """Fail closed before listeners bind or startup reports healthy."""
@@ -108,6 +111,9 @@ class ServiceConfig:
             ("request_timeout_seconds", self.request_timeout_seconds),
             ("lease_ttl_seconds", self.lease_ttl_seconds),
             ("dark_launch_busy_timeout_ms", self.dark_launch_busy_timeout_ms),
+            ("dark_launch_max_spool_bytes", self.dark_launch_max_spool_bytes),
+            ("dark_launch_max_spool_records", self.dark_launch_max_spool_records),
+            ("dark_launch_min_free_bytes", self.dark_launch_min_free_bytes),
         ):
             if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
                 raise DishRuleError(
@@ -202,5 +208,14 @@ class ServiceConfig:
             ),
             dark_launch_busy_timeout_ms=int(
                 os.environ.get("DISH_DARK_LAUNCH_BUSY_TIMEOUT_MS", "50")
+            ),
+            dark_launch_max_spool_bytes=int(
+                os.environ.get("DISH_DARK_LAUNCH_MAX_SPOOL_BYTES", str(512 * 1024 * 1024))
+            ),
+            dark_launch_max_spool_records=int(
+                os.environ.get("DISH_DARK_LAUNCH_MAX_SPOOL_RECORDS", "100000")
+            ),
+            dark_launch_min_free_bytes=int(
+                os.environ.get("DISH_DARK_LAUNCH_MIN_FREE_BYTES", str(1024 * 1024 * 1024))
             ),
         )

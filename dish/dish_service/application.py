@@ -455,6 +455,9 @@ class DishService:
                 source_authority_generation=config.dark_launch_source_generation,
                 kill_switch_path=config.dark_launch_kill_switch_path,
                 busy_timeout_ms=config.dark_launch_busy_timeout_ms,
+                max_spool_bytes=config.dark_launch_max_spool_bytes,
+                max_spool_records=config.dark_launch_max_spool_records,
+                min_free_bytes=config.dark_launch_min_free_bytes,
             ),
             db_path=config.db_path,
         )
