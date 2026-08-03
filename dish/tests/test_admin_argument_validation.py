@@ -5,6 +5,7 @@ import uuid
 import pytest
 
 from dish_tool.admin import DishAdminApplication
+from dish_tool.admin_cli import build_parser
 from tests.support.service_scenarios import RUN_ID, post as _post, running as _running
 from tests.support.thread_teardown import join_thread, stop_server
 from tests.support.submission import _signed
@@ -145,3 +146,25 @@ def test_recover_validates_blank_fields_before_terminal_operation(
 
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"] == [{"field": field, "rule": rule}]
+
+
+def test_record_human_decision_help_discloses_governed_field_boundary(capsys):
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["record-human-decision", "--help"])
+    help_text = " ".join(capsys.readouterr().out.split())
+    assert "does not modify governed fields" in help_text
+    assert "authorize-governed-change" in help_text
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["record-human-decision", "-h"])
+    detail_help_text = " ".join(capsys.readouterr().out.split())
+    assert "does not itself change Exemptions, Locks, or other canonical fields" in detail_help_text
+
+
+def test_supply_evidence_help_stays_route_specific(capsys):
+    parser = build_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["supply-evidence", "--help"])
+    help_text = capsys.readouterr().out
+    assert "governed" not in help_text

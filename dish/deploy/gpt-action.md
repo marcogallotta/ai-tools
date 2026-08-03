@@ -115,6 +115,11 @@ Add an operating instruction with all of these requirements:
 - `pending-human-review` is only for a durable, scoped decision future runs must preserve, per the
   protocol's eligibility test — not any question Marco could answer. Resolve routine clarification,
   agent-owned correction, and the brief's settled fields (e.g. `Role`) directly instead.
+- `record-human-decision` only records the decision and releases the hold; it never mutates or
+  authorizes `Exemptions`/`Locks`/other governed fields. Give Marco complete decision wording, not
+  the placeholder. If the decision requires a governed-field change, say so and give the separate
+  exact `authorize-governed-change` command; never call the field change approved until that
+  succeeds and an agent installs the authorized candidate.
 - After the third consecutive non-approved Large Verification round, `verification-hold` stops the
   flow; tell Marco to run `dish-admin resolved <operation-id>`, which releases the unchanged
   corrected candidate into a fresh Verification round without approving or signing it.

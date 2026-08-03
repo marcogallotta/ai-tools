@@ -186,12 +186,23 @@ def build_parser() -> JsonArgumentParser:
 
     _hold_help = {
         "supply-evidence": "resume a pending-evidence operation with Marco-supplied evidence",
-        "record-human-decision": "resume a pending-human-review operation with Marco's recorded decision",
+        "record-human-decision": (
+            "record Marco's decision in the task log and release a pending-human-review hold; "
+            "does not modify governed fields such as Exemptions or Locks — use "
+            "authorize-governed-change for that"
+        ),
+    }
+    _hold_detail_help = {
+        "supply-evidence": "the supplied evidence to append to the task record",
+        "record-human-decision": (
+            "human decision and reasoning to append to Decisions; this text does not itself "
+            "change Exemptions, Locks, or other canonical fields"
+        ),
     }
     for name, help_text in _hold_help.items():
-        hold = subparsers.add_parser(name, help=help_text)
+        hold = subparsers.add_parser(name, help=help_text, description=help_text)
         hold.add_argument("submission_id", help=_submission_target_help)
-        hold.add_argument("--detail", required=True)
+        hold.add_argument("--detail", required=True, help=_hold_detail_help[name])
         hold.add_argument("--resume-status", required=True, choices=("pending-research", "pending-verification"))
         hold.add_argument("--file", dest="file_path")
         hold.add_argument("--editor", choices=("claude", "gpt", "codex"))

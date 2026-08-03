@@ -282,15 +282,46 @@ def _evidence_hold_continuation(
     if cycle is not None:
         command += f" --expected-cycle-id {cycle['cycle_id']} --expected-hold-identity {cycle['hold_identity']}"
     next_action = after_resolution["legal_actions"][0] if after_resolution["legal_actions"] else None
-    directive = (
-        "Tell the human what fact or decision is missing (see this task's Status detail), then "
-        "ask them to run the following command after replacing the angle-bracketed detail text "
-        "with that answer:\n"
-        f"{command}\n"
-        "Then wait for confirmation it succeeded before continuing — do not start a new "
-        "operation; resume this same submission"
-        + (f" with `{next_action}`." if next_action else ".")
-    )
+    resume_clause = f" with `{next_action}`." if next_action else "."
+    if admin_action == "record-human-decision":
+        resolution_effect: dict[str, Any] = {
+            "records_human_decision": True,
+            "releases_hold": True,
+            "resumes_workflow": True,
+            "modifies_canonical_fields": False,
+            "authorizes_governed_field_changes": False,
+        }
+        directive = (
+            "Tell the human the exact decision being asked for and the consequence of each "
+            "option (see this task's Status detail). `record-human-decision` records that "
+            "authenticated decision, releases this hold, and resumes the workflow — it does not "
+            "edit or authorize any change to canonical governed fields such as Exemptions or "
+            "Locks. Before relaying it, replace the angle-bracketed detail text with the "
+            "complete decision and reasoning:\n"
+            f"{command}\n"
+            "If carrying out the decision requires a governed-field change, say so explicitly "
+            "and supply the separate exact `dish-admin authorize-governed-change` command using "
+            "the authoritative current value and exact proposed replacement; do not describe the "
+            "field change as approved or complete until that authorization succeeds and an agent "
+            "installs the authorized candidate. Then wait for confirmation the decision command "
+            "succeeded before continuing — do not start a new operation; resume this same "
+            "submission" + resume_clause
+        )
+    else:
+        resolution_effect = {
+            "records_supplied_evidence": True,
+            "releases_hold": True,
+            "resumes_workflow": True,
+            "modifies_canonical_fields": False,
+        }
+        directive = (
+            "Tell the human what fact is missing (see this task's Status detail), then ask them "
+            "to run the following command after replacing the angle-bracketed detail text with "
+            "that answer:\n"
+            f"{command}\n"
+            "Then wait for confirmation it succeeded before continuing — do not start a new "
+            "operation; resume this same submission" + resume_clause
+        )
     return {
         "phase": phase,
         "submission_id": operation_id,
@@ -300,6 +331,9 @@ def _evidence_hold_continuation(
         "continuation_surface": "private-admin",
         "connected_action_available": False,
         "admin_command": command,
+        "admin_command_is_template": True,
+        "admin_command_template": command,
+        "resolution_effect": resolution_effect,
         "directive": directive,
         "after_resolution": after_resolution,
     }

@@ -84,6 +84,10 @@ def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path)
     assert good["data"]["after_resolution"] == {
         "legal_actions": ["start"], "required_start_kind": "verification", "phase": "await_verification",
     }
+    assert good["data"]["admin_command_is_template"] is True
+    assert good["data"]["admin_command_template"] == command
+    assert good["data"]["resolution_effect"]["modifies_canonical_fields"] is False
+    assert "authorizes_governed_field_changes" not in good["data"]["resolution_effect"]
     inspected = app.execute("inspect", agent="codex", submission_id=operation_id)
     assert inspected["data"]["admin_command"] == good["data"]["admin_command"]
     assert inspected["data"]["continuation_surface"] == "private-admin"
@@ -104,6 +108,20 @@ def test_human_review_route_reports_private_continuation_without_exposing_it(tmp
     assert result["allowed_actions"] == []
     assert result["data"]["required_admin_action"] == "record-human-decision"
     assert "Status: pending-human-review" in backend.notes
+    assert result["data"]["admin_command_is_template"] is True
+    assert result["data"]["admin_command_template"] == result["data"]["admin_command"]
+    effect = result["data"]["resolution_effect"]
+    assert effect == {
+        "records_human_decision": True,
+        "releases_hold": True,
+        "resumes_workflow": True,
+        "modifies_canonical_fields": False,
+        "authorizes_governed_field_changes": False,
+    }
+    directive = result["data"]["directive"]
+    assert "does not edit or authorize any change to canonical governed fields" in directive
+    assert "authorize-governed-change" in directive
+    assert "do not describe the field change as approved or complete" in directive
 
 @pytest.mark.smoke
 def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):

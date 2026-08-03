@@ -113,6 +113,33 @@ anything. Once canonical content is fully internal, an inline resolve-and-create
 becomes one local transaction instead of read-Asana/hash/compare/write-Asana/re-verify.
 Sequence this after the database-backend cutover if there's a real choice in ordering.
 
+### Atomic Human Review decisions with governed-field changes
+
+A Human Review resolution can currently require two separate Marco admin commands for one
+conceptual approval:
+
+1. `record-human-decision` records the authenticated decision and releases the hold;
+2. `authorize-governed-change` separately authorizes the exact `Exemptions`, `Locks`, or
+   other governed-field mutation.
+
+An agent must then install the authorized candidate and return it to Verification. This is
+legitimate under the current authority model but creates avoidable ceremony and is easy to
+misunderstand because `record-human-decision` sounds like it completes the approval by
+itself — it doesn't; it only appends a decision line and releases the hold.
+
+Design a structured, Marco-authenticated resolution that can atomically record the human
+decision and authorize a declared set of exact governed-field changes against the held
+operation/content identity. It must retain stale-target checks, typed before/after values,
+audit causality, and normal re-verification of the resulting exact content. Until this
+ships, the agent-facing continuation must explicitly disclose the two-step requirement
+rather than implying one command completes the approval.
+
+Related to, but distinct from, inline resolution above: inline resolution removes the
+unnecessary hold round-trip when Marco is already live; this removes the second admin
+authorization ceremony when a genuine Human Review decision necessarily changes governed
+fields. Do not merge the two conceptually, though a future implementation may combine them
+in one structured admin operation.
+
 ### Phase-authoritative pending-Research/pending-Verification listing
 
 Blocked on the database-backend move, and becomes high priority once that move ships — not a
