@@ -18,6 +18,7 @@ from . import models
 from . import stage3_models as wf
 from . import stage5_models as tx
 from .planner import EffectObservation, adjudicate_effect
+from .shadow_evidence import compare_evidence
 from .workflow import sha256_json
 
 
@@ -211,6 +212,17 @@ class ShadowService:
         baseline = self.session.get(tx.ShadowBaseline, shadow_baseline_id)
         if baseline is None or baseline.status != "open":
             raise TransitionAuthorityError("shadow baseline is not open")
+        target_generation = self.session.get(models.AuthorityGeneration, baseline.generation_id)
+        if target_generation is None or target_generation.status != "active":
+            raise TransitionAuthorityError("shadow baseline target generation is stale")
+        if source_authority_generation is None:
+            raise TransitionAuthorityError("shadow envelope source generation is required")
+        if source_authority_generation != baseline.source_generation_identity:
+            raise TransitionAuthorityError("shadow envelope source generation does not match baseline")
+        if capture_qualification in {"execute", "capture_only"} and (
+            rollout_sequence is None or rollout_sequence <= 0
+        ):
+            raise TransitionAuthorityError("dark-launch envelope rollout sequence is required")
         existing = self.session.scalar(
             select(tx.ShadowEnvelope).where(
                 tx.ShadowEnvelope.shadow_baseline_id == shadow_baseline_id,
@@ -292,22 +304,59 @@ class ShadowService:
         ttl: timedelta,
         shadow_baseline_id: uuid.UUID | None = None,
     ) -> tx.ShadowDelivery | None:
-        query = select(tx.ShadowDelivery)
+        query = (
+            select(tx.ShadowDelivery, tx.ShadowEnvelope)
+            .join(
+                tx.ShadowEnvelope,
+                tx.ShadowEnvelope.envelope_id == tx.ShadowDelivery.envelope_id,
+            )
+            .join(
+                tx.ShadowBaseline,
+                tx.ShadowBaseline.shadow_baseline_id == tx.ShadowEnvelope.shadow_baseline_id,
+            )
+            .join(
+                models.AuthorityGeneration,
+                models.AuthorityGeneration.generation_id == tx.ShadowBaseline.generation_id,
+            )
+            .where(
+                tx.ShadowBaseline.status == "open",
+                models.AuthorityGeneration.status == "active",
+            )
+        )
         if shadow_baseline_id is not None:
-            query = query.join(
-                tx.ShadowEnvelope, tx.ShadowEnvelope.envelope_id == tx.ShadowDelivery.envelope_id
-            ).where(tx.ShadowEnvelope.shadow_baseline_id == shadow_baseline_id)
-        candidates = self.session.scalars(
+            query = query.where(tx.ShadowEnvelope.shadow_baseline_id == shadow_baseline_id)
+        candidates = self.session.execute(
             query.where(
                 (tx.ShadowDelivery.state == "pending")
                 | (
                     (tx.ShadowDelivery.state == "claimed")
                     & (tx.ShadowDelivery.claim_expires_at <= now)
                 )
+            ).order_by(
+                tx.ShadowEnvelope.rollout_sequence.is_(None),
+                tx.ShadowEnvelope.rollout_sequence,
+                tx.ShadowDelivery.created_at,
+                tx.ShadowDelivery.delivery_id,
             )
-            .order_by(tx.ShadowDelivery.created_at, tx.ShadowDelivery.delivery_id)
         ).all()
-        for row in candidates:
+        for row, envelope in candidates:
+            if envelope.rollout_sequence is not None:
+                blockers = int(self.session.scalar(
+                    select(func.count())
+                    .select_from(tx.ShadowDelivery)
+                    .join(
+                        tx.ShadowEnvelope,
+                        tx.ShadowEnvelope.envelope_id == tx.ShadowDelivery.envelope_id,
+                    )
+                    .where(
+                        tx.ShadowEnvelope.shadow_baseline_id == envelope.shadow_baseline_id,
+                        tx.ShadowEnvelope.rollout_sequence.is_not(None),
+                        tx.ShadowEnvelope.rollout_sequence < envelope.rollout_sequence,
+                        tx.ShadowDelivery.state != "delivered",
+                    )
+                ) or 0)
+                if blockers:
+                    continue
             revision = row.delivery_revision
             prior_state = row.state
             result = self.session.execute(
@@ -348,13 +397,20 @@ class ShadowService:
             raise TransitionAuthorityError("shadow delivery claim does not match")
         envelope = self.session.get(tx.ShadowEnvelope, delivery.envelope_id)
         target = dict(target_result)
-        if envelope.source_outcome == target:
+        if target.get("evidence_schema_version") is not None:
+            parity, differences = compare_evidence(
+                source_outcome=envelope.source_outcome,
+                source_pre_state=envelope.source_pre_state,
+                source_post_state=envelope.source_post_state,
+                target_payload=target,
+            )
+        elif envelope.source_outcome == target:
             parity, differences = "exact", []
         elif semantic_normalizer and semantic_normalizer(envelope.source_outcome) == semantic_normalizer(target):
             parity, differences = "semantic", []
         else:
             parity = "mismatch"
-            differences = [{"source": envelope.source_outcome, "target": target}]
+            differences = [{"axis": "response", "source": envelope.source_outcome, "target": target}]
         comparison = tx.ShadowComparison(
             comparison_id=self.uuid_factory(),
             envelope_id=envelope.envelope_id,
@@ -372,12 +428,13 @@ class ShadowService:
         delivery.claim_expires_at = None
         delivery.delivery_revision += 1
         delivery.terminal_at = compared_at
-        if parity == "mismatch":
+        if parity in {"mismatch", "gap"}:
+            kind = "mismatch" if parity == "mismatch" else "uncomparable"
             self._open_gap(
                 baseline_id=envelope.shadow_baseline_id,
                 envelope_id=envelope.envelope_id,
-                identity=f"mismatch:{envelope.source_request_identity}",
-                kind="mismatch",
+                identity=f"{kind}:{envelope.source_request_identity}",
+                kind=kind,
                 details={"differences": differences},
                 at=compared_at,
             )
@@ -474,8 +531,12 @@ class ShadowService:
             )
         )
         if existing is not None:
-            if existing.origin != origin:
-                raise TransitionAuthorityError("projection event origin conflict")
+            if (
+                existing.envelope_id != envelope_id
+                or existing.gap_kind != kind
+                or existing.details != dict(details)
+            ):
+                raise TransitionAuthorityError("shadow gap identity conflict")
             return existing
         row = tx.ShadowGap(
             gap_id=self.uuid_factory(),
@@ -782,6 +843,8 @@ class ProjectionService:
             select(tx.ProjectionOutboxEvent).where(tx.ProjectionOutboxEvent.idempotency_key == key)
         )
         if existing is not None:
+            if existing.origin != origin:
+                raise TransitionAuthorityError("projection event origin conflict")
             return existing
         sequence = int(
             self.session.scalar(

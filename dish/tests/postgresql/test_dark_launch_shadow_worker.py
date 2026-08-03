@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
@@ -105,8 +106,6 @@ def test_kill_switch_stops_worker_before_spool_delivery(workflow_db, tmp_path):
 
 
 def test_real_shadow_evaluator_tags_outbox_and_projection_claim_refuses_it(workflow_db):
-    from datetime import timedelta
-
     from dish_pg.shadow_worker import CommandPortShadowEvaluator
     from dish_pg.transition import ProjectionService
 
@@ -141,6 +140,8 @@ def test_real_shadow_evaluator_tags_outbox_and_projection_claim_refuses_it(workf
             },
             pinned_inputs={"rollout_mode": "execute"},
             capture_qualification="execute",
+            source_authority_generation="legacy-1",
+            rollout_sequence=1,
             captured_at=NOW,
         )
 
@@ -197,12 +198,15 @@ def test_shadow_identifier_translation_uses_prior_comparison_bindings(workflow_d
             captured_at=NOW,
         )
         target_result = {
-            "ok": True,
-            "command": "start",
-            "code": "OK",
-            "http_status": 200,
-            "data": {"operation_id": str(target_operation), "lease_id": str(target_lease)},
-            "retryable": False,
+            "evidence_schema_version": 2,
+            "response": {
+                "ok": True,
+                "command": "start",
+                "code": "OK",
+                "http_status": 200,
+                "data": {"operation_id": str(target_operation), "lease_id": str(target_lease)},
+                "retryable": False,
+            },
         }
         session.add(
             tx.ShadowComparison(
@@ -210,7 +214,7 @@ def test_shadow_identifier_translation_uses_prior_comparison_bindings(workflow_d
                 envelope_id=prior.envelope_id,
                 target_result=target_result,
                 target_result_sha256=sha256_json(target_result),
-                parity_class="mismatch",
+                parity_class="semantic",
                 differences=[],
                 comparator_release="test",
                 compared_at=NOW,
@@ -244,9 +248,69 @@ def test_shadow_identifier_translation_uses_prior_comparison_bindings(workflow_d
             )
 
 
-def test_shadow_worker_compacts_delivered_payload_after_retention(workflow_db, tmp_path):
-    from datetime import timedelta
+def test_shadow_identifier_translation_rejects_mismatch_and_non_bijective_bindings(workflow_db):
+    factory, ids, context, _task = workflow_db
+    shared_target = uuid.uuid4()
+    source_values = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+    with session_scope(factory) as session:
+        service = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = service.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        for sequence, source_value in enumerate(source_values, 1):
+            prior = service.capture_envelope(
+                shadow_baseline_id=baseline.shadow_baseline_id,
+                command_name="start",
+                source_request_identity=f"source-{sequence}",
+                canonical_input={"command": "start", "arguments": {}},
+                source_outcome={"submission_id": str(source_value)},
+                source_post_state={"phase": "research"},
+                rollout_sequence=sequence,
+                source_authority_generation="legacy-1",
+                captured_at=NOW,
+            )
+            target_result = {
+                "evidence_schema_version": 2,
+                "response": {"data": {"operation_id": str(shared_target)}},
+            }
+            session.add(
+                tx.ShadowComparison(
+                    comparison_id=_next(ids),
+                    envelope_id=prior.envelope_id,
+                    target_result=target_result,
+                    target_result_sha256=sha256_json(target_result),
+                    parity_class="mismatch" if sequence == 1 else "semantic",
+                    differences=[],
+                    comparator_release="test",
+                    compared_at=NOW,
+                )
+            )
+        current = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="prepare",
+            source_request_identity="current",
+            canonical_input={"command": "prepare", "arguments": {}},
+            source_outcome={"ok": True},
+            source_post_state={"phase": "research"},
+            rollout_sequence=4,
+            source_authority_generation="legacy-1",
+            captured_at=NOW,
+        )
+        with pytest.raises(ShadowIdentityMappingError):
+            _translate_workflow_identifiers(
+                session, current, {"submission_id": str(source_values[0])}
+            )
+        for source_value in source_values[1:]:
+            with pytest.raises(ShadowIdentityMappingError):
+                _translate_workflow_identifiers(
+                    session, current, {"submission_id": str(source_value)}
+                )
 
+
+def test_shadow_worker_compacts_delivered_payload_after_retention(workflow_db, tmp_path):
     factory, ids, context, _task = workflow_db
     with session_scope(factory) as session:
         baseline = ShadowService(session, uuid_factory=lambda: _next(ids)).create_baseline(
@@ -274,8 +338,6 @@ def test_shadow_worker_compacts_delivered_payload_after_retention(workflow_db, t
 
 
 def test_shadow_worker_recovers_stale_reservation_before_later_delivery(workflow_db, tmp_path):
-    from datetime import timedelta
-
     factory, ids, context, _task = workflow_db
     with session_scope(factory) as session:
         baseline = ShadowService(session, uuid_factory=lambda: _next(ids)).create_baseline(
@@ -335,3 +397,101 @@ def test_shadow_worker_recovers_stale_reservation_before_later_delivery(workflow
         assert gap is not None
         assert gap.gap_identity == "capture:request-first"
     assert first.rollout_sequence < second.rollout_sequence
+
+
+def test_real_shadow_evaluator_compares_legacy_start_semantically(workflow_db):
+    from dish_pg.shadow_worker import CommandPortShadowEvaluator
+    from tests.support.postgresql.core import HASH_A
+
+    factory, ids, context, _task = workflow_db
+    source_operation = uuid.uuid4()
+    source_pre = {
+        "task_gid": "123456789",
+        "selected_tables": ["task_content_state", "operations", "service_leases"],
+        "tables": {
+            "task_content_state": [{
+                "last_confirmed_identity": HASH_A,
+                "last_confirmed_title": "[ready] Exact imported task",
+                "last_confirmed_notes": "Canonical body\n---\nStatus: ready\n",
+                "schema_version": "1",
+            }],
+            "operations": [],
+            "service_leases": [],
+        },
+    }
+    source_post = {
+        **source_pre,
+        "tables": {
+            **source_pre["tables"],
+            "operations": [{
+                "operation_kind": "initial",
+                "status": "open",
+                "phase": "prepare_required",
+                "terminal_outcome": None,
+            }],
+            "service_leases": [{
+                "released_at": None,
+                "lease_kind": "actor",
+                "actor_attempt_seq": 1,
+            }],
+        },
+    }
+    source_outcome = {
+        "ok": True,
+        "command": "start",
+        "code": "OK",
+        "task_gid": "123456789",
+        "submission_id": str(source_operation),
+        "state": "open",
+        "retryable": False,
+        "allowed_actions": ["prepare"],
+        "data": {},
+        "errors": [],
+    }
+    claim_token = uuid.uuid4()
+    with session_scope(factory) as session:
+        service = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = service.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        envelope = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="start",
+            source_request_identity="legacy-start",
+            canonical_input={
+                "command": "start",
+                "arguments": {"task_gid": "123456789", "kind": "initial", "agent": "service"},
+            },
+            source_outcome=source_outcome,
+            source_pre_state=source_pre,
+            source_post_state=source_post,
+            principal={"owner_id": "owner-1", "principal_class": "agent", "run_id": str(uuid.uuid4())},
+            pinned_inputs={"rollout_mode": "execute"},
+            source_effects={},
+            rollout_sequence=1,
+            source_authority_generation="legacy-1",
+            capture_qualification="execute",
+            captured_at=NOW,
+        )
+        delivery = service.claim_delivery(
+            worker_id="shadow-1",
+            claim_token=claim_token,
+            now=NOW,
+            ttl=timedelta(minutes=2),
+            shadow_baseline_id=baseline.shadow_baseline_id,
+        )
+        target = CommandPortShadowEvaluator(
+            cursor_secret=b"shadow-test-cursor-secret-32bytes!"
+        ).evaluate(session, envelope)
+        comparison = service.compare_delivery(
+            delivery_id=delivery.delivery_id,
+            claim_token=claim_token,
+            target_result=target,
+            comparator_release="test",
+            compared_at=NOW,
+        )
+        assert comparison.parity_class == "semantic"
+        assert comparison.differences == []

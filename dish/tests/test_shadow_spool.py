@@ -151,3 +151,38 @@ def test_pending_stops_at_earliest_reserved_sequence_until_recovered(tmp_path) -
         second.registration_id,
     ]
     assert [item.state for item in pending] == ["gap", "complete"]
+
+
+def test_open_existing_refuses_missing_path_without_creating_database(tmp_path) -> None:
+    from dish_service.shadow_spool import ShadowSpoolError
+
+    path = tmp_path / "mistyped.sqlite3"
+    spool = ShadowSpool.open_existing(path, min_free_bytes=1)
+    with pytest.raises(ShadowSpoolError, match="does not exist"):
+        spool.status()
+    assert not path.exists()
+
+
+def test_completion_capacity_guard_rolls_back_large_payload(tmp_path) -> None:
+    spool = ShadowSpool(
+        tmp_path / "shadow.sqlite3",
+        max_bytes=256 * 1024,
+        min_free_bytes=1,
+    )
+    reservation = _reserve(spool)
+    before = spool.status()["capacity"]["logical_bytes"]
+
+    with pytest.raises(ShadowSpoolCapacityError, match="byte limit"):
+        spool.complete(
+            reservation.registration_id,
+            source_outcome={"ok": True, "payload": "x" * (512 * 1024)},
+            source_post_state={"phase": "verification"},
+            source_effects={},
+            completed_at=NOW,
+        )
+
+    item = spool.get_by_source_identity("request-1")
+    assert item is not None
+    assert item.state == "reserved"
+    assert item.source_outcome is None
+    assert spool.status()["capacity"]["logical_bytes"] < before + 128 * 1024

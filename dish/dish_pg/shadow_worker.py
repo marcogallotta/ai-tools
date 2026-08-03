@@ -21,13 +21,22 @@ from typing import Any, Mapping, Protocol
 
 from sqlalchemy import select
 
+from dish_service.path_safety import require_distinct_paths
 from dish_service.shadow_spool import ShadowSpool, ShadowSpoolItem
 from dish_tool.constants import RECOVERY_QUARANTINE_SECONDS
 
+from . import models
 from . import stage3_models as wf
 from . import stage5_models as tx
 from .command_port import CommandCall, CommandResult, PostgresCommandPort
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
+from .read_model import ReadModelError
+from .shadow_evidence import (
+    EVIDENCE_SCHEMA_VERSION,
+    ShadowEvaluation,
+    canonical_legacy_state,
+    canonical_transition,
+)
 from .transition import ShadowService
 from .workflow import WorkflowAuthorityService
 
@@ -159,7 +168,10 @@ def _identifier_bindings(session, envelope: tx.ShadowEnvelope) -> dict[str, dict
     query = (
         select(tx.ShadowEnvelope, tx.ShadowComparison)
         .join(tx.ShadowComparison, tx.ShadowComparison.envelope_id == tx.ShadowEnvelope.envelope_id)
-        .where(tx.ShadowEnvelope.shadow_baseline_id == envelope.shadow_baseline_id)
+        .where(
+            tx.ShadowEnvelope.shadow_baseline_id == envelope.shadow_baseline_id,
+            tx.ShadowComparison.parity_class.in_(("exact", "semantic")),
+        )
     )
     if envelope.rollout_sequence is not None:
         query = query.where(
@@ -171,9 +183,10 @@ def _identifier_bindings(session, envelope: tx.ShadowEnvelope) -> dict[str, dict
             tx.ShadowEnvelope.captured_at, tx.ShadowEnvelope.envelope_id
         )
 
-    bindings: dict[str, dict[str, str]] = {}
-    conflicts: set[tuple[str, str]] = set()
+    observed: dict[str, dict[str, set[str]]] = {}
     for prior, comparison in session.execute(query):
+        if comparison.target_result.get("evidence_schema_version") != EVIDENCE_SCHEMA_VERSION:
+            continue
         source = _collect_identifiers(prior.source_outcome)
         target = _collect_identifiers(comparison.target_result)
         for role in source.keys() & target.keys():
@@ -182,13 +195,19 @@ def _identifier_bindings(session, envelope: tx.ShadowEnvelope) -> dict[str, dict
                 continue
             source_value, target_value = next(iter(source_values)), next(iter(target_values))
             family = next(family for candidate, family in _IDENTIFIER_ROLES.values() if candidate == role)
-            family_bindings = bindings.setdefault(family, {})
-            existing = family_bindings.get(source_value)
-            if existing is not None and existing != target_value:
-                conflicts.add((family, source_value))
-                family_bindings.pop(source_value, None)
-            elif (family, source_value) not in conflicts:
-                family_bindings[source_value] = target_value
+            observed.setdefault(family, {}).setdefault(source_value, set()).add(target_value)
+    bindings: dict[str, dict[str, str]] = {}
+    for family, source_targets in observed.items():
+        target_sources: dict[str, set[str]] = {}
+        for source_value, targets in source_targets.items():
+            for target_value in targets:
+                target_sources.setdefault(target_value, set()).add(source_value)
+        bindings[family] = {
+            source_value: next(iter(targets))
+            for source_value, targets in source_targets.items()
+            if len(targets) == 1
+            and len(target_sources[next(iter(targets))]) == 1
+        }
     return bindings
 
 
@@ -228,6 +247,267 @@ def _result_payload(result: CommandResult) -> dict[str, Any]:
     }
 
 
+def _as_uuid(value: Any) -> uuid.UUID | None:
+    if value in {None, ""}:
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _source_task_reference(envelope: tx.ShadowEnvelope) -> str | None:
+    for snapshot in (envelope.source_post_state, envelope.source_pre_state):
+        if isinstance(snapshot, Mapping):
+            values = snapshot.get("task_gids")
+            if isinstance(values, list):
+                for candidate in values:
+                    value = str(candidate or "").strip()
+                    if value:
+                        return value
+            value = str(snapshot.get("task_gid") or "").strip()
+            if value:
+                return value
+    arguments = dict(envelope.canonical_input or {}).get("arguments")
+    if isinstance(arguments, Mapping):
+        value = str(arguments.get("task_gid") or arguments.get("task_id") or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _target_authority_state(
+    session,
+    *,
+    port: PostgresCommandPort,
+    envelope: tx.ShadowEnvelope,
+    arguments: Mapping[str, Any],
+    request_id: uuid.UUID,
+    result: CommandResult | None,
+) -> dict[str, Any]:
+    """Capture only target domains the bounded source snapshot selected."""
+    source_projection = canonical_legacy_state(envelope.source_post_state)
+    captured_domains = list(source_projection.get("captured_domains") or [])
+    generation = port.reads.active_generation()
+    task_ids: set[uuid.UUID] = set()
+    operation_ids: set[uuid.UUID] = set()
+
+    response_data = dict(result.data) if result is not None else {}
+    for key in ("operation_id", "successor_operation_id"):
+        parsed = _as_uuid(response_data.get(key) or arguments.get(key))
+        if parsed is not None:
+            operation_ids.add(parsed)
+    parsed_argument_operation = _as_uuid(
+        arguments.get("submission_id") or arguments.get("existing_submission_id")
+    )
+    if parsed_argument_operation is not None:
+        operation_ids.add(parsed_argument_operation)
+    for operation_id in tuple(operation_ids):
+        operation = session.get(wf.WorkflowOperation, operation_id)
+        if operation is not None and operation.generation_id == generation.generation_id:
+            task_ids.add(operation.task_id)
+
+    parsed_task = _as_uuid(response_data.get("task_id") or arguments.get("task_id"))
+    if parsed_task is not None:
+        task_ids.add(parsed_task)
+    for reference in (
+        arguments.get("task_gid"),
+        _source_task_reference(envelope),
+    ):
+        if reference in {None, ""}:
+            continue
+        try:
+            task_ids.add(port.reads.resolve_task(str(reference)).task_id)
+        except ReadModelError:
+            continue
+
+    domains: dict[str, Any] = {}
+    sorted_task_ids = sorted(task_ids, key=str)
+    if "task_content" in captured_domains:
+        rows: list[dict[str, Any]] = []
+        for task_id in sorted_task_ids:
+            head = session.get(models.TaskAuthorityHead, (generation.generation_id, task_id))
+            if head is None:
+                continue
+            activation = session.get(models.ContentActivation, head.current_content_activation_id)
+            version = (
+                None
+                if activation is None
+                else session.get(models.ContentVersion, activation.content_version_id)
+            )
+            if version is not None:
+                rows.append({
+                    "identity": version.content_identity,
+                    "title": version.title,
+                    "body": version.body,
+                })
+        domains["task_content"] = sorted(rows, key=lambda row: repr(sorted(row.items())))
+
+    if "operations" in captured_domains:
+        query = select(wf.WorkflowOperation).where(
+            wf.WorkflowOperation.generation_id == generation.generation_id
+        )
+        if sorted_task_ids:
+            query = query.where(wf.WorkflowOperation.task_id.in_(sorted_task_ids))
+        elif operation_ids:
+            query = query.where(wf.WorkflowOperation.operation_id.in_(operation_ids))
+        else:
+            query = query.where(False)
+        rows = []
+        for row in session.scalars(query).all():
+            phase = "terminal" if row.lifecycle != "open" or row.phase in {"completed", "cancelled"} else row.phase
+            lifecycle = {
+                "cancelled_by_marco": "cancelled",
+                "abandoned": "cancelled",
+                "failed": "uncertain",
+            }.get(row.lifecycle, row.lifecycle)
+            rows.append({
+                "kind": row.kind,
+                "lifecycle": lifecycle,
+                "phase": phase,
+                "terminal_outcome": row.terminal_outcome,
+            })
+        domains["operations"] = sorted(rows, key=lambda row: repr(sorted(row.items())))
+
+    if "leases" in captured_domains:
+        query = select(wf.ServiceLease).where(
+            wf.ServiceLease.generation_id == generation.generation_id
+        )
+        query = query.where(wf.ServiceLease.task_id.in_(sorted_task_ids)) if sorted_task_ids else query.where(False)
+        rows = [
+            {
+                "state": "active" if row.state == "active" else "terminal",
+                "lease_kind": row.lease_kind,
+                "actor_attempt_sequence": row.actor_attempt_sequence,
+            }
+            for row in session.scalars(query).all()
+        ]
+        domains["leases"] = sorted(rows, key=lambda row: repr(sorted(row.items())))
+
+    if "verification_cycles" in captured_domains:
+        query = select(wf.VerificationCycle).where(
+            wf.VerificationCycle.generation_id == generation.generation_id
+        )
+        if operation_ids:
+            query = query.where(wf.VerificationCycle.operation_id.in_(operation_ids))
+        elif sorted_task_ids:
+            query = query.where(wf.VerificationCycle.task_id.in_(sorted_task_ids))
+        else:
+            query = query.where(False)
+        rows = [
+            {"outcome": row.outcome, "open": row.terminal_at is None}
+            for row in session.scalars(query).all()
+        ]
+        domains["verification_cycles"] = sorted(rows, key=lambda row: repr(sorted(row.items())))
+
+    if "external_intents" in captured_domains:
+        # Compare only intent classes represented by legacy attempt tables.
+        # Create/completion/reproject rows remain raw evidence but have no
+        # independently captured SQLite counterpart on this axis.
+        event_map = {
+            "update_task_document": "content_write",
+            "move_task": "section_move",
+        }
+        query = select(tx.ProjectionOutboxEvent).where(
+            tx.ProjectionOutboxEvent.generation_id == generation.generation_id,
+            tx.ProjectionOutboxEvent.origin == "shadow",
+        )
+        if operation_ids:
+            query = query.join(
+                wf.CommandExecution,
+                wf.CommandExecution.execution_id == tx.ProjectionOutboxEvent.command_execution_id,
+            ).where(wf.CommandExecution.operation_id.in_(operation_ids))
+        elif sorted_task_ids:
+            query = query.where(tx.ProjectionOutboxEvent.task_id.in_(sorted_task_ids))
+        else:
+            query = query.where(False)
+        rows = [
+            {"kind": event_map[row.event_type]}
+            for row in session.scalars(query).all()
+            if row.event_type in event_map
+        ]
+        domains["external_intents"] = sorted(rows, key=lambda row: repr(sorted(row.items())))
+
+    if "abandonments" in captured_domains:
+        query = select(wf.AbandonmentAttempt).where(
+            wf.AbandonmentAttempt.generation_id == generation.generation_id
+        )
+        if operation_ids:
+            query = query.where(wf.AbandonmentAttempt.operation_id.in_(operation_ids))
+        elif sorted_task_ids:
+            query = query.where(wf.AbandonmentAttempt.task_id.in_(sorted_task_ids))
+        else:
+            query = query.where(False)
+        domains["abandonments"] = sorted(
+            [{"state": row.state} for row in session.scalars(query).all()],
+            key=lambda row: repr(sorted(row.items())),
+        )
+
+    if "requests" in captured_domains:
+        request = session.get(wf.ServiceRequest, request_id)
+        outcome = session.scalar(
+            select(wf.ServiceRequestOutcome).where(
+                wf.ServiceRequestOutcome.request_id == request_id
+            )
+        )
+        domains["requests"] = [] if request is None else [{
+            "command": request.command_name,
+            "status": "completed" if outcome is not None else "pending",
+        }]
+
+    return {"captured_domains": captured_domains, "domains": domains}
+
+
+def _target_response_payload(
+    session,
+    *,
+    port: PostgresCommandPort,
+    arguments: Mapping[str, Any],
+    result: CommandResult,
+) -> dict[str, Any]:
+    """Enrich the raw target response with shared lifecycle/action facts."""
+    payload = _result_payload(result)
+    data = dict(payload.get("data") or {})
+    task = None
+    operation = None
+    operation_id = _as_uuid(
+        data.get("operation_id")
+        or data.get("successor_operation_id")
+        or arguments.get("operation_id")
+        or arguments.get("submission_id")
+        or arguments.get("existing_submission_id")
+    )
+    if operation_id is not None:
+        operation = session.get(wf.WorkflowOperation, operation_id)
+        if operation is not None:
+            task = session.get(models.DishTask, operation.task_id)
+    task_reference = data.get("task_id") or arguments.get("task_id") or arguments.get("task_gid")
+    if task is None and task_reference not in {None, ""}:
+        try:
+            task = port.reads.resolve_task(str(task_reference))
+        except ReadModelError:
+            task = None
+    if task is not None:
+        data.setdefault("task_id", str(task.task_id))
+        try:
+            view = port.reads.task_view(task.task_id)
+        except ReadModelError:
+            view = None
+        if view is not None:
+            data["allowed_actions"] = list(view.legal_actions)
+            if operation is None and view.operation_id is not None:
+                operation = session.get(wf.WorkflowOperation, view.operation_id)
+    if operation is not None:
+        data.setdefault("operation_id", str(operation.operation_id))
+        data["state"] = {
+            "cancelled_by_marco": "cancelled",
+            "abandoned": "cancelled",
+            "failed": "uncertain",
+        }.get(operation.lifecycle, operation.lifecycle)
+    payload["data"] = data
+    return payload
+
+
 def semantic_normalizer(value: Mapping[str, Any]) -> Any:
     """Normalize only transport/replay metadata, never workflow semantics."""
     def clean(item: Any) -> Any:
@@ -256,16 +536,25 @@ class CommandPortShadowEvaluator:
         arguments = canonical.get("arguments")
         if not isinstance(arguments, Mapping):
             raise ValueError("shadow envelope arguments are missing")
+        baseline = session.get(tx.ShadowBaseline, envelope.shadow_baseline_id)
+        if baseline is None or baseline.status != "open":
+            raise ValueError("shadow baseline is not open")
         principal = dict(envelope.principal or {})
         owner_id = str(principal.get("owner_id") or "legacy-shadow")
         source_run_identity = principal.get("run_id") or f"request:{envelope.source_request_identity}"
         target_run_id = _shadow_uuid(
             envelope, label="run", value=f"{owner_id}:{source_run_identity}"
         )
+        target_request_id = _shadow_uuid(
+            envelope, label="request", value=envelope.source_request_identity
+        )
         port = PostgresCommandPort(
             session, cursor_secret=self.cursor_secret, projection_origin="shadow"
         )
         generation = port.reads.active_generation()
+        if generation.generation_id != baseline.generation_id:
+            raise ValueError("shadow baseline target generation is stale")
+        translated_arguments = _translate_workflow_identifiers(session, envelope, arguments)
         _ensure_shadow_run(
             session,
             envelope=envelope,
@@ -273,22 +562,44 @@ class CommandPortShadowEvaluator:
             owner_id=owner_id,
             source_run_identity=source_run_identity,
             target_run_id=target_run_id,
-            generation_id=generation.generation_id,
+            generation_id=baseline.generation_id,
+        )
+        pre_state = _target_authority_state(
+            session,
+            port=port,
+            envelope=envelope,
+            arguments=translated_arguments,
+            request_id=target_request_id,
+            result=None,
         )
         result = port.execute(
             CommandCall(
                 command_name=envelope.command_name,
-                arguments=_translate_workflow_identifiers(session, envelope, arguments),
+                arguments=translated_arguments,
                 owner_id=owner_id,
                 principal_class=str(principal.get("principal_class") or "agent"),
                 run_id=target_run_id,
-                request_id=_shadow_uuid(
-                    envelope, label="request", value=envelope.source_request_identity
-                ),
+                request_id=target_request_id,
                 now=envelope.captured_at,
             )
         )
-        return _result_payload(result)
+        session.flush()
+        post_state = _target_authority_state(
+            session,
+            port=port,
+            envelope=envelope,
+            arguments=translated_arguments,
+            request_id=target_request_id,
+            result=result,
+        )
+        return ShadowEvaluation(
+            response=_target_response_payload(
+                session, port=port, arguments=translated_arguments, result=result
+            ),
+            pre_state=pre_state,
+            post_state=post_state,
+            effects=canonical_transition(pre_state, post_state),
+        ).as_payload()
 
 
 class ShadowWorker:
@@ -315,6 +626,10 @@ class ShadowWorker:
         self.worker_id = worker_id
         self.comparator_release = comparator_release
         self.kill_switch_path = Path(kill_switch_path)
+        require_distinct_paths({
+            "dark-launch spool": self.spool.path,
+            "dark-launch kill switch": self.kill_switch_path,
+        })
         if reservation_ttl.total_seconds() < RECOVERY_QUARANTINE_SECONDS:
             raise ValueError(
                 f"reservation_ttl must be at least {RECOVERY_QUARANTINE_SECONDS} seconds"
@@ -334,6 +649,27 @@ class ShadowWorker:
     def _kill_switch_engaged(self) -> bool:
         return self.kill_switch_path.exists()
 
+    def _baseline_is_current(self, *, at: datetime) -> bool:
+        with session_scope(self.session_maker) as session:
+            active = session.scalar(
+                select(models.AuthorityGeneration).where(
+                    models.AuthorityGeneration.status == "active"
+                )
+            )
+            if active is None:
+                return False
+            ShadowService(session).disqualify_stale_baselines(
+                active_generation_id=active.generation_id,
+                reason="active target authority generation changed during dark launch",
+                at=at,
+            )
+            baseline = session.get(tx.ShadowBaseline, self.baseline_id)
+            return bool(
+                baseline is not None
+                and baseline.status == "open"
+                and baseline.generation_id == active.generation_id
+            )
+
     def run_forever(self) -> None:
         while not self._stop:
             if self._kill_switch_engaged():
@@ -349,6 +685,9 @@ class ShadowWorker:
         if self._kill_switch_engaged():
             return False
         now = self.clock()
+        if not self._baseline_is_current(at=now):
+            LOGGER.error("shadow baseline is stale or unavailable; worker is not draining")
+            return False
         try:
             self.spool.recover_stale_reservations(now=now, older_than=self.reservation_ttl)
         except BaseException:
@@ -367,8 +706,11 @@ class ShadowWorker:
                 self._deliver(item)
             except BaseException as exc:
                 LOGGER.exception("shadow spool delivery failed")
-                self.spool.mark_delivery_failed(item.registration_id, error=str(exc))
-                return True
+                try:
+                    self.spool.mark_delivery_failed(item.registration_id, error=str(exc))
+                except BaseException:
+                    LOGGER.exception("shadow spool delivery-failure recording failed")
+                return False
             delivered_at = self.clock()
             self.spool.mark_delivered(item.registration_id, delivered_at=delivered_at)
             try:
@@ -491,7 +833,7 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("cursor secret must contain at least 32 bytes")
     engine = create_database_engine(DatabaseSettings(url=args.database_url))
     worker = ShadowWorker(
-        spool=ShadowSpool(args.spool_path),
+        spool=ShadowSpool.open_existing(args.spool_path),
         session_maker=session_factory(engine),
         baseline_id=args.baseline_id,
         evaluator=CommandPortShadowEvaluator(cursor_secret=secret),

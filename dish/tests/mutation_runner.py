@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COPY_ENTRIES = (
     "dish_tool",
     "dish_service",
+    "dish_shadow",
     "dish_pg",
     "deploy",
     "openapi",

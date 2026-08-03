@@ -14,6 +14,8 @@ from dish_tool.constants import (
 from dish_tool.errors import DishRuleError
 from dish_tool.releases import configured_honest_path
 
+from .path_safety import PathIdentityError, require_distinct_paths
+
 
 @dataclass(frozen=True)
 class ServiceConfig:
@@ -94,12 +96,29 @@ class ServiceConfig:
                 rule="dark_launch_mode_invalid",
             )
         if self.dark_launch_mode != "off":
-            if self.dark_launch_spool_path is None or self.dark_launch_emergency_dir is None:
+            if (
+                self.dark_launch_spool_path is None
+                or self.dark_launch_emergency_dir is None
+                or self.dark_launch_kill_switch_path is None
+            ):
                 raise DishRuleError(
                     "INVALID_ARGUMENT",
-                    "dark-launch spool and emergency paths are required when enabled",
+                    "dark-launch spool, emergency, and kill-switch paths are required when enabled",
                     rule="dark_launch_paths_required",
                 )
+            try:
+                require_distinct_paths({
+                    "authority database": self.db_path,
+                    "dark-launch spool": self.dark_launch_spool_path,
+                    "dark-launch emergency directory": self.dark_launch_emergency_dir,
+                    "dark-launch kill switch": self.dark_launch_kill_switch_path,
+                })
+            except PathIdentityError as exc:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    str(exc),
+                    rule="dark_launch_paths_alias",
+                ) from exc
             if not self.dark_launch_source_generation.strip():
                 raise DishRuleError(
                     "INVALID_ARGUMENT",

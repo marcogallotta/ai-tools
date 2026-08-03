@@ -150,6 +150,7 @@ def test_shadow_delivery_is_resumable_and_baseline_closes_only_after_gap_resolut
             canonical_input={"task": "123456789"},
             source_outcome={"ok": True, "phase": "prepared"},
             source_post_state={"section": "verification"},
+            source_authority_generation="legacy-generation-1",
             captured_at=NOW,
         )
         token = _next(ids)

@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
-from dish_tool.transactions import begin_immediate
+from dish_tool.transactions import immediate_transaction
 
 
 class ShadowSpoolError(RuntimeError):
@@ -156,6 +156,7 @@ class ShadowSpool:
         max_bytes: int = 512 * 1024 * 1024,
         max_records: int = 100_000,
         min_free_bytes: int = 1024 * 1024 * 1024,
+        create_if_missing: bool = True,
     ) -> None:
         for name, value in (
             ("busy_timeout_ms", busy_timeout_ms),
@@ -170,13 +171,26 @@ class ShadowSpool:
         self.max_bytes = max_bytes
         self.max_records = max_records
         self.min_free_bytes = min_free_bytes
+        self.create_if_missing = bool(create_if_missing)
         self._initialize_lock = threading.Lock()
         self._initialized = False
 
+    @classmethod
+    def open_existing(cls, path: Path, **kwargs: Any) -> "ShadowSpool":
+        """Open an existing spool without ever creating a replacement database."""
+        return cls(path, create_if_missing=False, **kwargs)
+
     def _open(self) -> sqlite3.Connection:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.create_if_missing:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            target, uri = str(self.path), False
+        else:
+            if not self.path.is_file():
+                raise ShadowSpoolError(f"dark-launch spool does not exist: {self.path}")
+            target = f"{self.path.resolve().as_uri()}?mode=rw"
+            uri = True
         conn = sqlite3.connect(
-            str(self.path), timeout=self.busy_timeout_ms / 1000, isolation_level=None
+            target, uri=uri, timeout=self.busy_timeout_ms / 1000, isolation_level=None
         )
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
@@ -193,8 +207,28 @@ class ShadowSpool:
                 return
             conn = self._open()
             try:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.executescript(_SCHEMA)
+                if self.create_if_missing:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.executescript(_SCHEMA)
+                else:
+                    required = {
+                        "shadow_spool_metadata",
+                        "shadow_capture_registrations",
+                        "shadow_capture_tombstones",
+                    }
+                    present = {
+                        row[0]
+                        for row in conn.execute(
+                            "SELECT name FROM sqlite_schema WHERE type='table'"
+                        )
+                    }
+                    if not required.issubset(present):
+                        raise ShadowSpoolError("existing dark-launch spool schema is incomplete")
+                    marker = conn.execute(
+                        "SELECT value FROM shadow_spool_metadata WHERE key='next_rollout_sequence'"
+                    ).fetchone()
+                    if marker is None:
+                        raise ShadowSpoolError("existing dark-launch spool metadata is incomplete")
             finally:
                 conn.close()
             self._initialized = True
@@ -229,9 +263,15 @@ class ShadowSpool:
             "total_records": active_records + archived_records,
         }
 
-    def _assert_capacity(self, conn: sqlite3.Connection, *, incoming_bytes: int) -> None:
+    def _assert_capacity(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        incoming_bytes: int,
+        additional_records: int = 0,
+    ) -> None:
         state = self._capacity_state(conn)
-        if state["total_records"] >= self.max_records:
+        if state["total_records"] + additional_records > self.max_records:
             raise ShadowSpoolCapacityError("dark-launch spool record limit reached")
         if state["logical_bytes"] + incoming_bytes > self.max_bytes:
             raise ShadowSpoolCapacityError("dark-launch spool byte limit reached")
@@ -297,81 +337,87 @@ class ShadowSpool:
         )
         conn = self._connect()
         try:
-            begin_immediate(conn)
-            existing = conn.execute(
-                "SELECT * FROM shadow_capture_registrations WHERE source_request_identity=?",
-                (identity,),
-            ).fetchone()
-            if existing is not None:
-                observed = (
-                    existing["source_authority_generation"],
-                    existing["command_name"],
-                    existing["treatment"],
-                    existing["canonical_input_json"],
-                    existing["canonical_input_sha256"],
-                    existing["principal_json"],
-                    existing["principal_sha256"],
-                    existing["source_pre_state_json"],
-                    existing["source_pre_state_sha256"],
-                    existing["pinned_inputs_json"],
-                    existing["pinned_inputs_sha256"],
+            with immediate_transaction(conn, "shadow_spool_reserve"):
+                existing = conn.execute(
+                    "SELECT * FROM shadow_capture_registrations WHERE source_request_identity=?",
+                    (identity,),
+                ).fetchone()
+                if existing is not None:
+                    observed = (
+                        existing["source_authority_generation"],
+                        existing["command_name"],
+                        existing["treatment"],
+                        existing["canonical_input_json"],
+                        existing["canonical_input_sha256"],
+                        existing["principal_json"],
+                        existing["principal_sha256"],
+                        existing["source_pre_state_json"],
+                        existing["source_pre_state_sha256"],
+                        existing["pinned_inputs_json"],
+                        existing["pinned_inputs_sha256"],
+                    )
+                    if observed != values:
+                        raise ShadowSpoolConflict(
+                            "source request identity conflicts with existing reservation"
+                        )
+                    return ShadowReservation(
+                        existing["registration_id"], identity,
+                        int(existing["rollout_sequence"]), existing["command_name"],
+                        existing["treatment"], existing["state"],
+                    )
+                archived = conn.execute(
+                    "SELECT * FROM shadow_capture_tombstones WHERE source_request_identity=?",
+                    (identity,),
+                ).fetchone()
+                if archived is not None:
+                    observed = (
+                        archived["source_authority_generation"],
+                        archived["command_name"],
+                        archived["treatment"],
+                        archived["canonical_input_sha256"],
+                        archived["principal_sha256"],
+                        archived["source_pre_state_sha256"],
+                        archived["pinned_inputs_sha256"],
+                    )
+                    if observed != self._identity_fingerprint(values):
+                        raise ShadowSpoolConflict(
+                            "source request identity conflicts with compacted evidence"
+                        )
+                    return ShadowReservation(
+                        archived["registration_id"], identity,
+                        int(archived["rollout_sequence"]), archived["command_name"],
+                        archived["treatment"], "delivered",
+                    )
+                incoming_bytes = sum(
+                    len(value.encode("utf-8")) for value in values
+                ) + 2048
+                self._assert_capacity(
+                    conn, incoming_bytes=incoming_bytes, additional_records=1
                 )
-                if observed != values:
-                    raise ShadowSpoolConflict("source request identity conflicts with existing reservation")
-                conn.commit()
+                next_row = conn.execute(
+                    "SELECT value FROM shadow_spool_metadata WHERE key='next_rollout_sequence'"
+                ).fetchone()
+                sequence = int(next_row["value"])
+                conn.execute(
+                    "UPDATE shadow_spool_metadata SET value=? WHERE key='next_rollout_sequence'",
+                    (str(sequence + 1),),
+                )
+                row_id = registration_id or str(uuid.uuid4())
+                conn.execute(
+                    """INSERT INTO shadow_capture_registrations(
+                           registration_id, source_request_identity, rollout_sequence,
+                           source_authority_generation, command_name, treatment,
+                           canonical_input_json, canonical_input_sha256,
+                           principal_json, principal_sha256,
+                           source_pre_state_json, source_pre_state_sha256,
+                           pinned_inputs_json, pinned_inputs_sha256,
+                           state, created_at
+                       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'reserved', ?)""",
+                    (row_id, identity, sequence, *values, _stamp(created_at)),
+                )
                 return ShadowReservation(
-                    existing["registration_id"], identity, int(existing["rollout_sequence"]),
-                    existing["command_name"], existing["treatment"], existing["state"],
+                    row_id, identity, sequence, command_name, treatment, "reserved"
                 )
-            archived = conn.execute(
-                "SELECT * FROM shadow_capture_tombstones WHERE source_request_identity=?",
-                (identity,),
-            ).fetchone()
-            if archived is not None:
-                observed = (
-                    archived["source_authority_generation"],
-                    archived["command_name"],
-                    archived["treatment"],
-                    archived["canonical_input_sha256"],
-                    archived["principal_sha256"],
-                    archived["source_pre_state_sha256"],
-                    archived["pinned_inputs_sha256"],
-                )
-                if observed != self._identity_fingerprint(values):
-                    raise ShadowSpoolConflict("source request identity conflicts with compacted evidence")
-                conn.commit()
-                return ShadowReservation(
-                    archived["registration_id"], identity, int(archived["rollout_sequence"]),
-                    archived["command_name"], archived["treatment"], "delivered",
-                )
-            incoming_bytes = sum(len(value.encode("utf-8")) for value in values) + 2048
-            self._assert_capacity(conn, incoming_bytes=incoming_bytes)
-            next_row = conn.execute(
-                "SELECT value FROM shadow_spool_metadata WHERE key='next_rollout_sequence'"
-            ).fetchone()
-            sequence = int(next_row["value"])
-            conn.execute(
-                "UPDATE shadow_spool_metadata SET value=? WHERE key='next_rollout_sequence'",
-                (str(sequence + 1),),
-            )
-            row_id = registration_id or str(uuid.uuid4())
-            conn.execute(
-                """INSERT INTO shadow_capture_registrations(
-                       registration_id, source_request_identity, rollout_sequence,
-                       source_authority_generation, command_name, treatment,
-                       canonical_input_json, canonical_input_sha256,
-                       principal_json, principal_sha256,
-                       source_pre_state_json, source_pre_state_sha256,
-                       pinned_inputs_json, pinned_inputs_sha256,
-                       state, created_at
-                   ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'reserved', ?)""",
-                (row_id, identity, sequence, *values, _stamp(created_at)),
-            )
-            conn.commit()
-            return ShadowReservation(row_id, identity, sequence, command_name, treatment, "reserved")
-        except BaseException:
-            conn.rollback()
-            raise
         finally:
             conn.close()
 
@@ -389,43 +435,50 @@ class ShadowSpool:
         effects_json = _canonical_json(source_effects)
         conn = self._connect()
         try:
-            begin_immediate(conn)
-            row = conn.execute(
-                "SELECT * FROM shadow_capture_registrations WHERE registration_id=?",
-                (registration_id,),
-            ).fetchone()
-            if row is None:
-                raise ShadowSpoolError("shadow reservation does not exist")
-            if row["state"] in {"complete", "delivered"}:
-                if (
-                    row["source_outcome_sha256"] != _sha256_json(source_outcome)
-                    or row["source_post_state_sha256"] != _sha256_json(source_post_state)
-                    or row["source_effects_json"] != effects_json
-                ):
-                    raise ShadowSpoolConflict("completed shadow reservation conflicts with replay")
-            elif row["state"] != "reserved":
-                raise ShadowSpoolConflict("shadow reservation is already a gap")
-            else:
-                conn.execute(
-                    """UPDATE shadow_capture_registrations
-                          SET state='complete', source_outcome_json=?, source_outcome_sha256=?,
-                              source_post_state_json=?, source_post_state_sha256=?,
-                              source_effects_json=?, completed_at=?
-                        WHERE registration_id=? AND state='reserved'""",
-                    (
-                        outcome_json, _sha256_json(source_outcome), post_json,
-                        _sha256_json(source_post_state), effects_json,
-                        _stamp(completed_at), registration_id,
-                    ),
+            with immediate_transaction(conn, "shadow_spool_complete"):
+                row = conn.execute(
+                    "SELECT * FROM shadow_capture_registrations WHERE registration_id=?",
+                    (registration_id,),
+                ).fetchone()
+                if row is None:
+                    raise ShadowSpoolError("shadow reservation does not exist")
+                if row["state"] in {"complete", "delivered"}:
+                    if (
+                        row["source_outcome_sha256"] != _sha256_json(source_outcome)
+                        or row["source_post_state_sha256"] != _sha256_json(source_post_state)
+                        or row["source_effects_json"] != effects_json
+                    ):
+                        raise ShadowSpoolConflict(
+                            "completed shadow reservation conflicts with replay"
+                        )
+                elif row["state"] != "reserved":
+                    raise ShadowSpoolConflict("shadow reservation is already a gap")
+                else:
+                    incoming_bytes = sum(
+                        len(value.encode("utf-8"))
+                        for value in (outcome_json, post_json, effects_json)
+                    ) + 2048
+                    self._assert_capacity(
+                        conn, incoming_bytes=incoming_bytes, additional_records=0
+                    )
+                    conn.execute(
+                        """UPDATE shadow_capture_registrations
+                              SET state='complete', source_outcome_json=?, source_outcome_sha256=?,
+                                  source_post_state_json=?, source_post_state_sha256=?,
+                                  source_effects_json=?, completed_at=?
+                            WHERE registration_id=? AND state='reserved'""",
+                        (
+                            outcome_json, _sha256_json(source_outcome), post_json,
+                            _sha256_json(source_post_state), effects_json,
+                            _stamp(completed_at), registration_id,
+                        ),
+                    )
+                    self._assert_capacity(conn, incoming_bytes=0, additional_records=0)
+                return ShadowReservation(
+                    row["registration_id"], row["source_request_identity"],
+                    int(row["rollout_sequence"]), row["command_name"], row["treatment"],
+                    "complete" if row["state"] != "delivered" else "delivered",
                 )
-            conn.commit()
-            return ShadowReservation(
-                row["registration_id"], row["source_request_identity"], int(row["rollout_sequence"]),
-                row["command_name"], row["treatment"], "complete" if row["state"] != "delivered" else "delivered",
-            )
-        except BaseException:
-            conn.rollback()
-            raise
         finally:
             conn.close()
 
@@ -439,33 +492,40 @@ class ShadowSpool:
         gap_json = _canonical_json(gap)
         conn = self._connect()
         try:
-            begin_immediate(conn)
-            row = conn.execute(
-                "SELECT * FROM shadow_capture_registrations WHERE registration_id=?",
-                (registration_id,),
-            ).fetchone()
-            if row is None:
-                raise ShadowSpoolError("shadow reservation does not exist")
-            if row["state"] == "gap":
-                if row["gap_json"] != gap_json:
-                    raise ShadowSpoolConflict("shadow gap conflicts with existing evidence")
-            elif row["state"] != "reserved":
-                raise ShadowSpoolConflict("completed shadow reservation cannot become a gap")
-            else:
-                conn.execute(
-                    """UPDATE shadow_capture_registrations
-                          SET state='gap', gap_json=?, completed_at=?
-                        WHERE registration_id=? AND state='reserved'""",
-                    (gap_json, _stamp(completed_at), registration_id),
+            with immediate_transaction(conn, "shadow_spool_record_gap"):
+                row = conn.execute(
+                    "SELECT * FROM shadow_capture_registrations WHERE registration_id=?",
+                    (registration_id,),
+                ).fetchone()
+                if row is None:
+                    raise ShadowSpoolError("shadow reservation does not exist")
+                if row["state"] == "gap":
+                    if row["gap_json"] != gap_json:
+                        raise ShadowSpoolConflict(
+                            "shadow gap conflicts with existing evidence"
+                        )
+                elif row["state"] != "reserved":
+                    raise ShadowSpoolConflict(
+                        "completed shadow reservation cannot become a gap"
+                    )
+                else:
+                    self._assert_capacity(
+                        conn,
+                        incoming_bytes=len(gap_json.encode("utf-8")) + 512,
+                        additional_records=0,
+                    )
+                    conn.execute(
+                        """UPDATE shadow_capture_registrations
+                              SET state='gap', gap_json=?, completed_at=?
+                            WHERE registration_id=? AND state='reserved'""",
+                        (gap_json, _stamp(completed_at), registration_id),
+                    )
+                    self._assert_capacity(conn, incoming_bytes=0, additional_records=0)
+                return ShadowReservation(
+                    row["registration_id"], row["source_request_identity"],
+                    int(row["rollout_sequence"]), row["command_name"], row["treatment"],
+                    "gap",
                 )
-            conn.commit()
-            return ShadowReservation(
-                row["registration_id"], row["source_request_identity"], int(row["rollout_sequence"]),
-                row["command_name"], row["treatment"], "gap",
-            )
-        except BaseException:
-            conn.rollback()
-            raise
         finally:
             conn.close()
 
@@ -490,18 +550,14 @@ class ShadowSpool:
             ).fetchone()
             if candidate is None:
                 return 0
-            begin_immediate(conn)
-            result = conn.execute(
-                """UPDATE shadow_capture_registrations
-                      SET state='gap', gap_json=?, completed_at=?
-                    WHERE state='reserved' AND created_at <= ?""",
-                (gap, _stamp(now), cutoff),
-            )
-            conn.commit()
-            return int(result.rowcount)
-        except BaseException:
-            conn.rollback()
-            raise
+            with immediate_transaction(conn, "shadow_spool_recover_stale"):
+                result = conn.execute(
+                    """UPDATE shadow_capture_registrations
+                          SET state='gap', gap_json=?, completed_at=?
+                        WHERE state='reserved' AND created_at <= ?""",
+                    (gap, _stamp(now), cutoff),
+                )
+                return int(result.rowcount)
         finally:
             conn.close()
 
@@ -554,42 +610,38 @@ class ShadowSpool:
             ]
             if not candidate_ids:
                 return 0
-            begin_immediate(conn)
-            placeholders = ",".join("?" for _ in candidate_ids)
-            rows = conn.execute(
-                f"""SELECT * FROM shadow_capture_registrations
-                     WHERE state='delivered' AND delivered_at <= ?
-                       AND registration_id IN ({placeholders})
-                     ORDER BY rollout_sequence""",
-                (cutoff, *candidate_ids),
-            ).fetchall()
-            for row in rows:
-                conn.execute(
-                    """INSERT INTO shadow_capture_tombstones(
-                           registration_id, source_request_identity, rollout_sequence,
-                           source_authority_generation, command_name, treatment,
-                           canonical_input_sha256, principal_sha256,
-                           source_pre_state_sha256, pinned_inputs_sha256,
-                           delivered_at, compacted_at
-                       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        row["registration_id"], row["source_request_identity"],
-                        row["rollout_sequence"], row["source_authority_generation"],
-                        row["command_name"], row["treatment"],
-                        row["canonical_input_sha256"], row["principal_sha256"],
-                        row["source_pre_state_sha256"], row["pinned_inputs_sha256"],
-                        row["delivered_at"], _stamp(now),
-                    ),
-                )
-                conn.execute(
-                    "DELETE FROM shadow_capture_registrations WHERE registration_id=? AND state='delivered'",
-                    (row["registration_id"],),
-                )
-            conn.commit()
-            return len(rows)
-        except BaseException:
-            conn.rollback()
-            raise
+            with immediate_transaction(conn, "shadow_spool_compact_delivered"):
+                placeholders = ",".join("?" for _ in candidate_ids)
+                rows = conn.execute(
+                    f"""SELECT * FROM shadow_capture_registrations
+                         WHERE state='delivered' AND delivered_at <= ?
+                           AND registration_id IN ({placeholders})
+                         ORDER BY rollout_sequence""",
+                    (cutoff, *candidate_ids),
+                ).fetchall()
+                for row in rows:
+                    conn.execute(
+                        """INSERT INTO shadow_capture_tombstones(
+                               registration_id, source_request_identity, rollout_sequence,
+                               source_authority_generation, command_name, treatment,
+                               canonical_input_sha256, principal_sha256,
+                               source_pre_state_sha256, pinned_inputs_sha256,
+                               delivered_at, compacted_at
+                           ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (
+                            row["registration_id"], row["source_request_identity"],
+                            row["rollout_sequence"], row["source_authority_generation"],
+                            row["command_name"], row["treatment"],
+                            row["canonical_input_sha256"], row["principal_sha256"],
+                            row["source_pre_state_sha256"], row["pinned_inputs_sha256"],
+                            row["delivered_at"], _stamp(now),
+                        ),
+                    )
+                    conn.execute(
+                        "DELETE FROM shadow_capture_registrations WHERE registration_id=? AND state='delivered'",
+                        (row["registration_id"],),
+                    )
+                return len(rows)
         finally:
             conn.close()
 
@@ -617,44 +669,36 @@ class ShadowSpool:
     def mark_delivery_failed(self, registration_id: str, *, error: str) -> None:
         conn = self._connect()
         try:
-            begin_immediate(conn)
-            result = conn.execute(
-                """UPDATE shadow_capture_registrations
-                      SET delivery_attempts=delivery_attempts+1, last_delivery_error=?
-                    WHERE registration_id=? AND state IN ('complete','gap')""",
-                (str(error), registration_id),
-            )
-            if result.rowcount != 1:
-                raise ShadowSpoolConflict("shadow item is not pending delivery")
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
+            with immediate_transaction(conn, "shadow_spool_delivery_failed"):
+                result = conn.execute(
+                    """UPDATE shadow_capture_registrations
+                          SET delivery_attempts=delivery_attempts+1, last_delivery_error=?
+                        WHERE registration_id=? AND state IN ('complete','gap')""",
+                    (str(error), registration_id),
+                )
+                if result.rowcount != 1:
+                    raise ShadowSpoolConflict("shadow item is not pending delivery")
         finally:
             conn.close()
 
     def mark_delivered(self, registration_id: str, *, delivered_at: datetime) -> None:
         conn = self._connect()
         try:
-            begin_immediate(conn)
-            result = conn.execute(
-                """UPDATE shadow_capture_registrations
-                      SET state='delivered', delivered_at=?, delivery_attempts=delivery_attempts+1,
-                          last_delivery_error=NULL
-                    WHERE registration_id=? AND state IN ('complete','gap')""",
-                (_stamp(delivered_at), registration_id),
-            )
-            if result.rowcount != 1:
-                existing = conn.execute(
-                    "SELECT state FROM shadow_capture_registrations WHERE registration_id=?",
-                    (registration_id,),
-                ).fetchone()
-                if existing is None or existing["state"] != "delivered":
-                    raise ShadowSpoolConflict("shadow item is not pending delivery")
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
+            with immediate_transaction(conn, "shadow_spool_mark_delivered"):
+                result = conn.execute(
+                    """UPDATE shadow_capture_registrations
+                          SET state='delivered', delivered_at=?, delivery_attempts=delivery_attempts+1,
+                              last_delivery_error=NULL
+                        WHERE registration_id=? AND state IN ('complete','gap')""",
+                    (_stamp(delivered_at), registration_id),
+                )
+                if result.rowcount != 1:
+                    existing = conn.execute(
+                        "SELECT state FROM shadow_capture_registrations WHERE registration_id=?",
+                        (registration_id,),
+                    ).fetchone()
+                    if existing is None or existing["state"] != "delivered":
+                        raise ShadowSpoolConflict("shadow item is not pending delivery")
         finally:
             conn.close()
 

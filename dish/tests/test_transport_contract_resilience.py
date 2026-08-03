@@ -346,3 +346,23 @@ def test_action_contract_has_one_run_identity_and_precise_start_shapes():
         "do not start Planning again"
         in variants["initial"]["properties"]["kind"]["description"]
     )
+
+
+def test_runtime_rejects_dark_launch_path_aliases_and_hardlinks(tmp_path):
+    import os
+
+    db = tmp_path / "dish.db"
+    db.write_bytes(b"authority")
+    spool_alias = tmp_path / "spool.sqlite3"
+    os.link(db, spool_alias)
+    config = _config(
+        tmp_path,
+        db_path=db,
+        dark_launch_mode="capture",
+        dark_launch_spool_path=spool_alias,
+        dark_launch_emergency_dir=tmp_path / "emergency",
+        dark_launch_kill_switch_path=tmp_path / "disabled",
+    )
+    with pytest.raises(DishRuleError) as exc:
+        config.validate_runtime()
+    assert exc.value.rule == "dark_launch_paths_alias"

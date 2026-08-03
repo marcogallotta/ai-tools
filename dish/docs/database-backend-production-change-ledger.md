@@ -66,6 +66,13 @@ evaluation. Record each staged archive's final commit identifier here before sel
 dark-launch source release. These changes do not transfer production authority or enable Asana
 projection.
 
+Commits `ae9936a` and `32cd14e` close the seven pre-dark-launch audit findings: filesystem
+path aliasing and accidental spool creation, completion-time spool capacity enforcement, versioned
+cross-backend response/state/effect comparison, source/target generation fencing, strict rollout
+sequence claiming, and exactly idempotent gap delivery with worker backoff on deterministic spool
+delivery failures. The Stage A source and characterization hashes are refreshed through the exact
+reviewed source commit `32cd14e4d85761dceaf83c65728e5848a149c006`.
+
 ## Ongoing obligation
 
 This ledger must be extended for every further in-scope commit through the exact

@@ -25,8 +25,13 @@ should still remain `external_effects_enabled = false` as an independent operati
      --source-commit "$DISH_SOURCE_COMMIT"
    ```
 
-4. Put the returned baseline UUID in the owner-only dark-launch worker environment file.
-5. Install `deploy/systemd/dish-shadow-worker.service`, but do not start it yet.
+4. Verify that the resolved live SQLite database, spool, emergency directory, and kill-switch paths
+   are pairwise distinct. Do not place the spool or kill switch behind a symlink or hard link to live
+   authority storage. Status and worker startup refuse a missing or incomplete spool rather than
+   creating one. The disable command creates a versioned marker without replacing an existing file;
+   enable-capture removes only that validated marker.
+5. Put the returned baseline UUID in the owner-only dark-launch worker environment file.
+6. Install `deploy/systemd/dish-shadow-worker.service`, but do not start it yet.
 
 ## Enable capture first
 
@@ -34,7 +39,8 @@ should still remain `external_effects_enabled = false` as an independent operati
    `DISH_DARK_LAUNCH_BUSY_TIMEOUT_MS=50` unless host contention testing justifies another small,
    positive value; capture must fail open well before the live request timeout. Set explicit host
    limits for `DISH_DARK_LAUNCH_MAX_SPOOL_BYTES`, `DISH_DARK_LAUNCH_MAX_SPOOL_RECORDS`, and
-   `DISH_DARK_LAUNCH_MIN_FREE_BYTES`; reaching any bound automatically creates the shared kill switch.
+   `DISH_DARK_LAUNCH_MIN_FREE_BYTES`; reservation and completion writes are both checked inside their
+   transactions, and reaching any bound automatically creates the shared kill switch.
 2. Restart only the legacy service and issue representative normal commands.
 3. Check local spool status before starting PostgreSQL execution:
 
@@ -59,8 +65,15 @@ Inspect status repeatedly, including `spool.capacity.accepting_new_records`. The
 old delivered payloads after `DISH_DARK_LAUNCH_DELIVERED_RETENTION_SECONDS` while preserving replay
 fingerprints. Keep `DISH_DARK_LAUNCH_RESERVATION_TTL_SECONDS` at or above the legacy recovery
 quarantine (currently 90 seconds). An earlier unresolved reservation blocks all later spool delivery
-until it completes or ages into an explicit proof gap. Mismatch and gap counts are evidence, not
-authority failures; disabling the dark launch must not affect the live service.
+until it completes or ages into an explicit proof gap. PostgreSQL claims enforce the same sequence
+barrier after delivery. The worker also refuses a source-generation mismatch or a baseline whose target
+generation is no longer active, and execute/capture-only delivery requires an explicit positive rollout
+sequence. Workflow-ID translation uses only successful versioned comparisons and requires a one-to-one
+binding. Parity is based on a versioned shared response contract plus canonical pre-state, post-state,
+and transition effects. Result-created identities expand post-state capture, and a snapshot query error
+is recorded as a gap rather than empty evidence. Inspect axis-specific differences rather than treating
+raw transport shape as parity. Mismatch and gap counts are evidence, not authority failures; disabling
+the dark launch must not affect the live service.
 
 ## Immediate disable
 

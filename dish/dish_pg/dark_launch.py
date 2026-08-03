@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +12,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from dish_service.shadow_spool import ShadowSpool
+from dish_service.path_safety import clear_kill_switch, engage_kill_switch
 
 from . import models
 from . import stage5_models as tx
@@ -22,27 +22,6 @@ from .transition import ShadowService
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
-
-def _atomic_write(path: Path, payload: str) -> None:
-    path = path.expanduser()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temp = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8", closefd=True) as handle:
-            handle.write(payload)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temp, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
-    finally:
-        if os.path.exists(temp):
-            os.unlink(temp)
 
 
 def status(*, session_maker, spool: ShadowSpool, baseline_id: uuid.UUID | None) -> dict[str, Any]:
@@ -155,13 +134,13 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "disable":
-        _atomic_write(args.kill_switch, json.dumps({"disabled": True, "reason": args.reason, "at": _now().isoformat()}, sort_keys=True) + "\n")
+        engage_kill_switch(
+            args.kill_switch,
+            {"disabled": True, "reason": args.reason, "at": _now().isoformat()},
+        )
         return 0
     if args.command == "enable-capture":
-        try:
-            args.kill_switch.unlink()
-        except FileNotFoundError:
-            pass
+        clear_kill_switch(args.kill_switch)
         return 0
     engine = create_database_engine(DatabaseSettings(url=args.database_url))
     factory = session_factory(engine)
@@ -178,7 +157,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             value = status(
                 session_maker=factory,
-                spool=ShadowSpool(
+                spool=ShadowSpool.open_existing(
                     args.spool_path,
                     max_bytes=args.max_spool_bytes,
                     max_records=args.max_spool_records,

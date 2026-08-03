@@ -9,9 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import sqlite3
-import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -20,6 +18,7 @@ from typing import Any, Callable, Mapping
 
 from dish_shadow.policy import treatment_for
 
+from .path_safety import engage_kill_switch, require_distinct_paths
 from .shadow_spool import (
     EmergencyGapWriter,
     ShadowSpool,
@@ -44,12 +43,9 @@ def _jsonable(value: Any) -> Any:
 
 
 def _rows(conn: sqlite3.Connection, table: str, where: str, values: tuple[Any, ...]) -> list[dict[str, Any]]:
-    try:
-        result = conn.execute(
-            f'SELECT * FROM "{table}" WHERE {where} ORDER BY rowid', values
-        ).fetchall()
-    except sqlite3.DatabaseError:
-        return []
+    result = conn.execute(
+        f'SELECT * FROM "{table}" WHERE {where} ORDER BY rowid', values
+    ).fetchall()
     return [{key: _jsonable(row[key]) for key in row.keys()} for row in result]
 
 
@@ -58,6 +54,7 @@ def authoritative_snapshot(
     *,
     arguments: Mapping[str, Any],
     request_id: str | None,
+    result: Mapping[str, Any] | None = None,
     busy_timeout_ms: int = 50,
 ) -> dict[str, Any]:
     """Capture a bounded SQLite-only authority snapshot for one command.
@@ -65,10 +62,29 @@ def authoritative_snapshot(
     Rows are selected only by the command's task, operation, and request
     identities. This deliberately does not perform an independent Asana read.
     """
-    task_gid = str(arguments.get("task_gid") or "").strip() or None
-    operation_id = str(
-        arguments.get("submission_id") or arguments.get("operation_id") or ""
-    ).strip() or None
+    sources = [arguments]
+    if isinstance(result, Mapping):
+        sources.append(result)
+        if isinstance(result.get("data"), Mapping):
+            sources.append(result["data"])
+    task_gids = sorted({
+        str(source.get("task_gid") or "").strip()
+        for source in sources
+        if str(source.get("task_gid") or "").strip()
+    })
+    operation_keys = (
+        "submission_id", "operation_id", "existing_submission_id",
+        "prepared_operation_id", "successor_operation_id",
+        "continuation_operation_id", "source_operation_id", "target_operation_id",
+    )
+    operation_ids = sorted({
+        str(source.get(key) or "").strip()
+        for source in sources
+        for key in operation_keys
+        if str(source.get(key) or "").strip()
+    })
+    task_gid = task_gids[0] if task_gids else None
+    operation_id = operation_ids[0] if operation_ids else None
     uri = f"file:{Path(db_path).expanduser().resolve()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=busy_timeout_ms / 1000)
     conn.row_factory = sqlite3.Row
@@ -84,24 +100,36 @@ def authoritative_snapshot(
             "schema_version": conn.execute("PRAGMA user_version").fetchone()[0],
             "task_gid": task_gid,
             "operation_id": operation_id,
+            "task_gids": task_gids,
+            "operation_ids": operation_ids,
             "request_id": request_id,
+            "selected_tables": [],
             "tables": {},
         }
         selectors: list[tuple[str, str, tuple[Any, ...]]] = []
-        if task_gid:
+        for task_gid in task_gids:
             for table in (
                 "task_content_state", "operations", "submissions", "service_leases",
                 "dish_inspect_facts", "planning_reopen_attempts",
             ):
                 selectors.append((table, "task_gid=?", (task_gid,)))
-        if operation_id:
+        for operation_id in operation_ids:
             for table in (
                 "operations", "content_versions", "verification_cycles", "write_attempts",
                 "movement_attempts", "operation_steps", "operation_actor_facts", "audit_events",
                 "marco_authorizations", "operation_executions", "operation_execution_claims",
-                "abandonment_attempts", "operation_successions",
             ):
                 selectors.append((table, "operation_id=?", (operation_id,)))
+            selectors.append((
+                "abandonment_attempts",
+                "source_operation_id=? OR successor_operation_id=? OR continuation_operation_id=?",
+                (operation_id, operation_id, operation_id),
+            ))
+            selectors.append((
+                "operation_successions",
+                "source_operation_id=? OR successor_operation_id=?",
+                (operation_id, operation_id),
+            ))
         if request_id:
             for table in ("service_requests", "backup_creations"):
                 selectors.append((table, "request_id=?", (request_id,)))
@@ -110,9 +138,17 @@ def authoritative_snapshot(
             if selector in seen or selector[0] not in tables:
                 continue
             seen.add(selector)
+            snapshot["selected_tables"].append(selector[0])
             rows = _rows(conn, *selector)
             if rows:
                 snapshot["tables"].setdefault(selector[0], []).extend(rows)
+        for table, rows in snapshot["tables"].items():
+            unique = {
+                json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False): row
+                for row in rows
+            }
+            snapshot["tables"][table] = [unique[key] for key in sorted(unique)]
+        snapshot["selected_tables"] = sorted(set(snapshot["selected_tables"]))
         return snapshot
     finally:
         conn.close()
@@ -143,6 +179,13 @@ class LegacyShadowCapture:
     def __init__(self, settings: ShadowCaptureSettings, *, db_path: Path) -> None:
         self.settings = settings
         self.db_path = Path(db_path)
+        if settings.mode in {"capture", "execute"}:
+            require_distinct_paths({
+                "authority database": self.db_path,
+                "dark-launch spool": settings.spool_path,
+                "dark-launch emergency directory": settings.emergency_dir,
+                "dark-launch kill switch": settings.kill_switch_path,
+            })
         self.spool = ShadowSpool(
             settings.spool_path,
             busy_timeout_ms=settings.busy_timeout_ms,
@@ -151,10 +194,12 @@ class LegacyShadowCapture:
             min_free_bytes=settings.min_free_bytes,
         )
         self.emergency = EmergencyGapWriter(settings.emergency_dir)
-        if settings.enabled:
+        self._capture_available = settings.mode in {"capture", "execute"}
+        if self._capture_available:
             try:
                 self.spool.initialize()
             except BaseException:
+                self._capture_available = False
                 LOGGER.exception("dark-launch spool initialization failed; capture remains fail-open")
 
     @staticmethod
@@ -171,34 +216,15 @@ class LegacyShadowCapture:
         path = self.settings.kill_switch_path
         if path is None:
             return
-        path = Path(path).expanduser()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(
+        engage_kill_switch(
+            path,
             {
                 "disabled": True,
                 "reason": "dark-launch spool capacity guard",
                 "error": str(error),
                 "at": _utcnow().isoformat(),
             },
-            sort_keys=True,
-            separators=(",", ":"),
-        ) + "\n"
-        fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-        try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8", closefd=True) as handle:
-                handle.write(payload)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, path)
-            directory_fd = os.open(path.parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-        finally:
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+        )
 
     def _emergency(self, *, identity: str, command: str, phase: str, error: BaseException) -> None:
         try:
@@ -225,7 +251,7 @@ class LegacyShadowCapture:
         request_id: str | None,
         call: Callable[[], dict[str, Any]],
     ) -> dict[str, Any]:
-        if not self.settings.enabled:
+        if not self.settings.enabled or not self._capture_available:
             return call()
         try:
             treatment = treatment_for(command)
@@ -257,7 +283,7 @@ class LegacyShadowCapture:
                 canonical_input=canonical_input,
                 principal=principal_payload,
                 source_pre_state=pre_state,
-                pinned_inputs={"capture_schema": 1, "rollout_mode": self.settings.mode},
+                pinned_inputs={"capture_schema": 2, "rollout_mode": self.settings.mode},
                 created_at=_utcnow(),
             )
         except ShadowSpoolCapacityError as exc:
@@ -293,6 +319,7 @@ class LegacyShadowCapture:
                 self.db_path,
                 arguments=arguments,
                 request_id=request_id,
+                result=result,
                 busy_timeout_ms=self.settings.busy_timeout_ms,
             )
             effects = {
@@ -308,6 +335,24 @@ class LegacyShadowCapture:
                 source_effects=effects,
                 completed_at=_utcnow(),
             )
+        except ShadowSpoolCapacityError as exc:
+            try:
+                self._engage_capacity_kill_switch(exc)
+            except BaseException:
+                LOGGER.exception("dark-launch completion capacity kill-switch write failed")
+            try:
+                self.spool.record_gap(
+                    reservation.registration_id,
+                    gap={
+                        "classification": "capture_completion_capacity_exceeded",
+                        "missing_evidence": ["source_post_state"],
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    },
+                    completed_at=_utcnow(),
+                )
+            except BaseException:
+                self._emergency(identity=identity, command=command, phase="complete_capacity", error=exc)
         except BaseException as exc:
             try:
                 self.spool.record_gap(

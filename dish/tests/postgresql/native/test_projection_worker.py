@@ -174,6 +174,8 @@ def test_projection_worker_never_claims_real_shadow_evaluator_outbox(core_db) ->
             },
             pinned_inputs={"rollout_mode": "execute"},
             capture_qualification="execute",
+            source_authority_generation="legacy-native",
+            rollout_sequence=1,
             captured_at=NOW,
         )
         target = CommandPortShadowEvaluator(
