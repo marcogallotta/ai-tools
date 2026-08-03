@@ -140,6 +140,39 @@ authorization ceremony when a genuine Human Review decision necessarily changes 
 fields. Do not merge the two conceptually, though a future implementation may combine them
 in one structured admin operation.
 
+### Semantic `Exemptions` authorization instead of hand-typed exact diffs
+
+Distinct from the ceremony problem above: `authorize-governed-change` requires Marco or an
+agent to hand-author the complete serialized before/after value and match it byte-for-byte
+against the live field via compare-and-swap — e.g. `--before '"None"'` and
+`--after '"[nutrition-protein] [nutrition-kcal] — Marco approved for this controlled tasting
+repeat"'`. That is fragile (any bracket/spacing/reason-text mismatch fails the CAS) and is
+internal compare-and-swap plumbing leaking into a human-facing approval flow. Even an atomic
+merge with `record-human-decision` (above) would not fix this by itself if it keeps the same
+typed-diff shape.
+
+`Exemptions` is the one governed field with a fixed, enumerable vocabulary
+(`[nutrition-kcal]`, `[nutrition-protein]`, `[nutrition-fat]`), so it is the natural
+candidate for a semantic interface:
+
+```text
+dish-admin update-exemptions <operation-id> --add nutrition-protein --add nutrition-kcal \
+  --reason "Controlled tasting portion"
+dish-admin update-exemptions <operation-id> --remove nutrition-protein \
+  --reason "Protein target now met"
+```
+
+Dish would read the current `Exemptions` value, compute the exact before/after diff itself,
+reject a stale or conflicting live value, preserve any unrelated exemption already present,
+and write the same governed authorization and audit record `authorize-governed-change`
+produces today. The low-level `authorize-governed-change` command remains for exceptional or
+non-`Exemptions` governed-field use.
+
+`Locks` does not fit this shape: it is a single free-text sentence
+(`Locks: None | <settled dish-specific outcome or boundary - reason>`), not an enumerable tag
+set, so it has no natural `--add`/`--remove` semantics and should stay on the generic typed-diff
+path unless a future Locks redesign introduces discrete, addressable entries.
+
 ### Phase-authoritative pending-Research/pending-Verification listing
 
 Blocked on the database-backend move, and becomes high priority once that move ships — not a
