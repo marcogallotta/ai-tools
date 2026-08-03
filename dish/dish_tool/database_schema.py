@@ -2366,7 +2366,75 @@ WHEN OLD.completed_at IS NOT NULL AND (
 BEGIN SELECT RAISE(ABORT, 'completed verification cycle is immutable'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36}
+_MIGRATION_37 = """
+DROP TRIGGER abandonment_attempts_authority_insert;
+
+CREATE TRIGGER abandonment_attempts_authority_insert
+BEFORE INSERT ON abandonment_attempts
+WHEN NOT EXISTS (
+        SELECT 1
+          FROM operations AS operation
+         WHERE operation.operation_id=NEW.source_operation_id
+           AND operation.task_gid=NEW.task_gid
+           AND operation.status IN ('open','uncertain')
+           AND operation.phase != 'terminal'
+     )
+  OR NOT EXISTS (
+        SELECT 1
+          FROM service_leases AS lease
+         WHERE lease.lease_id=NEW.source_lease_id
+           AND lease.operation_id=NEW.source_operation_id
+           AND lease.task_gid=NEW.task_gid
+           AND lease.owner_id=NEW.abandoned_owner_id
+           AND lease.run_id=NEW.abandoned_run_id
+           AND lease.lease_kind='actor'
+           AND lease.actor_attempt_seq IS NOT NULL
+           AND lease.context_cycle_id IS NEW.attempt_cycle_id
+           AND (
+               lease.released_at IS NOT NULL
+               OR julianday(lease.expires_at) <= julianday(NEW.created_at)
+           )
+     )
+  OR EXISTS (
+        SELECT 1
+          FROM service_leases AS selected
+          JOIN service_leases AS later
+            ON later.task_gid=selected.task_gid
+           AND later.lease_kind='actor'
+           AND later.actor_attempt_seq > selected.actor_attempt_seq
+         WHERE selected.lease_id=NEW.source_lease_id
+           AND EXISTS (
+               SELECT 1 FROM operation_actor_facts AS fact
+                WHERE fact.operation_id=NEW.source_operation_id
+                  AND fact.run_id=later.run_id
+           )
+     )
+  OR EXISTS (
+        SELECT 1 FROM operation_successions
+         WHERE source_operation_id=NEW.source_operation_id
+     )
+  OR (
+        NEW.attempt_cycle_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM verification_cycles AS cycle
+             WHERE cycle.cycle_id=NEW.attempt_cycle_id
+               AND cycle.operation_id=NEW.source_operation_id
+               AND cycle.task_gid=NEW.task_gid
+               AND cycle.run_id=NEW.abandoned_run_id
+        )
+     )
+  OR (
+        NEW.current_execution_id IS NOT NULL
+        AND NOT EXISTS (
+            SELECT 1 FROM operation_executions AS execution
+             WHERE execution.execution_id=NEW.current_execution_id
+               AND execution.operation_id=NEW.source_operation_id
+        )
+     )
+BEGIN SELECT RAISE(ABORT, 'abandonment attempt authority binding is invalid'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37}
 
 
 def _backup_legacy_database(db_path: Path) -> None:

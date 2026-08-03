@@ -11,7 +11,7 @@ from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.admin import DishAdminApplication
 from dish_tool.admin_cli import build_parser
 from dish_tool.application_service import CurrentWorkflowService
-from dish_tool.database import declare_operation_step
+from dish_tool.database import declare_operation_step, record_actor_fact
 from dish_tool.database_initialization import initialize_database
 from tests.support.workflow_builders import create_large_rejection_successor
 from tests.support.abandonment import Backend, _source
@@ -123,6 +123,14 @@ def test_abandonment_requires_latest_released_actor_attempt():
     source = _source(conn, backend, kind="planning")
     older = _released_actor_lease(conn, source["operation_id"], run_id="dead-run")
     newer = _released_actor_lease(conn, source["operation_id"], run_id="later-run")
+    record_actor_fact(
+        conn,
+        operation_id=source["operation_id"],
+        task_gid=source["task_gid"],
+        role="verifier",
+        agent="gpt",
+        run_id=newer["run_id"],
+    )
     app = DishAdminApplication(conn, backend=backend)
 
     rejected = app.execute(

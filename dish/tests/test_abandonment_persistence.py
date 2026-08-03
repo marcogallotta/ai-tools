@@ -15,6 +15,7 @@ from dish_tool.database import (
     create_operation,
     create_verification_cycle,
     declare_operation_step,
+    record_actor_fact,
 )
 from dish_tool.database_initialization import initialize_database
 from dish_tool.database_schema import (
@@ -35,7 +36,7 @@ from tests.support.abandonment_scenarios import (
 
 def test_schema_33_adds_abandonment_lineage_and_prepared_claim_state():
     conn = initialize_database(":memory:")
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 36
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 37
     tables = {
         row[0]
         for row in conn.execute(
@@ -85,7 +86,7 @@ def test_migration_32_preserves_stage_2_actor_attempt_context(tmp_path):
 
     upgraded = initialize_database(db_path)
     try:
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 36
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 37
         assert upgraded.execute(
             "SELECT successor_claim_mode FROM operations WHERE operation_id='op'"
         ).fetchone()[0] == "none"
@@ -107,6 +108,14 @@ def test_abandonment_requires_latest_exact_actor_attempt_and_one_active_per_task
     manager.release(operation["operation_id"], None, reason="admin release", admin=True)
     second = manager.acquire(
         operation["operation_id"], ServicePrincipal("owner-1", "run-1")
+    )
+    record_actor_fact(
+        conn,
+        operation_id=operation["operation_id"],
+        task_gid=operation["task_gid"],
+        role="verifier",
+        agent="gpt",
+        run_id=second["run_id"],
     )
 
     conn.execute("BEGIN IMMEDIATE")
@@ -165,6 +174,31 @@ def test_abandonment_requires_latest_exact_actor_attempt_and_one_active_per_task
         )
     assert wrong_task.value.rule == "abandonment_authority_invalid"
     conn.execute("ROLLBACK")
+def test_abandonment_permits_cycle_owning_attempt_when_later_attempt_never_engaged_operation():
+    conn = initialize_database(":memory:")
+    operation, first, _, _ = _source(conn)
+    manager = LeaseManager(conn)
+    manager.release(operation["operation_id"], None, reason="admin release", admin=True)
+    second = manager.acquire(
+        operation["operation_id"], ServicePrincipal("owner-2", "run-2")
+    )
+    manager.release(operation["operation_id"], None, reason="admin release", admin=True)
+    manager.acquire(operation["operation_id"], ServicePrincipal("owner-3", "run-3"))
+    manager.release(operation["operation_id"], None, reason="admin release", admin=True)
+
+    conn.execute("BEGIN IMMEDIATE")
+    row = create_abandonment_attempt_in_transaction(
+        conn,
+        abandonment_id="cycle-owner-attempt",
+        task_gid=operation["task_gid"],
+        source_operation_id=operation["operation_id"],
+        source_lease_id=second["lease_id"],
+        abandoned_owner_id=second["owner_id"],
+        abandoned_run_id=second["run_id"],
+        reason="run-3 never claimed operation actor facts",
+    )
+    conn.execute("COMMIT")
+    assert row["status"] == "started"
 def test_live_actor_lease_cannot_start_abandonment():
     conn = initialize_database(":memory:")
     operation, lease, _, _ = _source(conn)

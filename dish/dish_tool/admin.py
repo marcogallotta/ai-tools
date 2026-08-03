@@ -826,33 +826,37 @@ def _select_abandonment_lease(
         rows = conn.execute(
             """SELECT * FROM service_leases
                  WHERE operation_id=? AND lease_kind='actor'
-                   AND actor_attempt_seq=(
-                       SELECT MAX(actor_attempt_seq) FROM service_leases
-                        WHERE task_gid=? AND lease_kind='actor'
-                   )
                    AND (released_at IS NOT NULL OR julianday(expires_at)<=julianday('now'))
                  ORDER BY actor_attempt_seq DESC""",
-            (operation_id, operation["task_gid"]),
+            (operation_id,),
         ).fetchall()
     eligible = []
     for row in rows:
-        latest = conn.execute(
-            """SELECT MAX(actor_attempt_seq) FROM service_leases
-                 WHERE task_gid=? AND lease_kind='actor'""",
-            (operation["task_gid"],),
-        ).fetchone()[0]
         expired_or_released = bool(
             row["released_at"] is not None
             or conn.execute(
                 "SELECT julianday(?)<=julianday('now')", (row["expires_at"],)
             ).fetchone()[0]
         )
+        superseded = conn.execute(
+            """SELECT 1
+                 FROM service_leases AS later
+                WHERE later.task_gid=?
+                  AND later.lease_kind='actor'
+                  AND later.actor_attempt_seq > ?
+                  AND EXISTS (
+                      SELECT 1 FROM operation_actor_facts AS fact
+                       WHERE fact.operation_id=?
+                         AND fact.run_id=later.run_id
+                  )""",
+            (operation["task_gid"], row["actor_attempt_seq"], operation_id),
+        ).fetchone()
         if (
             row["operation_id"] == operation_id
             and row["task_gid"] == operation["task_gid"]
             and row["lease_kind"] == "actor"
             and row["actor_attempt_seq"] is not None
-            and row["actor_attempt_seq"] == latest
+            and superseded is None
             and expired_or_released
         ):
             eligible.append(row)
