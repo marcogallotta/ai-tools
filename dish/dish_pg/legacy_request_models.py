@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, String, Uuid
+from sqlalchemy import JSON, CheckConstraint, DateTime, ForeignKey, Index, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .models import Base
@@ -28,6 +28,7 @@ class LegacyRequestTombstone(Base):
     imported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
+        Index("ix_legacy_request_tombstones_import_run", "import_run_id"),
         CheckConstraint("length(trim(source_authority)) > 0", name="source_authority_nonblank"),
         CheckConstraint("length(source_identity_sha256) = 64", name="source_identity_hash_length"),
     )

@@ -19,6 +19,10 @@ from .client_profiles import (
 from .constants import DB_PATH
 from .database import initialize_database
 from .backend import AsanaBackend
+from .admin_command_spec import (
+    ADMIN_COMMANDS as _ADMIN_COMMANDS,
+    CLI_OPERATION_IDENTIFIER_COMMANDS as _OPERATION_ADMIN_COMMANDS,
+)
 from .releases import configured_honest_path, resolve_release
 from dish_service.client import DishAdminServiceClient
 from dish_service.database_ownership import ServiceDatabaseOwnership
@@ -28,8 +32,6 @@ from .errors import DishRuleError
 from .results import error_envelope, exit_status
 from .admin_human import render_admin_result
 
-_ADMIN_COMMANDS = {"attention", "review-queue", "review-inspect", "review-approve", "review-reject", "inspect", "holds", "recover", "repair-destination", "discard", "abandon-operation", "reconcile-abandonment", "migrate", "reopen-planning", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease", "expire-lease", "backup-create", "backup-restore"}
-_OPERATION_ADMIN_COMMANDS = {"inspect", "recover", "repair-destination", "discard", "abandon-operation", "reopen", "supply-evidence", "record-human-decision", "resolved", "authorize-governed-change", "recover-lease"}
 
 
 class JsonArgumentParser(argparse.ArgumentParser):

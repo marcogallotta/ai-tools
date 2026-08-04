@@ -733,6 +733,12 @@ class ProjectionReconciliationRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
+        Index(
+            "ix_reconciliation_candidate_boundary",
+            "candidate_id",
+            "projection_epoch_id",
+            "registry_version_id",
+        ),
         CheckConstraint("status IN ('running','complete','blocked')", name="status_allowed"),
         CheckConstraint("expected_items >= 0 AND processed_items >= 0", name="nonnegative_counts"),
         CheckConstraint("processed_items <= expected_items", name="count_not_over_expected"),

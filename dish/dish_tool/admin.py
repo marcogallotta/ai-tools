@@ -26,6 +26,7 @@ from .database import (
 from .invocation_audit import record_invocation_audit
 from .transactions import immediate_transaction, savepoint_transaction
 from .errors import DishRuleError
+from .admin_command_spec import RESOLVED_OPERATION_TARGET_COMMANDS
 from .results import error_envelope, result_envelope
 from .human_actions import PromptField, exact_action, relay_text, template_action
 from .semantic_proposals import (
@@ -2224,11 +2225,8 @@ def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, r
         allowed_actions=view["legal_actions"], data=data,
     )
 
-_OPERATION_TARGET_COMMANDS = {
-    "holds", "inspect", "reopen", "recover", "repair-destination", "supply-evidence",
-    "record-human-decision", "resolved", "authorize-governed-change", "discard",
-    "abandon-operation",
-}
+_OPERATION_TARGET_COMMANDS = set(RESOLVED_OPERATION_TARGET_COMMANDS)
+
 
 CURRENT_ADMIN_COMMAND_HANDLERS = {
     "attention": _command_attention,

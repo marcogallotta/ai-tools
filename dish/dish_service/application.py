@@ -14,7 +14,12 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from dish_tool.admin import DishAdminApplication
-from dish_tool.admin import _OPERATION_TARGET_COMMANDS as _ADMIN_OPERATION_TARGET_COMMANDS
+from dish_tool.admin_command_spec import (
+    LEASE_FREE_ADMIN_COMMANDS as _LEASE_FREE_ADMIN_COMMANDS,
+    OPERATION_SCOPED_ADMIN_COMMANDS as _OPERATION_ADMIN_COMMANDS,
+    RESOLVED_OPERATION_TARGET_COMMANDS as _ADMIN_OPERATION_TARGET_COMMANDS,
+    RUN_ID_ADMIN_COMMANDS as _RUN_ID_ADMIN_COMMANDS,
+)
 from dish_tool.backend import AsanaBackend
 from dish_tool.commands import DishApplication, expose_authoritative_view
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
@@ -86,23 +91,7 @@ _READ_ONLY_AGENT_COMMANDS = {"sections", "section-tasks", "read", "inspect", "pr
 _LEASED_AGENT_COMMANDS = {"prepare", "approve", "reject", "submit", "apply-proposal"}
 _MUTATING_AGENT_COMMANDS = {"create", "start", *_LEASED_AGENT_COMMANDS}
 _RUN_ID_AGENT_COMMANDS = {"start", "prepare", "approve", "reject", "apply-proposal"}
-_RUN_ID_ADMIN_COMMANDS = {"repair-destination"}
 _HANDOFF_PHASES = {"await_verification", "held_evidence", "held_human"}
-_OPERATION_ADMIN_COMMANDS = {
-    "inspect",
-    "recover",
-    "abandon-operation",
-    "reconcile-abandonment",
-    "discard",
-    "reopen",
-    "supply-evidence",
-    "record-human-decision",
-    "authorize-governed-change",
-    "repair-destination",
-    "review-approve",
-    "review-reject",
-}
-_LEASE_FREE_ADMIN_COMMANDS = {"attention", "inspect", "holds", "authorize-governed-change", "abandon-operation", "reconcile-abandonment", "review-queue", "review-inspect"}
 
 LOG = logging.getLogger("dish.service.application")
 

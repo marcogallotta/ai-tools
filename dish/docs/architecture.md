@@ -7,6 +7,15 @@ boundaries that a locally reasonable change must not violate.
 Read this document end to end before changing code. Then use the routing table below instead of
 loading every Dish document.
 
+
+### Neutral submission and administration metadata authority
+
+Read-only submission identity, destination-repair evidence, and latest movement-failure facts live in
+`dish_tool/submission_authority.py`. Action-authority snapshots and Stage 9 consume that shared component;
+Stage 9 continues to own submission execution and mutation. Administration command dimensions live in the
+typed `dish_tool/admin_command_spec.py` registry, and CLI, HTTP/service, and admin application classifications
+are derived from it rather than maintained as disconnected sets.
+
 ## Route additional reading
 
 | If the change concerns | Also read |
