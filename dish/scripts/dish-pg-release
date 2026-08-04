@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import secrets
+import stat
 import sys
-import tempfile
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -14,14 +16,17 @@ from typing import Any
 
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import select
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from dish_pg.database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from dish_pg.release import ALEMBIC_HEAD, ReleaseCandidateService
+from dish_pg import stage6_models as rel
 from dish_service.legacy_writer_fence import (
     engage_legacy_writer_fence,
+    observe_legacy_writer_fence,
     read_legacy_writer_fence,
     release_legacy_writer_fence,
 )
@@ -188,28 +193,154 @@ def _load(path: Path) -> dict[str, Any]:
     return value
 
 
-def _write_atomic(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    temp = Path(name)
+def _canonical_json_bytes(payload: Any) -> bytes:
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+
+
+def _json_bytes(payload: Any) -> bytes:
+    return _canonical_json_bytes(payload) + b"\n"
+
+
+def _normalized_output_path(path: Path) -> Path:
+    return Path(os.path.abspath(os.path.normpath(os.fspath(path))))
+
+
+def _open_output_parent(path: Path) -> tuple[int, str, Path]:
+    """Open an existing governed output directory without following links."""
+
+    normalized = _normalized_output_path(path)
+    parts = normalized.parts
+    if len(parts) < 2 or not normalized.name:
+        raise ValueError(f"authoritative output path must name a file: {path}")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    directory_fd = os.open(parts[0], flags)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.chmod(temp, 0o600)
-        os.replace(temp, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
+        for component in parts[1:-1]:
+            try:
+                next_fd = os.open(component, flags | nofollow, dir_fd=directory_fd)
+            except OSError as exc:
+                raise ValueError(
+                    f"authoritative output path contains an unavailable or symbolic-link "
+                    f"directory: {normalized}"
+                ) from exc
             os.close(directory_fd)
+            directory_fd = next_fd
+        return directory_fd, parts[-1], normalized
+    except BaseException:
+        os.close(directory_fd)
+        raise
+
+
+def _read_published_artifact_at(parent_fd: int, name: str, path: Path) -> bytes:
+    metadata = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"authoritative output path is not a regular non-symlink file: {path}")
+    fd = os.open(
+        name,
+        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        dir_fd=parent_fd,
+    )
+    try:
+        opened = os.fstat(fd)
+        if (opened.st_dev, opened.st_ino, opened.st_size) != (
+            metadata.st_dev, metadata.st_ino, metadata.st_size
+        ):
+            raise ValueError(f"authoritative output changed while opening: {path}")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(fd)
+        after_path = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            (after.st_dev, after.st_ino, after.st_size)
+            != (opened.st_dev, opened.st_ino, opened.st_size)
+            or (after_path.st_dev, after_path.st_ino, after_path.st_size)
+            != (after.st_dev, after.st_ino, after.st_size)
+            or not stat.S_ISREG(after_path.st_mode)
+        ):
+            raise ValueError(f"authoritative output changed while reading: {path}")
+        return b"".join(chunks)
     finally:
+        os.close(fd)
+
+
+def _read_published_artifact(path: Path) -> bytes:
+    parent_fd, name, normalized = _open_output_parent(path)
+    try:
+        return _read_published_artifact_at(parent_fd, name, normalized)
+    finally:
+        os.close(parent_fd)
+
+
+def _write_atomic(path: Path, payload: Any) -> None:
+    """Publish once after database authority commits; exact retry is idempotent."""
+
+    expected = _json_bytes(payload)
+    parent_fd, name, normalized = _open_output_parent(path)
+    temp_name = f".{name}.uncommitted.{secrets.token_hex(8)}"
+    file_fd: int | None = None
+    temp_created = False
+    try:
         try:
-            temp.unlink()
+            actual = _read_published_artifact_at(parent_fd, name, normalized)
         except FileNotFoundError:
             pass
+        else:
+            if actual == expected:
+                return
+            raise ValueError(
+                f"authoritative output already exists with different content: {normalized}"
+            )
+
+        file_fd = os.open(
+            temp_name,
+            os.O_WRONLY
+            | os.O_CREAT
+            | os.O_EXCL
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+            dir_fd=parent_fd,
+        )
+        temp_created = True
+        with os.fdopen(file_fd, "wb") as handle:
+            file_fd = None
+            handle.write(expected)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(
+                temp_name,
+                name,
+                src_dir_fd=parent_fd,
+                dst_dir_fd=parent_fd,
+                follow_symlinks=False,
+            )
+        except FileExistsError:
+            actual = _read_published_artifact_at(parent_fd, name, normalized)
+            if actual != expected:
+                raise ValueError(
+                    "authoritative output appeared concurrently with different content: "
+                    f"{normalized}"
+                )
+        os.fsync(parent_fd)
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        if temp_created:
+            try:
+                os.unlink(temp_name, dir_fd=parent_fd)
+            except FileNotFoundError:
+                pass
+            else:
+                os.fsync(parent_fd)
+        os.close(parent_fd)
 
 
 def _row_id(row: Any) -> dict[str, Any]:
@@ -302,14 +433,6 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             if cmd == "evaluate":
                 result = service.evaluate_candidate(candidate_id=_uuid(args.candidate_id))
                 return {"ok": result.passed, **result.as_dict()}, 0 if result.passed else 2
-            if cmd == "bundle":
-                row = service.build_evidence_bundle(
-                    candidate_id=_uuid(args.candidate_id),
-                    bundle_kind=args.kind,
-                    built_at=_time(args.built_at),
-                )
-                _write_atomic(args.output, row.manifest)
-                return {"ok": True, **_row_id(row), "sha256": row.manifest_sha256, "path": str(args.output)}, 0
             if cmd == "validate":
                 result = service.validate_candidate(
                     candidate_id=_uuid(args.candidate_id),
@@ -373,21 +496,6 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                     prepared_at=_time(data["prepared_at"]),
                 )
                 return {"ok": True, **_row_id(row), "manifest_sha256": row.manifest_sha256}, 0
-            if cmd == "writer-fence-engage":
-                fence_id = _uuid(args.fence_id)
-                row = service.writer_fence_status(fence_id)
-                candidate = service.candidate_status(row.candidate_id)
-                _manifest, digest = engage_legacy_writer_fence(
-                    args.path,
-                    fence_id=str(fence_id),
-                    candidate_id=str(candidate.candidate_id),
-                    source_release=candidate.source_release,
-                    source_commit=candidate.source_commit,
-                    engaged_at=_time(args.engaged_at),
-                    operator=args.operator,
-                )
-                row = service.engage_writer_fence(fence_id=fence_id, engaged_at=_time(args.engaged_at))
-                return {"ok": True, **_row_id(row), "file_sha256": digest, "state": row.state}, 0
             if cmd == "writer-fence-verify":
                 row = service.verify_writer_fence(
                     fence_id=_uuid(args.fence_id),
@@ -448,6 +556,9 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                     command_name=data["command_name"],
                     command_arguments=data.get("command_arguments", {}),
                     task_id=None if task_id is None else _uuid(task_id),
+                    owner_id=data["owner_id"],
+                    principal_class=data["principal_class"],
+                    run_id=_uuid(data["run_id"]),
                     payload=data.get("payload", {}),
                     recorded_at=_time(data["recorded_at"]),
                 )
@@ -479,6 +590,176 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
 
 
+
+def _bundle_snapshot(row: Any) -> dict[str, Any]:
+    return {
+        "bundle_id": str(row.bundle_id),
+        "candidate_id": str(row.candidate_id),
+        "bundle_kind": row.bundle_kind,
+        "manifest": dict(row.manifest),
+        "manifest_sha256": row.manifest_sha256,
+    }
+
+
+def _committed_bundle_snapshot(
+    factory: Any, *, candidate_id: uuid.UUID, manifest_sha256: str
+) -> dict[str, Any] | None:
+    with session_scope(factory) as session:
+        row = session.scalar(
+            select(rel.EvidenceBundle).where(
+                rel.EvidenceBundle.candidate_id == candidate_id,
+                rel.EvidenceBundle.manifest_sha256 == manifest_sha256,
+            )
+        )
+        return None if row is None else _bundle_snapshot(row)
+
+
+def _bundle_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
+    engine = create_database_engine(DatabaseSettings(url=_database_url()))
+    factory = session_factory(engine)
+    snapshot: dict[str, Any] | None = None
+    candidate_id = _uuid(args.candidate_id)
+    try:
+        try:
+            with session_scope(factory) as session:
+                row = ReleaseCandidateService(session).build_evidence_bundle(
+                    candidate_id=candidate_id,
+                    bundle_kind=args.kind,
+                    built_at=_time(args.built_at),
+                )
+                snapshot = _bundle_snapshot(row)
+        except Exception:
+            # A commit acknowledgement may be lost after PostgreSQL committed.
+            # Query the immutable digest before deciding whether publication is safe.
+            if snapshot is None:
+                raise
+            recovered = _committed_bundle_snapshot(
+                factory,
+                candidate_id=candidate_id,
+                manifest_sha256=snapshot["manifest_sha256"],
+            )
+            if recovered is None:
+                raise
+            snapshot = recovered
+        assert snapshot is not None
+        if hashlib.sha256(_canonical_json_bytes(snapshot["manifest"])).hexdigest() != snapshot[
+            "manifest_sha256"
+        ]:
+            raise ValueError("committed evidence bundle digest does not match its manifest")
+        _write_atomic(args.output, snapshot["manifest"])
+        return {
+            "ok": True,
+            "bundle_id": snapshot["bundle_id"],
+            "sha256": snapshot["manifest_sha256"],
+            "path": str(args.output),
+        }, 0
+    finally:
+        engine.dispose()
+
+
+def _fence_context(factory: Any, fence_id: uuid.UUID) -> dict[str, Any]:
+    with session_scope(factory) as session:
+        service = ReleaseCandidateService(session)
+        fence = service.writer_fence_status(fence_id)
+        candidate = service.candidate_status(fence.candidate_id)
+        if fence.state == "released":
+            raise ValueError("released writer fence cannot be re-engaged")
+        return {
+            "fence_id": str(fence_id),
+            "candidate_id": str(candidate.candidate_id),
+            "generation_id": str(candidate.generation_id),
+            "source_release": candidate.source_release,
+            "source_commit": candidate.source_commit,
+            "database_state": fence.state,
+        }
+
+
+def _record_fence_engaged(
+    factory: Any,
+    *,
+    fence_id: uuid.UUID,
+    artifact_generation_identity: str,
+    observation: Any,
+    engaged_at: datetime,
+) -> dict[str, Any]:
+    if observation.device is None or observation.inode is None:
+        raise ValueError("writer fence observation lacks filesystem identity")
+    with session_scope(factory) as session:
+        service = ReleaseCandidateService(session)
+        durable_observation = service.record_writer_fence_artifact_observation(
+            fence_id=fence_id,
+            artifact_generation_identity=artifact_generation_identity,
+            canonical_path=observation.observed_path,
+            content_sha256=observation.artifact_sha256,
+            filesystem_device=observation.device,
+            filesystem_inode=observation.inode,
+            verification_result="matched",
+            observation_contract_version="dish-writer-fence-observation-v1",
+            observed_at=observation.observed_at,
+            recorded_at=observation.observed_at,
+        )
+        row = service.engage_writer_fence(
+            fence_id=fence_id,
+            artifact_observation_id=durable_observation.observation_id,
+            engaged_at=engaged_at,
+        )
+        return {
+            "fence_id": str(row.fence_id),
+            "state": row.state,
+            "artifact_observation_id": str(durable_observation.observation_id),
+        }
+
+
+def _engage_fence_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
+    engine = create_database_engine(DatabaseSettings(url=_database_url()))
+    factory = session_factory(engine)
+    fence_id = _uuid(args.fence_id)
+    engaged_at = _time(args.engaged_at)
+    try:
+        # The prepared row is the durable intent. No transaction remains open
+        # while the fail-closed file is written, fsynced, and observed.
+        context = _fence_context(factory, fence_id)
+        _manifest, manifest_digest = engage_legacy_writer_fence(
+            args.path,
+            fence_id=context["fence_id"],
+            candidate_id=context["candidate_id"],
+            source_release=context["source_release"],
+            source_commit=context["source_commit"],
+            engaged_at=engaged_at,
+            operator=args.operator,
+        )
+        observation = observe_legacy_writer_fence(
+            args.path,
+            expected_path=args.path,
+            expected_manifest_sha256=manifest_digest,
+        )
+        try:
+            result = _record_fence_engaged(
+                factory,
+                fence_id=fence_id,
+                artifact_generation_identity=context["generation_id"],
+                observation=observation,
+                engaged_at=engaged_at,
+            )
+        except Exception as exc:
+            # Resolve an ambiguous commit by rereading the same durable intent.
+            current = _fence_context(factory, fence_id)
+            if current["database_state"] not in {"engaged", "verified"}:
+                raise RuntimeError(
+                    "legacy writer fence is engaged on disk while the database "
+                    "remains prepared; retry this exact command to recover"
+                ) from exc
+            result = {"fence_id": str(fence_id), "state": current["database_state"]}
+        return {
+            "ok": True,
+            **result,
+            "file_sha256": manifest_digest,
+            "observation": observation.as_evidence_payload(),
+        }, 0
+    finally:
+        engine.dispose()
+
+
 def _release_fence(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     # Verify the exact on-disk fence before changing durable database state.
     manifest, digest = read_legacy_writer_fence(args.path)
@@ -507,6 +788,10 @@ def main(argv: list[str] | None = None) -> int:
             config.set_main_option("sqlalchemy.url", _database_url())
             command.upgrade(config, "head")
             result, status = {"ok": True, "schema_head": ALEMBIC_HEAD}, 0
+        elif args.command == "bundle":
+            result, status = _bundle_call(args)
+        elif args.command == "writer-fence-engage":
+            result, status = _engage_fence_call(args)
         elif args.command == "writer-fence-status":
             manifest, digest = read_legacy_writer_fence(args.path)
             result, status = {
