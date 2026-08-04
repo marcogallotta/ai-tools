@@ -118,3 +118,189 @@ def test_pglite_rejects_duplicate_task_level_grant(pglite) -> None:
     assert index is not None
     assert "UNIQUE INDEX" in index[0]
     assert "WHERE (operation_id IS NULL)" in index[0]
+
+
+def _install_honest_binding_predecessor(pglite) -> Config:
+    config = _config(pglite.sqlalchemy_url)
+    with psycopg.connect(pglite.libpq_dsn) as connection:
+        connection.execute(
+            """
+            CREATE TABLE honest_contract_bindings (
+                binding_id UUID PRIMARY KEY,
+                binding_kind TEXT NOT NULL,
+                source_identity TEXT NOT NULL,
+                dish_release TEXT NOT NULL,
+                honest_release TEXT NOT NULL,
+                protocol_release TEXT NOT NULL,
+                protocol_sha256 CHAR(64) NOT NULL,
+                schema_release TEXT NOT NULL,
+                schema_sha256 CHAR(64) NOT NULL,
+                migration_id TEXT NULL,
+                source_schema_version TEXT NULL,
+                target_schema_version TEXT NULL,
+                migration_metadata_sha256 CHAR(64) NULL,
+                source_ids JSON NOT NULL,
+                provenance JSON NOT NULL,
+                resolved_at TIMESTAMPTZ NOT NULL,
+                CONSTRAINT ck_honest_binding_kind_payload_consistent CHECK (
+                    (binding_kind IN ('release','task_schema')
+                     AND migration_id IS NULL
+                     AND source_schema_version IS NULL
+                     AND target_schema_version IS NULL
+                     AND migration_metadata_sha256 IS NULL)
+                    OR
+                    (binding_kind = 'migration'
+                     AND migration_id IS NOT NULL
+                     AND source_schema_version IS NOT NULL
+                     AND target_schema_version IS NOT NULL
+                     AND migration_metadata_sha256 IS NOT NULL)
+                ),
+                CONSTRAINT uq_honest_binding_exact_identity UNIQUE (
+                    binding_kind,
+                    protocol_sha256,
+                    schema_sha256,
+                    migration_id,
+                    migration_metadata_sha256
+                )
+            )
+            """
+        )
+        connection.commit()
+    command.stamp(config, "0015_verification_cycle_sequence")
+    return config
+
+
+def _insert_honest_binding(
+    connection,
+    *,
+    binding_id: uuid.UUID,
+    source_identity: str,
+    protocol_sha256: str,
+    schema_sha256: str,
+    migration_id: str | None = None,
+    migration_metadata_sha256: str | None = None,
+) -> None:
+    binding_kind = "migration" if migration_id is not None else "release"
+    source_schema_version = "v1" if migration_id is not None else None
+    target_schema_version = "v2" if migration_id is not None else None
+    connection.execute(
+        """
+        INSERT INTO honest_contract_bindings (
+            binding_id, binding_kind, source_identity, dish_release,
+            honest_release, protocol_release, protocol_sha256,
+            schema_release, schema_sha256, migration_id,
+            source_schema_version, target_schema_version,
+            migration_metadata_sha256, source_ids, provenance, resolved_at
+        ) VALUES (
+            %s, %s, %s, 'dish-test', 'honest-test', 'protocol-test', %s,
+            'schema-test', %s, %s, %s, %s, %s, '{}'::json, '{}'::json, %s
+        )
+        """,
+        (
+            binding_id,
+            binding_kind,
+            source_identity,
+            protocol_sha256,
+            schema_sha256,
+            migration_id,
+            source_schema_version,
+            target_schema_version,
+            migration_metadata_sha256,
+            datetime.now(timezone.utc),
+        ),
+    )
+
+
+def test_pglite_honest_binding_upgrade_enforces_null_safe_exact_identity(pglite) -> None:
+    config = _install_honest_binding_predecessor(pglite)
+    protocol_hash = "1" * 64
+    schema_hash = "2" * 64
+    with psycopg.connect(pglite.libpq_dsn) as connection:
+        _insert_honest_binding(
+            connection,
+            binding_id=uuid.uuid4(),
+            source_identity="valid-predecessor-release",
+            protocol_sha256=protocol_hash,
+            schema_sha256=schema_hash,
+        )
+        _insert_honest_binding(
+            connection,
+            binding_id=uuid.uuid4(),
+            source_identity="valid-predecessor-migration",
+            protocol_sha256=protocol_hash,
+            schema_sha256=schema_hash,
+            migration_id="migration-v1-v2",
+            migration_metadata_sha256="3" * 64,
+        )
+        connection.commit()
+
+    command.upgrade(config, "0016_honest_binding_null_identity")
+
+    # Reuse one post-upgrade connection because PGlite's TCP shim can become
+    # unavailable between rapid reconnects. The expected violation remains the
+    # final database action because it can invalidate the current connection.
+    connection = psycopg.connect(pglite.libpq_dsn)
+    try:
+        definition = connection.execute(
+            """
+            SELECT indexdef
+            FROM pg_indexes
+            WHERE schemaname = 'public'
+              AND indexname = 'uq_honest_binding_null_identity'
+            """
+        ).fetchone()[0]
+        assert "UNIQUE INDEX" in definition
+        assert "migration_id IS NULL" in definition
+        assert "migration_metadata_sha256 IS NULL" in definition
+        _insert_honest_binding(
+            connection,
+            binding_id=uuid.uuid4(),
+            source_identity="genuinely-distinct-protocol",
+            protocol_sha256="4" * 64,
+            schema_sha256=schema_hash,
+        )
+        _insert_honest_binding(
+            connection,
+            binding_id=uuid.uuid4(),
+            source_identity="genuinely-distinct-migration",
+            protocol_sha256=protocol_hash,
+            schema_sha256=schema_hash,
+            migration_id="migration-v2-v3",
+            migration_metadata_sha256="5" * 64,
+        )
+        connection.commit()
+        assert connection.execute(
+            "SELECT count(*) FROM honest_contract_bindings"
+        ).fetchone()[0] == 4
+        connection.commit()
+        connection.autocommit = True
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            _insert_honest_binding(
+                connection,
+                binding_id=uuid.uuid4(),
+                source_identity="same-logical-identity-different-source",
+                protocol_sha256=protocol_hash,
+                schema_sha256=schema_hash,
+            )
+    finally:
+        connection.close()
+
+
+def test_pglite_honest_binding_upgrade_rejects_conflicting_predecessor_data(pglite) -> None:
+    config = _install_honest_binding_predecessor(pglite)
+    with psycopg.connect(pglite.libpq_dsn) as connection:
+        for source_identity in ("predecessor-duplicate-a", "predecessor-duplicate-b"):
+            _insert_honest_binding(
+                connection,
+                binding_id=uuid.uuid4(),
+                source_identity=source_identity,
+                protocol_sha256="6" * 64,
+                schema_sha256="7" * 64,
+            )
+        connection.commit()
+
+    with pytest.raises(
+        RuntimeError,
+        match="predecessor data contains duplicate exact identity",
+    ):
+        command.upgrade(config, "0016_honest_binding_null_identity")

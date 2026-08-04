@@ -267,6 +267,19 @@ class HonestContractBinding(Base):
             "migration_metadata_sha256",
             name="uq_honest_binding_exact_identity",
         ),
+        Index(
+            "uq_honest_binding_null_identity",
+            "binding_kind",
+            "protocol_sha256",
+            "schema_sha256",
+            unique=True,
+            postgresql_where=text(
+                "migration_id IS NULL AND migration_metadata_sha256 IS NULL"
+            ),
+            sqlite_where=text(
+                "migration_id IS NULL AND migration_metadata_sha256 IS NULL"
+            ),
+        ),
     )
 
 

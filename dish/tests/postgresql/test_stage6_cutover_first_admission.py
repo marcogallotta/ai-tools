@@ -78,14 +78,6 @@ def _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fenc
             verified_at=NOW + timedelta(minutes=5),
         )
         service.mark_fenced(cutover_run_id=cutover_id, recorded_at=NOW + timedelta(minutes=5))
-        service.recertify_candidate(
-            candidate_id=candidate_id,
-            closure_id=closure_id,
-            approver="Marco",
-            recertification_statement="Confirm final closure after writer fencing.",
-            payload={"cutover_run_id": str(cutover_id)},
-            recertified_at=NOW + timedelta(minutes=5),
-        )
         service.activate_authority(
             cutover_run_id=cutover_id,
             final_asana_closure_id=closure_id,
@@ -380,6 +372,6 @@ def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: P
         assert "trim(legacy_bundle_id)" in checks[
             "ck_authority_activations_legacy_bundle_nonblank"
         ]
-        assert ALEMBIC_HEAD == "0015_verification_cycle_sequence"
+        assert ALEMBIC_HEAD == "0016_honest_binding_null_identity"
     finally:
         engine.dispose()
