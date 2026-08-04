@@ -765,7 +765,7 @@ def run_dark_launch_control(ctx: RuntimeContext, action: str, path: Path, *, rea
 
 
 def create_fresh_baseline(ctx: RuntimeContext) -> dict[str, Any]:
-    from sqlalchemy import select, text
+    from sqlalchemy import func, select, text
 
     from dish_pg import models
     from dish_pg import stage5_models as tx
@@ -806,6 +806,31 @@ def create_fresh_baseline(ctx: RuntimeContext) -> dict[str, Any]:
             if enabled_epochs:
                 raise RehearsalError(
                     "refusing rehearsal while the active TEST projection epoch allows external effects"
+                )
+            stale_baseline = session.scalar(
+                select(tx.ShadowBaseline).where(
+                    tx.ShadowBaseline.generation_id == generation.generation_id,
+                    tx.ShadowBaseline.status == "open",
+                )
+            )
+            if stale_baseline is not None:
+                has_captured_envelopes = bool(
+                    session.scalar(
+                        select(func.count())
+                        .select_from(tx.ShadowEnvelope)
+                        .where(tx.ShadowEnvelope.shadow_baseline_id == stale_baseline.shadow_baseline_id)
+                    )
+                )
+                if has_captured_envelopes:
+                    raise RehearsalError(
+                        "refusing to start rehearsal: baseline "
+                        f"{stale_baseline.shadow_baseline_id} is open on this generation and has "
+                        "captured envelopes; inspect and retire it explicitly before rerunning"
+                    )
+                ShadowService(session).disqualify_baseline(
+                    baseline_id=stale_baseline.shadow_baseline_id,
+                    reason="stale rehearsal baseline retired before starting a fresh capture run",
+                    at=datetime.now(timezone.utc),
                 )
             baseline = ShadowService(session).create_baseline(
                 generation_id=generation.generation_id,
