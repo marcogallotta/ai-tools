@@ -267,6 +267,32 @@ def active_generation_and_baseline(
                 tx.ShadowBaseline.status == "open",
             )
         )
+        if baseline is not None:
+            has_failed_delivery = bool(
+                session.scalar(
+                    select(func.count())
+                    .select_from(tx.ShadowDelivery)
+                    .join(
+                        tx.ShadowEnvelope,
+                        tx.ShadowEnvelope.envelope_id == tx.ShadowDelivery.envelope_id,
+                    )
+                    .where(
+                        tx.ShadowEnvelope.shadow_baseline_id
+                        == baseline.shadow_baseline_id,
+                        tx.ShadowDelivery.state == "failed",
+                    )
+                )
+            )
+            if has_failed_delivery:
+                ShadowService(session).disqualify_baseline(
+                    baseline_id=baseline.shadow_baseline_id,
+                    reason=(
+                        "reused certification baseline has a terminally failed "
+                        f"delivery; retiring to unblock rollout_sequence ({run_marker})"
+                    ),
+                    at=utcnow(),
+                )
+                baseline = None
         epoch = ProjectionService(session).activate_epoch(
             generation_id=generation.generation_id,
             activation_reason=f"shadow-worker restart certification {run_marker}",
