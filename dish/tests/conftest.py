@@ -469,6 +469,43 @@ def require_native_postgresql(request):
     return request.getfixturevalue("native_postgresql_identity")
 
 
+@pytest.fixture
+def sqlite_migration_database(tmp_path):
+    from tests.support.postgresql.migrations import MigrationDatabase
+
+    return MigrationDatabase(
+        sqlalchemy_url=f"sqlite+pysqlite:///{tmp_path / 'migration.sqlite3'}",
+        expected_dialect="sqlite",
+        certification_evidence=False,
+        lane="sqlite_compatibility",
+    )
+
+
+@pytest.fixture
+def pglite_migration_database(pglite):
+    from tests.support.postgresql.migrations import MigrationDatabase
+
+    return MigrationDatabase(
+        sqlalchemy_url=pglite.sqlalchemy_url,
+        expected_dialect="postgresql",
+        certification_evidence=False,
+        lane="pglite_development",
+    )
+
+
+@pytest.fixture
+def native_migration_database(request, native_postgresql_identity):
+    from tests.support.postgresql.certification import postgresql_dsn
+    from tests.support.postgresql.migrations import MigrationDatabase
+
+    return MigrationDatabase(
+        sqlalchemy_url=postgresql_dsn(),
+        expected_dialect="postgresql",
+        certification_evidence=True,
+        lane="native_postgresql_certification",
+    )
+
+
 def _load_cli_module():
     loader = SourceFileLoader("asana_cli_under_test", str(CLI_PATH))
     spec = importlib.util.spec_from_loader(loader.name, loader)

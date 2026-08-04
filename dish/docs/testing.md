@@ -391,3 +391,7 @@ Reusable fixtures, stateful fakes, workflow builders, and scenario helpers live 
 pytest configuration, and the dedicated flake/mutation runners. A structural contract
 rejects new root-level helper modules so support ownership cannot drift back into an
 accidental second namespace.
+
+### Populated-predecessor migration framework
+
+Reusable migration-lane support lives in `tests/support/postgresql/migrations.py`; migration-specific seed/assertion examples are in `projection_attempt_migration.py` and `honest_binding_migration.py`. See `tests/support/postgresql/MIGRATIONS.md` for the Agent A integration contract. SQLite remains compatibility evidence, PGlite remains development evidence, and only the native fixture is certification evidence.

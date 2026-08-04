@@ -100,6 +100,9 @@ def probe_native_postgresql(dsn: str | None = None) -> NativePostgreSQLIdentity:
 # collection drift instead of deriving the required set from production or pytest.
 NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY = (
     "tests/postgresql/native/test_importer.py::test_importer_persists_real_records_against_real_postgresql",
+    "tests/postgresql/native/test_native_honest_binding_populated_migration.py::test_native_postgresql_populated_honest_binding_upgrade_enforces_identity",
+    "tests/postgresql/native/test_native_honest_binding_populated_migration.py::test_native_postgresql_populated_honest_binding_upgrade_rejects_conflicts",
+    "tests/postgresql/native/test_native_populated_migrations.py::test_native_postgresql_upgrades_populated_projection_attempt_predecessor",
     "tests/postgresql/native/test_operation_discard_prepare_concurrency.py::test_native_discard_commits_before_prepare_lock_and_leaves_no_actionable_intent",
     "tests/postgresql/native/test_operation_discard_prepare_concurrency.py::test_native_prepare_commits_before_discard_lock_and_discard_cannot_cancel",
     "tests/postgresql/native/test_projection_attempt_concurrency.py::test_native_stale_settlement_races_current_owner_and_cannot_change_terminal_state",
