@@ -283,8 +283,6 @@ class PostgresCommandPort:
                 now=call.now,
                 ttl=timedelta(minutes=2),
             )
-            if operation is not None and call.command_name in {"prepare", "discard"}:
-                operation = self._lock_operation_transition(operation.operation_id)
             if task is not None:
                 self.workflow.repo.capture_task_fence(
                     execution_id=execution_id,
@@ -1250,7 +1248,7 @@ class PostgresCommandPort:
             wf.WorkflowOperation.operation_id == operation_id
         )
         if self.session.get_bind().dialect.name == "postgresql":
-            statement = statement.with_for_update(key_share=True)
+            statement = statement.with_for_update()
         operation = self.session.scalar(
             statement.execution_options(populate_existing=True)
         )
@@ -1262,6 +1260,7 @@ class PostgresCommandPort:
 
     def _prepare(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
+        operation = self._lock_operation_transition(operation.operation_id)
         if operation.lifecycle != "open":
             raise CommandRuleError(
                 "OPEN_OPERATION_REQUIRED", "prepare requires an open operation"
@@ -1928,6 +1927,7 @@ class PostgresCommandPort:
 
     def _discard(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
+        operation = self._lock_operation_transition(operation.operation_id)
         self.workflow.repo.assert_task_fence(execution.execution_id)
         self.workflow.repo.assert_operation_fence(execution.execution_id)
         if operation.lifecycle != "open":
@@ -2933,9 +2933,35 @@ class PostgresCommandPort:
         self._terminalize_lease(lease, "released", execution, call.now, reason)
 
     def _terminalize_lease(self, lease, state, execution, at, reason) -> None:
+        if state not in {"released", "expired", "recovered"}:
+            raise ValueError(f"unsupported lease terminal state: {state}")
+        if lease.state != "active":
+            if lease.state == state:
+                return
+            raise CommandRuleError(
+                "LEASE_ALREADY_TERMINAL",
+                "lease is already terminal with a different durable state",
+                data={"lease_id": str(lease.lease_id), "state": lease.state},
+            )
         prior_revision, prior_expiry = lease.lease_revision, lease.expires_at
-        lease.state, lease.lease_revision, lease.terminal_at = state, prior_revision + 1, at
-        self.session.add(wf.LeaseEvent(lease_event_id=self.uuid_factory(), lease_id=lease.lease_id, event_kind="released", request_id=execution.request_id, command_execution_id=execution.execution_id, prior_revision=prior_revision, resulting_revision=prior_revision + 1, prior_expiry=prior_expiry, resulting_expiry=prior_expiry, reason=reason, occurred_at=at))
+        lease.state = state
+        lease.lease_revision = prior_revision + 1
+        lease.terminal_at = at
+        self.session.add(
+            wf.LeaseEvent(
+                lease_event_id=self.uuid_factory(),
+                lease_id=lease.lease_id,
+                event_kind=state,
+                request_id=execution.request_id,
+                command_execution_id=execution.execution_id,
+                prior_revision=prior_revision,
+                resulting_revision=prior_revision + 1,
+                prior_expiry=prior_expiry,
+                resulting_expiry=prior_expiry,
+                reason=reason,
+                occurred_at=at,
+            )
+        )
 
     def _assert_committed_effects(
         self,
