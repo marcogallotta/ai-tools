@@ -19,6 +19,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
     event,
+    false,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -144,9 +145,9 @@ class ShadowEnvelope(Base):
     source_pre_state_sha256: Mapped[str | None] = mapped_column(String(64))
     pinned_inputs: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
     source_effects: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
-    capture_qualification: Mapped[str] = mapped_column(String(24), nullable=False, default="legacy")
+    capture_qualification: Mapped[str] = mapped_column(String(24), nullable=False, default="legacy", server_default=text("'legacy'"))
     source_post_state_sha256: Mapped[str | None] = mapped_column(String(64))
-    envelope_schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    envelope_schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default=text("1"))
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
@@ -284,7 +285,7 @@ class ProjectionEpoch(Base):
     epoch_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     activation_reason: Mapped[str] = mapped_column(Text, nullable=False)
-    external_effects_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    external_effects_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default=false())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -459,7 +460,7 @@ class ProjectionOutboxEvent(Base):
         Uuid, ForeignKey("projection_epochs.projection_epoch_id", ondelete="RESTRICT"), nullable=False
     )
     source_route: Mapped[str] = mapped_column(String(16), nullable=False)
-    origin: Mapped[str] = mapped_column(String(16), nullable=False, default="live")
+    origin: Mapped[str] = mapped_column(String(16), nullable=False, default="live", server_default=text("'live'"))
     command_execution_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("command_executions.execution_id", ondelete="RESTRICT")
     )

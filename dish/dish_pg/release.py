@@ -43,7 +43,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0018_projection_attempt_lifecycle"
+ALEMBIC_HEAD = "0027_server_default_alignment"
 
 
 class ReleaseCandidateService(
