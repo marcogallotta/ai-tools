@@ -690,6 +690,134 @@ class ProjectionService:
         self.session = session
         self.uuid_factory = uuid_factory
 
+    def _lock_epoch(
+        self,
+        projection_epoch_id: uuid.UUID,
+        *,
+        shared: bool,
+    ) -> tx.ProjectionEpoch | None:
+        statement = select(tx.ProjectionEpoch).where(
+            tx.ProjectionEpoch.projection_epoch_id == projection_epoch_id
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update(read=shared)
+            statement = statement.execution_options(populate_existing=True)
+        return self.session.scalar(statement)
+
+    def _active_epoch_for_generation(
+        self,
+        generation_id: uuid.UUID,
+        *,
+        shared: bool,
+    ) -> tx.ProjectionEpoch | None:
+        statement = select(tx.ProjectionEpoch).where(
+            tx.ProjectionEpoch.generation_id == generation_id,
+            tx.ProjectionEpoch.status == "active",
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update(read=shared)
+            statement = statement.execution_options(populate_existing=True)
+        return self.session.scalar(statement)
+
+    def _event_epoch_id(self, event_id: uuid.UUID) -> uuid.UUID | None:
+        return self.session.scalar(
+            select(tx.ProjectionOutboxEvent.projection_epoch_id).where(
+                tx.ProjectionOutboxEvent.projection_event_id == event_id
+            )
+        )
+
+    def _lock_event_path(
+        self,
+        event_id: uuid.UUID,
+    ) -> tuple[tx.ProjectionEpoch, tx.ProjectionOutboxEvent]:
+        projection_epoch_id = self._event_epoch_id(event_id)
+        if projection_epoch_id is None:
+            raise TransitionAuthorityError("unknown projection event")
+        epoch = self._lock_epoch(projection_epoch_id, shared=True)
+        if epoch is None:
+            raise TransitionAuthorityError("projection event has no epoch authority")
+        event = self._lock_event(event_id)
+        if event.projection_epoch_id != epoch.projection_epoch_id:
+            raise TransitionAuthorityError("projection event epoch changed while locking")
+        return epoch, event
+
+    def _lock_attempt(
+        self,
+        attempt_id: uuid.UUID,
+    ) -> tx.ProjectionAttempt | None:
+        statement = select(tx.ProjectionAttempt).where(
+            tx.ProjectionAttempt.attempt_id == attempt_id
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update()
+            statement = statement.execution_options(populate_existing=True)
+        return self.session.scalar(statement)
+
+    def _lock_attempt_path(
+        self,
+        attempt_id: uuid.UUID,
+    ) -> tuple[tx.ProjectionEpoch, tx.ProjectionOutboxEvent, tx.ProjectionAttempt]:
+        event_id = self.session.scalar(
+            select(tx.ProjectionAttempt.projection_event_id).where(
+                tx.ProjectionAttempt.attempt_id == attempt_id
+            )
+        )
+        if event_id is None:
+            raise TransitionAuthorityError("unknown projection attempt")
+        epoch, event = self._lock_event_path(event_id)
+        attempt = self._lock_attempt(attempt_id)
+        if attempt is None or attempt.projection_event_id != event.projection_event_id:
+            raise TransitionAuthorityError("projection attempt authority changed while locking")
+        return epoch, event, attempt
+
+    def _latest_attempt(
+        self,
+        event_id: uuid.UUID,
+        *,
+        for_update: bool,
+    ) -> tx.ProjectionAttempt | None:
+        statement = (
+            select(tx.ProjectionAttempt)
+            .where(tx.ProjectionAttempt.projection_event_id == event_id)
+            .order_by(tx.ProjectionAttempt.attempt_number.desc())
+            .limit(1)
+        )
+        if for_update and self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update()
+            statement = statement.execution_options(populate_existing=True)
+        return self.session.scalar(statement)
+
+    def _claim_candidates(self, *, now: datetime) -> list[tx.ProjectionOutboxEvent]:
+        return self.session.scalars(
+            select(tx.ProjectionOutboxEvent)
+            .join(
+                tx.ProjectionEpoch,
+                tx.ProjectionEpoch.projection_epoch_id
+                == tx.ProjectionOutboxEvent.projection_epoch_id,
+            )
+            .join(
+                models.AuthorityGeneration,
+                models.AuthorityGeneration.generation_id
+                == tx.ProjectionOutboxEvent.generation_id,
+            )
+            .where(
+                tx.ProjectionEpoch.status == "active",
+                tx.ProjectionEpoch.external_effects_enabled.is_(True),
+                tx.ProjectionOutboxEvent.origin == "live",
+                models.AuthorityGeneration.status == "active",
+                (tx.ProjectionOutboxEvent.state == "pending")
+                | (
+                    (tx.ProjectionOutboxEvent.state == "claimed")
+                    & (tx.ProjectionOutboxEvent.claim_expires_at <= now)
+                ),
+            )
+            .order_by(
+                tx.ProjectionOutboxEvent.created_at,
+                tx.ProjectionOutboxEvent.task_id,
+                tx.ProjectionOutboxEvent.aggregate_sequence,
+            )
+        ).all()
+
     def activate_epoch(
         self,
         *,
@@ -747,7 +875,7 @@ class ProjectionService:
         decision and cannot be inferred from epoch activation.
         """
 
-        epoch = self.session.get(tx.ProjectionEpoch, projection_epoch_id)
+        epoch = self._lock_epoch(projection_epoch_id, shared=False)
         if epoch is None or epoch.status != "active":
             raise TransitionAuthorityError("projection epoch is not active")
         if not str(reason).strip():
@@ -757,7 +885,7 @@ class ProjectionService:
         return epoch
 
     def retire_epoch(self, *, projection_epoch_id: uuid.UUID, retired_at: datetime) -> None:
-        epoch = self.session.get(tx.ProjectionEpoch, projection_epoch_id)
+        epoch = self._lock_epoch(projection_epoch_id, shared=False)
         if epoch is None or epoch.status != "active":
             raise TransitionAuthorityError("projection epoch is not active")
         epoch.status = "retired"
@@ -777,12 +905,15 @@ class ProjectionService:
                 mapping.state = "retired"
                 mapping.mapping_revision += 1
                 mapping.retired_at = retired_at
-        events = self.session.scalars(
-            select(tx.ProjectionOutboxEvent).where(
-                tx.ProjectionOutboxEvent.projection_epoch_id == projection_epoch_id,
-                tx.ProjectionOutboxEvent.state.not_in(("applied", "superseded")),
+        event_statement = select(tx.ProjectionOutboxEvent).where(
+            tx.ProjectionOutboxEvent.projection_epoch_id == projection_epoch_id,
+            tx.ProjectionOutboxEvent.state.not_in(("applied", "superseded")),
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            event_statement = event_statement.with_for_update().execution_options(
+                populate_existing=True
             )
-        ).all()
+        events = self.session.scalars(event_statement).all()
         for event in events:
             event.state = "superseded"
             event.claim_owner = None
@@ -790,12 +921,15 @@ class ProjectionService:
             event.claim_expires_at = None
             event.outbox_revision += 1
             event.terminal_at = retired_at
-            attempts = self.session.scalars(
-                select(tx.ProjectionAttempt).where(
-                    tx.ProjectionAttempt.projection_event_id == event.projection_event_id,
-                    tx.ProjectionAttempt.state.in_(("dispatched", "uncertain", "blocked")),
+            attempt_statement = select(tx.ProjectionAttempt).where(
+                tx.ProjectionAttempt.projection_event_id == event.projection_event_id,
+                tx.ProjectionAttempt.state.in_(("dispatched", "uncertain", "blocked")),
+            )
+            if self.session.get_bind().dialect.name == "postgresql":
+                attempt_statement = attempt_statement.with_for_update().execution_options(
+                    populate_existing=True
                 )
-            ).all()
+            attempts = self.session.scalars(attempt_statement).all()
             for attempt in attempts:
                 attempt.state = "blocked"
                 attempt.terminal_at = retired_at
@@ -835,12 +969,7 @@ class ProjectionService:
         origin: str,
         created_at: datetime,
     ) -> tx.ProjectionOutboxEvent:
-        epoch = self.session.scalar(
-            select(tx.ProjectionEpoch).where(
-                tx.ProjectionEpoch.generation_id == generation_id,
-                tx.ProjectionEpoch.status == "active",
-            )
-        )
+        epoch = self._active_epoch_for_generation(generation_id, shared=True)
         if epoch is None:
             raise TransitionAuthorityError("no active projection epoch")
         if origin not in {"live", "shadow"}:
@@ -1193,36 +1322,40 @@ class ProjectionService:
         now: datetime,
         ttl: timedelta,
     ) -> ProjectionClaim | None:
-        candidates = self.session.scalars(
-            select(tx.ProjectionOutboxEvent)
-            .join(
-                tx.ProjectionEpoch,
-                tx.ProjectionEpoch.projection_epoch_id
-                == tx.ProjectionOutboxEvent.projection_epoch_id,
-            )
-            .join(
+        for candidate in self._claim_candidates(now=now):
+            epoch = self._lock_epoch(candidate.projection_epoch_id, shared=True)
+            if (
+                epoch is None
+                or epoch.status != "active"
+                or not epoch.external_effects_enabled
+            ):
+                continue
+            generation = self.session.get(
                 models.AuthorityGeneration,
-                models.AuthorityGeneration.generation_id
-                == tx.ProjectionOutboxEvent.generation_id,
+                candidate.generation_id,
+                populate_existing=True,
             )
-            .where(
-                tx.ProjectionEpoch.status == "active",
-                tx.ProjectionEpoch.external_effects_enabled.is_(True),
-                tx.ProjectionOutboxEvent.origin == "live",
-                models.AuthorityGeneration.status == "active",
-                (tx.ProjectionOutboxEvent.state == "pending")
-                | (
-                    (tx.ProjectionOutboxEvent.state == "claimed")
-                    & (tx.ProjectionOutboxEvent.claim_expires_at <= now)
-                ),
-            )
-            .order_by(
-                tx.ProjectionOutboxEvent.created_at,
-                tx.ProjectionOutboxEvent.task_id,
-                tx.ProjectionOutboxEvent.aggregate_sequence,
-            )
-        ).all()
-        for event in candidates:
+            if generation is None or generation.status != "active":
+                continue
+            event = self._lock_event(candidate.projection_event_id)
+            if (
+                event.projection_epoch_id != epoch.projection_epoch_id
+                or event.origin != "live"
+                or event.generation_id != generation.generation_id
+            ):
+                continue
+            if event.state == "pending":
+                if event.claim_expires_at is not None:
+                    continue
+            elif event.state == "claimed":
+                if (
+                    event.claim_expires_at is None
+                    or self._utc_comparable(event.claim_expires_at)
+                    > self._utc_comparable(now)
+                ):
+                    continue
+            else:
+                continue
             blockers = self.session.scalar(
                 select(func.count()).select_from(tx.ProjectionOutboxEvent).where(
                     tx.ProjectionOutboxEvent.generation_id == event.generation_id,
@@ -1235,38 +1368,17 @@ class ProjectionService:
             if blockers:
                 continue
             token = self.uuid_factory()
-            revision, prior_state = event.outbox_revision, event.state
             claim_expiry = now + ttl
-            result = self.session.execute(
-                update(tx.ProjectionOutboxEvent)
-                .where(
-                    tx.ProjectionOutboxEvent.projection_event_id == event.projection_event_id,
-                    tx.ProjectionOutboxEvent.outbox_revision == revision,
-                    tx.ProjectionOutboxEvent.state == prior_state,
-                    (tx.ProjectionOutboxEvent.claim_expires_at <= now)
-                    if prior_state == "claimed"
-                    else tx.ProjectionOutboxEvent.claim_expires_at.is_(None),
-                )
-                .values(
-                    state="claimed",
-                    claim_owner=worker_id,
-                    claim_token=token,
-                    claim_expires_at=claim_expiry,
-                    outbox_revision=revision + 1,
-                    terminal_at=None,
-                )
-                .execution_options(synchronize_session=False)
-            )
-            if result.rowcount != 1:
-                continue
+            event.state = "claimed"
+            event.claim_owner = worker_id
+            event.claim_token = token
+            event.claim_expires_at = claim_expiry
+            event.outbox_revision += 1
+            event.terminal_at = None
             self.session.flush()
-            latest = self.session.scalar(
-                select(tx.ProjectionAttempt)
-                .where(
-                    tx.ProjectionAttempt.projection_event_id == event.projection_event_id
-                )
-                .order_by(tx.ProjectionAttempt.attempt_number.desc())
-                .limit(1)
+            latest = self._latest_attempt(
+                event.projection_event_id,
+                for_update=False,
             )
             recovery = None
             if latest is not None and latest.state == "dispatched":
@@ -1294,7 +1406,7 @@ class ProjectionService:
             return ProjectionClaim(
                 event.projection_event_id,
                 token,
-                revision + 1,
+                event.outbox_revision,
                 claim_expiry,
                 event.task_id,
                 event.aggregate_sequence,
@@ -1317,7 +1429,7 @@ class ProjectionService:
         intended_external_id: str | None,
         started_at: datetime,
     ) -> tx.ProjectionAttempt:
-        event = self._lock_event(event_id)
+        epoch, event = self._lock_event_path(event_id)
         self._assert_worker_claim(
             event=event,
             claim_token=claim_token,
@@ -1325,21 +1437,15 @@ class ProjectionService:
             worker_id=worker_id,
             at=started_at,
         )
-        epoch = self.session.get(tx.ProjectionEpoch, event.projection_epoch_id)
         generation = self.session.get(models.AuthorityGeneration, event.generation_id)
         if (
-            epoch is None
-            or epoch.status != "active"
+            epoch.status != "active"
+            or not epoch.external_effects_enabled
             or generation is None
             or generation.status != "active"
         ):
             raise TransitionAuthorityError("stale projection epoch cannot dispatch an attempt")
-        latest = self.session.scalar(
-            select(tx.ProjectionAttempt)
-            .where(tx.ProjectionAttempt.projection_event_id == event_id)
-            .order_by(tx.ProjectionAttempt.attempt_number.desc())
-            .limit(1)
-        )
+        latest = self._latest_attempt(event_id, for_update=True)
         if latest is not None and latest.state == "dispatched":
             raise TransitionAuthorityError(
                 "projection recovery observation is required before another dispatch"
@@ -1389,7 +1495,7 @@ class ProjectionService:
         prior_attempt_id: uuid.UUID,
         started_at: datetime,
     ) -> tx.ProjectionAttempt:
-        event = self._lock_event(event_id)
+        _epoch, event = self._lock_event_path(event_id)
         self._assert_worker_claim(
             event=event,
             claim_token=claim_token,
@@ -1397,7 +1503,7 @@ class ProjectionService:
             worker_id=worker_id,
             at=started_at,
         )
-        prior = self.session.get(tx.ProjectionAttempt, prior_attempt_id)
+        prior = self._lock_attempt(prior_attempt_id)
         if (
             prior is None
             or prior.projection_event_id != event_id
@@ -1406,7 +1512,7 @@ class ProjectionService:
             raise TransitionAuthorityError("projection recovery requires the exact active attempt")
         dispatch = prior
         if prior.attempt_kind == "recovery":
-            dispatch = self.session.get(tx.ProjectionAttempt, prior.predecessor_attempt_id)
+            dispatch = self._lock_attempt(prior.predecessor_attempt_id)
             if dispatch is None or dispatch.attempt_kind != "dispatch":
                 raise TransitionAuthorityError(
                     "active recovery attempt lacks its immutable dispatch predecessor"
@@ -1472,10 +1578,9 @@ class ProjectionService:
         claim_revision: int | None = None,
         worker_id: str | None = None,
     ) -> tx.ProjectionAdjudication:
-        attempt = self.session.get(tx.ProjectionAttempt, attempt_id)
-        if attempt is None or attempt.state != "dispatched":
+        _epoch, event, attempt = self._lock_attempt_path(attempt_id)
+        if attempt.state != "dispatched":
             raise TransitionAuthorityError("projection attempt is not active")
-        event = self._lock_event(attempt.projection_event_id)
         if decided_by == "automatic":
             if claim_token is None or claim_revision is None or worker_id is None:
                 raise TransitionAuthorityError("automatic settlement requires current claim authority")
@@ -1629,7 +1734,7 @@ class ProjectionService:
         claim_revision: int,
         worker_id: str,
     ) -> tx.ProjectionCreateCorrelation:
-        event = self._lock_event(event_id)
+        epoch, event = self._lock_event_path(event_id)
         self._assert_worker_claim(
             event=event,
             claim_token=claim_token,
@@ -1649,7 +1754,7 @@ class ProjectionService:
             if len(matches) == 1 and matches[0] == correlation.matched_external_id:
                 return correlation
             raise TransitionAuthorityError("bound create correlation cannot be rebound")
-        attempt = self.session.get(tx.ProjectionAttempt, attempt_id)
+        attempt = self._lock_attempt(attempt_id)
         if (
             attempt is None
             or attempt.projection_event_id != event_id
@@ -1674,7 +1779,8 @@ class ProjectionService:
             external_id = matches[0]
             if not external_id.isdigit() or external_id.startswith("0"):
                 raise TransitionAuthorityError("Asana correlation match must be a canonical GID")
-            epoch = self._active_epoch(event.generation_id)
+            if epoch.status != "active":
+                raise TransitionAuthorityError("active projection epoch is required")
             alias = models.TaskExternalAlias(
                 alias_id=self.uuid_factory(),
                 task_id=event.task_id,
@@ -1720,12 +1826,11 @@ class ProjectionService:
     ) -> Mapping[str, Any]:
         if route not in {"recover", "repair-destination"}:
             raise TransitionAuthorityError("unknown projection recovery route")
-        prior = self.session.get(tx.ProjectionAttempt, attempt_id)
-        if prior is None or prior.state not in {"uncertain", "blocked"}:
+        _epoch, event, prior = self._lock_attempt_path(attempt_id)
+        if prior.state not in {"uncertain", "blocked"}:
             raise TransitionAuthorityError(
                 "recover targets one exact terminal uncertain or blocked attempt"
             )
-        event = self._lock_event(prior.projection_event_id)
         if (
             event.state not in {"uncertain", "blocked"}
             or event.claim_owner is not None

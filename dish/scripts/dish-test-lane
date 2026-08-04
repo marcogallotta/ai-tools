@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""Run one named Dish test lane with phase-level reporting."""
+from __future__ import annotations
+
+import argparse
+import os
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Mapping, Sequence
+
+ROOT = Path(__file__).resolve().parents[1]
+PYTHON = str(ROOT / ".venv" / "bin" / "python")
+if not Path(PYTHON).exists():
+    PYTHON = sys.executable
+
+
+@dataclass(frozen=True)
+class Phase:
+    name: str
+    command: tuple[str, ...]
+    required_env: tuple[str, ...] = ()
+
+
+LANES: Mapping[str, tuple[Phase, ...]] = {
+    "schema-migrations": (
+        Phase(
+            "focused schema and migration contracts",
+            (
+                PYTHON,
+                "-m",
+                "pytest",
+                "-q",
+                "tests/postgresql/test_frozen_migration_history.py",
+                "tests/postgresql/test_initial_bootstrap.py",
+                "tests/postgresql/test_projection_attempt_migration.py",
+                "tests/postgresql/test_honest_binding_populated_migration.py",
+            ),
+        ),
+        Phase(
+            "SQLite database-boundary migration evidence",
+            (PYTHON, "-m", "pytest", "--database-boundary"),
+        ),
+    ),
+    "pglite": (
+        Phase(
+            "PGlite primary and quarantine accounting",
+            (
+                PYTHON,
+                "scripts/dish-pg-pglite",
+                "--output",
+                ".test-artifacts/pglite/report.json",
+            ),
+        ),
+    ),
+    "native-concurrency": (
+        Phase(
+            "native PostgreSQL concurrency contracts",
+            (
+                PYTHON,
+                "-m",
+                "pytest",
+                "--postgresql",
+                "-q",
+                "tests/postgresql/native/test_first_request_reservation_single_gate.py",
+                "tests/postgresql/native/test_operation_discard_prepare_concurrency.py",
+                "tests/postgresql/native/test_projection_attempt_concurrency.py",
+                "tests/postgresql/native/test_stage_a_concurrency.py",
+            ),
+            required_env=("DISH_TEST_POSTGRESQL_DSN",),
+        ),
+    ),
+    "release-cutover": (
+        Phase(
+            "release and cutover contracts",
+            (
+                PYTHON,
+                "-m",
+                "pytest",
+                "-q",
+                "tests/postgresql/test_release_evidence_contracts.py",
+                "tests/postgresql/test_release_oracle_independence.py",
+                "tests/postgresql/test_stage6_candidate_replacement.py",
+                "tests/postgresql/test_stage6_cutover_first_admission.py",
+                "tests/postgresql/test_stage6_legacy_writer_fence.py",
+                "tests/postgresql/test_stage6_reconciliation_membership.py",
+                "tests/postgresql/test_stage6_release_chronology.py",
+                "tests/postgresql/test_stage6_release_cutover.py",
+                "tests/postgresql/test_stage6_release_filesystem_recovery.py",
+                "tests/postgresql/test_stage7_final_asana_closure.py",
+                "tests/postgresql/test_stage8_cutover_evidence_gates.py",
+            ),
+        ),
+    ),
+    "command-api-contracts": (
+        Phase(
+            "command and API contracts",
+            (
+                PYTHON,
+                "-m",
+                "pytest",
+                "-q",
+                "tests/test_action_surface.py",
+                "tests/test_action_surface_identifier_contract.py",
+                "tests/test_action_surface_openapi.py",
+                "tests/test_commands.py",
+                "tests/postgresql/test_command_effect_authority.py",
+                "tests/postgresql/test_postgresql_action_openapi_oracle.py",
+                "tests/postgresql/test_stage4_command_port.py",
+                "tests/postgresql/test_stage4_command_semantics.py",
+            ),
+        ),
+    ),
+    "operational-certification": (
+        Phase(
+            "shadow-worker restart certification",
+            (PYTHON, "scripts/dish-pg-certify-shadow-worker-restart"),
+            required_env=("DISH_PG_TEST_URL",),
+        ),
+    ),
+}
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="dish-test-lane",
+        description="Run one named Dish lane and report the exact failing phase.",
+    )
+    parser.add_argument("lane", choices=sorted(LANES))
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="print the selected lane's phases without running them",
+    )
+    return parser
+
+
+def _display(command: Sequence[str]) -> str:
+    import shlex
+
+    return " ".join(shlex.quote(part) for part in command)
+
+
+def _run_phase(phase: Phase, *, env: Mapping[str, str]) -> int:
+    missing = [name for name in phase.required_env if not str(env.get(name, "")).strip()]
+    if missing:
+        print(
+            f"UNAVAILABLE [{phase.name}]: missing environment " + ", ".join(missing),
+            file=sys.stderr,
+            flush=True,
+        )
+        return 3
+    print(f"BEGIN [{phase.name}]", flush=True)
+    print(f"COMMAND {_display(phase.command)}", flush=True)
+    completed = subprocess.run(phase.command, cwd=ROOT, env=dict(env), check=False)
+    status = "PASS" if completed.returncode == 0 else "FAIL"
+    print(f"{status} [{phase.name}] exit={completed.returncode}", flush=True)
+    return completed.returncode
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    phases = LANES[args.lane]
+    if args.list:
+        for phase in phases:
+            print(f"{phase.name}: {_display(phase.command)}")
+        return 0
+    for phase in phases:
+        result = _run_phase(phase, env=os.environ)
+        if result != 0:
+            return result
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

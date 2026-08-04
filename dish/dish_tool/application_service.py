@@ -11,6 +11,7 @@ from .database_schema import _validate_semantic_evidence
 from .errors import DishRuleError
 from .execution_provenance import operation_execution_provenance
 from .legacy_adapter import LegacyReadOnlyAdapter
+from .submission_authority import submission_authority_facts
 from .operation_execution import (
     claim_abandonment_execution,
     claim_operation_execution,
@@ -150,28 +151,22 @@ class CurrentWorkflowService:
                 required_identity = cycle["reviewed_identity"]
             required_section_gid = registry.verification_queue_gid
         elif phase in {"await_submission", "ready_move_failed"}:
-            from .step9 import latest_destination_failure, submission_identity_evidence
-
             try:
-                identity_evidence = submission_identity_evidence(self.conn, operation_id)
+                submission_facts = submission_authority_facts(self.conn, operation_id)
             except DishRuleError:
-                identity_evidence = None
+                submission_facts = None
             signoff_bound = bool(
-                identity_evidence is not None
-                and identity_evidence.get("approved_identity")
-                and identity_evidence.get("approved_cycle_id")
+                submission_facts is not None
+                and submission_facts.approved_identity
+                and submission_facts.approved_cycle_id
                 and op["signoff_completed_at"] is not None
             )
             required_identity = (
-                None if identity_evidence is None
-                else identity_evidence["effective_identity"]
+                None if submission_facts is None else submission_facts.effective_identity
             )
-            if phase == "ready_move_failed":
-                movement_failure = latest_destination_failure(self.conn, operation_id)
-                destination_repair_required = bool(
-                    movement_failure is not None
-                    and not bool(movement_failure.get("movement_retry_safe"))
-                )
+            if phase == "ready_move_failed" and submission_facts is not None:
+                movement_failure = submission_facts.movement_failure
+                destination_repair_required = submission_facts.destination_repair_required
             # Submission deliberately preserves a manual placement or recognises
             # an already-applied destination move. Exact approved-or-repaired
             # content remains mandatory.

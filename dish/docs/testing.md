@@ -108,6 +108,26 @@ results, conditional lanes omitted with reasons, and any unresolved uncertainty.
 review these decisions; repeated mistakes should become clearer map rules, examples, inventories, or
 structural checks.
 
+## Named lane commands
+
+Use the single lane entrypoint when the change belongs to one of the recurring high-risk groups.
+Each command prints `BEGIN`, `PASS`, `FAIL`, or `UNAVAILABLE` for the exact phase that stopped the
+lane; it never hides a failed inner phase behind one final aggregate result.
+
+| Lane | Command |
+|---|---|
+| schema and migrations | `.venv/bin/python scripts/dish-test-lane schema-migrations` |
+| PGlite | `.venv/bin/python scripts/dish-test-lane pglite` |
+| native PostgreSQL concurrency | `.venv/bin/python scripts/dish-test-lane native-concurrency` |
+| release and cutover | `.venv/bin/python scripts/dish-test-lane release-cutover` |
+| command and API contracts | `.venv/bin/python scripts/dish-test-lane command-api-contracts` |
+| operational certification | `.venv/bin/python scripts/dish-test-lane operational-certification` |
+
+`native-concurrency` requires `DISH_TEST_POSTGRESQL_DSN`; `operational-certification` requires
+`DISH_PG_TEST_URL`. Missing infrastructure is reported as unavailable with exit status 3, never as a
+pass. These commands complement, rather than replace, changed-path focused tests and the ordinary
+full-suite integration checkpoint.
+
 ## Authoritative first-attempt lanes
 
 The planner may emit any of these separately reported lanes:
@@ -488,6 +508,32 @@ pytest configuration, and the dedicated flake/mutation runners. A structural con
 rejects new root-level helper modules so support ownership cannot drift back into an
 accidental second namespace.
 
+### Native PostgreSQL concurrency helpers
+
+Reusable deterministic synchronization lives in `tests/support/postgresql/concurrency.py`. Use
+`TransactionGate` for explicit interleaving points, independent connections for separate server
+transactions, and the named assertions for blocked, committed, aborted, stale-writer, lease-takeover,
+and conditional-update outcomes. Compose these helpers with `core_db` or `native_workflow_db`, which
+reset the disposable native schema through Alembic head and dispose the owning engine. Native
+concurrency tests must not use sleeps as correctness evidence.
+
 ### Populated-predecessor migration framework
 
 Reusable migration-lane support lives in `tests/support/postgresql/migrations.py`; migration-specific seed/assertion examples are in `projection_attempt_migration.py` and `honest_binding_migration.py`. See `tests/support/postgresql/MIGRATIONS.md` for the Agent A integration contract. SQLite remains compatibility evidence, PGlite remains development evidence, and only the native fixture is certification evidence.
+
+### Semantic diagnostic and ORM-index contracts
+
+`tests/test_semantic_invariant_diagnostic_coverage.py` requires every statically emitted durable semantic
+invariant to have an explicit payload-safe diagnostic specification. Dynamic invariant families must be
+documented and bounded. `tests/postgresql/test_orm_migration_index_alignment.py` protects migration-defined
+indexes that must also exist in SQLAlchemy metadata.
+
+
+### Service lifecycle seam checks
+
+Run `tests/test_service_lifecycle_seams.py` with the request replay, lease atomicity, service lease, expiry, and
+coordinator structure modules when changing request or lease lifecycle orchestration. The seam tests prove that
+coordinators have typed dependencies and remain directly constructible; focused seam checks assert acquisition,
+successful settlement, and cleanup call ordering, while behavioral modules continue to protect the underlying
+transaction, replay, lease, error-conversion, and response semantics.
+

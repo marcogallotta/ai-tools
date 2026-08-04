@@ -474,6 +474,7 @@ class ProjectionWorkerReadiness(Base):
     ready_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
+        Index("ix_projection_worker_readiness_probe_inventory", "probe_inventory_id"),
         CheckConstraint("length(trim(worker_identity)) > 0", name="worker_identity_nonblank"),
         CheckConstraint("length(trim(worker_release)) > 0", name="worker_release_nonblank"),
         CheckConstraint("length(readiness_sha256) = 64", name="readiness_hash_length"),

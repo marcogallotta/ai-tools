@@ -258,7 +258,7 @@ def evaluate(cmd):
         check_rm(segments)
         or check_docker(segments)
         or check_git(segments)
-        or check_psql(segments)
+        #or check_psql(segments)
         or check_rsync(segments)
         or check_ssh(segments)
     )

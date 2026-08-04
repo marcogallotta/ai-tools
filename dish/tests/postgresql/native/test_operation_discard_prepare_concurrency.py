@@ -1,15 +1,12 @@
 """Native PostgreSQL discard/prepare serialization regressions."""
 from __future__ import annotations
 
-import threading
 import uuid
-from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 
 import pytest
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
 
 from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
@@ -18,6 +15,12 @@ from dish_pg.database import session_scope
 from dish_pg.transition import ProjectionService
 from tests.support.canonical import TASK
 from tests.support.postgresql.command import _add_verification_queue
+from tests.support.postgresql.concurrency import (
+    TransactionGate,
+    assert_transaction_blocked,
+    independent_connections,
+    managed_session,
+)
 from tests.support.postgresql.core import core_db
 from tests.support.postgresql.projection_attempts import native_workflow_db
 from tests.support.postgresql.workflow import NOW, _next, _register_run
@@ -32,36 +35,19 @@ def _require_native_postgresql(request: pytest.FixtureRequest) -> None:
         pytest.skip("native PostgreSQL concurrency certification requires --postgresql")
 
 
-@contextmanager
-def _bound_session(connection):
-    session = Session(bind=connection, expire_on_commit=False)
-    try:
-        yield session
-        session.commit()
-    except BaseException:
-        session.rollback()
-        raise
-    finally:
-        session.close()
-
-
 
 class _DelayedOperationPort(PostgresCommandPort):
     def __init__(
         self,
         *args,
-        entered: threading.Event,
-        release: threading.Event,
+        gate: TransactionGate,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        self._entered = entered
-        self._release = release
+        self._gate = gate
 
     def _lock_operation_transition(self, operation_id):
-        self._entered.set()
-        if not self._release.wait(timeout=15):
-            raise RuntimeError("test interleaving gate timed out")
+        self._gate.block()
         return super()._lock_operation_transition(operation_id)
 
 
@@ -73,7 +59,7 @@ def _command_port(session, *, delayed=None) -> PostgresCommandPort:
         projection_recorder=ProjectionService(session, uuid_factory=uuid.uuid4),
     )
     if delayed is not None:
-        kwargs.update(entered=delayed[0], release=delayed[1])
+        kwargs.update(gate=delayed)
     return cls(session, **kwargs)
 
 
@@ -145,14 +131,12 @@ def test_native_discard_commits_before_prepare_lock_and_leaves_no_actionable_int
     author_run, admin_run, operation_id = _seed_open_operation(
         factory, ids, context, task_id
     )
-    entered, release = threading.Event(), threading.Event()
+    gate = TransactionGate(label="prepare waits before operation lock")
     engine = factory.kw["bind"]
-    delayed_connection = engine.connect()
-    winner_connection = engine.connect()
 
     def delayed_prepare():
-        with _bound_session(delayed_connection) as session:
-            return _command_port(session, delayed=(entered, release)).execute(
+        with managed_session(delayed_connection) as session:
+            return _command_port(session, delayed=gate).execute(
                 _call(
                     "prepare",
                     run_id=author_run,
@@ -165,29 +149,29 @@ def test_native_discard_commits_before_prepare_lock_and_leaves_no_actionable_int
                 )
             )
 
-    try:
+    with independent_connections(engine) as (delayed_connection, winner_connection):
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(delayed_prepare)
-            assert entered.wait(timeout=10)
-            with _bound_session(winner_connection) as session:
-                discarded = _command_port(session).execute(
-                    _call(
-                        "discard",
-                        run_id=admin_run,
-                        request_id=uuid.uuid4(),
-                        task_id=task_id,
-                        operation_id=operation_id,
-                        owner_id="Marco",
-                        principal_class="admin",
-                        at=NOW + timedelta(seconds=2),
+            gate.wait_until_blocked()
+            assert_transaction_blocked(future)
+            try:
+                with managed_session(winner_connection) as session:
+                    discarded = _command_port(session).execute(
+                        _call(
+                            "discard",
+                            run_id=admin_run,
+                            request_id=uuid.uuid4(),
+                            task_id=task_id,
+                            operation_id=operation_id,
+                            owner_id="Marco",
+                            principal_class="admin",
+                            at=NOW + timedelta(seconds=2),
+                        )
                     )
-                )
-                assert discarded.ok
-            release.set()
+                    assert discarded.ok
+            finally:
+                gate.release()
             prepared = future.result(timeout=20)
-    finally:
-        delayed_connection.close()
-        winner_connection.close()
     assert prepared.ok is False
 
     with session_scope(factory) as session:
@@ -223,14 +207,12 @@ def test_native_prepare_commits_before_discard_lock_and_discard_cannot_cancel(
     author_run, admin_run, operation_id = _seed_open_operation(
         factory, ids, context, task_id
     )
-    entered, release = threading.Event(), threading.Event()
+    gate = TransactionGate(label="discard waits before operation lock")
     engine = factory.kw["bind"]
-    delayed_connection = engine.connect()
-    winner_connection = engine.connect()
 
     def delayed_discard():
-        with _bound_session(delayed_connection) as session:
-            return _command_port(session, delayed=(entered, release)).execute(
+        with managed_session(delayed_connection) as session:
+            return _command_port(session, delayed=gate).execute(
                 _call(
                     "discard",
                     run_id=admin_run,
@@ -243,29 +225,29 @@ def test_native_prepare_commits_before_discard_lock_and_discard_cannot_cancel(
                 )
             )
 
-    try:
+    with independent_connections(engine) as (delayed_connection, winner_connection):
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(delayed_discard)
-            assert entered.wait(timeout=10)
-            with _bound_session(winner_connection) as session:
-                prepared = _command_port(session).execute(
-                    _call(
-                        "prepare",
-                        run_id=author_run,
-                        request_id=uuid.uuid4(),
-                        task_id=task_id,
-                        operation_id=operation_id,
-                        owner_id="owner-1",
-                        principal_class="agent",
-                        at=NOW + timedelta(seconds=1),
+            gate.wait_until_blocked()
+            assert_transaction_blocked(future)
+            try:
+                with managed_session(winner_connection) as session:
+                    prepared = _command_port(session).execute(
+                        _call(
+                            "prepare",
+                            run_id=author_run,
+                            request_id=uuid.uuid4(),
+                            task_id=task_id,
+                            operation_id=operation_id,
+                            owner_id="owner-1",
+                            principal_class="agent",
+                            at=NOW + timedelta(seconds=1),
+                        )
                     )
-                )
-                assert prepared.ok
-            release.set()
+                    assert prepared.ok
+            finally:
+                gate.release()
             discarded = future.result(timeout=20)
-    finally:
-        delayed_connection.close()
-        winner_connection.close()
     assert discarded.ok is False
 
     with session_scope(factory) as session:

@@ -1,11 +1,19 @@
 """Writer fencing, activation, rollback burn, and first-admission control."""
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime
-from typing import Any, Mapping
+from pathlib import Path
+from typing import Any, Collection, Mapping
 
 from sqlalchemy import select
+
+from dish_service.legacy_writer_fence import (
+    LEGACY_WRITER_FENCE_PROBE_PLAN,
+    manifest_sha256 as writer_fence_manifest_sha256,
+    planned_legacy_writer_fence_manifest,
+)
 
 from . import artifact_identity_models as artifact
 from . import models
@@ -55,19 +63,52 @@ class CutoverControlAuthority:
             floor_field="candidate created_at",
         )
         self._require_not_future(prepared_at, "prepared_at")
-        digest = sha256_json(dict(manifest))
+        plan = dict(manifest)
+        unexpected = set(plan) - {"path", "service_release", "probe_plan"}
+        if unexpected:
+            raise ReleaseAuthorityError(
+                "writer fence manifest contains unsupported fields: "
+                + ", ".join(sorted(unexpected))
+            )
+        planned_path = _require_nonblank(plan.get("path"), "manifest.path")
+        normalized_path = str(
+            Path(os.path.abspath(os.path.normpath(planned_path)))
+        )
+        if planned_path != normalized_path:
+            raise ReleaseAuthorityError(
+                "writer fence manifest path must be absolute and normalized"
+            )
+        service_release = plan.get("service_release", candidate.source_release)
+        if service_release != candidate.source_release:
+            raise ReleaseAuthorityError(
+                "writer fence manifest service_release does not match candidate"
+            )
+        probe_plan = plan.get("probe_plan", LEGACY_WRITER_FENCE_PROBE_PLAN)
+        if probe_plan != LEGACY_WRITER_FENCE_PROBE_PLAN:
+            raise ReleaseAuthorityError(
+                "writer fence manifest probe_plan does not match the enforced contract"
+            )
         existing = self.session.scalar(
             select(rel.LegacyWriterFence).where(
                 rel.LegacyWriterFence.candidate_id == candidate_id,
                 rel.LegacyWriterFence.target_identity == target_identity,
             )
         )
+        fence_id = existing.fence_id if existing is not None else self.uuid_factory()
+        planned_manifest = planned_legacy_writer_fence_manifest(
+            Path(planned_path),
+            fence_id=str(fence_id),
+            candidate_id=str(candidate_id),
+            source_release=candidate.source_release,
+            source_commit=candidate.source_commit,
+        )
+        digest = writer_fence_manifest_sha256(planned_manifest)
         if existing is not None:
             if existing.manifest_sha256 != digest or existing.mechanism != mechanism:
                 raise ReleaseAuthorityError("writer fence identity conflict")
             return existing
         row = rel.LegacyWriterFence(
-            fence_id=self.uuid_factory(),
+            fence_id=fence_id,
             candidate_id=candidate_id,
             target_identity=target_identity,
             mechanism=mechanism,
@@ -221,6 +262,10 @@ class CutoverControlAuthority:
             raise ReleaseAuthorityError(
                 "writer fence artifact observation is not an exact matched regular file"
             )
+        if observation.content_sha256 != row.manifest_sha256:
+            raise ReleaseAuthorityError(
+                "deployed writer fence manifest digest does not match the planned manifest"
+            )
         if row.state == "engaged" or row.state == "verified":
             if row.artifact_observation_id != observation.observation_id:
                 raise ReleaseAuthorityError(
@@ -249,10 +294,15 @@ class CutoverControlAuthority:
         fence_id: uuid.UUID,
         proof: Mapping[str, Any],
         verified_at: datetime,
+        required_writer_inventory: Collection[str] | None = None,
     ) -> rel.LegacyWriterFence:
         row = self._fence(fence_id)
         candidate = self._candidate(row.candidate_id)
-        validate_writer_fence_observation(self.session, fence=row)
+        validate_writer_fence_observation(
+            self.session,
+            fence=row,
+            required_writer_inventory=required_writer_inventory,
+        )
         body = dict(proof)
         required = {
             "probe_kind": "authenticated_mutation_rejected_before_body_parse",
@@ -376,7 +426,13 @@ class CutoverControlAuthority:
             started_at,
         )
         return row
-    def mark_fenced(self, *, cutover_run_id: uuid.UUID, recorded_at: datetime) -> rel.CutoverRun:
+    def mark_fenced(
+        self,
+        *,
+        cutover_run_id: uuid.UUID,
+        recorded_at: datetime,
+        required_writer_inventory: Collection[str] | None = None,
+    ) -> rel.CutoverRun:
         run = self._cutover(cutover_run_id)
         if run.state == "fenced":
             return run
@@ -388,7 +444,11 @@ class CutoverControlAuthority:
         if not fences or any(fence.state != "verified" for fence in fences):
             raise ReleaseAuthorityError("every planned legacy writer fence must be verified")
         for fence in fences:
-            observation = validate_writer_fence_observation(self.session, fence=fence)
+            observation = validate_writer_fence_observation(
+                self.session,
+                fence=fence,
+                required_writer_inventory=required_writer_inventory,
+            )
             if fence.artifact_observation_id != observation.observation_id:
                 raise ReleaseAuthorityError("writer fence is not bound to its exact persisted observation")
             if fence.verified_at is None:
@@ -420,6 +480,7 @@ class CutoverControlAuthority:
         cutover_run_id: uuid.UUID,
         final_asana_closure_id: uuid.UUID,
         activated_at: datetime,
+        required_writer_inventory: Collection[str] | None = None,
     ) -> rel.CutoverRun:
         run = self._cutover(cutover_run_id)
         if run.state == "activated":
@@ -445,7 +506,11 @@ class CutoverControlAuthority:
                 rel.LegacyWriterFence.candidate_id == candidate.candidate_id
             )
         ):
-            validate_writer_fence_observation(self.session, fence=fence)
+            validate_writer_fence_observation(
+                self.session,
+                fence=fence,
+                required_writer_inventory=required_writer_inventory,
+            )
         closure = self._current_approved_final_asana_closure(
             candidate.candidate_id, expected_closure_id=final_asana_closure_id
         )

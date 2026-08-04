@@ -75,12 +75,19 @@ def _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fenc
     with session_scope(factory) as session:
         service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
         _record_and_engage_writer_fence(service, ids, fence_id=fence_id, engaged_at=NOW + timedelta(minutes=5))
+        fence = service.writer_fence_status(fence_id)
+        writer_inventory = {fence.target_identity}
         service.verify_writer_fence(
             fence_id=fence_id,
-            proof=_writer_fence_proof(service.writer_fence_status(fence_id), candidate_id),
+            proof=_writer_fence_proof(fence, candidate_id),
             verified_at=NOW + timedelta(minutes=5),
+            required_writer_inventory=writer_inventory,
         )
-        service.mark_fenced(cutover_run_id=cutover_id, recorded_at=NOW + timedelta(minutes=5))
+        service.mark_fenced(
+            cutover_run_id=cutover_id,
+            recorded_at=NOW + timedelta(minutes=5),
+            required_writer_inventory=writer_inventory,
+        )
         service.recertify_candidate(
             candidate_id=candidate_id,
             closure_id=closure_id,
@@ -93,6 +100,7 @@ def _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fenc
             cutover_run_id=cutover_id,
             final_asana_closure_id=closure_id,
             activated_at=NOW + timedelta(minutes=5),
+            required_writer_inventory=writer_inventory,
         )
 
 

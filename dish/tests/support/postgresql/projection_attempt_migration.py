@@ -10,12 +10,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from dish_pg.database import session_scope
+from dish_pg.release import ALEMBIC_HEAD
 from dish_pg.transition import ProjectionService
 from tests.support.postgresql.core import _bootstrap_registry, _import_one, _uuid_stream
 from tests.support.postgresql.migrations import MigrationDatabase
 
 PREDECESSOR_REVISION = "0017_abandonment_terminal_state"
-TARGET_REVISION = "0018_projection_attempt_lifecycle"
+TARGET_REVISION = ALEMBIC_HEAD
 NOW = datetime(2026, 8, 3, 10, 0, tzinfo=timezone.utc)
 REQUEST_HASH = "a" * 64
 

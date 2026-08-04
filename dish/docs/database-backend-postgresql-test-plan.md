@@ -110,3 +110,16 @@ activation, or first live admission. Those remain separately authorized producti
 Local runtime validation is complete only when Sections 1 through 4 have reproducible evidence. A
 static pass cannot satisfy these sections, and an operator action must not duplicate an existing
 automated assertion or the coverage already recorded above.
+
+## Regression risk: script these, don't just prove them once
+
+As run so far (§3, 2026-08-04), these sections are one-off manual/agent-orchestrated proofs with
+no automated assertion behind them — unlike the coverage listed under "Covered elsewhere," nothing
+here reruns itself when `dish_pg/`, `dish_service/`, or the worker entry points change later. A
+regression (e.g. worker takeover breaking, or Postgres loss no longer failing closed) would go
+undetected until someone repeats this by hand again, or at cutover.
+
+Each section should eventually be a committed, rerunnable script (in the `scripts/dish-pg-*`
+family) that orchestrates the same fault injection and asserts the outcomes programmatically
+instead of narrating them, so it can be rerun cheaply after future changes. Not done as of this
+snapshot.

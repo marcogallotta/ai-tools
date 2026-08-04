@@ -19,6 +19,9 @@ from typing import Any, Callable, Mapping
 from dish_tool.errors import DishRuleError
 
 
+LEGACY_WRITER_FENCE_PROBE_PLAN = "authenticated POST rejected before body parsing"
+
+
 @dataclass(frozen=True)
 class WriterFenceObservation:
     """One internally consistent descriptor-based observation of the fence."""
@@ -61,6 +64,27 @@ def manifest_sha256(manifest: Mapping[str, Any]) -> str:
 
 def _normalized_path(path: Path) -> Path:
     return Path(os.path.abspath(os.path.normpath(os.fspath(path))))
+
+
+def planned_legacy_writer_fence_manifest(
+    path: Path,
+    *,
+    fence_id: str,
+    candidate_id: str,
+    source_release: str,
+    source_commit: str,
+) -> dict[str, Any]:
+    """Build the immutable manifest prepared in PostgreSQL and deployed on disk."""
+
+    return {
+        "format": "dish-legacy-writer-fence-v2",
+        "fence_id": fence_id,
+        "candidate_id": candidate_id,
+        "path": str(_normalized_path(path)),
+        "service_release": source_release,
+        "source_commit": source_commit,
+        "probe_plan": LEGACY_WRITER_FENCE_PROBE_PLAN,
+    }
 
 
 def _open_parent_directory(path: Path) -> tuple[int, str]:
@@ -298,15 +322,17 @@ def engage_legacy_writer_fence(
     engaged_at: datetime,
     operator: str,
 ) -> tuple[dict[str, Any], str]:
-    manifest = {
-        "format": "dish-legacy-writer-fence-v1",
-        "fence_id": fence_id,
-        "candidate_id": candidate_id,
-        "source_release": source_release,
-        "source_commit": source_commit,
-        "engaged_at": engaged_at.isoformat(),
-        "operator": operator,
-    }
+    if engaged_at.tzinfo is None:
+        raise ValueError("writer fence engagement timestamp must be timezone-aware")
+    if not operator.strip():
+        raise ValueError("writer fence operator must be nonblank")
+    manifest = planned_legacy_writer_fence_manifest(
+        path,
+        fence_id=fence_id,
+        candidate_id=candidate_id,
+        source_release=source_release,
+        source_commit=source_commit,
+    )
     digest = manifest_sha256(manifest)
     existing, existing_digest = read_legacy_writer_fence(path)
     if existing is not None:
@@ -338,7 +364,7 @@ def engage_legacy_writer_fence(
         )
         with os.fdopen(file_fd, "wb") as handle:
             file_fd = None
-            handle.write(_canonical(manifest) + b"\n")
+            handle.write(_canonical(manifest))
             handle.flush()
             os.fsync(handle.fileno())
         try:

@@ -3122,6 +3122,173 @@ def _semantic_relationship(
                 "operation with outcome=verification-hold"
             ),
         },
+        "audit_operation_execution_binding": {
+            "source_fields": ["operation_id", "operation_execution_id"],
+            "targets": [{
+                "record_type": "operation_executions",
+                "selector": _semantic_selector(row, "operation_execution_id"),
+                "fields": ["operation_id", "status", "resolved_at"],
+            }],
+            "required_predicate": (
+                "operation_execution_id selects an execution owned by the same operation as the audit event"
+            ),
+        },
+        "abandonment_attempt_authority_binding": {
+            "source_fields": [
+                "source_operation_id", "source_lease_id", "task_gid",
+                "abandoned_owner_id", "abandoned_run_id", "attempt_cycle_id",
+            ],
+            "targets": [{
+                "record_type": "service_leases",
+                "selector": _semantic_selector(row, "source_lease_id"),
+                "fields": [
+                    "operation_id", "task_gid", "owner_id", "run_id",
+                    "lease_kind", "actor_attempt_seq", "context_cycle_id",
+                ],
+            }],
+            "required_predicate": (
+                "the source actor lease exists and exactly matches the abandoned operation, task, owner, run, "
+                "and attempt cycle"
+            ),
+        },
+        "abandonment_attempt_cycle_binding": {
+            "source_fields": ["attempt_cycle_id", "source_operation_id", "task_gid", "abandoned_run_id"],
+            "targets": [{
+                "record_type": "verification_cycles",
+                "selector": _semantic_selector(row, "attempt_cycle_id"),
+                "fields": ["operation_id", "task_gid", "run_id"],
+            }],
+            "required_predicate": (
+                "attempt_cycle_id selects a cycle for the same source operation, task, and abandoned run"
+            ),
+        },
+        "abandonment_succession_binding": {
+            "source_fields": [
+                "abandonment_id", "source_operation_id", "successor_operation_id", "successor_cycle_id"
+            ],
+            "targets": [{
+                "record_type": "operation_successions",
+                "selector_fields": ["abandonment_id"],
+                "fields": ["source_operation_id", "successor_operation_id", "successor_cycle_id"],
+            }],
+            "required_predicate": (
+                "the succession for this abandonment exactly matches its source operation, successor operation, "
+                "and successor cycle"
+            ),
+        },
+        "abandonment_unexpected_succession": {
+            "source_fields": ["abandonment_id", "successor_operation_id"],
+            "targets": [{
+                "record_type": "operation_successions",
+                "selector_fields": ["abandonment_id"],
+                "fields": ["succession_id", "successor_operation_id"],
+            }],
+            "required_predicate": (
+                "no succession exists while the abandonment has no successor_operation_id"
+            ),
+        },
+        "abandonment_prepared_successor_missing": {
+            "source_fields": ["abandonment_id", "status", "successor_operation_id"],
+            "targets": [{
+                "record_type": "operation_successions",
+                "selector_fields": ["abandonment_id"],
+                "fields": ["succession_id", "successor_operation_id"],
+            }],
+            "required_predicate": (
+                "status=awaiting_successor_claim implies one durable operation succession exists"
+            ),
+        },
+        "abandonment_execution_binding": {
+            "source_fields": ["current_execution_id", "source_operation_id"],
+            "targets": [{
+                "record_type": "operation_executions",
+                "selector": _semantic_selector(row, "current_execution_id"),
+                "fields": ["operation_id", "status", "resolved_at"],
+            }],
+            "required_predicate": (
+                "current_execution_id selects an execution owned by the abandoned source operation"
+            ),
+        },
+        "operation_succession_binding": {
+            "source_fields": [
+                "succession_id", "task_gid", "source_operation_id", "successor_operation_id",
+                "abandonment_id", "source_content_version_id", "successor_content_version_id",
+            ],
+            "targets": [
+                {
+                    "record_type": "operations",
+                    "selector_fields": ["source_operation_id", "successor_operation_id"],
+                    "fields": ["task_gid", "status", "terminal_outcome", "expected_identity"],
+                },
+                {
+                    "record_type": "abandonment_attempts",
+                    "selector": _semantic_selector(row, "abandonment_id"),
+                    "fields": ["source_operation_id", "successor_operation_id"],
+                },
+                {
+                    "record_type": "content_versions",
+                    "selector_fields": ["source_content_version_id", "successor_content_version_id"],
+                    "fields": ["operation_id", "task_gid", "identity", "title", "notes", "boundary", "confirmed"],
+                },
+            ],
+            "required_predicate": (
+                "source, successor, abandonment, and confirmed content versions form one exact immutable "
+                "agent-abandonment succession chain"
+            ),
+        },
+        "agent_abandoned_source_terminal_binding": {
+            "source_fields": ["operation_id", "status", "terminal_outcome"],
+            "targets": [
+                {
+                    "record_type": "operation_successions",
+                    "selector_fields": ["source_operation_id=operation_id"],
+                    "fields": ["succession_id", "successor_operation_id"],
+                },
+                {
+                    "record_type": "operation_steps/write_attempts/movement_attempts",
+                    "selector": _semantic_selector(row, "operation_id"),
+                    "fields": ["completed_at", "outcome"],
+                },
+            ],
+            "required_predicate": (
+                "an agent-abandoned terminal operation has a succession, no incomplete steps, and no started or "
+                "uncertain external-effect attempts"
+            ),
+        },
+        "prepared_successor_authority_binding": {
+            "source_fields": ["operation_id", "status", "successor_claim_mode"],
+            "targets": [
+                {
+                    "record_type": "operation_successions",
+                    "selector_fields": ["successor_operation_id=operation_id"],
+                    "fields": ["succession_id", "source_operation_id"],
+                },
+                {
+                    "record_type": "service_leases",
+                    "selector": _semantic_selector(row, "operation_id"),
+                    "selector_field": "operation_id",
+                    "fields": ["released_at"],
+                },
+            ],
+            "required_predicate": (
+                "a prepared successor is open, has one durable succession, and has no active lease before claim"
+            ),
+        },
+        "abandoned_verification_cycle_binding": {
+            "source_fields": [
+                "cycle_id", "operation_id", "outcome", "completed_at",
+                "signed_content_version_id", "signed_identity",
+            ],
+            "targets": [{
+                "record_type": "operations",
+                "selector": _semantic_selector(row, "operation_id"),
+                "fields": ["status", "terminal_outcome"],
+            }],
+            "required_predicate": (
+                "an abandoned verification cycle is completed, has no signed identity/version, and belongs to "
+                "an agent-abandoned cancelled operation"
+            ),
+        },
     }
     if invariant.startswith("multiple_unresolved_"):
         target = invariant.removeprefix("multiple_unresolved_")
