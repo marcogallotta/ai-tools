@@ -41,6 +41,20 @@ def test_legacy_writer_fence_is_atomic_fail_closed_and_digest_bound(tmp_path: Pa
         engaged_at=NOW,
         operator="Marco",
     )
+    assert manifest == {
+        "format": "dish-legacy-writer-fence-v2",
+        "fence_id": "fence-1",
+        "candidate_id": "candidate-1",
+        "path": str(path.resolve()),
+        "service_release": "dish-42619b9",
+        "source_commit": "42619b9",
+        "probe_plan": "authenticated POST rejected before body parsing",
+    }
+    expected_bytes = json.dumps(
+        manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    assert path.read_bytes() == expected_bytes
+    assert digest == hashlib.sha256(expected_bytes).hexdigest()
     assert read_legacy_writer_fence(path) == (manifest, digest)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert engage_legacy_writer_fence(

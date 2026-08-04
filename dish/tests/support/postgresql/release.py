@@ -387,11 +387,12 @@ def _record_final_closure(service, ids, candidate_id, *, closed_through_at):
 
 
 def _record_and_engage_writer_fence(service, ids, *, fence_id, engaged_at):
+    fence = service._fence(fence_id)
     observation = service.record_writer_fence_artifact_observation(
         fence_id=fence_id,
         artifact_generation_identity="cutover-fixture-generation-v1",
         canonical_path=f"/tmp/writer-fence-{fence_id}.sqlite3",
-        content_sha256="b" * 64,
+        content_sha256=fence.manifest_sha256,
         filesystem_device=1,
         filesystem_inode=(fence_id.int % 2_000_000_000) + 1,
         verification_result="matched",
