@@ -1,0 +1,1560 @@
+#!/usr/bin/env python3
+"""Certify shadow-worker claim expiry, fencing, and ordering on real TEST PostgreSQL.
+
+This is a TEST-only rehearsal harness.  It deliberately starts the production
+shadow worker entry point as subprocesses, but it refuses to run unless the
+connected PostgreSQL database is named ``dish_stage_a_dark_test``.
+
+The harness leaves PostgreSQL evidence rows in place by default and deletes all
+scratch spool/secret/kill-switch/log files unless ``--keep-scratch`` is used.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import signal
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+import traceback
+import uuid
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Iterator, Sequence
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from sqlalchemy import func, select, text
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from dish_pg import models
+from dish_pg import stage3_models as wf
+from dish_pg import stage5_models as tx
+from dish_pg.database import (
+    DatabaseSettings,
+    create_database_engine,
+    session_factory,
+    session_scope,
+)
+from dish_pg.shadow_worker import _shadow_uuid
+from dish_pg.transition import ProjectionService, ShadowService
+from dish_service.shadow_spool import ShadowSpool
+from dish_tool.constants import RECOVERY_QUARANTINE_SECONDS
+
+EXPECTED_DATABASE = "dish_stage_a_dark_test"
+COMPARATOR_RELEASE = "rehearsal-cert"
+WORKER_IDLE_SECONDS = 0.2
+DEFAULT_POLL_SECONDS = 0.05
+CRITICAL_LOG_MARKERS = (
+    "Traceback (most recent call last)",
+    "shadow spool delivery failed",
+    "shadow delivery claim does not match",
+    "duplicate key value violates unique constraint",
+)
+
+
+class CertificationFailure(RuntimeError):
+    """A certification assertion or safety gate failed."""
+
+
+@dataclass(frozen=True)
+class EnvelopeFixture:
+    label: str
+    source_request_identity: str
+    rollout_sequence: int
+    title: str
+    body: str
+    principal: dict[str, Any]
+    canonical_input: dict[str, Any]
+    source_outcome: dict[str, Any]
+    source_pre_state: dict[str, Any]
+    source_post_state: dict[str, Any]
+    pinned_inputs: dict[str, Any]
+    source_effects: dict[str, Any]
+    captured_at: datetime
+    envelope_id: uuid.UUID
+    delivery_id: uuid.UUID
+    target_request_id: uuid.UUID
+
+
+@dataclass(frozen=True)
+class DeliverySnapshot:
+    source_request_identity: str
+    envelope_id: str
+    delivery_id: str
+    rollout_sequence: int | None
+    state: str
+    claim_owner: str | None
+    claim_token: str | None
+    claim_expires_at: str | None
+    attempts: int
+    delivery_revision: int
+    terminal_at: str | None
+    last_error: str | None
+    comparison_count: int
+    parity_classes: tuple[str, ...]
+    request_count: int
+    request_outcome_count: int
+    execution_count: int
+    task_count: int
+    projection_count: int
+
+
+@dataclass
+class WorkerProcess:
+    worker_id: str
+    process: subprocess.Popen[str]
+    log_path: Path
+    command_display: list[str]
+    started_at: datetime
+
+    def read_log(self) -> str:
+        try:
+            return self.log_path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            return ""
+
+
+@dataclass(frozen=True)
+class TestEvidence:
+    name: str
+    values: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class BaselineContext:
+    generation_id: uuid.UUID
+    baseline_id: uuid.UUID
+    source_generation_identity: str
+    baseline_was_created: bool
+    first_rollout_sequence: int
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def iso(value: datetime | None) -> str | None:
+    return None if value is None else value.isoformat()
+
+
+def require(condition: bool, message: str) -> None:
+    if not condition:
+        raise CertificationFailure(message)
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(
+        prog="dish-pg-certify-shadow-worker-restart",
+        description=(
+            "TEST-only real-PostgreSQL rehearsal for shadow-worker claim expiry, "
+            "concurrent ownership fencing, and rollout ordering across restart"
+        ),
+    )
+    result.add_argument(
+        "--database-url",
+        default=os.environ.get("DISH_PG_TEST_URL"),
+        help="real TEST PostgreSQL URL; defaults to DISH_PG_TEST_URL",
+    )
+    result.add_argument(
+        "--scratch-root",
+        type=Path,
+        help="optional parent for scratch state; defaults to the system temp directory",
+    )
+    result.add_argument(
+        "--keep-scratch",
+        action="store_true",
+        help="preserve scratch spool, secret, kill-switch, and worker log files",
+    )
+    result.add_argument(
+        "--claim-observation-timeout-seconds",
+        type=float,
+        default=30.0,
+    )
+    result.add_argument(
+        "--completion-timeout-seconds",
+        type=float,
+        default=90.0,
+    )
+    result.add_argument(
+        "--expiry-timeout-seconds",
+        type=float,
+        default=180.0,
+        help="maximum wait for the real fixed worker claim TTL to expire",
+    )
+    result.add_argument(
+        "--concurrent-observation-seconds",
+        type=float,
+        default=2.0,
+        help="time to hold the winner blocked while the losing worker retries polling",
+    )
+    result.add_argument(
+        "--reservation-ttl-seconds",
+        type=int,
+        default=RECOVERY_QUARANTINE_SECONDS,
+        help=(
+            "spool stale-reservation TTL; this is not the PostgreSQL delivery claim TTL "
+            f"and must be >= {RECOVERY_QUARANTINE_SECONDS}"
+        ),
+    )
+    return result
+
+
+def database_identity(engine: Engine) -> dict[str, Any]:
+    with engine.connect() as connection:
+        row = connection.execute(
+            text(
+                "SELECT current_database(), current_user, "
+                "inet_server_addr()::text, inet_server_port(), version()"
+            )
+        ).one()
+    return {
+        "database": row[0],
+        "user": row[1],
+        "server_address": row[2],
+        "server_port": row[3],
+        "version": row[4],
+    }
+
+
+def enforce_database_safety(engine: Engine) -> dict[str, Any]:
+    require(engine.dialect.name == "postgresql", "refusing non-PostgreSQL database")
+    identity = database_identity(engine)
+    require(
+        identity["database"] == EXPECTED_DATABASE,
+        f"refusing database {identity['database']!r}; expected exactly {EXPECTED_DATABASE!r}",
+    )
+    return identity
+
+
+def active_generation_and_baseline(
+    factory: sessionmaker[Session], *, run_marker: str
+) -> BaselineContext:
+    with session_scope(factory) as session:
+        active = list(
+            session.scalars(
+                select(models.AuthorityGeneration).where(
+                    models.AuthorityGeneration.status == "active"
+                )
+            )
+        )
+        require(len(active) == 1, f"expected exactly one active generation, found {len(active)}")
+        generation = active[0]
+
+        registry = session.get(models.ActiveSectionRegistry, generation.generation_id)
+        require(registry is not None, "active generation has no active section registry")
+        research_queue = session.scalar(
+            select(models.SectionRegistryEntry).where(
+                models.SectionRegistryEntry.registry_version_id
+                == registry.registry_version_id,
+                models.SectionRegistryEntry.workflow_role == "research_queue",
+            )
+        )
+        require(research_queue is not None, "active registry has no Research Queue entry")
+
+        baseline = session.scalar(
+            select(tx.ShadowBaseline).where(
+                tx.ShadowBaseline.generation_id == generation.generation_id,
+                tx.ShadowBaseline.status == "open",
+            )
+        )
+        epoch = ProjectionService(session).activate_epoch(
+            generation_id=generation.generation_id,
+            activation_reason=f"shadow-worker restart certification {run_marker}",
+            created_at=utcnow(),
+            external_effects_enabled=False,
+        )
+        require(not epoch.external_effects_enabled, "certification epoch unexpectedly enables external effects")
+
+        created = False
+        if baseline is None:
+            baseline = ShadowService(session).create_baseline(
+                generation_id=generation.generation_id,
+                source_generation_identity=f"rehearsal-cert-source:{run_marker}",
+                source_commit=COMPARATOR_RELEASE,
+                created_at=utcnow(),
+            )
+            created = True
+
+        unfinished = list(
+            session.execute(
+                select(
+                    tx.ShadowEnvelope.source_request_identity,
+                    tx.ShadowEnvelope.rollout_sequence,
+                    tx.ShadowDelivery.state,
+                )
+                .join(
+                    tx.ShadowDelivery,
+                    tx.ShadowDelivery.envelope_id == tx.ShadowEnvelope.envelope_id,
+                )
+                .where(
+                    tx.ShadowEnvelope.shadow_baseline_id
+                    == baseline.shadow_baseline_id,
+                    tx.ShadowDelivery.state.in_(("pending", "claimed")),
+                )
+                .order_by(tx.ShadowEnvelope.rollout_sequence)
+            )
+        )
+        require(
+            not unfinished,
+            "open baseline already has in-flight deliveries; refusing to mix certification "
+            f"work with them: {unfinished!r}",
+        )
+
+        max_sequence = int(
+            session.scalar(
+                select(func.coalesce(func.max(tx.ShadowEnvelope.rollout_sequence), 0)).where(
+                    tx.ShadowEnvelope.shadow_baseline_id
+                    == baseline.shadow_baseline_id
+                )
+            )
+            or 0
+        )
+        return BaselineContext(
+            generation_id=generation.generation_id,
+            baseline_id=baseline.shadow_baseline_id,
+            source_generation_identity=baseline.source_generation_identity,
+            baseline_was_created=created,
+            first_rollout_sequence=max_sequence + 1,
+        )
+
+
+def source_states() -> tuple[dict[str, Any], dict[str, Any]]:
+    before = {
+        "selected_tables": ["service_requests"],
+        "tables": {"service_requests": []},
+    }
+    after = {
+        "selected_tables": ["service_requests"],
+        "tables": {
+            "service_requests": [
+                {"command": "create", "status": "completed"}
+            ]
+        },
+    }
+    return before, after
+
+
+def make_fixture_spec(
+    *,
+    run_marker: str,
+    label: str,
+    rollout_sequence: int,
+    captured_at: datetime,
+) -> dict[str, Any]:
+    source_request_identity = f"rehearsal-cert:{run_marker}:{label}"
+    title = f"[rehearsal-cert {run_marker}] {label}"
+    body = (
+        "TEST-ONLY shadow-worker restart certification artifact.\n"
+        f"run_marker={run_marker}\nlabel={label}\n"
+    )
+    before, after = source_states()
+    principal = {
+        "owner_id": f"rehearsal-cert:{run_marker}",
+        "principal_class": "agent",
+        "run_id": f"source-run:{run_marker}:{label}",
+    }
+    canonical_input = {
+        "command": "create",
+        "arguments": {"title": title, "body": body},
+    }
+    source_outcome = {
+        "ok": True,
+        "command": "create",
+        "code": "OK",
+        "task_gid": f"source-task:{run_marker}:{label}",
+        "retryable": False,
+        "allowed_actions": ["start"],
+        "data": {},
+    }
+    return {
+        "label": label,
+        "source_request_identity": source_request_identity,
+        "rollout_sequence": rollout_sequence,
+        "title": title,
+        "body": body,
+        "principal": principal,
+        "canonical_input": canonical_input,
+        "source_outcome": source_outcome,
+        "source_pre_state": before,
+        "source_post_state": after,
+        "pinned_inputs": {"rollout_mode": "execute"},
+        "source_effects": {},
+        "captured_at": captured_at,
+    }
+
+
+def insert_fixture(
+    factory: sessionmaker[Session],
+    *,
+    baseline: BaselineContext,
+    spec: dict[str, Any],
+) -> EnvelopeFixture:
+    with session_scope(factory) as session:
+        envelope = ShadowService(session).capture_envelope(
+            shadow_baseline_id=baseline.baseline_id,
+            command_name="create",
+            source_request_identity=spec["source_request_identity"],
+            canonical_input=spec["canonical_input"],
+            source_outcome=spec["source_outcome"],
+            source_post_state=spec["source_post_state"],
+            captured_at=spec["captured_at"],
+            rollout_sequence=spec["rollout_sequence"],
+            source_authority_generation=baseline.source_generation_identity,
+            source_execution_identity=spec["source_request_identity"],
+            principal=spec["principal"],
+            source_pre_state=spec["source_pre_state"],
+            pinned_inputs=spec["pinned_inputs"],
+            source_effects=spec["source_effects"],
+            capture_qualification="execute",
+        )
+        delivery = session.scalar(
+            select(tx.ShadowDelivery).where(
+                tx.ShadowDelivery.envelope_id == envelope.envelope_id
+            )
+        )
+        require(delivery is not None, "capture_envelope did not create a delivery")
+        request_id = _shadow_uuid(
+            envelope,
+            label="request",
+            value=envelope.source_request_identity,
+        )
+        return EnvelopeFixture(
+            **spec,
+            envelope_id=envelope.envelope_id,
+            delivery_id=delivery.delivery_id,
+            target_request_id=request_id,
+        )
+
+
+def seed_spool(
+    path: Path,
+    *,
+    baseline: BaselineContext,
+    fixtures: Sequence[EnvelopeFixture],
+) -> None:
+    require(bool(fixtures), "cannot seed an empty spool")
+    spool = ShadowSpool(path, min_free_bytes=1)
+    spool.initialize()
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE shadow_spool_metadata SET value=? WHERE key='next_rollout_sequence'",
+            (str(fixtures[0].rollout_sequence),),
+        )
+        connection.commit()
+    for fixture in fixtures:
+        reservation = spool.reserve(
+            source_request_identity=fixture.source_request_identity,
+            source_authority_generation=baseline.source_generation_identity,
+            command_name="create",
+            treatment="execute",
+            canonical_input=fixture.canonical_input,
+            principal=fixture.principal,
+            source_pre_state=fixture.source_pre_state,
+            pinned_inputs=fixture.pinned_inputs,
+            created_at=fixture.captured_at,
+        )
+        require(
+            reservation.rollout_sequence == fixture.rollout_sequence,
+            "scratch spool rollout sequence does not match PostgreSQL envelope",
+        )
+        spool.complete(
+            reservation.registration_id,
+            source_outcome=fixture.source_outcome,
+            source_post_state=fixture.source_post_state,
+            source_effects=fixture.source_effects,
+            completed_at=fixture.captured_at,
+        )
+
+
+def spool_row(path: Path, source_request_identity: str) -> dict[str, Any]:
+    with sqlite3.connect(path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            """SELECT source_request_identity, rollout_sequence, state,
+                      delivery_attempts, delivered_at, last_delivery_error
+                 FROM shadow_capture_registrations
+                WHERE source_request_identity=?""",
+            (source_request_identity,),
+        ).fetchone()
+    require(row is not None, f"spool row missing for {source_request_identity}")
+    return dict(row)
+
+
+def delivery_snapshot(
+    factory: sessionmaker[Session], fixture: EnvelopeFixture
+) -> DeliverySnapshot:
+    with session_scope(factory) as session:
+        envelope = session.get(tx.ShadowEnvelope, fixture.envelope_id)
+        delivery = session.get(tx.ShadowDelivery, fixture.delivery_id)
+        require(envelope is not None, f"missing envelope {fixture.envelope_id}")
+        require(delivery is not None, f"missing delivery {fixture.delivery_id}")
+        comparisons = list(
+            session.scalars(
+                select(tx.ShadowComparison).where(
+                    tx.ShadowComparison.envelope_id == fixture.envelope_id
+                )
+            )
+        )
+        request_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(wf.ServiceRequest)
+                .where(wf.ServiceRequest.request_id == fixture.target_request_id)
+            )
+            or 0
+        )
+        request_outcome_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(wf.ServiceRequestOutcome)
+                .where(
+                    wf.ServiceRequestOutcome.request_id == fixture.target_request_id
+                )
+            )
+            or 0
+        )
+        executions = list(
+            session.scalars(
+                select(wf.CommandExecution).where(
+                    wf.CommandExecution.request_id == fixture.target_request_id
+                )
+            )
+        )
+        execution_ids = [row.execution_id for row in executions]
+        task_count = 0
+        projection_count = 0
+        if execution_ids:
+            task_count = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(models.DishTask)
+                    .where(models.DishTask.command_execution_id.in_(execution_ids))
+                )
+                or 0
+            )
+            projection_count = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(tx.ProjectionOutboxEvent)
+                    .where(
+                        tx.ProjectionOutboxEvent.command_execution_id.in_(execution_ids),
+                        tx.ProjectionOutboxEvent.origin == "shadow",
+                    )
+                )
+                or 0
+            )
+        return DeliverySnapshot(
+            source_request_identity=envelope.source_request_identity,
+            envelope_id=str(envelope.envelope_id),
+            delivery_id=str(delivery.delivery_id),
+            rollout_sequence=envelope.rollout_sequence,
+            state=delivery.state,
+            claim_owner=delivery.claim_owner,
+            claim_token=None if delivery.claim_token is None else str(delivery.claim_token),
+            claim_expires_at=iso(delivery.claim_expires_at),
+            attempts=delivery.attempts,
+            delivery_revision=delivery.delivery_revision,
+            terminal_at=iso(delivery.terminal_at),
+            last_error=delivery.last_error,
+            comparison_count=len(comparisons),
+            parity_classes=tuple(row.parity_class for row in comparisons),
+            request_count=request_count,
+            request_outcome_count=request_outcome_count,
+            execution_count=len(executions),
+            task_count=task_count,
+            projection_count=projection_count,
+        )
+
+
+def wait_until(
+    description: str,
+    predicate: Callable[[], Any],
+    *,
+    timeout: float,
+    interval: float = DEFAULT_POLL_SECONDS,
+) -> Any:
+    deadline = time.monotonic() + timeout
+    last_value: Any = None
+    while time.monotonic() < deadline:
+        last_value = predicate()
+        if last_value:
+            return last_value
+        time.sleep(interval)
+    raise CertificationFailure(
+        f"timed out after {timeout:.1f}s waiting for {description}; last={last_value!r}"
+    )
+
+
+def wait_for_claim(
+    factory: sessionmaker[Session],
+    fixture: EnvelopeFixture,
+    *,
+    owner: str,
+    attempts: int,
+    timeout: float,
+) -> DeliverySnapshot:
+    def observed() -> DeliverySnapshot | None:
+        snapshot = delivery_snapshot(factory, fixture)
+        if (
+            snapshot.state == "claimed"
+            and snapshot.claim_owner == owner
+            and snapshot.attempts == attempts
+        ):
+            return snapshot
+        if snapshot.state in {"failed", "delivered"}:
+            raise CertificationFailure(
+                f"delivery reached {snapshot.state} before claim observation: {snapshot}"
+            )
+        return None
+
+    return wait_until(
+        f"{fixture.label} claimed by {owner} at attempt {attempts}",
+        observed,
+        timeout=timeout,
+    )
+
+
+def wait_for_delivered(
+    factory: sessionmaker[Session],
+    fixture: EnvelopeFixture,
+    *,
+    timeout: float,
+) -> DeliverySnapshot:
+    def observed() -> DeliverySnapshot | None:
+        snapshot = delivery_snapshot(factory, fixture)
+        if snapshot.state == "failed":
+            raise CertificationFailure(f"delivery failed: {snapshot}")
+        if snapshot.state == "delivered" and snapshot.comparison_count == 1:
+            return snapshot
+        return None
+
+    return wait_until(
+        f"{fixture.label} delivered with one comparison",
+        observed,
+        timeout=timeout,
+    )
+
+
+def wait_for_claim_expiry(
+    engine: Engine,
+    fixture: EnvelopeFixture,
+    *,
+    timeout: float,
+) -> dict[str, Any]:
+    deadline = time.monotonic() + timeout
+    last: dict[str, Any] | None = None
+    while time.monotonic() < deadline:
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """SELECT d.state, d.claim_owner, d.claim_expires_at,
+                              clock_timestamp(),
+                              (d.claim_expires_at <= clock_timestamp()) AS expired
+                         FROM shadow_deliveries d
+                        WHERE d.delivery_id = :delivery_id"""
+                ),
+                {"delivery_id": fixture.delivery_id},
+            ).one()
+        last = {
+            "state": row[0],
+            "claim_owner": row[1],
+            "claim_expires_at": iso(row[2]),
+            "server_now": iso(row[3]),
+            "expired": bool(row[4]),
+        }
+        require(last["state"] == "claimed", f"claim changed before expiry: {last}")
+        if last["expired"]:
+            return last
+        time.sleep(0.25)
+    raise CertificationFailure(
+        f"timed out after {timeout:.1f}s waiting for PostgreSQL claim expiry; last={last}"
+    )
+
+
+@contextmanager
+def block_create_execution(engine: Engine) -> Iterator[None]:
+    """Block the evaluator's first dish_tasks INSERT without blocking claim reads.
+
+    PostgreSQL INSERT acquires ROW EXCLUSIVE, which conflicts with this SHARE
+    table lock.  Plain SELECTs and the shadow-delivery CAS update remain free to
+    proceed, making the claimed-but-not-compared window deterministic.
+    """
+
+    connection = engine.connect()
+    transaction = connection.begin()
+    try:
+        connection.exec_driver_sql("LOCK TABLE dish_tasks IN SHARE MODE NOWAIT")
+        yield
+    finally:
+        transaction.rollback()
+        connection.close()
+
+
+def worker_command(
+    *,
+    database_url: str,
+    spool_path: Path,
+    baseline_id: uuid.UUID,
+    worker_id: str,
+    secret_path: Path,
+    kill_switch_path: Path,
+    reservation_ttl_seconds: int,
+) -> list[str]:
+    return [
+        sys.executable,
+        "-m",
+        "dish_pg.shadow_worker",
+        "--database-url",
+        database_url,
+        "--spool-path",
+        str(spool_path),
+        "--baseline-id",
+        str(baseline_id),
+        "--worker-id",
+        worker_id,
+        "--cursor-secret-file",
+        str(secret_path),
+        "--comparator-release",
+        COMPARATOR_RELEASE,
+        "--kill-switch",
+        str(kill_switch_path),
+        "--idle-seconds",
+        str(WORKER_IDLE_SECONDS),
+        "--reservation-ttl-seconds",
+        str(reservation_ttl_seconds),
+        "--delivered-retention-seconds",
+        str(7 * 24 * 60 * 60),
+        "--log-level",
+        "INFO",
+    ]
+
+
+def display_command(command: Sequence[str]) -> list[str]:
+    visible = list(command)
+    try:
+        index = visible.index("--database-url") + 1
+        visible[index] = "<redacted TEST PostgreSQL URL>"
+    except ValueError:
+        pass
+    return visible
+
+
+def start_worker(
+    *,
+    database_url: str,
+    spool_path: Path,
+    baseline_id: uuid.UUID,
+    worker_id: str,
+    secret_path: Path,
+    kill_switch_path: Path,
+    reservation_ttl_seconds: int,
+    log_path: Path,
+) -> WorkerProcess:
+    try:
+        kill_switch_path.unlink()
+    except FileNotFoundError:
+        pass
+    command = worker_command(
+        database_url=database_url,
+        spool_path=spool_path,
+        baseline_id=baseline_id,
+        worker_id=worker_id,
+        secret_path=secret_path,
+        kill_switch_path=kill_switch_path,
+        reservation_ttl_seconds=reservation_ttl_seconds,
+    )
+    environment = dict(os.environ)
+    environment["PYTHONUNBUFFERED"] = "1"
+    existing_pythonpath = environment.get("PYTHONPATH")
+    environment["PYTHONPATH"] = (
+        str(ROOT)
+        if not existing_pythonpath
+        else os.pathsep.join((str(ROOT), existing_pythonpath))
+    )
+    log_handle = log_path.open("w", encoding="utf-8")
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=environment,
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+    finally:
+        log_handle.close()
+    return WorkerProcess(
+        worker_id=worker_id,
+        process=process,
+        log_path=log_path,
+        command_display=display_command(command),
+        started_at=utcnow(),
+    )
+
+
+def require_running(worker: WorkerProcess) -> None:
+    code = worker.process.poll()
+    if code is not None:
+        raise CertificationFailure(
+            f"{worker.worker_id} exited early with {code}; log={worker.read_log()!r}"
+        )
+
+
+def sigkill_worker(worker: WorkerProcess) -> int:
+    require_running(worker)
+    os.kill(worker.process.pid, signal.SIGKILL)
+    try:
+        code = worker.process.wait(timeout=15)
+    except subprocess.TimeoutExpired as exc:
+        raise CertificationFailure(
+            f"{worker.worker_id} did not exit after SIGKILL"
+        ) from exc
+    require(code == -signal.SIGKILL, f"expected SIGKILL exit, got {code}")
+    return code
+
+
+def engage_kill_switch(path: Path) -> None:
+    path.write_text("rehearsal complete\n", encoding="utf-8")
+
+
+def wait_worker_exit(worker: WorkerProcess, *, timeout: float = 15.0) -> int:
+    try:
+        return worker.process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        worker.process.send_signal(signal.SIGTERM)
+        try:
+            return worker.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            os.kill(worker.process.pid, signal.SIGKILL)
+            return worker.process.wait(timeout=10)
+
+
+def stop_workers(kill_switch_path: Path, workers: Sequence[WorkerProcess]) -> dict[str, int]:
+    engage_kill_switch(kill_switch_path)
+    return {worker.worker_id: wait_worker_exit(worker) for worker in workers}
+
+
+def assert_clean_logs(workers: Sequence[WorkerProcess]) -> dict[str, str]:
+    logs: dict[str, str] = {}
+    for worker in workers:
+        content = worker.read_log()
+        logs[worker.worker_id] = content
+        found = [marker for marker in CRITICAL_LOG_MARKERS if marker in content]
+        require(not found, f"{worker.worker_id} emitted critical log markers: {found}")
+    return logs
+
+
+def assert_single_execution(snapshot: DeliverySnapshot) -> None:
+    require(snapshot.state == "delivered", f"delivery not terminal: {snapshot}")
+    require(snapshot.comparison_count == 1, f"comparison count is not one: {snapshot}")
+    require(snapshot.request_count == 1, f"service request count is not one: {snapshot}")
+    require(
+        snapshot.request_outcome_count == 1,
+        f"service request outcome count is not one: {snapshot}",
+    )
+    require(snapshot.execution_count == 1, f"command execution count is not one: {snapshot}")
+    require(snapshot.task_count == 1, f"created task count is not one: {snapshot}")
+    require(snapshot.projection_count == 1, f"shadow projection count is not one: {snapshot}")
+    require(snapshot.last_error is None, f"delivery recorded an error: {snapshot}")
+
+
+def log_summary(logs: dict[str, str]) -> dict[str, Any]:
+    return {
+        worker_id: {
+            "bytes": len(content.encode("utf-8")),
+            "lines": len(content.splitlines()),
+            "tail": content.splitlines()[-10:],
+        }
+        for worker_id, content in logs.items()
+    }
+
+
+def run_test_1(
+    *,
+    engine: Engine,
+    factory: sessionmaker[Session],
+    database_url: str,
+    baseline: BaselineContext,
+    run_marker: str,
+    rollout_sequence: int,
+    scratch: Path,
+    secret_path: Path,
+    args: argparse.Namespace,
+) -> TestEvidence:
+    name = "TEST 1 — claim, SIGKILL, expiry, and safe reclaim"
+    directory = scratch / "test-1"
+    directory.mkdir(parents=True, exist_ok=True)
+    spool_path = directory / "shadow-spool.sqlite3"
+    kill_switch = directory / "dark-launch.disabled"
+    fixture = insert_fixture(
+        factory,
+        baseline=baseline,
+        spec=make_fixture_spec(
+            run_marker=run_marker,
+            label="test-1-crash-reclaim",
+            rollout_sequence=rollout_sequence,
+            captured_at=utcnow(),
+        ),
+    )
+    seed_spool(spool_path, baseline=baseline, fixtures=[fixture])
+
+    worker_a: WorkerProcess | None = None
+    worker_b: WorkerProcess | None = None
+    try:
+        with block_create_execution(engine):
+            worker_a = start_worker(
+                database_url=database_url,
+                spool_path=spool_path,
+                baseline_id=baseline.baseline_id,
+                worker_id="worker-a",
+                secret_path=secret_path,
+                kill_switch_path=kill_switch,
+                reservation_ttl_seconds=args.reservation_ttl_seconds,
+                log_path=directory / "worker-a.log",
+            )
+            first_claim = wait_for_claim(
+                factory,
+                fixture,
+                owner="worker-a",
+                attempts=1,
+                timeout=args.claim_observation_timeout_seconds,
+            )
+            require(first_claim.comparison_count == 0, "comparison existed before crash")
+            require(first_claim.request_count == 0, "evaluator transaction committed before crash")
+            killed_exit = sigkill_worker(worker_a)
+            after_kill = delivery_snapshot(factory, fixture)
+            require(after_kill.state == "claimed", f"claim did not survive crash: {after_kill}")
+            require(after_kill.claim_owner == "worker-a", f"claim owner changed: {after_kill}")
+            require(after_kill.attempts == 1, f"unexpected attempts after crash: {after_kill}")
+            require(after_kill.comparison_count == 0, "comparison committed before SIGKILL")
+            require(after_kill.request_count == 0, "partial target request survived SIGKILL")
+
+        expiry = wait_for_claim_expiry(
+            engine,
+            fixture,
+            timeout=args.expiry_timeout_seconds,
+        )
+
+        with block_create_execution(engine):
+            worker_b = start_worker(
+                database_url=database_url,
+                spool_path=spool_path,
+                baseline_id=baseline.baseline_id,
+                worker_id="worker-b",
+                secret_path=secret_path,
+                kill_switch_path=kill_switch,
+                reservation_ttl_seconds=args.reservation_ttl_seconds,
+                log_path=directory / "worker-b.log",
+            )
+            reclaimed = wait_for_claim(
+                factory,
+                fixture,
+                owner="worker-b",
+                attempts=2,
+                timeout=args.claim_observation_timeout_seconds,
+            )
+            require(reclaimed.comparison_count == 0, "comparison existed before reclaim execution")
+            require(
+                reclaimed.request_count == 0,
+                "target request existed before releasing execution lock",
+            )
+
+        terminal = wait_for_delivered(
+            factory,
+            fixture,
+            timeout=args.completion_timeout_seconds,
+        )
+        exit_codes = stop_workers(kill_switch, [worker_b])
+        require(exit_codes["worker-b"] == 0, f"worker-b exit was {exit_codes['worker-b']}")
+        assert_single_execution(terminal)
+        require(terminal.attempts == 2, f"expected one original claim and one reclaim: {terminal}")
+        spool = spool_row(spool_path, fixture.source_request_identity)
+        require(spool["state"] == "delivered", f"spool is not delivered: {spool}")
+        require(spool["last_delivery_error"] is None, f"spool error present: {spool}")
+        logs = assert_clean_logs([worker_a, worker_b])
+        return TestEvidence(
+            name=name,
+            values={
+                "fixture": asdict(fixture),
+                "first_claim": asdict(first_claim),
+                "worker_a_sigkill_exit": killed_exit,
+                "after_kill": asdict(after_kill),
+                "expiry": expiry,
+                "reclaimed": asdict(reclaimed),
+                "terminal": asdict(terminal),
+                "spool": spool,
+                "worker_exit_codes": exit_codes,
+                "worker_logs": log_summary(logs),
+            },
+        )
+    finally:
+        for worker in (worker_a, worker_b):
+            if worker is not None and worker.process.poll() is None:
+                try:
+                    os.kill(worker.process.pid, signal.SIGKILL)
+                    worker.process.wait(timeout=10)
+                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    pass
+
+
+def run_test_2(
+    *,
+    engine: Engine,
+    factory: sessionmaker[Session],
+    database_url: str,
+    baseline: BaselineContext,
+    run_marker: str,
+    rollout_sequence: int,
+    scratch: Path,
+    secret_path: Path,
+    args: argparse.Namespace,
+) -> TestEvidence:
+    name = "TEST 2 — concurrent ownership fencing"
+    directory = scratch / "test-2"
+    directory.mkdir(parents=True, exist_ok=True)
+    spool_path = directory / "shadow-spool.sqlite3"
+    kill_switch = directory / "dark-launch.disabled"
+    fixture = insert_fixture(
+        factory,
+        baseline=baseline,
+        spec=make_fixture_spec(
+            run_marker=run_marker,
+            label="test-2-concurrent-fencing",
+            rollout_sequence=rollout_sequence,
+            captured_at=utcnow(),
+        ),
+    )
+    seed_spool(spool_path, baseline=baseline, fixtures=[fixture])
+
+    workers: list[WorkerProcess] = []
+    try:
+        with block_create_execution(engine):
+            for worker_id in ("worker-a", "worker-b"):
+                workers.append(
+                    start_worker(
+                        database_url=database_url,
+                        spool_path=spool_path,
+                        baseline_id=baseline.baseline_id,
+                        worker_id=worker_id,
+                        secret_path=secret_path,
+                        kill_switch_path=kill_switch,
+                        reservation_ttl_seconds=args.reservation_ttl_seconds,
+                        log_path=directory / f"{worker_id}.log",
+                    )
+                )
+
+            def winner_observed() -> DeliverySnapshot | None:
+                for worker in workers:
+                    require_running(worker)
+                snapshot = delivery_snapshot(factory, fixture)
+                if (
+                    snapshot.state == "claimed"
+                    and snapshot.claim_owner in {"worker-a", "worker-b"}
+                    and snapshot.attempts == 1
+                ):
+                    return snapshot
+                if snapshot.state in {"failed", "delivered"}:
+                    raise CertificationFailure(
+                        f"delivery terminal before concurrent claim observation: {snapshot}"
+                    )
+                return None
+
+            claimed = wait_until(
+                "one concurrent worker to acquire the delivery",
+                winner_observed,
+                timeout=args.claim_observation_timeout_seconds,
+            )
+            winner = claimed.claim_owner
+            require(winner is not None, "claimed delivery has no owner")
+            loser = "worker-b" if winner == "worker-a" else "worker-a"
+
+            observation_deadline = time.monotonic() + args.concurrent_observation_seconds
+            observations: list[dict[str, Any]] = []
+            while time.monotonic() < observation_deadline:
+                for worker in workers:
+                    require_running(worker)
+                snapshot = delivery_snapshot(factory, fixture)
+                observations.append(asdict(snapshot))
+                require(snapshot.state == "claimed", f"claim changed while blocked: {snapshot}")
+                require(
+                    snapshot.claim_owner == winner,
+                    f"ownership changed while blocked: {snapshot}",
+                )
+                require(snapshot.attempts == 1, f"second concurrent claim succeeded: {snapshot}")
+                require(
+                    snapshot.comparison_count == 0,
+                    f"comparison appeared while blocked: {snapshot}",
+                )
+                time.sleep(0.1)
+
+        terminal = wait_for_delivered(
+            factory,
+            fixture,
+            timeout=args.completion_timeout_seconds,
+        )
+        exit_codes = stop_workers(kill_switch, workers)
+        require(all(code == 0 for code in exit_codes.values()), f"worker exits: {exit_codes}")
+        assert_single_execution(terminal)
+        require(terminal.attempts == 1, f"more than one concurrent claim succeeded: {terminal}")
+        spool = spool_row(spool_path, fixture.source_request_identity)
+        require(spool["state"] == "delivered", f"spool is not delivered: {spool}")
+        require(spool["last_delivery_error"] is None, f"spool error present: {spool}")
+        logs = assert_clean_logs(workers)
+        return TestEvidence(
+            name=name,
+            values={
+                "fixture": asdict(fixture),
+                "worker_start_times": {
+                    worker.worker_id: worker.started_at.isoformat() for worker in workers
+                },
+                "winner": winner,
+                "loser": loser,
+                "claim_observation": asdict(claimed),
+                "blocked_observations": observations,
+                "terminal": asdict(terminal),
+                "spool": spool,
+                "worker_exit_codes": exit_codes,
+                "worker_logs": log_summary(logs),
+            },
+        )
+    finally:
+        for worker in workers:
+            if worker.process.poll() is None:
+                try:
+                    os.kill(worker.process.pid, signal.SIGKILL)
+                    worker.process.wait(timeout=10)
+                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    pass
+
+
+def run_test_3(
+    *,
+    engine: Engine,
+    factory: sessionmaker[Session],
+    database_url: str,
+    baseline: BaselineContext,
+    run_marker: str,
+    first_rollout_sequence: int,
+    scratch: Path,
+    secret_path: Path,
+    args: argparse.Namespace,
+) -> TestEvidence:
+    name = "TEST 3 — rollout ordering survives crash/restart"
+    directory = scratch / "test-3"
+    directory.mkdir(parents=True, exist_ok=True)
+    spool_path = directory / "shadow-spool.sqlite3"
+    kill_switch = directory / "dark-launch.disabled"
+    first = insert_fixture(
+        factory,
+        baseline=baseline,
+        spec=make_fixture_spec(
+            run_marker=run_marker,
+            label="test-3-sequence-1",
+            rollout_sequence=first_rollout_sequence,
+            captured_at=utcnow(),
+        ),
+    )
+    second = insert_fixture(
+        factory,
+        baseline=baseline,
+        spec=make_fixture_spec(
+            run_marker=run_marker,
+            label="test-3-sequence-2",
+            rollout_sequence=first_rollout_sequence + 1,
+            captured_at=utcnow(),
+        ),
+    )
+    require(
+        second.rollout_sequence == first.rollout_sequence + 1,
+        "test-3 rollout sequences are not consecutive",
+    )
+    seed_spool(spool_path, baseline=baseline, fixtures=[first, second])
+
+    worker_a: WorkerProcess | None = None
+    worker_b: WorkerProcess | None = None
+    try:
+        with block_create_execution(engine):
+            worker_a = start_worker(
+                database_url=database_url,
+                spool_path=spool_path,
+                baseline_id=baseline.baseline_id,
+                worker_id="worker-a",
+                secret_path=secret_path,
+                kill_switch_path=kill_switch,
+                reservation_ttl_seconds=args.reservation_ttl_seconds,
+                log_path=directory / "worker-a.log",
+            )
+            first_claim = wait_for_claim(
+                factory,
+                first,
+                owner="worker-a",
+                attempts=1,
+                timeout=args.claim_observation_timeout_seconds,
+            )
+            second_while_first_claimed = delivery_snapshot(factory, second)
+            require(
+                second_while_first_claimed.state == "pending"
+                and second_while_first_claimed.attempts == 0,
+                "later rollout sequence was claimed before the earlier one settled: "
+                f"{second_while_first_claimed}",
+            )
+            killed_exit = sigkill_worker(worker_a)
+            after_kill_first = delivery_snapshot(factory, first)
+            after_kill_second = delivery_snapshot(factory, second)
+            require(after_kill_first.state == "claimed", f"first claim lost: {after_kill_first}")
+            require(
+                after_kill_second.state == "pending" and after_kill_second.attempts == 0,
+                f"second delivery advanced during crash: {after_kill_second}",
+            )
+
+        expiry = wait_for_claim_expiry(
+            engine,
+            first,
+            timeout=args.expiry_timeout_seconds,
+        )
+
+        with block_create_execution(engine):
+            worker_b = start_worker(
+                database_url=database_url,
+                spool_path=spool_path,
+                baseline_id=baseline.baseline_id,
+                worker_id="worker-b",
+                secret_path=secret_path,
+                kill_switch_path=kill_switch,
+                reservation_ttl_seconds=args.reservation_ttl_seconds,
+                log_path=directory / "worker-b.log",
+            )
+            reclaimed_first = wait_for_claim(
+                factory,
+                first,
+                owner="worker-b",
+                attempts=2,
+                timeout=args.claim_observation_timeout_seconds,
+            )
+            second_while_first_reclaimed = delivery_snapshot(factory, second)
+            require(
+                second_while_first_reclaimed.state == "pending"
+                and second_while_first_reclaimed.attempts == 0,
+                "restart allowed later rollout sequence to jump the unresolved earlier one: "
+                f"{second_while_first_reclaimed}",
+            )
+
+        first_terminal = wait_for_delivered(
+            factory,
+            first,
+            timeout=args.completion_timeout_seconds,
+        )
+        second_terminal = wait_for_delivered(
+            factory,
+            second,
+            timeout=args.completion_timeout_seconds,
+        )
+        exit_codes = stop_workers(kill_switch, [worker_b])
+        require(exit_codes["worker-b"] == 0, f"worker-b exit was {exit_codes['worker-b']}")
+        assert_single_execution(first_terminal)
+        assert_single_execution(second_terminal)
+        require(
+            first_terminal.attempts == 2,
+            f"first delivery was not reclaimed once: {first_terminal}",
+        )
+        require(
+            second_terminal.attempts == 1,
+            f"second delivery claim count unexpected: {second_terminal}",
+        )
+        require(
+            first_terminal.terminal_at is not None and second_terminal.terminal_at is not None,
+            "terminal timestamps are missing",
+        )
+        require(
+            datetime.fromisoformat(first_terminal.terminal_at)
+            <= datetime.fromisoformat(second_terminal.terminal_at),
+            "later rollout sequence completed before the earlier sequence",
+        )
+        first_spool = spool_row(spool_path, first.source_request_identity)
+        second_spool = spool_row(spool_path, second.source_request_identity)
+        require(first_spool["state"] == "delivered", f"first spool row: {first_spool}")
+        require(second_spool["state"] == "delivered", f"second spool row: {second_spool}")
+        logs = assert_clean_logs([worker_a, worker_b])
+        return TestEvidence(
+            name=name,
+            values={
+                "first_fixture": asdict(first),
+                "second_fixture": asdict(second),
+                "first_claim": asdict(first_claim),
+                "second_while_first_claimed": asdict(second_while_first_claimed),
+                "worker_a_sigkill_exit": killed_exit,
+                "after_kill_first": asdict(after_kill_first),
+                "after_kill_second": asdict(after_kill_second),
+                "expiry": expiry,
+                "reclaimed_first": asdict(reclaimed_first),
+                "second_while_first_reclaimed": asdict(second_while_first_reclaimed),
+                "first_terminal": asdict(first_terminal),
+                "second_terminal": asdict(second_terminal),
+                "first_spool": first_spool,
+                "second_spool": second_spool,
+                "worker_exit_codes": exit_codes,
+                "worker_logs": log_summary(logs),
+            },
+        )
+    finally:
+        for worker in (worker_a, worker_b):
+            if worker is not None and worker.process.poll() is None:
+                try:
+                    os.kill(worker.process.pid, signal.SIGKILL)
+                    worker.process.wait(timeout=10)
+                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    pass
+
+
+def json_default(value: Any) -> Any:
+    if isinstance(value, (datetime, uuid.UUID, Path)):
+        return str(value)
+    raise TypeError(f"not JSON serializable: {type(value)!r}")
+
+
+def print_result(status: str, evidence: TestEvidence | None, error: BaseException | None) -> None:
+    label = evidence.name if evidence is not None else "unknown test"
+    print(f"\n{status}: {label}")
+    if evidence is not None:
+        print(json.dumps(evidence.values, indent=2, sort_keys=True, default=json_default))
+    if error is not None:
+        print(f"error: {error}")
+
+
+def cleanup_manifest(
+    factory: sessionmaker[Session], *, run_marker: str, baseline_id: uuid.UUID
+) -> dict[str, Any]:
+    prefix = f"rehearsal-cert:{run_marker}:%"
+    title_prefix = f"[rehearsal-cert {run_marker}]%"
+    with session_scope(factory) as session:
+        envelopes = list(
+            session.execute(
+                select(
+                    tx.ShadowEnvelope.envelope_id,
+                    tx.ShadowEnvelope.source_request_identity,
+                    tx.ShadowEnvelope.rollout_sequence,
+                    tx.ShadowDelivery.delivery_id,
+                    tx.ShadowDelivery.state,
+                )
+                .join(
+                    tx.ShadowDelivery,
+                    tx.ShadowDelivery.envelope_id == tx.ShadowEnvelope.envelope_id,
+                )
+                .where(
+                    tx.ShadowEnvelope.shadow_baseline_id == baseline_id,
+                    tx.ShadowEnvelope.source_request_identity.like(prefix),
+                )
+                .order_by(tx.ShadowEnvelope.rollout_sequence)
+            )
+        )
+        tasks = list(
+            session.execute(
+                select(
+                    models.DishTask.task_id,
+                    models.DishTask.command_execution_id,
+                    models.ContentVersion.title,
+                )
+                .join(
+                    models.ContentVersion,
+                    models.ContentVersion.task_id == models.DishTask.task_id,
+                )
+                .where(models.ContentVersion.title.like(title_prefix))
+            )
+        )
+    return {
+        "run_marker": run_marker,
+        "baseline_id": str(baseline_id),
+        "source_request_like": prefix,
+        "task_title_like": title_prefix,
+        "shadow_rows": [
+            {
+                "envelope_id": str(row[0]),
+                "source_request_identity": row[1],
+                "rollout_sequence": row[2],
+                "delivery_id": str(row[3]),
+                "delivery_state": row[4],
+            }
+            for row in envelopes
+        ],
+        "target_tasks": [
+            {
+                "task_id": str(row[0]),
+                "command_execution_id": str(row[1]),
+                "title": row[2],
+            }
+            for row in tasks
+        ],
+        "cleanup_note": (
+            "PostgreSQL rows are intentionally retained as certification evidence. "
+            "Use this manifest to inspect them; the safest cleanup is restoring/resetting "
+            "the isolated dish_stage_a_dark_test database after review rather than issuing "
+            "ad-hoc deletes across the authority/audit foreign-key graph."
+        ),
+    }
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parser().parse_args(argv)
+    if not args.database_url:
+        parser().error("--database-url or DISH_PG_TEST_URL is required")
+    if args.reservation_ttl_seconds < RECOVERY_QUARANTINE_SECONDS:
+        parser().error(
+            "--reservation-ttl-seconds must be at least "
+            f"{RECOVERY_QUARANTINE_SECONDS}; the worker constructor rejects smaller values"
+        )
+
+    run_marker = f"{utcnow().strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:10]}"
+    if args.scratch_root is not None:
+        args.scratch_root.mkdir(parents=True, exist_ok=True)
+    scratch_parent = None if args.scratch_root is None else str(args.scratch_root)
+    scratch = Path(
+        tempfile.mkdtemp(
+            prefix=f"dish-shadow-restart-cert-{run_marker}-",
+            dir=scratch_parent,
+        )
+    )
+    secret_path = scratch / "cursor-secret"
+    secret_path.write_bytes(os.urandom(48))
+    os.chmod(secret_path, 0o600)
+
+    engine = create_database_engine(DatabaseSettings(url=args.database_url))
+    factory = session_factory(engine)
+    completed: list[TestEvidence] = []
+    failed_error: BaseException | None = None
+    baseline: BaselineContext | None = None
+    try:
+        identity = enforce_database_safety(engine)
+        baseline = active_generation_and_baseline(factory, run_marker=run_marker)
+        print(
+            json.dumps(
+                {
+                    "certification": "dish shadow-worker restart",
+                    "run_marker": run_marker,
+                    "database": identity,
+                    "baseline": asdict(baseline),
+                    "scratch": str(scratch),
+                    "scratch_will_be_deleted": not args.keep_scratch,
+                    "reservation_ttl_seconds": args.reservation_ttl_seconds,
+                    "claim_expiry_note": (
+                        "PostgreSQL delivery claims use ShadowWorker's fixed two-minute claim_ttl; "
+                        "the script waits on the stored claim_expires_at timestamp."
+                    ),
+                    "execution_blocker": (
+                        "short-lived PostgreSQL SHARE lock on dish_tasks; this allows claim CAS "
+                        "to commit but blocks the evaluator's create INSERT until observation/kill"
+                    ),
+                },
+                indent=2,
+                sort_keys=True,
+                default=json_default,
+            )
+        )
+
+        tests: list[tuple[str, Callable[[], TestEvidence]]] = [
+            (
+                "TEST 1 — claim, SIGKILL, expiry, and safe reclaim",
+                lambda: run_test_1(
+                    engine=engine,
+                    factory=factory,
+                    database_url=args.database_url,
+                    baseline=baseline,
+                    run_marker=run_marker,
+                    rollout_sequence=baseline.first_rollout_sequence,
+                    scratch=scratch,
+                    secret_path=secret_path,
+                    args=args,
+                ),
+            ),
+            (
+                "TEST 2 — concurrent ownership fencing",
+                lambda: run_test_2(
+                    engine=engine,
+                    factory=factory,
+                    database_url=args.database_url,
+                    baseline=baseline,
+                    run_marker=run_marker,
+                    rollout_sequence=baseline.first_rollout_sequence + 1,
+                    scratch=scratch,
+                    secret_path=secret_path,
+                    args=args,
+                ),
+            ),
+            (
+                "TEST 3 — rollout ordering survives crash/restart",
+                lambda: run_test_3(
+                    engine=engine,
+                    factory=factory,
+                    database_url=args.database_url,
+                    baseline=baseline,
+                    run_marker=run_marker,
+                    first_rollout_sequence=baseline.first_rollout_sequence + 2,
+                    scratch=scratch,
+                    secret_path=secret_path,
+                    args=args,
+                ),
+            ),
+        ]
+
+        for index, (name, test) in enumerate(tests):
+            try:
+                evidence = test()
+                completed.append(evidence)
+                print_result("PASS", evidence, None)
+            except BaseException as exc:
+                failed_error = exc
+                print_result("FAIL", TestEvidence(name=name, values={}), exc)
+                traceback.print_exc()
+                for remaining_name, _ in tests[index + 1 :]:
+                    print_result(
+                        "FAIL",
+                        TestEvidence(
+                            name=remaining_name,
+                            values={"not_run": "blocked by earlier certification failure"},
+                        ),
+                        CertificationFailure("not run because an earlier test failed"),
+                    )
+                break
+
+        manifest = cleanup_manifest(
+            factory,
+            run_marker=run_marker,
+            baseline_id=baseline.baseline_id,
+        )
+        print("\nPOSTGRESQL EVIDENCE / CLEANUP MANIFEST")
+        print(json.dumps(manifest, indent=2, sort_keys=True))
+
+        passed = failed_error is None and len(completed) == 3
+        overall = (
+            "PASS — all three real-worker PostgreSQL properties certified"
+            if passed
+            else "FAIL"
+        )
+        print("\nOVERALL: " + overall)
+        return 0 if passed else 2
+    except BaseException as exc:
+        traceback.print_exc()
+        print(f"\nOVERALL: FAIL — setup/safety gate: {exc}")
+        return 2
+    finally:
+        engine.dispose()
+        if args.keep_scratch:
+            print(f"scratch preserved at: {scratch}")
+        else:
+            shutil.rmtree(scratch, ignore_errors=True)
+            print(f"scratch cleaned: {scratch}")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

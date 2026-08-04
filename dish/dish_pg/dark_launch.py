@@ -17,7 +17,7 @@ from dish_service.path_safety import clear_kill_switch, engage_kill_switch
 from . import models
 from . import stage5_models as tx
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
-from .transition import ShadowService
+from .transition import ProjectionService, ShadowService
 
 
 def _now() -> datetime:
@@ -119,6 +119,10 @@ def _parser() -> argparse.ArgumentParser:
         type=int,
         default=int(os.environ.get("DISH_DARK_LAUNCH_MIN_FREE_BYTES", str(1024 * 1024 * 1024))),
     )
+    activate = sub.add_parser("activate-epoch")
+    activate.add_argument("--database-url", required=True)
+    activate.add_argument("--generation-id", required=True, type=uuid.UUID)
+    activate.add_argument("--reason", required=True)
     create = sub.choices["baseline-create"]
     create.add_argument("--generation-id", required=True, type=uuid.UUID)
     create.add_argument("--source-generation", required=True)
@@ -145,7 +149,20 @@ def main(argv: list[str] | None = None) -> int:
     engine = create_database_engine(DatabaseSettings(url=args.database_url))
     factory = session_factory(engine)
     try:
-        if args.command == "baseline-create":
+        if args.command == "activate-epoch":
+            with session_scope(factory) as session:
+                epoch = ProjectionService(session).activate_epoch(
+                    generation_id=args.generation_id,
+                    activation_reason=args.reason,
+                    created_at=_now(),
+                    external_effects_enabled=False,
+                )
+                value = {
+                    "projection_epoch_id": str(epoch.projection_epoch_id),
+                    "status": epoch.status,
+                    "external_effects_enabled": epoch.external_effects_enabled,
+                }
+        elif args.command == "baseline-create":
             with session_scope(factory) as session:
                 baseline = ShadowService(session).create_baseline(
                     generation_id=args.generation_id,

@@ -61,13 +61,24 @@ should still remain `external_effects_enabled = false` as an independent operati
      --contract-binding-id "$DISH_PG_BINDING_ID"
    ```
 
-6. Verify that the resolved live SQLite database, spool, emergency directory, and kill-switch paths
+6. Activate one projection epoch for the generation before starting the shadow worker. This is an
+   explicit, idempotent operator decision and must be performed once per generation. Dark-launch
+   activation always keeps external effects disabled:
+
+   ```sh
+   scripts/dish-pg-dark-launch activate-epoch \
+     --database-url "$DISH_PG_DATABASE_URL" \
+     --generation-id "$DISH_PG_GENERATION_ID" \
+     --reason "dark-launch shadow execution"
+   ```
+
+7. Verify that the resolved live SQLite database, spool, emergency directory, and kill-switch paths
    are pairwise distinct. Do not place the spool or kill switch behind a symlink or hard link to live
    authority storage. Status and worker startup refuse a missing or incomplete spool rather than
    creating one. The disable command creates a versioned marker without replacing an existing file;
    enable-capture removes only that validated marker.
-7. Put the returned baseline UUID in the owner-only dark-launch worker environment file.
-8. Install `deploy/systemd/dish-shadow-worker.service`, but do not start it yet.
+8. Put the returned baseline UUID in the owner-only dark-launch worker environment file.
+9. Install `deploy/systemd/dish-shadow-worker.service`, but do not start it yet.
 
 ## Enable capture first
 

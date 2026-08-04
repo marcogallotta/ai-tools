@@ -835,9 +835,34 @@ def main(argv: list[str] | None = None) -> int:
     if len(secret) < 32:
         raise SystemExit("cursor secret must contain at least 32 bytes")
     engine = create_database_engine(DatabaseSettings(url=args.database_url))
+    factory = session_factory(engine)
+    try:
+        with session_scope(factory) as session:
+            baseline = session.get(tx.ShadowBaseline, args.baseline_id)
+            if baseline is None:
+                raise SystemExit(f"shadow baseline {args.baseline_id} does not exist")
+            epoch = session.scalar(
+                select(tx.ProjectionEpoch).where(
+                    tx.ProjectionEpoch.generation_id == baseline.generation_id,
+                    tx.ProjectionEpoch.status == "active",
+                )
+            )
+            if epoch is None:
+                raise SystemExit(
+                    "shadow worker requires an active, effects-disabled projection epoch; "
+                    "run `dish-pg-dark-launch activate-epoch --database-url ... "
+                    f"--generation-id {baseline.generation_id} --reason ...` first"
+                )
+            if epoch.external_effects_enabled:
+                raise SystemExit(
+                    "shadow worker refuses an active projection epoch with external effects enabled"
+                )
+    except BaseException:
+        engine.dispose()
+        raise
     worker = ShadowWorker(
         spool=ShadowSpool.open_existing(args.spool_path),
-        session_maker=session_factory(engine),
+        session_maker=factory,
         baseline_id=args.baseline_id,
         evaluator=CommandPortShadowEvaluator(cursor_secret=secret),
         worker_id=args.worker_id,

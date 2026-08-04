@@ -1,0 +1,1693 @@
+#!/usr/bin/env python3
+"""Rehearse PostgreSQL dark-launch capture through the live TEST service.
+
+TEST-only safety contract:
+- edits only /home/marco/.config/dish-service/test.env, after an exact backup;
+- calls only the pre-authorized dish-service-test.service systemctl commands;
+- accepts only PostgreSQL database dish_stage_a_dark_test;
+- never starts a shadow worker (capture mode does not need one);
+- restores the original environment and running service in a finally block.
+
+Run from the real TEST host with the repository virtualenv, for example:
+
+    DISH_PG_DATABASE_URL='postgresql+psycopg://...' \
+      .venv/bin/python scripts/dish-pg-host-capture-rehearsal --agent codex
+
+The PostgreSQL URL is never printed or written to the report.  Each benchmark
+alternates the private CLI listener (8765) and GPT Action listener (8766).
+Existing TEST operation IDs may be supplied with repeated --operation-id.  Otherwise the
+script discovers recent operation IDs from the TEST SQLite database and keeps
+only operations whose live inspect result is stable while capture is off.
+"""
+from __future__ import annotations
+
+import argparse
+import copy
+import hashlib
+import json
+import math
+import os
+import re
+import shlex
+import shutil
+import signal
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+import traceback
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+
+TEST_ENV_PATH = Path("/home/marco/.config/dish-service/test.env")
+TEST_STATE_ROOT = Path("/home/marco/.local/state/dish/test")
+TEST_DB_PATH = TEST_STATE_ROOT / "shared.sqlite3"
+TEST_PROJECT_GID = "1216693403164366"
+TEST_PRIVATE_PORT = 8765
+TEST_ACTION_PORT = 8766
+TEST_UNIT = "dish-service-test.service"
+EXPECTED_PG_DATABASE = "dish_stage_a_dark_test"
+SYSTEMCTL = Path("/usr/bin/systemctl")
+DARK_KEYS = (
+    "DISH_DARK_LAUNCH_MODE",
+    "DISH_DARK_LAUNCH_BUSY_TIMEOUT_MS",
+    "DISH_DARK_LAUNCH_MAX_SPOOL_BYTES",
+    "DISH_DARK_LAUNCH_MAX_SPOOL_RECORDS",
+    "DISH_DARK_LAUNCH_MIN_FREE_BYTES",
+    "DISH_DARK_LAUNCH_SPOOL_PATH",
+    "DISH_DARK_LAUNCH_KILL_SWITCH",
+    "DISH_DARK_LAUNCH_EMERGENCY_DIR",
+    "DISH_DARK_LAUNCH_BASELINE_ID",
+    "DISH_DARK_LAUNCH_SOURCE_GENERATION",
+    "DISH_DARK_LAUNCH_RESERVATION_TTL_SECONDS",
+    "DISH_DARK_LAUNCH_DELIVERED_RETENTION_SECONDS",
+)
+_ASSIGNMENT = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=")
+_SAFE_ENV_VALUE = re.compile(r"^[A-Za-z0-9_./:@+,-]+$")
+_VOLATILE_KEYS = {
+    "request_id",
+    "run_id",
+    "invocation_run_id",
+    "dish_inspect_fact",
+    "verification_lineage",
+    "expires_in_seconds",
+    "lease_remaining_seconds",
+    "remaining_seconds",
+    "heartbeat_age_seconds",
+}
+
+
+class RehearsalError(RuntimeError):
+    pass
+
+
+class RehearsalInterrupted(RehearsalError):
+    pass
+
+
+@dataclass
+class PhaseResult:
+    name: str
+    passed: bool = False
+    evidence: dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+
+
+@dataclass
+class RunState:
+    current_stage: str = "initializing"
+    scratch: Path | None = None
+
+    def enter(self, stage: str) -> None:
+        self.current_stage = stage
+
+
+@dataclass
+class SpoolSnapshot:
+    total_records: int
+    counts: dict[str, int]
+    next_rollout_sequence: int
+    max_rollout_sequence: int | None
+    row_digest: str
+    quick_check: str
+    capacity_accepting: bool
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "total_records": self.total_records,
+            "counts": dict(self.counts),
+            "next_rollout_sequence": self.next_rollout_sequence,
+            "max_rollout_sequence": self.max_rollout_sequence,
+            "row_digest": self.row_digest,
+            "quick_check": self.quick_check,
+            "capacity_accepting": self.capacity_accepting,
+        }
+
+
+@dataclass
+class RuntimeContext:
+    args: argparse.Namespace
+    repo_root: Path
+    env_path: Path
+    original_env_bytes: bytes
+    original_env: dict[str, str]
+    original_env_mode: int
+    original_env_hash: str
+    scratch: Path
+    backup_path: Path
+    service_base_url: str
+    service_token: str
+    action_base_url: str
+    action_token: str
+    client_run_id: str
+    database_url: str
+    source_commit: str
+    source_generation: str
+    baseline_id: str | None = None
+    generation_id: str | None = None
+    stable_operations: list[str] = field(default_factory=list)
+    baseline_signatures: dict[str, Any] = field(default_factory=dict)
+    baseline_signature_hashes: dict[str, str] = field(default_factory=dict)
+    env_modified: bool = False
+    restored: bool = False
+
+    @property
+    def healthy_dir(self) -> Path:
+        return self.scratch / "healthy"
+
+    @property
+    def healthy_spool(self) -> Path:
+        return self.healthy_dir / "spool.sqlite3"
+
+    @property
+    def healthy_emergency(self) -> Path:
+        return self.healthy_dir / "emergency"
+
+    @property
+    def healthy_kill_switch(self) -> Path:
+        return self.healthy_dir / "capture.disabled"
+
+    @property
+    def broken_dir(self) -> Path:
+        return self.scratch / "broken-capacity"
+
+    @property
+    def broken_spool(self) -> Path:
+        return self.broken_dir / "spool.sqlite3"
+
+    @property
+    def broken_emergency(self) -> Path:
+        return self.broken_dir / "emergency"
+
+    @property
+    def broken_kill_switch(self) -> Path:
+        return self.broken_dir / "capture.disabled"
+
+
+class Checks:
+    def __init__(self) -> None:
+        self.failures: list[str] = []
+
+    def require(self, condition: bool, message: str) -> None:
+        if not condition:
+            self.failures.append(message)
+
+    def finish(self) -> None:
+        if self.failures:
+            raise RehearsalError("; ".join(self.failures))
+
+
+def utc_stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def log(message: str) -> None:
+    print(f"[{datetime.now(timezone.utc).isoformat(timespec='seconds')}] {message}", flush=True)
+
+
+def exception_chain(exc: BaseException) -> list[str]:
+    messages: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        messages.append(f"{type(current).__name__}: {current}")
+        current = current.__cause__ if current.__cause__ is not None else current.__context__
+    return messages
+
+
+def redact_diagnostic(text: str, secrets: Sequence[str]) -> str:
+    result = text
+    for secret in sorted({value for value in secrets if value}, key=len, reverse=True):
+        result = result.replace(secret, "<redacted>")
+    return result
+
+
+def diagnostic_secrets(args: argparse.Namespace, ctx: RuntimeContext | None) -> list[str]:
+    values = [os.environ.get(args.database_url_env, "")]
+    if ctx is not None:
+        values.extend((ctx.database_url, ctx.service_token, ctx.action_token))
+    return [value for value in values if value]
+
+
+def sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def canonical_hash(value: Any) -> str:
+    body = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()
+
+
+def ensure_owner_only(path: Path) -> int:
+    stat = path.stat()
+    mode = stat.st_mode & 0o777
+    if mode & 0o077:
+        raise RehearsalError(f"owner-only permissions required for {path}; observed {mode:04o}")
+    if stat.st_uid != os.geteuid():
+        raise RehearsalError(f"current user does not own {path}")
+    return mode
+
+
+def decode_env_value(raw: str) -> str:
+    lexer = shlex.shlex(raw.strip(), posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    values = list(lexer)
+    if not values:
+        return ""
+    if len(values) != 1:
+        raise RehearsalError("unsupported multi-token value in systemd EnvironmentFile")
+    return values[0]
+
+
+def parse_env_bytes(payload: bytes) -> dict[str, str]:
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RehearsalError("test.env must be UTF-8") from exc
+    result: dict[str, str] = {}
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        match = _ASSIGNMENT.match(line)
+        if not match:
+            raise RehearsalError(f"unsupported test.env line {number}; expected KEY=VALUE")
+        key = match.group(1)
+        raw = line[match.end() :]
+        result[key] = decode_env_value(raw)
+    return result
+
+
+def render_env(original: bytes, overrides: Mapping[str, str]) -> bytes:
+    try:
+        text = original.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RehearsalError("test.env must be UTF-8") from exc
+    for key, value in overrides.items():
+        if key not in DARK_KEYS:
+            raise RehearsalError(f"refusing non-dark-launch environment override: {key}")
+        if not value or not _SAFE_ENV_VALUE.fullmatch(value):
+            raise RehearsalError(f"unsafe EnvironmentFile value for {key}")
+    retained: list[str] = []
+    override_keys = set(overrides)
+    for line in text.splitlines():
+        match = _ASSIGNMENT.match(line)
+        if match and match.group(1) in override_keys:
+            continue
+        retained.append(line)
+    while retained and not retained[-1].strip():
+        retained.pop()
+    retained.extend(
+        [
+            "",
+            "# Temporary TEST-only host capture rehearsal overrides.",
+            *[f"{key}={overrides[key]}" for key in DARK_KEYS if key in overrides],
+            "",
+        ]
+    )
+    return "\n".join(retained).encode("utf-8")
+
+
+def atomic_write(path: Path, payload: bytes, *, mode: int) -> None:
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.rehearsal.", dir=path.parent)
+    temporary_path = Path(temporary)
+    try:
+        os.fchmod(fd, mode)
+        with os.fdopen(fd, "wb", closefd=True) as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def require_value(env: Mapping[str, str], key: str) -> str:
+    value = env.get(key, "").strip()
+    if not value:
+        raise RehearsalError(f"required TEST environment value is missing: {key}")
+    return value
+
+
+def validate_test_identity(env: Mapping[str, str]) -> tuple[str, int, str, int, str]:
+    db_path = Path(require_value(env, "DISH_DB_PATH")).expanduser().resolve(strict=False)
+    backup_dir = Path(require_value(env, "DISH_SERVICE_BACKUP_DIR")).expanduser().resolve(strict=False)
+    project_gid = require_value(env, "DISH_COOKING_PROJECT_GID")
+    private_bind = env.get("DISH_SERVICE_BIND", "127.0.0.1").strip()
+    action_bind = env.get("DISH_ACTION_BIND", "127.0.0.1").strip()
+    private_port = int(require_value(env, "DISH_SERVICE_PORT"))
+    action_port = int(require_value(env, "DISH_ACTION_PORT"))
+    if db_path != TEST_DB_PATH:
+        raise RehearsalError(f"refusing non-TEST SQLite path: {db_path}")
+    if TEST_STATE_ROOT not in backup_dir.parents and backup_dir != TEST_STATE_ROOT:
+        raise RehearsalError(f"refusing non-TEST backup path: {backup_dir}")
+    if project_gid != TEST_PROJECT_GID:
+        raise RehearsalError(f"refusing non-TEST Cooking project GID: {project_gid}")
+    if private_bind not in {"127.0.0.1", "localhost"} or action_bind not in {"127.0.0.1", "localhost"}:
+        raise RehearsalError("TEST service listeners must remain loopback-only")
+    if private_port != TEST_PRIVATE_PORT or action_port != TEST_ACTION_PORT:
+        raise RehearsalError(
+            f"refusing unexpected TEST ports: private={private_port}, action={action_port}"
+        )
+    token = require_value(env, "DISH_SERVICE_AGENT_TOKEN")
+    action_token = require_value(env, "DISH_SERVICE_ACTION_TOKEN")
+    return private_bind, private_port, token, action_port, action_token
+
+
+def systemctl(action: str, *, save_to: Path | None = None, require_success: bool = True) -> subprocess.CompletedProcess[str]:
+    if action not in {"stop", "start", "restart", "status"}:
+        raise RehearsalError(f"forbidden systemctl action: {action}")
+    command = ["sudo", str(SYSTEMCTL), action, TEST_UNIT]
+    completed = subprocess.run(command, text=True, capture_output=True, check=False)
+    if save_to is not None:
+        save_to.write_text(completed.stdout + completed.stderr, encoding="utf-8")
+        os.chmod(save_to, 0o600)
+    if require_success and completed.returncode != 0:
+        summary = next(
+            (line.strip() for line in (completed.stdout + completed.stderr).splitlines() if line.strip()),
+            f"exit {completed.returncode}",
+        )
+        raise RehearsalError(f"systemctl {action} failed: {summary}")
+    return completed
+
+
+def active_line(completed: subprocess.CompletedProcess[str]) -> str:
+    for line in (completed.stdout + completed.stderr).splitlines():
+        if "Active:" in line:
+            return line.strip()
+    return "Active: unknown"
+
+
+def wait_for_health(base_url: str, *, timeout: float) -> dict[str, Any]:
+    import http.client
+    from urllib.parse import urlsplit
+
+    end = time.monotonic() + timeout
+    last_error = "no response"
+    url = urlsplit(base_url)
+    while time.monotonic() < end:
+        connection = http.client.HTTPConnection(url.hostname, url.port, timeout=2.0)
+        try:
+            connection.request("GET", "/health", headers={"Accept": "application/json"})
+            response = connection.getresponse()
+            raw = response.read()
+            if response.status == 200:
+                payload = json.loads(raw.decode("utf-8"))
+                if isinstance(payload, dict) and payload.get("ok") is True:
+                    return payload
+                last_error = f"health payload not ok: {payload!r}"
+            else:
+                last_error = f"HTTP {response.status}"
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+        finally:
+            connection.close()
+        time.sleep(0.5)
+    raise RehearsalError(f"TEST service health did not recover: {last_error}")
+
+
+def install_signal_handlers() -> None:
+    def interrupted(signum: int, _frame: Any) -> None:
+        raise RehearsalInterrupted(f"received signal {signum}")
+
+    signal.signal(signal.SIGTERM, interrupted)
+    signal.signal(signal.SIGHUP, interrupted)
+
+
+def runtime_import_error() -> ImportError | None:
+    try:
+        import dish_service.client  # noqa: F401
+        import dish_service.shadow_spool  # noqa: F401
+        import dish_pg.database  # noqa: F401
+        import dish_pg.dark_launch  # noqa: F401
+        import dish_pg.transition  # noqa: F401
+    except ImportError as exc:
+        return exc
+    return None
+
+
+def reexec_repo_venv() -> None:
+    import_error = runtime_import_error()
+    if import_error is None:
+        return
+
+    expected_prefix = (REPO_ROOT / ".venv").resolve(strict=False)
+    current_prefix = Path(sys.prefix).resolve(strict=False)
+    if current_prefix == expected_prefix:
+        raise RehearsalError(
+            "repository runtime imports failed inside "
+            f"{sys.executable}: {type(import_error).__name__}: {import_error}"
+        ) from import_error
+
+    python = REPO_ROOT / ".venv/bin/python"
+    if not python.is_file():
+        raise RehearsalError(
+            f"repository virtualenv is missing: {python}; current interpreter import failed: "
+            f"{type(import_error).__name__}: {import_error}"
+        ) from import_error
+    os.execv(str(python), [str(python), str(Path(__file__).resolve()), *sys.argv[1:]])
+
+
+def preflight_runtime_imports() -> None:
+    import_error = runtime_import_error()
+    if import_error is not None:
+        raise RehearsalError(
+            "repository runtime imports failed inside "
+            f"{sys.executable}: {type(import_error).__name__}: {import_error}"
+        ) from import_error
+
+
+def discover_operation_ids(db_path: Path, limit: int = 30) -> list[str]:
+    uri = f"file:{db_path.resolve().as_posix()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+    try:
+        conn.execute("PRAGMA query_only=ON")
+        rows = conn.execute(
+            "SELECT operation_id FROM operations ORDER BY rowid DESC LIMIT ?", (limit,)
+        ).fetchall()
+    except sqlite3.Error as exc:
+        raise RehearsalError(f"cannot discover TEST operation IDs: {exc}") from exc
+    finally:
+        conn.close()
+    result: list[str] = []
+    for row in rows:
+        try:
+            result.append(str(uuid.UUID(str(row[0]))))
+        except (ValueError, TypeError, AttributeError):
+            continue
+    return result
+
+
+def scrub_observable(value: Any) -> Any:
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for key, item in value.items():
+            if key in _VOLATILE_KEYS or key.endswith("_at"):
+                continue
+            result[key] = scrub_observable(item)
+        return result
+    if isinstance(value, list):
+        return [scrub_observable(item) for item in value]
+    return value
+
+
+def observable_signature(result: Mapping[str, Any]) -> dict[str, Any]:
+    return scrub_observable(copy.deepcopy(dict(result)))
+
+
+def result_summary(
+    surface: str, operation_id: str, result: Mapping[str, Any], latency: float
+) -> dict[str, Any]:
+    signature = observable_signature(result)
+    return {
+        "surface": surface,
+        "operation_id": operation_id,
+        "ok": result.get("ok"),
+        "code": result.get("code"),
+        "state": result.get("state"),
+        "allowed_actions": list(result.get("allowed_actions") or []),
+        "latency_seconds": round(latency, 6),
+        "observable_sha256": canonical_hash(signature),
+    }
+
+
+def p95(values: Sequence[float]) -> float:
+    if not values:
+        raise RehearsalError("cannot calculate p95 without samples")
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    position = 0.95 * (len(ordered) - 1)
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[lower]
+    fraction = position - lower
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * fraction
+
+
+def latency_p95_by_surface(summaries: Sequence[Mapping[str, Any]]) -> dict[str, float]:
+    grouped: dict[str, list[float]] = {"private": [], "action": []}
+    for summary in summaries:
+        surface = str(summary.get("surface"))
+        if surface not in grouped:
+            raise RehearsalError(f"unexpected latency surface: {surface}")
+        grouped[surface].append(float(summary["latency_seconds"]))
+    missing = [surface for surface, values in grouped.items() if not values]
+    if missing:
+        raise RehearsalError(
+            "latency sample omitted required live listener(s): " + ", ".join(missing)
+        )
+    return {surface: p95(values) for surface, values in grouped.items()}
+
+
+def signature_key(surface: str, operation_id: str) -> str:
+    return f"{surface}:{operation_id}"
+
+
+def make_client(ctx: RuntimeContext, surface: str):
+    from dish_service.client import DishActionClient, DishServiceClient
+
+    if surface == "private":
+        return DishServiceClient(
+            ctx.service_base_url,
+            token=ctx.service_token,
+            run_id=ctx.client_run_id,
+            connect_timeout=5.0,
+            response_timeout=120.0,
+        )
+    if surface == "action":
+        return DishActionClient(
+            ctx.action_base_url,
+            token=ctx.action_token,
+            run_id=ctx.client_run_id,
+            connect_timeout=5.0,
+            response_timeout=120.0,
+        )
+    raise RehearsalError(f"unsupported live HTTP surface: {surface}")
+
+
+def inspect_once(
+    ctx: RuntimeContext, operation_id: str, *, surface: str
+) -> tuple[dict[str, Any], float]:
+    client = make_client(ctx, surface)
+    started = time.perf_counter()
+    result = client.execute(
+        "inspect",
+        {"submission_id": operation_id, "agent": ctx.args.agent},
+    )
+    elapsed = time.perf_counter() - started
+    if not isinstance(result, dict):
+        raise RehearsalError("inspect returned a non-object result")
+    return result, elapsed
+
+
+def choose_stable_operations(ctx: RuntimeContext, candidates: Sequence[str]) -> tuple[list[str], list[dict[str, Any]]]:
+    stable: list[str] = []
+    evidence: list[dict[str, Any]] = []
+    for operation_id in candidates:
+        surface_evidence: dict[str, Any] = {}
+        operation_stable = True
+        for surface in ("private", "action"):
+            first, first_latency = inspect_once(ctx, operation_id, surface=surface)
+            second, second_latency = inspect_once(ctx, operation_id, surface=surface)
+            first_signature = observable_signature(first)
+            second_signature = observable_signature(second)
+            surface_stable = first.get("ok") is True and first_signature == second_signature
+            surface_evidence[surface] = {
+                "first": result_summary(surface, operation_id, first, first_latency),
+                "second": result_summary(surface, operation_id, second, second_latency),
+                "stable": surface_stable,
+            }
+            operation_stable = operation_stable and surface_stable
+            if surface_stable:
+                key = signature_key(surface, operation_id)
+                ctx.baseline_signatures[key] = second_signature
+                ctx.baseline_signature_hashes[key] = canonical_hash(second_signature)
+        item = {
+            "operation_id": operation_id,
+            "surfaces": surface_evidence,
+            "stable": operation_stable,
+        }
+        evidence.append(item)
+        if operation_stable:
+            stable.append(operation_id)
+        else:
+            for surface in ("private", "action"):
+                key = signature_key(surface, operation_id)
+                ctx.baseline_signatures.pop(key, None)
+                ctx.baseline_signature_hashes.pop(key, None)
+        if len(stable) >= 3:
+            break
+    if not stable:
+        raise RehearsalError(
+            "no stable successful TEST inspect operation was found on both private and Action listeners; "
+            "supply --operation-id for a known live TEST operation"
+        )
+    return stable, evidence
+
+
+def run_inspect_batch(
+    ctx: RuntimeContext,
+    operations: Sequence[str],
+    count: int,
+    *,
+    require_baseline_match: bool,
+) -> tuple[list[dict[str, Any]], list[float]]:
+    summaries: list[dict[str, Any]] = []
+    latencies: list[float] = []
+    surfaces = ("private", "action")
+    for index in range(count):
+        surface = surfaces[index % len(surfaces)]
+        operation_id = operations[(index // len(surfaces)) % len(operations)]
+        result, elapsed = inspect_once(ctx, operation_id, surface=surface)
+        signature = observable_signature(result)
+        key = signature_key(surface, operation_id)
+        if result.get("ok") is not True:
+            raise RehearsalError(
+                f"live {surface} inspect failed for {operation_id}: "
+                f"code={result.get('code')} state={result.get('state')}"
+            )
+        if require_baseline_match and signature != ctx.baseline_signatures[key]:
+            raise RehearsalError(
+                f"observable {surface} inspect outcome changed for {operation_id}: "
+                f"baseline={ctx.baseline_signature_hashes[key]} observed={canonical_hash(signature)}"
+            )
+        summaries.append(result_summary(surface, operation_id, result, elapsed))
+        latencies.append(elapsed)
+    return summaries, latencies
+
+
+def open_spool_snapshot(ctx: RuntimeContext, path: Path, *, min_free_bytes: int | None = None) -> SpoolSnapshot:
+    from dish_service.shadow_spool import ShadowSpool
+
+    configured_min_free = ctx.args.min_free_bytes if min_free_bytes is None else min_free_bytes
+    status = ShadowSpool.open_existing(
+        path,
+        busy_timeout_ms=ctx.args.busy_timeout_ms,
+        max_bytes=ctx.args.max_spool_bytes,
+        max_records=ctx.args.max_spool_records,
+        min_free_bytes=configured_min_free,
+    ).status()
+    uri = f"file:{path.resolve().as_posix()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, timeout=2.0)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA query_only=ON")
+        quick = str(conn.execute("PRAGMA quick_check").fetchone()[0])
+        rows = conn.execute(
+            """SELECT registration_id, source_request_identity, rollout_sequence,
+                      source_authority_generation, command_name, treatment,
+                      canonical_input_sha256, principal_sha256,
+                      source_pre_state_sha256, pinned_inputs_sha256, state,
+                      source_outcome_sha256, source_post_state_sha256,
+                      gap_json, created_at, completed_at, delivered_at,
+                      delivery_attempts, last_delivery_error
+                   FROM shadow_capture_registrations
+               ORDER BY rollout_sequence"""
+        ).fetchall()
+        tombstones = conn.execute(
+            """SELECT registration_id, source_request_identity, rollout_sequence,
+                      source_authority_generation, command_name, treatment,
+                      canonical_input_sha256, principal_sha256,
+                      source_pre_state_sha256, pinned_inputs_sha256,
+                      delivered_at, compacted_at
+                   FROM shadow_capture_tombstones
+               ORDER BY rollout_sequence"""
+        ).fetchall()
+        digest_rows = [dict(row) for row in rows] + [dict(row) for row in tombstones]
+        max_sequence_row = conn.execute(
+            "SELECT MAX(rollout_sequence) FROM ("
+            "SELECT rollout_sequence FROM shadow_capture_registrations UNION ALL "
+            "SELECT rollout_sequence FROM shadow_capture_tombstones)"
+        ).fetchone()
+        max_sequence = None if max_sequence_row[0] is None else int(max_sequence_row[0])
+    finally:
+        conn.close()
+    return SpoolSnapshot(
+        total_records=int(status["capacity"]["total_records"]),
+        counts={key: int(value) for key, value in status["counts"].items()},
+        next_rollout_sequence=int(status["next_rollout_sequence"]),
+        max_rollout_sequence=max_sequence,
+        row_digest=canonical_hash(digest_rows),
+        quick_check=quick,
+        capacity_accepting=bool(status["capacity"]["accepting_new_records"]),
+    )
+
+
+def emergency_files(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return sorted(item.name for item in path.glob("*.json") if item.is_file())
+
+
+def read_kill_switch(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise RehearsalError(f"kill switch exists but is not valid JSON: {path}") from exc
+    if not isinstance(payload, dict):
+        raise RehearsalError(f"kill switch is not an object: {path}")
+    return payload
+
+
+def run_dark_launch_control(ctx: RuntimeContext, action: str, path: Path, *, reason: str | None = None) -> None:
+    if action not in {"disable", "enable-capture"}:
+        raise RehearsalError(f"unsupported dark-launch control: {action}")
+    command = [sys.executable, str(ctx.repo_root / "scripts/dish-pg-dark-launch"), action, "--kill-switch", str(path)]
+    if action == "disable":
+        command.extend(["--reason", reason or "TEST host capture rehearsal"])
+    completed = subprocess.run(command, cwd=ctx.repo_root, text=True, capture_output=True, check=False)
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip().splitlines()
+        raise RehearsalError(
+            f"dish-pg-dark-launch {action} failed: {detail[-1] if detail else completed.returncode}"
+        )
+
+
+def create_fresh_baseline(ctx: RuntimeContext) -> dict[str, Any]:
+    from sqlalchemy import select, text
+
+    from dish_pg import models
+    from dish_pg import stage5_models as tx
+    from dish_pg.database import DatabaseSettings, create_database_engine, session_factory, session_scope
+    from dish_pg.transition import ShadowService
+
+    engine = create_database_engine(DatabaseSettings(url=ctx.database_url))
+    factory = session_factory(engine)
+    try:
+        with session_scope(factory) as session:
+            database_name = session.execute(text("SELECT current_database()" )).scalar_one()
+            if database_name != EXPECTED_PG_DATABASE:
+                raise RehearsalError(
+                    f"refusing PostgreSQL database {database_name!r}; expected {EXPECTED_PG_DATABASE!r}"
+                )
+            generations = list(
+                session.scalars(
+                    select(models.AuthorityGeneration).where(models.AuthorityGeneration.status == "active")
+                )
+            )
+            if len(generations) != 1:
+                raise RehearsalError(
+                    f"expected exactly one active TEST PostgreSQL authority generation; found {len(generations)}"
+                )
+            generation = generations[0]
+            enabled_epochs = int(
+                session.scalar(
+                    select(tx.ProjectionEpoch)
+                    .where(
+                        tx.ProjectionEpoch.generation_id == generation.generation_id,
+                        tx.ProjectionEpoch.status == "active",
+                        tx.ProjectionEpoch.external_effects_enabled.is_(True),
+                    )
+                    .limit(1)
+                )
+                is not None
+            )
+            if enabled_epochs:
+                raise RehearsalError(
+                    "refusing rehearsal while the active TEST projection epoch allows external effects"
+                )
+            baseline = ShadowService(session).create_baseline(
+                generation_id=generation.generation_id,
+                source_generation_identity=ctx.source_generation,
+                source_commit=ctx.source_commit,
+                created_at=datetime.now(timezone.utc),
+            )
+            ctx.generation_id = str(generation.generation_id)
+            ctx.baseline_id = str(baseline.shadow_baseline_id)
+            return {
+                "database_name": database_name,
+                "generation_id": ctx.generation_id,
+                "baseline_id": ctx.baseline_id,
+                "source_generation": ctx.source_generation,
+                "source_commit": ctx.source_commit,
+                "projection_external_effects_enabled": False,
+            }
+    finally:
+        engine.dispose()
+
+
+def baseline_status(ctx: RuntimeContext) -> dict[str, Any]:
+    from dish_pg.dark_launch import status
+    from dish_pg.database import DatabaseSettings, create_database_engine, session_factory
+    from dish_service.shadow_spool import ShadowSpool
+
+    if not ctx.baseline_id:
+        raise RehearsalError("baseline has not been created")
+    engine = create_database_engine(DatabaseSettings(url=ctx.database_url))
+    factory = session_factory(engine)
+    try:
+        report = status(
+            session_maker=factory,
+            spool=ShadowSpool.open_existing(
+                ctx.healthy_spool,
+                busy_timeout_ms=ctx.args.busy_timeout_ms,
+                max_bytes=ctx.args.max_spool_bytes,
+                max_records=ctx.args.max_spool_records,
+                min_free_bytes=ctx.args.min_free_bytes,
+            ),
+            baseline_id=uuid.UUID(ctx.baseline_id),
+        )
+    finally:
+        engine.dispose()
+    baseline = report.get("baseline")
+    if not isinstance(baseline, dict) or baseline.get("shadow_baseline_id") != ctx.baseline_id:
+        raise RehearsalError("fresh baseline is not visible in dark-launch status")
+    epoch = report.get("projection_epoch")
+    if isinstance(epoch, dict) and epoch.get("external_effects_enabled") is not False:
+        raise RehearsalError("TEST projection external effects are not disabled")
+    return {
+        "active_generation_id": report.get("active_generation_id"),
+        "baseline": baseline,
+        "projection_epoch": epoch,
+        "spool_counts": report.get("spool", {}).get("counts"),
+        "spool_accepting_new_records": report.get("spool", {}).get("capacity", {}).get("accepting_new_records"),
+    }
+
+
+def healthy_overrides(ctx: RuntimeContext) -> dict[str, str]:
+    if not ctx.baseline_id:
+        raise RehearsalError("baseline ID is required before enabling capture")
+    return {
+        "DISH_DARK_LAUNCH_MODE": "capture",
+        "DISH_DARK_LAUNCH_BUSY_TIMEOUT_MS": str(ctx.args.busy_timeout_ms),
+        "DISH_DARK_LAUNCH_MAX_SPOOL_BYTES": str(ctx.args.max_spool_bytes),
+        "DISH_DARK_LAUNCH_MAX_SPOOL_RECORDS": str(ctx.args.max_spool_records),
+        "DISH_DARK_LAUNCH_MIN_FREE_BYTES": str(ctx.args.min_free_bytes),
+        "DISH_DARK_LAUNCH_SPOOL_PATH": str(ctx.healthy_spool),
+        "DISH_DARK_LAUNCH_KILL_SWITCH": str(ctx.healthy_kill_switch),
+        "DISH_DARK_LAUNCH_EMERGENCY_DIR": str(ctx.healthy_emergency),
+        "DISH_DARK_LAUNCH_BASELINE_ID": ctx.baseline_id,
+        "DISH_DARK_LAUNCH_SOURCE_GENERATION": ctx.source_generation,
+        "DISH_DARK_LAUNCH_RESERVATION_TTL_SECONDS": str(ctx.args.reservation_ttl_seconds),
+        "DISH_DARK_LAUNCH_DELIVERED_RETENTION_SECONDS": str(ctx.args.delivered_retention_seconds),
+    }
+
+
+def broken_overrides(ctx: RuntimeContext) -> dict[str, str]:
+    values = healthy_overrides(ctx)
+    values.update(
+        {
+            "DISH_DARK_LAUNCH_SPOOL_PATH": str(ctx.broken_spool),
+            "DISH_DARK_LAUNCH_KILL_SWITCH": str(ctx.broken_kill_switch),
+            "DISH_DARK_LAUNCH_EMERGENCY_DIR": str(ctx.broken_emergency),
+            "DISH_DARK_LAUNCH_MIN_FREE_BYTES": str(ctx.args.broken_min_free_bytes),
+        }
+    )
+    return values
+
+
+def apply_env(ctx: RuntimeContext, overrides: Mapping[str, str], *, phase: str) -> None:
+    payload = render_env(ctx.original_env_bytes, overrides)
+    atomic_write(ctx.env_path, payload, mode=ctx.original_env_mode)
+    observed = parse_env_bytes(ctx.env_path.read_bytes())
+    for key, expected in overrides.items():
+        if observed.get(key) != expected:
+            raise RehearsalError(f"failed to apply {key} for phase {phase}")
+    ctx.env_modified = True
+    log(f"Applied temporary test.env phase: {phase}")
+
+
+def restart_and_wait(ctx: RuntimeContext, *, phase: str) -> dict[str, Any]:
+    systemctl("restart")
+    health = wait_for_health(ctx.service_base_url, timeout=ctx.args.service_wait_seconds)
+    status = systemctl("status")
+    if "active (running)" not in active_line(status):
+        raise RehearsalError(f"TEST service not active after {phase}: {active_line(status)}")
+    return {"phase": phase, "health_ok": bool(health.get("ok")), "service": active_line(status)}
+
+
+def restore_original(ctx: RuntimeContext) -> dict[str, Any]:
+    restore: dict[str, Any] = {
+        "env_restored": False,
+        "env_hash_matches": False,
+        "service_restarted": False,
+        "service_healthy": False,
+        "service_status": None,
+        "errors": [],
+    }
+    try:
+        atomic_write(ctx.env_path, ctx.original_env_bytes, mode=ctx.original_env_mode)
+        restore["env_restored"] = True
+        restore["env_hash_matches"] = sha256_bytes(ctx.env_path.read_bytes()) == ctx.original_env_hash
+    except BaseException as exc:
+        restore["errors"].append(f"environment restore failed: {type(exc).__name__}: {exc}")
+        return restore
+    for switch in (ctx.healthy_kill_switch, ctx.broken_kill_switch):
+        if switch.exists():
+            try:
+                run_dark_launch_control(ctx, "enable-capture", switch)
+            except BaseException as exc:
+                restore["errors"].append(
+                    f"scratch kill-switch cleanup failed for {switch}: {type(exc).__name__}: {exc}"
+                )
+    try:
+        systemctl("restart")
+        restore["service_restarted"] = True
+        health = wait_for_health(ctx.service_base_url, timeout=ctx.args.service_wait_seconds)
+        restore["service_healthy"] = bool(health.get("ok"))
+        status = systemctl("status", save_to=ctx.scratch / "service-status-restored.txt")
+        restore["service_status"] = active_line(status)
+        if "active (running)" not in restore["service_status"]:
+            restore["errors"].append("restored TEST service is not active (running)")
+    except BaseException as exc:
+        restore["errors"].append(f"service restore failed: {type(exc).__name__}: {exc}")
+    ctx.restored = bool(
+        restore["env_hash_matches"] and restore["service_restarted"] and restore["service_healthy"]
+    )
+    return restore
+
+
+def write_manual_recovery(ctx: RuntimeContext) -> None:
+    content = f"""DISH TEST host capture rehearsal manual recovery
+
+Scratch directory:
+  {ctx.scratch}
+
+The rehearsal uses the direct test.env fallback because the authorized systemctl
+capability does not include daemon-reload, so a temporary drop-in cannot be
+installed safely.
+
+Run these commands as marco if the rehearsal process is killed before cleanup:
+
+  cp --preserve=mode,timestamps {shlex.quote(str(ctx.backup_path))} {shlex.quote(str(ctx.env_path))}
+  sha256sum {shlex.quote(str(ctx.env_path))}
+  cat {shlex.quote(str(ctx.scratch / 'original-test.env.sha256'))}
+  sudo /usr/bin/systemctl restart dish-service-test.service
+  sudo /usr/bin/systemctl status dish-service-test.service
+
+The printed SHA256 must match the value in original-test.env.sha256.  The two
+scratch kill switches are no longer live after the original environment is
+restored.  To remove only validated dark-launch markers, run:
+
+  cd {shlex.quote(str(ctx.repo_root))}
+  {shlex.quote(sys.executable)} scripts/dish-pg-dark-launch enable-capture --kill-switch {shlex.quote(str(ctx.healthy_kill_switch))}
+  {shlex.quote(sys.executable)} scripts/dish-pg-dark-launch enable-capture --kill-switch {shlex.quote(str(ctx.broken_kill_switch))}
+
+No dish_pg.shadow_worker subprocess is started by this rehearsal.
+"""
+    target = ctx.scratch / "MANUAL-RECOVERY.txt"
+    target.write_text(content, encoding="utf-8")
+    os.chmod(target, 0o600)
+
+
+def validate_paths(ctx: RuntimeContext) -> None:
+    paths = [
+        ctx.scratch,
+        ctx.healthy_spool,
+        ctx.healthy_emergency,
+        ctx.healthy_kill_switch,
+        ctx.broken_spool,
+        ctx.broken_emergency,
+        ctx.broken_kill_switch,
+    ]
+    for path in paths:
+        resolved = path.resolve(strict=False)
+        if TEST_STATE_ROOT not in resolved.parents and resolved != TEST_STATE_ROOT:
+            raise RehearsalError(f"scratch path escapes TEST state root: {resolved}")
+        if resolved == TEST_DB_PATH:
+            raise RehearsalError(f"scratch path aliases TEST authority database: {resolved}")
+    if len({str(path.resolve(strict=False)) for path in paths}) != len(paths):
+        raise RehearsalError("rehearsal scratch paths are not pairwise distinct")
+
+
+def resolve_source_commit(repo_root: Path, supplied: str | None) -> str:
+    if supplied:
+        value = supplied.strip()
+    else:
+        completed = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise RehearsalError("cannot resolve source commit; pass --source-commit")
+        value = completed.stdout.strip()
+    if not re.fullmatch(r"[0-9a-fA-F]{40,64}", value):
+        raise RehearsalError("source commit must be a full hexadecimal Git object ID")
+    return value.lower()
+
+
+def setup_context(args: argparse.Namespace, run_state: RunState) -> RuntimeContext:
+    run_state.enter("loading repository runtime modules")
+    preflight_runtime_imports()
+    repo_root = REPO_ROOT
+
+    run_state.enter("verifying the TEST environment path contract")
+    if TEST_ENV_PATH.resolve(strict=False) != Path("/home/marco/.config/dish-service/test.env"):
+        raise RehearsalError("internal TEST environment path contract changed")
+
+    run_state.enter("verifying the real TEST environment file exists")
+    if not TEST_ENV_PATH.is_file():
+        raise RehearsalError(f"real TEST environment file is missing: {TEST_ENV_PATH}")
+
+    run_state.enter("verifying owner-only permissions on test.env")
+    original_mode = ensure_owner_only(TEST_ENV_PATH)
+
+    run_state.enter("reading and hashing the original test.env")
+    original_bytes = TEST_ENV_PATH.read_bytes()
+    original_hash = sha256_bytes(original_bytes)
+
+    run_state.enter("parsing and validating TEST service identity")
+    original_env = parse_env_bytes(original_bytes)
+    bind, port, token, action_port, action_token = validate_test_identity(original_env)
+
+    run_state.enter("verifying dish-service-test is active")
+    status = systemctl("status", require_success=False)
+    if status.returncode != 0 or "active (running)" not in active_line(status):
+        raise RehearsalError(
+            f"dish-service-test must already be active before rehearsal: {active_line(status)}"
+        )
+
+    run_state.enter("resolving the TEST PostgreSQL URL")
+    database_url = os.environ.get(args.database_url_env, "").strip() or original_env.get(
+        args.database_url_env, ""
+    ).strip()
+    if not database_url:
+        raise RehearsalError(
+            f"{args.database_url_env} must be exported or present in test.env for TEST PostgreSQL"
+        )
+
+    run_state.enter("resolving the source commit")
+    source_commit = resolve_source_commit(repo_root, args.source_commit)
+    source_generation = (
+        f"legacy-sqlite-host-capture-rehearsal-{utc_stamp()}-{uuid.uuid4().hex[:12]}"
+    )
+
+    run_state.enter("creating the recovery directory")
+    scratch = TEST_STATE_ROOT / f"host-capture-rehearsal-{utc_stamp()}-{uuid.uuid4().hex[:8]}"
+    scratch.mkdir(mode=0o700, parents=False, exist_ok=False)
+    os.chmod(scratch, 0o700)
+    run_state.scratch = scratch
+    log(f"Recovery bundle: {scratch}")
+
+    run_state.enter("backing up the original test.env")
+    backup_path = scratch / "original-test.env"
+    shutil.copy2(TEST_ENV_PATH, backup_path)
+    os.chmod(backup_path, original_mode)
+
+    run_state.enter("verifying the test.env backup hash")
+    if sha256_bytes(backup_path.read_bytes()) != original_hash:
+        raise RehearsalError("test.env backup verification failed")
+
+    run_state.enter("writing pre-rehearsal recovery evidence")
+    (scratch / "original-test.env.sha256").write_text(original_hash + "\n", encoding="ascii")
+    os.chmod(scratch / "original-test.env.sha256", 0o600)
+    (scratch / "service-status-before.txt").write_text(
+        status.stdout + status.stderr, encoding="utf-8"
+    )
+    os.chmod(scratch / "service-status-before.txt", 0o600)
+    service_base_url = f"http://127.0.0.1:{port}"
+    action_base_url = f"http://127.0.0.1:{action_port}"
+    ctx = RuntimeContext(
+        args=args,
+        repo_root=repo_root,
+        env_path=TEST_ENV_PATH,
+        original_env_bytes=original_bytes,
+        original_env=original_env,
+        original_env_mode=original_mode,
+        original_env_hash=original_hash,
+        scratch=scratch,
+        backup_path=backup_path,
+        service_base_url=service_base_url,
+        service_token=token,
+        action_base_url=action_base_url,
+        action_token=action_token,
+        client_run_id=str(uuid.uuid4()),
+        database_url=database_url,
+        source_commit=source_commit,
+        source_generation=source_generation,
+    )
+
+    run_state.enter("validating rehearsal scratch paths")
+    validate_paths(ctx)
+
+    run_state.enter("creating rehearsal evidence directories")
+    ctx.healthy_dir.mkdir(mode=0o700)
+    ctx.broken_dir.mkdir(mode=0o700)
+
+    run_state.enter("writing the manual recovery procedure")
+    write_manual_recovery(ctx)
+    log("No shadow worker will be started; capture-only mode does not require one.")
+    run_state.enter("setup complete")
+    return ctx
+
+
+def run_test_1(ctx: RuntimeContext) -> PhaseResult:
+    result = PhaseResult("TEST 1 — live fail-open and latency")
+    checks = Checks()
+    evidence: dict[str, Any] = {}
+    try:
+        apply_env(ctx, {"DISH_DARK_LAUNCH_MODE": "off"}, phase="capture-off baseline")
+        evidence["capture_off_restart"] = restart_and_wait(ctx, phase="capture-off baseline")
+        candidates = list(ctx.args.operation_id or discover_operation_ids(TEST_DB_PATH))
+        if not candidates:
+            raise RehearsalError(
+                "no TEST operations exist; supply --operation-id for a known live TEST operation"
+            )
+        stable, probes = choose_stable_operations(ctx, candidates)
+        ctx.stable_operations = stable
+        evidence["stable_operation_probes"] = probes
+        baseline_requests, baseline_latencies = run_inspect_batch(
+            ctx, stable, ctx.args.request_count, require_baseline_match=True
+        )
+        evidence["capture_off_requests"] = baseline_requests
+
+        evidence["fresh_baseline"] = create_fresh_baseline(ctx)
+        apply_env(ctx, healthy_overrides(ctx), phase="healthy capture")
+        evidence["capture_on_restart"] = restart_and_wait(ctx, phase="healthy capture")
+        before = open_spool_snapshot(ctx, ctx.healthy_spool)
+        capture_requests, capture_latencies = run_inspect_batch(
+            ctx, stable, ctx.args.request_count, require_baseline_match=True
+        )
+        after = open_spool_snapshot(ctx, ctx.healthy_spool)
+        evidence["capture_on_requests"] = capture_requests
+        baseline_p95 = p95(baseline_latencies)
+        capture_p95 = p95(capture_latencies)
+        added_p95 = capture_p95 - baseline_p95
+        baseline_surface_p95 = latency_p95_by_surface(baseline_requests)
+        capture_surface_p95 = latency_p95_by_surface(capture_requests)
+        surface_latency = {
+            surface: {
+                "capture_off_p95_seconds": round(baseline_surface_p95[surface], 6),
+                "capture_on_p95_seconds": round(capture_surface_p95[surface], 6),
+                "added_p95_seconds": round(
+                    capture_surface_p95[surface] - baseline_surface_p95[surface], 6
+                ),
+            }
+            for surface in ("private", "action")
+        }
+        evidence["latency"] = {
+            "sample_count": ctx.args.request_count,
+            "capture_off_p95_seconds": round(baseline_p95, 6),
+            "capture_on_p95_seconds": round(capture_p95, 6),
+            "added_p95_seconds": round(added_p95, 6),
+            "surfaces": surface_latency,
+            "allowed_added_p95_seconds": ctx.args.latency_p95_budget_seconds,
+            "reference_in_process_bound_seconds": 0.750,
+        }
+        evidence["healthy_spool_before"] = before.as_dict()
+        evidence["healthy_spool_after"] = after.as_dict()
+        checks.require(
+            after.total_records - before.total_records == ctx.args.request_count,
+            "healthy capture did not add exactly one envelope per live inspect",
+        )
+        checks.require(after.quick_check == "ok", "healthy spool quick_check failed")
+        checks.require(after.capacity_accepting, "healthy spool rejected new records")
+        checks.require(not ctx.healthy_kill_switch.exists(), "healthy capture engaged the kill switch")
+        checks.require(
+            not emergency_files(ctx.healthy_emergency),
+            "healthy capture wrote emergency-gap records",
+        )
+        checks.require(
+            added_p95 <= ctx.args.latency_p95_budget_seconds,
+            f"combined capture added p95 {added_p95:.3f}s above "
+            f"{ctx.args.latency_p95_budget_seconds:.3f}s budget",
+        )
+        for surface in ("private", "action"):
+            surface_added = capture_surface_p95[surface] - baseline_surface_p95[surface]
+            checks.require(
+                surface_added <= ctx.args.latency_p95_budget_seconds,
+                f"{surface} capture added p95 {surface_added:.3f}s above "
+                f"{ctx.args.latency_p95_budget_seconds:.3f}s budget",
+            )
+        evidence["dark_launch_status"] = baseline_status(ctx)
+
+        apply_env(ctx, broken_overrides(ctx), phase="forced capacity failure")
+        evidence["broken_capture_restart"] = restart_and_wait(ctx, phase="forced capacity failure")
+        emergency_before = emergency_files(ctx.broken_emergency)
+        broken_response, broken_latency = inspect_once(ctx, stable[0], surface="action")
+        emergency_after = emergency_files(ctx.broken_emergency)
+        marker = read_kill_switch(ctx.broken_kill_switch)
+        broken_spool = open_spool_snapshot(
+            ctx, ctx.broken_spool, min_free_bytes=ctx.args.broken_min_free_bytes
+        )
+        evidence["broken_capture_request"] = result_summary(
+            "action", stable[0], broken_response, broken_latency
+        )
+        evidence["broken_capture"] = {
+            "kill_switch_present": marker is not None,
+            "kill_switch_kind": None if marker is None else marker.get("kind"),
+            "emergency_files_before": emergency_before,
+            "emergency_files_after": emergency_after,
+            "spool": broken_spool.as_dict(),
+        }
+        checks.require(broken_response.get("ok") is True, "broken capture changed the live inspect result")
+        checks.require(
+            observable_signature(broken_response)
+            == ctx.baseline_signatures[signature_key("action", stable[0])],
+            "broken capture changed the observable live outcome",
+        )
+        checks.require(
+            marker is not None or len(emergency_after) > len(emergency_before),
+            "forced capacity failure produced neither a kill switch nor emergency evidence",
+        )
+        checks.require(
+            marker is None
+            or (
+                marker.get("kind") == "dish-dark-launch-kill-switch"
+                and marker.get("disabled") is True
+            ),
+            "capacity kill switch is not the validated dark-launch marker",
+        )
+        run_dark_launch_control(ctx, "enable-capture", ctx.broken_kill_switch)
+        checks.finish()
+        result.passed = True
+    except BaseException as exc:
+        result.error = f"{type(exc).__name__}: {exc}"
+    result.evidence = evidence
+    return result
+
+
+def ensure_healthy_capture(ctx: RuntimeContext, *, phase: str) -> dict[str, Any]:
+    if not ctx.baseline_id:
+        raise RehearsalError("TEST 1 prerequisite failed before baseline creation")
+    if ctx.healthy_kill_switch.exists():
+        run_dark_launch_control(ctx, "enable-capture", ctx.healthy_kill_switch)
+    apply_env(ctx, healthy_overrides(ctx), phase=phase)
+    return restart_and_wait(ctx, phase=phase)
+
+
+def run_test_2(ctx: RuntimeContext) -> PhaseResult:
+    result = PhaseResult("TEST 2 — restart and spool conservation")
+    evidence: dict[str, Any] = {}
+    checks = Checks()
+    try:
+        evidence["healthy_capture_restart"] = ensure_healthy_capture(
+            ctx, phase="TEST 2 healthy capture"
+        )
+        before_accumulation = open_spool_snapshot(ctx, ctx.healthy_spool)
+        requests, _latencies = run_inspect_batch(
+            ctx,
+            ctx.stable_operations,
+            ctx.args.restart_accumulation_requests,
+            require_baseline_match=True,
+        )
+        accumulated = open_spool_snapshot(ctx, ctx.healthy_spool)
+        evidence["accumulation_requests"] = requests
+        evidence["before_accumulation"] = before_accumulation.as_dict()
+        evidence["before_restart"] = accumulated.as_dict()
+        checks.require(
+            accumulated.total_records - before_accumulation.total_records
+            == ctx.args.restart_accumulation_requests,
+            "pre-restart live commands did not accumulate the expected envelopes",
+        )
+        systemctl("restart")
+        health = wait_for_health(ctx.service_base_url, timeout=ctx.args.service_wait_seconds)
+        status = systemctl("status")
+        after_restart = open_spool_snapshot(ctx, ctx.healthy_spool)
+        evidence["restart"] = {
+            "health_ok": bool(health.get("ok")),
+            "service": active_line(status),
+        }
+        evidence["after_restart_before_request"] = after_restart.as_dict()
+        checks.require(after_restart.quick_check == "ok", "spool quick_check failed after restart")
+        checks.require(
+            after_restart.total_records == accumulated.total_records,
+            "spool envelope count changed across service restart",
+        )
+        checks.require(
+            after_restart.next_rollout_sequence == accumulated.next_rollout_sequence,
+            "spool next rollout sequence changed across restart",
+        )
+        checks.require(
+            after_restart.row_digest == accumulated.row_digest,
+            "spool logical row digest changed across restart",
+        )
+        post_result, post_latency = inspect_once(
+            ctx, ctx.stable_operations[0], surface="action"
+        )
+        final = open_spool_snapshot(ctx, ctx.healthy_spool)
+        evidence["post_restart_request"] = result_summary(
+            "action", ctx.stable_operations[0], post_result, post_latency
+        )
+        evidence["after_post_restart_request"] = final.as_dict()
+        checks.require(post_result.get("ok") is True, "service did not serve a live inspect after restart")
+        checks.require(
+            observable_signature(post_result)
+            == ctx.baseline_signatures[
+                signature_key("action", ctx.stable_operations[0])
+            ],
+            "post-restart live outcome changed",
+        )
+        checks.require(
+            final.total_records == after_restart.total_records + 1,
+            "capture did not resume after service restart",
+        )
+        checks.finish()
+        result.passed = True
+    except BaseException as exc:
+        result.error = f"{type(exc).__name__}: {exc}"
+    result.evidence = evidence
+    return result
+
+
+def run_test_3(ctx: RuntimeContext) -> PhaseResult:
+    result = PhaseResult("TEST 3 — live kill switch")
+    evidence: dict[str, Any] = {}
+    checks = Checks()
+    try:
+        evidence["healthy_capture_restart"] = ensure_healthy_capture(
+            ctx, phase="TEST 3 healthy capture"
+        )
+        before = open_spool_snapshot(ctx, ctx.healthy_spool)
+        run_dark_launch_control(
+            ctx,
+            "disable",
+            ctx.healthy_kill_switch,
+            reason="TEST live kill-switch rehearsal",
+        )
+        marker = read_kill_switch(ctx.healthy_kill_switch)
+        disabled_requests, _disabled_latencies = run_inspect_batch(
+            ctx,
+            ctx.stable_operations,
+            ctx.args.kill_switch_requests,
+            require_baseline_match=True,
+        )
+        disabled = open_spool_snapshot(ctx, ctx.healthy_spool)
+        evidence["disabled_marker"] = marker
+        evidence["before_disable"] = before.as_dict()
+        evidence["disabled_requests"] = disabled_requests
+        evidence["while_disabled"] = disabled.as_dict()
+        checks.require(marker is not None, "runbook disable command did not create the kill switch")
+        checks.require(
+            marker is not None
+            and marker.get("kind") == "dish-dark-launch-kill-switch"
+            and marker.get("disabled") is True,
+            "kill switch marker failed validation",
+        )
+        checks.require(
+            disabled.total_records == before.total_records,
+            "capture continued writing while the kill switch was present",
+        )
+        run_dark_launch_control(ctx, "enable-capture", ctx.healthy_kill_switch)
+        checks.require(not ctx.healthy_kill_switch.exists(), "enable-capture did not remove the marker")
+        resumed_requests, _resumed_latencies = run_inspect_batch(
+            ctx,
+            ctx.stable_operations,
+            ctx.args.resume_requests,
+            require_baseline_match=True,
+        )
+        resumed = open_spool_snapshot(ctx, ctx.healthy_spool)
+        evidence["resumed_requests"] = resumed_requests
+        evidence["after_resume"] = resumed.as_dict()
+        evidence["kill_switch_present_after_resume"] = ctx.healthy_kill_switch.exists()
+        checks.require(
+            resumed.total_records == disabled.total_records + ctx.args.resume_requests,
+            "capture did not resume after removing the kill switch",
+        )
+        checks.finish()
+        result.passed = True
+    except BaseException as exc:
+        result.error = f"{type(exc).__name__}: {exc}"
+    result.evidence = evidence
+    return result
+
+
+def self_test() -> int:
+    sample = b"A=one\nDISH_DARK_LAUNCH_MODE=off\nTOKEN='not printed'\n"
+    parsed = parse_env_bytes(sample)
+    assert parsed["A"] == "one"
+    assert parsed["TOKEN"] == "not printed"
+    rendered = render_env(
+        sample,
+        {
+            "DISH_DARK_LAUNCH_MODE": "capture",
+            "DISH_DARK_LAUNCH_SPOOL_PATH": "/tmp/test/spool.sqlite3",
+        },
+    )
+    reparsed = parse_env_bytes(rendered)
+    assert reparsed["DISH_DARK_LAUNCH_MODE"] == "capture"
+    assert reparsed["DISH_DARK_LAUNCH_SPOOL_PATH"] == "/tmp/test/spool.sqlite3"
+    assert rendered.decode().count("DISH_DARK_LAUNCH_MODE=") == 1
+    left = {"ok": True, "data": {"recorded_at": "a", "value": 1, "run_id": "x"}}
+    right = {"ok": True, "data": {"recorded_at": "b", "value": 1, "run_id": "y"}}
+    assert observable_signature(left) == observable_signature(right)
+    assert abs(p95([1.0, 2.0, 3.0, 4.0, 5.0]) - 4.8) < 1e-9
+    surface_p95 = latency_p95_by_surface(
+        [
+            {"surface": "private", "latency_seconds": 0.10},
+            {"surface": "action", "latency_seconds": 0.20},
+            {"surface": "private", "latency_seconds": 0.30},
+            {"surface": "action", "latency_seconds": 0.40},
+        ]
+    )
+    assert surface_p95["private"] > 0.10
+    assert surface_p95["action"] > 0.20
+    assert str(REPO_ROOT) in sys.path
+    parsed_args = build_parser().parse_args(["--agent", "claude"])
+    assert parsed_args.agent == "claude"
+    chained = RehearsalError("outer")
+    try:
+        try:
+            raise ModuleNotFoundError("missing_dependency")
+        except ModuleNotFoundError as exc:
+            raise chained from exc
+    except RehearsalError as exc:
+        assert exception_chain(exc) == [
+            "RehearsalError: outer",
+            "ModuleNotFoundError: missing_dependency",
+        ]
+    print("SELF-TEST PASS")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "TEST-only live dish-service-test dark-launch capture rehearsal. "
+            "Requires an exported DISH_PG_DATABASE_URL targeting dish_stage_a_dark_test."
+        )
+    )
+    parser.add_argument("--agent", choices=("claude", "gpt", "codex"), required=False)
+    parser.add_argument(
+        "--operation-id",
+        action="append",
+        help="known live TEST operation UUID; repeat for multiple operations",
+    )
+    parser.add_argument("--database-url-env", default="DISH_PG_DATABASE_URL")
+    parser.add_argument("--source-commit")
+    parser.add_argument("--request-count", type=int, default=8)
+    parser.add_argument("--restart-accumulation-requests", type=int, default=4)
+    parser.add_argument("--kill-switch-requests", type=int, default=3)
+    parser.add_argument("--resume-requests", type=int, default=2)
+    parser.add_argument("--latency-p95-budget-seconds", type=float, default=1.0)
+    parser.add_argument("--service-wait-seconds", type=float, default=90.0)
+    parser.add_argument("--busy-timeout-ms", type=int, default=50)
+    parser.add_argument("--max-spool-bytes", type=int, default=256 * 1024 * 1024)
+    parser.add_argument("--max-spool-records", type=int, default=10_000)
+    parser.add_argument("--min-free-bytes", type=int, default=64 * 1024 * 1024)
+    parser.add_argument("--broken-min-free-bytes", type=int, default=2**62)
+    parser.add_argument("--reservation-ttl-seconds", type=int, default=90)
+    parser.add_argument("--delivered-retention-seconds", type=int, default=7 * 24 * 60 * 60)
+    parser.add_argument("--self-test", action="store_true")
+    return parser
+
+
+def validate_args(args: argparse.Namespace) -> None:
+    if args.self_test:
+        return
+    if not args.agent:
+        raise RehearsalError("--agent is required for live execution")
+    for name in (
+        "request_count",
+        "restart_accumulation_requests",
+        "kill_switch_requests",
+        "resume_requests",
+        "busy_timeout_ms",
+        "max_spool_bytes",
+        "max_spool_records",
+        "min_free_bytes",
+        "broken_min_free_bytes",
+        "reservation_ttl_seconds",
+        "delivered_retention_seconds",
+    ):
+        if getattr(args, name) <= 0:
+            raise RehearsalError(f"--{name.replace('_', '-')} must be positive")
+    if args.request_count < 6:
+        raise RehearsalError(
+            "--request-count must be at least 6 so each live listener gets useful p95 samples"
+        )
+    if args.reservation_ttl_seconds < 90:
+        raise RehearsalError("reservation TTL must remain at or above 90 seconds")
+    if args.latency_p95_budget_seconds <= 0:
+        raise RehearsalError("latency p95 budget must be positive")
+    if args.broken_min_free_bytes <= args.min_free_bytes:
+        raise RehearsalError("broken free-space floor must exceed the healthy floor")
+    if args.operation_id:
+        normalized: list[str] = []
+        for value in args.operation_id:
+            try:
+                normalized.append(str(uuid.UUID(value)))
+            except ValueError as exc:
+                raise RehearsalError(f"invalid --operation-id: {value}") from exc
+        args.operation_id = normalized
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    install_signal_handlers()
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.self_test:
+        return self_test()
+
+    run_state = RunState()
+    phases: list[PhaseResult] = []
+    ctx: RuntimeContext | None = None
+    restore: dict[str, Any] = {
+        "attempted": False,
+        "required": False,
+        "env_restored": None,
+        "env_hash_matches": None,
+        "service_restarted": None,
+        "service_healthy": None,
+        "service_status": None,
+        "errors": [],
+    }
+    failed_during: str | None = None
+    setup_error: str | None = None
+    fatal_traceback: str | None = None
+    try:
+        run_state.enter("selecting a repository runtime with required imports")
+        reexec_repo_venv()
+        run_state.enter("validating command-line arguments")
+        validate_args(args)
+        ctx = setup_context(args, run_state)
+        run_state.enter("TEST 1 — live fail-open and latency")
+        phases.append(run_test_1(ctx))
+        if not ctx.stable_operations:
+            raise RehearsalError("TEST 1 did not establish stable live operations")
+        run_state.enter("TEST 2 — restart and spool conservation")
+        phases.append(run_test_2(ctx))
+        run_state.enter("TEST 3 — live kill switch")
+        phases.append(run_test_3(ctx))
+    except BaseException as exc:
+        failed_during = run_state.current_stage
+        secrets = diagnostic_secrets(args, ctx)
+        chain = [redact_diagnostic(item, secrets) for item in exception_chain(exc)]
+        setup_error = chain[0]
+        fatal_traceback = redact_diagnostic(
+            "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)), secrets
+        )
+        print(f"\nFAILED during: {failed_during}", file=sys.stderr, flush=True)
+        for index, message in enumerate(chain):
+            prefix = "  " if index == 0 else "  caused by: "
+            print(f"{prefix}{message}", file=sys.stderr, flush=True)
+        if ctx is not None:
+            existing_names = {phase.name for phase in phases}
+            for name in (
+                "TEST 1 — live fail-open and latency",
+                "TEST 2 — restart and spool conservation",
+                "TEST 3 — live kill switch",
+            ):
+                if name not in existing_names:
+                    phases.append(
+                        PhaseResult(name=name, passed=False, error=f"prerequisite failed: {setup_error}")
+                    )
+    finally:
+        if ctx is not None:
+            log("Restoring the exact original test.env and restarting dish-service-test.")
+            restore = restore_original(ctx)
+            restore["attempted"] = True
+            restore["required"] = True
+
+    report = {
+        "kind": "dish-pg-host-capture-rehearsal",
+        "completed_at": datetime.now(timezone.utc).isoformat(),
+        "test_only": True,
+        "unit": TEST_UNIT,
+        "postgres_database": EXPECTED_PG_DATABASE,
+        "configuration_method": "verified direct test.env backup/edit/restore fallback",
+        "shadow_worker_started": False,
+        "scratch": str(ctx.scratch) if ctx is not None else (
+            None if run_state.scratch is None else str(run_state.scratch)
+        ),
+        "baseline_id": None if ctx is None else ctx.baseline_id,
+        "generation_id": None if ctx is None else ctx.generation_id,
+        "failed_during": failed_during,
+        "setup_error": setup_error,
+        "fatal_traceback": fatal_traceback,
+        "tests": [
+            {
+                "name": phase.name,
+                "status": "PASS" if phase.passed else "FAIL",
+                "error": phase.error,
+                "evidence": phase.evidence,
+            }
+            for phase in phases
+        ],
+        "restore": restore,
+    }
+    report_root = ctx.scratch if ctx is not None else run_state.scratch
+    if report_root is not None:
+        target = report_root / "report.json"
+        target.write_text(json.dumps(report, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+        os.chmod(target, 0o600)
+
+    print("\n=== REHEARSAL RESULTS ===")
+    for phase in phases:
+        status = "PASS" if phase.passed else "FAIL"
+        print(f"{status}: {phase.name}")
+        if phase.error:
+            print(f"  {phase.error}")
+        latency = phase.evidence.get("latency") if isinstance(phase.evidence, dict) else None
+        if isinstance(latency, dict):
+            print(
+                "  combined p95 off/on/add: "
+                f"{latency['capture_off_p95_seconds']:.3f}s / "
+                f"{latency['capture_on_p95_seconds']:.3f}s / "
+                f"{latency['added_p95_seconds']:.3f}s"
+            )
+            surfaces = latency.get("surfaces")
+            if isinstance(surfaces, dict):
+                for surface in ("private", "action"):
+                    item = surfaces.get(surface)
+                    if isinstance(item, dict):
+                        print(
+                            f"  {surface} p95 off/on/add: "
+                            f"{item['capture_off_p95_seconds']:.3f}s / "
+                            f"{item['capture_on_p95_seconds']:.3f}s / "
+                            f"{item['added_p95_seconds']:.3f}s"
+                        )
+        for key in ("healthy_spool_after", "after_post_restart_request", "after_resume"):
+            item = phase.evidence.get(key) if isinstance(phase.evidence, dict) else None
+            if isinstance(item, dict):
+                print(
+                    f"  {key}: records={item.get('total_records')} "
+                    f"counts={item.get('counts')} digest={str(item.get('row_digest'))[:16]}"
+                )
+
+    if not restore.get("attempted"):
+        restore_status = "NOT RUN"
+        print("NOT RUN: RESTORE")
+        print(
+            "  setup stopped before any test.env or service change; "
+            "restoration was not required"
+        )
+    else:
+        restore_passed = bool(
+            restore.get("env_hash_matches")
+            and restore.get("service_restarted")
+            and restore.get("service_healthy")
+            and not restore.get("errors")
+        )
+        restore_status = "PASS" if restore_passed else "FAIL"
+        print(f"{restore_status}: RESTORE")
+        print(f"  env hash matches: {restore.get('env_hash_matches')}")
+        print(f"  service: {restore.get('service_status')}")
+        if restore.get("errors"):
+            for error in restore["errors"]:
+                print(f"  {error}")
+
+    if report_root is not None:
+        print(f"Evidence and manual recovery: {report_root}")
+    print("Shadow worker started: no")
+
+    tests_passed = len(phases) == 3 and all(phase.passed for phase in phases)
+    restore_passed = restore_status in {"PASS", "NOT RUN"}
+    return 0 if tests_passed and restore_passed and setup_error is None else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
