@@ -57,3 +57,5 @@ from . import candidate_manifest_models
 from . import legacy_request_models
 
 from . import import_link_models
+
+from . import readiness_evidence_models

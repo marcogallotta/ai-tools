@@ -464,6 +464,9 @@ class ProjectionWorkerReadiness(Base):
     reconciliation_run_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("projection_reconciliation_runs.reconciliation_run_id", ondelete="RESTRICT"), nullable=False
     )
+    probe_inventory_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("worker_probe_inventories.inventory_id", ondelete="RESTRICT")
+    )
     worker_identity: Mapped[str] = mapped_column(String(256), nullable=False)
     worker_release: Mapped[str] = mapped_column(String(128), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
