@@ -23,15 +23,18 @@ etc.) before trusting or removing it.
 - **Connection**: `postgresql://dish:dish@127.0.0.1:55432/dish_stage_a_test`
   (bound to `127.0.0.1` only).
 - **Schema state as of 2026-08-04**: migrated to Alembic head, full
-  `dish_pg` table set present. Contains whatever data prior local runs
-  left behind — not guaranteed empty; check row counts before treating any
+  `dish_pg` table set present. Holds §3 rehearsal fixture data (2 outbox
+  events, 1 reconciliation run) plus whatever else prior local runs left
+  behind — not guaranteed empty; check row counts before treating any
   rehearsal result as a clean-slate run.
 - **Status**: running continuously since 2026-08-02 (not torn down between
   sessions). Confirmed via `docker ps` on 2026-08-04.
-- **Not yet done against it**: §3 runtime wiring rehearsal (service +
-  `projection_worker.py` + `reconciliation_worker.py` as separate
-  processes against this instance) — see `ops-issues.md`'s "Local runtime
-  validation plan" section for status of all four sections.
+- **Done against it**: §3 runtime wiring rehearsal, 2026-08-04 — service,
+  `projection_worker.py`, and `reconciliation_worker.py` run as separate
+  OS processes (no systemd). Full report was written to a session
+  scratchpad (not committed to the repo); result summary is in
+  `ops-issues.md`'s "Local runtime validation plan" table. §1, §2, §4
+  still not run.
 
 ## Production and test `dish-service`
 
