@@ -341,14 +341,6 @@ complete external corpus before opening any transaction, then drives
 `start_reconciliation`/`record_reconciliation_item`/`complete_reconciliation` as one governed run;
 it does not inspect or mutate projection outbox rows directly.
 
-`dish_pg/bootstrap.py`, `dish_pg/import_runtime.py`, `scripts/dish-pg-bootstrap-initial`, and
-`scripts/dish-pg-import-legacy` own the otherwise-missing first-generation path. Bootstrap is an
-empty-target-only transaction: it binds real Git/Honest/source hashes, creates the first generation
-as immediately active, and installs the imported project/section registry. The import wrapper then
-uses real precondition and idempotency checks and verifies every source task against its PostgreSQL
-content, alias, placement, membership, and completion heads. Neither path creates command authority
-or permits an external effect.
-
 Stage 6 adds the offline release-candidate and cutover-control foundation through
 `0005_release_cutover`, `stage6_models.py`, the `release.py` transactional facade,
 `release_evidence.py`, `release_status.py`, `cutover_chronology.py`,
@@ -374,10 +366,12 @@ Stage 7 closes the final Asana-authoritative interval through
 observation high-water mark, watcher identity and gap-free closed-through timestamp. Any relevant
 intervening Asana task, project, section, registry or alias change appends an invalidation and makes
 the existing approval unusable. A replacement closure must be captured and Marco must recertify the
-same candidate against that exact closure. Authority activation binds the approved or recertified
-closure identity and digest and rejects a closure that does not remain valid through the exact
-activation timestamp. Rollback burn revalidates the activation-bound closure; routing cannot stand
-in for authority closure.
+same candidate against that exact closure. Authority activation binds the post-fence recertified closure identity and digest. The final
+closure must cover the durable legacy-writer fence boundary, its recertification must follow that
+boundary, and activation must follow the recertification. Once the verified fence is durable, the
+closure need not claim observation into the future through the later authorization timestamp.
+Rollback burn revalidates the activation-bound closure; routing cannot stand in for authority
+closure.
 
 Stage 8 strengthens production evidence through `0007_cutover_evidence_gates`. A passed rehearsal
 must contain the checkpoint set prescribed for its rehearsal class. Writer-fence verification binds
@@ -537,10 +531,6 @@ create
 → start verification
 → inspect the exact current reviewed candidate
 → approve or reject
-→ when a Large candidate needs Marco authority, queue one exact semantic proposal
-→ Marco approves or rejects the complete linked bundle
-→ any fresh eligible run applies the exact approved candidate
-→ start fresh verification on the applied candidate
 → submit after approval
 ```
 
@@ -555,20 +545,8 @@ Dish owns canonical Material-change history after the first baseline. A later ca
 or omit prior entries but cannot rewrite them; Dish appends from durable intent and independent
 approval finalizes every pending entry in the reviewed correction chain. Changes to the governed
 Planning facts—including `Dish candidate`, Purpose, Role, Locks, Exemptions, Research emphasis,
-Destination section, and Decisions—require exact persisted Marco authority before any candidate
-write. When one Large correction changes governed facts, Dish stores the complete candidate and all
-linked governed diffs as one immutable semantic proposal rather than asking Marco field by field.
-The proposal is the durable continuation point: queuing it releases proposer lease ownership; Marco
-approves or rejects the exact bundle atomically; approval creates all exact authorizations in one
-transaction; and any fresh eligible run may claim and install only the stored candidate. Rejection
-creates no authorization or content write: it closes the proposing cycle, preserves the unchanged
-live baseline, and opens a fresh Verification cycle so another agent can propose a different route.
-The exact rejected change bundle cannot be queued again without a materially different proposal or
-new evidence. The applying run never inherits the proposer run identity or independent-review
-status. The proposer remains the material editor of an approved candidate, the interrupted cycle
-closes as a Large correction, and Dish opens a fresh Verification cycle for independent review.
-Pending proposals safely park their task, so a batch agent may continue unrelated work.
-Caller-supplied `model` is display metadata, never authenticated provenance.
+Destination section, and Decisions—require an exact persisted Marco authorization before any
+candidate write. Caller-supplied `model` is display metadata, never authenticated provenance.
 
 Specialized client-visible rules for material classification, audit normalization, pre-construction
 Research holds, destination repair, and reruns belong in the corresponding sections of
@@ -588,7 +566,6 @@ cannot silently create separate live authorities.
 | Verification/signoff | `verification_cycles`, `two_pass_resets` |
 | external effects | `write_attempts`, `movement_attempts` |
 | governed authority | `marco_authorizations` |
-| semantic proposals and approval queue | `semantic_proposals`, `semantic_proposal_changes` |
 | execution and ownership | `operation_executions`, `operation_execution_claims`, `service_leases` |
 | request replay | `service_requests`; sibling identity, checkpoint, and result journal for `backup-restore` |
 | Planning intent confirmation | `planning_intent_challenges` |
@@ -614,14 +591,10 @@ service, lease, request-journal, recovery, migration, or audit-repair module iss
 making commit ownership reviewable in one module and ensuring process-exit exceptions roll back the
 unit they own.
 
-A standalone Marco authorization grant is one `BEGIN IMMEDIATE` unit: the operation-open check,
-exact semantic deduplication, authorization row, and `marco.authorization` audit either all commit
-or all roll back. Semantic-proposal approval is the bundled equivalent: proposal baseline validation,
-every linked authorization, proposal status transition, and approval audit commit together or all
-roll back. Proposal candidate text and linked diffs are immutable after queueing. Claim and apply are
-separate durable states; only one fresh run may claim, application must match the stored candidate
-identity exactly, and an uncertain application remains fail-closed rather than becoming claimable by
-another run. Reservation never treats an unaudited historical row as a usable capability.
+A Marco authorization
+grant is one `BEGIN IMMEDIATE` unit: the operation-open check, exact semantic deduplication,
+authorization row, and `marco.authorization` audit either all commit or all roll back. Reservation
+never treats an unaudited historical row as a usable capability.
 
 An unresolved `uncertain` operation execution remains an operation-scoped mutation fence even after
 its active process claim is gone. Only exact replay of that request or explicit authoritative

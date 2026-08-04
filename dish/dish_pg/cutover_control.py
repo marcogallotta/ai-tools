@@ -274,11 +274,36 @@ class CutoverControlAuthority:
         closure = self._current_approved_final_asana_closure(
             candidate.candidate_id, expected_closure_id=final_asana_closure_id
         )
-        if _utc_comparable(closure.closed_through_at) < _utc_comparable(activated_at):
-            raise ReleaseAuthorityError(
-                "final Asana closure does not cover the authority activation timestamp"
-            )
         fenced_at = self._cutover_checkpoint_time(cutover_run_id, "legacy_writers_fenced")
+        if _utc_comparable(closure.closed_through_at) < _utc_comparable(fenced_at):
+            raise ReleaseAuthorityError(
+                "final Asana closure does not cover the legacy writer-fence boundary"
+            )
+        recertification = self.session.scalar(
+            select(rel.CutoverRecertification)
+            .where(
+                rel.CutoverRecertification.candidate_id == candidate.candidate_id,
+                rel.CutoverRecertification.closure_id == closure.closure_id,
+            )
+            .order_by(rel.CutoverRecertification.recertification_revision.desc())
+            .limit(1)
+        )
+        if recertification is None:
+            raise ReleaseAuthorityError(
+                "final Asana verification must be recertified after writer fencing"
+            )
+        _require_at_or_after(
+            recertification.recertified_at,
+            fenced_at,
+            field="recertified_at",
+            floor_field="legacy writer fence verification",
+        )
+        _require_at_or_after(
+            activated_at,
+            recertification.recertified_at,
+            field="activated_at",
+            floor_field="final Asana recertification",
+        )
         _require_at_or_after(
             activated_at,
             fenced_at,

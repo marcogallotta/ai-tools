@@ -145,7 +145,7 @@ def test_final_asana_change_invalidates_activation_until_recaptured_and_recertif
         assert checkpoint.payload["final_asana_closure_id"] == str(replacement.closure_id)
 
 
-def test_activation_requires_closure_through_exact_activation_timestamp(workflow_db) -> None:
+def test_activation_requires_post_fence_closure_and_recertification(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         service, candidate_id = _prepare_candidate(session, ids, context, task_id)
@@ -157,19 +157,19 @@ def test_activation_requires_closure_through_exact_activation_timestamp(workflow
             evidence_bundle_id=bundle.bundle_id,
             validated_at=NOW + timedelta(minutes=1),
         )
-        closure = _record_final_closure(
-            service, ids, candidate_id, closed_through_at=NOW + timedelta(minutes=4)
+        approved_closure = _record_final_closure(
+            service, ids, candidate_id, closed_through_at=NOW + timedelta(minutes=2)
         )
         service.approve_candidate(
             candidate_id=candidate_id,
             evidence_bundle_id=bundle.bundle_id,
             approver="Marco",
-            approval_statement="Approve exact final Asana closure.",
+            approval_statement="Approve initial exact final Asana closure.",
             approval_payload={
-                "final_asana_closure_id": str(closure.closure_id),
-                "final_asana_closure_sha256": closure.closure_sha256,
+                "final_asana_closure_id": str(approved_closure.closure_id),
+                "final_asana_closure_sha256": approved_closure.closure_sha256,
             },
-            approved_at=NOW + timedelta(minutes=4),
+            approved_at=NOW + timedelta(minutes=3),
         )
         fence = service.prepare_writer_fence(
             candidate_id=candidate_id,
@@ -181,20 +181,131 @@ def test_activation_requires_closure_through_exact_activation_timestamp(workflow
         run = service.prepare_cutover(
             candidate_id=candidate_id, started_at=NOW + timedelta(minutes=4)
         )
-        service.engage_writer_fence(fence_id=fence.fence_id, engaged_at=NOW + timedelta(minutes=4))
+        service.engage_writer_fence(
+            fence_id=fence.fence_id, engaged_at=NOW + timedelta(minutes=5)
+        )
         service.verify_writer_fence(
             fence_id=fence.fence_id,
             proof=_writer_fence_proof(fence, candidate_id),
-            verified_at=NOW + timedelta(minutes=4),
+            verified_at=NOW + timedelta(minutes=6),
         )
-        service.mark_fenced(cutover_run_id=run.cutover_run_id, recorded_at=NOW + timedelta(minutes=4))
-        with pytest.raises(ReleaseAuthorityError, match="does not cover"):
+        service.mark_fenced(
+            cutover_run_id=run.cutover_run_id,
+            recorded_at=NOW + timedelta(minutes=7),
+        )
+
+        # Recertifying stale pre-fence evidence does not extend its observation interval.
+        service.recertify_candidate(
+            candidate_id=candidate_id,
+            closure_id=approved_closure.closure_id,
+            approver="Marco",
+            recertification_statement="Confirm the selected closure after fencing.",
+            payload={"cutover_run_id": str(run.cutover_run_id)},
+            recertified_at=NOW + timedelta(minutes=8),
+        )
+        with pytest.raises(ReleaseAuthorityError, match="writer-fence boundary"):
             service.activate_authority(
                 cutover_run_id=run.cutover_run_id,
-                final_asana_closure_id=closure.closure_id,
-                activated_at=NOW + timedelta(minutes=5),
+                final_asana_closure_id=approved_closure.closure_id,
+                activated_at=NOW + timedelta(minutes=9),
             )
 
+        final = service.record_final_asana_closure(
+            candidate_id=candidate_id,
+            capture_manifest_sha256=HASH_A,
+            observation_high_water="asana-change-post-fence-missing-recertification",
+            watcher_identity="watcher@fixture",
+            interval_started_at=NOW + timedelta(minutes=2),
+            closed_through_at=NOW + timedelta(minutes=9),
+            payload={"registry": "closed", "writer_fence_verified": True},
+            recorded_at=NOW + timedelta(minutes=9),
+        )
+        with pytest.raises(ReleaseAuthorityError, match="currently approved"):
+            service.activate_authority(
+                cutover_run_id=run.cutover_run_id,
+                final_asana_closure_id=final.closure_id,
+                activated_at=NOW + timedelta(minutes=10),
+            )
+
+
+def test_valid_increasing_final_asana_activation_chronology_passes(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        bundle = service.build_evidence_bundle(
+            candidate_id=candidate_id, bundle_kind="release_candidate", built_at=NOW
+        )
+        service.validate_candidate(
+            candidate_id=candidate_id,
+            evidence_bundle_id=bundle.bundle_id,
+            validated_at=NOW + timedelta(minutes=1),
+        )
+        initial = _record_final_closure(
+            service, ids, candidate_id, closed_through_at=NOW + timedelta(minutes=2)
+        )
+        service.approve_candidate(
+            candidate_id=candidate_id,
+            evidence_bundle_id=bundle.bundle_id,
+            approver="Marco",
+            approval_statement="Approve initial closure evidence.",
+            approval_payload={
+                "final_asana_closure_id": str(initial.closure_id),
+                "final_asana_closure_sha256": initial.closure_sha256,
+            },
+            approved_at=NOW + timedelta(minutes=3),
+        )
+        fence = service.prepare_writer_fence(
+            candidate_id=candidate_id,
+            target_identity="legacy-service@laptop",
+            mechanism="fail-closed-file",
+            manifest={"path": "/var/lib/dish/legacy-writer-fence.json"},
+            prepared_at=NOW + timedelta(minutes=4),
+        )
+        run = service.prepare_cutover(
+            candidate_id=candidate_id, started_at=NOW + timedelta(minutes=4)
+        )
+        service.engage_writer_fence(
+            fence_id=fence.fence_id, engaged_at=NOW + timedelta(minutes=5)
+        )
+        service.verify_writer_fence(
+            fence_id=fence.fence_id,
+            proof=_writer_fence_proof(fence, candidate_id),
+            verified_at=NOW + timedelta(minutes=6),
+        )
+        service.mark_fenced(
+            cutover_run_id=run.cutover_run_id,
+            recorded_at=NOW + timedelta(minutes=7),
+        )
+        final = service.record_final_asana_closure(
+            candidate_id=candidate_id,
+            capture_manifest_sha256=HASH_A,
+            observation_high_water="asana-change-post-fence",
+            watcher_identity="watcher@fixture",
+            interval_started_at=NOW + timedelta(minutes=2),
+            closed_through_at=NOW + timedelta(minutes=8),
+            payload={"registry": "closed", "writer_fence_verified": True},
+            recorded_at=NOW + timedelta(minutes=8),
+        )
+        service.recertify_candidate(
+            candidate_id=candidate_id,
+            closure_id=final.closure_id,
+            approver="Marco",
+            recertification_statement="Authorize the post-fence final verification.",
+            payload={"cutover_run_id": str(run.cutover_run_id)},
+            recertified_at=NOW + timedelta(minutes=9),
+        )
+        with pytest.raises(ReleaseAuthorityError, match="final Asana recertification"):
+            service.activate_authority(
+                cutover_run_id=run.cutover_run_id,
+                final_asana_closure_id=final.closure_id,
+                activated_at=NOW + timedelta(minutes=8, seconds=30),
+            )
+        activated = service.activate_authority(
+            cutover_run_id=run.cutover_run_id,
+            final_asana_closure_id=final.closure_id,
+            activated_at=NOW + timedelta(minutes=10),
+        )
+        assert activated.state == "activated"
 
 def test_final_asana_closure_rejects_impossible_or_future_chronology(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db

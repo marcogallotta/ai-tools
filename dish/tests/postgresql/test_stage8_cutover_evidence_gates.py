@@ -85,6 +85,14 @@ def _burn_rollback(session, ids, context, task_id):
         cutover_run_id=run.cutover_run_id,
         recorded_at=NOW + timedelta(minutes=5),
     )
+    service.recertify_candidate(
+        candidate_id=candidate_id,
+        closure_id=closure.closure_id,
+        approver="Marco",
+        recertification_statement="Confirm final closure after writer fencing.",
+        payload={"cutover_run_id": str(run.cutover_run_id)},
+        recertified_at=NOW + timedelta(minutes=5),
+    )
     service.activate_authority(
         cutover_run_id=run.cutover_run_id,
         final_asana_closure_id=closure.closure_id,
