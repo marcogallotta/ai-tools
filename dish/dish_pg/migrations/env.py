@@ -13,6 +13,7 @@ from dish_pg import reservation_models  # noqa: F401 -- register first-request r
 from dish_pg import artifact_identity_models  # noqa: F401 -- register writer-fence artifact metadata
 from dish_pg import candidate_manifest_models  # noqa: F401 -- register candidate manifest metadata
 from dish_pg import legacy_request_models  # noqa: F401 -- register legacy request tombstones
+from dish_pg import import_link_models  # noqa: F401 -- register typed import linkage
 
 config = context.config
 if config.config_file_name is not None:
