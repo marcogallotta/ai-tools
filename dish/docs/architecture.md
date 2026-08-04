@@ -174,6 +174,16 @@ Those checks occur while the outbox row is locked on PostgreSQL, so an expired o
 confirm, mark absent, mark uncertain, append terminal evidence, clear another owner's claim, or
 advance per-task rollout order.
 
+Projection lifecycle writes use one PostgreSQL lock order: projection epoch first, outbox event
+second, then attempt, observation, adjudication, correlation, or other child evidence. Event
+admission and ordinary lifecycle work take a shared epoch lock; effects-disable and retirement take
+the conflicting exclusive epoch lock. `begin_attempt` rechecks both active epoch status and
+`external_effects_enabled` while holding that epoch lock before it locks the event and inserts the
+durable dispatch attempt. Therefore a committed disable is a dispatch barrier even for a worker that
+selected or claimed the event earlier. Retirement cannot pass an admitted event insertion or an
+in-flight settlement: after waiting, it locks and rereads each event and only supersedes still-open
+work, preserving any event that became `applied` and any attempt that became `confirmed`.
+
 Every attempt becomes terminal exactly once and remains immutable. `confirmed` closes the event as
 `applied`; `not_applied` returns it to `pending`; `uncertain` or `blocked` stops later events for the
 same task. A new dispatch after `not_applied` creates a fresh attempt ID, attempt number, retry
