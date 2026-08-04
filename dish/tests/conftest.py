@@ -6,6 +6,7 @@ module instance (loaded, not cached in sys.modules) so the script's module-
 level globals (_CLIENT, _PAT) never leak state between tests.
 """
 import importlib.util
+import json
 import os
 import pathlib
 import sqlite3
@@ -15,6 +16,13 @@ from tests.flake_policy import (
     CANDIDATE_MARKER,
     QUARANTINE_MARKER,
     validate_marker_metadata,
+)
+from tests.support.postgresql.certification import (
+    NATIVE_POSTGRESQL_UNAVAILABLE,
+    NativePostgreSQLUnavailable,
+    postgresql_dsn,
+    probe_native_postgresql,
+    redacted_dsn,
 )
 from importlib.machinery import SourceFileLoader
 
@@ -114,6 +122,18 @@ def pytest_addoption(parser):
         ),
     )
     parser.addoption(
+        "--native-postgresql",
+        action="store_true",
+        default=False,
+        help="run only the governed native PostgreSQL certification inventory",
+    )
+    parser.addoption(
+        "--postgresql-report",
+        type=pathlib.Path,
+        default=None,
+        help="write exact native PostgreSQL execution accounting as JSON",
+    )
+    parser.addoption(
         "--pglite",
         action="store_true",
         default=False,
@@ -185,18 +205,32 @@ def _select_items(config, items):
     candidates_requested = config.getoption("--flake-candidates")
     quarantine_requested = config.getoption("--quarantine")
     pglite_requested = config.getoption("--pglite")
+    native_postgresql_requested = config.getoption("--native-postgresql")
     selectors = [
         smoke_requested,
         database_boundary_requested,
         candidates_requested,
         quarantine_requested,
         pglite_requested,
+        native_postgresql_requested,
     ]
     if sum(bool(value) for value in selectors) > 1:
         raise pytest.UsageError(
             "--smoke, --database-boundary, --flake-candidates, --quarantine, "
-            "and --pglite are separate test lanes"
+            "--pglite, and --native-postgresql are separate test lanes"
         )
+
+    if native_postgresql_requested:
+        if not config.getoption("--postgresql"):
+            raise pytest.UsageError(
+                "--native-postgresql requires --postgresql; SQLite and PGlite cannot certify the lane"
+            )
+        return [
+            item
+            for item in items
+            if item.get_closest_marker("native_postgresql") is not None
+            and item.get_closest_marker(QUARANTINE_MARKER) is None
+        ]
 
     if smoke_requested:
         selected = [
@@ -280,6 +314,16 @@ def pytest_collection_modifyitems(config, items):
         )
 
     selected = _select_items(config, items)
+    native_nodeids = {
+        item.nodeid
+        for item in selected
+        if item.get_closest_marker("native_postgresql") is not None
+    }
+    config._native_postgresql_state = {
+        "selected_nodeids": sorted(native_nodeids),
+        "outcomes": {},
+        "skip_reasons": {},
+    }
     selected_set = set(selected)
     deselected = [item for item in items if item not in selected_set]
     items[:] = selected
@@ -287,17 +331,142 @@ def pytest_collection_modifyitems(config, items):
         config.hook.pytest_deselected(items=deselected)
 
 
-def pytest_sessionfinish(session, exitstatus):
-    if exitstatus != pytest.ExitCode.NO_TESTS_COLLECTED:
+def pytest_collection_finish(session):
+    state = getattr(session.config, "_native_postgresql_state", None)
+    if state is None:
         return
+    state["selected_nodeids"] = sorted(
+        item.nodeid
+        for item in session.items
+        if item.get_closest_marker("native_postgresql") is not None
+    )
+
+
+def _native_postgresql_summary(config):
+    state = getattr(
+        config,
+        "_native_postgresql_state",
+        {"selected_nodeids": [], "outcomes": {}, "skip_reasons": {}},
+    )
+    selected = list(state["selected_nodeids"])
+    outcomes = dict(state["outcomes"])
+    skip_reasons = dict(state["skip_reasons"])
+    executed = sorted(nodeid for nodeid, outcome in outcomes.items() if outcome in {"passed", "failed"})
+    skipped = sorted(nodeid for nodeid, outcome in outcomes.items() if outcome == "skipped")
+    unavailable = sorted(
+        nodeid
+        for nodeid in skipped
+        if NATIVE_POSTGRESQL_UNAVAILABLE in skip_reasons.get(nodeid, "")
+    )
+    failed = sorted(nodeid for nodeid, outcome in outcomes.items() if outcome == "failed")
+    errors = sorted(nodeid for nodeid, outcome in outcomes.items() if outcome == "error")
+    passed = sorted(nodeid for nodeid, outcome in outcomes.items() if outcome == "passed")
+    return {
+        "selected": len(selected),
+        "executed": len(executed),
+        "passed": len(passed),
+        "failed": len(failed),
+        "errors": len(errors),
+        "skipped": len(skipped),
+        "unavailable": len(unavailable),
+        "selected_nodeids": selected,
+        "executed_nodeids": executed,
+        "passed_nodeids": passed,
+        "failed_nodeids": failed,
+        "error_nodeids": errors,
+        "skipped_nodeids": skipped,
+        "unavailable_nodeids": unavailable,
+        "skip_reasons": skip_reasons,
+    }
+
+
+_ACTIVE_PYTEST_CONFIG = None
+
+
+def pytest_configure(config):
+    global _ACTIVE_PYTEST_CONFIG
+    _ACTIVE_PYTEST_CONFIG = config
+
+
+def pytest_unconfigure(config):
+    global _ACTIVE_PYTEST_CONFIG
+    if _ACTIVE_PYTEST_CONFIG is config:
+        _ACTIVE_PYTEST_CONFIG = None
+
+
+def pytest_runtest_logreport(report):
+    config = _ACTIVE_PYTEST_CONFIG
+    if config is None:
+        return
+    state = getattr(config, "_native_postgresql_state", None)
+    if state is None or report.nodeid not in state["selected_nodeids"]:
+        return
+    if report.when == "call":
+        state["outcomes"][report.nodeid] = "passed" if report.passed else "failed"
+    elif report.when == "setup" and report.skipped:
+        state["outcomes"][report.nodeid] = "skipped"
+        state["skip_reasons"][report.nodeid] = str(report.longrepr)
+    elif report.when == "setup" and report.failed:
+        state["outcomes"][report.nodeid] = "error"
+
+
+def pytest_sessionfinish(session, exitstatus):
     config = session.config
-    if (
+    if exitstatus == pytest.ExitCode.NO_TESTS_COLLECTED and (
         config.getoption("--flake-candidates")
         or config.getoption("--quarantine")
         or config.getoption("--pglite")
     ):
         session.exitstatus = pytest.ExitCode.OK
 
+    output = config.getoption("--postgresql-report")
+    if output is not None:
+        identity = getattr(config, "_native_postgresql_identity", None)
+        payload = {
+            "format": "dish-native-postgresql-pytest-report-v1",
+            "requested": bool(config.getoption("--native-postgresql")),
+            "postgresql_enabled": bool(config.getoption("--postgresql")),
+            "dsn": redacted_dsn(postgresql_dsn()),
+            "identity": identity,
+            "tests": _native_postgresql_summary(config),
+            "pytest_exit_status": int(session.exitstatus),
+        }
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n")
+
+
+def pytest_terminal_summary(terminalreporter):
+    summary = _native_postgresql_summary(terminalreporter.config)
+    if summary["selected"]:
+        terminalreporter.write_sep(
+            "=",
+            "native PostgreSQL: "
+            f"selected={summary['selected']} executed={summary['executed']} "
+            f"passed={summary['passed']} failed={summary['failed']} errors={summary['errors']} "
+            f"skipped={summary['skipped']} unavailable={summary['unavailable']}",
+        )
+
+
+
+@pytest.fixture(scope="session")
+def native_postgresql_identity(request):
+    if not request.config.getoption("--postgresql"):
+        pytest.skip(NATIVE_POSTGRESQL_UNAVAILABLE)
+    try:
+        identity = probe_native_postgresql()
+    except NativePostgreSQLUnavailable as exc:
+        pytest.fail(f"native PostgreSQL identity check failed: {exc}")
+    request.config._native_postgresql_identity = identity.as_dict()
+    return identity
+
+
+@pytest.fixture(autouse=True)
+def require_native_postgresql(request):
+    if request.node.get_closest_marker("native_postgresql") is None:
+        return None
+    if not request.config.getoption("--postgresql"):
+        pytest.skip(NATIVE_POSTGRESQL_UNAVAILABLE)
+    return request.getfixturevalue("native_postgresql_identity")
 
 
 def _load_cli_module():
@@ -386,7 +555,9 @@ def current_database_template(tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
-def close_sqlite_connections(monkeypatch, request, current_database_template):
+def close_sqlite_connections(
+    monkeypatch, request, current_database_template, require_native_postgresql
+):
     """Make every test own and deterministically close its SQLite handles."""
     from dish_tool import database_schema
 

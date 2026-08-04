@@ -1,7 +1,6 @@
 """Core PostgreSQL authority fixtures shared across collected tests."""
 from __future__ import annotations
 
-import os
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
@@ -17,6 +16,7 @@ from dish_pg import models
 from dish_pg.database import session_scope
 from dish_pg.repositories import AuthorityRepository, ContractBindingRepository, RegistryRepository
 from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
+from tests.support.postgresql.certification import postgresql_dsn
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -24,12 +24,6 @@ NOW = datetime(2026, 8, 1, 19, 0, tzinfo=timezone.utc)
 HASH_A = "a" * 64
 HASH_B = "b" * 64
 HASH_C = "c" * 64
-
-REAL_POSTGRESQL_DSN = os.environ.get(
-    "DISH_TEST_POSTGRESQL_DSN",
-    "postgresql+psycopg://dish:dish@127.0.0.1:55432/dish_stage_a_test",
-)
-
 
 def _uuid_stream() -> Iterator[uuid.UUID]:
     for value in range(1, 1000):
@@ -59,8 +53,11 @@ def core_db(request) -> tuple[sessionmaker[Session], Iterator[uuid.UUID]]:
     if request.config.getoption("--postgresql"):
         # The native lane must exercise the deployed migration history, including hand-written
         # PostgreSQL triggers that cannot be produced by ORM metadata.create_all().
-        _reset_postgresql_schema(REAL_POSTGRESQL_DSN)
-        engine = create_engine(REAL_POSTGRESQL_DSN, future=True)
+        request.getfixturevalue("native_postgresql_identity")
+        dsn = postgresql_dsn()
+        _reset_postgresql_schema(dsn)
+        engine = create_engine(dsn, future=True)
+        assert engine.dialect.name == "postgresql"
     else:
         engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
 
