@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the non-certification PGlite PostgreSQL-semantic development lane."""
+"""Run the non-certification PGlite development and quarantine lanes."""
 from __future__ import annotations
 
 import argparse
@@ -10,10 +10,24 @@ import subprocess
 import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+PGLITE_FOUNDATIONAL_QUARANTINE = (
+    "tests/postgresql/pglite/test_pglite_migrations.py::test_native_fixture_reset_uses_alembic_history",
+)
+_INFRASTRUCTURE_SIGNATURES = (
+    "server closed the connection",
+    "connection refused",
+    "connection reset",
+    "broken pipe",
+    "pglite",
+    "tcp startup",
+    "operationalerror",
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -39,9 +53,7 @@ def _write_atomic(path: Path, value: object) -> None:
         temp.unlink(missing_ok=True)
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
-    command = [args.python, "-m", "pytest", "--pglite", "-q"]
+def _run(command: list[str]) -> dict[str, Any]:
     started = time.monotonic()
     completed = subprocess.run(
         command,
@@ -52,30 +64,147 @@ def main(argv: list[str] | None = None) -> int:
         check=False,
     )
     output = completed.stdout
-    report = {
-        "format": "dish-pglite-development-report-v1",
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    return {
         "command": command,
         "exit_code": completed.returncode,
         "duration_seconds": round(time.monotonic() - started, 3),
         "output": output,
         "output_sha256": hashlib.sha256(output.encode()).hexdigest(),
-        "passed": completed.returncode == 0,
+    }
+
+
+def _junit_summary(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {
+            "tests": 0,
+            "passed": 0,
+            "skipped": 0,
+            "assertion_failures": 0,
+            "infrastructure_failures": 1,
+            "failed_cases": ["missing JUnit report"],
+            "nodeids": [],
+        }
+    root = ET.parse(path).getroot()
+    cases = root.findall(".//testcase")
+    skipped = 0
+    assertion_failures = 0
+    infrastructure_failures = 0
+    failed_cases: list[str] = []
+    nodeids: list[str] = []
+    for case in cases:
+        classname = case.get("classname", "")
+        name = case.get("name", "")
+        if classname:
+            node = f"{classname.replace('.', '/')}.py::{name}"
+        else:
+            node = name
+        nodeids.append(node)
+        if case.find("skipped") is not None:
+            skipped += 1
+            continue
+        failure = case.find("failure")
+        error = case.find("error")
+        if error is not None:
+            infrastructure_failures += 1
+            failed_cases.append(node)
+            continue
+        if failure is not None:
+            detail = ((failure.text or "") + " " + (failure.get("message") or "")).lower()
+            if any(signature in detail for signature in _INFRASTRUCTURE_SIGNATURES):
+                infrastructure_failures += 1
+            else:
+                assertion_failures += 1
+            failed_cases.append(node)
+    passed = len(cases) - skipped - assertion_failures - infrastructure_failures
+    return {
+        "tests": len(cases),
+        "passed": passed,
+        "skipped": skipped,
+        "assertion_failures": assertion_failures,
+        "infrastructure_failures": infrastructure_failures,
+        "failed_cases": failed_cases,
+        "nodeids": nodeids,
+    }
+
+
+def _required_inventory_present(summary: dict[str, Any], required: tuple[str, ...]) -> bool:
+    return set(required).issubset(set(summary.get("nodeids", ())))
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    with tempfile.TemporaryDirectory(prefix="dish-pglite-report-") as temp_name:
+        temp = Path(temp_name)
+        primary_xml = temp / "primary.xml"
+        quarantine_xml = temp / "quarantine.xml"
+        primary = _run(
+            [args.python, "-m", "pytest", "--pglite", "-q", "--junitxml", str(primary_xml)]
+        )
+        quarantine = _run(
+            [
+                args.python,
+                "-m",
+                "pytest",
+                "--quarantine",
+                "-q",
+                "--junitxml",
+                str(quarantine_xml),
+            ]
+        )
+        primary_counts = _junit_summary(primary_xml)
+        quarantine_counts = _junit_summary(quarantine_xml)
+
+    quarantine_inventory_present = _required_inventory_present(
+        quarantine_counts, PGLITE_FOUNDATIONAL_QUARANTINE
+    )
+    passed = (
+        primary["exit_code"] == 0
+        and primary_counts["tests"] > 0
+        and quarantine["exit_code"] == 0
+        and quarantine_inventory_present
+    )
+    report = {
+        "format": "dish-pglite-development-report-v2",
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "lane": "pglite_development",
+        "primary": {**primary, "counts": primary_counts},
+        "quarantine": {**quarantine, "counts": quarantine_counts},
+        "foundational_quarantine_inventory": list(PGLITE_FOUNDATIONAL_QUARANTINE),
+        "foundational_quarantine_inventory_present": quarantine_inventory_present,
+        "passed": passed,
         "certification_evidence": False,
         "native_postgresql_certified": False,
+        "failure_classification": {
+            "assertion_failures": (
+                primary_counts["assertion_failures"]
+                + quarantine_counts["assertion_failures"]
+            ),
+            "infrastructure_failures": (
+                primary_counts["infrastructure_failures"]
+                + quarantine_counts["infrastructure_failures"]
+            ),
+        },
     }
     report["report_sha256"] = hashlib.sha256(
         json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     _write_atomic(args.output, report)
-    print(json.dumps({
-        "ok": report["passed"],
-        "certification_evidence": False,
-        "native_postgresql_certified": False,
-        "path": str(args.output),
-        "report_sha256": report["report_sha256"],
-    }, sort_keys=True, separators=(",", ":")))
-    return completed.returncode
+    print(
+        json.dumps(
+            {
+                "ok": report["passed"],
+                "certification_evidence": False,
+                "native_postgresql_certified": False,
+                "assertion_failures": report["failure_classification"]["assertion_failures"],
+                "infrastructure_failures": report["failure_classification"]["infrastructure_failures"],
+                "path": str(args.output),
+                "report_sha256": report["report_sha256"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    return 0 if passed else 2
 
 
 if __name__ == "__main__":

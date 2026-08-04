@@ -1,0 +1,259 @@
+#!/usr/bin/env python3
+"""Run the mandatory governed native PostgreSQL certification lane."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tests.support.postgresql.certification import (  # noqa: E402
+    NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY,
+    NativePostgreSQLUnavailable,
+    postgresql_dsn,
+    probe_native_postgresql,
+    redacted_dsn,
+)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="dish-pg-native-certification")
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--python", default=sys.executable)
+    parser.add_argument("--dsn", default=None, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--waive-skip",
+        action="append",
+        default=[],
+        metavar="NODEID=REASON",
+        help="explicitly waive one required native test skip with a nonblank reason",
+    )
+    return parser
+
+
+def _write_atomic(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temp, 0o600)
+        os.replace(temp, path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def _parse_waivers(values: list[str]) -> dict[str, str]:
+    waivers: dict[str, str] = {}
+    for value in values:
+        nodeid, separator, reason = value.partition("=")
+        if not separator or not nodeid.strip() or not reason.strip():
+            raise ValueError("--waive-skip must be NODEID=REASON with a nonblank reason")
+        if nodeid in waivers:
+            raise ValueError(f"duplicate skip waiver for {nodeid}")
+        waivers[nodeid] = reason.strip()
+    return waivers
+
+
+def _run(command: list[str], *, env: dict[str, str]) -> dict[str, Any]:
+    started = time.monotonic()
+    completed = subprocess.run(
+        command,
+        cwd=ROOT,
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    output = completed.stdout
+    return {
+        "command": command,
+        "exit_code": completed.returncode,
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "output": output,
+        "output_sha256": hashlib.sha256(output.encode("utf-8")).hexdigest(),
+    }
+
+
+def _base_report(*, dsn: str, waivers: dict[str, str]) -> dict[str, Any]:
+    return {
+        "format": "dish-native-postgresql-certification-report-v1",
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+        "certification_scope": "native_postgresql",
+        "inventory": list(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY),
+        "inventory_count": len(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY),
+        "dsn": redacted_dsn(dsn),
+        "skip_waivers": waivers,
+        "source_contract_acceptance": False,
+        "pglite_evidence": False,
+        "production_operational_rehearsal": False,
+    }
+
+
+def _finalize(report: dict[str, Any]) -> None:
+    report["report_sha256"] = hashlib.sha256(
+        json.dumps(report, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        waivers = _parse_waivers(args.waive_skip)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    unknown_waivers = sorted(set(waivers) - set(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY))
+    if unknown_waivers:
+        raise SystemExit("skip waivers are not in the governed inventory: " + ", ".join(unknown_waivers))
+
+    dsn = args.dsn or postgresql_dsn()
+    report = _base_report(dsn=dsn, waivers=waivers)
+    try:
+        identity = probe_native_postgresql(dsn)
+    except NativePostgreSQLUnavailable as exc:
+        report.update(
+            {
+                "status": "unavailable",
+                "environment_error": str(exc),
+                "identity": None,
+                "tests": {
+                    "selected": len(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY),
+                    "executed": 0,
+                    "passed": 0,
+                    "failed": 0,
+                    "errors": 0,
+                    "skipped": 0,
+                    "unavailable": len(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY),
+                    "unavailable_nodeids": list(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY),
+                },
+                "native_postgresql_certified": False,
+            }
+        )
+        _finalize(report)
+        _write_atomic(args.output, report)
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "status": report["status"],
+                    "path": str(args.output),
+                    "report_sha256": report["report_sha256"],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 3
+
+    with tempfile.TemporaryDirectory(prefix="dish-native-cert-") as temp_name:
+        temp = Path(temp_name)
+        pytest_report = temp / "pytest-native.json"
+        junit_report = temp / "pytest-native.xml"
+        command = [
+            args.python,
+            "-m",
+            "pytest",
+            "--postgresql",
+            "--native-postgresql",
+            "--postgresql-report",
+            str(pytest_report),
+            "--junitxml",
+            str(junit_report),
+            "-q",
+        ]
+        env = os.environ.copy()
+        env["DISH_TEST_POSTGRESQL_DSN"] = dsn
+        run = _run(command, env=env)
+        if pytest_report.is_file():
+            pytest_payload = json.loads(pytest_report.read_text(encoding="utf-8"))
+        else:
+            pytest_payload = {
+                "identity": None,
+                "tests": {
+                    "selected": 0,
+                    "executed": 0,
+                    "passed": 0,
+                    "failed": 0,
+                    "errors": 1,
+                    "skipped": 0,
+                    "unavailable": 0,
+                    "selected_nodeids": [],
+                    "skipped_nodeids": [],
+                    "skip_reasons": {},
+                },
+                "pytest_exit_status": run["exit_code"],
+            }
+
+    tests = pytest_payload["tests"]
+    selected = set(tests.get("selected_nodeids", []))
+    expected = set(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY)
+    inventory_missing = sorted(expected - selected)
+    inventory_unexpected = sorted(selected - expected)
+    skipped = set(tests.get("skipped_nodeids", []))
+    unwaived_skips = sorted(skipped - set(waivers))
+    unused_waivers = sorted(set(waivers) - skipped)
+    identity_matches = pytest_payload.get("identity") == identity.as_dict()
+    certified = (
+        run["exit_code"] == 0
+        and not inventory_missing
+        and not inventory_unexpected
+        and int(tests.get("executed", 0)) > 0
+        and int(tests.get("failed", 0)) == 0
+        and int(tests.get("errors", 0)) == 0
+        and not unwaived_skips
+        and identity_matches
+    )
+    report.update(
+        {
+            "status": "passed" if certified else "failed",
+            "identity": identity.as_dict(),
+            "pytest_identity": pytest_payload.get("identity"),
+            "identity_matches_fixture": identity_matches,
+            "tests": tests,
+            "inventory_missing": inventory_missing,
+            "inventory_unexpected": inventory_unexpected,
+            "unwaived_skips": unwaived_skips,
+            "unused_waivers": unused_waivers,
+            "pytest": run,
+            "native_postgresql_certified": certified,
+        }
+    )
+    _finalize(report)
+    _write_atomic(args.output, report)
+    print(
+        json.dumps(
+            {
+                "ok": certified,
+                "status": report["status"],
+                "executed": tests.get("executed", 0),
+                "skipped": tests.get("skipped", 0),
+                "failed": tests.get("failed", 0),
+                "errors": tests.get("errors", 0),
+                "path": str(args.output),
+                "report_sha256": report["report_sha256"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    return 0 if certified else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

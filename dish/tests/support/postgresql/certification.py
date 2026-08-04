@@ -95,3 +95,20 @@ def probe_native_postgresql(dsn: str | None = None) -> NativePostgreSQLIdentity:
         ) from exc
     finally:
         engine.dispose()
+
+# This inventory is intentionally literal. The native certification script rejects
+# collection drift instead of deriving the required set from production or pytest.
+NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY = (
+    "tests/postgresql/native/test_importer.py::test_importer_persists_real_records_against_real_postgresql",
+    "tests/postgresql/native/test_operation_discard_prepare_concurrency.py::test_native_discard_commits_before_prepare_lock_and_leaves_no_actionable_intent",
+    "tests/postgresql/native/test_operation_discard_prepare_concurrency.py::test_native_prepare_commits_before_discard_lock_and_discard_cannot_cancel",
+    "tests/postgresql/native/test_projection_attempt_concurrency.py::test_native_stale_settlement_races_current_owner_and_cannot_change_terminal_state",
+    "tests/postgresql/native/test_projection_attempt_concurrency.py::test_native_worker_restart_observes_without_second_dispatch",
+    "tests/postgresql/native/test_projection_worker.py::test_projection_worker_drains_one_pending_event_against_real_postgresql",
+    "tests/postgresql/native/test_projection_worker.py::test_projection_worker_never_claims_real_shadow_evaluator_outbox",
+    "tests/postgresql/native/test_reconciliation_worker.py::test_reconciliation_worker_completes_one_corpus_against_real_postgresql",
+    "tests/postgresql/native/test_stage_a_concurrency.py::test_independent_tasks_acquire_authority_without_global_serialization",
+    "tests/postgresql/native/test_stage_a_concurrency.py::test_ten_simultaneous_actor_lease_acquisitions_have_one_winner",
+    "tests/postgresql/native/test_stage_a_concurrency.py::test_ten_simultaneous_duplicate_request_admissions_perform_one_logical_execution",
+    "tests/postgresql/native/test_stage_a_concurrency.py::test_ten_simultaneous_marco_reservations_have_one_winner",
+)

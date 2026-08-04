@@ -42,6 +42,7 @@ FOCUSED_TEST_SELECTORS = (
     "postgresql_action_openapi_oracle",
     "stage_a_release_decomposition",
     "stage_a_acceptance_runner",
+    "native_postgresql_certification_lane",
 )
 FOCUSED_TEST_EXPRESSION = " or ".join(FOCUSED_TEST_SELECTORS)
 BASELINE_IDENTITY_TEST_SELECTORS = (
@@ -181,7 +182,12 @@ def main(argv: list[str] | None = None) -> int:
                 else "requires_governed_rebaseline_or_investigation"
             ),
         },
+        "acceptance_scope": "source_contract",
+        "source_contract_acceptance_passed": source_acceptance_passed,
         "source_acceptance_passed": source_acceptance_passed,
+        "native_postgresql_certified": False,
+        "pglite_evidence": False,
+        "production_operational_rehearsal": False,
         "baseline_identity_passed": baseline_identity_passed,
         "production_acceptance_complete": (
             source_acceptance_passed and baseline_identity_passed
@@ -195,7 +201,9 @@ def main(argv: list[str] | None = None) -> int:
     ).hexdigest()
     _write_atomic(args.output, report)
     print(json.dumps({
-        "ok": report["source_acceptance_passed"],
+        "ok": report["source_contract_acceptance_passed"],
+        "acceptance_scope": report["acceptance_scope"],
+        "native_postgresql_certified": False,
         "production_acceptance_complete": report["production_acceptance_complete"],
         "baseline_identity_status": report["baseline_identity_gate"]["status"],
         "path": str(args.output),

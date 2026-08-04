@@ -30,6 +30,7 @@ def test_stage_a_acceptance_selection_pins_all_release_safety_owners() -> None:
         "postgresql_action_openapi_oracle",
         "stage_a_release_decomposition",
         "stage_a_acceptance_runner",
+        "native_postgresql_certification_lane",
     )
     assert namespace["FOCUSED_TEST_EXPRESSION"] == " or ".join(selectors)
     baseline = tuple(namespace["BASELINE_IDENTITY_TEST_SELECTORS"])
@@ -81,7 +82,10 @@ def test_stage_a_acceptance_report_names_selection_metadata(monkeypatch, tmp_pat
     assert report["baseline_identity_gate"]["command"][-1] == namespace[
         "BASELINE_IDENTITY_TEST_EXPRESSION"
     ]
+    assert report["acceptance_scope"] == "source_contract"
+    assert report["source_contract_acceptance_passed"] is True
     assert report["source_acceptance_passed"] is True
+    assert report["native_postgresql_certified"] is False
     assert report["baseline_identity_passed"] is False
     assert report["production_acceptance_complete"] is False
     assert report["baseline_identity_gate"]["status"] == (

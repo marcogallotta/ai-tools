@@ -41,20 +41,50 @@ These commands never rerun a failure. Any failure blocks the gate.
 
 A pass after retry is not a clean pass and must not be reported as one.
 
-### Native PostgreSQL fixture lane
+### Source-contract acceptance
 
-Run PostgreSQL-backed Stage A fixtures with:
+`scripts/dish-pg-acceptance` is source-contract acceptance. Its report now names
+`acceptance_scope=source_contract` and always reports `native_postgresql_certified=false`.
+A source-contract pass is not native PostgreSQL certification and is not production operational
+rehearsal evidence.
+
+### Mandatory native PostgreSQL certification lane
+
+Run the governed native inventory with:
 
 ```sh
 DISH_TEST_POSTGRESQL_DSN='postgresql+psycopg://...' \
-  .venv/bin/python -m pytest --postgresql
+  .venv/bin/python scripts/dish-pg-native-certification \
+  --output .test-artifacts/native-postgresql/report.json
 ```
 
-The native branch of `tests/support/postgresql/core.py` drops and recreates the disposable
-`public` schema before each owning test, then runs Alembic through `head`. It must not use
-`Base.metadata.create_all()`: hand-written PostgreSQL triggers and constraints are part of the
-behavior under certification. If per-test migration cost becomes material, measure it first and
-introduce an explicit session-migrate/table-reset strategy; do not silently bypass migration history.
+The script probes the target before pytest, rejects SQLite and PGlite server identities, invokes
+pytest with both `--postgresql` and `--native-postgresql`, and compares collection with the literal
+inventory in `tests/support/postgresql/certification.py`. Certification fails when zero tests execute,
+when inventory identities drift, when setup errors occur, or when a required test skips without an
+explicit `--waive-skip NODEID=REASON`. The report includes dialect, driver, database, native server
+version, selected/executed/passed/failed/error/skipped/unavailable counts, duration, and exact node
+IDs.
+
+Native-marked tests in ordinary source or full-suite runs skip before their bodies with a governed
+reason unless `--postgresql` is present. They never substitute SQLite. The native branch of
+`tests/support/postgresql/core.py` drops and recreates the disposable `public` schema before each
+owning test, then runs Alembic through `head`. It must not use `Base.metadata.create_all()`:
+hand-written PostgreSQL triggers and constraints are part of the behavior under certification.
+
+### PGlite development lane
+
+Run PGlite separately with:
+
+```sh
+.venv/bin/python scripts/dish-pg-pglite \
+  --output .test-artifacts/pglite/report.json
+```
+
+The report is explicitly non-certifying. It runs the normal PGlite inventory and the foundational
+quarantine inventory separately, refuses to let the quarantined lifecycle test disappear silently,
+and classifies assertion failures separately from infrastructure/lifecycle failures. PGlite success
+never sets native PostgreSQL certification true.
 
 ## Flaky-test classifications
 
