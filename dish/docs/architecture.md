@@ -341,6 +341,14 @@ complete external corpus before opening any transaction, then drives
 `start_reconciliation`/`record_reconciliation_item`/`complete_reconciliation` as one governed run;
 it does not inspect or mutate projection outbox rows directly.
 
+`dish_pg/bootstrap.py`, `dish_pg/import_runtime.py`, `scripts/dish-pg-bootstrap-initial`, and
+`scripts/dish-pg-import-legacy` own the otherwise-missing first-generation path. Bootstrap is an
+empty-target-only transaction: it binds real Git/Honest/source hashes, creates the first generation
+as immediately active, and installs the imported project/section registry. The import wrapper then
+uses real precondition and idempotency checks and verifies every source task against its PostgreSQL
+content, alias, placement, membership, and completion heads. Neither path creates command authority
+or permits an external effect.
+
 Stage 6 adds the offline release-candidate and cutover-control foundation through
 `0005_release_cutover`, `stage6_models.py`, the `release.py` transactional facade,
 `release_evidence.py`, `release_status.py`, `cutover_chronology.py`,

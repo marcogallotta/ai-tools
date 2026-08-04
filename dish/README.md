@@ -63,9 +63,17 @@ Operator entry points:
 
 ```sh
 scripts/dish-pg-export-legacy --help
+scripts/dish-pg-bootstrap-initial --help
+scripts/dish-pg-import-legacy --help
 scripts/dish-pg-dark-launch --help
 .venv/bin/python -m dish_pg.shadow_worker --help
 ```
+
+`dish-pg-bootstrap-initial` is the only first-generation bootstrap path. It refuses a non-empty
+PostgreSQL authority target, verifies the exact database name and Alembic head, binds the import run
+to the NDJSON byte hash, verifies both Git checkouts, and creates the first generation immediately
+as `active`. Normal generation transition authority remains unchanged after that one empty-target
+operation.
 
 ## Service-host configuration
 

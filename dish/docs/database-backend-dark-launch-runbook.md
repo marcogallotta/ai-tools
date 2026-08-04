@@ -11,10 +11,30 @@ should still remain `external_effects_enabled = false` as an independent operati
 ## Prepare
 
 1. Migrate the target PostgreSQL database to Alembic head.
-2. Import a coherent baseline. `scripts/dish-pg-export-legacy` can produce importer NDJSON from the
-   SQLite task-content heads plus a complete location/completion manifest captured by the existing
-   authority path.
-3. Create one open shadow baseline:
+2. Capture the complete location manifest through the existing TEST authority path, then create the
+   importer NDJSON with `scripts/dish-pg-export-legacy`. Confirm the manifest and export contain the
+   same non-zero task corpus before continuing.
+3. Create the first active PostgreSQL generation and its imported section registry. This is a
+   one-time empty-target operation; the command refuses any existing authority generation or
+   registry state and verifies both Git heads, the Honest version/schema/protocol assets, the exact
+   NDJSON SHA256, the target database name, and the Alembic head:
+
+   ```sh
+   scripts/dish-pg-bootstrap-initial \
+     --database-url "$DISH_PG_DATABASE_URL" \
+     --expected-database-name dish_stage_a_dark_test \
+     --source "$DISH_PG_LEGACY_NDJSON" \
+     --source-generation "$DISH_DARK_LAUNCH_SOURCE_GENERATION" \
+     --dish-repo /home/marco/ai-tools/dish \
+     --dish-commit "$DISH_SOURCE_COMMIT" \
+     --honest-repo /home/marco/honest-pantry \
+     --honest-commit "$HONEST_SOURCE_COMMIT" \
+     --receipt "$DISH_PG_BOOTSTRAP_RECEIPT"
+   ```
+
+   Preserve the owner-only receipt. Its `generation_id`, `import_run_id`, `binding_id`,
+   `source_bundle_sha256`, and `source_record_count` are the exact inputs to the remaining rehearsal.
+4. Create one open shadow baseline against the receipt's active generation:
 
    ```sh
    scripts/dish-pg-dark-launch baseline-create \
@@ -25,13 +45,29 @@ should still remain `external_effects_enabled = false` as an independent operati
      --source-commit "$DISH_SOURCE_COMMIT"
    ```
 
-4. Verify that the resolved live SQLite database, spool, emergency directory, and kill-switch paths
+5. Import the exact NDJSON bound by the bootstrap receipt. The wrapper performs the real
+   `DishTask` idempotency check, verifies the bootstrapped preconditions, requires imported plus
+   skipped counts to equal the source record count, and compares every imported task's content,
+   alias, project membership, section placement, and completion head with its source record:
+
+   ```sh
+   scripts/dish-pg-import-legacy \
+     --database-url "$DISH_PG_DATABASE_URL" \
+     --source "$DISH_PG_LEGACY_NDJSON" \
+     --expected-source-sha256 "$DISH_PG_SOURCE_BUNDLE_SHA256" \
+     --expected-record-count "$DISH_PG_SOURCE_RECORD_COUNT" \
+     --generation-id "$DISH_PG_GENERATION_ID" \
+     --import-run-id "$DISH_PG_IMPORT_RUN_ID" \
+     --contract-binding-id "$DISH_PG_BINDING_ID"
+   ```
+
+6. Verify that the resolved live SQLite database, spool, emergency directory, and kill-switch paths
    are pairwise distinct. Do not place the spool or kill switch behind a symlink or hard link to live
    authority storage. Status and worker startup refuse a missing or incomplete spool rather than
    creating one. The disable command creates a versioned marker without replacing an existing file;
    enable-capture removes only that validated marker.
-5. Put the returned baseline UUID in the owner-only dark-launch worker environment file.
-6. Install `deploy/systemd/dish-shadow-worker.service`, but do not start it yet.
+7. Put the returned baseline UUID in the owner-only dark-launch worker environment file.
+8. Install `deploy/systemd/dish-shadow-worker.service`, but do not start it yet.
 
 ## Enable capture first
 
