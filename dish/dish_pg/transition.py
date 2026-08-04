@@ -654,6 +654,18 @@ class ShadowService:
         self.session.flush()
         return baseline
 
+    def disqualify_baseline(
+        self, *, baseline_id: uuid.UUID, reason: str, at: datetime
+    ) -> tx.ShadowBaseline:
+        baseline = self.session.get(tx.ShadowBaseline, baseline_id)
+        if baseline is None or baseline.status != "open":
+            raise TransitionAuthorityError("shadow baseline is not open")
+        baseline.status = "disqualified"
+        baseline.disqualification_reason = reason
+        baseline.terminal_at = at
+        self.session.flush()
+        return baseline
+
     def disqualify_stale_baselines(
         self, *, active_generation_id: uuid.UUID, reason: str, at: datetime
     ) -> int:
