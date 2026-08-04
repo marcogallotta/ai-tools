@@ -54,6 +54,13 @@ python3 -m venv .venv
 .venv/bin/python -m pytest --database-boundary
 ```
 
+ChatGPT environments may use a different Python minor version from the uploaded repository.
+Do not assume the uploaded `dish/.venv` interpreter is executable. Create a fresh local virtual
+environment with the available Python interpreter and install `requirements-test.txt`. If a required
+dependency is unavailable from that requirements installation, the uploaded `.venv` site-packages
+may be used only as a documented fallback after confirming they are compatible with the current
+interpreter.
+
 Flaky-test detection uses a separate environment created from `requirements-flake.txt`; follow
 `dish/docs/testing.md`. Normal smoke, database-boundary, and full-suite gates never rerun failures.
 
