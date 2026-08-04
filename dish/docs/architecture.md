@@ -808,6 +808,23 @@ the service-ownership marker, restore request journal, and restore-fault marker.
 sidecar unless the fact must survive replacement of the database itself.
 
 
+### Preparation and terminal-operation serialization
+
+`prepare` and `discard` share the workflow-operation row as their transaction authority boundary. On
+PostgreSQL each path locks that row before it validates lifecycle and execution fences. Preparation
+may persist a content activation, verification cycle, operation step, or projection intent only after
+the locked row still proves the operation is open and the exact task and operation revisions match
+the command execution. Discard holds the same lock while proving that the operation has no workflow
+progress, projection intent, or baseline drift before making cancellation durable.
+
+The allowed interleavings are therefore explicit. If discard obtains and commits the lock first, a
+waiting prepare refreshes the row, observes the terminal lifecycle, and creates no artifacts or
+external intent. If prepare commits first, it advances the operation revision and creates its
+artifacts atomically; a waiting discard then fails its revision/progress proof and cannot cancel the
+prepared operation. A cancelled operation cannot retain actionable projection intent from a stale
+prepare transaction. SQLite retains its existing single-writer behavior; native PostgreSQL tests
+exercise the row-lock ordering with independent connections.
+
 ## Compatibility, startup, and availability
 
 `dish_tool.releases` resolves exactly one supported Honest protocol/schema pair from

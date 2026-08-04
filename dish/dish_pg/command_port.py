@@ -1241,8 +1241,30 @@ class PostgresCommandPort:
             "phase": operation.phase,
         }
 
+    def _lock_operation_transition(
+        self, operation_id: uuid.UUID
+    ) -> wf.WorkflowOperation:
+        statement = select(wf.WorkflowOperation).where(
+            wf.WorkflowOperation.operation_id == operation_id
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update()
+        operation = self.session.scalar(
+            statement.execution_options(populate_existing=True)
+        )
+        if operation is None:
+            raise CommandRuleError(
+                "OPEN_OPERATION_REQUIRED", "workflow operation no longer exists"
+            )
+        return operation
+
     def _prepare(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
+        operation = self._lock_operation_transition(operation.operation_id)
+        if operation.lifecycle != "open":
+            raise CommandRuleError(
+                "OPEN_OPERATION_REQUIRED", "prepare requires an open operation"
+            )
         self.workflow.repo.assert_task_fence(execution.execution_id)
         self.workflow.repo.assert_operation_fence(execution.execution_id)
         head = self.session.get(
@@ -1905,6 +1927,9 @@ class PostgresCommandPort:
 
     def _discard(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
+        operation = self._lock_operation_transition(operation.operation_id)
+        self.workflow.repo.assert_task_fence(execution.execution_id)
+        self.workflow.repo.assert_operation_fence(execution.execution_id)
         if operation.lifecycle != "open":
             raise CommandRuleError("OPEN_OPERATION_REQUIRED", "discard requires an open operation")
         steps = int(self.session.scalar(select(func.count()).select_from(wf.OperationStep).where(wf.OperationStep.operation_id == operation.operation_id)) or 0)
