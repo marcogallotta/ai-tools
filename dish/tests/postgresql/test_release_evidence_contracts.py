@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import runpy
+import hashlib
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -20,11 +22,13 @@ pytestmark = pytest.mark.smoke
 
 
 def _valid_evidence_payload(category: str, evidence_key: str) -> dict[str, object]:
+    path = Path(tempfile.mkdtemp(prefix="dish-evidence-contract-")) / f"{category}-{evidence_key}.json"
+    path.write_bytes(f"{category}:{evidence_key}\n".encode("utf-8"))
     return {
         "artifact_kind": EXPECTED_EVIDENCE_ARTIFACT_KINDS[(category, evidence_key)],
         "artifact_identity": f"fixture:{category}:{evidence_key}:replacement",
-        "artifact_path": f"/evidence/{category}/{evidence_key}.json",
-        "artifact_sha256": "b" * 64,
+        "artifact_path": str(path),
+        "artifact_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "source_manifest_sha256": HASH_A,
         "gate_name": f"{category}:{evidence_key}",
         "gate_result": "pass",

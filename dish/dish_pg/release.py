@@ -21,6 +21,11 @@ from . import stage6_models as rel
 from .cutover_chronology import _require_at_or_after, _require_aware, _utc_comparable
 from .cutover_control import CutoverControlAuthority
 from .final_asana_closure import FinalAsanaClosureAuthority
+from .release_artifacts import observe_release_artifact
+from .release_validation import (
+    validate_reconciliation,
+    validate_typed_import_linkage,
+)
 from .release_evidence import (
     EVIDENCE_ARTIFACT_KINDS,
     REHEARSAL_CHECKPOINT_EVIDENCE_KINDS,
@@ -256,6 +261,12 @@ class ReleaseCandidateService(
             outcome=outcome,
             payload=payload,
         )
+        observation = observe_release_artifact(
+            artifact_path=body["artifact_path"],
+            expected_sha256=body["artifact_sha256"],
+        )
+        if observation.mtime_ns < int(candidate.created_at.timestamp() * 1_000_000_000):
+            raise ReleaseAuthorityError("release evidence artifact predates the candidate and is stale")
         latest = self.session.scalar(
             select(rel.ReleaseEvidenceItem)
             .where(
@@ -384,6 +395,12 @@ class ReleaseCandidateService(
             checkpoint_kind=checkpoint_kind,
             payload=payload,
         )
+        observation = observe_release_artifact(
+            artifact_path=body["artifact_path"],
+            expected_sha256=body["artifact_sha256"],
+        )
+        if observation.mtime_ns < int(rehearsal.started_at.timestamp() * 1_000_000_000):
+            raise ReleaseAuthorityError("rehearsal checkpoint artifact predates the rehearsal and is stale")
         digest = sha256_json(body)
         if existing is not None:
             if (
@@ -500,8 +517,15 @@ class ReleaseCandidateService(
 
 
 
-    def evaluate_candidate(self, *, candidate_id: uuid.UUID) -> CandidateEvaluation:
+    def evaluate_candidate(
+        self, *, candidate_id: uuid.UUID, as_of: datetime | None = None
+    ) -> CandidateEvaluation:
         candidate = self._candidate(candidate_id)
+        evaluation_time = candidate.created_at if as_of is None else as_of
+        _require_at_or_after(
+            evaluation_time, candidate.created_at,
+            field="evaluation_time", floor_field="candidate created_at",
+        )
         checks: list[AcceptanceCheck] = []
 
         def add(code: str, passed: bool, **details: Any) -> None:
@@ -531,6 +555,11 @@ class ReleaseCandidateService(
             imported=None if batch is None else batch.imported_entities,
             expected=None if batch is None else batch.expected_entities,
         )
+
+        typed_import_ok, typed_import_details = validate_typed_import_linkage(
+            self.session, candidate=candidate
+        )
+        add("typed_import_linkage_exact", typed_import_ok, **typed_import_details)
 
         baseline = self.session.get(tx.ShadowBaseline, candidate.shadow_baseline_id)
         unresolved_deliveries = self._count(
@@ -694,7 +723,7 @@ class ReleaseCandidateService(
             "planning_challenges": self._count(
                 wf.PlanningIntentChallenge,
                 wf.PlanningIntentChallenge.generation_id == candidate.generation_id,
-                wf.PlanningIntentChallenge.state.in_(("issued", "claimed")),
+                wf.PlanningIntentChallenge.state.in_(("issued", "claimed", "consumed")),
             ),
             "authorization_reservations": self._count(
                 wf.MarcoAuthorizationState,
@@ -754,64 +783,23 @@ class ReleaseCandidateService(
                 tx.ProjectionDriftEvent.state == "open",
             ),
         }
-        latest_reconciliation = self.session.scalar(
-            select(tx.ProjectionReconciliationRun)
-            .where(
-                tx.ProjectionReconciliationRun.generation_id == candidate.generation_id,
-                tx.ProjectionReconciliationRun.projection_epoch_id == candidate.projection_epoch_id,
-            )
-            .order_by(
-                tx.ProjectionReconciliationRun.started_at.desc(),
-                tx.ProjectionReconciliationRun.reconciliation_run_id.desc(),
-            )
-            .limit(1)
-        )
-        active_mapping_count = sum(
-            self._count(
-                mapping_model,
-                mapping_model.generation_id == candidate.generation_id,
-                mapping_model.projection_epoch_id == candidate.projection_epoch_id,
-                mapping_model.state == "active",
-            )
-            for mapping_model in (
-                tx.ProjectProjectionMapping,
-                tx.SectionProjectionMapping,
-                tx.TaskProjectionMapping,
-            )
-        )
-        reconciled_mapping_count = 0
-        if latest_reconciliation is not None:
-            reconciled_mapping_count = int(
-                self.session.scalar(
-                    select(func.count(func.distinct(tx.ProjectionReconciliationItem.mapping_id))).where(
-                        tx.ProjectionReconciliationItem.reconciliation_run_id
-                        == latest_reconciliation.reconciliation_run_id,
-                        tx.ProjectionReconciliationItem.mapping_id.is_not(None),
-                        tx.ProjectionReconciliationItem.outcome.in_(("matched", "reprojected")),
-                    )
-                )
-                or 0
-            )
-        reconciliation_ok = (
-            latest_reconciliation is not None
-            and latest_reconciliation.status == "complete"
-            and latest_reconciliation.processed_items == latest_reconciliation.expected_items
-            and latest_reconciliation.expected_items >= active_mapping_count
-            and reconciled_mapping_count == active_mapping_count
+        reconciliation = validate_reconciliation(
+            self.session, candidate=candidate, as_of=evaluation_time
         )
         add(
             "projection_ready",
-            not any(projection_counts.values()) and reconciliation_ok,
+            not any(projection_counts.values()) and reconciliation.passed,
             **projection_counts,
-            active_mappings=active_mapping_count,
-            reconciled_mappings=reconciled_mapping_count,
-            reconciliation_expected=None
-            if latest_reconciliation is None
-            else latest_reconciliation.expected_items,
-            reconciliation_processed=None
-            if latest_reconciliation is None
-            else latest_reconciliation.processed_items,
-            reconciliation_status=None if latest_reconciliation is None else latest_reconciliation.status,
+            **reconciliation.details,
+        )
+        quiescent_counts = {
+            **{f"authority_{key}": value for key, value in open_counts.items()},
+            **{f"projection_{key}": value for key, value in projection_counts.items()},
+        }
+        add(
+            "quiescent_cutover_authority",
+            not any(quiescent_counts.values()),
+            **quiescent_counts,
         )
 
         schema_version: str | None = None
@@ -838,16 +826,26 @@ class ReleaseCandidateService(
             )
         ):
             latest_evidence[(item.category, item.evidence_key)] = item
-        evidence_status = {
-            f"{category}:{key}": (
-                None if latest_evidence.get((category, key)) is None else latest_evidence[(category, key)].outcome
-            )
-            for category, key in REQUIRED_EVIDENCE
-        }
+        evidence_status: dict[str, str | None] = {}
+        artifact_errors: dict[str, str] = {}
+        for category, key in REQUIRED_EVIDENCE:
+            item = latest_evidence.get((category, key))
+            identity = f"{category}:{key}"
+            evidence_status[identity] = None if item is None else item.outcome
+            if item is not None:
+                try:
+                    observe_release_artifact(
+                        artifact_path=item.payload.get("artifact_path"),
+                        expected_sha256=item.payload.get("artifact_sha256"),
+                    )
+                except ReleaseAuthorityError as exc:
+                    artifact_errors[identity] = str(exc)
         add(
             "required_acceptance_evidence",
-            all(value == "pass" for value in evidence_status.values()),
+            all(value == "pass" for value in evidence_status.values())
+            and not artifact_errors,
             evidence=evidence_status,
+            artifact_errors=artifact_errors,
         )
 
         rehearsal_status: dict[str, str | None] = {}
@@ -862,10 +860,25 @@ class ReleaseCandidateService(
                 .limit(1)
             )
             rehearsal_status[kind] = None if latest is None else latest.status
+        rehearsal_artifact_errors: dict[str, str] = {}
+        for checkpoint in self.session.scalars(
+            select(rel.RehearsalCheckpoint)
+            .join(rel.RehearsalRun, rel.RehearsalRun.rehearsal_id == rel.RehearsalCheckpoint.rehearsal_id)
+            .where(rel.RehearsalRun.candidate_id == candidate_id)
+        ):
+            try:
+                observe_release_artifact(
+                    artifact_path=checkpoint.payload.get("artifact_path"),
+                    expected_sha256=checkpoint.payload.get("artifact_sha256"),
+                )
+            except ReleaseAuthorityError as exc:
+                rehearsal_artifact_errors[f"{checkpoint.rehearsal_id}:{checkpoint.checkpoint_kind}"] = str(exc)
         add(
             "required_rehearsals",
-            all(value == "passed" for value in rehearsal_status.values()),
+            all(value == "passed" for value in rehearsal_status.values())
+            and not rehearsal_artifact_errors,
             rehearsals=rehearsal_status,
+            artifact_errors=rehearsal_artifact_errors,
         )
 
         return CandidateEvaluation(candidate_id, tuple(checks))
@@ -902,7 +915,7 @@ class ReleaseCandidateService(
                 _require_at_or_after(
                     built_at, floor, field="built_at", floor_field=floor_field
                 )
-        evaluation = self.evaluate_candidate(candidate_id=candidate_id)
+        evaluation = self.evaluate_candidate(candidate_id=candidate_id, as_of=built_at)
         evidence = self.session.scalars(
             select(rel.ReleaseEvidenceItem)
             .where(rel.ReleaseEvidenceItem.candidate_id == candidate_id)
@@ -1151,7 +1164,7 @@ class ReleaseCandidateService(
                 _require_at_or_after(
                     validated_at, floor, field="validated_at", floor_field=floor_field
                 )
-        evaluation = self.evaluate_candidate(candidate_id=candidate_id)
+        evaluation = self.evaluate_candidate(candidate_id=candidate_id, as_of=validated_at)
         if not evaluation.passed:
             failed = [check.code for check in evaluation.checks if not check.passed]
             raise ReleaseAuthorityError("release candidate acceptance failed: " + ", ".join(failed))

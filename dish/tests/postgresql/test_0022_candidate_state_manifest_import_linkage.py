@@ -6,6 +6,7 @@ from datetime import timedelta
 from sqlalchemy import select
 
 from dish_pg import import_link_models as import_links
+from dish_pg import legacy_request_models as legacy
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
 from tests.support.postgresql.candidate_manifest import (
@@ -43,29 +44,52 @@ def test_0022_typed_import_link_change_under_same_ids_revalidates_stale(
             task_id,
         )
 
+        tombstone = legacy.LegacyRequestTombstone(
+            tombstone_id=_next(ids),
+            request_id=_next(ids),
+            source_authority="legacy",
+            import_run_id=batch.import_run_id,
+            import_batch_id=batch.import_batch_id,
+            source_identity_sha256="b" * 64,
+            source_metadata={"source": "manifest-drift-test"},
+            imported_at=NOW + timedelta(minutes=3),
+        )
+        session.add(tombstone)
+        session.flush()
+        new_evidence = tx.SourceImportEntityEvidence(
+            evidence_id=_next(ids),
+            import_batch_id=batch.import_batch_id,
+            entity_kind="request_tombstone",
+            source_identity=f"legacy-request:{tombstone.request_id}",
+            source_sha256="b" * 64,
+            target_entity_type="legacy_request_tombstone",
+            target_entity_id=tombstone.tombstone_id,
+            provenance={"source": "manifest-drift-test"},
+            imported_at=NOW + timedelta(minutes=3),
+        )
+        session.add(new_evidence)
+        session.flush()
         link = import_links.SourceImportNativeLink(
             link_id=_next(ids),
-            evidence_id=evidence.evidence_id,
+            evidence_id=new_evidence.evidence_id,
             import_batch_id=batch.import_batch_id,
             import_run_id=batch.import_run_id,
-            entity_kind="task",
+            entity_kind="request_tombstone",
             project_id=None,
             section_id=None,
-            task_id=task_id,
+            task_id=None,
             content_version_id=None,
-            request_tombstone_id=None,
+            request_tombstone_id=tombstone.tombstone_id,
             linked_at=NOW + timedelta(minutes=3),
         )
         session.add(link)
         session.flush()
         revalidation = _revalidate(session, ids, service, candidate_id)
 
-        assert original_ids == (
+        assert original_ids[:3] == (
             candidate.candidate_id,
             link.import_batch_id,
             link.import_run_id,
-            link.evidence_id,
-            link.task_id,
         )
         assert revalidation.result == "stale"
         assert (

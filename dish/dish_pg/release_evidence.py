@@ -136,6 +136,7 @@ def _validate_checkpoint_payload(
             "checkpoint evidence kind does not match contract"
         )
     _require_nonblank(body.get("artifact_identity"), "artifact_identity")
+    _require_nonblank(body.get("artifact_path"), "artifact_path")
     _require_sha256(body.get("artifact_sha256"), "artifact_sha256")
     source_manifest = _require_sha256(
         body.get("source_manifest_sha256"), "source_manifest_sha256"

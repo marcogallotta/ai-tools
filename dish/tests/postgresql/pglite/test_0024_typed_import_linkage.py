@@ -36,13 +36,13 @@ def test_0024_exact_typed_link_succeeds_and_contradictory_binding_fails(pglite) 
                     evidence=session.scalar(select(tx.SourceImportEntityEvidence).where(tx.SourceImportEntityEvidence.entity_kind=="task"))
                     assert evidence is not None
                     batch=session.get(tx.SourceImportBatch,evidence.import_batch_id); assert batch is not None
-                    link_id=_next(ids)
-                    session.add(links.SourceImportNativeLink(
-                        link_id=link_id,evidence_id=evidence.evidence_id,
-                        import_batch_id=evidence.import_batch_id,import_run_id=batch.import_run_id,
-                        entity_kind="task",task_id=task.task_id,project_id=None,section_id=None,
-                        content_version_id=None,request_tombstone_id=None,linked_at=NOW,
-                    ))
+                    existing_link=session.scalar(
+                        select(links.SourceImportNativeLink).where(
+                            links.SourceImportNativeLink.evidence_id == evidence.evidence_id
+                        )
+                    )
+                    assert existing_link is not None
+                    assert existing_link.task_id == task.task_id
             raw=connection.connection.driver_connection; raw.autocommit=True
             with pytest.raises(psycopg.Error):
                 raw.execute(

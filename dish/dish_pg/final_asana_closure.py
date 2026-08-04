@@ -8,7 +8,7 @@ from typing import Any, Mapping
 from sqlalchemy import func, select
 
 from . import stage6_models as rel
-from .candidate_manifest import bind_approval_manifest
+from .candidate_manifest import bind_approval_manifest, build_candidate_manifest
 from .cutover_chronology import _require_at_or_after, _require_aware
 from .release_evidence import (
     ReleaseAuthorityError,
@@ -278,6 +278,19 @@ class FinalAsanaClosureAuthority:
             floor_field="final closure recorded_at",
         )
         self._require_not_future(approved_at, "approved_at")
+        evaluation = self.evaluate_candidate(
+            candidate_id=candidate_id, as_of=approved_at
+        )
+        if not evaluation.passed:
+            raise ReleaseAuthorityError(
+                "candidate release gates are no longer satisfied at approval"
+            )
+        manifest = build_candidate_manifest(
+            self.session,
+            uuid_factory=self.uuid_factory,
+            candidate=candidate,
+            built_at=approved_at,
+        )
         body = {
             "candidate_id": str(candidate_id),
             "evidence_bundle_sha256": bundle.manifest_sha256,

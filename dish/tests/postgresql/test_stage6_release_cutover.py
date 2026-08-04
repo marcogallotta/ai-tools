@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import hashlib
+import tempfile
 import uuid
 from datetime import timedelta
 from pathlib import Path
@@ -90,6 +92,8 @@ def test_candidate_evaluation_bundle_is_deterministic_and_stale_safe(workflow_db
             built_at=NOW + timedelta(hours=1),
         )
         assert second.bundle_id == first.bundle_id
+        replacement_path = Path(tempfile.mkdtemp(prefix="dish-release-replacement-")) / "replacement.json"
+        replacement_path.write_bytes(b"replacement\n")
         service.record_evidence(
             candidate_id=candidate_id,
             category="authority_coverage",
@@ -98,8 +102,8 @@ def test_candidate_evaluation_bundle_is_deterministic_and_stale_safe(workflow_db
             payload={
                 "artifact_kind": EVIDENCE_ARTIFACT_KINDS[("authority_coverage", "current_to_target")],
                 "artifact_identity": "fixture:authority-coverage:replacement",
-                "artifact_path": "/evidence/authority_coverage/replacement.json",
-                "artifact_sha256": "b" * 64,
+                "artifact_path": str(replacement_path),
+                "artifact_sha256": hashlib.sha256(replacement_path.read_bytes()).hexdigest(),
                 "source_manifest_sha256": HASH_A,
                 "gate_name": "authority_coverage:current_to_target",
                 "gate_result": "pass",
@@ -150,6 +154,7 @@ def test_acceptance_fails_closed_on_unresolved_authority_and_incomplete_mapping_
         result = service.evaluate_candidate(candidate_id=candidate_id)
         failed = {check.code: check.details for check in result.checks if not check.passed}
         assert failed["legacy_and_target_authority_resolved"]["requests_without_outcome"] == 1
+        assert failed["quiescent_cutover_authority"]["authority_requests_without_outcome"] == 1
 
         # A complete reconciliation must account for every active mapping, not
         # merely declare a smaller corpus complete.

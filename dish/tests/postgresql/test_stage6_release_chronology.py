@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 from pathlib import Path
+import hashlib
+import tempfile
 
 import pytest
 from alembic import command
@@ -23,12 +25,15 @@ from tests.support.postgresql.workflow import NOW, _next, workflow_db
 
 
 def _checkpoint_payload(kind: str, checkpoint_kind: str) -> dict[str, str]:
+    path = Path(tempfile.mkdtemp(prefix="dish-checkpoint-chronology-")) / f"{kind}-{checkpoint_kind}.json"
+    path.write_bytes(f"{kind}:{checkpoint_kind}\n".encode("utf-8"))
     return {
         "rehearsal_kind": kind,
         "checkpoint_kind": checkpoint_kind,
         "evidence_kind": REHEARSAL_CHECKPOINT_EVIDENCE_KINDS[kind][checkpoint_kind],
         "artifact_identity": f"chronology:{kind}:{checkpoint_kind}",
-        "artifact_sha256": HASH_A,
+        "artifact_path": str(path),
+        "artifact_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "source_manifest_sha256": HASH_A,
         "gate_result": "pass",
     }
