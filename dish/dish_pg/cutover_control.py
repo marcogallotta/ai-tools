@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from sqlalchemy import select
 
+from . import artifact_identity_models as artifact
 from . import models
 from . import stage3_models as wf
 from . import stage5_models as tx
@@ -73,9 +74,149 @@ class CutoverControlAuthority:
         self.session.add(row)
         self.session.flush()
         return row
-    def engage_writer_fence(self, *, fence_id: uuid.UUID, engaged_at: datetime) -> rel.LegacyWriterFence:
+
+    def record_writer_fence_artifact_observation(
+        self,
+        *,
+        fence_id: uuid.UUID,
+        artifact_generation_identity: str,
+        canonical_path: str,
+        content_sha256: str,
+        filesystem_device: int,
+        filesystem_inode: int,
+        verification_result: str,
+        observation_contract_version: str,
+        observed_at: datetime,
+        recorded_at: datetime,
+    ) -> artifact.WriterFenceArtifactObservation:
         row = self._fence(fence_id)
+        _require_nonblank(
+            artifact_generation_identity, "artifact_generation_identity"
+        )
+        _require_nonblank(canonical_path, "canonical_path")
+        if not canonical_path.startswith("/") or "/../" in canonical_path:
+            raise ReleaseAuthorityError("canonical_path must be absolute and normalized")
+        _require_sha256(content_sha256, "content_sha256")
+        if filesystem_device < 0 or filesystem_inode <= 0:
+            raise ReleaseAuthorityError(
+                "filesystem device and inode must identify a regular file"
+            )
+        if verification_result not in {"matched", "mismatched", "unverifiable"}:
+            raise ReleaseAuthorityError("unsupported artifact verification_result")
+        _require_nonblank(
+            observation_contract_version, "observation_contract_version"
+        )
+        _require_at_or_after(
+            recorded_at,
+            observed_at,
+            field="recorded_at",
+            floor_field="observed_at",
+        )
+        self._require_not_future(observed_at, "observed_at")
+        self._require_not_future(recorded_at, "recorded_at")
+        evidence_payload = {
+            "fence_id": str(row.fence_id),
+            "candidate_id": str(row.candidate_id),
+            "artifact_generation_identity": artifact_generation_identity,
+            "canonical_path": canonical_path,
+            "content_sha256": content_sha256,
+            "filesystem_device": filesystem_device,
+            "filesystem_inode": filesystem_inode,
+            "file_type": "regular",
+            "regular_file": True,
+            "verification_result": verification_result,
+            "observation_contract_version": observation_contract_version,
+            "observed_at": observed_at.isoformat(),
+        }
+        digest = sha256_json(evidence_payload)
+        existing = self.session.scalar(
+            select(artifact.WriterFenceArtifactObservation).where(
+                artifact.WriterFenceArtifactObservation.fence_id == fence_id
+            )
+        )
+        if existing is not None:
+            expected = (
+                row.candidate_id,
+                artifact_generation_identity,
+                canonical_path,
+                content_sha256,
+                filesystem_device,
+                filesystem_inode,
+                verification_result,
+                observation_contract_version,
+                observed_at,
+                recorded_at,
+                digest,
+            )
+            actual = (
+                existing.candidate_id,
+                existing.artifact_generation_identity,
+                existing.canonical_path,
+                existing.content_sha256,
+                existing.filesystem_device,
+                existing.filesystem_inode,
+                existing.verification_result,
+                existing.observation_contract_version,
+                existing.observed_at,
+                existing.recorded_at,
+                existing.evidence_sha256,
+            )
+            if actual != expected:
+                raise ReleaseAuthorityError(
+                    "writer fence artifact observation identity conflict"
+                )
+            return existing
+        observation = artifact.WriterFenceArtifactObservation(
+            observation_id=self.uuid_factory(),
+            fence_id=row.fence_id,
+            candidate_id=row.candidate_id,
+            artifact_generation_identity=artifact_generation_identity,
+            canonical_path=canonical_path,
+            content_sha256=content_sha256,
+            filesystem_device=filesystem_device,
+            filesystem_inode=filesystem_inode,
+            file_type="regular",
+            regular_file=True,
+            verification_result=verification_result,
+            observation_contract_version=observation_contract_version,
+            observed_at=observed_at,
+            recorded_at=recorded_at,
+            evidence_sha256=digest,
+        )
+        self.session.add(observation)
+        self.session.flush()
+        return observation
+
+    def engage_writer_fence(
+        self,
+        *,
+        fence_id: uuid.UUID,
+        artifact_observation_id: uuid.UUID,
+        engaged_at: datetime,
+    ) -> rel.LegacyWriterFence:
+        row = self._fence(fence_id)
+        observation = self.session.get(
+            artifact.WriterFenceArtifactObservation, artifact_observation_id
+        )
+        if observation is None:
+            raise ReleaseAuthorityError(
+                "writer fence engagement requires durable artifact observation"
+            )
+        if (
+            observation.fence_id != row.fence_id
+            or observation.candidate_id != row.candidate_id
+            or observation.verification_result != "matched"
+            or observation.file_type != "regular"
+            or not observation.regular_file
+        ):
+            raise ReleaseAuthorityError(
+                "writer fence artifact observation is not an exact matched regular file"
+            )
         if row.state == "engaged" or row.state == "verified":
+            if row.artifact_observation_id != observation.observation_id:
+                raise ReleaseAuthorityError(
+                    "writer fence engagement artifact identity conflict"
+                )
             return row
         if row.state != "prepared":
             raise ReleaseAuthorityError("writer fence is not prepared")
@@ -89,6 +230,8 @@ class CutoverControlAuthority:
         row.state = "engaged"
         row.fence_revision += 1
         row.engaged_at = engaged_at
+        row.artifact_observation_id = observation.observation_id
+        row.artifact_verification_result = observation.verification_result
         self.session.flush()
         return row
     def verify_writer_fence(

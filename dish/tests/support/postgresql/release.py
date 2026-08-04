@@ -209,6 +209,25 @@ def _record_final_closure(service, ids, candidate_id, *, closed_through_at):
     )
 
 
+def _record_and_engage_writer_fence(service, ids, *, fence_id, engaged_at):
+    observation = service.record_writer_fence_artifact_observation(
+        fence_id=fence_id,
+        artifact_generation_identity="cutover-fixture-generation-v1",
+        canonical_path=f"/tmp/writer-fence-{fence_id}.sqlite3",
+        content_sha256="b" * 64,
+        filesystem_device=1,
+        filesystem_inode=(fence_id.int % 2_000_000_000) + 1,
+        verification_result="matched",
+        observation_contract_version="writer-fence-fixture-v1",
+        observed_at=engaged_at,
+        recorded_at=engaged_at,
+    )
+    return service.engage_writer_fence(
+        fence_id=fence_id,
+        artifact_observation_id=observation.observation_id,
+        engaged_at=engaged_at,
+    )
+
 def _writer_fence_proof(fence, candidate_id):
     return {
         "probe_kind": "authenticated_mutation_rejected_before_body_parse",

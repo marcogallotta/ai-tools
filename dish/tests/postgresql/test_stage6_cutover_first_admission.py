@@ -23,6 +23,7 @@ from tests.support.postgresql.release import (
     HASH_A,
     _complete_active_mapping_reconciliation,
     _prepare_candidate,
+    _record_and_engage_writer_fence,
     _record_final_closure,
     _writer_fence_proof,
 )
@@ -71,7 +72,7 @@ def _prepare_approved_cutover(factory, ids, context, task_id):
 def _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fence_id):
     with session_scope(factory) as session:
         service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
-        service.engage_writer_fence(fence_id=fence_id, engaged_at=NOW + timedelta(minutes=5))
+        _record_and_engage_writer_fence(service, ids, fence_id=fence_id, engaged_at=NOW + timedelta(minutes=5))
         service.verify_writer_fence(
             fence_id=fence_id,
             proof=_writer_fence_proof(service.writer_fence_status(fence_id), candidate_id),

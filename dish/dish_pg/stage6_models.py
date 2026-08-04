@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     String,
     Text,
@@ -216,23 +217,41 @@ class LegacyWriterFence(Base):
     engaged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    artifact_observation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, unique=True)
+    artifact_verification_result: Mapped[str | None] = mapped_column(String(16))
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["artifact_observation_id", "fence_id", "candidate_id", "artifact_verification_result"],
+            [
+                "writer_fence_artifact_observations.observation_id",
+                "writer_fence_artifact_observations.fence_id",
+                "writer_fence_artifact_observations.candidate_id",
+                "writer_fence_artifact_observations.verification_result",
+            ],
+            ondelete="RESTRICT",
+            name="fk_writer_fence_exact_artifact_observation",
+        ),
         CheckConstraint("state IN ('prepared','engaged','verified','released')", name="state_allowed"),
         CheckConstraint("fence_revision > 0", name="positive_revision"),
         CheckConstraint("length(manifest_sha256) = 64", name="manifest_hash_length"),
         CheckConstraint("proof_sha256 IS NULL OR length(proof_sha256) = 64", name="proof_hash_length"),
         CheckConstraint(
             "(state = 'prepared' AND engaged_at IS NULL AND verified_at IS NULL AND released_at IS NULL "
-            "AND proof_sha256 IS NULL) OR "
+            "AND proof_sha256 IS NULL AND artifact_observation_id IS NULL "
+            "AND artifact_verification_result IS NULL) OR "
             "(state = 'engaged' AND engaged_at IS NOT NULL AND verified_at IS NULL AND released_at IS NULL "
-            "AND proof_sha256 IS NULL) OR "
+            "AND proof_sha256 IS NULL AND artifact_observation_id IS NOT NULL "
+            "AND artifact_verification_result = 'matched') OR "
             "(state = 'verified' AND engaged_at IS NOT NULL AND verified_at IS NOT NULL "
-            "AND released_at IS NULL AND proof_sha256 IS NOT NULL) OR "
-            "(state = 'released' AND engaged_at IS NOT NULL AND released_at IS NOT NULL)",
+            "AND released_at IS NULL AND proof_sha256 IS NOT NULL AND artifact_observation_id IS NOT NULL "
+            "AND artifact_verification_result = 'matched') OR "
+            "(state = 'released' AND engaged_at IS NOT NULL AND released_at IS NOT NULL "
+            "AND artifact_observation_id IS NOT NULL AND artifact_verification_result = 'matched')",
             name="state_payload_consistent",
         ),
         UniqueConstraint("candidate_id", "target_identity", name="uq_fence_candidate_target"),
+        UniqueConstraint("fence_id", "candidate_id", name="uq_writer_fence_candidate_identity"),
     )
 
 

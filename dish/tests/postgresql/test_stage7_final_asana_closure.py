@@ -17,6 +17,7 @@ from tests.support.postgresql.release import (
     HASH_A,
     ROOT,
     _prepare_candidate,
+    _record_and_engage_writer_fence,
     _record_final_closure,
     _writer_fence_proof,
 )
@@ -81,8 +82,8 @@ def test_final_asana_change_invalidates_activation_until_recaptured_and_recertif
         cutover = service.prepare_cutover(
             candidate_id=candidate_id, started_at=NOW + timedelta(minutes=8)
         )
-        service.engage_writer_fence(
-            fence_id=fence.fence_id, engaged_at=NOW + timedelta(minutes=8)
+        _record_and_engage_writer_fence(
+            service, ids, fence_id=fence.fence_id, engaged_at=NOW + timedelta(minutes=8)
         )
         service.verify_writer_fence(
             fence_id=fence.fence_id,
@@ -181,8 +182,8 @@ def test_activation_requires_post_fence_closure_and_recertification(workflow_db)
         run = service.prepare_cutover(
             candidate_id=candidate_id, started_at=NOW + timedelta(minutes=4)
         )
-        service.engage_writer_fence(
-            fence_id=fence.fence_id, engaged_at=NOW + timedelta(minutes=5)
+        _record_and_engage_writer_fence(
+            service, ids, fence_id=fence.fence_id, engaged_at=NOW + timedelta(minutes=5)
         )
         service.verify_writer_fence(
             fence_id=fence.fence_id,
@@ -264,8 +265,8 @@ def test_valid_increasing_final_asana_activation_chronology_passes(workflow_db) 
         run = service.prepare_cutover(
             candidate_id=candidate_id, started_at=NOW + timedelta(minutes=4)
         )
-        service.engage_writer_fence(
-            fence_id=fence.fence_id, engaged_at=NOW + timedelta(minutes=5)
+        _record_and_engage_writer_fence(
+            service, ids, fence_id=fence.fence_id, engaged_at=NOW + timedelta(minutes=5)
         )
         service.verify_writer_fence(
             fence_id=fence.fence_id,

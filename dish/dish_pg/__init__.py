@@ -49,3 +49,5 @@ __all__ = [
     "stage6_models",
     "reservation_models",
 ]
+
+from . import artifact_identity_models

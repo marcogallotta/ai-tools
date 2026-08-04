@@ -27,6 +27,7 @@ from tests.support.postgresql.release import (
     ROOT,
     _complete_active_mapping_reconciliation,
     _prepare_candidate,
+    _record_and_engage_writer_fence,
     _record_final_closure,
     _writer_fence_proof,
 )
@@ -72,7 +73,9 @@ def _burn_rollback(session, ids, context, task_id):
         candidate_id=candidate_id,
         started_at=NOW + timedelta(minutes=5),
     )
-    service.engage_writer_fence(
+    _record_and_engage_writer_fence(
+        service,
+        ids,
         fence_id=fence.fence_id,
         engaged_at=NOW + timedelta(minutes=5),
     )
@@ -231,7 +234,7 @@ def test_writer_fence_proof_is_candidate_bound_and_pre_body_parse(workflow_db) -
             manifest={"path": "/tmp/stage8-fence.json"},
             prepared_at=NOW,
         )
-        service.engage_writer_fence(fence_id=fence.fence_id, engaged_at=NOW)
+        _record_and_engage_writer_fence(service, ids, fence_id=fence.fence_id, engaged_at=NOW)
         weak = _writer_fence_proof(fence, candidate_id)
         weak["http_status"] = 401
         with pytest.raises(ReleaseAuthorityError, match="exact authenticated mutation response"):
