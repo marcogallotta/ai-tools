@@ -117,7 +117,9 @@ def _assert_admission_closed(factory, ids, context, task_id):
 
 def _burn_and_open_admission(factory, ids, context, task_id, candidate_id, cutover_id):
     first_request_id = _next(ids)
+    first_run_id = _next(ids)
     with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=first_run_id)
         service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
         activation = service.burn_rollback(
             cutover_run_id=cutover_id,
@@ -164,6 +166,9 @@ def _burn_and_open_admission(factory, ids, context, task_id, candidate_id, cutov
             command_name="start",
             command_arguments={"task_id": str(task_id), "agent": "codex", "kind": "initial"},
             task_id=task_id,
+            owner_id="owner-1",
+            principal_class="agent",
+            run_id=first_run_id,
             payload={"probe": "first production mutation"},
             recorded_at=NOW + timedelta(minutes=6),
         )
@@ -171,13 +176,11 @@ def _burn_and_open_admission(factory, ids, context, task_id, candidate_id, cutov
             cutover_run_id=cutover_id, opened_at=NOW + timedelta(minutes=7)
         )
         assert control.state == "open"
-    return first_request_id
+    return first_request_id, first_run_id
 
 
-def _record_committed_first_request(factory, ids, context, task_id, cutover_id, request_id):
+def _record_committed_first_request(factory, ids, context, task_id, cutover_id, request_id, run_id):
     with session_scope(factory) as session:
-        run_id = _next(ids)
-        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
         binding = session.scalar(
             select(models.HonestContractBinding).where(
                 models.HonestContractBinding.binding_kind == "release",
@@ -217,7 +220,12 @@ def _record_committed_first_request(factory, ids, context, task_id, cutover_id, 
                 owner_id="owner-1",
                 principal_class="agent",
                 command_name="start",
-                canonical_payload={"arguments": {"task_id": str(task_id), "agent": "codex", "kind": "initial"}},
+                canonical_payload={
+                    "command": "start",
+                    "arguments": {"task_id": str(task_id), "agent": "codex", "kind": "initial"},
+                    "owner_id": "owner-1",
+                    "run_id": str(run_id),
+                },
                 protocol_release=binding.protocol_release,
                 dish_release=binding.dish_release,
                 admitted_at=NOW + timedelta(minutes=8),
@@ -320,10 +328,12 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
     )
     _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fence_id)
     _assert_admission_closed(factory, ids, context, task_id)
-    request_id = _burn_and_open_admission(
+    request_id, run_id = _burn_and_open_admission(
         factory, ids, context, task_id, candidate_id, cutover_id
     )
-    _record_committed_first_request(factory, ids, context, task_id, cutover_id, request_id)
+    _record_committed_first_request(
+        factory, ids, context, task_id, cutover_id, request_id, run_id
+    )
     _verify_and_complete(factory, ids, context, candidate_id, cutover_id, request_id)
 
 
@@ -389,6 +399,75 @@ def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: P
         assert "trim(legacy_bundle_id)" in checks[
             "ck_authority_activations_legacy_bundle_nonblank"
         ]
-        assert ALEMBIC_HEAD == "0027_server_default_alignment"
+        assert ALEMBIC_HEAD == "0028_consumed_first_request_open_admission"
     finally:
         engine.dispose()
+
+
+def test_consumed_first_reservation_allows_second_request_and_first_replay(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    candidate_id, closure_id, cutover_id, fence_id = _prepare_approved_cutover(
+        factory, ids, context, task_id
+    )
+    _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fence_id)
+    first_request_id, first_run_id = _burn_and_open_admission(
+        factory, ids, context, task_id, candidate_id, cutover_id
+    )
+    _record_committed_first_request(
+        factory, ids, context, task_id, cutover_id, first_request_id, first_run_id
+    )
+
+    with session_scope(factory) as session:
+        workflow = WorkflowAuthorityService(session, uuid_factory=lambda: _next(ids))
+        second_run_id = _next(ids)
+        second_request_id = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=second_run_id,
+        )
+        second = workflow.admit_request(
+            RequestSpec(
+                request_id=second_request_id,
+                generation_id=context["generation_id"],
+                run_id=second_run_id,
+                owner_id="owner-1",
+                principal_class="agent",
+                command_name="start",
+                canonical_payload={
+                    "command": "start",
+                    "arguments": {
+                        "task_id": str(task_id),
+                        "agent": "codex",
+                        "kind": "follow-up",
+                    },
+                    "owner_id": "owner-1",
+                    "run_id": str(second_run_id),
+                },
+                protocol_release="protocol-1",
+                dish_release="dish-pg-stage6",
+                admitted_at=NOW + timedelta(minutes=9),
+            )
+        )
+        assert not second.replayed
+        assert second.request.request_id == second_request_id
+
+        accepted_first = session.get(wf.ServiceRequest, first_request_id)
+        assert accepted_first is not None
+        first_replay = workflow.admit_request(
+            RequestSpec(
+                request_id=accepted_first.request_id,
+                generation_id=accepted_first.generation_id,
+                run_id=accepted_first.run_id,
+                owner_id=accepted_first.owner_id,
+                principal_class=accepted_first.principal_class,
+                command_name=accepted_first.command_name,
+                canonical_payload=accepted_first.canonical_payload,
+                protocol_release=accepted_first.protocol_release,
+                dish_release=accepted_first.dish_release,
+                admitted_at=NOW + timedelta(minutes=9),
+            )
+        )
+        assert first_replay.replayed
+        assert first_replay.outcome is not None
+        assert first_replay.outcome.result_code == "OK"

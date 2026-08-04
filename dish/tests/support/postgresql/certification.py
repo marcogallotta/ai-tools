@@ -99,6 +99,11 @@ def probe_native_postgresql(dsn: str | None = None) -> NativePostgreSQLIdentity:
 # This inventory is intentionally literal. The native certification script rejects
 # collection drift instead of deriving the required set from production or pytest.
 NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY = (
+    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_exact_reserved_first_request_succeeds",
+    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_unrelated_valid_second_request_succeeds",
+    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_first_request_replay_succeeds",
+    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_mismatched_request_before_consumption_fails",
+    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_cancelled_reservation_fails_closed",
     "tests/postgresql/native/test_importer.py::test_importer_persists_real_records_against_real_postgresql",
     "tests/postgresql/native/test_native_honest_binding_populated_migration.py::test_native_postgresql_populated_honest_binding_upgrade_enforces_identity",
     "tests/postgresql/native/test_native_honest_binding_populated_migration.py::test_native_postgresql_populated_honest_binding_upgrade_rejects_conflicts",
