@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Collection
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -308,7 +308,10 @@ def validate_typed_import_linkage(
 
 
 def validate_writer_fence_observation(
-    session: Session, *, fence: rel.LegacyWriterFence
+    session: Session,
+    *,
+    fence: rel.LegacyWriterFence,
+    required_writer_inventory: Collection[str] | None,
 ) -> artifact.WriterFenceArtifactObservation:
     if fence.artifact_observation_id is None:
         raise ReleaseAuthorityError("writer fence lacks the artifact observation bound to engagement")
@@ -345,6 +348,37 @@ def validate_writer_fence_observation(
         or observation.evidence_sha256 != sha256_json(payload)
     ):
         raise ReleaseAuthorityError("writer fence engagement is not bound to an exact persisted matched observation")
+
+    if required_writer_inventory is None:
+        raise ReleaseAuthorityError(
+            "required legacy writer inventory is not configured; "
+            "TODO: supply Marco's local enumeration of every real legacy writer path"
+        )
+    required = {
+        value.strip()
+        for value in required_writer_inventory
+        if isinstance(value, str) and value.strip()
+    }
+    if not required or len(required) != len(required_writer_inventory):
+        raise ReleaseAuthorityError(
+            "required legacy writer inventory must be a non-empty set of nonblank identities"
+        )
+    actual = set(
+        session.scalars(
+            select(rel.LegacyWriterFence.target_identity).where(
+                rel.LegacyWriterFence.candidate_id == fence.candidate_id,
+                rel.LegacyWriterFence.state.in_(("engaged", "verified")),
+            )
+        ).all()
+    )
+    missing = required - actual
+    extra = actual - required
+    if missing or extra:
+        raise ReleaseAuthorityError(
+            "legacy writer fence inventory mismatch: "
+            f"missing_writer_targets={sorted(missing)!r}; "
+            f"extra_writer_targets={sorted(extra)!r}"
+        )
     return observation
 
 

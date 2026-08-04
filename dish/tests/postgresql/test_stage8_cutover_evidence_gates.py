@@ -21,6 +21,10 @@ from dish_pg.release import (
     ReleaseCandidateService,
     sha256_json,
 )
+from dish_service.legacy_writer_fence import (
+    engage_legacy_writer_fence,
+    observe_legacy_writer_fence,
+)
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 from tests.support.postgresql.release import (
     HASH_A,
@@ -86,10 +90,12 @@ def _burn_rollback(session, ids, context, task_id):
         fence_id=fence.fence_id,
         proof=_writer_fence_proof(fence, candidate_id),
         verified_at=NOW + timedelta(minutes=5),
+        required_writer_inventory={fence.target_identity},
     )
     service.mark_fenced(
         cutover_run_id=run.cutover_run_id,
         recorded_at=NOW + timedelta(minutes=5),
+        required_writer_inventory={fence.target_identity},
     )
     service.recertify_candidate(
         candidate_id=candidate_id,
@@ -103,6 +109,7 @@ def _burn_rollback(session, ids, context, task_id):
         cutover_run_id=run.cutover_run_id,
         final_asana_closure_id=closure.closure_id,
         activated_at=NOW + timedelta(minutes=5),
+        required_writer_inventory={fence.target_identity},
     )
     service.burn_rollback(
         cutover_run_id=run.cutover_run_id,
@@ -231,6 +238,7 @@ def test_writer_fence_proof_is_candidate_bound_and_pre_body_parse(workflow_db) -
                 fence_id=fence.fence_id,
                 proof=weak,
                 verified_at=NOW + timedelta(minutes=1),
+                required_writer_inventory={fence.target_identity},
             )
         weak = _writer_fence_proof(fence, candidate_id)
         weak["body_loaded"] = True
@@ -239,9 +247,164 @@ def test_writer_fence_proof_is_candidate_bound_and_pre_body_parse(workflow_db) -
                 fence_id=fence.fence_id,
                 proof=weak,
                 verified_at=NOW + timedelta(minutes=1),
+                required_writer_inventory={fence.target_identity},
             )
         assert service.writer_fence_status(fence.fence_id).state == "engaged"
         assert service.writer_fence_status(fence.fence_id).proof_sha256 is None
+
+
+def test_prepared_writer_fence_digest_matches_deployed_manifest_bytes(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        candidate = service.candidate_status(candidate_id)
+        path = tmp_path / "legacy-writer-fence.json"
+        fence = service.prepare_writer_fence(
+            candidate_id=candidate_id,
+            target_identity="legacy-service@digest-bound",
+            mechanism="fail-closed-file",
+            manifest={"path": str(path)},
+            prepared_at=NOW,
+        )
+        _manifest, deployed_digest = engage_legacy_writer_fence(
+            path,
+            fence_id=str(fence.fence_id),
+            candidate_id=str(candidate_id),
+            source_release=candidate.source_release,
+            source_commit=candidate.source_commit,
+            engaged_at=NOW,
+            operator="Marco",
+        )
+        assert deployed_digest == fence.manifest_sha256
+        observed = observe_legacy_writer_fence(
+            path, expected_manifest_sha256=fence.manifest_sha256, clock=lambda: NOW
+        )
+        assert observed.artifact_sha256 == fence.manifest_sha256
+        durable = service.record_writer_fence_artifact_observation(
+            fence_id=fence.fence_id,
+            artifact_generation_identity=str(candidate.generation_id),
+            canonical_path=observed.observed_path,
+            content_sha256=observed.artifact_sha256,
+            filesystem_device=observed.device,
+            filesystem_inode=observed.inode,
+            verification_result="matched",
+            observation_contract_version="dish-writer-fence-observation-v1",
+            observed_at=observed.observed_at,
+            recorded_at=observed.observed_at,
+        )
+        engaged = service.engage_writer_fence(
+            fence_id=fence.fence_id,
+            artifact_observation_id=durable.observation_id,
+            engaged_at=NOW,
+        )
+        assert engaged.state == "engaged"
+
+
+def test_writer_fence_engagement_rejects_deployed_manifest_digest_mismatch(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        fence = service.prepare_writer_fence(
+            candidate_id=candidate_id,
+            target_identity="legacy-service@digest-mismatch",
+            mechanism="fail-closed-file",
+            manifest={"path": "/tmp/digest-mismatch-writer-fence.json"},
+            prepared_at=NOW,
+        )
+        observation = service.record_writer_fence_artifact_observation(
+            fence_id=fence.fence_id,
+            artifact_generation_identity="digest-mismatch-fixture-v1",
+            canonical_path="/tmp/digest-mismatch-writer-fence.json",
+            content_sha256="0" * 64,
+            filesystem_device=1,
+            filesystem_inode=(fence.fence_id.int % 2_000_000_000) + 1,
+            verification_result="matched",
+            observation_contract_version="writer-fence-fixture-v1",
+            observed_at=NOW,
+            recorded_at=NOW,
+        )
+
+        with pytest.raises(
+            ReleaseAuthorityError, match="does not match the planned manifest"
+        ):
+            service.engage_writer_fence(
+                fence_id=fence.fence_id,
+                artifact_observation_id=observation.observation_id,
+                engaged_at=NOW,
+            )
+        assert service.writer_fence_status(fence.fence_id).state == "prepared"
+
+
+def test_writer_fence_inventory_requires_exact_engaged_set(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        required_fence = service.prepare_writer_fence(
+            candidate_id=candidate_id,
+            target_identity="legacy-service@required",
+            mechanism="fail-closed-file",
+            manifest={"path": "/tmp/required-writer-fence.json"},
+            prepared_at=NOW,
+        )
+        extra_fence = service.prepare_writer_fence(
+            candidate_id=candidate_id,
+            target_identity="legacy-service@extra",
+            mechanism="fail-closed-file",
+            manifest={"path": "/tmp/extra-writer-fence.json"},
+            prepared_at=NOW,
+        )
+        _record_and_engage_writer_fence(
+            service, ids, fence_id=required_fence.fence_id, engaged_at=NOW
+        )
+        _record_and_engage_writer_fence(
+            service, ids, fence_id=extra_fence.fence_id, engaged_at=NOW
+        )
+
+        with pytest.raises(
+            ReleaseAuthorityError,
+            match=(
+                "missing_writer_targets=.*legacy-service@missing.*"
+                "extra_writer_targets=.*legacy-service@extra"
+            ),
+        ):
+            service.verify_writer_fence(
+                fence_id=required_fence.fence_id,
+                proof=_writer_fence_proof(required_fence, candidate_id),
+                verified_at=NOW + timedelta(minutes=1),
+                required_writer_inventory={
+                    "legacy-service@required",
+                    "legacy-service@missing",
+                },
+            )
+        assert service.writer_fence_status(required_fence.fence_id).state == "engaged"
+
+
+def test_writer_fence_inventory_must_be_supplied(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        fence = service.prepare_writer_fence(
+            candidate_id=candidate_id,
+            target_identity="legacy-service@inventory-todo",
+            mechanism="fail-closed-file",
+            manifest={"path": "/tmp/inventory-todo-writer-fence.json"},
+            prepared_at=NOW,
+        )
+        _record_and_engage_writer_fence(
+            service, ids, fence_id=fence.fence_id, engaged_at=NOW
+        )
+
+        with pytest.raises(ReleaseAuthorityError, match="inventory is not configured"):
+            service.verify_writer_fence(
+                fence_id=fence.fence_id,
+                proof=_writer_fence_proof(fence, candidate_id),
+                verified_at=NOW + timedelta(minutes=1),
+            )
+        assert service.writer_fence_status(fence.fence_id).state == "engaged"
 
 
 def test_post_burn_evidence_cannot_predate_rollback_burn(workflow_db) -> None:
@@ -490,10 +653,12 @@ def _prepare_fenced_recertified_cutover(session, ids, context, task_id):
         fence_id=fence.fence_id,
         proof=_writer_fence_proof(fence, candidate_id),
         verified_at=NOW + timedelta(minutes=5),
+        required_writer_inventory={fence.target_identity},
     )
     service.mark_fenced(
         cutover_run_id=run.cutover_run_id,
         recorded_at=NOW + timedelta(minutes=5),
+        required_writer_inventory={fence.target_identity},
     )
     service.recertify_candidate(
         candidate_id=candidate_id,
@@ -503,13 +668,13 @@ def _prepare_fenced_recertified_cutover(session, ids, context, task_id):
         payload={"cutover_run_id": str(run.cutover_run_id)},
         recertified_at=NOW + timedelta(minutes=5),
     )
-    return service, candidate_id, closure, run
+    return service, candidate_id, closure, run, fence
 
 
 def test_activation_revalidates_the_exact_approved_candidate_manifest(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
-        service, candidate_id, closure, run = _prepare_fenced_recertified_cutover(
+        service, candidate_id, closure, run, fence = _prepare_fenced_recertified_cutover(
             session, ids, context, task_id
         )
         candidate = service._candidate(candidate_id)
@@ -525,6 +690,7 @@ def test_activation_revalidates_the_exact_approved_candidate_manifest(workflow_d
                 cutover_run_id=run.cutover_run_id,
                 final_asana_closure_id=closure.closure_id,
                 activated_at=NOW + timedelta(minutes=5),
+                required_writer_inventory={fence.target_identity},
             )
         assert service._cutover(run.cutover_run_id).state == "fenced"
 
@@ -545,6 +711,7 @@ def test_writer_fence_verification_requires_exact_persisted_observation(workflow
                 fence_id=fence.fence_id,
                 proof=_writer_fence_proof(fence, candidate_id),
                 verified_at=NOW + timedelta(minutes=1),
+                required_writer_inventory={fence.target_identity},
             )
         assert service.writer_fence_status(fence.fence_id).state == "prepared"
 

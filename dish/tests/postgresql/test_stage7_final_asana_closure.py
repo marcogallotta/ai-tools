@@ -89,9 +89,12 @@ def test_final_asana_change_invalidates_activation_until_recaptured_and_recertif
             fence_id=fence.fence_id,
             proof=_writer_fence_proof(fence, candidate_id),
             verified_at=NOW + timedelta(minutes=8),
+            required_writer_inventory={fence.target_identity},
         )
         service.mark_fenced(
-            cutover_run_id=cutover.cutover_run_id, recorded_at=NOW + timedelta(minutes=8)
+            cutover_run_id=cutover.cutover_run_id,
+            recorded_at=NOW + timedelta(minutes=8),
+            required_writer_inventory={fence.target_identity},
         )
         service.invalidate_final_asana_closure(
             closure_id=original.closure_id,
@@ -106,6 +109,7 @@ def test_final_asana_change_invalidates_activation_until_recaptured_and_recertif
                 cutover_run_id=cutover.cutover_run_id,
                 final_asana_closure_id=original.closure_id,
                 activated_at=NOW + timedelta(minutes=8),
+                required_writer_inventory={fence.target_identity},
             )
 
         replacement = service.record_final_asana_closure(
@@ -130,6 +134,7 @@ def test_final_asana_change_invalidates_activation_until_recaptured_and_recertif
             cutover_run_id=cutover.cutover_run_id,
             final_asana_closure_id=replacement.closure_id,
             activated_at=NOW + timedelta(minutes=9),
+            required_writer_inventory={fence.target_identity},
         )
         assert activated.state == "activated"
         service.burn_rollback(
@@ -189,10 +194,12 @@ def test_activation_requires_post_fence_closure_and_recertification(workflow_db)
             fence_id=fence.fence_id,
             proof=_writer_fence_proof(fence, candidate_id),
             verified_at=NOW + timedelta(minutes=6),
+            required_writer_inventory={fence.target_identity},
         )
         service.mark_fenced(
             cutover_run_id=run.cutover_run_id,
             recorded_at=NOW + timedelta(minutes=7),
+            required_writer_inventory={fence.target_identity},
         )
 
         # Recertifying stale pre-fence evidence does not extend its observation interval.
@@ -209,6 +216,7 @@ def test_activation_requires_post_fence_closure_and_recertification(workflow_db)
                 cutover_run_id=run.cutover_run_id,
                 final_asana_closure_id=approved_closure.closure_id,
                 activated_at=NOW + timedelta(minutes=9),
+                required_writer_inventory={fence.target_identity},
             )
 
         final = service.record_final_asana_closure(
@@ -226,6 +234,7 @@ def test_activation_requires_post_fence_closure_and_recertification(workflow_db)
                 cutover_run_id=run.cutover_run_id,
                 final_asana_closure_id=final.closure_id,
                 activated_at=NOW + timedelta(minutes=10),
+                required_writer_inventory={fence.target_identity},
             )
 
 
@@ -272,10 +281,12 @@ def test_valid_increasing_final_asana_activation_chronology_passes(workflow_db) 
             fence_id=fence.fence_id,
             proof=_writer_fence_proof(fence, candidate_id),
             verified_at=NOW + timedelta(minutes=6),
+            required_writer_inventory={fence.target_identity},
         )
         service.mark_fenced(
             cutover_run_id=run.cutover_run_id,
             recorded_at=NOW + timedelta(minutes=7),
+            required_writer_inventory={fence.target_identity},
         )
         final = service.record_final_asana_closure(
             candidate_id=candidate_id,
@@ -300,11 +311,13 @@ def test_valid_increasing_final_asana_activation_chronology_passes(workflow_db) 
                 cutover_run_id=run.cutover_run_id,
                 final_asana_closure_id=final.closure_id,
                 activated_at=NOW + timedelta(minutes=8, seconds=30),
+                required_writer_inventory={fence.target_identity},
             )
         activated = service.activate_authority(
             cutover_run_id=run.cutover_run_id,
             final_asana_closure_id=final.closure_id,
             activated_at=NOW + timedelta(minutes=10),
+            required_writer_inventory={fence.target_identity},
         )
         assert activated.state == "activated"
 
