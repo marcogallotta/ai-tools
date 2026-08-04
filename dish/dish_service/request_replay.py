@@ -4,7 +4,8 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from typing import Any, Mapping, MutableMapping
+from dataclasses import dataclass
+from typing import Any, Callable, Mapping, MutableMapping, Protocol
 
 from dish_tool.errors import DishRuleError
 from dish_tool.models import utc_now
@@ -204,3 +205,73 @@ def pending_error(command: str, request_id: str, *, operation_id: str | None = N
             "required_admin_action": "inspect",
         },
     )
+
+
+class RequestReplayPort(Protocol):
+    """Typed request-identity seam used by lifecycle coordinators."""
+
+    def begin(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        request_id: str,
+        owner_id: str,
+        run_id: str,
+        command: str,
+        arguments: Mapping[str, Any],
+    ) -> tuple[sqlite3.Row, bool]: ...
+
+    def stored(
+        self,
+        row: sqlite3.Row | None,
+        *,
+        permit_uncertain_resume: bool = False,
+    ) -> dict[str, Any] | None: ...
+
+    def complete(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        request_id: str,
+        result: dict[str, Any],
+    ) -> dict[str, Any]: ...
+
+    def pending(
+        self,
+        command: str,
+        request_id: str,
+        *,
+        operation_id: str | None = None,
+    ) -> DishRuleError: ...
+
+
+@dataclass(frozen=True)
+class FunctionalRequestReplay:
+    """Injectable adapter preserving the existing replay functions and ordering."""
+
+    begin_fn: Callable[..., tuple[sqlite3.Row, bool]]
+    stored_fn: Callable[..., dict[str, Any] | None]
+    complete_fn: Callable[..., dict[str, Any]]
+    pending_fn: Callable[..., DishRuleError]
+
+    def begin(self, conn: sqlite3.Connection, **kwargs: Any) -> tuple[sqlite3.Row, bool]:
+        return self.begin_fn(conn, **kwargs)
+
+    def stored(
+        self, row: sqlite3.Row | None, *, permit_uncertain_resume: bool = False
+    ) -> dict[str, Any] | None:
+        return self.stored_fn(
+            row, permit_uncertain_resume=permit_uncertain_resume
+        )
+
+    def complete(
+        self, conn: sqlite3.Connection, *, request_id: str, result: dict[str, Any]
+    ) -> dict[str, Any]:
+        return self.complete_fn(conn, request_id=request_id, result=result)
+
+    def pending(
+        self, command: str, request_id: str, *, operation_id: str | None = None
+    ) -> DishRuleError:
+        return self.pending_fn(
+            command, request_id, operation_id=operation_id
+        )

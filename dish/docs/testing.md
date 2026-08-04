@@ -528,3 +528,12 @@ invariant to have an explicit payload-safe diagnostic specification. Dynamic inv
 documented and bounded. `tests/postgresql/test_orm_migration_index_alignment.py` protects migration-defined
 indexes that must also exist in SQLAlchemy metadata.
 
+
+### Service lifecycle seam checks
+
+Run `tests/test_service_lifecycle_seams.py` with the request replay, lease atomicity, service lease, expiry, and
+coordinator structure modules when changing request or lease lifecycle orchestration. The seam tests prove that
+coordinators have typed dependencies and remain directly constructible; focused seam checks assert acquisition,
+successful settlement, and cleanup call ordering, while behavioral modules continue to protect the underlying
+transaction, replay, lease, error-conversion, and response semantics.
+

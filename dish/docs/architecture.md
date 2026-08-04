@@ -975,3 +975,14 @@ owned by the transaction or workflow module rather than add a second name for it
 ## Hold observability and resolution binding
 
 `dish-admin holds` is the read-only Marco/admin inventory for every open Evidence or Human Review hold. It classifies pre-construction Research, ordinary Verification Evidence/Human Review, and automatic two-pass Verification holds separately, reports the exact required admin action, task title/GID/link, question, operation and cycle identifiers, and the persisted hold identity. Durable resolution commands must include the displayed task GID and, for Verification holds, the displayed cycle ID and hold identity; Dish rejects stale or mismatched commands before mutation. Quantified-limit blockers are recorded at `reject` time as a complete metric/actual/limit/delta/unit/basis set in the existing operation-step and audit JSON.
+
+### Typed service lifecycle seams
+
+`DishService` remains the public facade and composition root. Agent and admin request coordinators depend on
+typed service ports, request replay is injected through `RequestReplayPort`, and lease renewal, recovery, and
+expiry orchestration lives in `dish_service/lease_requests.py`. These seams preserve the existing SQLite
+transaction boundaries, replay completion ordering, lease cleanup, error conversion, and shadow capture while
+allowing lifecycle collaborators to be tested without constructing the complete service graph. Agent and
+admin acquisition/settlement remain facade-owned private operations behind those typed ports because they
+share exact recovery, cleanup, and result-finalization ordering; this pass does not split that authority.
+
