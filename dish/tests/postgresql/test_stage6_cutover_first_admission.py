@@ -399,7 +399,7 @@ def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: P
         assert "trim(legacy_bundle_id)" in checks[
             "ck_authority_activations_legacy_bundle_nonblank"
         ]
-        assert ALEMBIC_HEAD == "0028_consumed_first_request_open_admission"
+        assert ALEMBIC_HEAD == "0027_server_default_alignment"
     finally:
         engine.dispose()
 

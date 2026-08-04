@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from . import artifact_identity_models as artifact
 from . import models
+from . import reservation_models as reservations
 from . import stage3_models as wf
 from . import stage5_models as tx
 from . import stage6_models as rel
@@ -814,6 +815,9 @@ class CutoverControlAuthority:
         command_name: str,
         command_arguments: Mapping[str, Any],
         task_id: uuid.UUID | None,
+        owner_id: str,
+        principal_class: str,
+        run_id: uuid.UUID,
         payload: Mapping[str, Any],
         recorded_at: datetime,
     ) -> rel.FirstAdmissionPlan:
@@ -840,7 +844,20 @@ class CutoverControlAuthority:
         if not definition.retained or definition.profile == "Q":
             raise ReleaseAuthorityError("first admission must be a retained mutation command")
         arguments = dict(command_arguments)
+        normalized_owner = owner_id.strip()
+        if not normalized_owner:
+            raise ReleaseAuthorityError("first-admission owner must be nonblank")
+        if principal_class not in {"agent", "admin", "verification", "service"}:
+            raise ReleaseAuthorityError("first-admission principal class is unsupported")
         candidate = self._candidate(run.candidate_id)
+        service_run = self.session.get(wf.ServiceRun, run_id)
+        if (
+            service_run is None
+            or service_run.generation_id != candidate.generation_id
+            or service_run.owner_id != normalized_owner
+            or service_run.status != "active"
+        ):
+            raise ReleaseAuthorityError("first-admission service run is not active for the exact owner")
         operation_id = self._validate_first_admission_targets(
             candidate=candidate,
             command_name=normalized_command,
@@ -849,10 +866,21 @@ class CutoverControlAuthority:
             task_id=task_id,
         )
         expected_projection_events = expected_projection_count(normalized_command, arguments)
+        canonical_request_payload = {
+            "command": normalized_command,
+            "arguments": arguments,
+            "owner_id": normalized_owner,
+            "run_id": str(run_id),
+        }
+        canonical_payload_sha256 = sha256_json(canonical_request_payload)
         plan_payload = {
             "command_arguments": arguments,
             "operator_evidence": dict(payload),
             "operation_id": None if operation_id is None else str(operation_id),
+            "owner_id": normalized_owner,
+            "principal_class": principal_class,
+            "run_id": str(run_id),
+            "canonical_payload_sha256": canonical_payload_sha256,
         }
         body = {
             "cutover_run_id": str(cutover_run_id),
@@ -882,6 +910,25 @@ class CutoverControlAuthority:
             recorded_at=recorded_at,
         )
         self.session.add(row)
+        self.session.flush()
+        reservation = reservations.FirstRequestReservation(
+            reservation_id=self.uuid_factory(),
+            plan_id=row.plan_id,
+            cutover_run_id=cutover_run_id,
+            candidate_id=candidate.candidate_id,
+            generation_id=candidate.generation_id,
+            request_id=request_id,
+            command_name=normalized_command,
+            owner_id=normalized_owner,
+            principal_class=principal_class,
+            run_id=run_id,
+            canonical_payload_sha256=canonical_payload_sha256,
+            state="reserved",
+            reservation_revision=1,
+            reserved_at=recorded_at,
+            consumed_at=None,
+        )
+        self.session.add(reservation)
         self.session.flush()
         return row
     def open_mutation_admission(

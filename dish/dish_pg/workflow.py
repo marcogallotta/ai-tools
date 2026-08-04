@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from . import models
+from . import reservation_models as reservations
 from . import stage3_models as wf
 from . import stage6_models as rel
 
@@ -40,6 +41,10 @@ class ContentionLost(WorkflowAuthorityError):
 
 class MutationAdmissionClosed(StaleAuthorityError):
     """Stage 6 has not opened PostgreSQL mutation admission."""
+
+
+class FirstRequestReservationMismatch(StaleAuthorityError):
+    """The first PostgreSQL mutation is not the exact reserved request."""
 
 
 def canonical_json(value: Mapping[str, Any] | list[Any] | str | int | bool | None) -> str:
@@ -166,10 +171,45 @@ class WorkflowAuthorityRepository:
                 rel.ReleaseCandidate.generation_id == spec.generation_id
             ).limit(1)
         ) is not None
+        reservation = None
         if candidate_exists:
             control = self.session.get(rel.MutationAdmissionControl, spec.generation_id)
             if control is None or control.state != "open":
                 raise MutationAdmissionClosed("PostgreSQL mutation admission is closed")
+            reservation = self.session.scalar(
+                select(reservations.FirstRequestReservation)
+                .where(
+                    reservations.FirstRequestReservation.generation_id == spec.generation_id,
+                    reservations.FirstRequestReservation.candidate_id == control.candidate_id,
+                )
+                .with_for_update()
+            )
+            if reservation is None:
+                raise MutationAdmissionClosed(
+                    "open PostgreSQL mutation admission lacks a first-request reservation"
+                )
+            if reservation.state == "reserved":
+                reserved_identity = (
+                    reservation.request_id == spec.request_id
+                    and reservation.command_name == spec.command_name
+                    and reservation.owner_id == spec.owner_id
+                    and reservation.principal_class == spec.principal_class
+                    and reservation.run_id == spec.run_id
+                    and reservation.canonical_payload_sha256 == payload_sha
+                )
+                if not reserved_identity:
+                    raise FirstRequestReservationMismatch(
+                        "first PostgreSQL mutation does not match the reserved request"
+                    )
+            elif reservation.state == "consumed":
+                # The exact-first gate is terminal after successful consumption.
+                # Later new requests follow normal open-admission behavior; an
+                # exact replay was already returned from the request lookup above.
+                reservation = None
+            else:
+                raise FirstRequestReservationMismatch(
+                    "first PostgreSQL request reservation is cancelled"
+                )
 
         row = wf.ServiceRequest(
             request_id=spec.request_id,
@@ -187,6 +227,11 @@ class WorkflowAuthorityRepository:
         self.session.add(row)
         try:
             self.session.flush()
+            if reservation is not None and self.session.bind.dialect.name != "postgresql":
+                reservation.state = "consumed"
+                reservation.reservation_revision += 1
+                reservation.consumed_at = spec.admitted_at
+                self.session.flush()
         except IntegrityError as exc:
             if "mutation admission is closed" in str(exc).lower():
                 raise MutationAdmissionClosed("PostgreSQL mutation admission is closed") from exc

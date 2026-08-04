@@ -21,7 +21,7 @@ from dish_pg.release import (
     ReleaseCandidateService,
     sha256_json,
 )
-from tests.support.postgresql.workflow import NOW, _next, workflow_db
+from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 from tests.support.postgresql.release import (
     HASH_A,
     ROOT,
@@ -303,12 +303,17 @@ def test_admission_requires_post_burn_runtime_worker_and_first_request_evidence(
             )
 
         first_request_id = _next(ids)
+        first_run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=first_run_id)
         plan = service.plan_first_admission(
             cutover_run_id=cutover_run_id,
             request_id=first_request_id,
             command_name="start",
             command_arguments={"task_id": str(task_id), "agent": "codex", "kind": "initial"},
             task_id=task_id,
+            owner_id="owner-1",
+            principal_class="agent",
+            run_id=first_run_id,
             payload={"probe": "stage8-first-admission"},
             recorded_at=NOW + timedelta(minutes=6),
         )
@@ -360,9 +365,14 @@ def test_first_admission_plan_rejects_unverifiable_target_shapes(workflow_db) ->
         service, _candidate_id, cutover_run_id = _burn_rollback(
             session, ids, context, task_id
         )
+        first_run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=first_run_id)
         common = {
             "cutover_run_id": cutover_run_id,
             "request_id": _next(ids),
+            "owner_id": "owner-1",
+            "principal_class": "agent",
+            "run_id": first_run_id,
             "payload": {"probe": "invalid-first-admission"},
             "recorded_at": NOW + timedelta(minutes=6),
         }
