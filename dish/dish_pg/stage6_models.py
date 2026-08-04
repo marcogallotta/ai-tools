@@ -84,6 +84,9 @@ class ReleaseCandidate(Base):
         UniqueConstraint(
             "generation_id", "source_import_batch_id", "source_commit", name="uq_release_candidate_source"
         ),
+        UniqueConstraint(
+            "candidate_id", "generation_id", name="uq_release_candidate_generation_identity"
+        ),
         Index(
             "uq_release_candidate_one_live_generation",
             "generation_id",
@@ -291,6 +294,9 @@ class CutoverRun(Base):
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
+        UniqueConstraint(
+            "cutover_run_id", "candidate_id", name="uq_cutover_run_candidate_identity"
+        ),
         CheckConstraint(
             "state IN ('prepared','fenced','activated','rollback_burned','admission_open',"
             "'first_admission_verified','completed','aborted')",
@@ -472,6 +478,13 @@ class FirstAdmissionPlan(Base):
         CheckConstraint("length(trim(command_name)) > 0", name="command_nonblank"),
         CheckConstraint("expected_projection_events >= 0", name="projection_count_nonnegative"),
         CheckConstraint("length(plan_sha256) = 64", name="plan_hash_length"),
+        UniqueConstraint(
+            "plan_id",
+            "cutover_run_id",
+            "request_id",
+            "command_name",
+            name="uq_first_admission_plan_exact_request",
+        ),
     )
 
 
