@@ -50,8 +50,7 @@ assume an uploaded or host-global environment is runnable on the current Python 
 cd ai-tools/dish
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-test.txt
-.venv/bin/python -m pytest --smoke
-.venv/bin/python -m pytest --database-boundary
+.venv/bin/python scripts/dish-test-plan --base <revision>
 ```
 
 ChatGPT environments may use a different Python minor version from the uploaded repository.
@@ -62,14 +61,22 @@ may be used only as a documented fallback after confirming they are compatible w
 interpreter.
 
 Flaky-test detection uses a separate environment created from `requirements-flake.txt`; follow
-`dish/docs/testing.md`. Normal smoke, database-boundary, and full-suite gates never rerun failures.
+`dish/docs/testing.md`. Authoritative first-attempt lanes never rerun failures automatically.
 
-Use `pytest --smoke` for rapid confidence while iterating. The smoke gate is selected by explicit
-per-test markers and enforces representative coverage of the launch-critical invariants. Run
-`pytest --database-boundary` before handoff to exercise real empty-database bootstrap, historical
-schema migration, SQLite concurrency, and backup/restore with production synchronization pragmas.
-Before handing back code or staged archives, also run the complete `.venv/bin/python -m pytest`
-suite. Never package `.venv` in a patch or archive.
+For Dish code or test changes, run `scripts/dish-test-plan` with the complete changed-path set and
+execute its focused tests and governed lanes. Treat `test_selection/ownership.csv` as a strong
+current-HEAD prior, not a ceiling: assess the actual invariant, authority, durable state, external
+effect, transaction boundary, and release consequence changed; add any semantically required lane;
+and take the union across mixed changes. New in-scope paths must be classified in the same change.
+Escalate to Marco only when the owning architecture or acceptable evidence remains materially
+ambiguous.
+
+The ordinary full suite is required before merge or integration of a completed change block, before
+a final staged archive, after conflict resolution affecting shared code, after global selector,
+fixture, dependency, marker, or runner-policy changes, and before release or cutover certification.
+It is not mandatory after every scoped edit. Keep smoke, SQLite database-boundary, PGlite, native
+PostgreSQL, migration, mutation, acceptance, and ordinary pytest evidence separately reported as
+defined in `dish/docs/testing.md`. Never package `.venv` in a patch or archive.
 
 ## Live Dish rehearsal credentials
 

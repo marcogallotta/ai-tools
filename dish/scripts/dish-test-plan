@@ -1,0 +1,106 @@
+#!/usr/bin/env python3
+"""Print the mandatory Dish test plan for a changed path set."""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from test_selection.model import ALLOWED_LANES, POLICY_PATH, PolicyError  # noqa: E402
+from test_selection.planner import (  # noqa: E402
+    build_plan,
+    discover_git_paths,
+    load_git_policy,
+    normalize_explicit_paths,
+)
+from test_selection.validator import validate_policy  # noqa: E402
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="dish-test-plan")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--base", help="plan all changes from this Git revision to the working tree")
+    source.add_argument("--staged", action="store_true", help="plan only staged changes")
+    source.add_argument("--path", action="append", default=[], help="explicit changed path; repeatable")
+    parser.add_argument(
+        "--add-lane",
+        action="append",
+        default=[],
+        choices=sorted(ALLOWED_LANES),
+        help="agent-selected semantic escalation; repeatable",
+    )
+    parser.add_argument(
+        "--integration-checkpoint",
+        action="store_true",
+        help="add the ordinary full suite for an integration, merge, or certification checkpoint",
+    )
+    parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
+    parser.add_argument("--validate", action="store_true", help="validate the current ownership map")
+    parser.add_argument(
+        "--collected-nodeids",
+        "--collected-nodeids-json",
+        dest="collected_nodeids",
+        type=Path,
+        help="fresh successful pytest collection output or JSON node-ID list",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    if args.validate:
+        result = validate_policy(
+            repo_root=ROOT,
+            parent_root=ROOT.parent,
+            policy_path=POLICY_PATH,
+            collected_nodeids_path=args.collected_nodeids,
+        )
+        print(result.summary())
+        for warning in result.warnings:
+            print(f"WARNING: {warning}")
+        for error in result.errors:
+            print(f"ERROR: {error}")
+        return 0 if result.ok else 1
+
+    try:
+        ignored: tuple[str, ...] = ()
+        fallback_policy = None
+        if args.path:
+            changed = normalize_explicit_paths(args.path)
+        else:
+            changed, ignored = discover_git_paths(base=args.base, staged=args.staged)
+            fallback_policy = load_git_policy(ref=args.base or "HEAD")
+        if not changed:
+            raise PolicyError("no Dish-scoped changed paths were found")
+        plan = build_plan(
+            changed,
+            fallback_policy=fallback_policy,
+            add_lanes=args.add_lane,
+            integration_checkpoint=args.integration_checkpoint,
+        )
+    except PolicyError as exc:
+        print(f"dish-test-plan: {exc}", file=sys.stderr)
+        return 2
+
+    if ignored:
+        plan = type(plan)(
+            changed_paths=plan.changed_paths,
+            ignored_paths=ignored,
+            classes=plan.classes,
+            traits=plan.traits,
+            focused_tests=plan.focused_tests,
+            lanes=plan.lanes,
+            commands=plan.commands,
+            conditional_reviews=plan.conditional_reviews,
+            integration_checkpoint=plan.integration_checkpoint,
+        )
+    sys.stdout.write(plan.to_json() if args.json else plan.to_text())
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

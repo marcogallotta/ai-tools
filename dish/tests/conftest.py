@@ -305,9 +305,29 @@ def _select_items(config, items):
     ]
 
 
+def _is_complete_repository_collection(config) -> bool:
+    root = pathlib.Path(str(config.rootpath)).resolve()
+    roots = {root, root / "tests"}
+    return len(config.args) == 1 and pathlib.Path(config.args[0]).resolve() in roots
+
+
 def pytest_collection_modifyitems(config, items):
     violations = _flake_policy_violations(items)
-    violations.extend(_smoke_invariant_owner_violations(items))
+    if _is_complete_repository_collection(config):
+        violations.extend(_smoke_invariant_owner_violations(items))
+    elif any(
+        config.getoption(name)
+        for name in (
+            "--smoke",
+            "--database-boundary",
+            "--pglite",
+            "--native-postgresql",
+        )
+    ):
+        raise pytest.UsageError(
+            "governed lanes require complete repository collection; do not combine lane selectors "
+            "with explicit test paths"
+        )
     if violations:
         raise pytest.UsageError(
             "invalid flaky-test policy metadata:\n" + "\n".join(violations)

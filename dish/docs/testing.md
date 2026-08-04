@@ -29,9 +29,88 @@ This environment adds `pytest-rerunfailures`, `pytest-randomly`, `pytest-repeat`
 `pytest-xdist`. Use it only through the explicit commands below. `pytest-randomly` changes normal
 pytest behavior when installed, which is why it is kept out of `requirements-test.txt`.
 
-## Authoritative first-attempt gates
+## Autonomous changed-path selection
 
-These commands never rerun a failure. Any failure blocks the gate.
+For every Dish code or test change, start with the complete changed-path set:
+
+```sh
+# All changes from a branch base through the current working tree.
+.venv/bin/python scripts/dish-test-plan --base <revision>
+
+# Or an explicit path set while iterating.
+.venv/bin/python scripts/dish-test-plan \
+  --path dish_tool/example.py \
+  --path tests/test_example.py
+```
+
+The command reads `test_selection/ownership.csv`, takes the union across mixed changes, and prints
+focused owner tests plus governed lane commands. For Git-based planning it also reads the map at the
+base revision so deleted paths retain their prior test ownership. The map is a strong current-HEAD
+prior; it does not replace semantic review. An agent must evaluate the actual invariant, authority, durable state,
+external effect, transaction boundary, and release consequence changed. Add any additional required
+lane explicitly:
+
+```sh
+.venv/bin/python scripts/dish-test-plan \
+  --path dish_tool/example.py \
+  --add-lane 'SQLite database-boundary'
+```
+
+The eight primary classes are:
+
+| Class | Scope |
+| --- | --- |
+| 1 | Documentation and isolated tests; test rows also require `domain_class_for_tests` |
+| 2 | Frontend |
+| 3 | Ordinary Python/service logic |
+| 4 | Authority and canonical identity |
+| 5 | Recovery and filesystem behavior |
+| 6 | Schema, ORM, and migrations |
+| 7 | PostgreSQL concurrency and projection lifecycle |
+| 8 | Release, cutover, dark launch, and import |
+
+Each path has one primary class plus a bounded set of escalation traits. Mixed changes always take
+the union. New in-scope paths must be classified in the map in the same change. Agents decide the
+classification for new architecture and ask Marco only when the owning authority or acceptable
+evidence remains materially ambiguous.
+
+Normal scoped work runs:
+
+1. `direct_owner_tests` and `critical_contract_tests`;
+2. the row's `default_lanes`;
+3. consumer lanes required by bounded shared-test fan-out;
+4. every additional lane triggered by the actual semantic delta.
+
+`other_direct_consumers` and `transitive_consumers` are audit and integration context, not an
+instruction to execute every consumer during ordinary iteration. Shared test infrastructure uses
+fan-out scope: narrow helpers run known consumers; cross-lane helpers run their consumer lanes;
+only genuinely global collection, dependency, fixture, selector, or governed-runner changes force
+the ordinary full suite before handoff. A row addition that only classifies a new path does not by
+itself force the full suite.
+
+Validate the map after adding, deleting, renaming, or reclassifying a path:
+
+```sh
+.venv/bin/python scripts/dish-test-plan --validate
+```
+
+After a successful fresh collection, strengthen validation with:
+
+```sh
+.venv/bin/python -m pytest --collect-only -q \
+  > .test-artifacts/collected-nodeids.txt
+.venv/bin/python scripts/dish-test-plan --validate \
+  --collected-nodeids .test-artifacts/collected-nodeids.txt
+```
+
+Every handoff records the chosen class and traits, the changed invariants, commands and first-attempt
+results, conditional lanes omitted with reasons, and any unresolved uncertainty. Intermittent audits
+review these decisions; repeated mistakes should become clearer map rules, examples, inventories, or
+structural checks.
+
+## Authoritative first-attempt lanes
+
+The planner may emit any of these separately reported lanes:
 
 ```sh
 .venv/bin/python -m pytest --smoke
@@ -39,7 +118,22 @@ These commands never rerun a failure. Any failure blocks the gate.
 .venv/bin/python -m pytest
 ```
 
-A pass after retry is not a clean pass and must not be reported as one.
+The ordinary full suite is mandatory at concrete integration checkpoints, not after every scoped
+edit:
+
+- before merge or integration of a completed change block;
+- before a final staged archive;
+- after conflict resolution affecting shared code;
+- after global selector, fixture, dependency, marker, or runner-policy changes;
+- before release or cutover certification.
+
+Authoritative first attempts never rerun failures automatically. Preserve and report the first
+result. One lane-level retry is allowed only for a narrowly proven infrastructure signature such as
+connection refusal, unavailable native PostgreSQL, PGlite process startup failure, unexpected server
+closure, connection reset, or broken pipe before an assertion or domain transaction executes. Use
+the exact same commit, environment, selection, and command, and report both attempts. Never retry an
+assertion, SQL constraint, migration, domain-rule, lock-order, state, hash, collection, or inventory
+failure. An ambiguous timeout is a correctness failure until infrastructure failure is proved.
 
 ### Source-contract acceptance
 
@@ -150,7 +244,7 @@ Quarantine rules are enforced during collection:
 - a test cannot be both `flake_candidate` and `quarantined`;
 - automatic per-test `@pytest.mark.flaky(reruns=...)` is forbidden.
 
-No test is currently quarantined.
+Two PGlite lifecycle tests are currently quarantined and remain visible through the separate PGlite quarantine result. They do not certify native PostgreSQL behavior.
 
 ## Reproducible detection commands
 
@@ -314,11 +408,13 @@ state, complete thread/process teardown, and independent oracles.
 
 | When | Required work |
 | --- | --- |
-| Every code handoff | smoke, database-boundary, and complete first-attempt gates |
+| Every scoped code handoff | planner-selected focused tests and governed lanes, with classification and omission reasons |
+| Integration, merge, or final staged archive | planner-selected lanes plus the ordinary full suite |
+| Global test infrastructure or selector change | all affected governed lanes, ordinary full suite, and structural map validation |
 | Test infrastructure or concurrency change | rerun detector, five random-order runs, and twenty `flake_stress` runs |
 | One unexpected failure | exact-node repeat workflow and recorded triage evidence |
 | Nightly or periodic health check | rerun detector, random-order, stress, parallel diagnostic, quarantine lane, and static scan |
-| Before release | all authoritative gates plus reviewed unresolved flake candidates and quarantine expiry check |
+| Before release or cutover certification | ordinary full suite plus every required native, PGlite, migration, mutation, and acceptance lane |
 
 ## Artifact retention
 

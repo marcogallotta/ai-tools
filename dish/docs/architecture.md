@@ -898,18 +898,28 @@ path:
 When testing the generated Asana SDK contract, call its real generated methods and fake the
 low-level `ApiClient.call_api` transport. Handwritten method mocks do not prove the integration.
 
-Use `.venv/bin/python -m pytest --smoke` for rapid confidence while iterating and run the complete
-`.venv/bin/python -m pytest` suite before handoff. When persistence changes, test upgrade and
-recovery immediately after upgrade.
+Use `scripts/dish-test-plan` with the complete changed-path set. The current-HEAD map in
+`test_selection/ownership.csv` records each path's primary class, focused owners, governed lanes,
+and semantic escalation predicates. It is a strong prior, not a ceiling: agents must reason from the
+actual invariant, authority, durable state, external effect, and transaction or release consequence
+changed, then add required lanes and take the union across mixed changes. New paths are classified
+in the same change; material ambiguity in architecture or acceptable evidence is escalated to Marco.
 
 Keep the smoke selection broad, representative, and normally bounded to ten seconds; it is a
-curated confidence gate, not a bucket for every quick test. `tests/conftest.py` lists whole
-high-signal test files, while the `smoke` and `full_suite_only` markers add or remove deliberate
-exceptions. When adding or moving a test, decide whether it materially improves smoke confidence
-and whether the resulting bundle still meets its budget. Do not automatically include every new
-test or exclude all integration cost: smoke must retain representative workflow, persistence,
-restore, concurrency, subprocess, HTTP, and production-topology coverage. The default suite remains
-the complete handoff authority.
+curated confidence gate, not a bucket for every quick test. Explicit per-test `smoke` markers own the
+selection, while `tests/conftest.py` protects the literal launch-critical invariant owners and
+`full_suite_only` excludes deliberate exceptions. When adding or moving a test, decide whether it
+materially improves smoke confidence and whether the resulting bundle still meets its budget. Do
+not automatically include every new test or exclude all integration cost: smoke must retain
+representative workflow, persistence, restore, concurrency, subprocess, HTTP, and production-
+topology coverage.
+
+The ordinary full suite is an integration authority rather than a mandatory inner-loop command. Run
+it before merge, before final staged archives, after shared-code conflict resolution, after global
+test-selector/fixture/runner-policy changes, and before release or cutover certification. Persistence
+changes still require immediate upgrade and recovery evidence; PostgreSQL lock, transaction,
+projection, migration, and release behavior retain their separately governed native and PGlite
+lanes as defined in `docs/testing.md`.
 
 After editing, reread this entire document and every changed documentation file for conceptual
 overlap and stale claims. Architecture is converged only when each durable fact and decision has one
