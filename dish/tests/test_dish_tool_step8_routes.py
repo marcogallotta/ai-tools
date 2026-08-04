@@ -109,6 +109,8 @@ def test_human_review_route_reports_private_continuation_without_exposing_it(tmp
     assert "Status: pending-human-review" in backend.notes
     assert result["data"]["admin_command_is_template"] is True
     assert result["data"]["admin_command_template"] == result["data"]["admin_command"]
+    assert result["data"]["batch_may_continue"] is True
+    assert result["data"]["parked_task_gid"] == "t"
     effect = result["data"]["resolution_effect"]
     assert effect == {
         "records_human_decision": True,

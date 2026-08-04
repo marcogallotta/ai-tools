@@ -294,13 +294,18 @@ In service mode it exposes:
 - `reopen`, `supply-evidence`, and `record-human-decision` for the existing protocol-specific hold routes;
 - `authorize-governed-change` for a standalone exact governed-field change; unused exact grants
   carry across abandonment succession for the same task and typed before/after values;
-- `review-queue` and `review-inspect` to review durable semantic proposals parked by agents;
+- `review-queue` and `review-inspect` to review durable semantic proposals and Verification Human
+  Review holds parked by agents; queue numbers are accepted for the current view, while UUIDs are
+  stable for sharing;
 - `review-approve` and `review-reject` to decide one complete linked proposal bundle atomically;
+  `review-approve REVIEW_ID --detail "..."` records and releases a Human Review item;
 - `migrate` for explicit task-schema migration;
 - `backup-create` and `backup-restore` for managed shared-database snapshots.
 
-Agents can continue batch review after Dish parks a task on a semantic proposal. Marco reviews the
-queue with:
+Agents can continue an explicitly requested batch after Dish returns `batch_may_continue=true` for
+a proposal, Human Review/Evidence hold, or completed Large correction. They track handled task GIDs
+for that run and skip parked tasks if listing pagination returns them again. Marco reviews the queue
+with:
 
 ```sh
 dish-admin review-queue

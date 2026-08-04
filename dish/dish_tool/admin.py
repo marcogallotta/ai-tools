@@ -21,6 +21,7 @@ from .database import (
     record_audit,
     resolve_admin_abandonment_target,
     resolve_admin_operation_target,
+    utc_now,
 )
 from .invocation_audit import record_invocation_audit
 from .transactions import immediate_transaction, savepoint_transaction
@@ -30,11 +31,10 @@ from .human_actions import PromptField, exact_action, relay_text, template_actio
 from .semantic_proposals import (
     active_proposal_for_operation,
     approve_semantic_proposal,
-    get_semantic_proposal,
-    list_semantic_proposals,
     proposal_payload,
     reject_semantic_proposal,
 )
+from .review_queue import list_review_items, resolve_review_item
 
 
 @dataclass
@@ -682,7 +682,7 @@ def _attention_category(data: Mapping[str, Any]) -> tuple[str, str]:
 
 
 def _attention_candidate_operation_ids(conn: sqlite3.Connection) -> list[str]:
-    """Return one relevant operation per task, preferring active abandonment sources."""
+    """Return only database-evidenced abnormal candidates, one per task."""
 
     selected: list[str] = []
     seen_tasks: set[str] = set()
@@ -702,8 +702,24 @@ def _attention_candidate_operation_ids(conn: sqlite3.Connection) -> list[str]:
     for row in conn.execute(
         """SELECT operation_id, task_gid
              FROM operations
-            WHERE status IN ('open','uncertain')
+            WHERE status='uncertain'
+               OR (status='open' AND phase IN ('held_evidence','held_human'))
+               OR (status='open' AND destination_movement_attempt_id IS NOT NULL
+                   AND movement_completed_at IS NULL)
             ORDER BY created_at, operation_id"""
+    ):
+        task_gid = str(row["task_gid"])
+        if task_gid in seen_tasks:
+            continue
+        seen_tasks.add(task_gid)
+        selected.append(str(row["operation_id"]))
+
+    for row in conn.execute(
+        """SELECT operation.operation_id, operation.task_gid
+             FROM semantic_proposals AS proposal
+             JOIN operations AS operation ON operation.operation_id=proposal.operation_id
+            WHERE proposal.status IN ('pending','approved','claimed')
+            ORDER BY proposal.created_at, proposal.proposal_id"""
     ):
         task_gid = str(row["task_gid"])
         if task_gid in seen_tasks:
@@ -716,7 +732,28 @@ def _attention_candidate_operation_ids(conn: sqlite3.Connection) -> list[str]:
              FROM service_leases AS lease
              JOIN operations AS operation ON operation.operation_id=lease.operation_id
             WHERE lease.lease_kind='actor' AND lease.released_at IS NULL
-            ORDER BY lease.acquired_at, lease.lease_id"""
+              AND (lease.expires_at<=? OR operation.status!='open')
+            ORDER BY lease.acquired_at, lease.lease_id""",
+        (utc_now(),),
+    ):
+        task_gid = str(row["task_gid"])
+        if task_gid in seen_tasks:
+            continue
+        seen_tasks.add(task_gid)
+        selected.append(str(row["operation_id"]))
+
+    for row in conn.execute(
+        """SELECT operation.operation_id, operation.task_gid
+             FROM operations AS operation
+            WHERE operation.status='open'
+              AND operation.phase IN ('prepare_required','await_verification','await_submission')
+              AND operation.run_id IS NOT NULL
+              AND NOT EXISTS (
+                    SELECT 1 FROM service_leases AS lease
+                     WHERE lease.operation_id=operation.operation_id
+                       AND lease.lease_kind='actor' AND lease.released_at IS NULL
+                  )
+            ORDER BY operation.created_at, operation.operation_id"""
     ):
         task_gid = str(row["task_gid"])
         if task_gid in seen_tasks:
@@ -757,6 +794,9 @@ def _command_attention(self, *, trace: AdminTrace) -> dict[str, Any]:
         "unsafe": 0,
     }
     healthy_count = 0
+    workflow_record_count = int(
+        self.conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0]
+    )
     operation_ids = _attention_candidate_operation_ids(self.conn)
     for operation_id in operation_ids:
         try:
@@ -803,6 +843,13 @@ def _command_attention(self, *, trace: AdminTrace) -> dict[str, Any]:
                 "SELECT task_gid,status,phase FROM operations WHERE operation_id=?",
                 (operation_id,),
             ).fetchone()
+            if (
+                exc.rule == "task_not_in_cooking"
+                and operation is not None
+                and operation["status"] not in {"open", "uncertain"}
+            ):
+                healthy_count += 1
+                continue
             category_counts["unsafe"] += 1
             items.append(
                 {
@@ -840,7 +887,8 @@ def _command_attention(self, *, trace: AdminTrace) -> dict[str, Any]:
     trace.state = "ok"
     trace.audit_details.update(
         {
-            "checked_count": len(operation_ids),
+            "checked_count": workflow_record_count,
+            "live_inspection_count": len(operation_ids),
             "attention_count": len(items),
             "category_counts": dict(category_counts),
         }
@@ -849,7 +897,8 @@ def _command_attention(self, *, trace: AdminTrace) -> dict[str, Any]:
         command="attention",
         state="ok",
         data={
-            "checked_count": len(operation_ids),
+            "checked_count": workflow_record_count,
+            "live_inspection_count": len(operation_ids),
             "attention_count": len(items),
             "healthy_count": healthy_count,
             "category_counts": category_counts,
@@ -1364,13 +1413,18 @@ def _command_review_queue(
             rule="semantic_proposal_status_invalid",
             details={"allowed": sorted(status_map)},
         )
-    proposals = list_semantic_proposals(self.conn, statuses=statuses)
+    items = list_review_items(
+        self.conn,
+        proposal_statuses=statuses,
+        include_human_holds="pending" in statuses,
+    )
     return result_envelope(
         command="review-queue", state="ok",
         data={
-            "count": len(proposals),
+            "count": len(items),
             "status_filter": status,
-            "proposals": list(proposals),
+            "proposals": list(items),
+            "review_items": list(items),
         },
     )
 
@@ -1378,22 +1432,57 @@ def _command_review_queue(
 def _command_review_inspect(
     self, *, trace: AdminTrace, proposal_id: str
 ) -> dict[str, Any]:
-    clean_id = _clean_required(
-        proposal_id, rule="semantic_proposal_id_required", label="proposal ID"
-    )
-    row = get_semantic_proposal(self.conn, clean_id)
-    trace.task_gid = row["task_gid"]
-    trace.submission_id = row["operation_id"]
-    trace.state = row["status"]
+    clean_id = _clean_required(proposal_id, rule="review_item_id_required", label="review item ID")
+    item = resolve_review_item(self.conn, clean_id)
+    trace.task_gid = item["task_gid"]
+    trace.submission_id = item["operation_id"]
+    trace.state = item["status"]
+    data: dict[str, Any] = {"review_item": item}
+    if item["item_type"] == "semantic_proposal":
+        data["proposal"] = item
+    else:
+        if item["item_type"] == "verification_hold":
+            spec = exact_action(
+                kind="release-verification-hold",
+                command="resolved",
+                positional=(item["operation_id"],),
+                summary="Release the three-round Verification hold.",
+                effect="Return the unchanged candidate to a fresh Verification round.",
+                after_success={"instruction": "A later fresh verifier may start Verification."},
+            )
+        else:
+            spec = template_action(
+                kind="record-human-decision",
+                command="record-human-decision",
+                positional=(item["operation_id"],),
+                options=(
+                    ("--detail", "<Marco's exact decision and reasoning>"),
+                    ("--resume-status", item["resume_status"] or "pending-verification"),
+                    ("--expected-task-gid", item["task_gid"]),
+                    ("--expected-cycle-id", item["cycle_id"]),
+                    ("--expected-hold-identity", item["hold_identity"]),
+                ),
+                prompt_fields=(
+                    PromptField(
+                        "detail",
+                        "Marco's exact decision and reasoning",
+                        "<Marco's exact decision and reasoning>",
+                    ),
+                ),
+                summary="Record Marco's exact decision and release the Human Review hold.",
+                effect="This records the decision only; it does not edit or authorize governed fields.",
+                after_success={"instruction": "A later fresh verifier may resume the stored operation."},
+            )
+        data.update(spec.payload())
     return result_envelope(
-        command="review-inspect", task_gid=row["task_gid"],
-        submission_id=row["operation_id"], state=row["status"],
-        data={"proposal": proposal_payload(self.conn, row)},
+        command="review-inspect", task_gid=item["task_gid"],
+        submission_id=item["operation_id"], state=item["status"],
+        data=data,
     )
 
 
 def _command_review_approve(
-    self, *, trace: AdminTrace, proposal_id: str, reason: str
+    self, *, trace: AdminTrace, proposal_id: str, reason: str, detail: str | None = None
 ) -> dict[str, Any]:
     if self.backend is None:
         raise DishRuleError(
@@ -1403,10 +1492,37 @@ def _command_review_approve(
     from .constants import COOKING_PROJECT_GID
     from .task_store import read_complete_task
 
-    clean_id = _clean_required(
-        proposal_id, rule="semantic_proposal_id_required", label="proposal ID"
-    )
-    row = get_semantic_proposal(self.conn, clean_id)
+    clean_id = _clean_required(proposal_id, rule="review_item_id_required", label="review item ID")
+    item = resolve_review_item(self.conn, clean_id)
+    if item["item_type"] == "verification_hold":
+        return _command_resolved(self, trace=trace, submission_id=item["operation_id"])
+    if item["item_type"] == "human_review":
+        clean_detail = str(detail or "").strip()
+        if not clean_detail:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "Human Review approval requires Marco's exact decision and reasoning",
+                rule="human_review_detail_required",
+                details={
+                    "review_id": item["review_id"],
+                    "required_input": "Pass --detail with Marco's complete decision and reasoning.",
+                    "inspect_command": f"dish-admin review-inspect {item['review_id']}",
+                },
+            )
+        return _command_record_human_decision(
+            self,
+            trace=trace,
+            submission_id=item["operation_id"],
+            detail=clean_detail,
+            resume_status=item["resume_status"] or "pending-verification",
+            expected_task_gid=item["task_gid"],
+            expected_cycle_id=item["cycle_id"],
+            expected_hold_identity=item["hold_identity"],
+        )
+    row = self.conn.execute(
+        "SELECT * FROM semantic_proposals WHERE proposal_id=?", (item["proposal_id"],)
+    ).fetchone()
+    clean_id = item["proposal_id"]
     live = read_complete_task(
         self.backend, task_gid=row["task_gid"], project_gid=COOKING_PROJECT_GID
     )
@@ -1446,10 +1562,22 @@ def _command_review_reject(
     from .constants import COOKING_PROJECT_GID
     from .task_store import read_complete_task
 
-    clean_id = _clean_required(
-        proposal_id, rule="semantic_proposal_id_required", label="proposal ID"
-    )
-    row = get_semantic_proposal(self.conn, clean_id)
+    clean_id = _clean_required(proposal_id, rule="review_item_id_required", label="review item ID")
+    item = resolve_review_item(self.conn, clean_id)
+    if item["item_type"] != "semantic_proposal":
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "Human Review items require a concrete decision, not proposal rejection",
+            rule="human_review_reject_unsupported",
+            details={
+                "review_id": item["review_id"],
+                "inspect_command": f"dish-admin review-inspect {item['review_id']}",
+            },
+        )
+    clean_id = item["proposal_id"]
+    row = self.conn.execute(
+        "SELECT * FROM semantic_proposals WHERE proposal_id=?", (clean_id,)
+    ).fetchone()
     live = read_complete_task(
         self.backend, task_gid=row["task_gid"], project_gid=COOKING_PROJECT_GID
     )

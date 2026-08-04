@@ -77,23 +77,27 @@ def build_parser() -> JsonArgumentParser:
 
     review_queue = subparsers.add_parser(
         "review-queue",
-        help="list durable semantic proposals waiting for Marco or an applying agent",
+        help="list durable semantic proposals and Human Review items waiting for Marco",
     )
     review_queue.add_argument(
         "--status", choices=("active", "pending", "approved", "all"), default="active"
     )
 
     review_inspect = subparsers.add_parser(
-        "review-inspect", help="show one proposed change bundle, its rationale, and every linked edit"
+        "review-inspect", help="show one review item by UUID or current queue number"
     )
     review_inspect.add_argument("proposal_id")
 
     review_approve = subparsers.add_parser(
-        "review-approve", help="approve one exact linked semantic change bundle atomically"
+        "review-approve", help="approve a semantic bundle or resolve a Human Review item"
     )
     review_approve.add_argument("proposal_id")
     review_approve.add_argument(
         "--reason", default="Approved after reviewing the exact linked change bundle."
+    )
+    review_approve.add_argument(
+        "--detail",
+        help="for Human Review items, Marco's complete decision and reasoning",
     )
 
     review_reject = subparsers.add_parser(

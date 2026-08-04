@@ -22,6 +22,7 @@ def test_attention_lists_dead_released_attempt_without_mutating_workflow():
     assert result["ok"]
     assert result["data"]["read_only"] is True
     assert result["data"]["checked_count"] == 1
+    assert result["data"]["live_inspection_count"] == 1
     assert result["data"]["attention_count"] == 1
     assert result["data"]["category_counts"]["multi_step_safe"] == 1
     item = result["data"]["attention_items"][0]
@@ -51,6 +52,36 @@ def test_attention_treats_an_unexpired_active_actor_lease_as_healthy():
 
     assert result["ok"]
     assert result["data"]["checked_count"] == 1
-    assert result["data"]["healthy_count"] == 1
+    assert result["data"]["live_inspection_count"] == 0
+    assert result["data"]["healthy_count"] == 0
+    assert result["data"]["attention_count"] == 0
+    assert result["data"]["attention_items"] == []
+
+@pytest.mark.smoke
+def test_attention_hides_completed_task_intentionally_moved_out_of_cooking():
+    conn = initialize_database(":memory:")
+    backend = Backend(section="pi")
+    source = _source(conn, backend, kind="planning", run_id="completed-run")
+    LeaseManager(conn).acquire(
+        source["operation_id"], ServicePrincipal("owner", "completed-run")
+    )
+    conn.execute(
+        "UPDATE operations SET status='completed', phase='terminal', completed_at='2026-08-04T00:00:00Z', terminal_outcome='submitted' WHERE operation_id=?",
+        (source["operation_id"],),
+    )
+    original_read = backend.read_task
+
+    def outside_cooking(gid):
+        task = original_read(gid)
+        task["projects"] = [{"gid": "other-project"}]
+        task["memberships"] = []
+        return task
+
+    backend.read_task = outside_cooking
+
+    result = DishAdminApplication(conn, backend=backend).execute("attention")
+
+    assert result["ok"]
+    assert result["data"]["live_inspection_count"] == 1
     assert result["data"]["attention_count"] == 0
     assert result["data"]["attention_items"] == []

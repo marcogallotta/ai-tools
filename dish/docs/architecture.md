@@ -588,8 +588,24 @@ Dish owns canonical Material-change history after the first baseline. A later ca
 or omit prior entries but cannot rewrite them; Dish appends from durable intent and independent
 approval finalizes every pending entry in the reviewed correction chain. Changes to the governed
 Planning facts—including `Dish candidate`, Purpose, Role, Locks, Exemptions, Research emphasis,
-Destination section, and Decisions—require an exact persisted Marco authorization before any
-candidate write. Caller-supplied `model` is display metadata, never authenticated provenance.
+Destination section, and Decisions—require exact persisted Marco authority before any candidate
+write. When one Large correction changes governed facts, Dish stores the complete candidate and all
+linked governed diffs as one immutable semantic proposal rather than asking Marco field by field.
+The proposal is the durable continuation point: queuing it releases proposer lease ownership; Marco
+approves or rejects the exact bundle atomically; approval creates all exact authorizations in one
+transaction; and any fresh eligible run may claim and install only the stored candidate. Rejection
+creates no authorization or content write: it closes the proposing cycle, preserves the unchanged
+live baseline, and opens a fresh Verification cycle so another agent can propose a different route.
+The exact rejected change bundle cannot be queued again without a materially different proposal or
+new evidence. The applying run never inherits the proposer run identity or independent-review
+status. The proposer remains the material editor of an approved candidate, the interrupted cycle
+closes as a Large correction, and Dish opens a fresh Verification cycle for independent review.
+Pending proposals and durable Verification holds safely park their task. A batch agent may continue
+unrelated work only when the response explicitly returns `batch_may_continue=true`, and it keeps a
+run-local set of handled task GIDs so parked tasks are not selected twice. Human Review holds appear
+beside semantic proposals in the review queue; resolving one records Marco's decision but does not
+silently derive or install governed-field changes.
+Caller-supplied `model` is display metadata, never authenticated provenance.
 
 Specialized client-visible rules for material classification, audit normalization, pre-construction
 Research holds, destination repair, and reruns belong in the corresponding sections of

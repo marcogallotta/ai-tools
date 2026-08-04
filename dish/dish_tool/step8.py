@@ -884,13 +884,22 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
             candidate_notes=intended_notes,
             proposal_reason=reason,
             explanation={
-                "problem": reason,
+                "problem": (
+                    "The corrected candidate changes governed facts that Dish will not let an "
+                    "agent install without Marco's approval: "
+                    + ", ".join(change["field"] for change in changes_for_proposal)
+                    + "."
+                ),
                 "cause": reason,
                 "why_not_ordinary_correction": (
-                    "The proposer classified the exact linked candidate change as Large and "
-                    "cannot apply governed facts without Marco's approval."
+                    "This is a Large correction to protected task intent, not a routine wording "
+                    "or execution fix. The agent may propose the exact consequence but may not "
+                    "choose or broaden the governed facts on Marco's behalf."
                 ),
-                "recommended_resolution": "Approve or reject the exact linked semantic proposal.",
+                "recommended_resolution": (
+                    "Review the complete linked candidate, including every contradiction caused "
+                    "by the same interpretation, then approve or reject the bundle as one unit."
+                ),
                 "scope": "This task, this exact baseline, and this exact candidate only.",
                 "command_effect": "Approval authorizes the complete bundle; it does not sign the dish.",
                 "after_success": "Any fresh eligible run may claim and apply the exact stored candidate.",
@@ -1018,7 +1027,20 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
             new_cycle = None
         complete_operation_step(conn, operation_id, route_phase_step)
         record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "quantified_blocker": quantified_blocker, "verification_hold": verification_hold, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
-    return {"operation_id": operation_id, "route": route, "verification_hold": verification_hold, "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"], "task": dataclasses.asdict(confirmed)}
+    return {
+        "operation_id": operation_id,
+        "route": route,
+        "verification_hold": verification_hold,
+        "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"],
+        "task": dataclasses.asdict(confirmed),
+        "parked_task_gid": op["task_gid"],
+        "batch_may_continue": True,
+        "batch_continuation_reason": (
+            "This task is durably parked for Marco review."
+            if verification_hold or route in {"human-review", "evidence"}
+            else "This correction round is complete and a later fresh verifier is required."
+        ),
+    }
 
 
 

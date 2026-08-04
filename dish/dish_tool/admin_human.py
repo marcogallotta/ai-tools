@@ -162,19 +162,25 @@ def render_admin_result(
     command = _clean(result.get("command")) or "command"
     if command in {"review-queue", "review-inspect"} and ok:
         if command == "review-queue":
-            proposals = data.get("proposals") if isinstance(data.get("proposals"), list) else []
-            lines.append(f"Review proposals: {len(proposals)}")
-            if not proposals:
-                lines.append("No semantic proposals match this filter.")
-            for index, proposal in enumerate(proposals, start=1):
+            items = data.get("review_items") if isinstance(data.get("review_items"), list) else data.get("proposals") if isinstance(data.get("proposals"), list) else []
+            lines.append(f"Review items: {len(items)}")
+            if not items:
+                lines.append("No review items match this filter.")
+            for index, proposal in enumerate(items, start=1):
                 if not isinstance(proposal, Mapping):
                     continue
                 lines.append("")
-                proposal_id = _clean(proposal.get("proposal_id")) or "unknown"
+                proposal_id = _clean(proposal.get("review_id") or proposal.get("proposal_id")) or "unknown"
                 status = (_clean(proposal.get("status")) or "unknown").upper()
                 title = _clean(proposal.get("candidate_title")) or _clean(proposal.get("task_gid")) or "Task"
-                lines.append(f"{index}. [{status}] {title}")
-                lines.append(f"   Proposal: {proposal_id}")
+                item_type = _clean(proposal.get("item_type")) or "semantic_proposal"
+                label = {
+                    "semantic_proposal": "CHANGE PROPOSAL",
+                    "human_review": "HUMAN DECISION",
+                    "verification_hold": "VERIFICATION HOLD",
+                }.get(item_type, "REVIEW")
+                lines.append(f"{index}. [{status}] [{label}] {title}")
+                lines.append(f"   Review ID: {proposal_id}")
                 reason = _clean(proposal.get("proposal_reason"))
                 if reason:
                     lines.append(f"   Why: {reason}")
@@ -183,10 +189,22 @@ def render_admin_result(
                     fields = ", ".join(str(item.get("field")) for item in changes if isinstance(item, Mapping))
                     if fields:
                         lines.append(f"   Changes: {fields}")
-                lines.append(f"   Review: dish-admin review-inspect {proposal_id}")
+                lines.append(f"   Inspect: dish-admin review-inspect {proposal_id}")
+                if item_type == "semantic_proposal" and status == "PENDING":
+                    lines.append(f"   Approve: dish-admin review-approve {proposal_id}")
+                    lines.append(f"   Reject: dish-admin review-reject {proposal_id} --reason '<why>'")
+                elif item_type == "human_review":
+                    lines.append(
+                        f"   Decide: dish-admin review-approve {proposal_id} --detail '<Marco decision and reasoning>'"
+                    )
+                elif item_type == "verification_hold":
+                    lines.append(f"   Release: dish-admin review-approve {proposal_id}")
+            if items:
+                lines.append("")
+                lines.append("Queue numbers are accepted only for the current queue view; UUIDs are safer to copy or share.")
         else:
-            proposal = data.get("proposal") if isinstance(data.get("proposal"), Mapping) else {}
-            proposal_id = _clean(proposal.get("proposal_id")) or "unknown"
+            proposal = data.get("review_item") if isinstance(data.get("review_item"), Mapping) else data.get("proposal") if isinstance(data.get("proposal"), Mapping) else {}
+            proposal_id = _clean(proposal.get("review_id") or proposal.get("proposal_id")) or "unknown"
             lines.append(f"Proposal {proposal_id}")
             lines.append(f"Status: {_clean(proposal.get('status')) or 'unknown'}")
             explanation = proposal.get("explanation") if isinstance(proposal.get("explanation"), Mapping) else {}
@@ -215,10 +233,21 @@ def render_admin_result(
                         f"-> {json.dumps(item.get('after'), ensure_ascii=False)}"
                     )
             status = _clean(proposal.get("status"))
-            if status == "pending":
+            item_type = _clean(proposal.get("item_type")) or "semantic_proposal"
+            if status == "pending" and item_type == "semantic_proposal":
                 lines.append("")
                 lines.append(f"Approve: dish-admin review-approve {proposal_id}")
                 lines.append(f"Reject: dish-admin review-reject {proposal_id} --reason '<why>'")
+            elif status == "pending" and item_type == "human_review":
+                lines.append("")
+                command = _clean(data.get("admin_command") or data.get("admin_command_template"))
+                if command:
+                    lines.append("Record decision:")
+                    lines.append(command)
+                lines.append(f"Or run: dish-admin review-approve {proposal_id} --detail '<Marco decision and reasoning>'")
+            elif status == "pending" and item_type == "verification_hold":
+                lines.append("")
+                lines.append(f"Release hold: dish-admin review-approve {proposal_id}")
             elif status == "approved":
                 lines.append("")
                 lines.append(f"Agent next: dish apply-proposal {proposal_id} --agent <agent> --model <model>")
@@ -235,6 +264,7 @@ def render_admin_result(
         )
         lines.append("Dish attention")
         lines.append(f"Workflow records checked: {int(data.get('checked_count') or 0)}")
+        lines.append(f"Live task inspections: {int(data.get('live_inspection_count') or 0)}")
         lines.append(f"Need attention: {int(data.get('attention_count') or 0)}")
         lines.append(
             "Safe multi-step: {multi}; Needs Marco: {marco}; Unsafe: {unsafe}".format(

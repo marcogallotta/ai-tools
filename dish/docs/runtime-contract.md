@@ -479,9 +479,16 @@ title marker that disagrees with `Role`.
 If authority is missing, Dish stores the exact candidate and all governed before/after values once,
 returns `semantic_proposal_queued`, releases proposer lease ownership, and marks the task safely
 parked. The proposing agent may continue unrelated batch work when `batch_may_continue=true`; it must
-not keep mutating the parked operation. Marco reviews pending items with `dish-admin review-queue`
-and `dish-admin review-inspect PROPOSAL_ID`, then uses `review-approve` or `review-reject`. Approval
-is atomic across the complete displayed bundle and does not edit, approve, or submit the task.
+not keep mutating the parked operation. The same flag is returned after a durable Human Review,
+Evidence, or completed Large-correction handoff. In an explicit batch, the agent tracks handled task
+GIDs for that run and skips them if section pagination returns them again.
+
+`dish-admin review-queue` aggregates pending semantic proposals and Verification Human Review holds.
+`review-inspect` accepts either the durable UUID or the current queue number. Semantic bundles use
+`review-approve`/`review-reject`; Human Review items require Marco's exact decision through
+`review-approve ... --detail`. Approval of a semantic bundle is atomic across the complete displayed
+bundle and does not edit, approve, or submit the task. Resolving a Human Review item records the
+decision and releases its hold; it still does not edit or authorize governed fields.
 
 Approved proposals are detached from the proposing run. `dish proposals --agent AGENT` lists
 claimable approved bundles. A fresh invocation runs `dish apply-proposal PROPOSAL_ID --agent AGENT

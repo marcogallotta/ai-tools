@@ -124,11 +124,17 @@ Add an operating instruction with all of these requirements:
   fields. When Dish returns `semantic_proposal_queued`, the exact candidate and every linked governed
   change are durably parked for Marco review. Relay the rationale, proposal ID, and exact
   `dish-admin review-inspect` command. Do not reconstruct field commands. If
-  `batch_may_continue=true`, continue unrelated queue tasks. In a later run, use `dish proposals` and
+  `batch_may_continue=true`, continue unrelated queue tasks. A Human Review or Evidence hold with
+  this flag is also safely parked; Human Review appears in `dish-admin review-queue`. In a later run,
+  use `dish proposals` and
   `dish apply-proposal` to install an approved bundle exactly as stored; never edit it or reuse the
   proposer run ID. Application opens a fresh Verification cycle and does not sign or submit. If
   Marco rejects a proposal, do not resubmit the same semantic bundle; a fresh Verification round may
   propose a materially different correction that addresses his rejection.
+- In an explicitly requested batch, keep a set of task GIDs already handled in this run and skip
+  them if section pagination returns them again. A parked proposal, Human Review/Evidence hold, or
+  completed Large correction is not a batch stop when Dish returns `batch_may_continue=true`.
+  Continue until no unprocessed eligible task remains or Dish reports an unsafe/tooling state.
 - After the third consecutive non-approved Large Verification round, `verification-hold` stops the
   flow; tell Marco to run `dish-admin resolved <operation-id>`, which releases the unchanged
   corrected candidate into a fresh Verification round without approving or signing it.

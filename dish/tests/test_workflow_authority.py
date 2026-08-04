@@ -212,11 +212,11 @@ def test_post_planning_priors_change_requires_exact_marco_authorization(tmp_path
         "scope": "this task, operation, and exact proposed values",
         "modifies_task": False,
         "after_success": "retry the same unchanged candidate",
+        "proposal_reason": None,
+        "linked_changes": [],
     }
-    assert "Before the command, explain plainly" in error["directive"]
-    assert error["directive"].index("Before the command") < error["directive"].index(
-        "dish-admin authorize-governed-change"
-    )
+    assert "Before showing any command, explain" in error["directive"]
+    assert "dish-admin authorize-governed-change" not in error["directive"]
 
     admin = DishAdminApplication(
         app.conn, backend=backend, release_loader=lambda: app._load_release("verification")

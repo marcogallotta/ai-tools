@@ -46,7 +46,7 @@ def test_large_cycle_freezes_current_release_and_preserves_all_run_lineage(tmp_p
     assert barred["code"] == "AGENT_MISMATCH"
 
 
-def test_governed_lock_change_requires_human_authorization(tmp_path):
+def test_governed_lock_change_queues_semantic_proposal(tmp_path):
     app, _, operation_id, _ = make_app(tmp_path)
     review = app.execute("start", agent="codex", task_gid="t", kind="verification", run_id="review-run", independence_attestation="independent")
     assert review["ok"]
@@ -59,7 +59,9 @@ def test_governed_lock_change_requires_human_authorization(tmp_path):
         reason="change lock", file_path=str(candidate), run_id="review-run",
     )
     assert result["code"] == "VALIDATION_FAILED"
-    assert result["errors"][0]["rule"] == "governed_change_unauthorized"
+    assert result["errors"][0]["rule"] == "semantic_proposal_queued"
+    assert result["data"]["proposal_queued"] is True
+    assert result["data"]["batch_may_continue"] is True
 
 
 def test_evidence_hold_has_executable_resume_to_verification(tmp_path):

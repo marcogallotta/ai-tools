@@ -52,6 +52,7 @@ from dish_tool.task_store import (
 from dish_tool.releases import resolve_release
 from dish_tool.results import error_envelope, result_envelope
 from dish_tool.human_actions import PromptField, exact_action, relay_text, template_action
+from dish_tool.review_queue import review_item_operation_id
 from dish_tool.validation_scope import scope_for_command
 from dish_tool.transactions import immediate_transaction
 
@@ -101,7 +102,7 @@ _OPERATION_ADMIN_COMMANDS = {
     "review-approve",
     "review-reject",
 }
-_LEASE_FREE_ADMIN_COMMANDS = {"attention", "inspect", "holds", "authorize-governed-change", "abandon-operation", "reconcile-abandonment", "review-queue", "review-inspect", "review-approve", "review-reject"}
+_LEASE_FREE_ADMIN_COMMANDS = {"attention", "inspect", "holds", "authorize-governed-change", "abandon-operation", "reconcile-abandonment", "review-queue", "review-inspect"}
 
 LOG = logging.getLogger("dish.service.application")
 
@@ -3201,12 +3202,9 @@ class DishService:
         if command in {"review-approve", "review-reject"}:
             proposal_id = str(prepared.get("proposal_id") or "").strip()
             if proposal_id:
-                proposal = conn.execute(
-                    "SELECT operation_id FROM semantic_proposals WHERE proposal_id=?",
-                    (proposal_id,),
-                ).fetchone()
-                if proposal is not None:
-                    requested_operation_id = str(proposal["operation_id"])
+                review_operation_id = review_item_operation_id(conn, proposal_id)
+                if review_operation_id is not None:
+                    requested_operation_id = review_operation_id
         supplied_run_id = str(prepared.get("run_id") or "").strip()
         if command in _RUN_ID_ADMIN_COMMANDS and not supplied_run_id:
             prepared["run_id"] = principal.run_id
