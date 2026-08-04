@@ -763,38 +763,69 @@ class ReleaseCandidateService(
             .order_by(tx.ProjectionReconciliationRun.started_at.desc())
             .limit(1)
         )
-        active_mapping_count = sum(
-            self._count(
-                mapping_model,
-                mapping_model.generation_id == candidate.generation_id,
-                mapping_model.projection_epoch_id == candidate.projection_epoch_id,
-                mapping_model.state == "active",
-            )
-            for mapping_model in (
-                tx.ProjectProjectionMapping,
-                tx.SectionProjectionMapping,
-                tx.TaskProjectionMapping,
-            )
+        mapping_specs = (
+            ("project", tx.ProjectProjectionMapping),
+            ("section", tx.SectionProjectionMapping),
+            ("task", tx.TaskProjectionMapping),
         )
-        reconciled_mapping_count = 0
-        if latest_reconciliation is not None:
-            reconciled_mapping_count = int(
-                self.session.scalar(
-                    select(func.count(func.distinct(tx.ProjectionReconciliationItem.mapping_id))).where(
-                        tx.ProjectionReconciliationItem.reconciliation_run_id
-                        == latest_reconciliation.reconciliation_run_id,
-                        tx.ProjectionReconciliationItem.mapping_id.is_not(None),
-                        tx.ProjectionReconciliationItem.outcome.in_(("matched", "reprojected")),
+        required_mapping_ids = {
+            entity_kind: set(
+                self.session.scalars(
+                    select(mapping_model.mapping_id).where(
+                        mapping_model.generation_id == candidate.generation_id,
+                        mapping_model.projection_epoch_id == candidate.projection_epoch_id,
+                        mapping_model.state == "active",
                     )
                 )
-                or 0
             )
+            for entity_kind, mapping_model in mapping_specs
+        }
+        required_mapping_membership = {
+            (entity_kind, mapping_id)
+            for entity_kind, mapping_ids in required_mapping_ids.items()
+            for mapping_id in mapping_ids
+        }
+        reconciliation_rows: list[tuple[str, uuid.UUID | None, str]] = []
+        if latest_reconciliation is not None:
+            reconciliation_rows = list(
+                self.session.execute(
+                    select(
+                        tx.ProjectionReconciliationItem.entity_kind,
+                        tx.ProjectionReconciliationItem.mapping_id,
+                        tx.ProjectionReconciliationItem.outcome,
+                    ).where(
+                        tx.ProjectionReconciliationItem.reconciliation_run_id
+                        == latest_reconciliation.reconciliation_run_id
+                    )
+                ).all()
+            )
+        reconciled_mapping_membership = {
+            (entity_kind, mapping_id)
+            for entity_kind, mapping_id, outcome in reconciliation_rows
+            if mapping_id is not None and outcome in {"matched", "reprojected"}
+        }
+        invalid_reconciliation_rows = [
+            (entity_kind, mapping_id, outcome)
+            for entity_kind, mapping_id, outcome in reconciliation_rows
+            if mapping_id is None
+            or outcome not in {"matched", "reprojected"}
+            or (entity_kind, mapping_id) not in required_mapping_membership
+        ]
+        missing_mapping_membership = required_mapping_membership - reconciled_mapping_membership
+        extra_mapping_membership = reconciled_mapping_membership - required_mapping_membership
+        active_mapping_count = len(required_mapping_membership)
+        reconciled_mapping_count = len(reconciled_mapping_membership)
         reconciliation_ok = (
-            latest_reconciliation is not None
+            active_mapping_count > 0
+            and latest_reconciliation is not None
             and latest_reconciliation.status == "complete"
             and latest_reconciliation.processed_items == latest_reconciliation.expected_items
-            and latest_reconciliation.expected_items >= active_mapping_count
-            and reconciled_mapping_count == active_mapping_count
+            and latest_reconciliation.expected_items == active_mapping_count
+            and len(reconciliation_rows) == active_mapping_count
+            and not invalid_reconciliation_rows
+            and not missing_mapping_membership
+            and not extra_mapping_membership
+            and reconciled_mapping_membership == required_mapping_membership
         )
         add(
             "projection_ready",
@@ -802,6 +833,27 @@ class ReleaseCandidateService(
             **projection_counts,
             active_mappings=active_mapping_count,
             reconciled_mappings=reconciled_mapping_count,
+            required_project_mapping_ids=sorted(
+                str(value) for value in required_mapping_ids["project"]
+            ),
+            required_section_mapping_ids=sorted(
+                str(value) for value in required_mapping_ids["section"]
+            ),
+            required_task_mapping_ids=sorted(
+                str(value) for value in required_mapping_ids["task"]
+            ),
+            missing_mapping_membership=sorted(
+                f"{kind}:{mapping_id}" for kind, mapping_id in missing_mapping_membership
+            ),
+            extra_mapping_membership=sorted(
+                f"{kind}:{mapping_id}" for kind, mapping_id in extra_mapping_membership
+            ),
+            invalid_reconciliation_rows=len(invalid_reconciliation_rows),
+            active_generation_id=str(candidate.generation_id),
+            active_registry_version_id=None
+            if registry is None
+            else str(registry.registry_version_id),
+            projection_epoch_id=str(candidate.projection_epoch_id),
             reconciliation_expected=None
             if latest_reconciliation is None
             else latest_reconciliation.expected_items,
