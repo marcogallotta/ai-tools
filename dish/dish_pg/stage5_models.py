@@ -520,8 +520,16 @@ class ProjectionAttempt(Base):
         Uuid, ForeignKey("projection_outbox_events.projection_event_id", ondelete="RESTRICT"), nullable=False
     )
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    attempt_kind: Mapped[str] = mapped_column(String(16), nullable=False, default="dispatch")
+    predecessor_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("projection_attempts.attempt_id", ondelete="RESTRICT")
+    )
     worker_id: Mapped[str] = mapped_column(String(256), nullable=False)
-    request_identity: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
+    request_identity: Mapped[str] = mapped_column(String(256), nullable=False)
+    dispatch_identity: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    retry_generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    dispatch_claim_token: Mapped[uuid.UUID | None] = mapped_column(Uuid)
+    dispatch_claim_revision: Mapped[int | None] = mapped_column(BigInteger)
     intended_external_id: Mapped[str | None] = mapped_column(String(256))
     request_payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     request_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -530,8 +538,22 @@ class ProjectionAttempt(Base):
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
-        CheckConstraint("attempt_number > 0", name="positive_attempt"),
-        CheckConstraint("length(request_sha256) = 64", name="request_hash_length"),
+        CheckConstraint("attempt_number > 0 AND retry_generation > 0", name="positive_attempt"),
+        CheckConstraint("attempt_kind IN ('dispatch','recovery')", name="kind_allowed"),
+        CheckConstraint(
+            "(attempt_kind = 'dispatch' AND predecessor_attempt_id IS NULL) OR "
+            "(attempt_kind = 'recovery' AND predecessor_attempt_id IS NOT NULL)",
+            name="predecessor_consistent",
+        ),
+        CheckConstraint(
+            "length(request_sha256) = 64 AND length(dispatch_identity) = 64",
+            name="request_hash_length",
+        ),
+        CheckConstraint(
+            "(dispatch_claim_token IS NULL AND dispatch_claim_revision IS NULL) OR "
+            "(dispatch_claim_token IS NOT NULL AND dispatch_claim_revision > 0)",
+            name="dispatch_claim_consistent",
+        ),
         CheckConstraint(
             "state IN ('dispatched','confirmed','not_applied','uncertain','blocked')",
             name="state_allowed",

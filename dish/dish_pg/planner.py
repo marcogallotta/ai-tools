@@ -78,6 +78,7 @@ class EffectObservation:
     observed_identity: str | None
     observed_applied: bool | None
     reread_complete: bool
+    externally_observed: bool
     evidence: Mapping[str, Any]
 
 
@@ -237,7 +238,11 @@ def adjudicate_effect(
 
     if observation.intended_identity != intended_identity:
         raise PlanningError("effect observation does not match intended identity")
-    if not observation.reread_complete or observation.observed_applied is None:
+    if (
+        not observation.externally_observed
+        or not observation.reread_complete
+        or observation.observed_applied is None
+    ):
         return EffectAdjudication("uncertain", False, dict(observation.evidence))
     if observation.observed_applied and observation.observed_identity == intended_identity:
         return EffectAdjudication("confirmed", False, dict(observation.evidence))

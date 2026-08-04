@@ -43,7 +43,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0017_abandonment_terminal_state"
+ALEMBIC_HEAD = "0018_projection_attempt_lifecycle"
 
 
 class ReleaseCandidateService(

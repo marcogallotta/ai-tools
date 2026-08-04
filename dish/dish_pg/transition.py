@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Sequence
 
 from sqlalchemy import func, select, update
@@ -31,14 +31,34 @@ class ProjectionContentionLost(TransitionAuthorityError):
 
 
 @dataclass(frozen=True)
+class ProjectionAttemptSnapshot:
+    attempt_id: uuid.UUID
+    attempt_number: int
+    attempt_kind: str
+    request_identity: str
+    dispatch_identity: str
+    external_dispatch_identity: str
+    request_payload: Mapping[str, Any]
+    intended_external_id: str | None
+    retry_generation: int
+
+
+@dataclass(frozen=True)
 class ProjectionClaim:
     event_id: uuid.UUID
     claim_token: uuid.UUID
+    claim_revision: int
+    claim_expires_at: datetime
     task_id: uuid.UUID
     aggregate_sequence: int
     event_type: str
     payload: Mapping[str, Any]
     idempotency_key: str
+    recovery_attempt: ProjectionAttemptSnapshot | None = None
+
+    @property
+    def recovery_required(self) -> bool:
+        return self.recovery_attempt is not None
 
 
 class SourceImportService:
@@ -1020,6 +1040,140 @@ class ProjectionService:
         self.session.flush()
         return project_count, section_count, task_count
 
+    def _lock_event(self, event_id: uuid.UUID) -> tx.ProjectionOutboxEvent:
+        statement = select(tx.ProjectionOutboxEvent).where(
+            tx.ProjectionOutboxEvent.projection_event_id == event_id
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update()
+        event = self.session.scalar(statement.execution_options(populate_existing=True))
+        if event is None:
+            raise TransitionAuthorityError("unknown projection event")
+        return event
+
+    @staticmethod
+    def _utc_comparable(value: datetime) -> datetime:
+        # SQLite returns timezone-aware columns as naive values. Public callers
+        # provide aware timestamps; normalize only for durable lease comparison.
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @classmethod
+    def _assert_worker_claim(
+        cls,
+        *,
+        event: tx.ProjectionOutboxEvent,
+        claim_token: uuid.UUID,
+        claim_revision: int,
+        worker_id: str,
+        at: datetime,
+    ) -> None:
+        if (
+            event.state != "claimed"
+            or event.claim_token != claim_token
+            or event.claim_owner != worker_id
+            or event.outbox_revision != claim_revision
+            or event.claim_expires_at is None
+            or cls._utc_comparable(event.claim_expires_at) <= cls._utc_comparable(at)
+        ):
+            raise TransitionAuthorityError("projection settlement claim is stale or expired")
+
+    def _terminalize_unobserved_attempt(
+        self,
+        *,
+        attempt: tx.ProjectionAttempt,
+        event: tx.ProjectionOutboxEvent,
+        observed_at: datetime,
+        reason: str,
+    ) -> None:
+        if attempt.state != "dispatched":
+            raise TransitionAuthorityError("only an active attempt can be terminalized")
+        evidence = {
+            "external_observation": {
+                "source": "unavailable",
+                "operation": event.event_type,
+                "reason": "claim_expired_before_settlement",
+            },
+            "prior_dispatch_identity": attempt.dispatch_identity,
+        }
+        observation = tx.ProjectionObservation(
+            observation_id=self.uuid_factory(),
+            attempt_id=attempt.attempt_id,
+            observation_sequence=1,
+            observation_kind="preflight",
+            observed_applied=None,
+            observed_identity=None,
+            reread_complete=False,
+            evidence=evidence,
+            evidence_sha256=sha256_json(evidence),
+            observed_at=observed_at,
+        )
+        self.session.add(observation)
+        self.session.flush()
+        self.session.add(
+            tx.ProjectionAdjudication(
+                adjudication_id=self.uuid_factory(),
+                attempt_id=attempt.attempt_id,
+                observation_id=observation.observation_id,
+                adjudication_sequence=1,
+                outcome="uncertain",
+                decided_by="automatic",
+                decision_reason=reason,
+                decided_at=observed_at,
+            )
+        )
+        attempt.state = "uncertain"
+        attempt.terminal_at = observed_at
+        self.session.flush()
+
+    @staticmethod
+    def _is_independent_external_observation(
+        *,
+        event: tx.ProjectionOutboxEvent,
+        attempt: tx.ProjectionAttempt,
+        observation_kind: str,
+        observed_applied: bool | None,
+        observed_identity: str | None,
+        evidence: Mapping[str, Any],
+    ) -> bool:
+        fact = evidence.get("external_observation")
+        if not isinstance(fact, Mapping) or fact.get("operation") != event.event_type:
+            return False
+        source = fact.get("source")
+        if event.event_type == "create_task":
+            return (
+                observation_kind == "marker_search"
+                and source == "external_marker_search"
+                and fact.get("correlation_marker")
+                == event.intent_payload.get("correlation_marker")
+            )
+        if observation_kind not in {"reread", "drift_scan"}:
+            return False
+        if source not in {"external_reread", "external_drift_scan"}:
+            return False
+        observed_external_id = str(fact.get("observed_external_id") or "").strip()
+        if not observed_external_id:
+            return False
+        if (
+            attempt.intended_external_id is not None
+            and observed_external_id != attempt.intended_external_id
+        ):
+            return False
+        if observed_applied is False:
+            return fact.get("observed_absent") is True
+        if observed_applied is not True or not str(observed_identity or "").strip():
+            return False
+        identity_field = {
+            "update_task_document": "observed_document_identity",
+            "move_task": "observed_membership_identity",
+            "set_completion": "observed_completion_identity",
+        }.get(event.event_type)
+        return (
+            identity_field is not None
+            and fact.get(identity_field) == observed_identity
+        )
+
     def claim_next(
         self,
         *,
@@ -1070,33 +1224,73 @@ class ProjectionService:
                 continue
             token = self.uuid_factory()
             revision, prior_state = event.outbox_revision, event.state
+            claim_expiry = now + ttl
             result = self.session.execute(
                 update(tx.ProjectionOutboxEvent)
                 .where(
                     tx.ProjectionOutboxEvent.projection_event_id == event.projection_event_id,
                     tx.ProjectionOutboxEvent.outbox_revision == revision,
                     tx.ProjectionOutboxEvent.state == prior_state,
+                    (tx.ProjectionOutboxEvent.claim_expires_at <= now)
+                    if prior_state == "claimed"
+                    else tx.ProjectionOutboxEvent.claim_expires_at.is_(None),
                 )
                 .values(
                     state="claimed",
                     claim_owner=worker_id,
                     claim_token=token,
-                    claim_expires_at=now + ttl,
+                    claim_expires_at=claim_expiry,
                     outbox_revision=revision + 1,
                     terminal_at=None,
                 )
+                .execution_options(synchronize_session=False)
             )
-            if result.rowcount == 1:
-                self.session.flush()
-                return ProjectionClaim(
-                    event.projection_event_id,
-                    token,
-                    event.task_id,
-                    event.aggregate_sequence,
-                    event.event_type,
-                    dict(event.intent_payload),
-                    event.idempotency_key,
+            if result.rowcount != 1:
+                continue
+            self.session.flush()
+            latest = self.session.scalar(
+                select(tx.ProjectionAttempt)
+                .where(
+                    tx.ProjectionAttempt.projection_event_id == event.projection_event_id
                 )
+                .order_by(tx.ProjectionAttempt.attempt_number.desc())
+                .limit(1)
+            )
+            recovery = None
+            if latest is not None and latest.state == "dispatched":
+                external_dispatch_identity = latest.dispatch_identity
+                if latest.attempt_kind == "recovery":
+                    predecessor = self.session.get(
+                        tx.ProjectionAttempt, latest.predecessor_attempt_id
+                    )
+                    if predecessor is None or predecessor.attempt_kind != "dispatch":
+                        raise TransitionAuthorityError(
+                            "active recovery attempt lacks its immutable dispatch predecessor"
+                        )
+                    external_dispatch_identity = predecessor.dispatch_identity
+                recovery = ProjectionAttemptSnapshot(
+                    attempt_id=latest.attempt_id,
+                    attempt_number=latest.attempt_number,
+                    attempt_kind=latest.attempt_kind,
+                    request_identity=latest.request_identity,
+                    dispatch_identity=latest.dispatch_identity,
+                    external_dispatch_identity=external_dispatch_identity,
+                    request_payload=dict(latest.request_payload),
+                    intended_external_id=latest.intended_external_id,
+                    retry_generation=latest.retry_generation,
+                )
+            return ProjectionClaim(
+                event.projection_event_id,
+                token,
+                revision + 1,
+                claim_expiry,
+                event.task_id,
+                event.aggregate_sequence,
+                event.event_type,
+                dict(event.intent_payload),
+                event.idempotency_key,
+                recovery,
+            )
         return None
 
     def begin_attempt(
@@ -1104,20 +1298,21 @@ class ProjectionService:
         *,
         event_id: uuid.UUID,
         claim_token: uuid.UUID,
+        claim_revision: int,
         worker_id: str,
         request_identity: str,
         request_payload: Mapping[str, Any],
         intended_external_id: str | None,
         started_at: datetime,
     ) -> tx.ProjectionAttempt:
-        event = self.session.get(tx.ProjectionOutboxEvent, event_id)
-        if (
-            event is None
-            or event.state != "claimed"
-            or event.claim_token != claim_token
-            or event.claim_owner != worker_id
-        ):
-            raise TransitionAuthorityError("projection claim does not match")
+        event = self._lock_event(event_id)
+        self._assert_worker_claim(
+            event=event,
+            claim_token=claim_token,
+            claim_revision=claim_revision,
+            worker_id=worker_id,
+            at=started_at,
+        )
         epoch = self.session.get(tx.ProjectionEpoch, event.projection_epoch_id)
         generation = self.session.get(models.AuthorityGeneration, event.generation_id)
         if (
@@ -1127,31 +1322,120 @@ class ProjectionService:
             or generation.status != "active"
         ):
             raise TransitionAuthorityError("stale projection epoch cannot dispatch an attempt")
-        existing = self.session.scalar(
-            select(tx.ProjectionAttempt).where(tx.ProjectionAttempt.request_identity == request_identity)
+        latest = self.session.scalar(
+            select(tx.ProjectionAttempt)
+            .where(tx.ProjectionAttempt.projection_event_id == event_id)
+            .order_by(tx.ProjectionAttempt.attempt_number.desc())
+            .limit(1)
         )
-        payload = dict(request_payload)
-        if existing is not None:
-            if existing.projection_event_id != event_id or existing.request_sha256 != sha256_json(payload):
-                raise TransitionAuthorityError("projection request identity conflict")
-            return existing
-        number = int(
-            self.session.scalar(
-                select(func.coalesce(func.max(tx.ProjectionAttempt.attempt_number), 0)).where(
-                    tx.ProjectionAttempt.projection_event_id == event_id
-                )
+        if latest is not None and latest.state == "dispatched":
+            raise TransitionAuthorityError(
+                "projection recovery observation is required before another dispatch"
             )
-            or 0
-        ) + 1
+        if latest is not None and latest.state == "confirmed":
+            raise TransitionAuthorityError("confirmed projection event cannot dispatch again")
+        payload = dict(request_payload)
+        number = (latest.attempt_number if latest is not None else 0) + 1
+        retry_generation = (latest.retry_generation if latest is not None else 0) + 1
+        dispatch_identity = sha256_json(
+            {
+                "projection_event_id": str(event_id),
+                "request_identity": request_identity,
+                "retry_generation": retry_generation,
+            }
+        )
         row = tx.ProjectionAttempt(
             attempt_id=self.uuid_factory(),
             projection_event_id=event_id,
             attempt_number=number,
+            attempt_kind="dispatch",
+            predecessor_attempt_id=None,
             worker_id=worker_id,
             request_identity=request_identity,
+            dispatch_identity=dispatch_identity,
+            retry_generation=retry_generation,
+            dispatch_claim_token=claim_token,
+            dispatch_claim_revision=claim_revision,
             intended_external_id=intended_external_id,
             request_payload=payload,
             request_sha256=sha256_json(payload),
+            state="dispatched",
+            started_at=started_at,
+            terminal_at=None,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def begin_recovery_attempt(
+        self,
+        *,
+        event_id: uuid.UUID,
+        claim_token: uuid.UUID,
+        claim_revision: int,
+        worker_id: str,
+        prior_attempt_id: uuid.UUID,
+        started_at: datetime,
+    ) -> tx.ProjectionAttempt:
+        event = self._lock_event(event_id)
+        self._assert_worker_claim(
+            event=event,
+            claim_token=claim_token,
+            claim_revision=claim_revision,
+            worker_id=worker_id,
+            at=started_at,
+        )
+        prior = self.session.get(tx.ProjectionAttempt, prior_attempt_id)
+        if (
+            prior is None
+            or prior.projection_event_id != event_id
+            or prior.state != "dispatched"
+        ):
+            raise TransitionAuthorityError("projection recovery requires the exact active attempt")
+        dispatch = prior
+        if prior.attempt_kind == "recovery":
+            dispatch = self.session.get(tx.ProjectionAttempt, prior.predecessor_attempt_id)
+            if dispatch is None or dispatch.attempt_kind != "dispatch":
+                raise TransitionAuthorityError(
+                    "active recovery attempt lacks its immutable dispatch predecessor"
+                )
+        self._terminalize_unobserved_attempt(
+            attempt=prior,
+            event=event,
+            observed_at=started_at,
+            reason=(
+                "dispatch ownership expired before settlement; external outcome requires observation"
+                if prior.attempt_kind == "dispatch"
+                else "recovery ownership expired before settlement; external outcome remains unresolved"
+            ),
+        )
+        number = prior.attempt_number + 1
+        dispatch_identity = sha256_json(
+            {
+                "projection_event_id": str(event_id),
+                "predecessor_attempt_id": str(dispatch.attempt_id),
+                "superseded_recovery_attempt_id": (
+                    str(prior.attempt_id) if prior.attempt_kind == "recovery" else None
+                ),
+                "claim_revision": claim_revision,
+                "attempt_kind": "recovery",
+            }
+        )
+        row = tx.ProjectionAttempt(
+            attempt_id=self.uuid_factory(),
+            projection_event_id=event_id,
+            attempt_number=number,
+            attempt_kind="recovery",
+            predecessor_attempt_id=dispatch.attempt_id,
+            worker_id=worker_id,
+            request_identity=dispatch.request_identity,
+            dispatch_identity=dispatch_identity,
+            retry_generation=dispatch.retry_generation,
+            dispatch_claim_token=None,
+            dispatch_claim_revision=None,
+            intended_external_id=dispatch.intended_external_id,
+            request_payload=dict(dispatch.request_payload),
+            request_sha256=dispatch.request_sha256,
             state="dispatched",
             started_at=started_at,
             terminal_at=None,
@@ -1172,13 +1456,59 @@ class ProjectionService:
         decided_by: str,
         decision_reason: str,
         observed_at: datetime,
+        claim_token: uuid.UUID | None = None,
+        claim_revision: int | None = None,
+        worker_id: str | None = None,
     ) -> tx.ProjectionAdjudication:
         attempt = self.session.get(tx.ProjectionAttempt, attempt_id)
-        if attempt is None or attempt.state not in {"dispatched", "uncertain", "blocked"}:
-            raise TransitionAuthorityError("projection attempt is not unresolved")
-        event = self.session.get(tx.ProjectionOutboxEvent, attempt.projection_event_id)
-        if event is None or event.state not in {"claimed", "uncertain", "blocked"}:
-            raise TransitionAuthorityError("projection event is not unresolved")
+        if attempt is None or attempt.state != "dispatched":
+            raise TransitionAuthorityError("projection attempt is not active")
+        event = self._lock_event(attempt.projection_event_id)
+        if decided_by == "automatic":
+            if claim_token is None or claim_revision is None or worker_id is None:
+                raise TransitionAuthorityError("automatic settlement requires current claim authority")
+            self._assert_worker_claim(
+                event=event,
+                claim_token=claim_token,
+                claim_revision=claim_revision,
+                worker_id=worker_id,
+                at=observed_at,
+            )
+            if attempt.worker_id != worker_id:
+                raise TransitionAuthorityError(
+                    "projection attempt settlement belongs to a different claim owner"
+                )
+            if attempt.attempt_kind == "dispatch" and (
+                attempt.dispatch_claim_token != claim_token
+                or attempt.dispatch_claim_revision != claim_revision
+            ):
+                raise TransitionAuthorityError(
+                    "dispatch attempt settlement requires its original durable claim"
+                )
+        elif decided_by == "marco":
+            if (
+                event.state not in {"uncertain", "blocked"}
+                or event.claim_owner is not None
+                or event.claim_token is not None
+            ):
+                raise TransitionAuthorityError(
+                    "Marco recovery requires an unclaimed uncertain or blocked event"
+                )
+        else:
+            raise TransitionAuthorityError("unknown projection settlement authority")
+
+        evidence_payload = dict(evidence)
+        externally_observed = self._is_independent_external_observation(
+            event=event,
+            attempt=attempt,
+            observation_kind=observation_kind,
+            observed_applied=observed_applied,
+            observed_identity=observed_identity,
+            evidence=evidence_payload,
+        )
+        intended_identity = (
+            event.idempotency_key if event.event_type == "create_task" else attempt.request_sha256
+        )
         observation_sequence = int(
             self.session.scalar(
                 select(func.coalesce(func.max(tx.ProjectionObservation.observation_sequence), 0)).where(
@@ -1203,23 +1533,28 @@ class ProjectionService:
             observed_applied=observed_applied,
             observed_identity=observed_identity,
             reread_complete=reread_complete,
-            evidence=dict(evidence),
-            evidence_sha256=sha256_json(dict(evidence)),
+            evidence=evidence_payload,
+            evidence_sha256=sha256_json(evidence_payload),
             observed_at=observed_at,
         )
         self.session.add(observation)
         self.session.flush()
         decision = adjudicate_effect(
-            intended_identity=event.idempotency_key,
+            intended_identity=intended_identity,
             observation=EffectObservation(
-                intended_identity=event.idempotency_key,
+                intended_identity=intended_identity,
                 observed_identity=observed_identity,
                 observed_applied=observed_applied,
                 reread_complete=reread_complete,
-                evidence=dict(evidence),
+                externally_observed=externally_observed,
+                evidence=evidence_payload,
             ),
         )
         outcome = decision.outcome
+        if event.event_type != "create_task" and not externally_observed:
+            decision_reason = (
+                "non-create settlement lacks independent operation-specific external observation"
+            )
         if event.event_type == "create_task":
             correlation = self.session.scalar(
                 select(tx.ProjectionCreateCorrelation).where(
@@ -1278,8 +1613,18 @@ class ProjectionService:
         external_matches: Sequence[str],
         observed_at: datetime,
         evidence: Mapping[str, Any],
+        claim_token: uuid.UUID,
+        claim_revision: int,
+        worker_id: str,
     ) -> tx.ProjectionCreateCorrelation:
-        event = self.session.get(tx.ProjectionOutboxEvent, event_id)
+        event = self._lock_event(event_id)
+        self._assert_worker_claim(
+            event=event,
+            claim_token=claim_token,
+            claim_revision=claim_revision,
+            worker_id=worker_id,
+            at=observed_at,
+        )
         correlation = self.session.scalar(
             select(tx.ProjectionCreateCorrelation).where(
                 tx.ProjectionCreateCorrelation.projection_event_id == event_id
@@ -1296,7 +1641,7 @@ class ProjectionService:
         if (
             attempt is None
             or attempt.projection_event_id != event_id
-            or attempt.state not in {"dispatched", "uncertain", "blocked"}
+            or attempt.state != "dispatched"
         ):
             raise TransitionAuthorityError(
                 "create correlation requires the exact unresolved projection attempt"
@@ -1313,14 +1658,6 @@ class ProjectionService:
             correlation.state = "ambiguous"
             correlation.matched_external_id = None
             correlation.mapping_id = None
-            event.state = "blocked"
-            event.claim_owner = None
-            event.claim_token = None
-            event.claim_expires_at = None
-            event.outbox_revision += 1
-            event.terminal_at = observed_at
-            attempt.state = "blocked"
-            attempt.terminal_at = observed_at
         else:
             external_id = matches[0]
             if not external_id.isdigit() or external_id.startswith("0"):
@@ -1371,19 +1708,61 @@ class ProjectionService:
     ) -> Mapping[str, Any]:
         if route not in {"recover", "repair-destination"}:
             raise TransitionAuthorityError("unknown projection recovery route")
-        attempt = self.session.get(tx.ProjectionAttempt, attempt_id)
-        if attempt is None or attempt.state not in {"dispatched", "uncertain", "blocked"}:
-            raise TransitionAuthorityError("recover targets one exact unresolved projection attempt")
-        event = self.session.get(tx.ProjectionOutboxEvent, attempt.projection_event_id)
-        if event is None or event.state not in {"claimed", "uncertain", "blocked"}:
-            raise TransitionAuthorityError("recover target event is not unresolved")
+        prior = self.session.get(tx.ProjectionAttempt, attempt_id)
+        if prior is None or prior.state not in {"uncertain", "blocked"}:
+            raise TransitionAuthorityError(
+                "recover targets one exact terminal uncertain or blocked attempt"
+            )
+        event = self._lock_event(prior.projection_event_id)
+        if (
+            event.state not in {"uncertain", "blocked"}
+            or event.claim_owner is not None
+            or event.claim_token is not None
+        ):
+            raise TransitionAuthorityError("recover target event is not available for Marco recovery")
         if expected_task_id is not None and event.task_id != expected_task_id:
             raise TransitionAuthorityError("projection attempt does not belong to the command task")
         observed_applied = arguments.get("observed_applied")
         if observed_applied not in {True, False, None}:
             raise TransitionAuthorityError("observed_applied must be true, false, or null")
+        latest_number = int(
+            self.session.scalar(
+                select(func.coalesce(func.max(tx.ProjectionAttempt.attempt_number), 0)).where(
+                    tx.ProjectionAttempt.projection_event_id == event.projection_event_id
+                )
+            )
+            or 0
+        )
+        recovery = tx.ProjectionAttempt(
+            attempt_id=self.uuid_factory(),
+            projection_event_id=event.projection_event_id,
+            attempt_number=latest_number + 1,
+            attempt_kind="recovery",
+            predecessor_attempt_id=prior.attempt_id,
+            worker_id=actor,
+            request_identity=prior.request_identity,
+            dispatch_identity=sha256_json(
+                {
+                    "projection_event_id": str(event.projection_event_id),
+                    "predecessor_attempt_id": str(prior.attempt_id),
+                    "attempt_number": latest_number + 1,
+                    "attempt_kind": "marco_recovery",
+                }
+            ),
+            retry_generation=prior.retry_generation,
+            dispatch_claim_token=None,
+            dispatch_claim_revision=None,
+            intended_external_id=prior.intended_external_id,
+            request_payload=dict(prior.request_payload),
+            request_sha256=prior.request_sha256,
+            state="dispatched",
+            started_at=recovered_at,
+            terminal_at=None,
+        )
+        self.session.add(recovery)
+        self.session.flush()
         adjudication = self.record_observation_and_adjudicate(
-            attempt_id=attempt_id,
+            attempt_id=recovery.attempt_id,
             observation_kind=str(arguments.get("observation_kind", "reread")),
             observed_applied=observed_applied,
             observed_identity=arguments.get("observed_identity"),
@@ -1394,7 +1773,8 @@ class ProjectionService:
             observed_at=recovered_at,
         )
         return {
-            "attempt_id": str(attempt_id),
+            "attempt_id": str(recovery.attempt_id),
+            "predecessor_attempt_id": str(prior.attempt_id),
             "projection_event_id": str(event.projection_event_id),
             "adjudication_id": str(adjudication.adjudication_id),
             "outcome": adjudication.outcome,

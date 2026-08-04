@@ -26,7 +26,7 @@ def _projection(session, ids) -> ProjectionService:
     return ProjectionService(session, uuid_factory=lambda: _next(ids))
 
 
-def test_uncertain_projection_can_be_settled_later_by_exact_admin_recovery(workflow_db) -> None:
+def _uncertain_projection_admin_recovery_scenario(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         projection = _projection(session, ids)
@@ -47,6 +47,7 @@ def test_uncertain_projection_can_be_settled_later_by_exact_admin_recovery(workf
         attempt = projection.begin_attempt(
             event_id=event_id,
             claim_token=claim.claim_token,
+            claim_revision=claim.claim_revision,
             worker_id="projector",
             request_identity="write-lost-response",
             request_payload={"notes": "v3"},
@@ -59,10 +60,13 @@ def test_uncertain_projection_can_be_settled_later_by_exact_admin_recovery(workf
             observed_applied=None,
             observed_identity=None,
             reread_complete=False,
-            evidence={"timeout": True},
+            evidence={"external_observation": {"source": "external_reread", "operation": "update_task_document", "observed_external_id": "123456789", "available": False}},
             decided_by="automatic",
             decision_reason="reread incomplete",
             observed_at=NOW,
+            claim_token=claim.claim_token,
+            claim_revision=claim.claim_revision,
+            worker_id="projector",
         )
         assert first.outcome == "uncertain"
         assert projection.unresolved_attempt_id(task_id) == attempt.attempt_id
@@ -88,9 +92,16 @@ def test_uncertain_projection_can_be_settled_later_by_exact_admin_recovery(workf
                     "task_id": str(task_id),
                     "attempt_id": str(attempt.attempt_id),
                     "observed_applied": True,
-                    "observed_identity": event.idempotency_key,
+                    "observed_identity": attempt.request_sha256,
                     "reread_complete": True,
-                    "evidence": {"manual_reread": "exact"},
+                    "evidence": {
+                        "external_observation": {
+                            "source": "external_reread",
+                            "operation": "update_task_document",
+                            "observed_external_id": "123456789",
+                            "observed_document_identity": attempt.request_sha256,
+                        }
+                    },
                 },
                 owner_id="marco",
                 principal_class="admin",
@@ -100,17 +111,35 @@ def test_uncertain_projection_can_be_settled_later_by_exact_admin_recovery(workf
             )
         )
         assert recovered.ok and recovered.data["outcome"] == "confirmed"
+        recovery_attempt_id = uuid.UUID(recovered.data["attempt_id"])
+        assert recovery_attempt_id != attempt.attempt_id
+        assert recovered.data["predecessor_attempt_id"] == str(attempt.attempt_id)
         assert session.get(tx.ProjectionOutboxEvent, event_id).state == "applied"
+        original = session.get(tx.ProjectionAttempt, attempt.attempt_id)
+        recovery = session.get(tx.ProjectionAttempt, recovery_attempt_id)
+        assert original.state == "uncertain" and original.terminal_at == NOW
+        assert recovery.state == "confirmed" and recovery.predecessor_attempt_id == original.attempt_id
         assert session.scalar(
             select(func.count()).select_from(tx.ProjectionObservation).where(
                 tx.ProjectionObservation.attempt_id == attempt.attempt_id
             )
-        ) == 2
+        ) == 1
         assert session.scalar(
             select(func.count()).select_from(tx.ProjectionAdjudication).where(
                 tx.ProjectionAdjudication.attempt_id == attempt.attempt_id
             )
-        ) == 2
+        ) == 1
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionObservation).where(
+                tx.ProjectionObservation.attempt_id == recovery_attempt_id
+            )
+        ) == 1
+
+
+def test_uncertain_projection_can_be_settled_later_by_exact_admin_recovery(
+    workflow_db,
+) -> None:
+    _uncertain_projection_admin_recovery_scenario(workflow_db)
 
 
 def test_retired_epoch_fences_stale_workers_and_drift_reprojects_authority(workflow_db) -> None:

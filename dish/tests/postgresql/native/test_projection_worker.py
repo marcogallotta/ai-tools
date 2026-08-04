@@ -18,7 +18,7 @@ from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
 from dish_pg.projection_worker import ExternalAttempt, ExternalObservation, ProjectionWorker
 from dish_pg.transition import ProjectionService
-from dish_pg.workflow import WorkflowAuthorityService
+from dish_pg.workflow import WorkflowAuthorityService, sha256_json
 from tests.support.postgresql.core import NOW, _bootstrap_registry, _import_one, core_db
 from tests.support.postgresql.workflow import _admit, _execution, _next, _register_run
 
@@ -42,11 +42,37 @@ class _StubAdapter:
 
     def attempt_and_observe(self, claim, attempt: ExternalAttempt) -> ExternalObservation:
         self.observed.append(claim.event_id)
+        identity = sha256_json(dict(attempt.request_payload))
         return ExternalObservation(
             observed_applied=True,
-            observed_identity=claim.idempotency_key,
+            observed_identity=identity,
             reread_complete=True,
-            evidence={"gid": "123456789"},
+            evidence={
+                "external_observation": {
+                    "source": "external_reread",
+                    "operation": claim.event_type,
+                    "observed_external_id": "123456789",
+                    "observed_document_identity": identity,
+                }
+            },
+        )
+
+    def observe_recovery(self, claim, attempt: ExternalAttempt) -> ExternalObservation:
+        self.observed.append(claim.event_id)
+        identity = sha256_json(dict(attempt.request_payload))
+        return ExternalObservation(
+            observed_applied=True,
+            observed_identity=identity,
+            reread_complete=True,
+            evidence={
+                "external_observation": {
+                    "source": "external_reread",
+                    "operation": claim.event_type,
+                    "observed_external_id": "123456789",
+                    "observed_document_identity": identity,
+                }
+            },
+            decision_reason="native recovery reread",
         )
 
 

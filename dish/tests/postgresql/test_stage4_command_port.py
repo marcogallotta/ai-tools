@@ -84,11 +84,11 @@ def test_planner_delegates_legality_and_adjudicates_exact_effects() -> None:
     ]
     confirmed = adjudicate_effect(
         intended_identity="intent-1",
-        observation=EffectObservation("intent-1", "intent-1", True, True, {"reread": 1}),
+        observation=EffectObservation("intent-1", "intent-1", True, True, True, {"reread": 1}),
     )
     uncertain = adjudicate_effect(
         intended_identity="intent-1",
-        observation=EffectObservation("intent-1", None, None, False, {}),
+        observation=EffectObservation("intent-1", None, None, False, False, {}),
     )
     assert (confirmed.outcome, confirmed.retry_safe) == ("confirmed", False)
     assert (uncertain.outcome, uncertain.retry_safe) == ("uncertain", False)

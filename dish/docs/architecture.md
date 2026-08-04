@@ -144,6 +144,43 @@ consumed challenge to the resulting operation and authoritative request result. 
 the existing challenge or result; a different request cannot
 reuse the challenge. Supplying an intent basis on the first request cannot bypass challenge issuance.
 
+
+### Projection attempt lifecycle and evidence
+
+A live projection event has one ordered, append-only attempt history. The first worker may create a
+`dispatch` attempt only while it owns the event's exact unexpired claim token and outbox revision.
+That transaction assigns a service-generated `dispatch_identity`, retry generation, worker, and
+claim identity and commits before the adapter may make the external call. A durable active
+`dispatch` attempt therefore means the mutation **may already have happened**; it is not permission
+to send it again.
+
+After claim expiry, a new worker claims the same event under a higher outbox revision and enters the
+read-only recovery path. It terminalizes the superseded active attempt as `uncertain`, creates a new
+`recovery` attempt that points to the immutable original dispatch, and calls only the adapter's
+observation method using the original external dispatch identity and request payload. A crash during
+recovery repeats this process with another recovery attempt; it never reopens dispatch. The active
+attempt's worker must match the current event owner, and automatic settlement must present the exact
+current claim token and revision. A dispatch attempt additionally requires its original durable claim.
+Those checks occur while the outbox row is locked on PostgreSQL, so an expired or stale worker cannot
+confirm, mark absent, mark uncertain, append terminal evidence, clear another owner's claim, or
+advance per-task rollout order.
+
+Every attempt becomes terminal exactly once and remains immutable. `confirmed` closes the event as
+`applied`; `not_applied` returns it to `pending`; `uncertain` or `blocked` stops later events for the
+same task. A new dispatch after `not_applied` creates a fresh attempt ID, attempt number, retry
+generation, and dispatch identity while retaining the same logical request identity and immutable
+prior history. A confirmed event is never dispatchable again. Recovery without sufficient external
+evidence remains uncertain rather than becoming an invented success or a retry instruction.
+
+Create confirmation keeps its exact external marker-search and one-match correlation contract. For
+non-create effects, a local request digest or echoed intended identity is never sufficient.
+Confirmation requires a complete external reread or drift scan for the intended external task and an
+operation-specific observed fact: document identity for `update_task_document`, membership identity
+for `move_task`, or completion identity for `set_completion`. A proved external absence may classify
+`not_applied`; a conflicting or unavailable observation remains `uncertain`. Shadow-origin rows stay
+structurally excluded from live claims, and unresolved earlier live events continue to block later
+per-task rollout sequence.
+
 Every multi-step workflow mutation routed through the operation service has a request-scoped
 `operation_executions` baseline. Failure reconstruction may attribute only evidence created or
 changed by that execution; older operation history cannot be presented as the failed call's work.
@@ -769,6 +806,7 @@ replay behavior belongs in the runtime contract.
 The only durable state deliberately outside SQLite is tied to database ownership or replacement:
 the service-ownership marker, restore request journal, and restore-fault marker. Do not create a new
 sidecar unless the fact must survive replacement of the database itself.
+
 
 ## Compatibility, startup, and availability
 

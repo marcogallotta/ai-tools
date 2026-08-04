@@ -236,6 +236,7 @@ def test_projection_outbox_is_idempotent_and_preserves_per_task_order(workflow_d
         attempt = service.begin_attempt(
             event_id=first_claim.event_id,
             claim_token=first_claim.claim_token,
+            claim_revision=first_claim.claim_revision,
             worker_id="projector-1",
             request_identity="asana-write-1",
             request_payload={"notes": "v2"},
@@ -247,19 +248,29 @@ def test_projection_outbox_is_idempotent_and_preserves_per_task_order(workflow_d
             attempt_id=attempt.attempt_id,
             observation_kind="reread",
             observed_applied=True,
-            observed_identity=first_event.idempotency_key,
+            observed_identity=attempt.request_sha256,
             reread_complete=True,
-            evidence={"gid": "123456789"},
+            evidence={
+                "external_observation": {
+                    "source": "external_reread",
+                    "operation": "update_task_document",
+                    "observed_external_id": "123456789",
+                    "observed_document_identity": attempt.request_sha256,
+                }
+            },
             decided_by="automatic",
             decision_reason="exact reread",
             observed_at=NOW,
+            claim_token=first_claim.claim_token,
+            claim_revision=first_claim.claim_revision,
+            worker_id="projector-1",
         )
         assert result.outcome == "confirmed"
         second_claim = service.claim_next(worker_id="projector-2", now=NOW, ttl=timedelta(minutes=2))
         assert second_claim and second_claim.event_id == second_id and second_claim.aggregate_sequence == 2
 
 
-def test_lost_create_response_binds_one_marker_and_blocks_multiple_matches(workflow_db) -> None:
+def _lost_create_response_correlation_scenario(workflow_db) -> None:
     factory, ids, context, _task_id = workflow_db
     run_id, request_id = _next(ids), _next(ids)
     with session_scope(factory) as session:
@@ -289,6 +300,7 @@ def test_lost_create_response_binds_one_marker_and_blocks_multiple_matches(workf
         attempt = projection.begin_attempt(
             event_id=event_id,
             claim_token=claim.claim_token,
+            claim_revision=claim.claim_revision,
             worker_id="projector",
             request_identity="create-request-1",
             request_payload={"name": "Projected task"},
@@ -301,6 +313,9 @@ def test_lost_create_response_binds_one_marker_and_blocks_multiple_matches(workf
             external_matches=["987654321"],
             observed_at=NOW,
             evidence={"marker_search": "one"},
+            claim_token=claim.claim_token,
+            claim_revision=claim.claim_revision,
+            worker_id="projector",
         )
         assert correlation.state == "bound" and correlation.matched_external_id == "987654321"
         event = session.get(tx.ProjectionOutboxEvent, event_id)
@@ -310,10 +325,20 @@ def test_lost_create_response_binds_one_marker_and_blocks_multiple_matches(workf
             observed_applied=True,
             observed_identity=event.idempotency_key,
             reread_complete=True,
-            evidence={"gid": "987654321"},
+            evidence={
+                "external_observation": {
+                    "source": "external_marker_search",
+                    "operation": "create_task",
+                    "correlation_marker": event.intent_payload["correlation_marker"],
+                    "observed_external_id": "987654321",
+                }
+            },
             decided_by="automatic",
             decision_reason="exact marker",
             observed_at=NOW,
+            claim_token=claim.claim_token,
+            claim_revision=claim.claim_revision,
+            worker_id="projector",
         )
         assert adjudication.outcome == "confirmed"
         assert session.get(tx.ProjectionOutboxEvent, event_id).state == "applied"
@@ -343,6 +368,7 @@ def test_lost_create_response_binds_one_marker_and_blocks_multiple_matches(workf
         second_attempt = projection.begin_attempt(
             event_id=second_event_id,
             claim_token=second_claim.claim_token,
+            claim_revision=second_claim.claim_revision,
             worker_id="projector",
             request_identity="create-request-2",
             request_payload={"name": "Ambiguous projected task"},
@@ -355,7 +381,39 @@ def test_lost_create_response_binds_one_marker_and_blocks_multiple_matches(workf
             external_matches=["111111111", "222222222"],
             observed_at=NOW,
             evidence={"marker_search": "multiple"},
+            claim_token=second_claim.claim_token,
+            claim_revision=second_claim.claim_revision,
+            worker_id="projector",
         )
         assert blocked.state == "ambiguous"
+        second_event = session.get(tx.ProjectionOutboxEvent, second_event_id)
+        second_adjudication = projection.record_observation_and_adjudicate(
+            attempt_id=second_attempt.attempt_id,
+            observation_kind="marker_search",
+            observed_applied=True,
+            observed_identity=second_event.idempotency_key,
+            reread_complete=True,
+            evidence={
+                "external_observation": {
+                    "source": "external_marker_search",
+                    "operation": "create_task",
+                    "correlation_marker": second_event.intent_payload["correlation_marker"],
+                    "matches": ["111111111", "222222222"],
+                }
+            },
+            decided_by="automatic",
+            decision_reason="ambiguous marker",
+            observed_at=NOW,
+            claim_token=second_claim.claim_token,
+            claim_revision=second_claim.claim_revision,
+            worker_id="projector",
+        )
+        assert second_adjudication.outcome == "blocked"
         assert session.get(tx.ProjectionOutboxEvent, second_event_id).state == "blocked"
         assert blocked.mapping_id is None
+
+
+def test_lost_create_response_binds_one_marker_and_blocks_multiple_matches(
+    workflow_db,
+) -> None:
+    _lost_create_response_correlation_scenario(workflow_db)

@@ -10,11 +10,15 @@ any two of them leaves recoverable, non-lost state:
 1. claim (own transaction) — mark the event claimed;
 2. begin_attempt (own transaction) — durably record intent *before* the
    external call, per the checkpoint in database-backend-imp.md Section 2;
-3. the external call happens with no open transaction, then
-   record_observation_and_adjudicate (own transaction) settles the event.
+3. for a first dispatch, the external mutation happens with no open
+   transaction and the adapter independently rereads it; for a reclaimed
+   active attempt, only the read-only recovery observation is permitted;
+4. record_observation_and_adjudicate (own transaction) settles the event under
+   the exact still-current claim token and revision.
 
 Callers supply an :class:`ExternalAdapter` that performs the actual external
-system call; this module has no knowledge of any specific external API.
+system call and operation-specific reread; this module has no knowledge of any
+specific external API.
 """
 from __future__ import annotations
 
@@ -24,7 +28,7 @@ import logging
 import signal
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from types import FrameType
 from typing import Any, Mapping, Protocol, Sequence
@@ -68,7 +72,12 @@ class ExternalAdapter(Protocol):
     def attempt_and_observe(
         self, claim: ProjectionClaim, attempt: ExternalAttempt
     ) -> ExternalObservation:
-        """Perform the external call (or reread) and report what was observed."""
+        """Perform the first external mutation, then independently observe it."""
+
+    def observe_recovery(
+        self, claim: ProjectionClaim, attempt: ExternalAttempt
+    ) -> ExternalObservation:
+        """Observe a possibly dispatched mutation without sending it again."""
 
 
 class ProjectionWorker:
@@ -109,8 +118,12 @@ class ProjectionWorker:
         if claim is None:
             return False
         try:
-            attempt_id, request = self._begin_attempt(claim)
-            observation = self._adapter.attempt_and_observe(claim, request)
+            if claim.recovery_required:
+                attempt_id, request = self._begin_recovery_attempt(claim)
+                observation = self._adapter.observe_recovery(claim, request)
+            else:
+                attempt_id, request = self._begin_attempt(claim)
+                observation = self._adapter.attempt_and_observe(claim, request)
             self._settle(claim, attempt_id, observation)
         except TransitionAuthorityError:
             LOGGER.exception(
@@ -133,13 +146,37 @@ class ProjectionWorker:
             attempt = service.begin_attempt(
                 event_id=claim.event_id,
                 claim_token=claim.claim_token,
+                claim_revision=claim.claim_revision,
                 worker_id=self._worker_id,
                 request_identity=request.request_identity,
                 request_payload=request.request_payload,
                 intended_external_id=request.intended_external_id,
                 started_at=self._clock(),
             )
-            return attempt.attempt_id, request
+            durable_request = replace(request, request_identity=attempt.dispatch_identity)
+            return attempt.attempt_id, durable_request
+
+    def _begin_recovery_attempt(
+        self, claim: ProjectionClaim
+    ) -> tuple[uuid.UUID, ExternalAttempt]:
+        prior = claim.recovery_attempt
+        if prior is None:
+            raise TransitionAuthorityError("projection claim does not require recovery")
+        with session_scope(self._session_maker) as session:
+            service = ProjectionService(session)
+            attempt = service.begin_recovery_attempt(
+                event_id=claim.event_id,
+                claim_token=claim.claim_token,
+                claim_revision=claim.claim_revision,
+                worker_id=self._worker_id,
+                prior_attempt_id=prior.attempt_id,
+                started_at=self._clock(),
+            )
+            return attempt.attempt_id, ExternalAttempt(
+                request_identity=prior.external_dispatch_identity,
+                request_payload=dict(prior.request_payload),
+                intended_external_id=prior.intended_external_id,
+            )
 
     def _settle(
         self,
@@ -157,6 +194,9 @@ class ProjectionWorker:
                     external_matches=observation.create_matches,
                     observed_at=now,
                     evidence=observation.evidence,
+                    claim_token=claim.claim_token,
+                    claim_revision=claim.claim_revision,
+                    worker_id=self._worker_id,
                 )
             service.record_observation_and_adjudicate(
                 attempt_id=attempt_id,
@@ -168,6 +208,9 @@ class ProjectionWorker:
                 decided_by=observation.decided_by,
                 decision_reason=observation.decision_reason,
                 observed_at=now,
+                claim_token=claim.claim_token,
+                claim_revision=claim.claim_revision,
+                worker_id=self._worker_id,
             )
 
 
