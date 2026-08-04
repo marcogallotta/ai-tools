@@ -53,3 +53,5 @@ __all__ = [
 from . import artifact_identity_models
 
 from . import candidate_manifest_models
+
+from . import legacy_request_models
