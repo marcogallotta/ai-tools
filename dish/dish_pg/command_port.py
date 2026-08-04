@@ -1248,7 +1248,7 @@ class PostgresCommandPort:
             wf.WorkflowOperation.operation_id == operation_id
         )
         if self.session.get_bind().dialect.name == "postgresql":
-            statement = statement.with_for_update()
+            statement = statement.with_for_update(key_share=True)
         operation = self.session.scalar(
             statement.execution_options(populate_existing=True)
         )
