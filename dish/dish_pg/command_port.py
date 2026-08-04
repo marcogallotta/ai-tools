@@ -283,6 +283,8 @@ class PostgresCommandPort:
                 now=call.now,
                 ttl=timedelta(minutes=2),
             )
+            if operation is not None and call.command_name in {"prepare", "discard"}:
+                operation = self._lock_operation_transition(operation.operation_id)
             if task is not None:
                 self.workflow.repo.capture_task_fence(
                     execution_id=execution_id,
@@ -1260,7 +1262,6 @@ class PostgresCommandPort:
 
     def _prepare(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
-        operation = self._lock_operation_transition(operation.operation_id)
         if operation.lifecycle != "open":
             raise CommandRuleError(
                 "OPEN_OPERATION_REQUIRED", "prepare requires an open operation"
@@ -1927,7 +1928,6 @@ class PostgresCommandPort:
 
     def _discard(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
-        operation = self._lock_operation_transition(operation.operation_id)
         self.workflow.repo.assert_task_fence(execution.execution_id)
         self.workflow.repo.assert_operation_fence(execution.execution_id)
         if operation.lifecycle != "open":
