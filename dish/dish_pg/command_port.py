@@ -2807,8 +2807,9 @@ class PostgresCommandPort:
             prepared_cycle_id = prepared_cycle.cycle_id
             claim_mode = "operation_cycle"
         self.session.add(wf.OperationSuccessionEdge(succession_id=self.uuid_factory(), abandonment_id=attempt.abandonment_id, task_id=attempt.task_id, source_operation_id=source.operation_id, successor_operation_id=successor.operation_id, claim_mode=claim_mode, prepared_cycle_id=prepared_cycle_id, published_by_execution_id=execution.execution_id, published_at=published_at))
-        attempt.state = "published"
+        attempt.state = "completed"
         attempt.successor_operation_id = successor.operation_id
+        attempt.terminal_at = published_at
         return successor
 
     def _latest_cycle(self, operation_id: uuid.UUID) -> wf.VerificationCycle:

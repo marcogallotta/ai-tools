@@ -987,9 +987,11 @@ class AbandonmentAttempt(Base):
             name="state_allowed",
         ),
         CheckConstraint(
-            "(state IN ('preparing','blocked','reconciling') AND terminal_at IS NULL) OR "
+            "(state IN ('preparing','blocked','reconciling') "
+            "AND successor_operation_id IS NULL AND terminal_at IS NULL) OR "
             "(state = 'published' AND successor_operation_id IS NOT NULL AND terminal_at IS NULL) OR "
-            "(state IN ('completed','cancelled') AND terminal_at IS NOT NULL)",
+            "(state = 'completed' AND successor_operation_id IS NOT NULL AND terminal_at IS NOT NULL) OR "
+            "(state = 'cancelled' AND terminal_at IS NOT NULL)",
             name="state_payload_consistent",
         ),
         Index(
