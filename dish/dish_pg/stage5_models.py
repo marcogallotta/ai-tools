@@ -711,6 +711,20 @@ class ProjectionReconciliationRun(Base):
         Uuid, ForeignKey("projection_epochs.projection_epoch_id", ondelete="RESTRICT"), nullable=False
     )
     corpus_identity: Mapped[str] = mapped_column(String(256), nullable=False)
+    candidate_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("release_candidates.candidate_id", ondelete="RESTRICT")
+    )
+    registry_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT")
+    )
+    observation_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    observation_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    external_snapshot_identity: Mapped[str | None] = mapped_column(String(256))
+    external_high_water: Mapped[str | None] = mapped_column(String(256))
+    corpus_manifest_sha256: Mapped[str | None] = mapped_column(String(64))
+    scope_complete: Mapped[bool | None] = mapped_column(Boolean)
+    adapter_contract_version: Mapped[str | None] = mapped_column(String(64))
+    evidence_recorded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
     expected_items: Mapped[int] = mapped_column(BigInteger, nullable=False)
     processed_items: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
@@ -725,6 +739,26 @@ class ProjectionReconciliationRun(Base):
             "(status = 'running' AND completed_at IS NULL) OR "
             "(status IN ('complete','blocked') AND completed_at IS NOT NULL)",
             name="terminal_time_consistent",
+        ),
+        CheckConstraint(
+            "(candidate_id IS NULL AND registry_version_id IS NULL AND observation_started_at IS NULL "
+            "AND observation_completed_at IS NULL AND external_snapshot_identity IS NULL "
+            "AND external_high_water IS NULL AND corpus_manifest_sha256 IS NULL "
+            "AND scope_complete IS NULL AND adapter_contract_version IS NULL AND evidence_recorded_at IS NULL) OR "
+            "(candidate_id IS NOT NULL AND registry_version_id IS NOT NULL AND observation_started_at IS NOT NULL "
+            "AND corpus_manifest_sha256 IS NOT NULL AND length(corpus_manifest_sha256)=64 "
+            "AND adapter_contract_version IS NOT NULL AND length(trim(adapter_contract_version))>0 "
+            "AND evidence_recorded_at IS NOT NULL AND scope_complete IS NOT NULL)",
+            name="candidate_observation_contract_complete",
+        ),
+        CheckConstraint(
+            "observation_completed_at IS NULL OR observation_completed_at >= observation_started_at",
+            name="observation_chronology",
+        ),
+        CheckConstraint(
+            "candidate_id IS NULL OR status <> 'complete' OR "
+            "(scope_complete AND observation_completed_at IS NOT NULL AND evidence_recorded_at >= observation_completed_at)",
+            name="complete_observation_boundary",
         ),
         UniqueConstraint(
             "generation_id", "projection_epoch_id", "corpus_identity", name="uq_reconciliation_corpus"
