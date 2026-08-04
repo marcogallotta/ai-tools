@@ -8,20 +8,20 @@ from sqlalchemy import select
 
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
-from dish_pg.release import (
-    EVIDENCE_ARTIFACT_KINDS,
-    ReleaseAuthorityError,
-    sha256_json,
-)
+from dish_pg.release import ReleaseAuthorityError
 from tests.support.postgresql.workflow import NOW, workflow_db
 from tests.support.postgresql.release import HASH_A, ROOT, _prepare_candidate
+from tests.support.postgresql.release_oracles import (
+    EXPECTED_EVIDENCE_ARTIFACT_KINDS,
+    independent_sha256_json,
+)
 
 pytestmark = pytest.mark.smoke
 
 
 def _valid_evidence_payload(category: str, evidence_key: str) -> dict[str, object]:
     return {
-        "artifact_kind": EVIDENCE_ARTIFACT_KINDS[(category, evidence_key)],
+        "artifact_kind": EXPECTED_EVIDENCE_ARTIFACT_KINDS[(category, evidence_key)],
         "artifact_identity": f"fixture:{category}:{evidence_key}:replacement",
         "artifact_path": f"/evidence/{category}/{evidence_key}.json",
         "artifact_sha256": "b" * 64,
@@ -140,4 +140,4 @@ def test_valid_typed_evidence_remains_deterministic(workflow_db) -> None:
             payload=payload,
             recorded_at=NOW,
         )
-        assert row.payload_sha256 == sha256_json(payload)
+        assert row.payload_sha256 == independent_sha256_json(payload)

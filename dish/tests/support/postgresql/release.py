@@ -6,20 +6,32 @@ from pathlib import Path
 from sqlalchemy import select, text
 
 from dish_pg import stage5_models as tx
-from dish_pg.release import (
-    ALEMBIC_HEAD, EVIDENCE_ARTIFACT_KINDS, REHEARSAL_CHECKPOINT_EVIDENCE_KINDS,
-    REQUIRED_EVIDENCE, REQUIRED_REHEARSALS, REQUIRED_REHEARSAL_CHECKPOINTS,
-    ReleaseCandidateService,
-)
+from dish_pg.release import ALEMBIC_HEAD, ReleaseCandidateService
 from dish_pg.transition import ProjectionService, ShadowService, SourceImportService
-from dish_pg.workflow import sha256_json
+from tests.support.postgresql.release_oracles import (
+    EXPECTED_EVIDENCE_ARTIFACT_KINDS,
+    EXPECTED_RELEASE_EVIDENCE,
+    EXPECTED_REHEARSAL_CHECKPOINT_EVIDENCE_KINDS,
+    EXPECTED_REHEARSAL_CHECKPOINTS,
+    EXPECTED_REHEARSALS,
+    independent_sha256_json,
+)
 from tests.support.postgresql.workflow import NOW, _next
 
 ROOT = Path(__file__).resolve().parents[3]
 HASH_A = "a" * 64
 
 
-def _prepare_candidate(session, ids, context, task_id):
+def _prepare_candidate(
+    session,
+    ids,
+    context,
+    task_id,
+    *,
+    evidence_contracts=EXPECTED_RELEASE_EVIDENCE,
+    rehearsal_kinds=EXPECTED_REHEARSALS,
+    rehearsal_checkpoints=EXPECTED_REHEARSAL_CHECKPOINTS,
+):
     # Base.metadata fixtures do not normally carry Alembic's version table.
     session.execute(text("CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(64) NOT NULL)"))
     session.execute(text("DELETE FROM alembic_version"))
@@ -121,14 +133,14 @@ def _prepare_candidate(session, ids, context, task_id):
         routing_release="routing-stage6",
         created_at=NOW,
     )
-    for category, key in REQUIRED_EVIDENCE:
+    for category, key in evidence_contracts:
         service.record_evidence(
             candidate_id=candidate_id,
             category=category,
             evidence_key=key,
             outcome="pass",
             payload={
-                "artifact_kind": EVIDENCE_ARTIFACT_KINDS[(category, key)],
+                "artifact_kind": EXPECTED_EVIDENCE_ARTIFACT_KINDS[(category, key)],
                 "artifact_identity": f"fixture:{category}:{key}",
                 "artifact_path": f"/evidence/{category}/{key}.json",
                 "artifact_sha256": HASH_A,
@@ -138,7 +150,7 @@ def _prepare_candidate(session, ids, context, task_id):
             },
             recorded_at=NOW,
         )
-    for kind in REQUIRED_REHEARSALS:
+    for kind in rehearsal_kinds:
         rehearsal = service.start_rehearsal(
             candidate_id=candidate_id,
             rehearsal_kind=kind,
@@ -147,14 +159,14 @@ def _prepare_candidate(session, ids, context, task_id):
             started_at=NOW,
         )
         checkpoints = []
-        for checkpoint_kind in REQUIRED_REHEARSAL_CHECKPOINTS[kind]:
+        for checkpoint_kind in rehearsal_checkpoints[kind]:
             checkpoint = service.record_rehearsal_checkpoint(
                 rehearsal_id=rehearsal.rehearsal_id,
                 checkpoint_kind=checkpoint_kind,
                 payload={
                     "rehearsal_kind": kind,
                     "checkpoint_kind": checkpoint_kind,
-                    "evidence_kind": REHEARSAL_CHECKPOINT_EVIDENCE_KINDS[kind][checkpoint_kind],
+                    "evidence_kind": EXPECTED_REHEARSAL_CHECKPOINT_EVIDENCE_KINDS[kind][checkpoint_kind],
                     "artifact_identity": f"fixture:{kind}:{checkpoint_kind}",
                     "artifact_sha256": HASH_A,
                     "source_manifest_sha256": HASH_A,
@@ -175,7 +187,7 @@ def _prepare_candidate(session, ids, context, task_id):
                 "rehearsal_kind": kind,
                 "source_manifest_sha256": HASH_A,
                 "result": "passed",
-                "checkpoint_manifest_sha256": sha256_json(checkpoints),
+                "checkpoint_manifest_sha256": independent_sha256_json(checkpoints),
             },
             measured_rpo_seconds=0.0 if kind == "restore" else None,
             measured_rto_seconds=12.5 if kind == "restore" else None,
