@@ -17,7 +17,14 @@ from dish_pg.shadow_worker import (
 from dish_pg.transition import ShadowService
 from dish_pg.workflow import sha256_json
 from dish_service.shadow_spool import ShadowSpool
-from tests.support.postgresql.workflow import NOW, _next, workflow_db
+from tests.support.postgresql.command import (
+    _add_verification_queue,
+    _port,
+    _prepare_for_verification,
+    _start_initial,
+    _start_verification,
+)
+from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 
 
 class Evaluator:
@@ -37,6 +44,43 @@ def _spool(tmp_path, *, treatment="execute"):
     spool.complete(reservation.registration_id, source_outcome={"ok":True},
                    source_post_state={"phase":"verification"}, source_effects={}, completed_at=NOW)
     return spool
+
+
+def _real_verification_target(session, ids, context, task_id):
+    _add_verification_queue(session, ids, context)
+    author_run = _next(ids)
+    verifier_run = _next(ids)
+    _register_run(session, generation_id=context["generation_id"], run_id=author_run)
+    _register_run(
+        session,
+        generation_id=context["generation_id"],
+        run_id=verifier_run,
+        owner="verifier-owner",
+        agent="codex",
+    )
+    port = _port(session, ids)
+    started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+    _prepare_for_verification(
+        port,
+        ids,
+        task_id=task_id,
+        operation_id=started.data["operation_id"],
+        run_id=author_run,
+    )
+
+    savepoint = session.begin_nested()
+    verification = _start_verification(
+        port,
+        ids,
+        task_id=task_id,
+        operation_id=started.data["operation_id"],
+        run_id=verifier_run,
+    )
+    operation_id = verification.data["operation_id"]
+    cycle_id = verification.data["cycle_id"]
+    savepoint.rollback()
+    session.expire_all()
+    return operation_id, cycle_id
 
 
 def test_shadow_worker_delivers_executes_and_compares(workflow_db, tmp_path):
@@ -246,6 +290,157 @@ def test_shadow_identifier_translation_uses_prior_comparison_bindings(workflow_d
                 current,
                 {"submission_id": str(uuid.uuid4())},
             )
+
+
+def test_real_shadow_evaluator_translates_verification_continuation_before_dispatch(workflow_db):
+    from dish_pg.shadow_worker import CommandPortShadowEvaluator
+
+    factory, ids, context, task_id = workflow_db
+    source_operation = uuid.uuid4()
+    source_cycle = uuid.uuid4()
+    with session_scope(factory) as session:
+        target_operation, target_cycle = _real_verification_target(
+            session, ids, context, task_id
+        )
+        assert str(source_operation) != target_operation
+        assert str(source_cycle) != target_cycle
+
+        service = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = service.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        prior = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="start",
+            source_request_identity="legacy-verification-start",
+            canonical_input={"command": "start", "arguments": {}},
+            source_outcome={
+                "data": {
+                    "operation_id": str(source_operation),
+                    "cycle_id": str(source_cycle),
+                }
+            },
+            source_post_state={"phase": "await_verification"},
+            rollout_sequence=1,
+            source_authority_generation="legacy-1",
+            captured_at=NOW,
+        )
+        target_result = {
+            "evidence_schema_version": 2,
+            "response": {
+                "ok": True,
+                "data": {
+                    "operation_id": target_operation,
+                    "cycle_id": target_cycle,
+                },
+            },
+        }
+        session.add(
+            tx.ShadowComparison(
+                comparison_id=_next(ids),
+                envelope_id=prior.envelope_id,
+                target_result=target_result,
+                target_result_sha256=sha256_json(target_result),
+                parity_class="semantic",
+                differences=[],
+                comparator_release="test",
+                compared_at=NOW,
+            )
+        )
+        current = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="start",
+            source_request_identity="legacy-verification-continuation",
+            canonical_input={
+                "command": "start",
+                "arguments": {
+                    "task_id": str(task_id),
+                    "kind": "verification",
+                    "agent": "codex",
+                    "independence_attestation": (
+                        "I independently inspected this exact candidate."
+                    ),
+                    "target_operation_id": str(source_operation),
+                    "target_cycle_id": str(source_cycle),
+                },
+            },
+            source_outcome={"ok": True},
+            source_post_state={"phase": "await_verification"},
+            principal={
+                "owner_id": "verifier-owner",
+                "principal_class": "agent",
+                "run_id": str(uuid.uuid4()),
+            },
+            pinned_inputs={"rollout_mode": "execute"},
+            rollout_sequence=2,
+            source_authority_generation="legacy-1",
+            capture_qualification="execute",
+            captured_at=NOW,
+        )
+
+        target = CommandPortShadowEvaluator(
+            cursor_secret=b"shadow-test-cursor-secret-32bytes!"
+        ).evaluate(session, current)
+
+        assert target["response"]["ok"] is True
+        assert target["response"]["data"]["operation_id"] == target_operation
+        assert target["response"]["data"]["cycle_id"] == target_cycle
+
+
+def test_real_shadow_evaluator_rejects_unmapped_verification_continuation(workflow_db):
+    from dish_pg.shadow_worker import CommandPortShadowEvaluator
+
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        _real_verification_target(session, ids, context, task_id)
+        service = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = service.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        current = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="start",
+            source_request_identity="unmapped-verification-continuation",
+            canonical_input={
+                "command": "start",
+                "arguments": {
+                    "task_id": str(task_id),
+                    "kind": "verification",
+                    "agent": "codex",
+                    "independence_attestation": (
+                        "I independently inspected this exact candidate."
+                    ),
+                    "target_operation_id": str(uuid.uuid4()),
+                    "target_cycle_id": str(uuid.uuid4()),
+                },
+            },
+            source_outcome={"ok": True},
+            source_post_state={"phase": "await_verification"},
+            principal={
+                "owner_id": "verifier-owner",
+                "principal_class": "agent",
+                "run_id": str(uuid.uuid4()),
+            },
+            pinned_inputs={"rollout_mode": "execute"},
+            rollout_sequence=1,
+            source_authority_generation="legacy-1",
+            capture_qualification="execute",
+            captured_at=NOW,
+        )
+
+        with pytest.raises(
+            ShadowIdentityMappingError,
+            match="no unique target operation binding for captured field target_operation_id",
+        ):
+            CommandPortShadowEvaluator(
+                cursor_secret=b"shadow-test-cursor-secret-32bytes!"
+            ).evaluate(session, current)
 
 
 def test_shadow_identifier_translation_rejects_mismatch_and_non_bijective_bindings(workflow_db):
