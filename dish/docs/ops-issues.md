@@ -70,6 +70,7 @@ items are.
 | Source (SQLite) semantic-proposal workflow, full lifecycle | 2026-08-04 (fork-verified) | Commits `5cfcdfc`, `bff1c0d` |
 | Test breakup / changed-path test-selection infra | 2026-08-04 (confirmed via `git log` independent of ChatGPT) | Commits `227e681`, `dd95d70`, `24d705d` |
 | PGlite / governed native test-lane infra | 2026-08-04 (confirmed via `git log` independent of ChatGPT) | Commits `95ebdff`, `fdaa678`, `6f04142`, `afda679` |
+| Legacy-writer inventory — enumeration | 2026-08-04 (repo search + Marco confirmation) | Complete set: `dish-service-prod.service`, `dish` CLI, `dish-admin` CLI. Repo search of `scripts/` found no other write path to legacy SQLite/Asana — the `dish-pg-*` scripts that touch SQLite operate on disposable rehearsal/test spool DBs, not authoritative state. Marco confirmed no writer exists outside the repo (no cron/manual/external process). |
 
 ## Provisionally done — not independently reverified
 
@@ -101,8 +102,7 @@ items are.
 
 | Item | Priority | Owner | Local effort | Last verified | Note |
 | --- | --- | --- | --- | --- | --- |
-| Legacy-writer inventory — enforcement | Must-fix | Mixed | Medium | 2026-08-04 (ChatGPT claim only) | Code gap: no exact-set-equality check between required and verified writers |
-| Legacy-writer inventory — enumeration | Must-fix | Local | Hard | 2026-08-04 (ChatGPT claim only) | Only you can enumerate every real local writer (scripts, services, credentials, scheduled tasks, manual paths); this is not a code task |
+| Legacy-writer inventory — enforcement | Must-fix | Mixed | Medium | 2026-08-04 (ChatGPT claim only) | Code gap: no exact-set-equality check between required and verified writers. Required set now known (see Done table) and handed to ChatGPT tonight as a combined pass with writer-fence planned/deployed binding; no file overlap with the four patches landing tonight. |
 | Writer-fence planned/deployed binding | Later | Mixed | Medium | 2026-08-04 (ChatGPT claim only) | Artifact observed, but no digest comparison between planned manifest and generated on-disk manifest |
 | Canonical readiness inventory | Later | Mixed | Easy | 2026-08-04 (ChatGPT claim only) | Typed evidence exists; probe kinds/contract versions still caller-supplied, no server-owned canonical registry. Typed readiness evidence is sufficient for launch if the locally supplied probe set is manually reviewed — the canonical registry is later hardening, not a launch blocker, unless admission or irreversible burn ends up relying on those probes as the decisive proof of safe operation. |
 | Post-burn admission manifest | Later | Mixed | Medium | 2026-08-04 (ChatGPT claim only) | Prerequisites enforced, but approval-time candidate manifest not revalidated against post-burn-only inputs |
