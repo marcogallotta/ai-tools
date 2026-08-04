@@ -10,6 +10,7 @@ from sqlalchemy import select
 from . import artifact_identity_models as artifact
 from . import models
 from . import reservation_models as reservations
+from . import readiness_evidence_models as typed_readiness
 from . import stage3_models as wf
 from . import stage5_models as tx
 from . import stage6_models as rel
@@ -17,6 +18,12 @@ from .candidate_manifest import revalidate_candidate_manifest
 from .command_contract import definition_for
 from .command_effects import expected_projection_count
 from .cutover_chronology import _require_at_or_after, _utc_comparable
+from .release_artifacts import observe_release_artifact
+from .release_validation import (
+    validate_reconciliation,
+    validate_worker_readiness,
+    validate_writer_fence_observation,
+)
 from .release_evidence import (
     ReleaseAuthorityError,
     _is_sha256,
@@ -245,6 +252,7 @@ class CutoverControlAuthority:
     ) -> rel.LegacyWriterFence:
         row = self._fence(fence_id)
         candidate = self._candidate(row.candidate_id)
+        validate_writer_fence_observation(self.session, fence=row)
         body = dict(proof)
         required = {
             "probe_kind": "authenticated_mutation_rejected_before_body_parse",
@@ -380,6 +388,9 @@ class CutoverControlAuthority:
         if not fences or any(fence.state != "verified" for fence in fences):
             raise ReleaseAuthorityError("every planned legacy writer fence must be verified")
         for fence in fences:
+            observation = validate_writer_fence_observation(self.session, fence=fence)
+            if fence.artifact_observation_id != observation.observation_id:
+                raise ReleaseAuthorityError("writer fence is not bound to its exact persisted observation")
             if fence.verified_at is None:
                 raise ReleaseAuthorityError("verified writer fence lacks verification chronology")
             _require_at_or_after(
@@ -416,6 +427,25 @@ class CutoverControlAuthority:
         if run.state != "fenced":
             raise ReleaseAuthorityError("authority activation requires verified writer fencing")
         candidate = self._candidate(run.candidate_id)
+        evaluation = self.evaluate_candidate(
+            candidate_id=candidate.candidate_id, as_of=activated_at
+        )
+        if not evaluation.passed:
+            raise ReleaseAuthorityError(
+                "candidate release gates are no longer satisfied at authority activation"
+            )
+        revalidation = revalidate_candidate_manifest(
+            self.session, uuid_factory=self.uuid_factory, candidate=candidate,
+            revalidated_at=activated_at,
+        )
+        if revalidation.result != "matched":
+            raise ReleaseAuthorityError("approved candidate authority manifest is stale")
+        for fence in self.session.scalars(
+            select(rel.LegacyWriterFence).where(
+                rel.LegacyWriterFence.candidate_id == candidate.candidate_id
+            )
+        ):
+            validate_writer_fence_observation(self.session, fence=fence)
         closure = self._current_approved_final_asana_closure(
             candidate.candidate_id, expected_closure_id=final_asana_closure_id
         )
@@ -491,6 +521,12 @@ class CutoverControlAuthority:
         _require_nonblank(legacy_bundle_id, "legacy_bundle_id")
         run = self._cutover(cutover_run_id)
         candidate = self._candidate(run.candidate_id)
+        revalidation = revalidate_candidate_manifest(
+            self.session, uuid_factory=self.uuid_factory, candidate=candidate,
+            revalidated_at=burned_at,
+        )
+        if revalidation.result != "matched":
+            raise ReleaseAuthorityError("approved candidate authority manifest is stale")
         approval = self.session.scalar(
             select(rel.CutoverApproval).where(rel.CutoverApproval.candidate_id == candidate.candidate_id)
         )
@@ -556,12 +592,6 @@ class CutoverControlAuthority:
         )
         self.session.add(row)
         self._advance_cutover(run, "rollback_burned")
-        revalidation = revalidate_candidate_manifest(
-            self.session, uuid_factory=self.uuid_factory, candidate=candidate,
-            revalidated_at=burned_at,
-        )
-        if revalidation.result != "matched":
-            raise ReleaseAuthorityError("approved candidate authority manifest is stale")
         candidate.status = "activated"
         candidate.candidate_revision += 1
         candidate.terminal_at = burned_at
@@ -623,6 +653,20 @@ class CutoverControlAuthority:
         }
         if any(body.get(key) != value for key, value in expected.items()):
             raise ReleaseAuthorityError("runtime attestation does not match the exact candidate release and closed route")
+        artifact_paths = {
+            "service_artifact_sha256": body.get("service_artifact_path"),
+            "projection_worker_artifact_sha256": body.get("projection_worker_artifact_path"),
+            "route_probe_sha256": body.get("route_probe_path"),
+        }
+        for digest_field, artifact_path in artifact_paths.items():
+            observe_release_artifact(
+                artifact_path=artifact_path,
+                expected_sha256={
+                    "service_artifact_sha256": service_artifact_sha256,
+                    "projection_worker_artifact_sha256": projection_worker_artifact_sha256,
+                    "route_probe_sha256": route_probe_sha256,
+                }[digest_field],
+            )
         identity = {
             "candidate_id": str(candidate_id),
             "service_artifact_sha256": service_artifact_sha256,
@@ -691,23 +735,44 @@ class CutoverControlAuthority:
         self._require_not_future(ready_at, "ready_at")
         if worker_release.strip() != candidate.dish_release:
             raise ReleaseAuthorityError("projection worker readiness is for the wrong release")
+        reconciliation_validation = validate_reconciliation(
+            self.session, candidate=candidate, as_of=ready_at
+        )
         if (
             reconciliation is None
-            or reconciliation.generation_id != candidate.generation_id
-            or reconciliation.projection_epoch_id != candidate.projection_epoch_id
-            or reconciliation.status != "complete"
-            or reconciliation.processed_items != reconciliation.expected_items
+            or reconciliation_validation.run is None
+            or reconciliation_validation.run.reconciliation_run_id != reconciliation_run_id
+            or not reconciliation_validation.passed
             or reconciliation.completed_at is None
             or _utc_comparable(reconciliation.completed_at)
             < _utc_comparable(activation.rollback_burned_at)
         ):
-            raise ReleaseAuthorityError("projection worker readiness requires complete exact reconciliation")
-        if any(body.get(key) != "pass" for key in ("claim_probe", "write_probe", "restart_probe")):
-            raise ReleaseAuthorityError("projection worker readiness lacks claim, write, and restart proof")
+            raise ReleaseAuthorityError(
+                "projection worker readiness requires fresh candidate-bound exact reconciliation"
+            )
+        inventory = self.session.scalar(
+            select(typed_readiness.WorkerProbeInventory).where(
+                typed_readiness.WorkerProbeInventory.candidate_id == candidate_id,
+                typed_readiness.WorkerProbeInventory.projection_epoch_id
+                == candidate.projection_epoch_id,
+            )
+        )
+        if inventory is None or _utc_comparable(inventory.sealed_at) > _utc_comparable(ready_at):
+            raise ReleaseAuthorityError("projection worker readiness requires a sealed typed probe inventory")
+        requirement_count = len(
+            self.session.scalars(
+                select(typed_readiness.WorkerProbeRequirement).where(
+                    typed_readiness.WorkerProbeRequirement.inventory_id == inventory.inventory_id
+                )
+            ).all()
+        )
+        if requirement_count != inventory.required_probe_count:
+            raise ReleaseAuthorityError("typed worker probe inventory is incomplete")
         identity = {
             "candidate_id": str(candidate_id),
             "projection_epoch_id": str(candidate.projection_epoch_id),
             "reconciliation_run_id": str(reconciliation_run_id),
+            "probe_inventory_id": str(inventory.inventory_id),
             "worker_identity": worker_identity,
             "worker_release": worker_release,
             "payload": body,
@@ -727,6 +792,7 @@ class CutoverControlAuthority:
             candidate_id=candidate_id,
             projection_epoch_id=candidate.projection_epoch_id,
             reconciliation_run_id=reconciliation_run_id,
+            probe_inventory_id=inventory.inventory_id,
             worker_identity=worker_identity.strip(),
             worker_release=worker_release.strip(),
             payload=body,
@@ -973,6 +1039,20 @@ class CutoverControlAuthority:
             )
         if worker.projection_epoch_id != candidate.projection_epoch_id:
             raise ReleaseAuthorityError("projection-worker readiness is for the wrong epoch")
+        runtime_paths = {
+            runtime.service_artifact_sha256: runtime.payload.get("service_artifact_path"),
+            runtime.projection_worker_artifact_sha256: runtime.payload.get("projection_worker_artifact_path"),
+            runtime.route_probe_sha256: runtime.payload.get("route_probe_path"),
+        }
+        for digest, path in runtime_paths.items():
+            observe_release_artifact(artifact_path=path, expected_sha256=digest)
+        readiness_details = validate_worker_readiness(
+            self.session,
+            candidate=candidate,
+            row=worker,
+            deployed_artifact_sha256=runtime.projection_worker_artifact_sha256,
+            as_of=opened_at,
+        )
         if (
             _utc_comparable(runtime.recorded_at) > _utc_comparable(opened_at)
             or _utc_comparable(worker.ready_at) > _utc_comparable(opened_at)
@@ -991,6 +1071,7 @@ class CutoverControlAuthority:
                 "generation_id": str(candidate.generation_id),
                 "runtime_attestation_id": str(runtime.attestation_id),
                 "projection_worker_readiness_id": str(worker.readiness_id),
+                "worker_readiness_completion": readiness_details,
                 "first_admission_plan_id": str(plan.plan_id),
             },
             opened_at,
@@ -1034,36 +1115,10 @@ class CutoverControlAuthority:
                 tx.ProjectionOutboxEvent.command_execution_id == (execution.execution_id if execution else None)
             )
         ).all() if execution is not None else []
-        reconciliation = (
-            self.session.scalar(
-                select(tx.ProjectionReconciliationRun)
-                .where(
-                    tx.ProjectionReconciliationRun.generation_id == candidate.generation_id,
-                    tx.ProjectionReconciliationRun.projection_epoch_id == candidate.projection_epoch_id,
-                    tx.ProjectionReconciliationRun.status == "complete",
-                    tx.ProjectionReconciliationRun.started_at >= request.admitted_at,
-                )
-                .order_by(tx.ProjectionReconciliationRun.completed_at.desc())
-                .limit(1)
-            )
-            if request is not None
-            else None
+        reconciliation_validation = validate_reconciliation(
+            self.session, candidate=candidate, as_of=verified_at
         )
-        active_mapping_ids: set[uuid.UUID] = set()
-        for mapping_model in (
-            tx.ProjectProjectionMapping,
-            tx.SectionProjectionMapping,
-            tx.TaskProjectionMapping,
-        ):
-            active_mapping_ids.update(
-                self.session.scalars(
-                    select(mapping_model.mapping_id).where(
-                        mapping_model.generation_id == candidate.generation_id,
-                        mapping_model.projection_epoch_id == candidate.projection_epoch_id,
-                        mapping_model.state == "active",
-                    )
-                ).all()
-            )
+        reconciliation = reconciliation_validation.run
         reconciliation_items = (
             self.session.scalars(
                 select(tx.ProjectionReconciliationItem).where(
@@ -1134,10 +1189,10 @@ class CutoverControlAuthority:
             or len(projection_events) != plan.expected_projection_events
             or any(event.state != "applied" for event in projection_events)
             or reconciliation is None
-            or reconciliation.processed_items != reconciliation.expected_items
-            or reconciliation.expected_items != len(active_mapping_ids)
-            or len(reconciliation_items) != len(active_mapping_ids)
-            or reconciled_mapping_ids != active_mapping_ids
+            or not reconciliation_validation.passed
+            or request is None
+            or _utc_comparable(reconciliation.started_at)
+            < _utc_comparable(request.admitted_at)
         ):
             raise ReleaseAuthorityError(
                 "first admission lacks exact committed execution, audit, projection, and reconciliation evidence"
@@ -1156,7 +1211,8 @@ class CutoverControlAuthority:
                 "invocation_obligation_id": str(obligation.obligation_id),
                 "projection_event_ids": [str(event.projection_event_id) for event in projection_events],
                 "reconciliation_run_id": str(reconciliation.reconciliation_run_id),
-                "reconciled_mapping_ids": sorted(str(value) for value in active_mapping_ids),
+                "reconciled_mapping_ids": sorted(str(value) for value in reconciled_mapping_ids),
+                "reconciliation_validation": reconciliation_validation.details,
             },
             verified_at,
         )

@@ -26,6 +26,9 @@ from tests.support.postgresql.release import (
     HASH_A,
     ROOT,
     _complete_active_mapping_reconciliation,
+    _record_runtime_and_typed_readiness,
+    _seed_worker_probe_inventory,
+    _artifact_file,
     _prepare_candidate,
     _record_and_engage_writer_fence,
     _record_final_closure,
@@ -110,38 +113,22 @@ def _burn_rollback(session, ids, context, task_id):
 
 
 def _record_runtime_and_worker_readiness(session, ids, service, candidate_id, context):
-    candidate = service.candidate_status(candidate_id)
     reconciliation = _complete_active_mapping_reconciliation(
         session,
         ids,
-        generation_id=context["generation_id"],
+        candidate_id=candidate_id,
         corpus_identity=f"stage8-readiness:{candidate_id}",
         started_at=NOW + timedelta(minutes=6),
         completed_at=NOW + timedelta(minutes=6),
     )
-    service.record_runtime_release_attestation(
+    return _record_runtime_and_typed_readiness(
+        session,
+        ids,
+        service=service,
         candidate_id=candidate_id,
-        service_artifact_sha256="1" * 64,
-        projection_worker_artifact_sha256="2" * 64,
-        route_probe_sha256="3" * 64,
-        payload={
-            "dish_release": candidate.dish_release,
-            "protocol_release": candidate.protocol_release,
-            "openapi_release": candidate.openapi_release,
-            "routing_release": candidate.routing_release,
-            "route_target": "postgresql",
-            "health": "pass",
-            "mutation_admission": "closed",
-        },
+        reconciliation=reconciliation,
         recorded_at=NOW + timedelta(minutes=6),
-    )
-    service.record_projection_worker_readiness(
-        candidate_id=candidate_id,
-        reconciliation_run_id=reconciliation.reconciliation_run_id,
         worker_identity="projection-worker@stage8-test",
-        worker_release=candidate.dish_release,
-        payload={"claim_probe": "pass", "write_probe": "pass", "restart_probe": "pass"},
-        ready_at=NOW + timedelta(minutes=6),
     )
 
 
@@ -184,6 +171,7 @@ def test_passed_rehearsal_requires_kind_specific_checkpoints(workflow_db) -> Non
             source_manifest_sha256="b" * 64,
             started_at=NOW + timedelta(minutes=1),
         )
+        checkpoint_path, checkpoint_sha = _artifact_file("activation-writer-fence")
         service.record_rehearsal_checkpoint(
             rehearsal_id=rehearsal.rehearsal_id,
             checkpoint_kind="writer_fence",
@@ -192,7 +180,8 @@ def test_passed_rehearsal_requires_kind_specific_checkpoints(workflow_db) -> Non
                 "checkpoint_kind": "writer_fence",
                 "evidence_kind": REHEARSAL_CHECKPOINT_EVIDENCE_KINDS["activation"]["writer_fence"],
                 "artifact_identity": "fixture:activation:writer-fence",
-                "artifact_sha256": "c" * 64,
+                "artifact_path": checkpoint_path,
+                "artifact_sha256": checkpoint_sha,
                 "source_manifest_sha256": "b" * 64,
                 "gate_result": "pass",
             },
@@ -447,4 +436,230 @@ def test_first_admission_plan_rejects_unverifiable_target_shapes(workflow_db) ->
                 command_name="start",
                 command_arguments={"task_id": str(task_id), "kind": "initial"},
                 task_id=task_id,
+            )
+
+
+
+def _prepare_fenced_recertified_cutover(session, ids, context, task_id):
+    service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+    bundle = service.build_evidence_bundle(
+        candidate_id=candidate_id,
+        bundle_kind="release_candidate",
+        built_at=NOW,
+    )
+    service.validate_candidate(
+        candidate_id=candidate_id,
+        evidence_bundle_id=bundle.bundle_id,
+        validated_at=NOW + timedelta(minutes=1),
+    )
+    closure = _record_final_closure(
+        service,
+        ids,
+        candidate_id,
+        closed_through_at=NOW + timedelta(minutes=5),
+    )
+    service.approve_candidate(
+        candidate_id=candidate_id,
+        evidence_bundle_id=bundle.bundle_id,
+        approver="Marco",
+        approval_statement="Approve exact candidate for Agent B activation checks.",
+        approval_payload={
+            "final_asana_closure_id": str(closure.closure_id),
+            "final_asana_closure_sha256": closure.closure_sha256,
+        },
+        approved_at=NOW + timedelta(minutes=5),
+    )
+    fence = service.prepare_writer_fence(
+        candidate_id=candidate_id,
+        target_identity="legacy-service@agent-b-activation",
+        mechanism="fail-closed-file",
+        manifest={"path": "/tmp/agent-b-activation-fence.json"},
+        prepared_at=NOW + timedelta(minutes=5),
+    )
+    run = service.prepare_cutover(
+        candidate_id=candidate_id,
+        started_at=NOW + timedelta(minutes=5),
+    )
+    _record_and_engage_writer_fence(
+        service,
+        ids,
+        fence_id=fence.fence_id,
+        engaged_at=NOW + timedelta(minutes=5),
+    )
+    service.verify_writer_fence(
+        fence_id=fence.fence_id,
+        proof=_writer_fence_proof(fence, candidate_id),
+        verified_at=NOW + timedelta(minutes=5),
+    )
+    service.mark_fenced(
+        cutover_run_id=run.cutover_run_id,
+        recorded_at=NOW + timedelta(minutes=5),
+    )
+    service.recertify_candidate(
+        candidate_id=candidate_id,
+        closure_id=closure.closure_id,
+        approver="Marco",
+        recertification_statement="Recertify exact closure after fencing.",
+        payload={"cutover_run_id": str(run.cutover_run_id)},
+        recertified_at=NOW + timedelta(minutes=5),
+    )
+    return service, candidate_id, closure, run
+
+
+def test_activation_revalidates_the_exact_approved_candidate_manifest(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id, closure, run = _prepare_fenced_recertified_cutover(
+            session, ids, context, task_id
+        )
+        candidate = service._candidate(candidate_id)
+        _seed_worker_probe_inventory(
+            session,
+            ids,
+            candidate=candidate,
+            sealed_at=NOW + timedelta(minutes=5),
+        )
+
+        with pytest.raises(ReleaseAuthorityError, match="authority manifest is stale"):
+            service.activate_authority(
+                cutover_run_id=run.cutover_run_id,
+                final_asana_closure_id=closure.closure_id,
+                activated_at=NOW + timedelta(minutes=5),
+            )
+        assert service._cutover(run.cutover_run_id).state == "fenced"
+
+
+def test_writer_fence_verification_requires_exact_persisted_observation(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        fence = service.prepare_writer_fence(
+            candidate_id=candidate_id,
+            target_identity="legacy-service@missing-observation",
+            mechanism="fail-closed-file",
+            manifest={"path": "/tmp/missing-observation.json"},
+            prepared_at=NOW,
+        )
+        with pytest.raises(ReleaseAuthorityError, match="lacks the artifact observation"):
+            service.verify_writer_fence(
+                fence_id=fence.fence_id,
+                proof=_writer_fence_proof(fence, candidate_id),
+                verified_at=NOW + timedelta(minutes=1),
+            )
+        assert service.writer_fence_status(fence.fence_id).state == "prepared"
+
+
+def test_caller_pass_strings_cannot_replace_typed_worker_probe_evidence(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id, cutover_run_id = _burn_rollback(
+            session, ids, context, task_id
+        )
+        candidate = service._candidate(candidate_id)
+        reconciliation = _complete_active_mapping_reconciliation(
+            session,
+            ids,
+            candidate_id=candidate_id,
+            corpus_identity="agent-b-untyped-readiness",
+            started_at=NOW + timedelta(minutes=6),
+            completed_at=NOW + timedelta(minutes=6),
+        )
+        service_path, service_sha = _artifact_file("untyped-service")
+        worker_path, worker_sha = _artifact_file("untyped-worker")
+        route_path, route_sha = _artifact_file("untyped-route")
+        service.record_runtime_release_attestation(
+            candidate_id=candidate_id,
+            service_artifact_sha256=service_sha,
+            projection_worker_artifact_sha256=worker_sha,
+            route_probe_sha256=route_sha,
+            payload={
+                "dish_release": candidate.dish_release,
+                "protocol_release": candidate.protocol_release,
+                "openapi_release": candidate.openapi_release,
+                "routing_release": candidate.routing_release,
+                "route_target": "postgresql",
+                "health": "pass",
+                "mutation_admission": "closed",
+                "service_artifact_path": service_path,
+                "projection_worker_artifact_path": worker_path,
+                "route_probe_path": route_path,
+            },
+            recorded_at=NOW + timedelta(minutes=6),
+        )
+        _seed_worker_probe_inventory(
+            session,
+            ids,
+            candidate=candidate,
+            sealed_at=NOW + timedelta(minutes=6),
+        )
+        service.record_projection_worker_readiness(
+            candidate_id=candidate_id,
+            reconciliation_run_id=reconciliation.reconciliation_run_id,
+            worker_identity="projection-worker@untyped",
+            worker_release=candidate.dish_release,
+            payload={"claim_probe": "pass", "write_probe": "pass", "restart_probe": "pass"},
+            ready_at=NOW + timedelta(minutes=6),
+        )
+        first_run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=first_run_id)
+        service.plan_first_admission(
+            cutover_run_id=cutover_run_id,
+            request_id=_next(ids),
+            command_name="start",
+            command_arguments={"task_id": str(task_id), "agent": "codex", "kind": "initial"},
+            task_id=task_id,
+            owner_id="owner-1",
+            principal_class="agent",
+            run_id=first_run_id,
+            payload={"probe": "untyped-readiness-must-fail"},
+            recorded_at=NOW + timedelta(minutes=6),
+        )
+        with pytest.raises(ReleaseAuthorityError, match="completed typed probe evidence"):
+            service.open_mutation_admission(
+                cutover_run_id=cutover_run_id,
+                opened_at=NOW + timedelta(minutes=7),
+            )
+
+
+def test_runtime_artifact_substitution_blocks_admission_after_typed_readiness(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id, cutover_run_id = _burn_rollback(
+            session, ids, context, task_id
+        )
+        reconciliation = _complete_active_mapping_reconciliation(
+            session,
+            ids,
+            candidate_id=candidate_id,
+            corpus_identity="agent-b-runtime-substitution",
+            started_at=NOW + timedelta(minutes=6),
+            completed_at=NOW + timedelta(minutes=6),
+        )
+        runtime, _readiness = _record_runtime_and_typed_readiness(
+            session,
+            ids,
+            service=service,
+            candidate_id=candidate_id,
+            reconciliation=reconciliation,
+            recorded_at=NOW + timedelta(minutes=6),
+        )
+        first_run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=first_run_id)
+        service.plan_first_admission(
+            cutover_run_id=cutover_run_id,
+            request_id=_next(ids),
+            command_name="start",
+            command_arguments={"task_id": str(task_id), "agent": "codex", "kind": "initial"},
+            task_id=task_id,
+            owner_id="owner-1",
+            principal_class="agent",
+            run_id=first_run_id,
+            payload={"probe": "runtime-substitution-must-fail"},
+            recorded_at=NOW + timedelta(minutes=6),
+        )
+        Path(runtime.payload["service_artifact_path"]).write_bytes(b"substituted-runtime\n")
+        with pytest.raises(ReleaseAuthorityError, match="digest does not match"):
+            service.open_mutation_admission(
+                cutover_run_id=cutover_run_id,
+                opened_at=NOW + timedelta(minutes=7),
             )

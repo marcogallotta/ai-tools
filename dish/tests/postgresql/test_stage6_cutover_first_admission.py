@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from dish_pg import models
 from dish_pg import stage3_models as wf
+from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
 from dish_pg.release import ALEMBIC_HEAD, ReleaseAuthorityError, ReleaseCandidateService
 from dish_pg.workflow import (
@@ -25,6 +26,7 @@ from tests.support.postgresql.release import (
     _prepare_candidate,
     _record_and_engage_writer_fence,
     _record_final_closure,
+    _record_runtime_and_typed_readiness,
     _writer_fence_proof,
 )
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
@@ -136,29 +138,13 @@ def _burn_and_open_admission(factory, ids, context, task_id, candidate_id, cutov
             started_at=NOW + timedelta(minutes=6),
             completed_at=NOW + timedelta(minutes=6),
         )
-        service.record_runtime_release_attestation(
+        _record_runtime_and_typed_readiness(
+            session,
+            ids,
+            service=service,
             candidate_id=candidate_id,
-            service_artifact_sha256="1" * 64,
-            projection_worker_artifact_sha256="2" * 64,
-            route_probe_sha256="3" * 64,
-            payload={
-                "dish_release": candidate.dish_release,
-                "protocol_release": candidate.protocol_release,
-                "openapi_release": candidate.openapi_release,
-                "routing_release": candidate.routing_release,
-                "route_target": "postgresql",
-                "health": "pass",
-                "mutation_admission": "closed",
-            },
+            reconciliation=reconciliation,
             recorded_at=NOW + timedelta(minutes=6),
-        )
-        service.record_projection_worker_readiness(
-            candidate_id=candidate_id,
-            reconciliation_run_id=reconciliation.reconciliation_run_id,
-            worker_identity="projection-worker@fixture",
-            worker_release=candidate.dish_release,
-            payload={"claim_probe": "pass", "write_probe": "pass", "restart_probe": "pass"},
-            ready_at=NOW + timedelta(minutes=6),
         )
         service.plan_first_admission(
             cutover_run_id=cutover_id,
@@ -337,6 +323,80 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
     _verify_and_complete(factory, ids, context, candidate_id, cutover_id, request_id)
 
 
+
+@pytest.mark.parametrize("defect", ["stale", "wrong_candidate", "wrong_boundary"])
+def test_first_admission_rejects_non_strict_post_request_reconciliation(
+    workflow_db, defect: str
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    candidate_id, closure_id, cutover_id, fence_id = _prepare_approved_cutover(
+        factory, ids, context, task_id
+    )
+    _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fence_id)
+    request_id, run_id = _burn_and_open_admission(
+        factory, ids, context, task_id, candidate_id, cutover_id
+    )
+    _record_committed_first_request(
+        factory, ids, context, task_id, cutover_id, request_id, run_id
+    )
+
+    verified_at = NOW + timedelta(minutes=9)
+    with session_scope(factory) as session:
+        reconciliation = _complete_active_mapping_reconciliation(
+            session,
+            ids,
+            generation_id=context["generation_id"],
+            corpus_identity=f"post-first-admission-{defect}",
+            started_at=NOW + timedelta(minutes=8),
+            completed_at=NOW + timedelta(minutes=9),
+        )
+        if defect == "stale":
+            verified_at = NOW + timedelta(hours=2)
+        elif defect == "wrong_candidate":
+            candidate = session.get(rel.ReleaseCandidate, candidate_id)
+            assert candidate is not None
+            other = rel.ReleaseCandidate(
+                candidate_id=_next(ids),
+                generation_id=candidate.generation_id,
+                source_import_batch_id=candidate.source_import_batch_id,
+                shadow_baseline_id=candidate.shadow_baseline_id,
+                projection_epoch_id=candidate.projection_epoch_id,
+                source_release=candidate.source_release,
+                source_commit="f" * 64,
+                ledger_through_commit=candidate.ledger_through_commit,
+                schema_head=candidate.schema_head,
+                dish_release=candidate.dish_release,
+                honest_release=candidate.honest_release,
+                protocol_release=candidate.protocol_release,
+                openapi_release=candidate.openapi_release,
+                routing_release=candidate.routing_release,
+                status="activated",
+                candidate_revision=1,
+                validation_bundle_sha256=candidate.validation_bundle_sha256,
+                created_at=candidate.created_at,
+                validated_at=candidate.validated_at,
+                approved_at=candidate.approved_at,
+                terminal_at=candidate.terminal_at,
+            )
+            session.add(other)
+            session.flush()
+            reconciliation.candidate_id = other.candidate_id
+        else:
+            reconciliation.external_high_water = None
+            reconciliation.external_snapshot_identity = "snapshot:wrong-contract"
+        session.flush()
+
+        service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
+        with pytest.raises(
+            ReleaseAuthorityError,
+            match="execution, audit, projection, and reconciliation",
+        ):
+            service.verify_first_admission(
+                cutover_run_id=cutover_id,
+                request_id=request_id,
+                verified_at=verified_at,
+            )
+
 def test_rollback_burn_replay_requires_exact_bundle_and_timestamp(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     candidate_id, closure_id, cutover_id, fence_id = _prepare_approved_cutover(
@@ -399,7 +459,7 @@ def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: P
         assert "trim(legacy_bundle_id)" in checks[
             "ck_authority_activations_legacy_bundle_nonblank"
         ]
-        assert ALEMBIC_HEAD == "0027_server_default_alignment"
+        assert ALEMBIC_HEAD == "0028_consumed_first_request_open_admission"
     finally:
         engine.dispose()
 
