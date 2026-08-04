@@ -32,7 +32,25 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+def _run_on_connection(connection) -> None:
+    connection.exec_driver_sql(
+        "CREATE TABLE IF NOT EXISTS alembic_version "
+        "(version_num VARCHAR(128) NOT NULL PRIMARY KEY)"
+    )
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
 def run_migrations_online() -> None:
+    supplied_connection = config.attributes.get("connection")
+    if supplied_connection is not None:
+        _run_on_connection(supplied_connection)
+        return
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -43,20 +61,11 @@ def run_migrations_online() -> None:
     # every Alembic revision commit together. A plain connection context rolls
     # back its implicit transaction on close under PostgreSQL.
     with connectable.begin() as connection:
-        connection.exec_driver_sql(
-            "CREATE TABLE IF NOT EXISTS alembic_version "
-            "(version_num VARCHAR(128) NOT NULL PRIMARY KEY)"
-        )
-        context.configure(
-            connection=connection,
-            target_metadata=target_metadata,
-            compare_type=True,
-        )
-        with context.begin_transaction():
-            context.run_migrations()
+        _run_on_connection(connection)
 
 
 if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
+

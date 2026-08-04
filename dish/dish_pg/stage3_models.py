@@ -98,6 +98,16 @@ class ServiceRequest(Base):
             name="principal_class_allowed",
         ),
         CheckConstraint("length(canonical_payload_sha256) = 64", name="payload_hash_length"),
+        ForeignKeyConstraint(
+            ["generation_id", "owner_id", "run_id"],
+            [
+                "service_runs.generation_id",
+                "service_runs.owner_id",
+                "service_runs.run_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_service_requests_exact_run_owner",
+        ),
         UniqueConstraint("generation_id", "request_id", name="uq_request_generation_identity"),
     )
 
