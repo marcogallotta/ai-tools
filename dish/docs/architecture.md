@@ -394,7 +394,13 @@ control instead of attempting to create a second generation-primary row. Candida
 recomputes closure from the authoritative Stage 2–5 tables; it does not accept a checklist assertion in place of closed
 requests, operations, projection attempts, shadow gaps, registry/alias coverage, or mapped-corpus
 reconciliation. Evidence bundles exclude build time from their identity and stale bundles cannot be
-validated. The legacy HTTP service checks its file fence after route-scope authentication and before
+validated. Approved candidates additionally bind a versioned canonical authority manifest whose
+fingerprint covers exact active projection-mapping membership, import completion and typed
+source-to-native linkage, selected reconciliation run and item evidence, and sealed worker-readiness
+inventory and completion evidence, as well as the candidate generation, import, epoch, baseline, and
+registry identities. Activation recomputes the same inputs and fails closed when mutable state beneath
+unchanged parent IDs differs from the approval-time manifest. The legacy HTTP service checks its file
+fence after route-scope authentication and before
 request-body loading, so malformed, oversized, or valid mutation bodies cannot bypass a cutover
 fence.
 

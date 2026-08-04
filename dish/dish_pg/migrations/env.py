@@ -11,6 +11,7 @@ from dish_pg import stage5_models  # noqa: F401 -- register Stage 5 metadata
 from dish_pg import stage6_models  # noqa: F401 -- register Stage 6 metadata
 from dish_pg import reservation_models  # noqa: F401 -- register first-request reservation metadata
 from dish_pg import artifact_identity_models  # noqa: F401 -- register writer-fence artifact metadata
+from dish_pg import candidate_manifest_models  # noqa: F401 -- register candidate manifest metadata
 
 config = context.config
 if config.config_file_name is not None:

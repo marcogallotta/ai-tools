@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from sqlalchemy import func, select
 
 from . import stage6_models as rel
+from .candidate_manifest import bind_approval_manifest
 from .cutover_chronology import _require_at_or_after, _require_aware
 from .release_evidence import (
     ReleaseAuthorityError,
@@ -304,6 +305,11 @@ class FinalAsanaClosureAuthority:
             approved_at=approved_at,
         )
         self.session.add(row)
+        self.session.flush()
+        bind_approval_manifest(
+            self.session, uuid_factory=self.uuid_factory, approval=row,
+            candidate=candidate, bound_at=approved_at,
+        )
         candidate.status = "approved"
         candidate.candidate_revision += 1
         candidate.approved_at = approved_at

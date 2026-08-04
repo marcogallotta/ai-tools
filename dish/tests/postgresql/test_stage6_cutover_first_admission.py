@@ -79,6 +79,14 @@ def _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fenc
             verified_at=NOW + timedelta(minutes=5),
         )
         service.mark_fenced(cutover_run_id=cutover_id, recorded_at=NOW + timedelta(minutes=5))
+        service.recertify_candidate(
+            candidate_id=candidate_id,
+            closure_id=closure_id,
+            approver="Marco",
+            recertification_statement="final closure remains exact after fencing",
+            payload={"result": "pass"},
+            recertified_at=NOW + timedelta(minutes=5),
+        )
         service.activate_authority(
             cutover_run_id=cutover_id,
             final_asana_closure_id=closure_id,
@@ -170,25 +178,18 @@ def _record_committed_first_request(factory, ids, context, task_id, cutover_id, 
     with session_scope(factory) as session:
         run_id = _next(ids)
         _register_run(session, generation_id=context["generation_id"], run_id=run_id)
-        workflow = WorkflowAuthorityService(session, uuid_factory=lambda: _next(ids))
-        workflow.admit_request(
-            RequestSpec(
-                request_id=request_id,
-                generation_id=context["generation_id"],
-                run_id=run_id,
-                owner_id="owner-1",
-                principal_class="agent",
-                command_name="start",
-                canonical_payload={"arguments": {"task_id": str(task_id), "agent": "codex", "kind": "initial"}},
-                protocol_release="protocol-1",
-                dish_release="dish-pg-stage6",
-                admitted_at=NOW + timedelta(minutes=8),
+        binding = session.scalar(
+            select(models.HonestContractBinding).where(
+                models.HonestContractBinding.binding_kind == "release",
+                models.HonestContractBinding.protocol_sha256 == HASH_A,
+                models.HonestContractBinding.schema_sha256 == "b" * 64,
+                models.HonestContractBinding.migration_id.is_(None),
+                models.HonestContractBinding.migration_metadata_sha256.is_(None),
             )
         )
-        binding_id = _next(ids)
-        session.add(
-            models.HonestContractBinding(
-                binding_id=binding_id,
+        if binding is None:
+            binding = models.HonestContractBinding(
+                binding_id=_next(ids),
                 binding_kind="release",
                 source_identity="honest-pantry@stage6-first-admission",
                 dish_release="dish-pg-stage6",
@@ -205,8 +206,23 @@ def _record_committed_first_request(factory, ids, context, task_id, cutover_id, 
                 provenance={"source": "cutover-test"},
                 resolved_at=NOW + timedelta(minutes=8),
             )
+            session.add(binding)
+            session.flush()
+        workflow = WorkflowAuthorityService(session, uuid_factory=lambda: _next(ids))
+        workflow.admit_request(
+            RequestSpec(
+                request_id=request_id,
+                generation_id=context["generation_id"],
+                run_id=run_id,
+                owner_id="owner-1",
+                principal_class="agent",
+                command_name="start",
+                canonical_payload={"arguments": {"task_id": str(task_id), "agent": "codex", "kind": "initial"}},
+                protocol_release=binding.protocol_release,
+                dish_release=binding.dish_release,
+                admitted_at=NOW + timedelta(minutes=8),
+            )
         )
-        session.flush()
         execution_id = _next(ids)
         workflow.begin_execution(
             ExecutionSpec(
@@ -219,7 +235,7 @@ def _record_committed_first_request(factory, ids, context, task_id, cutover_id, 
                 transaction_profile="L",
                 canonical_intent={"command": "start", "arguments": {"task_id": str(task_id), "agent": "codex", "kind": "initial"}},
                 pinned_inputs={"now": (NOW + timedelta(minutes=8)).isoformat()},
-                contract_binding_id=binding_id,
+                contract_binding_id=binding.binding_id,
                 admitted_at=NOW + timedelta(minutes=8),
             )
         )

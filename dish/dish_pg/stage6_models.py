@@ -297,6 +297,7 @@ class CutoverApproval(Base):
         CheckConstraint("length(trim(approver)) > 0", name="approver_nonblank"),
         CheckConstraint("length(trim(approval_statement)) > 0", name="statement_nonblank"),
         CheckConstraint("length(approval_sha256) = 64", name="approval_hash_length"),
+        UniqueConstraint("approval_id", "candidate_id", name="uq_cutover_approval_candidate_identity"),
     )
 
 

@@ -12,6 +12,7 @@ from . import models
 from . import stage3_models as wf
 from . import stage5_models as tx
 from . import stage6_models as rel
+from .candidate_manifest import revalidate_candidate_manifest
 from .command_contract import definition_for
 from .command_effects import expected_projection_count
 from .cutover_chronology import _require_at_or_after, _utc_comparable
@@ -554,6 +555,12 @@ class CutoverControlAuthority:
         )
         self.session.add(row)
         self._advance_cutover(run, "rollback_burned")
+        revalidation = revalidate_candidate_manifest(
+            self.session, uuid_factory=self.uuid_factory, candidate=candidate,
+            revalidated_at=burned_at,
+        )
+        if revalidation.result != "matched":
+            raise ReleaseAuthorityError("approved candidate authority manifest is stale")
         candidate.status = "activated"
         candidate.candidate_revision += 1
         candidate.terminal_at = burned_at

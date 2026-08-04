@@ -760,7 +760,10 @@ class ReleaseCandidateService(
                 tx.ProjectionReconciliationRun.generation_id == candidate.generation_id,
                 tx.ProjectionReconciliationRun.projection_epoch_id == candidate.projection_epoch_id,
             )
-            .order_by(tx.ProjectionReconciliationRun.started_at.desc())
+            .order_by(
+                tx.ProjectionReconciliationRun.started_at.desc(),
+                tx.ProjectionReconciliationRun.reconciliation_run_id.desc(),
+            )
             .limit(1)
         )
         active_mapping_count = sum(
