@@ -60,13 +60,11 @@ def test_frozen_command_inventory_matches_current_surfaces() -> None:
     assert list(action_values["ACTION_COMMANDS"]) == baseline["action_commands"]
     assert sorted(admin_values["_ADMIN_COMMANDS"]) == sorted(baseline["admin_commands"])
 
-    current_surface = set(baseline["action_commands"]) | set(baseline["admin_commands"])
-    source_only = set(baseline.get("source_only_commands", ()))
+    expected_treatments = set(baseline["action_commands"]) | set(baseline["admin_commands"])
+    expected_treatments.add("planning-intent-settlement")
     treatments = baseline["target_treatments"]
     assert isinstance(treatments, dict)
-    assert source_only <= current_surface
-    assert current_surface - source_only <= set(treatments)
-    assert set(treatments) - {"planning-intent-settlement"} <= current_surface
+    assert set(treatments) == expected_treatments
     assert all(
         re.fullmatch(r"(?:retain|retire|add):[A-Z]", treatment)
         for treatment in treatments.values()
@@ -106,3 +104,34 @@ def test_frozen_characterization_corpus_has_exact_hashes() -> None:
         for path in sorted((ROOT / "tests").glob("test_*.py"))
     }
     assert actual == baseline["characterization_test_sha256"]
+
+
+def test_canonical_stage_a_regeneration_matches_checked_in_bytes(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    script = ROOT / "scripts/dish-pg-stage-a-baseline"
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    for output in (first, second):
+        completed = subprocess.run(
+            [sys.executable, str(script), "--output", str(output)],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        assert completed.returncode == 0, completed.stdout
+    assert first.read_bytes() == second.read_bytes() == BASELINE_PATH.read_bytes()
+
+    checked = subprocess.run(
+        [sys.executable, str(script), "--check"],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    assert checked.returncode == 0, checked.stdout
+    assert "matches canonical regeneration" in checked.stdout

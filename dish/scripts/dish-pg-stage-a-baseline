@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Deterministically regenerate or verify the checked-in Stage A baseline.
+
+File identities are SHA-256 digests of repository bytes exactly as stored.  The
+only normalization is deterministic inventory ordering and canonical JSON
+serialization (sorted keys, two-space indentation, one trailing newline).
+"""
+from __future__ import annotations
+
+import argparse
+import ast
+import hashlib
+import json
+import os
+import re
+import tempfile
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+BASELINE_PATH = ROOT / "docs/database-backend-stage-a-baseline.json"
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _literal_assignments(path: Path) -> dict[str, Any]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    values: dict[str, Any] = {}
+
+    def evaluate(node: ast.AST) -> Any:
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            return values[node.id]
+        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+            result = [evaluate(item) for item in node.elts]
+            if isinstance(node, ast.Tuple):
+                return tuple(result)
+            if isinstance(node, ast.Set):
+                return set(result)
+            return result
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+            return evaluate(node.left) | evaluate(node.right)
+        raise ValueError(f"unsupported literal expression: {ast.dump(node)}")
+
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if not isinstance(target, ast.Name):
+            continue
+        try:
+            values[target.id] = evaluate(statement.value)
+        except (KeyError, ValueError):
+            continue
+    return values
+
+
+def _sqlite_tables() -> list[str]:
+    source = (ROOT / "dish_tool/database_schema.py").read_text(encoding="utf-8")
+    actual: list[str] = []
+    for name in re.findall(
+        r"CREATE TABLE(?: IF NOT EXISTS)?\s+([A-Za-z0-9_]+)", source
+    ):
+        if name not in actual:
+            actual.append(name)
+    for old_name, new_name in re.findall(
+        r"ALTER TABLE\s+([A-Za-z0-9_]+)\s+RENAME TO\s+([A-Za-z0-9_]+)", source
+    ):
+        if old_name in actual:
+            actual[actual.index(old_name)] = new_name
+    return actual
+
+
+def generated_baseline() -> dict[str, Any]:
+    baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    action_values = _literal_assignments(ROOT / "dish_service/command_spec.py")
+    admin_values = _literal_assignments(ROOT / "dish_tool/admin_cli.py")
+    baseline["action_commands"] = list(action_values["ACTION_COMMANDS"])
+    baseline["admin_commands"] = sorted(admin_values["_ADMIN_COMMANDS"])
+    baseline["sqlite_tables"] = _sqlite_tables()
+    baseline["governing_source_sha256"] = {
+        relative: _sha256(ROOT / relative)
+        for relative in sorted(baseline["governing_source_sha256"])
+    }
+    baseline["characterization_test_sha256"] = {
+        str(path.relative_to(ROOT)): _sha256(path)
+        for path in sorted((ROOT / "tests").glob("test_*.py"))
+    }
+    return baseline
+
+
+def encoded_baseline() -> bytes:
+    return (json.dumps(generated_baseline(), indent=2, sort_keys=True) + "\n").encode()
+
+
+def _write_atomic(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="dish-pg-stage-a-baseline")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--check", action="store_true")
+    mode.add_argument("--write", action="store_true")
+    mode.add_argument("--output", type=Path)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    generated = encoded_baseline()
+    if args.check:
+        stored = BASELINE_PATH.read_bytes()
+        if stored != generated:
+            print(
+                "Stage A baseline is stale: "
+                f"stored={hashlib.sha256(stored).hexdigest()} "
+                f"generated={hashlib.sha256(generated).hexdigest()}"
+            )
+            return 1
+        print(f"Stage A baseline matches canonical regeneration: {_sha256(BASELINE_PATH)}")
+        return 0
+    destination = BASELINE_PATH if args.write else args.output
+    assert destination is not None
+    _write_atomic(destination, generated)
+    print(f"Wrote {destination}: {hashlib.sha256(generated).hexdigest()}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

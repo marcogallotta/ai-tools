@@ -39,7 +39,7 @@
     "review-reject",
     "supply-evidence"
   ],
-  "baseline_id": "stage-a-semantic-proposal-review-queue-20260803",
+  "baseline_id": "stage-a-current-system-audit-remediation-20260803",
   "characterization_test_sha256": {
     "tests/test_abandonment_admin_workflow.py": "64038a2026abe68462eea03f3fb0039919e7da12801b82c759e0e4ed5318ec06",
     "tests/test_abandonment_fencing_and_reconciliation.py": "616fa856e9ed5f42d3bfdf4a2eb9b485825f5100d200fc578c1c8926ed572e39",
@@ -246,20 +246,12 @@
     "The baseline records current authority only; PostgreSQL is not production authority.",
     "New PostgreSQL implementation tests use the tests/postgresql/ namespace and are not part of the frozen legacy characterization corpus.",
     "Any change to a hashed current-system file or characterization test requires production-ledger review and an explicit baseline revision.",
-    "The current SQLite/Asana surface adds semantic proposal review and application commands; they are recorded in source_only_commands and dark-launch capture but are not falsely exposed as implemented PostgreSQL authority.",
-    "WORKTREE-SEMANTIC-PROPOSALS-20260803 is a source marker for the durable review-queue implementation; replace it with the final immutable commit before release or cutover evidence is closed."
+    "The 2026-08-03 baseline includes the shared-policy correction required for PostgreSQL Human Review continuation and the exact current-system command inventories present in the supplied worktree.",
+    "WORKTREE-AUDIT-REMEDIATION-20260803 is an honest source marker because the supplied archive contains no Git metadata; replace it with the final immutable commit before release or cutover evidence is closed."
   ],
   "production_change_epoch": "2026-08-03",
-  "source_commit": "WORKTREE-SEMANTIC-PROPOSALS-20260803",
-  "source_commit_time": "2026-08-03T22:00:00+02:00",
-  "source_only_commands": [
-    "apply-proposal",
-    "proposals",
-    "review-approve",
-    "review-inspect",
-    "review-queue",
-    "review-reject"
-  ],
+  "source_commit": "WORKTREE-AUDIT-REMEDIATION-20260803",
+  "source_commit_time": "2026-08-03",
   "sqlite_tables": [
     "submissions",
     "audit_events",
