@@ -21,6 +21,19 @@ from sqlalchemy import select
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+# The complete set of legacy writers that must be fenced before cutover authority
+# can activate. Enumerated and confirmed against the repo and host state on
+# 2026-08-04 (see docs/ops-issues.md, "Legacy-writer inventory — enumeration"):
+# no other process writes to legacy SQLite/Asana. Update this set only after a
+# fresh enumeration confirms it is still exhaustive.
+REQUIRED_LEGACY_WRITER_INVENTORY = frozenset(
+    {
+        "dish-service-prod.service",
+        "dish",
+        "dish-admin",
+    }
+)
+
 from dish_pg.database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from dish_pg.release import ALEMBIC_HEAD, ReleaseCandidateService
 from dish_pg import stage6_models as rel
@@ -501,6 +514,7 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                     fence_id=_uuid(args.fence_id),
                     proof=_load(args.proof_file),
                     verified_at=_time(args.verified_at),
+                    required_writer_inventory=REQUIRED_LEGACY_WRITER_INVENTORY,
                 )
                 return {"ok": True, **_row_id(row), "proof_sha256": row.proof_sha256, "state": row.state}, 0
             if cmd == "cutover-prepare":
@@ -509,19 +523,23 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 )
             elif cmd == "cutover-mark-fenced":
                 row = service.mark_fenced(
-                    cutover_run_id=_uuid(args.cutover_run_id), recorded_at=_time(args.recorded_at)
+                    cutover_run_id=_uuid(args.cutover_run_id),
+                    recorded_at=_time(args.recorded_at),
+                    required_writer_inventory=REQUIRED_LEGACY_WRITER_INVENTORY,
                 )
             elif cmd == "cutover-activate":
                 row = service.activate_authority(
                     cutover_run_id=_uuid(args.cutover_run_id),
                     final_asana_closure_id=_uuid(args.final_closure_id),
                     activated_at=_time(args.activated_at),
+                    required_writer_inventory=REQUIRED_LEGACY_WRITER_INVENTORY,
                 )
             elif cmd == "cutover-burn-rollback":
                 row = service.burn_rollback(
                     cutover_run_id=_uuid(args.cutover_run_id),
                     legacy_bundle_id=args.legacy_bundle_id,
                     burned_at=_time(args.burned_at),
+                    required_writer_inventory=REQUIRED_LEGACY_WRITER_INVENTORY,
                 )
             elif cmd == "runtime-attestation-record":
                 data = _load(args.file)
