@@ -66,6 +66,7 @@ LANES: Mapping[str, tuple[Phase, ...]] = {
                 "tests/postgresql/native/test_first_request_reservation_single_gate.py",
                 "tests/postgresql/native/test_operation_discard_prepare_concurrency.py",
                 "tests/postgresql/native/test_projection_attempt_concurrency.py",
+                "tests/postgresql/native/test_projection_epoch_lifecycle_concurrency.py",
                 "tests/postgresql/native/test_stage_a_concurrency.py",
             ),
             required_env=("DISH_TEST_POSTGRESQL_DSN",),
