@@ -1389,6 +1389,7 @@ class CutoverControlAuthority:
             return run
         if run.state != "first_admission_verified":
             raise ReleaseAuthorityError("cutover completion requires first-admission verification")
+        candidate = self._candidate(run.candidate_id)
         verified_at = self._cutover_checkpoint_time(cutover_run_id, "first_admission_verified")
         _require_at_or_after(
             completed_at,
@@ -1397,8 +1398,39 @@ class CutoverControlAuthority:
             floor_field="first-admission verification",
         )
         self._require_not_future(completed_at, "completed_at")
+        # Completion is a fresh authority decision, not an inference from prior
+        # activation or first-admission evidence. Rebuild and validate the final
+        # bundle at the transition boundary so stale, partial, mismatched, or
+        # invalidated evidence cannot be carried into the terminal state.
+        final_bundle = self.build_evidence_bundle(
+            candidate_id=candidate.candidate_id,
+            bundle_kind="cutover_final",
+            built_at=completed_at,
+        )
+        manifest_candidate = final_bundle.manifest.get("candidate", {})
+        if (
+            final_bundle.candidate_id != candidate.candidate_id
+            or final_bundle.bundle_kind != "cutover_final"
+            or final_bundle.manifest_sha256 != sha256_json(final_bundle.manifest)
+            or manifest_candidate.get("candidate_id") != str(candidate.candidate_id)
+            or manifest_candidate.get("generation_id") != str(candidate.generation_id)
+            or not final_bundle.manifest.get("acceptance", {}).get("passed", False)
+        ):
+            raise ReleaseAuthorityError(
+                "cutover completion requires a current validated final evidence bundle"
+            )
         self._advance_cutover(run, "completed", terminal_at=completed_at)
-        self._checkpoint(run, "cutover_completed", {}, completed_at)
+        self._checkpoint(
+            run,
+            "cutover_completed",
+            {
+                "final_evidence_bundle_id": str(final_bundle.bundle_id),
+                "final_evidence_bundle_sha256": final_bundle.manifest_sha256,
+                "candidate_id": str(candidate.candidate_id),
+                "generation_id": str(candidate.generation_id),
+            },
+            completed_at,
+        )
         return run
     def abort_cutover(
         self,

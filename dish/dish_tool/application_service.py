@@ -263,7 +263,7 @@ class CurrentWorkflowService:
             live_status=live_status,
             live_section_gid=live.section_gid,
             verification_queue_gid=registry.verification_queue_gid,
-            cycle_reviewed=cycle_reviewed,
+            verifier_established=cycle_reviewed,
             latest_cycle_outcome=None if cycle is None else cycle["outcome"],
             latest_cycle_route=None if cycle is None else cycle["route"],
             validation_rules=tuple(validation_rules),

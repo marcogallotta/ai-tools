@@ -56,7 +56,7 @@ def test_planner_delegates_legality_and_adjudicates_exact_effects() -> None:
         live_status="pending-research",
         live_section_gid="rq",
         verification_queue_gid="vq",
-        cycle_reviewed=False,
+        verifier_established=False,
         latest_cycle_outcome=None,
         latest_cycle_route=None,
         validation_rules=(),

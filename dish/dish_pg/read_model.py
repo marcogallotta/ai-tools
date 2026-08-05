@@ -386,9 +386,33 @@ class PostgresReadModel:
             .order_by(wf.VerificationCycle.cycle_sequence.desc())
             .limit(1)
         )
+        verifier_established = False
         inspected = False
         signoff_bound = False
         if cycle is not None:
+            verifier_established = self.session.scalar(
+                select(func.count())
+                .select_from(wf.OperationActorFact)
+                .join(
+                    wf.ServiceLease,
+                    (wf.ServiceLease.operation_id == wf.OperationActorFact.operation_id)
+                    & (wf.ServiceLease.run_id == wf.OperationActorFact.run_id)
+                    & (wf.ServiceLease.owner_id == wf.OperationActorFact.owner_id)
+                    & (wf.ServiceLease.actor_role == wf.OperationActorFact.actor_role)
+                    & (
+                        wf.ServiceLease.actor_attempt_sequence
+                        == wf.OperationActorFact.actor_attempt_sequence
+                    ),
+                )
+                .where(
+                    wf.OperationActorFact.operation_id == operation.operation_id,
+                    wf.OperationActorFact.task_id == task_id,
+                    wf.OperationActorFact.actor_role == "verification",
+                    wf.ServiceLease.generation_id == generation_id,
+                    wf.ServiceLease.task_id == task_id,
+                    wf.ServiceLease.verification_cycle_id == cycle.cycle_id,
+                )
+            ) > 0
             inspected = self.session.scalar(
                 select(func.count())
                 .select_from(wf.VerificationInspectionOccurrence)
@@ -453,7 +477,7 @@ class PostgresReadModel:
             live_status=_status_from_document(title, body),
             live_section_gid=live_section_gid,
             verification_queue_gid=verification_gid,
-            cycle_reviewed=inspected,
+            verifier_established=verifier_established,
             latest_cycle_outcome=cycle.outcome if cycle else None,
             latest_cycle_route=latest_route,
             validation_rules=(),

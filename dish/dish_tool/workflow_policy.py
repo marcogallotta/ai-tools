@@ -13,7 +13,7 @@ class WorkflowSnapshot:
     live_status: str | None
     live_section_gid: str | None
     verification_queue_gid: str | None
-    cycle_reviewed: bool
+    verifier_established: bool
     latest_cycle_outcome: str | None
     latest_cycle_route: str | None
     validation_rules: tuple[str, ...]
@@ -64,7 +64,7 @@ def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
             or snapshot.live_section_gid != snapshot.verification_queue_gid
         ):
             return []
-        if not snapshot.cycle_reviewed:
+        if not snapshot.verifier_established:
             return ["verify"]
         return ["approve", "reject"] if snapshot.dish_inspect_current else ["inspect"]
     if phase in {"await_submission", "ready_move_failed"}:
