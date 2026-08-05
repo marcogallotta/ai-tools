@@ -640,7 +640,7 @@ def test_abandonment_terminal_migration_completes_only_durable_published_success
     root = Path(__file__).resolve().parents[2]
     config = Config(str(root / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", str(engine.url))
-    command.upgrade(config, "head")
+    command.upgrade(config, "0017_abandonment_terminal_state")
 
     with engine.connect() as connection:
         row = connection.execute(

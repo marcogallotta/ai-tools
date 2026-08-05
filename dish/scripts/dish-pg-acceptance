@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -15,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+BASELINE_PATH = ROOT / "docs/database-backend-stage-a-baseline.json"
 EXCLUDED_PARTS = {
     ".git",
     ".venv",
@@ -141,6 +144,82 @@ def _write_atomic(path: Path, value: Any) -> None:
             pass
 
 
+def _literal_string_assignment(path: Path, name: str) -> str:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for statement in tree.body:
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        target = statement.targets[0]
+        if not isinstance(target, ast.Name) or target.id != name:
+            continue
+        value = ast.literal_eval(statement.value)
+        if isinstance(value, str):
+            return value
+    raise ValueError(f"cannot resolve literal {name} from {path.relative_to(ROOT)}")
+
+
+def _baseline_release_readiness() -> dict[str, Any]:
+    reasons: list[str] = []
+    try:
+        baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        return {
+            "passed": False,
+            "status": "requires_governed_rebaseline_or_investigation",
+            "reasons": [f"cannot read canonical Stage A baseline: {exc}"],
+        }
+
+    rules = baseline.get("acceptance_rules")
+    if not isinstance(rules, dict):
+        reasons.append("acceptance_rules is missing or not an object")
+        rules = {}
+
+    source_commit = baseline.get("source_commit")
+    if rules.get("immutable_source_commit_required") is True and not (
+        isinstance(source_commit, str)
+        and re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", source_commit)
+    ):
+        reasons.append("source_commit is not a full immutable Git object ID")
+
+    try:
+        release_head = _literal_string_assignment(ROOT / "dish_pg/release.py", "ALEMBIC_HEAD")
+    except (OSError, SyntaxError, ValueError) as exc:
+        reasons.append(f"cannot resolve current release schema head: {exc}")
+        release_head = None
+    if (
+        rules.get("schema_head_must_match_release_head") is True
+        and baseline.get("schema_head") != release_head
+    ):
+        reasons.append(
+            "baseline schema_head does not match the executable release head: "
+            f"baseline={baseline.get('schema_head')!r}, release={release_head!r}"
+        )
+
+    source_only = baseline.get("source_only_commands")
+    if rules.get("source_only_commands_must_be_empty_for_cutover") is True:
+        if not isinstance(source_only, list):
+            reasons.append("source_only_commands is missing or not an array")
+        elif source_only:
+            reasons.append(
+                "source-only commands remain without target cutover treatment: "
+                + ", ".join(str(command) for command in source_only)
+            )
+
+    return {
+        "passed": not reasons,
+        "status": (
+            "passed" if not reasons else "requires_governed_rebaseline_or_investigation"
+        ),
+        "reasons": reasons,
+        "baseline_id": baseline.get("baseline_id"),
+        "baseline_schema_head": baseline.get("schema_head"),
+        "release_schema_head": release_head,
+        "source_commit": source_commit,
+        "source_only_commands": source_only,
+        "acceptance_rules": rules,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     files, source_sha256 = _source_manifest()
@@ -161,8 +240,9 @@ def main(argv: list[str] | None = None) -> int:
         result["exit_code"] == 0 for result in required_results
     )
     baseline_identity_passed = baseline_result["exit_code"] == 0
+    baseline_release_readiness = _baseline_release_readiness()
     report = {
-        "format": "dish-stage-a-acceptance-report-v3",
+        "format": "dish-stage-a-acceptance-report-v4",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "python": args.python,
         "focused_test_selectors": list(FOCUSED_TEST_SELECTORS),
@@ -182,6 +262,7 @@ def main(argv: list[str] | None = None) -> int:
                 else "requires_governed_rebaseline_or_investigation"
             ),
         },
+        "baseline_release_readiness_gate": baseline_release_readiness,
         "acceptance_scope": "source_contract",
         "source_contract_acceptance_passed": source_acceptance_passed,
         "source_acceptance_passed": source_acceptance_passed,
@@ -190,7 +271,9 @@ def main(argv: list[str] | None = None) -> int:
         "production_operational_rehearsal": False,
         "baseline_identity_passed": baseline_identity_passed,
         "production_acceptance_complete": (
-            source_acceptance_passed and baseline_identity_passed
+            source_acceptance_passed
+            and baseline_identity_passed
+            and baseline_release_readiness["passed"]
         ),
         # Backward-compatible source-gate summary. Production completion is the
         # stricter field above and remains false while the governed baseline is stale.
@@ -206,6 +289,9 @@ def main(argv: list[str] | None = None) -> int:
         "native_postgresql_certified": False,
         "production_acceptance_complete": report["production_acceptance_complete"],
         "baseline_identity_status": report["baseline_identity_gate"]["status"],
+        "baseline_release_readiness_status": report[
+            "baseline_release_readiness_gate"
+        ]["status"],
         "path": str(args.output),
         "report_sha256": report["report_sha256"],
         "source_manifest_sha256": source_sha256,

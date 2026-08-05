@@ -13,7 +13,7 @@ memory.
 
 ## 1. What the repository can prove offline
 
-The repository can migrate an empty target through `0015_verification_cycle_sequence`, execute the Stage 1–6
+The repository can migrate an empty target through `0029_cutover_authority_admission_fixes`, execute the Stage 1–6
 acceptance suites, hash the exact source tree, store immutable evidence revisions and rehearsal
 reports, recompute structural closure from PostgreSQL, build deterministic evidence bundles, fence
 the legacy HTTP writer mechanically, and resume an interrupted cutover from durable checkpoints.
@@ -29,6 +29,11 @@ Use an isolated operator shell with:
 ```sh
 export DISH_PG_URL='postgresql+psycopg://...'
 export DISH_LEGACY_WRITER_FENCE='/absolute/path/legacy-writer-fence.json'
+export DISH_PG_CERT_URL='postgresql+psycopg://.../dish_native_cert'
+export DISH_PG_REHEARSAL_URL='postgresql+psycopg://.../dish_rehearsal'
+export DISH_PG_REHEARSAL_LIBPQ_URL='postgresql://.../dish_rehearsal'
+export DISH_PG_RESTORE_URL='postgresql+psycopg://.../dish_restore_verify'
+export DISH_PG_RESTORE_LIBPQ_URL='postgresql://.../dish_restore_verify'
 ```
 
 The legacy service process must resolve the same `DISH_LEGACY_WRITER_FENCE` path. The file and its
@@ -46,7 +51,7 @@ Freeze and retain these exact identities before candidate creation:
 - closed shadow baseline;
 - active projection epoch and completed reconciliation run;
 - Dish, Honest, protocol, OpenAPI, and routing releases;
-- PostgreSQL schema head `0015_verification_cycle_sequence`.
+- PostgreSQL schema head `0029_cutover_authority_admission_fixes`.
 
 A changed source commit, ledger high-water mark, production object, release, schema head, or proof gap
 requires a new or revised candidate. Do not relabel an old evidence bundle.
@@ -73,6 +78,83 @@ The final source repository gate is the complete non-baseline suite. `--skip-ful
 rehearsal only and cannot satisfy production acceptance. Governed re-baselining and a passing
 `baseline_identity_gate` remain separately mandatory before production acceptance is complete.
 
+### 3.1 Native PostgreSQL certification
+
+When the separate disposable `DISH_PG_CERT_URL` database is available, run the governed inventory exactly once and
+retain its mode-0600 report:
+
+```sh
+DISH_TEST_POSTGRESQL_DSN="$DISH_PG_CERT_URL" \
+  .venv/bin/python scripts/dish-pg-native-certification \
+  --python .venv/bin/python \
+  --output /secure/evidence/native-postgresql-certification.json
+sha256sum /secure/evidence/native-postgresql-certification.json \
+  > /secure/evidence/native-postgresql-certification.json.sha256
+```
+
+A missing DSN is **unavailable**, not passed. PGlite and source acceptance are not substitutes for
+this certification report.
+
+### 3.2 Clean migration rehearsal
+
+Provision `DISH_PG_REHEARSAL_LIBPQ_URL` as a disposable database. Before migration, prove that its
+`public` schema contains no tables; stop if the count is not zero:
+
+```sh
+test "$(psql "$DISH_PG_REHEARSAL_LIBPQ_URL" -XAtv ON_ERROR_STOP=1 \
+  -c "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname='public'")" = 0
+DISH_PG_URL="$DISH_PG_REHEARSAL_URL" \
+  .venv/bin/python scripts/dish-pg-release migrate \
+  > /secure/evidence/clean-migration-rehearsal.log 2>&1
+sha256sum /secure/evidence/clean-migration-rehearsal.log \
+  > /secure/evidence/clean-migration-rehearsal.log.sha256
+DISH_PG_URL="$DISH_PG_REHEARSAL_URL" \
+  .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
+  --database-url-env DISH_PG_URL \
+  --expected-database-name dish_rehearsal \
+  --expected-schema-head 0029_cutover_authority_admission_fixes \
+  --output /secure/evidence/clean-migration-fingerprint.json
+```
+
+The fingerprint command is read-only and fails when the selected database, single Alembic head, or
+primary-key requirements do not match. It does not create or migrate the database.
+
+### 3.3 Backup and restore verification
+
+Run this only while the rehearsal source is quiesced so the source fingerprint and dump describe the
+same logical state. The restore target must be a separately provisioned empty database:
+
+```sh
+DISH_PG_URL="$DISH_PG_REHEARSAL_URL" \
+  .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
+  --database-url-env DISH_PG_URL \
+  --expected-database-name dish_rehearsal \
+  --expected-schema-head 0029_cutover_authority_admission_fixes \
+  --output /secure/evidence/backup-source-fingerprint.json
+pg_dump "$DISH_PG_REHEARSAL_LIBPQ_URL" \
+  --format=custom --no-owner --no-privileges \
+  --file=/secure/evidence/dish-rehearsal.dump
+sha256sum /secure/evidence/dish-rehearsal.dump \
+  > /secure/evidence/dish-rehearsal.dump.sha256
+test "$(psql "$DISH_PG_RESTORE_LIBPQ_URL" -XAtv ON_ERROR_STOP=1 \
+  -c "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname='public'")" = 0
+pg_restore --exit-on-error --single-transaction --no-owner --no-privileges \
+  --dbname="$DISH_PG_RESTORE_LIBPQ_URL" /secure/evidence/dish-rehearsal.dump
+DISH_PG_URL="$DISH_PG_RESTORE_URL" \
+  .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
+  --database-url-env DISH_PG_URL \
+  --expected-database-name dish_restore_verify \
+  --expected-schema-head 0029_cutover_authority_admission_fixes \
+  --output /secure/evidence/backup-restored-fingerprint.json
+.venv/bin/python scripts/dish-pg-operations-evidence compare-database-fingerprints \
+  --source /secure/evidence/backup-source-fingerprint.json \
+  --restored /secure/evidence/backup-restored-fingerprint.json \
+  --output /secure/evidence/backup-restore-comparison.json
+```
+
+A failed comparison is investigation evidence, never a successful rehearsal. Retain the dump hash,
+both fingerprint reports, and the comparison report together.
+
 ## 4. Create the release candidate
 
 Prepare a mode-0600 JSON file containing exact UUIDs and release identities:
@@ -87,7 +169,7 @@ Prepare a mode-0600 JSON file containing exact UUIDs and release identities:
   "source_release": "EXACT_RELEASE",
   "source_commit": "EXACT_COMMIT",
   "ledger_through_commit": "EXACT_COMMIT",
-  "schema_head": "0015_verification_cycle_sequence",
+  "schema_head": "0029_cutover_authority_admission_fixes",
   "dish_release": "EXACT_RELEASE",
   "honest_release": "EXACT_RELEASE",
   "protocol_release": "EXACT_RELEASE",
@@ -227,7 +309,7 @@ Evaluation fails closed unless all of the following are true in authoritative Po
   unresolved;
 - no projection outbox item, attempt, create correlation, or drift item is unresolved;
 - the latest completed reconciliation accounts for every active projection mapping;
-- the database is at `0015_verification_cycle_sequence`;
+- the database is at `0029_cutover_authority_admission_fixes`;
 - every required evidence item and rehearsal class passes.
 
 Bundle identity is deterministic from authoritative contents; build time does not alter its SHA-256.
@@ -359,6 +441,23 @@ A `401` response proves only that authentication failed; it is never accepted as
 evidence. The proof must match the exact authenticated legacy mutation response above and bind the
 exact request-token digest.
 
+Before recording the fence checkpoint, validate a complete inventory of every legacy writer class.
+The input is mode `0600` and contains exactly one category for `process`, `endpoint`, `credential`,
+and `scheduler`. Each category includes a hashed discovery artifact; applicable categories list every
+writer with a closed state and a hashed owner-only evidence file. Non-applicable categories contain
+no writers and give a nonblank reason.
+
+```sh
+.venv/bin/python scripts/dish-pg-operations-evidence validate-legacy-writer-inventory \
+  --file /secure/evidence/legacy-writer-inventory.json \
+  --expected-candidate-id CANDIDATE_UUID \
+  --expected-cutover-run-id CUTOVER_UUID \
+  --expected-source-commit EXACT_FULL_SOURCE_COMMIT \
+  --output /secure/evidence/legacy-writer-inventory-report.json
+```
+
+A self-consistent inventory for the wrong candidate, cutover run, or source commit is rejected.
+
 Record exact probe evidence:
 
 ```sh
@@ -449,9 +548,39 @@ scripts/dish-pg-release cutover-open-admission CUTOVER_UUID \
   --opened-at RFC3339_WITH_OFFSET
 ```
 
-Issue exactly the planned request through the target service. Any unrelated new request remains
-rejected after reservation consumption until verification succeeds. Fulfil or repair its invocation-audit
-obligation and complete a post-request reconciliation covering every active projection mapping.
+Issue exactly the planned request through the target service with the repository one-shot helper:
+
+```sh
+export DISH_SERVICE_URL_PROD='https://EXACT_TARGET_SERVICE_ORIGIN'
+export DISH_SERVICE_TOKEN_PROD='EXACT_SCOPED_TOKEN'
+.venv/bin/python scripts/dish-pg-first-admission-request \
+  --plan /secure/evidence/first-admission-plan.json \
+  --service-url-env DISH_SERVICE_URL_PROD \
+  --token-env DISH_SERVICE_TOKEN_PROD \
+  --output /secure/evidence/first-admission-request.json
+```
+
+The helper sends no retry. If the report says `delivery_state=unknown`, stop and reconcile the exact
+request UUID against PostgreSQL and service logs; never resubmit by guessing. Any unrelated new
+request remains rejected after reservation consumption until verification succeeds.
+
+Fulfil or repair the exact request's invocation-audit obligation, then run the deployment's approved
+full-corpus fetcher and pure comparator and capture the reconciliation result:
+
+```sh
+export DISH_RECONCILIATION_FETCHER='DEPLOYMENT_MODULE:FETCH_CALLABLE'
+export DISH_RECONCILIATION_COMPARATOR='DEPLOYMENT_MODULE:COMPARE_CALLABLE'
+.venv/bin/python -m dish_pg.reconciliation_worker \
+  --database-url "$DISH_PG_URL" \
+  --generation-id GENERATION_UUID \
+  --corpus-identity EXACT_CORPUS_IDENTITY \
+  --fetcher "$DISH_RECONCILIATION_FETCHER" \
+  --comparator "$DISH_RECONCILIATION_COMPARATOR" \
+  --output /secure/evidence/post-first-request-reconciliation.json
+```
+
+The command exits nonzero unless the governed reconciliation run is complete and writes exact item
+and outcome counts. Complete a post-request reconciliation covering every active projection mapping.
 Confirm the immutable successful outcome, committed execution, governed audit, exact applied
 projection-event count and complete reconciliation, then record. The verification transition alone
 opens ordinary mutation admission:

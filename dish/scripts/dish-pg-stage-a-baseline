@@ -24,7 +24,9 @@ BASELINE_PATH = ROOT / "docs/database-backend-stage-a-baseline.json"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dish_tool.admin_command_spec import ADMIN_COMMANDS  # noqa: E402
+
+class BaselineRegenerationError(ValueError):
+    """The checked-in baseline cannot be regenerated without investigation."""
 
 
 def _sha256(path: Path) -> str:
@@ -71,6 +73,40 @@ _SQLITE_TABLE_STATEMENT = re.compile(
 )
 
 
+def _required_literal(path: Path, name: str) -> Any:
+    values = _literal_assignments(path)
+    if name not in values:
+        raise BaselineRegenerationError(
+            f"cannot resolve literal {name} from {path.relative_to(ROOT)}"
+        )
+    return values[name]
+
+
+def _first_string_call_arguments(path: Path, function_name: str) -> list[str]:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    values: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != function_name or not node.args:
+            continue
+        first = node.args[0]
+        if isinstance(first, ast.Constant) and isinstance(first.value, str):
+            values.append(first.value)
+    if not values:
+        raise BaselineRegenerationError(
+            f"cannot resolve {function_name}(...) command inventory from "
+            f"{path.relative_to(ROOT)}"
+        )
+    duplicates = sorted({value for value in values if values.count(value) > 1})
+    if duplicates:
+        raise BaselineRegenerationError(
+            f"duplicate {function_name}(...) command definitions in "
+            f"{path.relative_to(ROOT)}: {duplicates}"
+        )
+    return values
+
+
 def _sqlite_tables() -> list[str]:
     """Walk CREATE/RENAME/DROP TABLE statements in source order, keeping each
     table at the list slot of its first CREATE even when a migration renames
@@ -112,9 +148,17 @@ def _sqlite_tables() -> list[str]:
 
 def generated_baseline() -> dict[str, Any]:
     baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
-    action_values = _literal_assignments(ROOT / "dish_service/command_spec.py")
-    baseline["action_commands"] = list(action_values["ACTION_COMMANDS"])
-    baseline["admin_commands"] = sorted(ADMIN_COMMANDS)
+    action_commands = list(
+        _required_literal(ROOT / "dish_service/command_spec.py", "ACTION_COMMANDS")
+    )
+    admin_commands = sorted(
+        _first_string_call_arguments(ROOT / "dish_tool/admin_command_spec.py", "_spec")
+    )
+    baseline["action_commands"] = action_commands
+    baseline["admin_commands"] = admin_commands
+    baseline["schema_head"] = _required_literal(
+        ROOT / "dish_pg/release.py", "ALEMBIC_HEAD"
+    )
     baseline["sqlite_tables"] = _sqlite_tables()
     baseline["governing_source_sha256"] = {
         relative: _sha256(ROOT / relative)
@@ -124,6 +168,26 @@ def generated_baseline() -> dict[str, Any]:
         str(path.relative_to(ROOT)): _sha256(path)
         for path in sorted((ROOT / "tests").glob("test_*.py"))
     }
+
+    current_commands = set(action_commands) | set(admin_commands)
+    target_treatments = baseline.get("target_treatments")
+    source_only_commands = baseline.get("source_only_commands")
+    if not isinstance(target_treatments, dict):
+        raise BaselineRegenerationError("target_treatments must be a JSON object")
+    if not isinstance(source_only_commands, list) or not all(
+        isinstance(command, str) for command in source_only_commands
+    ):
+        raise BaselineRegenerationError("source_only_commands must be an array of strings")
+    classified = set(target_treatments) | set(source_only_commands)
+    expected = current_commands | {"planning-intent-settlement"}
+    missing = sorted(expected - classified)
+    unknown = sorted(classified - expected)
+    overlap = sorted(set(target_treatments) & set(source_only_commands))
+    if missing or unknown or overlap:
+        raise BaselineRegenerationError(
+            "command treatment classification requires governed review: "
+            f"missing={missing}, unknown={unknown}, overlap={overlap}"
+        )
     return baseline
 
 
@@ -151,19 +215,51 @@ def _parser() -> argparse.ArgumentParser:
     mode.add_argument("--check", action="store_true")
     mode.add_argument("--write", action="store_true")
     mode.add_argument("--output", type=Path)
+    parser.add_argument(
+        "--reason",
+        help="required with --write; records the governed rebaseline reason",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    generated = encoded_baseline()
+    if args.write and (not isinstance(args.reason, str) or not args.reason.strip()):
+        print("Stage A baseline write blocked: --reason is required for governed rebaseline")
+        return 2
+    if not args.write and args.reason is not None:
+        print("Stage A baseline generation blocked: --reason is accepted only with --write")
+        return 2
+    try:
+        generated_value = generated_baseline()
+    except (BaselineRegenerationError, KeyError, OSError, ValueError) as exc:
+        print(
+            "Stage A baseline generation blocked: "
+            f"{exc}. Governed rebaseline or investigation is required."
+        )
+        return 2
+    if args.write:
+        generated_value["last_rebaseline_reason"] = args.reason.strip()
+    generated = (
+        json.dumps(generated_value, indent=2, sort_keys=True) + "\n"
+    ).encode()
     if args.check:
         stored = BASELINE_PATH.read_bytes()
         if stored != generated:
+            try:
+                stored_value = json.loads(stored)
+                changed = sorted(
+                    key
+                    for key in set(stored_value) | set(generated_value)
+                    if stored_value.get(key) != generated_value.get(key)
+                )
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                changed = ["<stored baseline is not valid canonical JSON>"]
             print(
                 "Stage A baseline is stale: "
                 f"stored={hashlib.sha256(stored).hexdigest()} "
-                f"generated={hashlib.sha256(generated).hexdigest()}"
+                f"generated={hashlib.sha256(generated).hexdigest()} "
+                f"changed_keys={changed}. Governed rebaseline or investigation is required."
             )
             return 1
         print(f"Stage A baseline matches canonical regeneration: {_sha256(BASELINE_PATH)}")

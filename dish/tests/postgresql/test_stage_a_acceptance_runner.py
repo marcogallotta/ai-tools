@@ -74,7 +74,7 @@ def test_stage_a_acceptance_report_names_selection_metadata(monkeypatch, tmp_pat
     assert result == 0
     report = captured["report"]
     assert isinstance(report, dict)
-    assert report["format"] == "dish-stage-a-acceptance-report-v3"
+    assert report["format"] == "dish-stage-a-acceptance-report-v4"
     assert report["focused_test_selectors"] == list(namespace["FOCUSED_TEST_SELECTORS"])
     assert report["required_gates"][0]["command"][-1] == namespace[
         "REQUIRED_FOCUSED_TEST_EXPRESSION"
@@ -91,6 +91,19 @@ def test_stage_a_acceptance_report_names_selection_metadata(monkeypatch, tmp_pat
     assert report["baseline_identity_gate"]["status"] == (
         "requires_governed_rebaseline_or_investigation"
     )
+    assert report["baseline_release_readiness_gate"]["passed"] is False
+    assert report["baseline_release_readiness_gate"]["status"] == (
+        "requires_governed_rebaseline_or_investigation"
+    )
+
+
+def test_stage_a_release_readiness_fails_closed_on_unresolved_baseline() -> None:
+    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-acceptance"))
+    readiness = namespace["_baseline_release_readiness"]()
+    assert readiness["passed"] is False
+    assert readiness["status"] == "requires_governed_rebaseline_or_investigation"
+    assert any("source-only" in reason for reason in readiness["reasons"])
+    assert any("source-only commands" in reason for reason in readiness["reasons"])
 
 
 

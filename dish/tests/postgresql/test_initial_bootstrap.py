@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from dish_pg import models
 from dish_pg.bootstrap import (
+    DEFAULT_SCHEMA_HEAD,
     DEFAULT_PROJECT_GID,
     DEFAULT_PROJECT_ID,
     DEFAULT_SECTION_GID,
@@ -71,7 +72,7 @@ def _spec(source: Path) -> InitialBootstrapSpec:
     )
     return InitialBootstrapSpec(
         dish_commit="9" * 40,
-        schema_head="0015_verification_cycle_sequence",
+        schema_head=DEFAULT_SCHEMA_HEAD,
         source_generation="test-dark-launch-rehearsal-2026-08-03",
         source_bundle=bundle,
         honest=honest,
@@ -115,7 +116,7 @@ def test_bootstrap_baseline_and_import_run_end_to_end(tmp_path: Path) -> None:
             assert generation.status == "active"
             assert generation.predecessor_generation_id is None
             assert generation.creation_reason == "initial_cutover"
-            assert generation.schema_head == "0015_verification_cycle_sequence"
+            assert generation.schema_head == DEFAULT_SCHEMA_HEAD
             assert import_run is not None
             assert import_run.source_bundle_sha256 == spec.source_bundle.sha256
             assert import_run.baseline_high_water_mark == spec.source_bundle.high_water_mark

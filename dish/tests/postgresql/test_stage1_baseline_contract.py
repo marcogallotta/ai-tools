@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 import re
+import runpy
 from pathlib import Path
 from typing import Any
 
@@ -17,46 +17,16 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _literal_assignments(path: Path) -> dict[str, Any]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    values: dict[str, Any] = {}
-
-    def evaluate(node: ast.AST) -> Any:
-        if isinstance(node, ast.Constant):
-            return node.value
-        if isinstance(node, ast.Name):
-            return values[node.id]
-        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-            result = [evaluate(item) for item in node.elts]
-            if isinstance(node, ast.Tuple):
-                return tuple(result)
-            if isinstance(node, ast.Set):
-                return set(result)
-            return result
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-            return evaluate(node.left) | evaluate(node.right)
-        raise ValueError(f"unsupported literal expression: {ast.dump(node)}")
-
-    for statement in tree.body:
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if not isinstance(target, ast.Name):
-            continue
-        try:
-            values[target.id] = evaluate(statement.value)
-        except (KeyError, ValueError):
-            continue
-    return values
-
-
 def _baseline() -> dict[str, Any]:
     return json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
 
 
 def test_frozen_command_inventory_matches_current_surfaces() -> None:
     baseline = _baseline()
-    action_values = _literal_assignments(ROOT / "dish_service/command_spec.py")
+    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-stage-a-baseline"))
+    action_values = namespace["_literal_assignments"](
+        ROOT / "dish_service/command_spec.py"
+    )
 
     assert list(action_values["ACTION_COMMANDS"]) == baseline["action_commands"]
     assert sorted(ADMIN_COMMANDS) == sorted(baseline["admin_commands"])
@@ -64,8 +34,11 @@ def test_frozen_command_inventory_matches_current_surfaces() -> None:
     expected_treatments = set(baseline["action_commands"]) | set(baseline["admin_commands"])
     expected_treatments.add("planning-intent-settlement")
     treatments = baseline["target_treatments"]
+    source_only = baseline["source_only_commands"]
     assert isinstance(treatments, dict)
-    assert set(treatments) == expected_treatments
+    assert isinstance(source_only, list)
+    assert not (set(treatments) & set(source_only))
+    assert set(treatments) | set(source_only) == expected_treatments
     assert all(
         re.fullmatch(r"(?:retain|retire|add):[A-Z]", treatment)
         for treatment in treatments.values()
@@ -170,3 +143,23 @@ def test_canonical_stage_a_regeneration_matches_checked_in_bytes(tmp_path: Path)
     )
     assert checked.returncode == 0, checked.stdout
     assert "matches canonical regeneration" in checked.stdout
+
+
+def test_governed_stage_a_write_requires_a_reason(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "dish-pg-stage-a-baseline"),
+            "--write",
+        ],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "--reason is required" in completed.stdout

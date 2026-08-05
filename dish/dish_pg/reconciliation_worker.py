@@ -13,21 +13,92 @@ not reimplement reconciliation state transitions.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
+import json
 import logging
+import os
 import signal
+import tempfile
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from types import FrameType
 from typing import Any, Mapping, Protocol, Sequence
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
+from . import stage5_models as tx
 from .transition import ProjectionService
 
 LOGGER = logging.getLogger("dish.reconciliation_worker")
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
+
+
+def _write_atomic(path: Path, value: object) -> None:
+    destination = path.expanduser().resolve(strict=False)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    fd, raw_temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
+    temporary = Path(raw_temporary)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "wb", closefd=True) as handle:
+            handle.write(_canonical_json_bytes(value))
+            handle.write(b"\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, destination)
+        directory_fd = os.open(destination.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def reconciliation_report(session_maker, run) -> dict[str, Any]:
+    with session_scope(session_maker) as session:
+        outcome_counts = {
+            str(outcome): int(count)
+            for outcome, count in session.execute(
+                select(
+                    tx.ProjectionReconciliationItem.outcome,
+                    func.count(tx.ProjectionReconciliationItem.reconciliation_item_id),
+                )
+                .where(
+                    tx.ProjectionReconciliationItem.reconciliation_run_id
+                    == run.reconciliation_run_id
+                )
+                .group_by(tx.ProjectionReconciliationItem.outcome)
+                .order_by(tx.ProjectionReconciliationItem.outcome)
+            )
+        }
+    report = {
+        "format": "dish-projection-reconciliation-report-v1",
+        "status": "pass" if run.status == "complete" else "fail",
+        "ok": run.status == "complete",
+        "reconciliation_run_id": str(run.reconciliation_run_id),
+        "generation_id": str(run.generation_id),
+        "projection_epoch_id": str(run.projection_epoch_id),
+        "corpus_identity": run.corpus_identity,
+        "run_status": run.status,
+        "expected_items": int(run.expected_items),
+        "processed_items": int(run.processed_items),
+        "outcome_counts": outcome_counts,
+        "started_at": run.started_at.isoformat(),
+        "completed_at": None if run.completed_at is None else run.completed_at.isoformat(),
+    }
+    report["report_sha256"] = hashlib.sha256(_canonical_json_bytes(report)).hexdigest()
+    return report
 
 
 @dataclass(frozen=True)
@@ -151,6 +222,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="module:callable that compares one fetched item without external I/O",
     )
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="write a mode-0600 machine-checkable report for this exact run",
+    )
     return parser
 
 
@@ -174,10 +250,25 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
     try:
-        worker.run_once()
+        run = worker.run_once()
+        if run is None:
+            report = {
+                "format": "dish-projection-reconciliation-report-v1",
+                "status": "not_run",
+                "ok": False,
+                "generation_id": str(args.generation_id),
+                "corpus_identity": args.corpus_identity,
+                "reason": "shutdown requested before the authoritative transaction",
+            }
+            report["report_sha256"] = hashlib.sha256(_canonical_json_bytes(report)).hexdigest()
+        else:
+            report = reconciliation_report(session_factory(engine), run)
+        if args.output is not None:
+            _write_atomic(args.output, report)
+        print(json.dumps(report, sort_keys=True, separators=(",", ":")))
+        return 0 if report["ok"] else 1
     finally:
         engine.dispose()
-    return 0
 
 
 if __name__ == "__main__":

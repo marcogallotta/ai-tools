@@ -11,6 +11,7 @@ from dish_pg.reconciliation_worker import (
     ExternalCorpusItem,
     ReconciliationRecord,
     ReconciliationWorker,
+    reconciliation_report,
 )
 from dish_pg.transition import ProjectionService, TransitionAuthorityError
 from tests.support.postgresql.core import NOW
@@ -62,6 +63,10 @@ def test_worker_records_complete_corpus_through_projection_service(workflow_db) 
     assert run.status == "complete"
     assert run.expected_items == 2
     assert run.processed_items == 2
+    report = reconciliation_report(factory, run)
+    assert report["ok"] is True
+    assert report["outcome_counts"] == {"matched": 2}
+    assert report["report_sha256"]
     with session_scope(factory) as session:
         stored = session.get(tx.ProjectionReconciliationRun, run.reconciliation_run_id)
         assert stored.status == "complete"
@@ -97,7 +102,11 @@ def test_worker_preserves_blocked_authority_result(workflow_db) -> None:
         clock=lambda: NOW,
     )
 
-    assert worker.run_once().status == "blocked"
+    blocked = worker.run_once()
+    assert blocked.status == "blocked"
+    report = reconciliation_report(factory, blocked)
+    assert report["ok"] is False
+    assert report["outcome_counts"] == {"matched": 1, "unknown_external": 1}
 
 
 def test_fetch_failure_opens_no_reconciliation_transaction(workflow_db) -> None:

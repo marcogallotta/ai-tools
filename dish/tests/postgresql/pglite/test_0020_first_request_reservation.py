@@ -96,12 +96,6 @@ def _seed_open_reservation(session: Session):
             consumed_at=None,
         )
     )
-    control = session.get(rel.MutationAdmissionControl, context["generation_id"])
-    assert control is not None
-    control.state = "open"
-    control.control_revision += 1
-    control.opened_at = NOW
-    control.updated_at = NOW
     session.flush()
     return context, request_id, run_id, payload_sha
 
@@ -158,7 +152,7 @@ def test_0020_different_first_request_is_rejected(pglite) -> None:
         engine.dispose()
 
 
-def test_0020_exact_request_consumes_and_replay_remains_native(pglite) -> None:
+def test_0020_exact_request_consumes_and_replay_waits_for_verification(pglite) -> None:
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
@@ -186,7 +180,10 @@ def test_0020_exact_request_consumes_and_replay_remains_native(pglite) -> None:
                      FROM first_request_reservations WHERE request_id=%s""",
                 (request_id,),
             ).fetchone() == ("consumed", 2, NOW)
-            with pytest.raises(psycopg.errors.UniqueViolation):
+            with pytest.raises(
+                psycopg.errors.RaiseException,
+                match="pending first-admission verification",
+            ):
                 raw.execute(_raw_insert_sql(), params)
     finally:
         engine.dispose()
