@@ -23,6 +23,7 @@ COPY_ENTRIES = (
     "deploy",
     "openapi",
     "scripts",
+    "test_selection",
     "tests",
     "alembic.ini",
     "pytest.ini",

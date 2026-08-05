@@ -18,6 +18,7 @@ from dish_pg.transition import ProjectionService, TransitionAuthorityError
 from dish_pg.workflow import sha256_json
 from tests.support.postgresql.core import core_db
 from tests.support.postgresql.projection_attempts import native_workflow_db
+from tests.support.postgresql.projection_evidence import external_evidence
 from tests.support.postgresql.workflow import NOW, _claimed_execution, _next
 
 pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
@@ -43,15 +44,6 @@ def _bound_session(connection):
 
 
 
-def _external_evidence(identity: str | None = None) -> dict:
-    fact = {
-        "source": "external_reread",
-        "operation": "update_task_document",
-        "observed_external_id": "123456789",
-    }
-    if identity is not None:
-        fact["observed_document_identity"] = identity
-    return {"external_observation": fact}
 
 
 def _seed_projection(factory, ids, context, task_id) -> uuid.UUID:
@@ -119,7 +111,7 @@ def _native_stale_settlement_race(
                     observed_applied=True,
                     observed_identity=attempt_a.request_sha256,
                     reread_complete=True,
-                    evidence=_external_evidence(attempt_a.request_sha256),
+                    evidence=external_evidence(attempt_a.request_sha256),
                     decided_by="automatic",
                     decision_reason="stale worker late result",
                     observed_at=reclaimed_at,
@@ -149,7 +141,7 @@ def _native_stale_settlement_race(
                 observed_applied=True,
                 observed_identity=recovery.request_sha256,
                 reread_complete=True,
-                evidence=_external_evidence(recovery.request_sha256),
+                evidence=external_evidence(recovery.request_sha256),
                 decided_by="automatic",
                 decision_reason="current owner external reread",
                 observed_at=reclaimed_at,
@@ -221,7 +213,7 @@ class _NativeCrashAdapter:
             observed_applied=True,
             observed_identity=identity,
             reread_complete=True,
-            evidence=_external_evidence(identity),
+            evidence=external_evidence(identity),
             decision_reason="native PostgreSQL recovery reread",
         )
 

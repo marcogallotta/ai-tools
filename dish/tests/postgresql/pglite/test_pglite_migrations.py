@@ -16,18 +16,16 @@ from alembic.config import Config
 
 from dish_pg.release import ALEMBIC_HEAD
 
+from tests.support.postgresql.pglite_fixtures import alembic_config
+
 pytestmark = pytest.mark.pglite
 ROOT = Path(__file__).resolve().parents[3]
 
 
-def _config(url: str) -> Config:
-    config = Config(str(ROOT / "alembic.ini"))
-    config.set_main_option("sqlalchemy.url", url)
-    return config
 
 
 def test_pglite_upgrades_empty_database_through_head(pglite) -> None:
-    command.upgrade(_config(pglite.sqlalchemy_url), "head")
+    command.upgrade(alembic_config(pglite.sqlalchemy_url), "head")
     with psycopg.connect(pglite.libpq_dsn) as connection:
         version = connection.execute(
             "SELECT version_num FROM alembic_version"
@@ -40,7 +38,7 @@ def test_pglite_upgrades_empty_database_through_head(pglite) -> None:
 
 
 def test_pglite_persists_migrated_schema_across_connections(pglite) -> None:
-    command.upgrade(_config(pglite.sqlalchemy_url), "head")
+    command.upgrade(alembic_config(pglite.sqlalchemy_url), "head")
     with psycopg.connect(pglite.libpq_dsn) as first:
         assert first.execute(
             "SELECT to_regclass('public.authority_generations')"
@@ -52,7 +50,7 @@ def test_pglite_persists_migrated_schema_across_connections(pglite) -> None:
 
 
 def test_pglite_accepts_service_run_for_active_generation(pglite) -> None:
-    command.upgrade(_config(pglite.sqlalchemy_url), "head")
+    command.upgrade(alembic_config(pglite.sqlalchemy_url), "head")
     generation_id = uuid.uuid4()
     run_id = uuid.uuid4()
     now = datetime.now(timezone.utc)
@@ -105,7 +103,7 @@ def test_native_fixture_reset_uses_alembic_history(pglite) -> None:
 
 
 def test_pglite_rejects_duplicate_task_level_grant(pglite) -> None:
-    command.upgrade(_config(pglite.sqlalchemy_url), "head")
+    command.upgrade(alembic_config(pglite.sqlalchemy_url), "head")
     with psycopg.connect(pglite.libpq_dsn) as connection:
         index = connection.execute(
             """
@@ -121,7 +119,7 @@ def test_pglite_rejects_duplicate_task_level_grant(pglite) -> None:
 
 
 def _install_honest_binding_predecessor(pglite) -> Config:
-    config = _config(pglite.sqlalchemy_url)
+    config = alembic_config(pglite.sqlalchemy_url)
     with psycopg.connect(pglite.libpq_dsn) as connection:
         connection.execute(
             """

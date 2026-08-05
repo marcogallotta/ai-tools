@@ -1,13 +1,10 @@
 from __future__ import annotations
-
 import sqlite3
 import sys
 import threading
 from pathlib import Path
 from types import SimpleNamespace
-
 import pytest
-
 from dish_service import __main__ as service_main
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
@@ -21,50 +18,13 @@ from dish_tool.models import OperationActors, ResolvedRelease
 from dish_tool.results import result_envelope
 from dish_tool.task_store import write_exact_content
 
-
-def _release(role=None, include_migrations=False):
-    del include_migrations
-    return ResolvedRelease(
-        version="1.0.10",
-        commit="",
-        root=Path("."),
-        protocols={} if role is None else {role: f"{role} protocol"},
-        manifests={},
-        manifest_texts={},
-        schema_version="2",
-        schema={},
-        schema_text="{}",
-        migration_metadata={},
-        requested_protocol_role=role,
-    )
-
-
-class ScopeRaceBackend:
-    def __init__(self):
-        self.reads = 0
-
-    def read_task(self, task_gid):
-        self.reads += 1
-        in_project = self.reads == 1
-        return {
-            "gid": task_gid,
-            "name": "Bare",
-            "notes": "",
-            "completed": False,
-            "modified_at": "now",
-            "projects": [{"gid": COOKING_PROJECT_GID}] if in_project else [],
-            "memberships": (
-                [{"project": {"gid": COOKING_PROJECT_GID}, "section": {"gid": "rq"}}]
-                if in_project
-                else []
-            ),
-        }
-
-    def list_sections(self, _project_gid):
-        return [
-            {"gid": "rq", "name": "Research Queue"},
-            {"gid": "vq", "name": "Verification Queue"},
-        ]
+from tests.support.backend_service_resilience import (
+    _release,
+    ScopeRaceBackend,
+    RejectedWriteBackend,
+    ReturnedBaselineWithAdvancedVersionBackend,
+    _aba_operation,
+)
 
 
 def test_read_fails_if_task_leaves_cooking_between_scope_and_complete_reads(tmp_path):
@@ -77,7 +37,6 @@ def test_read_fails_if_task_leaves_cooking_between_scope_and_complete_reads(tmp_
 
     assert result["code"] == "UNMANAGED_TASK"
     assert result["errors"] == [{"rule": "task_not_in_cooking"}]
-
 
 def test_start_does_not_open_operation_if_task_leaves_cooking_between_reads(tmp_path):
     conn = initialize_database(tmp_path / "dish.db")
@@ -92,7 +51,6 @@ def test_start_does_not_open_operation_if_task_leaves_cooking_between_reads(tmp_
 
     assert result["code"] == "UNMANAGED_TASK"
     assert operations == 0
-
 
 def test_section_enumeration_follows_asana_pagination(monkeypatch):
     calls = []
@@ -125,41 +83,6 @@ def test_section_enumeration_follows_asana_pagination(monkeypatch):
             {"opt_fields": "gid,name", "limit": 100, "offset": "page-2"},
         ),
     ]
-
-
-class RejectedWriteBackend:
-    def __init__(self):
-        self.title = "Title"
-        self.notes = "Notes"
-
-    def read_task(self, task_gid):
-        return {
-            "gid": task_gid,
-            "name": self.title,
-            "notes": self.notes,
-            "completed": False,
-            "modified_at": "now",
-            "projects": [{"gid": COOKING_PROJECT_GID}],
-            "memberships": [
-                {"project": {"gid": COOKING_PROJECT_GID}, "section": {"gid": "rq"}}
-            ],
-            "_dish_version_evidence": {
-                "source": "test.modified_at",
-                "value": "now",
-                "reliable_for": ["content"],
-            },
-        }
-
-    def update_task_content(self, **_kwargs):
-        raise BackendFailure(
-            "BACKEND_REJECTED",
-            "forbidden",
-            rule="backend_access_denied",
-            status=403,
-            phase="response_received",
-            retryable=False,
-        )
-
 
 def test_unchanged_reread_preserves_nonretryable_backend_rejection(tmp_path):
     conn = initialize_database(tmp_path / "dish.db")
@@ -198,7 +121,6 @@ def test_unchanged_reread_preserves_nonretryable_backend_rejection(tmp_path):
     assert exc.value.rule == "backend_access_denied"
     assert exc.value.retryable is False
 
-
 def test_release_loader_internal_typeerror_is_not_retried(tmp_path):
     calls = 0
 
@@ -216,7 +138,6 @@ def test_release_loader_internal_typeerror_is_not_retried(tmp_path):
     with pytest.raises(TypeError, match="implementation bug"):
         service._release("planning", include_migrations=True)
     assert calls == 1
-
 
 def test_injected_backend_factory_resources_remain_caller_owned(tmp_path):
     class InjectedBackend:
@@ -240,7 +161,6 @@ def test_injected_backend_factory_resources_remain_caller_owned(tmp_path):
 
     assert result["code"] == "INVALID_ARGUMENT"
     assert backend.closed is False
-
 
 def test_owned_backend_cleanup_failure_does_not_replace_result_or_skip_db_close(
     monkeypatch, tmp_path
@@ -278,7 +198,6 @@ def test_owned_backend_cleanup_failure_does_not_replace_result_or_skip_db_close(
 
     assert result["code"] == "INVALID_ARGUMENT"
     assert tracked.closed is True
-
 
 def test_admin_lease_cleanup_failure_preserves_committed_success(monkeypatch, tmp_path):
     conn = initialize_database(tmp_path / "dish.db")
@@ -329,7 +248,6 @@ def test_admin_lease_cleanup_failure_preserves_committed_success(monkeypatch, tm
     }
     assert active is None
 
-
 def test_second_listener_thread_start_failure_closes_both_without_shutdown_deadlock(
     monkeypatch,
 ):
@@ -371,152 +289,3 @@ def test_second_listener_thread_start_failure_closes_both_without_shutdown_deadl
     assert action.closed is True
     assert created_threads[0].joined is True
     assert created_threads[1].joined is False
-
-class ReturnedBaselineWithAdvancedVersionBackend(RejectedWriteBackend):
-    def __init__(self):
-        super().__init__()
-        self.modified_at = "v0"
-        self.section = "rq"
-
-    def read_task(self, task_gid):
-        task = super().read_task(task_gid)
-        task["modified_at"] = self.modified_at
-        task["memberships"][0]["section"]["gid"] = self.section
-        task["_dish_version_evidence"] = {
-            "source": "test.modified_at",
-            "value": self.modified_at,
-            "reliable_for": ["content", "movement"],
-        }
-        return task
-
-    def update_task_content(self, **_kwargs):
-        self.modified_at = "v1"
-
-    def move_task_to_section(self, **_kwargs):
-        self.modified_at = "v1"
-
-
-def _aba_operation(conn):
-    identity = confirm_task_content(
-        conn, task_gid="t", title="Title", notes="Notes",
-        schema_version="2", boundary="test",
-    )
-    operation = create_operation(
-        conn,
-        task_gid="t", operation_kind="planning",
-        expected_identity=identity.digest, schema_version="2",
-        expected_section_gid="rq",
-        actors=OperationActors(editor_agent="gpt", run_id="run"),
-    )
-    return identity, operation
-
-
-def test_content_return_to_baseline_with_advanced_version_is_uncertain(tmp_path):
-    conn = initialize_database(tmp_path / "dish.db")
-    backend = ReturnedBaselineWithAdvancedVersionBackend()
-    identity, operation = _aba_operation(conn)
-    try:
-        with pytest.raises(BackendFailure) as caught:
-            write_exact_content(
-                conn, backend, operation_id=operation["operation_id"],
-                task_gid="t", project_gid=COOKING_PROJECT_GID,
-                expected_identity=identity.digest, expected_section_gid="rq",
-                title="Changed", notes="Notes", schema_version="2",
-            )
-        attempt = conn.execute(
-            "SELECT * FROM write_attempts WHERE operation_id=?",
-            (operation["operation_id"],),
-        ).fetchone()
-    finally:
-        conn.close()
-    assert caught.value.code == "BACKEND_UNCERTAIN"
-    assert caught.value.rule == "content_write_outcome_uncertain"
-    assert attempt["outcome"] == "uncertain"
-    assert attempt["expected_modified_at"] == "v0"
-    assert attempt["version_reliable"] == 1
-
-
-def test_movement_return_to_baseline_with_advanced_version_is_uncertain(tmp_path):
-    from dish_tool.task_store import move_exact
-
-    conn = initialize_database(tmp_path / "dish.db")
-    backend = ReturnedBaselineWithAdvancedVersionBackend()
-    identity, operation = _aba_operation(conn)
-    try:
-        with pytest.raises(BackendFailure) as caught:
-            move_exact(
-                conn, backend, operation_id=operation["operation_id"],
-                task_gid="t", project_gid=COOKING_PROJECT_GID,
-                expected_identity=identity.digest, expected_section_gid="rq",
-                intended_section_gid="vq", purpose="test",
-            )
-        attempt = conn.execute(
-            "SELECT * FROM movement_attempts WHERE operation_id=?",
-            (operation["operation_id"],),
-        ).fetchone()
-    finally:
-        conn.close()
-    assert caught.value.code == "BACKEND_UNCERTAIN"
-    assert caught.value.rule == "movement_outcome_uncertain"
-    assert attempt["outcome"] == "uncertain"
-    assert attempt["expected_modified_at"] == "v0"
-    assert attempt["version_reliable"] == 1
-
-
-def test_manual_recovery_refuses_baseline_after_version_advance(tmp_path):
-    from dish_tool.step9 import _recover_content_attempt
-    from dish_tool.task_store import read_complete_task
-
-    conn = initialize_database(tmp_path / "dish.db")
-    backend = ReturnedBaselineWithAdvancedVersionBackend()
-    identity, operation = _aba_operation(conn)
-    try:
-        with pytest.raises(BackendFailure):
-            write_exact_content(
-                conn, backend, operation_id=operation["operation_id"],
-                task_gid="t", project_gid=COOKING_PROJECT_GID,
-                expected_identity=identity.digest, expected_section_gid="rq",
-                title="Changed", notes="Notes", schema_version="2",
-            )
-        op = conn.execute(
-            "SELECT * FROM operations WHERE operation_id=?",
-            (operation["operation_id"],),
-        ).fetchone()
-        live = read_complete_task(
-            backend, task_gid="t", project_gid=COOKING_PROJECT_GID
-        )
-        with pytest.raises(DishRuleError) as caught:
-            _recover_content_attempt(
-                conn, operation_id=operation["operation_id"], op=op, live=live,
-                requested_outcome="not-applied", actions=[],
-            )
-    finally:
-        conn.close()
-    assert caught.value.rule == "recovery_evidence_ambiguous"
-
-
-def test_asana_modified_at_evidence_is_fail_closed_by_default(monkeypatch):
-    monkeypatch.delenv("DISH_ASANA_MODIFIED_AT_RELIABLE_EFFECTS", raising=False)
-    backend = AsanaBackend(api_client=object())
-    assert backend._modified_at_reliable_effects == frozenset()
-
-
-def test_asana_modified_at_evidence_requires_explicit_per_effect_certification(
-    monkeypatch,
-):
-    monkeypatch.setenv(
-        "DISH_ASANA_MODIFIED_AT_RELIABLE_EFFECTS", "content, completion"
-    )
-    backend = AsanaBackend(api_client=object())
-    assert backend._modified_at_reliable_effects == frozenset(
-        {"content", "completion"}
-    )
-
-
-def test_asana_modified_at_evidence_rejects_unknown_effect(monkeypatch):
-    monkeypatch.setenv(
-        "DISH_ASANA_MODIFIED_AT_RELIABLE_EFFECTS", "content,assignment"
-    )
-    with pytest.raises(DishRuleError) as caught:
-        AsanaBackend(api_client=object())
-    assert caught.value.rule == "asana_version_evidence_config_invalid"

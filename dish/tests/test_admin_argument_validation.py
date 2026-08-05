@@ -1,14 +1,15 @@
 from __future__ import annotations
-
 import uuid
-
 import pytest
-
 from dish_tool.admin import DishAdminApplication
 from dish_tool.admin_cli import build_parser
 from tests.support.service_scenarios import RUN_ID, post as _post, running as _running
 from tests.support.thread_teardown import join_thread, stop_server
 from tests.support.submission import _signed
+
+from tests.support.admin_argument_validation import (
+    _parse_generated_human_action,
+)
 
 
 @pytest.mark.parametrize(
@@ -67,7 +68,6 @@ def test_empty_generic_admin_arguments_are_structured_and_replayable(
     assert replay["data"]["request_replayed"] is True
     assert backend.writes == 0
 
-
 @pytest.mark.parametrize(
     ("arguments", "required_field"),
     [
@@ -110,7 +110,6 @@ def test_recover_validates_required_fields_before_unknown_operation_and_replays(
     assert replay["data"]["request_replayed"] is True
     assert backend.writes == 0
 
-
 @pytest.mark.parametrize(
     ("arguments", "field", "rule"),
     [
@@ -147,7 +146,6 @@ def test_recover_validates_blank_fields_before_terminal_operation(
     assert result["code"] == "INVALID_ARGUMENT"
     assert result["errors"] == [{"field": field, "rule": rule}]
 
-
 def test_record_human_decision_help_discloses_governed_field_boundary(capsys):
     parser = build_parser()
     with pytest.raises(SystemExit):
@@ -161,14 +159,12 @@ def test_record_human_decision_help_discloses_governed_field_boundary(capsys):
     detail_help_text = " ".join(capsys.readouterr().out.split())
     assert "does not itself change Exemptions, Locks, or other canonical fields" in detail_help_text
 
-
 def test_supply_evidence_help_stays_route_specific(capsys):
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["supply-evidence", "--help"])
     help_text = capsys.readouterr().out
     assert "governed" not in help_text
-
 
 def test_recover_parser_accepts_generated_inspect_outcome():
     operation_id = str(uuid.uuid4())
@@ -184,154 +180,15 @@ def test_recover_parser_accepts_generated_inspect_outcome():
     )
     assert parsed.outcome == "inspect"
 
-
 def test_admin_inspect_is_a_first_class_human_command():
     operation_id = str(uuid.uuid4())
     parsed = build_parser().parse_args(["inspect", operation_id])
     assert parsed.command == "inspect"
     assert parsed.submission_id == operation_id
 
-
 def test_admin_attention_is_a_first_class_read_only_command():
     parsed = build_parser().parse_args(["attention"])
     assert parsed.command == "attention"
-
-
-def test_human_renderer_surfaces_recovery_actions_from_errors():
-    from dish_tool.admin_human import render_admin_result
-
-    result = {
-        "ok": False,
-        "command": "authorize-governed-change",
-        "code": "VALIDATION_FAILED",
-        "task_gid": "121",
-        "submission_id": "operation-1",
-        "state": "open",
-        "retryable": True,
-        "allowed_actions": [],
-        "data": {"message": "authorization required"},
-        "errors": [
-            {
-                "rule": "governed_change_unauthorized",
-                "human_action": {
-                    "kind": "authorize-governed-change",
-                    "summary": "Authorize the exact Exemptions change.",
-                    "effect": "Create one authorization without editing the task.",
-                    "shell_command": "dish-admin authorize-governed-change operation-1 --field Exemptions",
-                },
-            }
-        ],
-    }
-    rendered = render_admin_result(result, profile="prod")
-    assert "Could not authorize-governed-change" in rendered
-    assert "Authorize the exact Exemptions change." in rendered
-    assert "dish-admin authorize-governed-change operation-1" in rendered
-    assert '"errors"' not in rendered
-
-
-def test_human_renderer_explains_authorization_success_without_claiming_a_write():
-    from dish_tool.admin_human import render_admin_result
-
-    result = {
-        "ok": True,
-        "command": "authorize-governed-change",
-        "code": "OK",
-        "task_gid": "121",
-        "submission_id": "operation-1",
-        "state": "open",
-        "retryable": False,
-        "allowed_actions": [],
-        "data": {"field": "Exemptions"},
-        "errors": [],
-    }
-
-    rendered = render_admin_result(result, profile="prod")
-
-    assert "Authorization recorded" in rendered
-    assert "task itself was not changed" in rendered
-    assert "retry the same exact candidate" in rendered
-
-
-def _parse_generated_human_action(action):
-    import re
-    import shlex
-
-    argv = shlex.split(action["shell_command"])
-    assert argv[0] == "dish-admin"
-    filled = [
-        re.sub(r"<[^>]+>", "operator supplied reason", token)
-        for token in argv[1:]
-    ]
-    return build_parser().parse_args(filled)
-
-
-def test_governed_exemptions_action_explains_approval_and_roundtrips_parser():
-    from dish_tool.human_actions import governed_change_action, relay_text
-
-    after = (
-        "[nutrition-kcal] Scope: this tasting may remain below 700 kcal. | "
-        "[nutrition-protein] Scope: this tasting may remain below 35g protein."
-    )
-    spec = governed_change_action(
-        operation_id=str(uuid.uuid4()),
-        field="Exemptions",
-        before="None",
-        after=after,
-    )
-    action = spec.payload()["human_action"]
-
-    parsed = _parse_generated_human_action(action)
-    assert parsed.command == "authorize-governed-change"
-    assert parsed.field == "Exemptions"
-    assert parsed.before == "None"
-    assert parsed.after == after
-    assert action["context"]["governed_change"]["added_tokens"] == [
-        "nutrition-kcal",
-        "nutrition-protein",
-    ]
-    details = "\n".join(action["details"])
-    assert "700–1,000 kcal" in details
-    assert "minimum 35 g protein" in details
-    assert "this task, this operation" in details
-    assert "does not edit the task or approve Verification" in details
-    assert "retry the same unchanged candidate" in details
-
-    relay = relay_text(spec, instruction="Wait for Marco, then retry.")
-    assert relay.index("Before the command") < relay.index("dish-admin authorize-governed-change")
-    assert "[nutrition-kcal]" in relay
-    assert "[nutrition-protein]" in relay
-
-
-def test_human_renderer_shows_governed_change_details_before_command():
-    from dish_tool.admin_human import render_admin_result
-    from dish_tool.human_actions import governed_change_action
-
-    spec = governed_change_action(
-        operation_id="operation-1",
-        field="Exemptions",
-        before="None",
-        after="[nutrition-kcal] controlled tasting",
-    )
-    result = {
-        "ok": False,
-        "command": "reject",
-        "code": "VALIDATION_FAILED",
-        "task_gid": "121",
-        "submission_id": "operation-1",
-        "state": "open",
-        "retryable": True,
-        "allowed_actions": [],
-        "data": {"message": "authorization required"},
-        "errors": [{"rule": "governed_change_unauthorized", **spec.payload()}],
-    }
-
-    rendered = render_admin_result(result, profile="prod")
-    assert rendered.index("Change this task's Exemptions") < rendered.index(
-        "Run: dish-admin authorize-governed-change"
-    )
-    assert "Scope: this task, this operation" in rendered
-    assert "does not edit the task or approve Verification" in rendered
-
 
 def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
     parser = build_parser()
@@ -348,7 +205,6 @@ def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
     auth_help = " ".join(capsys.readouterr().out.split())
     assert "does not edit the task" in auth_help
     assert "approve Verification" in auth_help
-
 
 def test_representative_generated_admin_commands_roundtrip_the_real_parser():
     import re
@@ -440,7 +296,6 @@ def test_representative_generated_admin_commands_roundtrip_the_real_parser():
         parsed = build_parser().parse_args(filled)
         assert parsed.command == spec.command
 
-
 def test_output_flags_are_accepted_before_or_after_admin_subcommand():
     from dish_tool.admin_cli import _normalize_output_flags
 
@@ -452,119 +307,3 @@ def test_output_flags_are_accepted_before_or_after_admin_subcommand():
     assert parsed_after.command == "inspect"
     assert parsed_after.json is True
     assert parsed_after.verbose is True
-
-
-def test_human_renderer_summarizes_global_attention_items():
-    from dish_tool.admin_human import render_admin_result
-
-    result = {
-        "ok": True,
-        "command": "attention",
-        "code": "OK",
-        "state": "ok",
-        "retryable": False,
-        "allowed_actions": [],
-        "data": {
-            "checked_count": 3,
-            "attention_count": 1,
-            "healthy_count": 2,
-            "category_counts": {
-                "safe_cleanup": 0,
-                "multi_step_safe": 1,
-                "needs_marco": 0,
-                "unsafe": 0,
-            },
-            "attention_items": [
-                {
-                    "category": "multi_step_safe",
-                    "task_title": "Laap gai",
-                    "operation_id": "operation-1",
-                    "problem": "A dead verifier attempt must be abandoned.",
-                    "human_actions": [
-                        {
-                            "summary": "Abandon the dead verifier attempt.",
-                            "shell_command": "dish-admin abandon-operation operation-1 --lease-id lease-1",
-                        }
-                    ],
-                }
-            ],
-        },
-        "errors": [],
-    }
-
-    rendered = render_admin_result(result, profile="prod")
-
-    assert "Dish attention" in rendered
-    assert "Workflow records checked: 3" in rendered
-    assert "[SAFE MULTI-STEP] Laap gai" in rendered
-    assert "dish-admin abandon-operation operation-1" in rendered
-
-
-def test_semantic_review_queue_commands_are_first_class_admin_commands():
-    proposal_id = str(uuid.uuid4())
-    assert build_parser().parse_args(["review-queue"]).command == "review-queue"
-    assert build_parser().parse_args(["review-inspect", proposal_id]).proposal_id == proposal_id
-    approved = build_parser().parse_args(["review-approve", proposal_id])
-    assert approved.command == "review-approve"
-    rejected = build_parser().parse_args([
-        "review-reject", proposal_id, "--reason", "wrong interpretation"
-    ])
-    assert rejected.reason == "wrong interpretation"
-
-
-def test_human_renderer_explains_semantic_proposal_before_approval_commands():
-    from dish_tool.admin_human import render_admin_result
-
-    proposal_id = str(uuid.uuid4())
-    result = {
-        "ok": True,
-        "command": "review-inspect",
-        "code": "OK",
-        "state": "pending",
-        "retryable": False,
-        "allowed_actions": [],
-        "data": {
-            "proposal": {
-                "proposal_id": proposal_id,
-                "status": "pending",
-                "explanation": {
-                    "problem": "The title still requires home-grown scallion greens.",
-                    "cause": "A settled Marco decision made shop-bought whole scallion the default.",
-                    "why_not_ordinary_correction": "Dish candidate is governed.",
-                    "recommended_resolution": "Remove the stale harvest dependency everywhere it appears.",
-                    "scope": "This task and exact candidate only.",
-                    "after_success": "A fresh agent applies the exact stored candidate.",
-                },
-                "changes": [
-                    {
-                        "field": "Dish candidate",
-                        "before": "[Scallion greens] Vietnamese scallion egg",
-                        "after": "Vietnamese scallion egg",
-                    },
-                    {
-                        "field": "Locks",
-                        "before": "Harvest home-grown greens",
-                        "after": "Use shop-bought whole scallion",
-                    },
-                ],
-                "linked_changes": [
-                    {
-                        "path": "title",
-                        "before": "[Scallion greens] Vietnamese scallion egg",
-                        "after": "Vietnamese scallion egg",
-                    },
-                    {
-                        "path": "planning.Locks",
-                        "before": "Harvest home-grown greens",
-                        "after": "Use shop-bought whole scallion",
-                    },
-                ],
-            }
-        },
-        "errors": [],
-    }
-    rendered = render_admin_result(result, profile="prod")
-    assert rendered.index("Problem:") < rendered.index("Governed changes requiring Marco approval")
-    assert "Dish candidate" in rendered and "Locks" in rendered
-    assert "Complete linked candidate change set" in rendered
-    assert rendered.index("Complete linked candidate change set") < rendered.index("Approve: dish-admin review-approve")

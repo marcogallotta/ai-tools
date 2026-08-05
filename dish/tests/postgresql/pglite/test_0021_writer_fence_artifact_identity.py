@@ -18,19 +18,13 @@ from tests.support.postgresql.core import ROOT, _bootstrap_registry, _import_one
 from tests.support.postgresql.release import HASH_A, _prepare_candidate
 from tests.support.postgresql.workflow import NOW, _next
 
+from tests.support.postgresql.pglite_fixtures import upgrade_on
+
 pytestmark = pytest.mark.pglite
 
 
-def _config(url: str) -> Config:
-    config = Config(str(ROOT / "alembic.ini"))
-    config.set_main_option("sqlalchemy.url", url)
-    return config
 
 
-def _upgrade_on(connection, url: str, revision: str) -> None:
-    config = _config(url)
-    config.attributes["connection"] = connection
-    command.upgrade(config, revision)
 
 
 def _seed_candidate(session: Session):
@@ -70,7 +64,7 @@ def test_0021_mismatched_artifact_cannot_engage_fence(pglite) -> None:
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(connection, pglite.sqlalchemy_url, "head")
+            upgrade_on(connection, pglite.sqlalchemy_url, "head")
             connection.commit()
             with Session(bind=connection, autoflush=False, expire_on_commit=False) as session:
                 with session.begin():
@@ -94,7 +88,7 @@ def test_0021_matched_artifact_engages_and_observation_is_immutable(pglite) -> N
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(connection, pglite.sqlalchemy_url, "head")
+            upgrade_on(connection, pglite.sqlalchemy_url, "head")
             connection.commit()
             with Session(bind=connection, autoflush=False, expire_on_commit=False) as session:
                 with session.begin():
@@ -126,7 +120,7 @@ def test_0021_upgrade_refuses_abstract_engaged_predecessor_fence(pglite) -> None
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(
+            upgrade_on(
                 connection,
                 pglite.sqlalchemy_url,
                 "0020_first_request_reservation",

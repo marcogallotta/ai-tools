@@ -637,6 +637,8 @@ class CutoverControlAuthority:
 
         self.session.flush()
         self._fence_rollback_burn_state()
+        if self.rollback_burn_fence_hook is not None:
+            self.rollback_burn_fence_hook()
         self.session.expire_all()
         run = self._cutover(cutover_run_id)
         candidate = self._candidate(run.candidate_id)

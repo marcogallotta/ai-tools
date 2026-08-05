@@ -11,19 +11,18 @@ from sqlalchemy import create_engine, inspect, text
 from dish_pg.models import Base
 from tests.support.postgresql.core import ROOT
 
+from tests.support.postgresql.pglite_fixtures import upgrade_on
+
 pytestmark = pytest.mark.pglite
 
 
-def _upgrade_on(connection, url):
-    config=Config(str(ROOT/"alembic.ini")); config.set_main_option("sqlalchemy.url",url); config.attributes["connection"]=connection
-    command.upgrade(config,"0027_server_default_alignment")
 
 
 def test_0027_server_defaults_match_orm_metadata_with_default_comparison(pglite):
     engine=create_engine(pglite.sqlalchemy_url,future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(connection,pglite.sqlalchemy_url); connection.commit()
+            upgrade_on(connection, pglite.sqlalchemy_url, "0027_server_default_alignment"); connection.commit()
             context=MigrationContext.configure(connection,opts={"compare_server_default":True,"compare_type":True,"target_metadata":Base.metadata})
             diffs=compare_metadata(context,Base.metadata)
             protected={

@@ -22,6 +22,7 @@ from tests.support.postgresql.concurrency import (
 )
 from tests.support.postgresql.core import core_db
 from tests.support.postgresql.projection_attempts import native_workflow_db
+from tests.support.postgresql.projection_evidence import external_evidence
 from tests.support.postgresql.workflow import NOW, _claimed_execution, _next
 
 pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
@@ -33,15 +34,6 @@ def _require_native_postgresql(request: pytest.FixtureRequest) -> None:
         pytest.skip("native PostgreSQL concurrency certification requires --postgresql")
 
 
-def _external_evidence(identity: str | None = None) -> dict:
-    fact = {
-        "source": "external_reread",
-        "operation": "update_task_document",
-        "observed_external_id": "123456789",
-    }
-    if identity is not None:
-        fact["observed_document_identity"] = identity
-    return {"external_observation": fact}
 
 
 def _seed_projection(factory, ids, context, task_id) -> uuid.UUID:
@@ -336,7 +328,7 @@ def test_native_confirmed_settlement_waiting_before_retirement_is_preserved(core
                     observed_applied=True,
                     observed_identity=request_sha256,
                     reread_complete=True,
-                    evidence=_external_evidence(request_sha256),
+                    evidence=external_evidence(request_sha256),
                     decided_by="automatic",
                     decision_reason="native confirmed settlement race",
                     observed_at=NOW + timedelta(seconds=1),

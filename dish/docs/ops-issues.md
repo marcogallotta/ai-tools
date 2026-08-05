@@ -7,8 +7,8 @@ not a live source of truth — it will go stale the same way
 verified" column before trusting an "open" or "done" mark on anything more
 than a few weeks old.
 
-Snapshot date: 2026-08-04, partially refreshed 2026-08-05. Repo HEAD at last refresh: `10ded82`
-(main).
+Snapshot date: 2026-08-04, refreshed 2026-08-05. Verified repair tree through `09fa713`
+(synthetic Git history created from the supplied repository snapshot).
 
 ## Priority key
 
@@ -79,6 +79,7 @@ items are.
 | Illegal candidate initial states admitted on INSERT | 2026-08-05 (directly code-verified) | Migration `0029` adds a `BEFORE INSERT` guard trigger on `release_candidates` (`release_candidates_initial_state_guard`). Commit `fce152c`. |
 | Illegal admission-control / reservation initial states | 2026-08-05 (directly code-verified) | Migration `0029` adds `BEFORE INSERT` guard triggers on `mutation_admission_controls` and `first_request_reservations`. Commit `fce152c`. |
 | Migration `0028` fails open when no admission-control row exists | 2026-08-05 (directly code-verified) | Migration `0029` adds `mutation_admission_controls_verified_open_guard` (`BEFORE UPDATE`) and `service_requests_stage6_admission_guard` (`BEFORE INSERT`), closing the fail-open path. Commit `fce152c`. |
+| Stage A treatment/baseline evidence | 2026-08-05 (directly generated and tested) | Governed generator records exact `source_only_commands` (`proposals`, `apply-proposal`, `review-approve`, `review-inspect`, `review-reject`, `review-queue`), canonical baseline SHA-256 `26d456e648e3e1e9b0a507de6483b675b1abe1cac80c94b32aeea77d76044ab5`, post-write `--check` passed, and `test_stage1_baseline_contract.py` reported 5 passed. Commit `09fa713`. |
 
 ## Provisionally done — not independently reverified
 
@@ -121,7 +122,6 @@ to its generation. Moved to Done below.
 | Post-burn admission manifest | Later | Mixed | Medium | 2026-08-04 (ChatGPT claim only) | Prerequisites enforced, but approval-time candidate manifest not revalidated against post-burn-only inputs |
 | Semantic-proposal PostgreSQL parity | Decision | ChatGPT+Mixed | Hard | 2026-08-04 (ChatGPT claim only) | Source side complete; PG-target authority not implemented. Priority depends on an unmade scope decision: Skip if semantic-proposal commands remain source-owned after cutover; Must-fix if PostgreSQL must own this workflow |
 | Sealed per-entity source-import manifest | Later | Mixed | Medium | 2026-08-04 (ChatGPT claim only) | Source verification exists; no persisted per-entity digest manifest |
-| Stage A treatment/baseline evidence | Later | ChatGPT | Easy | 2026-08-04 (ChatGPT claim only) | Currently failing (4 failed/5 passed); stale hashes/corpus, missing coverage for new source-only proposal commands |
 
 ## Confirmed open — claimed with specificity, not independently code-verified
 

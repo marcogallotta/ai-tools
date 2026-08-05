@@ -14,18 +14,18 @@ from tests.support.postgresql.core import ROOT, _bootstrap_registry, _import_one
 from tests.support.postgresql.release import _prepare_candidate
 from tests.support.postgresql.workflow import NOW, _next
 
+from tests.support.postgresql.pglite_fixtures import upgrade_on
+
 pytestmark=pytest.mark.pglite
 
 
-def _upgrade_on(connection,url):
-    c=Config(str(ROOT/"alembic.ini")); c.set_main_option("sqlalchemy.url",url); c.attributes["connection"]=connection; command.upgrade(c,"0025_reconciliation_observation_boundary")
 
 
 def test_0025_complete_candidate_reconciliation_requires_exact_fresh_boundary(pglite):
     engine=create_engine(pglite.sqlalchemy_url,future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(connection,pglite.sqlalchemy_url); connection.commit(); ids=_uuid_stream()
+            upgrade_on(connection, pglite.sqlalchemy_url, "0025_reconciliation_observation_boundary"); connection.commit(); ids=_uuid_stream()
             with Session(bind=connection,autoflush=False,expire_on_commit=False) as session:
                 with session.begin():
                     context=_bootstrap_registry(session,ids,generation_status="active"); task=_import_one(session,ids,context)

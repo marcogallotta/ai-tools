@@ -21,83 +21,9 @@ from tests.support.postgresql.core import ROOT, _bootstrap_registry, _import_one
 from tests.support.postgresql.release import HASH_A, _prepare_candidate
 from tests.support.postgresql.workflow import NOW, _next, _register_run
 
+from tests.support.postgresql.pglite_fixtures import seed_open_reservation, upgrade_on
+
 pytestmark = pytest.mark.pglite
-
-
-def _config(url: str) -> Config:
-    config = Config(str(ROOT / "alembic.ini"))
-    config.set_main_option("sqlalchemy.url", url)
-    return config
-
-
-def _upgrade_on(connection, url: str, revision: str) -> None:
-    config = _config(url)
-    config.attributes["connection"] = connection
-    command.upgrade(config, revision)
-
-
-def _seed_open_reservation(session: Session):
-    ids = _uuid_stream()
-    context = _bootstrap_registry(session, ids, generation_status="active")
-    task = _import_one(session, ids, context)
-    _service, candidate_id = _prepare_candidate(session, ids, context, task.task_id)
-    cutover_id = _next(ids)
-    request_id = _next(ids)
-    run_id = _next(ids)
-    plan_id = _next(ids)
-    _register_run(
-        session,
-        generation_id=context["generation_id"],
-        run_id=run_id,
-        owner="owner-1",
-        agent="service",
-    )
-    session.add(
-        rel.CutoverRun(
-            cutover_run_id=cutover_id,
-            candidate_id=candidate_id,
-            state="admission_open",
-            state_revision=5,
-            started_at=NOW,
-            terminal_at=None,
-        )
-    )
-    session.add(
-        rel.FirstAdmissionPlan(
-            plan_id=plan_id,
-            cutover_run_id=cutover_id,
-            request_id=request_id,
-            command_name="start",
-            task_id=task.task_id,
-            expected_projection_events=1,
-            payload={"task_id": str(task.task_id)},
-            plan_sha256=HASH_A,
-            recorded_at=NOW,
-        )
-    )
-    session.flush()
-    payload_sha = "b" * 64
-    session.add(
-        reservations.FirstRequestReservation(
-            reservation_id=_next(ids),
-            plan_id=plan_id,
-            cutover_run_id=cutover_id,
-            candidate_id=candidate_id,
-            generation_id=context["generation_id"],
-            request_id=request_id,
-            command_name="start",
-            owner_id="owner-1",
-            principal_class="service",
-            run_id=run_id,
-            canonical_payload_sha256=payload_sha,
-            state="reserved",
-            reservation_revision=1,
-            reserved_at=NOW,
-            consumed_at=None,
-        )
-    )
-    session.flush()
-    return context, request_id, run_id, payload_sha
 
 
 def _request(*, request_id, generation_id, run_id, payload_sha, owner="owner-1"):
@@ -129,14 +55,14 @@ def test_0020_different_first_request_is_rejected(pglite) -> None:
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(connection, pglite.sqlalchemy_url, "head")
+            upgrade_on(connection, pglite.sqlalchemy_url, "head")
             connection.commit()
             with Session(
                 bind=connection, autoflush=False, expire_on_commit=False
             ) as session:
                 with session.begin():
                     context, _request_id, run_id, payload_sha = (
-                        _seed_open_reservation(session)
+                        seed_open_reservation(session)
                     )
             raw = connection.connection.driver_connection
             raw.autocommit = True
@@ -156,14 +82,14 @@ def test_0020_exact_request_consumes_and_replay_waits_for_verification(pglite) -
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(connection, pglite.sqlalchemy_url, "head")
+            upgrade_on(connection, pglite.sqlalchemy_url, "head")
             connection.commit()
             with Session(
                 bind=connection, autoflush=False, expire_on_commit=False
             ) as session:
                 with session.begin():
                     context, request_id, run_id, payload_sha = (
-                        _seed_open_reservation(session)
+                        seed_open_reservation(session)
                     )
             raw = connection.connection.driver_connection
             raw.autocommit = True
@@ -193,7 +119,7 @@ def test_0020_upgrade_refuses_preexisting_open_admission(pglite) -> None:
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(
+            upgrade_on(
                 connection,
                 pglite.sqlalchemy_url,
                 "0019_request_run_owner_consistency",

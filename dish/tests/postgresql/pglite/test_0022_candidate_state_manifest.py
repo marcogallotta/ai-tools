@@ -20,15 +20,13 @@ from dish_pg.candidate_manifest import revalidate_candidate_manifest
 from tests.support.postgresql.release import HASH_A, _prepare_candidate, _record_final_closure
 from tests.support.postgresql.workflow import NOW, _next
 
+from tests.support.postgresql.pglite_fixtures import upgrade_on
+
 pytestmark = pytest.mark.pglite
 
 
-def _config(url: str) -> Config:
-    config = Config(str(ROOT / "alembic.ini")); config.set_main_option("sqlalchemy.url", url); return config
 
 
-def _upgrade_on(connection, url: str, revision: str) -> None:
-    config = _config(url); config.attributes["connection"] = connection; command.upgrade(config, revision)
 
 
 def _validated_candidate(session: Session):
@@ -55,7 +53,7 @@ def test_0022_database_rejects_approval_without_manifest_binding(pglite) -> None
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(connection, pglite.sqlalchemy_url, "head")
+            upgrade_on(connection, pglite.sqlalchemy_url, "head")
             connection.commit()
             with Session(bind=connection, autoflush=False, expire_on_commit=False) as session:
                 with session.begin():
@@ -76,7 +74,7 @@ def test_0022_upgrade_refuses_already_approved_predecessor_candidate(pglite) -> 
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(
+            upgrade_on(
                 connection,
                 pglite.sqlalchemy_url,
                 "0021_writer_fence_artifact_identity",
@@ -120,7 +118,7 @@ def test_0022_database_rejects_false_matched_component_attestation(pglite) -> No
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(connection, pglite.sqlalchemy_url, "head")
+            upgrade_on(connection, pglite.sqlalchemy_url, "head")
             connection.commit()
             with Session(bind=connection, autoflush=False, expire_on_commit=False) as session:
                 with session.begin():
@@ -218,7 +216,7 @@ def test_0022_database_activation_rejects_latest_stale_component_revalidation(pg
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(connection, pglite.sqlalchemy_url, "head")
+            upgrade_on(connection, pglite.sqlalchemy_url, "head")
             connection.commit()
             with Session(bind=connection, autoflush=False, expire_on_commit=False) as session:
                 with session.begin():

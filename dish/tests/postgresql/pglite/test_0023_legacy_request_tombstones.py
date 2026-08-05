@@ -9,22 +9,18 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from dish_pg import legacy_request_models as legacy
-from tests.postgresql.pglite.test_0020_first_request_reservation import _seed_open_reservation
 from tests.support.postgresql.core import ROOT
 from tests.support.postgresql.workflow import NOW
+
+from tests.support.postgresql.pglite_fixtures import seed_open_reservation, upgrade_on
 
 pytestmark = pytest.mark.pglite
 
 
-def _upgrade_on(connection, url: str) -> None:
-    config = Config(str(ROOT / "alembic.ini"))
-    config.set_main_option("sqlalchemy.url", url)
-    config.attributes["connection"] = connection
-    command.upgrade(config, "head")
 
 
 def _seed_tombstone(session: Session):
-    context, request_id, run_id, payload_sha = _seed_open_reservation(session)
+    context, request_id, run_id, payload_sha = seed_open_reservation(session)
     session.add(legacy.LegacyRequestTombstone(
         tombstone_id=request_id, request_id=request_id,
         source_authority="legacy-sqlite", import_run_id=context["import_run_id"],
@@ -39,7 +35,7 @@ def test_0023_tombstoned_legacy_request_is_rejected_before_native_admission(pgli
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(connection, pglite.sqlalchemy_url)
+            upgrade_on(connection, pglite.sqlalchemy_url, "head")
             connection.commit()
             with Session(bind=connection, autoflush=False, expire_on_commit=False) as session:
                 with session.begin():
@@ -64,7 +60,7 @@ def test_0023_tombstones_are_immutable(pglite) -> None:
     engine = create_engine(pglite.sqlalchemy_url, future=True)
     try:
         with engine.connect() as connection:
-            _upgrade_on(connection, pglite.sqlalchemy_url)
+            upgrade_on(connection, pglite.sqlalchemy_url, "head")
             connection.commit()
             with Session(bind=connection, autoflush=False, expire_on_commit=False) as session:
                 with session.begin():

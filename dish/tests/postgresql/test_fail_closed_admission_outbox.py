@@ -23,6 +23,7 @@ from tests.support.postgresql.workflow import (
     _register_run,
     workflow_db,
 )
+from tests.support.postgresql.first_admission import open_verified_first_admission
 from tests.support.postgresql.release import _prepare_candidate
 
 pytestmark = pytest.mark.smoke
@@ -77,14 +78,10 @@ def test_candidate_admission_rejects_missing_or_closed_control(
 
 def test_candidate_admission_accepts_only_explicit_open_control(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
+    open_verified_first_admission(factory, ids, context, task_id)
     with session_scope(factory) as session:
-        _service, _candidate_id = _prepare_candidate(session, ids, context, task_id)
         control = session.get(rel.MutationAdmissionControl, context["generation_id"])
-        control.state = "open"
-        control.control_revision += 1
-        control.opened_at = NOW
-        control.updated_at = NOW
-        session.flush()
+        assert control is not None and control.state == "open"
         run_id = _next(ids)
         _register_run(session, generation_id=context["generation_id"], run_id=run_id)
         admission = _admit(

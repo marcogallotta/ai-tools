@@ -178,7 +178,7 @@ def test_writer_fence_engagement_does_not_alter_target_through_parent_symlink(
     governed = tmp_path / "governed"
     governed.symlink_to(target, target_is_directory=True)
 
-    with pytest.raises(DishRuleError):
+    with pytest.raises(DishRuleError) as rejected:
         engage_legacy_writer_fence(
             governed / target_file.name,
             fence_id="fence-planned",
@@ -188,6 +188,7 @@ def test_writer_fence_engagement_does_not_alter_target_through_parent_symlink(
             engaged_at=NOW,
             operator="Marco",
         )
+    assert rejected.value.rule == "legacy_writer_fence_conflict"
     assert target_file.read_bytes() == sentinel
 
 def test_writer_fence_observation_is_descriptor_bound_and_service_shaped(tmp_path: Path) -> None:

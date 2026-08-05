@@ -263,10 +263,11 @@ def test_local_application_holds_common_lock_until_released(monkeypatch, tmp_pat
     monkeypatch.setattr(cli_module, "DB_PATH", db_path)
     app = cli_module.build_application()
     try:
-        with pytest.raises(DishRuleError):
+        with pytest.raises(DishRuleError) as rejected:
             DatabaseProcessLock(
                 database_process_lock_path(db_path), role="local-admin"
             ).acquire()
+        assert rejected.value.rule == "database_process_lock_held"
     finally:
         app.conn.close()
         app._database_process_lock.release()

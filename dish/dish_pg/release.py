@@ -60,10 +60,12 @@ class ReleaseCandidateService(
         *,
         uuid_factory: Callable[[], uuid.UUID] = uuid.uuid4,
         clock: Callable[[], datetime] | None = None,
+        rollback_burn_fence_hook: Callable[[], None] | None = None,
     ) -> None:
         self.session = session
         self.uuid_factory = uuid_factory
         self.clock = clock
+        self.rollback_burn_fence_hook = rollback_burn_fence_hook
 
     def _trusted_now(self) -> datetime:
         value = self.clock() if self.clock is not None else self.session.scalar(

@@ -1,17 +1,14 @@
 from __future__ import annotations
-
 import io
 import json
 import runpy
 from datetime import timedelta
 from pathlib import Path
-
 import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
-
 from dish_pg import models
 from dish_pg import stage5_models as tx
 from dish_pg import stage6_models as rel
@@ -46,105 +43,11 @@ from tests.support.postgresql.release import (
     _writer_fence_proof,
 )
 
-
-def _burn_rollback(session, ids, context, task_id):
-    service, candidate_id = _prepare_candidate(session, ids, context, task_id)
-    bundle = service.build_evidence_bundle(
-        candidate_id=candidate_id,
-        bundle_kind="release_candidate",
-        built_at=NOW,
-    )
-    service.validate_candidate(
-        candidate_id=candidate_id,
-        evidence_bundle_id=bundle.bundle_id,
-        validated_at=NOW + timedelta(minutes=1),
-    )
-    closure = _record_final_closure(
-        service,
-        ids,
-        candidate_id,
-        closed_through_at=NOW + timedelta(minutes=5),
-    )
-    service.approve_candidate(
-        candidate_id=candidate_id,
-        evidence_bundle_id=bundle.bundle_id,
-        approver="Marco",
-        approval_statement="Approve exact candidate for Stage 8 gate tests.",
-        approval_payload={
-            "final_asana_closure_id": str(closure.closure_id),
-            "final_asana_closure_sha256": closure.closure_sha256,
-        },
-        approved_at=NOW + timedelta(minutes=5),
-    )
-    fence = service.prepare_writer_fence(
-        candidate_id=candidate_id,
-        target_identity="legacy-service@stage8-test",
-        mechanism="fail-closed-file",
-        manifest={"path": "/tmp/stage8-writer-fence.json"},
-        prepared_at=NOW + timedelta(minutes=5),
-    )
-    run = service.prepare_cutover(
-        candidate_id=candidate_id,
-        started_at=NOW + timedelta(minutes=5),
-    )
-    _record_and_engage_writer_fence(
-        service,
-        ids,
-        fence_id=fence.fence_id,
-        engaged_at=NOW + timedelta(minutes=5),
-    )
-    service.verify_writer_fence(
-        fence_id=fence.fence_id,
-        proof=_writer_fence_proof(fence, candidate_id),
-        verified_at=NOW + timedelta(minutes=5),
-        required_writer_inventory={fence.target_identity},
-    )
-    service.mark_fenced(
-        cutover_run_id=run.cutover_run_id,
-        recorded_at=NOW + timedelta(minutes=5),
-        required_writer_inventory={fence.target_identity},
-    )
-    service.recertify_candidate(
-        candidate_id=candidate_id,
-        closure_id=closure.closure_id,
-        approver="Marco",
-        recertification_statement="Confirm final closure after writer fencing.",
-        payload={"cutover_run_id": str(run.cutover_run_id)},
-        recertified_at=NOW + timedelta(minutes=5),
-    )
-    service.activate_authority(
-        cutover_run_id=run.cutover_run_id,
-        final_asana_closure_id=closure.closure_id,
-        activated_at=NOW + timedelta(minutes=5),
-        required_writer_inventory={fence.target_identity},
-    )
-    service.burn_rollback(
-        cutover_run_id=run.cutover_run_id,
-        legacy_bundle_id="legacy-bundle-sha256:" + HASH_A,
-        burned_at=NOW + timedelta(minutes=6),
-        required_writer_inventory={fence.target_identity},
-    )
-    return service, candidate_id, run.cutover_run_id
-
-
-def _record_runtime_and_worker_readiness(session, ids, service, candidate_id, context):
-    reconciliation = _complete_active_mapping_reconciliation(
-        session,
-        ids,
-        candidate_id=candidate_id,
-        corpus_identity=f"stage8-readiness:{candidate_id}",
-        started_at=NOW + timedelta(minutes=6),
-        completed_at=NOW + timedelta(minutes=6),
-    )
-    return _record_runtime_and_typed_readiness(
-        session,
-        ids,
-        service=service,
-        candidate_id=candidate_id,
-        reconciliation=reconciliation,
-        recorded_at=NOW + timedelta(minutes=6),
-        worker_identity="projection-worker@stage8-test",
-    )
+from tests.support.postgresql.stage8_cutover_evidence_gates import (
+    _burn_rollback,
+    _record_runtime_and_worker_readiness,
+    _prepare_fenced_recertified_cutover,
+)
 
 
 @pytest.mark.database_boundary
@@ -173,7 +76,6 @@ def test_stage8_schema_migration_adds_cutover_evidence_tables(tmp_path: Path) ->
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ALEMBIC_HEAD
     finally:
         engine.dispose()
-
 
 def test_passed_rehearsal_requires_kind_specific_checkpoints(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
@@ -226,7 +128,6 @@ def test_passed_rehearsal_requires_kind_specific_checkpoints(workflow_db) -> Non
                 completed_at=NOW + timedelta(minutes=2),
             )
 
-
 def test_writer_fence_proof_is_candidate_bound_and_pre_body_parse(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
@@ -259,7 +160,6 @@ def test_writer_fence_proof_is_candidate_bound_and_pre_body_parse(workflow_db) -
             )
         assert service.writer_fence_status(fence.fence_id).state == "engaged"
         assert service.writer_fence_status(fence.fence_id).proof_sha256 is None
-
 
 def test_prepared_writer_fence_digest_matches_deployed_manifest_bytes(
     workflow_db, tmp_path: Path
@@ -309,7 +209,6 @@ def test_prepared_writer_fence_digest_matches_deployed_manifest_bytes(
         )
         assert engaged.state == "engaged"
 
-
 def test_writer_fence_engagement_rejects_deployed_manifest_digest_mismatch(
     workflow_db,
 ) -> None:
@@ -345,7 +244,6 @@ def test_writer_fence_engagement_rejects_deployed_manifest_digest_mismatch(
                 engaged_at=NOW,
             )
         assert service.writer_fence_status(fence.fence_id).state == "prepared"
-
 
 def test_writer_fence_inventory_requires_exact_engaged_set(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
@@ -390,7 +288,6 @@ def test_writer_fence_inventory_requires_exact_engaged_set(workflow_db) -> None:
             )
         assert service.writer_fence_status(required_fence.fence_id).state == "engaged"
 
-
 def test_writer_fence_inventory_must_be_supplied(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
@@ -413,7 +310,6 @@ def test_writer_fence_inventory_must_be_supplied(workflow_db) -> None:
                 verified_at=NOW + timedelta(minutes=1),
             )
         assert service.writer_fence_status(fence.fence_id).state == "engaged"
-
 
 def test_post_burn_evidence_cannot_predate_rollback_burn(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
@@ -438,456 +334,4 @@ def test_post_burn_evidence_cannot_predate_rollback_burn(workflow_db) -> None:
                     "mutation_admission": "closed",
                 },
                 recorded_at=NOW + timedelta(minutes=5),
-            )
-
-
-def test_admission_requires_post_burn_runtime_worker_and_first_request_evidence(workflow_db) -> None:
-    factory, ids, context, task_id = workflow_db
-    with session_scope(factory) as session:
-        service, candidate_id, cutover_run_id = _burn_rollback(
-            session, ids, context, task_id
-        )
-        with pytest.raises(ReleaseAuthorityError, match="runtime attestation"):
-            service.open_mutation_admission(
-                cutover_run_id=cutover_run_id,
-                opened_at=NOW + timedelta(minutes=7),
-            )
-
-        _record_runtime_and_worker_readiness(
-            session, ids, service, candidate_id, context
-        )
-        with pytest.raises(ReleaseAuthorityError, match="first-admission plan"):
-            service.open_mutation_admission(
-                cutover_run_id=cutover_run_id,
-                opened_at=NOW + timedelta(minutes=7),
-            )
-
-        first_request_id = _next(ids)
-        first_run_id = _next(ids)
-        _register_run(session, generation_id=context["generation_id"], run_id=first_run_id)
-        plan = service.plan_first_admission(
-            cutover_run_id=cutover_run_id,
-            request_id=first_request_id,
-            command_name="start",
-            command_arguments={"task_id": str(task_id), "agent": "codex", "kind": "initial"},
-            task_id=task_id,
-            owner_id="owner-1",
-            principal_class="agent",
-            run_id=first_run_id,
-            payload={"probe": "stage8-first-admission"},
-            recorded_at=NOW + timedelta(minutes=6),
-        )
-        assert plan.expected_projection_events == 0
-        assert plan.payload["command_arguments"]["task_id"] == str(task_id)
-        canonical_payload = {
-            "command": "start",
-            "arguments": {
-                "task_id": str(task_id),
-                "agent": "codex",
-                "kind": "initial",
-            },
-            "owner_id": "owner-1",
-            "run_id": str(first_run_id),
-        }
-        with pytest.raises(
-            IntegrityError,
-            match="mutation admission is closed",
-        ), session.begin_nested():
-            session.execute(
-                text(
-                    """INSERT INTO service_requests (
-                        request_id,generation_id,run_id,owner_id,principal_class,
-                        command_name,canonical_payload_sha256,canonical_payload,
-                        protocol_release,dish_release,admitted_at
-                    ) VALUES (
-                        :request_id,:generation_id,:run_id,'owner-1','agent','start',
-                        :payload_sha,:payload,'protocol-1','dish-pg-stage6',:admitted_at
-                    )"""
-                ),
-                {
-                    "request_id": first_request_id.hex,
-                    "generation_id": context["generation_id"].hex,
-                    "run_id": first_run_id.hex,
-                    "payload_sha": sha256_json(canonical_payload),
-                    "payload": json.dumps(canonical_payload),
-                    "admitted_at": NOW + timedelta(minutes=6),
-                },
-            )
-            session.flush()
-        with pytest.raises(
-            MutationAdmissionClosed,
-            match="pending first-request gate",
-        ):
-            WorkflowAuthorityService(session).admit_request(
-                RequestSpec(
-                    request_id=first_request_id,
-                    generation_id=context["generation_id"],
-                    run_id=first_run_id,
-                    owner_id="owner-1",
-                    principal_class="agent",
-                    command_name="start",
-                    canonical_payload=canonical_payload,
-                    protocol_release="protocol-1",
-                    dish_release="dish-pg-stage6",
-                    admitted_at=NOW + timedelta(minutes=6),
-                )
-            )
-        control = service.open_mutation_admission(
-            cutover_run_id=cutover_run_id,
-            opened_at=NOW + timedelta(minutes=7),
-        )
-        assert control.state == "closed"
-        checkpoint = session.scalar(
-            select(rel.CutoverCheckpoint).where(
-                rel.CutoverCheckpoint.cutover_run_id == cutover_run_id,
-                rel.CutoverCheckpoint.checkpoint_kind == "first_request_admission_opened",
-            )
-        )
-        assert checkpoint is not None
-        assert checkpoint.payload["runtime_attestation_id"]
-        assert checkpoint.payload["projection_worker_readiness_id"]
-        assert checkpoint.payload["first_admission_plan_id"]
-
-
-def test_stage8_operator_cli_exposes_readiness_and_first_admission_commands() -> None:
-    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-release"))
-    parser = namespace["_parser"]()
-    assert parser.parse_args([
-        "runtime-attestation-record",
-        "00000000-0000-0000-0000-000000000001",
-        "--file",
-        "/tmp/runtime.json",
-    ]).command == "runtime-attestation-record"
-    assert parser.parse_args([
-        "projection-worker-ready",
-        "00000000-0000-0000-0000-000000000001",
-        "--file",
-        "/tmp/worker.json",
-    ]).command == "projection-worker-ready"
-    assert parser.parse_args([
-        "first-admission-plan",
-        "00000000-0000-0000-0000-000000000002",
-        "--file",
-        "/tmp/first.json",
-    ]).command == "first-admission-plan"
-
-
-def test_first_admission_plan_rejects_unverifiable_target_shapes(workflow_db) -> None:
-    factory, ids, context, task_id = workflow_db
-    with session_scope(factory) as session:
-        service, _candidate_id, cutover_run_id = _burn_rollback(
-            session, ids, context, task_id
-        )
-        first_run_id = _next(ids)
-        _register_run(session, generation_id=context["generation_id"], run_id=first_run_id)
-        common = {
-            "cutover_run_id": cutover_run_id,
-            "request_id": _next(ids),
-            "owner_id": "owner-1",
-            "principal_class": "agent",
-            "run_id": first_run_id,
-            "payload": {"probe": "invalid-first-admission"},
-            "recorded_at": NOW + timedelta(minutes=6),
-        }
-        with pytest.raises(ReleaseAuthorityError, match="must use the bounded start command"):
-            service.plan_first_admission(
-                **common,
-                command_name="create",
-                command_arguments={"title": "New task"},
-                task_id=None,
-            )
-        common["request_id"] = _next(ids)
-        with pytest.raises(ReleaseAuthorityError, match="requires task_id"):
-            service.plan_first_admission(
-                **common,
-                command_name="start",
-                command_arguments={"task_id": str(task_id), "agent": "codex", "kind": "initial"},
-                task_id=None,
-            )
-        common["request_id"] = _next(ids)
-        with pytest.raises(ReleaseAuthorityError, match="must include canonical task_id"):
-            service.plan_first_admission(
-                **common,
-                command_name="start",
-                command_arguments={},
-                task_id=task_id,
-            )
-        common["request_id"] = _next(ids)
-        with pytest.raises(ReleaseAuthorityError, match="task identity conflicts"):
-            service.plan_first_admission(
-                **common,
-                command_name="start",
-                command_arguments={"task_id": str(_next(ids))},
-                task_id=task_id,
-            )
-        common["request_id"] = _next(ids)
-        with pytest.raises(ReleaseAuthorityError, match="must use the bounded start command"):
-            service.plan_first_admission(
-                **common,
-                command_name="prepare",
-                command_arguments={"task_id": str(task_id)},
-                task_id=task_id,
-            )
-        common["request_id"] = _next(ids)
-        with pytest.raises(ReleaseAuthorityError, match="cannot carry prior operation"):
-            service.plan_first_admission(
-                **common,
-                command_name="start",
-                command_arguments={
-                    "task_id": str(task_id),
-                    "agent": "codex",
-                    "kind": "initial",
-                    "operation_id": str(_next(ids)),
-                },
-                task_id=task_id,
-            )
-        common["request_id"] = _next(ids)
-        with pytest.raises(ReleaseAuthorityError, match="kind must be initial"):
-            service.plan_first_admission(
-                **common,
-                command_name="start",
-                command_arguments={
-                    "task_id": str(task_id),
-                    "agent": "codex",
-                    "kind": "planning",
-                },
-                task_id=task_id,
-            )
-        common["request_id"] = _next(ids)
-        with pytest.raises(ReleaseAuthorityError, match="first-admission agent"):
-            service.plan_first_admission(
-                **common,
-                command_name="start",
-                command_arguments={"task_id": str(task_id), "kind": "initial"},
-                task_id=task_id,
-            )
-
-
-
-def _prepare_fenced_recertified_cutover(session, ids, context, task_id):
-    service, candidate_id = _prepare_candidate(session, ids, context, task_id)
-    bundle = service.build_evidence_bundle(
-        candidate_id=candidate_id,
-        bundle_kind="release_candidate",
-        built_at=NOW,
-    )
-    service.validate_candidate(
-        candidate_id=candidate_id,
-        evidence_bundle_id=bundle.bundle_id,
-        validated_at=NOW + timedelta(minutes=1),
-    )
-    closure = _record_final_closure(
-        service,
-        ids,
-        candidate_id,
-        closed_through_at=NOW + timedelta(minutes=5),
-    )
-    service.approve_candidate(
-        candidate_id=candidate_id,
-        evidence_bundle_id=bundle.bundle_id,
-        approver="Marco",
-        approval_statement="Approve exact candidate for Agent B activation checks.",
-        approval_payload={
-            "final_asana_closure_id": str(closure.closure_id),
-            "final_asana_closure_sha256": closure.closure_sha256,
-        },
-        approved_at=NOW + timedelta(minutes=5),
-    )
-    fence = service.prepare_writer_fence(
-        candidate_id=candidate_id,
-        target_identity="legacy-service@agent-b-activation",
-        mechanism="fail-closed-file",
-        manifest={"path": "/tmp/agent-b-activation-fence.json"},
-        prepared_at=NOW + timedelta(minutes=5),
-    )
-    run = service.prepare_cutover(
-        candidate_id=candidate_id,
-        started_at=NOW + timedelta(minutes=5),
-    )
-    _record_and_engage_writer_fence(
-        service,
-        ids,
-        fence_id=fence.fence_id,
-        engaged_at=NOW + timedelta(minutes=5),
-    )
-    service.verify_writer_fence(
-        fence_id=fence.fence_id,
-        proof=_writer_fence_proof(fence, candidate_id),
-        verified_at=NOW + timedelta(minutes=5),
-        required_writer_inventory={fence.target_identity},
-    )
-    service.mark_fenced(
-        cutover_run_id=run.cutover_run_id,
-        recorded_at=NOW + timedelta(minutes=5),
-        required_writer_inventory={fence.target_identity},
-    )
-    service.recertify_candidate(
-        candidate_id=candidate_id,
-        closure_id=closure.closure_id,
-        approver="Marco",
-        recertification_statement="Recertify exact closure after fencing.",
-        payload={"cutover_run_id": str(run.cutover_run_id)},
-        recertified_at=NOW + timedelta(minutes=5),
-    )
-    return service, candidate_id, closure, run, fence
-
-
-def test_activation_revalidates_the_exact_approved_candidate_manifest(workflow_db) -> None:
-    factory, ids, context, task_id = workflow_db
-    with session_scope(factory) as session:
-        service, candidate_id, closure, run, fence = _prepare_fenced_recertified_cutover(
-            session, ids, context, task_id
-        )
-        candidate = service._candidate(candidate_id)
-        _seed_worker_probe_inventory(
-            session,
-            ids,
-            candidate=candidate,
-            sealed_at=NOW + timedelta(minutes=5),
-        )
-
-        with pytest.raises(ReleaseAuthorityError, match="authority manifest is stale"):
-            service.activate_authority(
-                cutover_run_id=run.cutover_run_id,
-                final_asana_closure_id=closure.closure_id,
-                activated_at=NOW + timedelta(minutes=5),
-                required_writer_inventory={fence.target_identity},
-            )
-        assert service._cutover(run.cutover_run_id).state == "fenced"
-
-
-def test_writer_fence_verification_requires_exact_persisted_observation(workflow_db) -> None:
-    factory, ids, context, task_id = workflow_db
-    with session_scope(factory) as session:
-        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
-        fence = service.prepare_writer_fence(
-            candidate_id=candidate_id,
-            target_identity="legacy-service@missing-observation",
-            mechanism="fail-closed-file",
-            manifest={"path": "/tmp/missing-observation.json"},
-            prepared_at=NOW,
-        )
-        with pytest.raises(ReleaseAuthorityError, match="lacks the artifact observation"):
-            service.verify_writer_fence(
-                fence_id=fence.fence_id,
-                proof=_writer_fence_proof(fence, candidate_id),
-                verified_at=NOW + timedelta(minutes=1),
-                required_writer_inventory={fence.target_identity},
-            )
-        assert service.writer_fence_status(fence.fence_id).state == "prepared"
-
-
-def test_caller_pass_strings_cannot_replace_typed_worker_probe_evidence(workflow_db) -> None:
-    factory, ids, context, task_id = workflow_db
-    with session_scope(factory) as session:
-        service, candidate_id, cutover_run_id = _burn_rollback(
-            session, ids, context, task_id
-        )
-        candidate = service._candidate(candidate_id)
-        reconciliation = _complete_active_mapping_reconciliation(
-            session,
-            ids,
-            candidate_id=candidate_id,
-            corpus_identity="agent-b-untyped-readiness",
-            started_at=NOW + timedelta(minutes=6),
-            completed_at=NOW + timedelta(minutes=6),
-        )
-        service_path, service_sha = _artifact_file("untyped-service")
-        worker_path, worker_sha = _artifact_file("untyped-worker")
-        route_path, route_sha = _artifact_file("untyped-route")
-        service.record_runtime_release_attestation(
-            candidate_id=candidate_id,
-            service_artifact_sha256=service_sha,
-            projection_worker_artifact_sha256=worker_sha,
-            route_probe_sha256=route_sha,
-            payload={
-                "dish_release": candidate.dish_release,
-                "protocol_release": candidate.protocol_release,
-                "openapi_release": candidate.openapi_release,
-                "routing_release": candidate.routing_release,
-                "route_target": "postgresql",
-                "health": "pass",
-                "mutation_admission": "closed",
-                "service_artifact_path": service_path,
-                "projection_worker_artifact_path": worker_path,
-                "route_probe_path": route_path,
-            },
-            recorded_at=NOW + timedelta(minutes=6),
-        )
-        _seed_worker_probe_inventory(
-            session,
-            ids,
-            candidate=candidate,
-            sealed_at=NOW + timedelta(minutes=6),
-        )
-        service.record_projection_worker_readiness(
-            candidate_id=candidate_id,
-            reconciliation_run_id=reconciliation.reconciliation_run_id,
-            worker_identity="projection-worker@untyped",
-            worker_release=candidate.dish_release,
-            payload={"claim_probe": "pass", "write_probe": "pass", "restart_probe": "pass"},
-            ready_at=NOW + timedelta(minutes=6),
-        )
-        first_run_id = _next(ids)
-        _register_run(session, generation_id=context["generation_id"], run_id=first_run_id)
-        service.plan_first_admission(
-            cutover_run_id=cutover_run_id,
-            request_id=_next(ids),
-            command_name="start",
-            command_arguments={"task_id": str(task_id), "agent": "codex", "kind": "initial"},
-            task_id=task_id,
-            owner_id="owner-1",
-            principal_class="agent",
-            run_id=first_run_id,
-            payload={"probe": "untyped-readiness-must-fail"},
-            recorded_at=NOW + timedelta(minutes=6),
-        )
-        with pytest.raises(ReleaseAuthorityError, match="completed typed probe evidence"):
-            service.open_mutation_admission(
-                cutover_run_id=cutover_run_id,
-                opened_at=NOW + timedelta(minutes=7),
-            )
-
-
-def test_runtime_artifact_substitution_blocks_admission_after_typed_readiness(workflow_db) -> None:
-    factory, ids, context, task_id = workflow_db
-    with session_scope(factory) as session:
-        service, candidate_id, cutover_run_id = _burn_rollback(
-            session, ids, context, task_id
-        )
-        reconciliation = _complete_active_mapping_reconciliation(
-            session,
-            ids,
-            candidate_id=candidate_id,
-            corpus_identity="agent-b-runtime-substitution",
-            started_at=NOW + timedelta(minutes=6),
-            completed_at=NOW + timedelta(minutes=6),
-        )
-        runtime, _readiness = _record_runtime_and_typed_readiness(
-            session,
-            ids,
-            service=service,
-            candidate_id=candidate_id,
-            reconciliation=reconciliation,
-            recorded_at=NOW + timedelta(minutes=6),
-        )
-        first_run_id = _next(ids)
-        _register_run(session, generation_id=context["generation_id"], run_id=first_run_id)
-        service.plan_first_admission(
-            cutover_run_id=cutover_run_id,
-            request_id=_next(ids),
-            command_name="start",
-            command_arguments={"task_id": str(task_id), "agent": "codex", "kind": "initial"},
-            task_id=task_id,
-            owner_id="owner-1",
-            principal_class="agent",
-            run_id=first_run_id,
-            payload={"probe": "runtime-substitution-must-fail"},
-            recorded_at=NOW + timedelta(minutes=6),
-        )
-        Path(runtime.payload["service_artifact_path"]).write_bytes(b"substituted-runtime\n")
-        with pytest.raises(ReleaseAuthorityError, match="digest does not match"):
-            service.open_mutation_admission(
-                cutover_run_id=cutover_run_id,
-                opened_at=NOW + timedelta(minutes=7),
             )
