@@ -132,6 +132,8 @@ def test_delivery_claim_is_strictly_rollout_ordered_and_blocks_later_sequence(wo
         service.compare_delivery(
             delivery_id=claim.delivery_id,
             claim_token=first_token,
+            claim_revision=claim.delivery_revision,
+            worker_id="worker-1",
             target_result=dict(first.source_outcome),
             comparator_release="test",
             compared_at=NOW + timedelta(seconds=3),

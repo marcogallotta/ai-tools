@@ -376,7 +376,11 @@ Stage 5 adds isolated transition and downstream-projection authority through
 bind the current source release, database digest, sidecar manifest, production-change ledger
 high-water mark, and per-entity immutable evidence. Shadow baselines own exact source envelopes,
 resumable asynchronous deliveries, independent comparisons, explicit proof gaps, and closure only
-after every delivery and gap is settled. Projection epochs fence restore and takeover; historical
+after every delivery and gap is settled. Shadow lifecycle transactions use one lock order—baseline
+first, then delivery, then gap or comparison evidence. Envelope and gap admission retain the baseline
+lock until their rows are durable, while close and disqualification take the same lock and reread all
+blocking work; termination therefore cannot pass an admitted capture or be followed by an authoritative
+capture. Projection epochs fence restore and takeover; historical
 project, section, and task mappings are generation/epoch-bound and cannot transfer an external
 alias between logical entities. Authoritative commands emit ordered, idempotent outbox events in
 the same caller-owned transaction as PostgreSQL state. Workers persist exact attempts before an
@@ -493,6 +497,14 @@ replay tombstones that retain identity hashes and rollout sequence without retai
 The earliest unresolved reservation is a hard delivery barrier. The worker first converts reservations
 older than the recovery quarantine into explicit permanent gaps; it never skips them to replay a later
 rollout sequence.
+Delivery claim and settlement use the same baseline-first authority path for immediate work, expired-
+claim takeover, exact request replay, and operator recovery. A terminal settlement must match the
+persisted owner, token, delivery revision, claimed lifecycle, and exact unexpired lease timestamp in one
+conditional update. Reclaim also locks and rereads the baseline before changing the delivery, so a
+committed close, disqualification, or target-generation retirement cannot authorize later shadow work.
+Each delivery failure records the exact failed delivery revision. Manual recovery may reopen only that
+same terminal revision and only with explicit evidence that the target request was ``not_applied``;
+missing or ambiguous evidence remains an open uncertain gap rather than becoming a retry.
 The same owner-only filesystem kill switch gates both legacy capture and shadow-worker draining;
 the worker exits cleanly before reading further spool entries while it is engaged. Shadow execution
 namespaces legacy request and run identities by baseline, registers one deterministic target

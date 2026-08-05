@@ -175,6 +175,154 @@ class ShadowService:
         self.session = session
         self.uuid_factory = uuid_factory
 
+    @staticmethod
+    def _utc_comparable(value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def _lock_baseline(self, baseline_id: uuid.UUID) -> tx.ShadowBaseline | None:
+        statement = select(tx.ShadowBaseline).where(
+            tx.ShadowBaseline.shadow_baseline_id == baseline_id
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        return self.session.scalar(statement)
+
+    def _lock_delivery(self, delivery_id: uuid.UUID) -> tx.ShadowDelivery | None:
+        statement = select(tx.ShadowDelivery).where(
+            tx.ShadowDelivery.delivery_id == delivery_id
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        return self.session.scalar(statement)
+
+    def _lock_gap(self, gap_id: uuid.UUID) -> tx.ShadowGap | None:
+        statement = select(tx.ShadowGap).where(tx.ShadowGap.gap_id == gap_id)
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        return self.session.scalar(statement)
+
+    def _lock_delivery_path(
+        self,
+        delivery_id: uuid.UUID,
+    ) -> tuple[tx.ShadowBaseline, tx.ShadowDelivery, tx.ShadowEnvelope]:
+        baseline_id = self.session.scalar(
+            select(tx.ShadowEnvelope.shadow_baseline_id)
+            .join(
+                tx.ShadowDelivery,
+                tx.ShadowDelivery.envelope_id == tx.ShadowEnvelope.envelope_id,
+            )
+            .where(tx.ShadowDelivery.delivery_id == delivery_id)
+        )
+        if baseline_id is None:
+            raise TransitionAuthorityError("unknown shadow delivery")
+        baseline = self._lock_baseline(baseline_id)
+        if baseline is None:
+            raise TransitionAuthorityError("shadow delivery has no baseline authority")
+        delivery = self._lock_delivery(delivery_id)
+        if delivery is None:
+            raise TransitionAuthorityError("unknown shadow delivery")
+        envelope = self.session.get(tx.ShadowEnvelope, delivery.envelope_id)
+        if envelope is None or envelope.shadow_baseline_id != baseline.shadow_baseline_id:
+            raise TransitionAuthorityError("shadow delivery authority changed while locking")
+        return baseline, delivery, envelope
+
+    def _lock_gap_path(
+        self,
+        gap_id: uuid.UUID,
+    ) -> tuple[tx.ShadowBaseline, tx.ShadowDelivery | None, tx.ShadowGap]:
+        path = self.session.execute(
+            select(tx.ShadowGap.shadow_baseline_id, tx.ShadowGap.envelope_id).where(
+                tx.ShadowGap.gap_id == gap_id
+            )
+        ).one_or_none()
+        if path is None:
+            raise TransitionAuthorityError("unknown shadow gap")
+        baseline = self._lock_baseline(path.shadow_baseline_id)
+        if baseline is None:
+            raise TransitionAuthorityError("shadow gap has no baseline authority")
+        delivery = None
+        if path.envelope_id is not None:
+            delivery_id = self.session.scalar(
+                select(tx.ShadowDelivery.delivery_id).where(
+                    tx.ShadowDelivery.envelope_id == path.envelope_id
+                )
+            )
+            if delivery_id is not None:
+                delivery = self._lock_delivery(delivery_id)
+        gap = self._lock_gap(gap_id)
+        if (
+            gap is None
+            or gap.shadow_baseline_id != baseline.shadow_baseline_id
+            or gap.envelope_id != path.envelope_id
+            or (delivery is not None and delivery.envelope_id != gap.envelope_id)
+        ):
+            raise TransitionAuthorityError("shadow gap authority changed while locking")
+        return baseline, delivery, gap
+
+    def _assert_delivery_claim(
+        self,
+        *,
+        baseline: tx.ShadowBaseline,
+        delivery: tx.ShadowDelivery,
+        claim_token: uuid.UUID,
+        claim_revision: int,
+        worker_id: str,
+        at: datetime,
+    ) -> datetime:
+        generation = self.session.get(models.AuthorityGeneration, baseline.generation_id)
+        if baseline.status != "open" or generation is None or generation.status != "active":
+            raise TransitionAuthorityError("shadow delivery baseline authority is no longer current")
+        if (
+            delivery.state != "claimed"
+            or delivery.claim_token != claim_token
+            or delivery.claim_owner != worker_id
+            or delivery.delivery_revision != claim_revision
+            or delivery.claim_expires_at is None
+            or self._utc_comparable(delivery.claim_expires_at) <= self._utc_comparable(at)
+        ):
+            raise TransitionAuthorityError("shadow delivery settlement claim is stale or expired")
+        return delivery.claim_expires_at
+
+    def _settle_delivery_cas(
+        self,
+        *,
+        delivery: tx.ShadowDelivery,
+        claim_token: uuid.UUID,
+        claim_revision: int,
+        worker_id: str,
+        claim_expires_at: datetime,
+        state: str,
+        terminal_at: datetime,
+        last_error: str | None = None,
+    ) -> None:
+        result = self.session.execute(
+            update(tx.ShadowDelivery)
+            .where(
+                tx.ShadowDelivery.delivery_id == delivery.delivery_id,
+                tx.ShadowDelivery.state == "claimed",
+                tx.ShadowDelivery.claim_owner == worker_id,
+                tx.ShadowDelivery.claim_token == claim_token,
+                tx.ShadowDelivery.delivery_revision == claim_revision,
+                tx.ShadowDelivery.claim_expires_at == claim_expires_at,
+                tx.ShadowDelivery.claim_expires_at > terminal_at,
+            )
+            .values(
+                state=state,
+                claim_owner=None,
+                claim_token=None,
+                claim_expires_at=None,
+                delivery_revision=claim_revision + 1,
+                last_error=last_error,
+                terminal_at=terminal_at,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise TransitionAuthorityError("shadow delivery settlement lost current claim authority")
+        self.session.expire(delivery)
+
     def create_baseline(
         self,
         *,
@@ -229,7 +377,7 @@ class ShadowService:
         capture_qualification: str = "legacy",
         envelope_schema_version: int = 1,
     ) -> tx.ShadowEnvelope:
-        baseline = self.session.get(tx.ShadowBaseline, shadow_baseline_id)
+        baseline = self._lock_baseline(shadow_baseline_id)
         if baseline is None or baseline.status != "open":
             raise TransitionAuthorityError("shadow baseline is not open")
         target_generation = self.session.get(models.AuthorityGeneration, baseline.generation_id)
@@ -359,7 +507,26 @@ class ShadowService:
                 tx.ShadowDelivery.delivery_id,
             )
         ).all()
-        for row, envelope in candidates:
+        for candidate, envelope in candidates:
+            baseline = self._lock_baseline(envelope.shadow_baseline_id)
+            if baseline is None or baseline.status != "open":
+                continue
+            generation = self.session.get(models.AuthorityGeneration, baseline.generation_id)
+            if generation is None or generation.status != "active":
+                continue
+            row = self._lock_delivery(candidate.delivery_id)
+            if row is None or row.envelope_id != envelope.envelope_id:
+                continue
+            if row.state == "pending":
+                pass
+            elif (
+                row.state == "claimed"
+                and row.claim_expires_at is not None
+                and self._utc_comparable(row.claim_expires_at) <= self._utc_comparable(now)
+            ):
+                pass
+            else:
+                continue
             if envelope.rollout_sequence is not None:
                 blockers = int(self.session.scalar(
                     select(func.count())
@@ -379,13 +546,23 @@ class ShadowService:
                     continue
             revision = row.delivery_revision
             prior_state = row.state
+            predicate = [
+                tx.ShadowDelivery.delivery_id == row.delivery_id,
+                tx.ShadowDelivery.delivery_revision == revision,
+                tx.ShadowDelivery.state == prior_state,
+            ]
+            if prior_state == "claimed":
+                predicate.extend(
+                    (
+                        tx.ShadowDelivery.claim_owner == row.claim_owner,
+                        tx.ShadowDelivery.claim_token == row.claim_token,
+                        tx.ShadowDelivery.claim_expires_at == row.claim_expires_at,
+                        tx.ShadowDelivery.claim_expires_at <= now,
+                    )
+                )
             result = self.session.execute(
                 update(tx.ShadowDelivery)
-                .where(
-                    tx.ShadowDelivery.delivery_id == row.delivery_id,
-                    tx.ShadowDelivery.delivery_revision == revision,
-                    tx.ShadowDelivery.state == prior_state,
-                )
+                .where(*predicate)
                 .values(
                     state="claimed",
                     claim_owner=worker_id,
@@ -395,6 +572,7 @@ class ShadowService:
                     attempts=row.attempts + 1,
                     last_error=None,
                 )
+                .execution_options(synchronize_session=False)
             )
             if result.rowcount == 1:
                 self.session.flush()
@@ -407,15 +585,22 @@ class ShadowService:
         *,
         delivery_id: uuid.UUID,
         claim_token: uuid.UUID,
+        claim_revision: int,
+        worker_id: str,
         target_result: Mapping[str, Any],
         comparator_release: str,
         compared_at: datetime,
         semantic_normalizer: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> tx.ShadowComparison:
-        delivery = self.session.get(tx.ShadowDelivery, delivery_id)
-        if delivery is None or delivery.state != "claimed" or delivery.claim_token != claim_token:
-            raise TransitionAuthorityError("shadow delivery claim does not match")
-        envelope = self.session.get(tx.ShadowEnvelope, delivery.envelope_id)
+        baseline, delivery, envelope = self._lock_delivery_path(delivery_id)
+        claim_expires_at = self._assert_delivery_claim(
+            baseline=baseline,
+            delivery=delivery,
+            claim_token=claim_token,
+            claim_revision=claim_revision,
+            worker_id=worker_id,
+            at=compared_at,
+        )
         target = dict(target_result)
         if target.get("evidence_schema_version") is not None:
             parity, differences = compare_evidence(
@@ -441,13 +626,16 @@ class ShadowService:
             comparator_release=comparator_release,
             compared_at=compared_at,
         )
+        self._settle_delivery_cas(
+            delivery=delivery,
+            claim_token=claim_token,
+            claim_revision=claim_revision,
+            worker_id=worker_id,
+            claim_expires_at=claim_expires_at,
+            state="delivered",
+            terminal_at=compared_at,
+        )
         self.session.add(comparison)
-        delivery.state = "delivered"
-        delivery.claim_owner = None
-        delivery.claim_token = None
-        delivery.claim_expires_at = None
-        delivery.delivery_revision += 1
-        delivery.terminal_at = compared_at
         if parity in {"mismatch", "gap"}:
             kind = "mismatch" if parity == "mismatch" else "uncomparable"
             self._open_gap(
@@ -466,15 +654,22 @@ class ShadowService:
         *,
         delivery_id: uuid.UUID,
         claim_token: uuid.UUID,
+        claim_revision: int,
+        worker_id: str,
         reason: str,
         comparator_release: str,
         completed_at: datetime,
     ) -> tx.ShadowComparison:
         """Settle a deliberately capture-only envelope as an explicit gap."""
-        delivery = self.session.get(tx.ShadowDelivery, delivery_id)
-        if delivery is None or delivery.state != "claimed" or delivery.claim_token != claim_token:
-            raise TransitionAuthorityError("shadow delivery claim does not match")
-        envelope = self.session.get(tx.ShadowEnvelope, delivery.envelope_id)
+        baseline, delivery, envelope = self._lock_delivery_path(delivery_id)
+        claim_expires_at = self._assert_delivery_claim(
+            baseline=baseline,
+            delivery=delivery,
+            claim_token=claim_token,
+            claim_revision=claim_revision,
+            worker_id=worker_id,
+            at=completed_at,
+        )
         target = {"shadow_execution": "skipped", "reason": reason}
         comparison = tx.ShadowComparison(
             comparison_id=self.uuid_factory(),
@@ -486,13 +681,16 @@ class ShadowService:
             comparator_release=comparator_release,
             compared_at=completed_at,
         )
+        self._settle_delivery_cas(
+            delivery=delivery,
+            claim_token=claim_token,
+            claim_revision=claim_revision,
+            worker_id=worker_id,
+            claim_expires_at=claim_expires_at,
+            state="delivered",
+            terminal_at=completed_at,
+        )
         self.session.add(comparison)
-        delivery.state = "delivered"
-        delivery.claim_owner = None
-        delivery.claim_token = None
-        delivery.claim_expires_at = None
-        delivery.delivery_revision += 1
-        delivery.terminal_at = completed_at
         self._open_gap(
             baseline_id=envelope.shadow_baseline_id,
             envelope_id=envelope.envelope_id,
@@ -509,26 +707,42 @@ class ShadowService:
         *,
         delivery_id: uuid.UUID,
         claim_token: uuid.UUID,
+        claim_revision: int,
+        worker_id: str,
         error: str,
         failed_at: datetime,
     ) -> tx.ShadowGap:
-        delivery = self.session.get(tx.ShadowDelivery, delivery_id)
-        if delivery is None or delivery.state != "claimed" or delivery.claim_token != claim_token:
-            raise TransitionAuthorityError("shadow delivery claim does not match")
-        envelope = self.session.get(tx.ShadowEnvelope, delivery.envelope_id)
-        delivery.state = "failed"
-        delivery.claim_owner = None
-        delivery.claim_token = None
-        delivery.claim_expires_at = None
-        delivery.delivery_revision += 1
-        delivery.last_error = error
-        delivery.terminal_at = failed_at
+        baseline, delivery, envelope = self._lock_delivery_path(delivery_id)
+        claim_expires_at = self._assert_delivery_claim(
+            baseline=baseline,
+            delivery=delivery,
+            claim_token=claim_token,
+            claim_revision=claim_revision,
+            worker_id=worker_id,
+            at=failed_at,
+        )
+        self._settle_delivery_cas(
+            delivery=delivery,
+            claim_token=claim_token,
+            claim_revision=claim_revision,
+            worker_id=worker_id,
+            claim_expires_at=claim_expires_at,
+            state="failed",
+            terminal_at=failed_at,
+            last_error=error,
+        )
         gap = self._open_gap(
             baseline_id=envelope.shadow_baseline_id,
             envelope_id=envelope.envelope_id,
-            identity=f"delivery:{envelope.source_request_identity}",
+            identity=(
+                f"delivery:{envelope.source_request_identity}:"
+                f"revision:{claim_revision + 1}"
+            ),
             kind="delivery_failure",
-            details={"error": error},
+            details={
+                "error": error,
+                "failed_delivery_revision": claim_revision + 1,
+            },
             at=failed_at,
         )
         self.session.flush()
@@ -584,7 +798,7 @@ class ShadowService:
         created_at: datetime,
         envelope_id: uuid.UUID | None = None,
     ) -> tx.ShadowGap:
-        baseline = self.session.get(tx.ShadowBaseline, baseline_id)
+        baseline = self._lock_baseline(baseline_id)
         if baseline is None or baseline.status != "open":
             raise TransitionAuthorityError("shadow baseline is not open")
         if gap_kind not in {"missing_envelope", "delivery_failure", "uncomparable", "mismatch"}:
@@ -608,28 +822,77 @@ class ShadowService:
         resolved_at: datetime,
         waived: bool = False,
     ) -> tx.ShadowGap:
-        gap = self.session.get(tx.ShadowGap, gap_id)
-        if gap is None or gap.state != "open":
+        baseline, delivery, gap = self._lock_gap_path(gap_id)
+        generation = self.session.get(models.AuthorityGeneration, baseline.generation_id)
+        if baseline.status != "open" or generation is None or generation.status != "active":
+            raise TransitionAuthorityError("shadow gap recovery authority is no longer current")
+        if gap.state != "open":
             raise TransitionAuthorityError("shadow gap is not open")
-        gap.state = "waived" if waived else "resolved"
-        gap.resolution = dict(resolution)
-        gap.gap_revision += 1
-        gap.resolved_at = resolved_at
+        resolution_payload = dict(resolution)
         if gap.gap_kind == "delivery_failure" and gap.envelope_id is not None and not waived:
-            delivery = self.session.scalar(
-                select(tx.ShadowDelivery).where(
-                    tx.ShadowDelivery.envelope_id == gap.envelope_id
+            if resolution_payload.get("delivery_outcome") != "not_applied":
+                raise TransitionAuthorityError(
+                    "shadow delivery recovery remains uncertain without not-applied proof"
                 )
+            failed_revision = gap.details.get("failed_delivery_revision")
+            if not isinstance(failed_revision, int) or failed_revision <= 0:
+                raise TransitionAuthorityError(
+                    "shadow delivery recovery lacks exact failed revision evidence"
+                )
+            if delivery is None or delivery.state != "failed":
+                raise TransitionAuthorityError("shadow delivery is not failed")
+            terminal_at = delivery.terminal_at
+            result = self.session.execute(
+                update(tx.ShadowDelivery)
+                .where(
+                    tx.ShadowDelivery.delivery_id == delivery.delivery_id,
+                    tx.ShadowDelivery.envelope_id == gap.envelope_id,
+                    tx.ShadowDelivery.state == "failed",
+                    tx.ShadowDelivery.delivery_revision == failed_revision,
+                    tx.ShadowDelivery.claim_owner.is_(None),
+                    tx.ShadowDelivery.claim_token.is_(None),
+                    tx.ShadowDelivery.claim_expires_at.is_(None),
+                    tx.ShadowDelivery.terminal_at == terminal_at,
+                )
+                .values(
+                    state="pending",
+                    terminal_at=None,
+                    delivery_revision=failed_revision + 1,
+                )
+                .execution_options(synchronize_session=False)
             )
-            if delivery is not None and delivery.state == "failed":
-                delivery.state = "pending"
-                delivery.terminal_at = None
-                delivery.delivery_revision += 1
+            if result.rowcount != 1:
+                raise TransitionAuthorityError(
+                    "shadow delivery recovery lost current failed authority"
+                )
+            self.session.expire(delivery)
+        gap_revision = gap.gap_revision
+        result = self.session.execute(
+            update(tx.ShadowGap)
+            .where(
+                tx.ShadowGap.gap_id == gap.gap_id,
+                tx.ShadowGap.shadow_baseline_id == baseline.shadow_baseline_id,
+                tx.ShadowGap.state == "open",
+                tx.ShadowGap.gap_revision == gap_revision,
+                tx.ShadowGap.gap_kind == gap.gap_kind,
+                tx.ShadowGap.envelope_id == gap.envelope_id,
+            )
+            .values(
+                state="waived" if waived else "resolved",
+                resolution=resolution_payload,
+                gap_revision=gap_revision + 1,
+                resolved_at=resolved_at,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise TransitionAuthorityError("shadow gap recovery lost current authority")
+        self.session.expire(gap)
         self.session.flush()
         return gap
 
     def close_baseline(self, *, baseline_id: uuid.UUID, closed_at: datetime) -> tx.ShadowBaseline:
-        baseline = self.session.get(tx.ShadowBaseline, baseline_id)
+        baseline = self._lock_baseline(baseline_id)
         if baseline is None or baseline.status != "open":
             raise TransitionAuthorityError("shadow baseline is not open")
         open_gaps = self.session.scalar(
@@ -657,7 +920,7 @@ class ShadowService:
     def disqualify_baseline(
         self, *, baseline_id: uuid.UUID, reason: str, at: datetime
     ) -> tx.ShadowBaseline:
-        baseline = self.session.get(tx.ShadowBaseline, baseline_id)
+        baseline = self._lock_baseline(baseline_id)
         if baseline is None or baseline.status != "open":
             raise TransitionAuthorityError("shadow baseline is not open")
         baseline.status = "disqualified"
@@ -669,12 +932,17 @@ class ShadowService:
     def disqualify_stale_baselines(
         self, *, active_generation_id: uuid.UUID, reason: str, at: datetime
     ) -> int:
-        rows = self.session.scalars(
-            select(tx.ShadowBaseline).where(
+        statement = (
+            select(tx.ShadowBaseline)
+            .where(
                 tx.ShadowBaseline.status == "open",
                 tx.ShadowBaseline.generation_id != active_generation_id,
             )
-        ).all()
+            .order_by(tx.ShadowBaseline.shadow_baseline_id)
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        rows = self.session.scalars(statement).all()
         for row in rows:
             row.status = "disqualified"
             row.disqualification_reason = reason

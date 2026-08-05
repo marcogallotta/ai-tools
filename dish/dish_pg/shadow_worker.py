@@ -37,7 +37,7 @@ from .shadow_evidence import (
     canonical_legacy_state,
     canonical_transition,
 )
-from .transition import ShadowService
+from .transition import ShadowService, TransitionAuthorityError
 from .workflow import WorkflowAuthorityService
 
 LOGGER = logging.getLogger("dish.shadow_worker")
@@ -772,6 +772,7 @@ class ShadowWorker:
                 return False
             delivery_id = delivery.delivery_id
             envelope_id = delivery.envelope_id
+            claim_revision = delivery.delivery_revision
         try:
             with session_scope(self.session_maker) as session:
                 envelope = session.get(tx.ShadowEnvelope, envelope_id)
@@ -785,6 +786,8 @@ class ShadowWorker:
                     ShadowService(session).skip_delivery(
                         delivery_id=delivery_id,
                         claim_token=token,
+                        claim_revision=claim_revision,
+                        worker_id=self.worker_id,
                         reason=reason,
                         comparator_release=self.comparator_release,
                         completed_at=self.clock(),
@@ -794,18 +797,28 @@ class ShadowWorker:
                     ShadowService(session).compare_delivery(
                         delivery_id=delivery_id,
                         claim_token=token,
+                        claim_revision=claim_revision,
+                        worker_id=self.worker_id,
                         target_result=target,
                         comparator_release=self.comparator_release,
                         compared_at=self.clock(),
                         semantic_normalizer=semantic_normalizer,
                     )
         except BaseException as exc:
-            with session_scope(self.session_maker) as session:
-                ShadowService(session).fail_delivery(
-                    delivery_id=delivery_id,
-                    claim_token=token,
-                    error=str(exc),
-                    failed_at=self.clock(),
+            try:
+                with session_scope(self.session_maker) as session:
+                    ShadowService(session).fail_delivery(
+                        delivery_id=delivery_id,
+                        claim_token=token,
+                        claim_revision=claim_revision,
+                        worker_id=self.worker_id,
+                        error=str(exc),
+                        failed_at=self.clock(),
+                    )
+            except TransitionAuthorityError:
+                LOGGER.info(
+                    "shadow evaluation lost delivery authority; current state is preserved",
+                    extra={"delivery_id": str(delivery_id)},
                 )
         return True
 

@@ -161,6 +161,8 @@ def test_shadow_delivery_is_resumable_and_baseline_closes_only_after_gap_resolut
         comparison = service.compare_delivery(
             delivery_id=delivery.delivery_id,
             claim_token=token,
+            claim_revision=delivery.delivery_revision,
+            worker_id="shadow-1",
             target_result={"ok": True, "phase": "different"},
             comparator_release="dish-pg-stage5",
             compared_at=NOW,

@@ -684,6 +684,8 @@ def test_real_shadow_evaluator_compares_legacy_start_semantically(workflow_db):
         comparison = service.compare_delivery(
             delivery_id=delivery.delivery_id,
             claim_token=claim_token,
+            claim_revision=delivery.delivery_revision,
+            worker_id="shadow-1",
             target_result=target,
             comparator_release="test",
             compared_at=NOW,
