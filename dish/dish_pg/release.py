@@ -265,7 +265,7 @@ class ReleaseCandidateService(
             artifact_path=body["artifact_path"],
             expected_sha256=body["artifact_sha256"],
         )
-        if observation.mtime_ns < int(candidate.created_at.timestamp() * 1_000_000_000):
+        if observation.mtime_ns < int(_utc_comparable(candidate.created_at).timestamp() * 1_000_000_000):
             raise ReleaseAuthorityError("release evidence artifact predates the candidate and is stale")
         latest = self.session.scalar(
             select(rel.ReleaseEvidenceItem)
@@ -399,7 +399,7 @@ class ReleaseCandidateService(
             artifact_path=body["artifact_path"],
             expected_sha256=body["artifact_sha256"],
         )
-        if observation.mtime_ns < int(rehearsal.started_at.timestamp() * 1_000_000_000):
+        if observation.mtime_ns < int(_utc_comparable(rehearsal.started_at).timestamp() * 1_000_000_000):
             raise ReleaseAuthorityError("rehearsal checkpoint artifact predates the rehearsal and is stale")
         digest = sha256_json(body)
         if existing is not None:

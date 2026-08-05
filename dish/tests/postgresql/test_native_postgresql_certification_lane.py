@@ -151,7 +151,7 @@ def test_native_certification_rejects_zero_executed_tests(
     assert isinstance(report, dict)
     assert report["native_postgresql_certified"] is False
     assert report["tests"]["executed"] == 0
-    assert report["unwaived_skips"] == list(
+    assert report["unwaived_skips"] == sorted(
         NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY
     )
 

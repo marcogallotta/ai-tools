@@ -229,6 +229,7 @@ def test_common_database_lock_excludes_local_cli_and_admin(monkeypatch, tmp_path
     db_path = tmp_path / "shared.db"
     monkeypatch.setenv("DISH_MODE", "local")
     monkeypatch.delenv("DISH_SERVICE_URL", raising=False)
+    monkeypatch.delenv("DISH_LIVE_MODE", raising=False)
     monkeypatch.setattr(cli_module, "DB_PATH", db_path)
     monkeypatch.setattr(admin_module, "DB_PATH", db_path)
 
@@ -255,6 +256,7 @@ def test_local_application_holds_common_lock_until_released(monkeypatch, tmp_pat
     db_path = tmp_path / "local.db"
     monkeypatch.setenv("DISH_MODE", "local")
     monkeypatch.delenv("DISH_SERVICE_URL", raising=False)
+    monkeypatch.delenv("DISH_LIVE_MODE", raising=False)
     honest = tmp_path / "honest"
     honest.mkdir()
     monkeypatch.setenv("DISH_HONEST_PATH", str(honest))
