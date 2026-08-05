@@ -168,6 +168,23 @@ class AsanaBackend:
         self._client = api_client
         self._owns_client = api_client is None
         self._closed = False
+        configured = {
+            value.strip().lower()
+            for value in os.environ.get(
+                "DISH_ASANA_MODIFIED_AT_RELIABLE_EFFECTS", ""
+            ).split(",")
+            if value.strip()
+        }
+        allowed = {"content", "movement", "completion"}
+        invalid = configured - allowed
+        if invalid:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "DISH_ASANA_MODIFIED_AT_RELIABLE_EFFECTS contains unsupported values",
+                rule="asana_version_evidence_config_invalid",
+                details={"invalid_effects": sorted(invalid), "allowed_effects": sorted(allowed)},
+            )
+        self._modified_at_reliable_effects = frozenset(configured)
 
     def client(self) -> Any:
         if self._closed:
@@ -385,7 +402,13 @@ class AsanaBackend:
                 "Asana returned malformed task data",
                 rule="backend_response_malformed",
             )
-        return dict(data)
+        result = dict(data)
+        result["_dish_version_evidence"] = {
+            "source": "asana.modified_at",
+            "value": str(result.get("modified_at") or "").strip() or None,
+            "reliable_for": sorted(self._modified_at_reliable_effects),
+        }
+        return result
 
     @staticmethod
     def _section_for_project(

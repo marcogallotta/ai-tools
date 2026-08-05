@@ -95,6 +95,25 @@ def _resolved_execution_exists(conn: sqlite3.Connection, request_id: str) -> boo
     ).fetchone() is not None
 
 
+def _backup_creation_resolution_matches(
+    conn: sqlite3.Connection, request_id: str, result: Mapping[str, Any]
+) -> bool:
+    row = conn.execute(
+        "SELECT status FROM backup_creations WHERE request_id=? LIMIT 1",
+        (request_id,),
+    ).fetchone()
+    if row is None:
+        return False
+    return row["status"] == ("confirmed" if result.get("ok") else "not_applied")
+
+
+def _confirmed_backup_creation_exists(conn: sqlite3.Connection, request_id: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM backup_creations WHERE request_id=? AND status='confirmed' LIMIT 1",
+        (request_id,),
+    ).fetchone() is not None
+
+
 def _authoritative_result(row: Mapping[str, Any]) -> dict[str, Any] | None:
     encoded = (
         row["resolution_result_json"]
@@ -160,12 +179,31 @@ def complete_request(
             row["status"] == "uncertain"
             and status == "completed"
             and row["resolved_at"] is None
-            and _resolved_execution_exists(conn, request_id)
+            and (
+                _resolved_execution_exists(conn, request_id)
+                or _backup_creation_resolution_matches(conn, request_id, result)
+            )
         ):
             cursor = conn.execute(
                 """UPDATE service_requests
                       SET status='completed', resolution_result_json=?, resolved_at=?
                     WHERE request_id=? AND status='uncertain' AND resolved_at IS NULL""",
+                (encoded, utc_now(), request_id),
+            )
+            wrote = cursor.rowcount == 1
+        elif (
+            row["status"] == "completed"
+            and status == "completed"
+            and row["command"] == "backup-create"
+            and row["resolution_result_json"] is None
+            and bool(result.get("ok"))
+            and _confirmed_backup_creation_exists(conn, request_id)
+        ):
+            cursor = conn.execute(
+                """UPDATE service_requests
+                      SET resolution_result_json=?, resolved_at=?
+                    WHERE request_id=? AND status='completed'
+                      AND resolution_result_json IS NULL""",
                 (encoded, utc_now(), request_id),
             )
             wrote = cursor.rowcount == 1

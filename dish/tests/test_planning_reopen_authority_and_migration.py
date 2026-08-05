@@ -257,8 +257,10 @@ def test_historical_terminal_request_remains_blocked_for_manual_authority(tmp_pa
         begin_planning_reopen_attempt(
             conn, task_gid="t", expected_identity=live.identity,
             expected_section_gid=live.section_gid,
-            expected_modified_at=live.modified_at, reason=ARGS["reason"],
-            actor_run_id=ADMIN.run_id, request_id=REQUEST_ID,
+            expected_modified_at=live.modified_at,
+            expected_version_source=live.version_source,
+            expected_version_reliable=("completion" in live.version_reliable_for),
+            reason=ARGS["reason"], actor_run_id=ADMIN.run_id, request_id=REQUEST_ID,
         )
         complete_request(
             conn, request_id=REQUEST_ID,
@@ -362,3 +364,28 @@ def test_migration_reopens_historical_uncertain_request_for_reconciliation(
         ).fetchone()[0] == "confirmed"
     finally:
         upgraded.close()
+
+
+def test_planning_reopen_return_to_baseline_with_advanced_version_is_uncertain(tmp_path):
+    from dish_tool.errors import BackendFailure
+
+    backend = CompletedBackend()
+    service, _ = _service(tmp_path, backend)
+
+    def rejected_after_intervening_change(*, task_gid, completed):
+        backend.modified_at = "m1"
+        raise BackendFailure(
+            "BACKEND_REJECTED", "rejected after another mutation",
+            rule="backend_rejected", retryable=True,
+        )
+
+    backend.update_task_completed = rejected_after_intervening_change
+    result = service.execute_admin(
+        "reopen-planning", ARGS, principal=ADMIN, request_id=REQUEST_ID
+    )
+    assert result["code"] == "BACKEND_UNCERTAIN"
+    assert result["errors"][0]["rule"] == "planning_reopen_outcome_uncertain"
+    attempt, _request, _domain, _invocation = _rows(service)
+    assert attempt["outcome"] == "uncertain"
+    assert attempt["expected_modified_at"] == "m0"
+    assert attempt["expected_version_reliable"] == 1

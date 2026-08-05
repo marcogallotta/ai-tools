@@ -64,6 +64,17 @@ EXPECTED_MOVEMENT_ATTEMPTS = {
     "ma-ambiguous": ("op-move-ambiguous", "uncertain", "verification_handoff"),
 }
 
+EXPECTED_WRITE_VERSION_EVIDENCE = {
+    "wa-applied": ("fixture", "test.modified_at", 1),
+    "wa-not-applied": ("fixture", "test.modified_at", 1),
+    "wa-uncertain": ("fixture", "test.modified_at", 1),
+}
+
+EXPECTED_MOVEMENT_VERSION_EVIDENCE = {
+    "ma-applied": ("fixture", "test.modified_at", 1),
+    "ma-not-applied": ("fixture", "test.modified_at", 1),
+}
+
 EXPECTED_CYCLES = {
     "cycle-signed": ("op-signed", "approved", True),
     "cycle-evidence": ("op-evidence-hold", "evidence-hold", False),
@@ -119,6 +130,16 @@ def assert_database_matches_contract(database_path: Path) -> None:
         }
         assert write_attempts == EXPECTED_WRITE_ATTEMPTS
 
+        write_version_evidence = {
+            attempt_id: (expected_modified_at, version_source, version_reliable)
+            for attempt_id, expected_modified_at, version_source, version_reliable
+            in conn.execute(
+                "SELECT attempt_id,expected_modified_at,version_source,version_reliable "
+                "FROM write_attempts WHERE expected_modified_at IS NOT NULL"
+            )
+        }
+        assert write_version_evidence == EXPECTED_WRITE_VERSION_EVIDENCE
+
         movement_attempts = {
             attempt_id: (operation_id, outcome, purpose)
             for attempt_id, operation_id, outcome, purpose in conn.execute(
@@ -126,6 +147,16 @@ def assert_database_matches_contract(database_path: Path) -> None:
             )
         }
         assert movement_attempts == EXPECTED_MOVEMENT_ATTEMPTS
+
+        movement_version_evidence = {
+            attempt_id: (expected_modified_at, version_source, version_reliable)
+            for attempt_id, expected_modified_at, version_source, version_reliable
+            in conn.execute(
+                "SELECT attempt_id,expected_modified_at,version_source,version_reliable "
+                "FROM movement_attempts WHERE expected_modified_at IS NOT NULL"
+            )
+        }
+        assert movement_version_evidence == EXPECTED_MOVEMENT_VERSION_EVIDENCE
 
         cycles = {
             cycle_id: (operation_id, outcome, completed_at is not None)

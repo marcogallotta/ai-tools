@@ -50,6 +50,9 @@ def test_started_write_not_applied_is_closed_without_repeating_write(tmp_path):
         intended_identity=content_identity(title, notes).digest,
         intended_title=title, intended_notes=notes, schema_version="2",
         purpose="content_write",
+        expected_modified_at=backend.tasks[backend.task_gid]["modified_at"],
+        version_source="test.modified_at",
+        version_reliable=True,
     )
     writes = backend.writes
     admin = DishAdminApplication(app.conn, backend=backend)

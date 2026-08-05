@@ -36,7 +36,12 @@ from .task_document import (
     validate_planning_brief,
     validate_task_document,
 )
-from .task_store import move_exact, read_complete_task, write_exact_content
+from .task_store import (
+    _version_proves_no_intervening_mutation,
+    move_exact,
+    read_complete_task,
+    write_exact_content,
+)
 from .recovery import begin_movement_attempt
 from .governed_diff import canonical_diff
 
@@ -1013,6 +1018,26 @@ def _recover_content_attempt(
         )
         return "reconciled_confirmed_content_write", attempt
     if live.identity == attempt["expected_identity"]:
+        if not _version_proves_no_intervening_mutation(
+            attempt, live, effect="content"
+        ):
+            if attempt["outcome"] == "started":
+                from .recovery import finish_operation_write_attempt
+                finish_operation_write_attempt(
+                    conn, attempt_id=attempt["attempt_id"], outcome="uncertain"
+                )
+                attempt = _latest_recovery_attempt(
+                    conn, table="write_attempts", operation_id=operation_id
+                )
+            if requested_outcome != "inspect":
+                raise DishRuleError(
+                    "CONFLICT",
+                    "baseline content does not prove no intervening write",
+                    rule="recovery_evidence_ambiguous",
+                    retryable=False,
+                    details={"attempt_id": attempt["attempt_id"], "version_evidence_required": True},
+                )
+            return "unresolved_content_write", attempt
         state = "confirmed_content_write_not_applied"
         if requested_outcome == "inspect":
             return state, attempt
@@ -1112,6 +1137,26 @@ def _recover_movement_attempt(
         )
         return "reconciled_confirmed_movement", attempt
     if live.section_gid == attempt["expected_section_gid"]:
+        if not _version_proves_no_intervening_mutation(
+            attempt, live, effect="movement"
+        ):
+            if attempt["outcome"] == "started":
+                from .recovery import finish_movement_attempt
+                finish_movement_attempt(
+                    conn, attempt_id=attempt["attempt_id"], outcome="uncertain"
+                )
+                attempt = _latest_recovery_attempt(
+                    conn, table="movement_attempts", operation_id=operation_id
+                )
+            if requested_outcome != "inspect":
+                raise DishRuleError(
+                    "CONFLICT",
+                    "baseline placement does not prove no intervening movement",
+                    rule="recovery_evidence_ambiguous",
+                    retryable=False,
+                    details={"attempt_id": attempt["attempt_id"], "version_evidence_required": True},
+                )
+            return "unresolved_movement", attempt
         state = "confirmed_movement_not_applied"
         if requested_outcome == "inspect":
             return state, attempt

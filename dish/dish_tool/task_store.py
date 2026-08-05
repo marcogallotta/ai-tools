@@ -42,6 +42,8 @@ class LiveTask:
     section_gid: str | None
     completed: bool
     modified_at: str | None
+    version_source: str | None = None
+    version_reliable_for: tuple[str, ...] = ()
 
     @property
     def identity(self) -> str:
@@ -121,13 +123,28 @@ def read_complete_task(backend: TaskBackend, *, task_gid: str, project_gid: str)
     gid = _gid(raw.get("gid"))
     if gid != task_gid:
         raise DishRuleError("INTERNAL_ERROR", "backend returned the wrong task", rule="backend_response_malformed")
+    modified_at = str(raw.get("modified_at") or "").strip() or None
+    evidence = raw.get("_dish_version_evidence")
+    version_source = None
+    reliable_for: tuple[str, ...] = ()
+    if isinstance(evidence, Mapping):
+        evidence_value = str(evidence.get("value") or "").strip() or None
+        source = str(evidence.get("source") or "").strip() or None
+        raw_effects = evidence.get("reliable_for")
+        if evidence_value == modified_at and source and isinstance(raw_effects, (list, tuple, set, frozenset)):
+            reliable_for = tuple(sorted({
+                str(value).strip().lower() for value in raw_effects if str(value).strip()
+            }))
+            version_source = source
     return LiveTask(
         gid=gid,
         title=str(raw.get("name") or ""),
         notes=str(raw.get("notes") or ""),
         section_gid=_section_gid(raw, project_gid),
         completed=bool(raw.get("completed")),
-        modified_at=str(raw.get("modified_at") or "").strip() or None,
+        modified_at=modified_at,
+        version_source=version_source,
+        version_reliable_for=reliable_for,
     )
 
 
@@ -153,6 +170,43 @@ def _attempt_value(attempt: Mapping[str, Any], key: str) -> Any:
         return attempt[key]
     except (KeyError, IndexError):
         return None
+
+
+def _version_proves_no_intervening_mutation(
+    attempt: Mapping[str, Any], live: LiveTask, *, effect: str,
+    modified_at_key: str = "expected_modified_at",
+    source_key: str = "version_source",
+    reliable_key: str = "version_reliable",
+) -> bool:
+    baseline = str(_attempt_value(attempt, modified_at_key) or "").strip()
+    source = str(_attempt_value(attempt, source_key) or "").strip()
+    reliable = bool(_attempt_value(attempt, reliable_key))
+    return bool(
+        baseline
+        and reliable
+        and source
+        and live.modified_at == baseline
+        and live.version_source == source
+        and effect in live.version_reliable_for
+    )
+
+
+def _version_uncertainty_details(
+    attempt: Mapping[str, Any], live: LiveTask, *, effect: str,
+    modified_at_key: str = "expected_modified_at",
+    source_key: str = "version_source",
+    reliable_key: str = "version_reliable",
+) -> dict[str, Any]:
+    return {
+        "effect": effect,
+        "baseline_modified_at": _attempt_value(attempt, modified_at_key),
+        "observed_modified_at": live.modified_at,
+        "baseline_version_source": _attempt_value(attempt, source_key),
+        "observed_version_source": live.version_source,
+        "baseline_version_reliable": bool(_attempt_value(attempt, reliable_key)),
+        "observed_reliable_effects": sorted(live.version_reliable_for),
+        "version_evidence_required": True,
+    }
 
 def _planning_reopen_attempt(
     conn: sqlite3.Connection, *, attempt_id: str
@@ -273,7 +327,11 @@ def _planning_reopen_not_applied_is_proven(
         live.completed
         and _planning_reopen_live_matches(attempt, live)
         and expected_modified_at
-        and live.modified_at == expected_modified_at
+        and _version_proves_no_intervening_mutation(
+            attempt, live, effect="completion",
+            source_key="expected_version_source",
+            reliable_key="expected_version_reliable",
+        )
     )
 
 
@@ -382,6 +440,19 @@ def _finish_planning_reopen_after_effect(
         )
         return after, finished
 
+    if not _planning_reopen_not_applied_is_proven(attempt, after):
+        uncertain = _mark_planning_reopen_uncertain(conn, attempt=attempt, live=after)
+        error = _planning_reopen_uncertain_error(
+            uncertain,
+            "task returned to the Planning reopen baseline without conclusive version evidence",
+            live=after,
+        )
+        error.details.update(_version_uncertainty_details(
+            attempt, after, effect="completion",
+            source_key="expected_version_source",
+            reliable_key="expected_version_reliable",
+        ))
+        raise error
     finished = finish_planning_reopen_attempt(
         conn, attempt_id=attempt["attempt_id"], outcome="not_applied",
         confirmed_modified_at=after.modified_at,
@@ -580,6 +651,8 @@ def reopen_completed_task_for_planning(
         expected_identity=before.identity,
         expected_section_gid=before.section_gid,
         expected_modified_at=before.modified_at,
+        expected_version_source=before.version_source,
+        expected_version_reliable=("completion" in before.version_reliable_for),
         reason=reason,
         actor_run_id=actor_run_id,
         request_id=request_id,
@@ -611,7 +684,9 @@ def write_exact_content(
     attempt_id = begin_operation_write_attempt(
         conn, operation_id=operation_id, expected_identity=expected_identity, intended_identity=intended.digest,
         intended_title=intended.title, intended_notes=intended.notes, schema_version=schema_version,
-        purpose=purpose, context=context,
+        purpose=purpose, context=context, expected_modified_at=before.modified_at,
+        version_source=before.version_source,
+        version_reliable=("content" in before.version_reliable_for),
     )
     backend_error: BackendFailure | None = None
     try:
@@ -633,6 +708,18 @@ def write_exact_content(
         return after
 
     if after.identity == before.identity and after.section_gid == before.section_gid:
+        attempt = conn.execute(
+            "SELECT * FROM write_attempts WHERE attempt_id=?", (attempt_id,)
+        ).fetchone()
+        if not _version_proves_no_intervening_mutation(attempt, after, effect="content"):
+            finish_operation_write_attempt(conn, attempt_id=attempt_id, outcome="uncertain")
+            raise BackendFailure(
+                "BACKEND_UNCERTAIN",
+                "content returned to baseline without conclusive version evidence",
+                rule="content_write_outcome_uncertain",
+                retryable=False,
+                details=_version_uncertainty_details(attempt, after, effect="content"),
+            )
         finalize_not_applied_write_attempt(conn, attempt_id=attempt_id)
         if backend_error is not None:
             raise BackendFailure(
@@ -680,6 +767,8 @@ def move_exact(
     attempt_id = begin_movement_attempt(
         conn, operation_id=operation_id, expected_section_gid=expected_section_gid,
         intended_section_gid=intended_section_gid, purpose=purpose,
+        expected_modified_at=before.modified_at, version_source=before.version_source,
+        version_reliable=("movement" in before.version_reliable_for),
     )
     backend_error: BackendFailure | None = None
     try:
@@ -700,6 +789,18 @@ def move_exact(
         finalize_confirmed_movement_attempt(conn, attempt_id=attempt_id, live_section_gid=after.section_gid)
         return after
     if after.section_gid == expected_section_gid:
+        attempt = conn.execute(
+            "SELECT * FROM movement_attempts WHERE attempt_id=?", (attempt_id,)
+        ).fetchone()
+        if not _version_proves_no_intervening_mutation(attempt, after, effect="movement"):
+            finish_movement_attempt(conn, attempt_id=attempt_id, outcome="uncertain")
+            raise BackendFailure(
+                "BACKEND_UNCERTAIN",
+                "placement returned to baseline without conclusive version evidence",
+                rule="movement_outcome_uncertain",
+                retryable=False,
+                details=_version_uncertainty_details(attempt, after, effect="movement"),
+            )
         finalize_not_applied_movement_attempt(conn, attempt_id=attempt_id)
         if backend_error is not None:
             raise BackendFailure(

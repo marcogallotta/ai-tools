@@ -34,7 +34,13 @@ from .hold_resolution import resolve_preconstruction_hold_to_successor
 from .models import SectionRegistry, utc_now
 from .human_actions import exact_action, relay_text
 from .transactions import immediate_transaction
-from .task_store import LiveTask, move_exact, read_complete_task, write_exact_content
+from .task_store import (
+    LiveTask,
+    _version_proves_no_intervening_mutation,
+    move_exact,
+    read_complete_task,
+    write_exact_content,
+)
 
 
 @dataclass(frozen=True)
@@ -1047,6 +1053,19 @@ def _reconcile_existing_successor_write(
         )
         return live
     if live.identity == attempt["expected_identity"]:
+        if not _version_proves_no_intervening_mutation(
+            attempt, live, effect="content"
+        ):
+            raise DishRuleError(
+                "BACKEND_UNCERTAIN",
+                "prepared successor returned to baseline without conclusive version evidence",
+                rule="prepared_successor_reconciliation_content_uncertain",
+                retryable=False,
+                details={
+                    "attempt_id": attempt["attempt_id"],
+                    "version_evidence_required": True,
+                },
+            )
         finalize_not_applied_write_attempt(conn, attempt_id=attempt["attempt_id"])
         return live
     raise DishRuleError(
@@ -1094,6 +1113,19 @@ def _reconcile_existing_successor_movement(
         )
         return live
     if live.section_gid == attempt["expected_section_gid"]:
+        if not _version_proves_no_intervening_mutation(
+            attempt, live, effect="movement"
+        ):
+            raise DishRuleError(
+                "BACKEND_UNCERTAIN",
+                "prepared successor placement returned to baseline without conclusive version evidence",
+                rule="prepared_successor_reconciliation_placement_uncertain",
+                retryable=False,
+                details={
+                    "attempt_id": attempt["attempt_id"],
+                    "version_evidence_required": True,
+                },
+            )
         finalize_not_applied_movement_attempt(conn, attempt_id=attempt["attempt_id"])
         return live
     raise DishRuleError(

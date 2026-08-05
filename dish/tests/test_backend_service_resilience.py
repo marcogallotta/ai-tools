@@ -143,6 +143,11 @@ class RejectedWriteBackend:
             "memberships": [
                 {"project": {"gid": COOKING_PROJECT_GID}, "section": {"gid": "rq"}}
             ],
+            "_dish_version_evidence": {
+                "source": "test.modified_at",
+                "value": "now",
+                "reliable_for": ["content"],
+            },
         }
 
     def update_task_content(self, **_kwargs):
@@ -366,3 +371,152 @@ def test_second_listener_thread_start_failure_closes_both_without_shutdown_deadl
     assert action.closed is True
     assert created_threads[0].joined is True
     assert created_threads[1].joined is False
+
+class ReturnedBaselineWithAdvancedVersionBackend(RejectedWriteBackend):
+    def __init__(self):
+        super().__init__()
+        self.modified_at = "v0"
+        self.section = "rq"
+
+    def read_task(self, task_gid):
+        task = super().read_task(task_gid)
+        task["modified_at"] = self.modified_at
+        task["memberships"][0]["section"]["gid"] = self.section
+        task["_dish_version_evidence"] = {
+            "source": "test.modified_at",
+            "value": self.modified_at,
+            "reliable_for": ["content", "movement"],
+        }
+        return task
+
+    def update_task_content(self, **_kwargs):
+        self.modified_at = "v1"
+
+    def move_task_to_section(self, **_kwargs):
+        self.modified_at = "v1"
+
+
+def _aba_operation(conn):
+    identity = confirm_task_content(
+        conn, task_gid="t", title="Title", notes="Notes",
+        schema_version="2", boundary="test",
+    )
+    operation = create_operation(
+        conn,
+        task_gid="t", operation_kind="planning",
+        expected_identity=identity.digest, schema_version="2",
+        expected_section_gid="rq",
+        actors=OperationActors(editor_agent="gpt", run_id="run"),
+    )
+    return identity, operation
+
+
+def test_content_return_to_baseline_with_advanced_version_is_uncertain(tmp_path):
+    conn = initialize_database(tmp_path / "dish.db")
+    backend = ReturnedBaselineWithAdvancedVersionBackend()
+    identity, operation = _aba_operation(conn)
+    try:
+        with pytest.raises(BackendFailure) as caught:
+            write_exact_content(
+                conn, backend, operation_id=operation["operation_id"],
+                task_gid="t", project_gid=COOKING_PROJECT_GID,
+                expected_identity=identity.digest, expected_section_gid="rq",
+                title="Changed", notes="Notes", schema_version="2",
+            )
+        attempt = conn.execute(
+            "SELECT * FROM write_attempts WHERE operation_id=?",
+            (operation["operation_id"],),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert caught.value.code == "BACKEND_UNCERTAIN"
+    assert caught.value.rule == "content_write_outcome_uncertain"
+    assert attempt["outcome"] == "uncertain"
+    assert attempt["expected_modified_at"] == "v0"
+    assert attempt["version_reliable"] == 1
+
+
+def test_movement_return_to_baseline_with_advanced_version_is_uncertain(tmp_path):
+    from dish_tool.task_store import move_exact
+
+    conn = initialize_database(tmp_path / "dish.db")
+    backend = ReturnedBaselineWithAdvancedVersionBackend()
+    identity, operation = _aba_operation(conn)
+    try:
+        with pytest.raises(BackendFailure) as caught:
+            move_exact(
+                conn, backend, operation_id=operation["operation_id"],
+                task_gid="t", project_gid=COOKING_PROJECT_GID,
+                expected_identity=identity.digest, expected_section_gid="rq",
+                intended_section_gid="vq", purpose="test",
+            )
+        attempt = conn.execute(
+            "SELECT * FROM movement_attempts WHERE operation_id=?",
+            (operation["operation_id"],),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert caught.value.code == "BACKEND_UNCERTAIN"
+    assert caught.value.rule == "movement_outcome_uncertain"
+    assert attempt["outcome"] == "uncertain"
+    assert attempt["expected_modified_at"] == "v0"
+    assert attempt["version_reliable"] == 1
+
+
+def test_manual_recovery_refuses_baseline_after_version_advance(tmp_path):
+    from dish_tool.step9 import _recover_content_attempt
+    from dish_tool.task_store import read_complete_task
+
+    conn = initialize_database(tmp_path / "dish.db")
+    backend = ReturnedBaselineWithAdvancedVersionBackend()
+    identity, operation = _aba_operation(conn)
+    try:
+        with pytest.raises(BackendFailure):
+            write_exact_content(
+                conn, backend, operation_id=operation["operation_id"],
+                task_gid="t", project_gid=COOKING_PROJECT_GID,
+                expected_identity=identity.digest, expected_section_gid="rq",
+                title="Changed", notes="Notes", schema_version="2",
+            )
+        op = conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?",
+            (operation["operation_id"],),
+        ).fetchone()
+        live = read_complete_task(
+            backend, task_gid="t", project_gid=COOKING_PROJECT_GID
+        )
+        with pytest.raises(DishRuleError) as caught:
+            _recover_content_attempt(
+                conn, operation_id=operation["operation_id"], op=op, live=live,
+                requested_outcome="not-applied", actions=[],
+            )
+    finally:
+        conn.close()
+    assert caught.value.rule == "recovery_evidence_ambiguous"
+
+
+def test_asana_modified_at_evidence_is_fail_closed_by_default(monkeypatch):
+    monkeypatch.delenv("DISH_ASANA_MODIFIED_AT_RELIABLE_EFFECTS", raising=False)
+    backend = AsanaBackend(api_client=object())
+    assert backend._modified_at_reliable_effects == frozenset()
+
+
+def test_asana_modified_at_evidence_requires_explicit_per_effect_certification(
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "DISH_ASANA_MODIFIED_AT_RELIABLE_EFFECTS", "content, completion"
+    )
+    backend = AsanaBackend(api_client=object())
+    assert backend._modified_at_reliable_effects == frozenset(
+        {"content", "completion"}
+    )
+
+
+def test_asana_modified_at_evidence_rejects_unknown_effect(monkeypatch):
+    monkeypatch.setenv(
+        "DISH_ASANA_MODIFIED_AT_RELIABLE_EFFECTS", "content,assignment"
+    )
+    with pytest.raises(DishRuleError) as caught:
+        AsanaBackend(api_client=object())
+    assert caught.value.rule == "asana_version_evidence_config_invalid"

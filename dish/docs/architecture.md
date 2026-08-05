@@ -686,9 +686,15 @@ preserved, while separate resolution evidence and a resolution result complete t
 request once the missing governed proof is durable. Fresh request UUIDs cannot bypass that fence.
 
 External-effect intent and confirmation are intentionally visible between transactions because they
-are the recovery authority around Asana calls. Planning reopen uses the same rule: a `started` or
-`uncertain` attempt is valid durable evidence, not whole-database corruption, but it is a task-level
-admission lock until live evidence and the original request converge. When exact replay is allowed
+are the recovery authority around Asana calls. Every write, movement, and Planning-reopen attempt
+persists its exact pre-effect external state together with the observed version value, version source,
+and whether that source is deployment-certified for the effect class. Recovery may classify
+`not_applied` only when the exact baseline state is observed and reliable version evidence proves no
+intervening mutation. A returned-to-baseline state after a version advance, or any baseline match
+without reliable version evidence, remains `uncertain`; immediate confirmation, restart recovery, and
+manual recovery use the same rule. Planning reopen uses the same rule: a `started` or `uncertain`
+attempt is valid durable evidence, not whole-database corruption, but it is a task-level admission
+lock until live evidence and the original request converge. When exact replay is allowed
 to resume a proven-not-applied reopen, the authoritative reread, external update, confirmation
 reread, and terminal evidence run under one `BEGIN IMMEDIATE` writer boundary. Concurrent exact
 replays therefore cannot both issue the Asana update; after a crash, rollback leaves the persisted

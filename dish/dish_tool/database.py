@@ -1751,6 +1751,8 @@ def begin_planning_reopen_attempt(
     expected_identity: str,
     expected_section_gid: str | None,
     expected_modified_at: str | None,
+    expected_version_source: str | None = None,
+    expected_version_reliable: bool = False,
     reason: str,
     actor_run_id: str | None,
     request_id: str | None,
@@ -1770,17 +1772,36 @@ def begin_planning_reopen_attempt(
                 rule="active_operation_exists",
                 details={"operation_id": active["operation_id"]},
             )
-        conn.execute(
-            """INSERT INTO planning_reopen_attempts(
-                   attempt_id,task_gid,request_id,expected_identity,expected_section_gid,
-                   expected_modified_at,reason,actor_run_id,outcome,created_at
-               ) VALUES (?,?,?,?,?,?,?,?, 'started', ?)""",
-            (
-                attempt_id, task_gid, request_id, expected_identity,
-                expected_section_gid, expected_modified_at, reason,
-                actor_run_id, utc_now(),
-            ),
-        )
+        columns = {
+            row["name"] for row in conn.execute(
+                "PRAGMA table_info(planning_reopen_attempts)"
+            )
+        }
+        if "expected_version_source" in columns:
+            conn.execute(
+                """INSERT INTO planning_reopen_attempts(
+                       attempt_id,task_gid,request_id,expected_identity,expected_section_gid,
+                       expected_modified_at,expected_version_source,expected_version_reliable,
+                       reason,actor_run_id,outcome,created_at
+                   ) VALUES (?,?,?,?,?,?,?,?,?,?,'started',?)""",
+                (
+                    attempt_id, task_gid, request_id, expected_identity,
+                    expected_section_gid, expected_modified_at, expected_version_source,
+                    int(expected_version_reliable), reason, actor_run_id, utc_now(),
+                ),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO planning_reopen_attempts(
+                       attempt_id,task_gid,request_id,expected_identity,expected_section_gid,
+                       expected_modified_at,reason,actor_run_id,outcome,created_at
+                   ) VALUES (?,?,?,?,?,?,?,?,'started',?)""",
+                (
+                    attempt_id, task_gid, request_id, expected_identity,
+                    expected_section_gid, expected_modified_at, reason, actor_run_id,
+                    utc_now(),
+                ),
+            )
         return conn.execute(
             "SELECT * FROM planning_reopen_attempts WHERE attempt_id=?",
             (attempt_id,),

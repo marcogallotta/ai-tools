@@ -25,7 +25,8 @@ from .admin_command_spec import (
 )
 from .releases import configured_honest_path, resolve_release
 from dish_service.client import DishAdminServiceClient
-from dish_service.database_ownership import ServiceDatabaseOwnership
+from dish_service.database_ownership import ServiceDatabaseOwnership, database_process_lock_path
+from dish_service.process_lock import DatabaseProcessLock
 from dish_service.identifiers import require_asana_gid, require_dish_uuid
 from dish_service.task_urls import task_gid_from_url
 from .errors import DishRuleError
@@ -340,9 +341,22 @@ def build_application(profile: str | None = None):
             "live mode requires the shared dish service",
             rule="shared_service_required",
         )
-    ServiceDatabaseOwnership(DB_PATH).assert_local_access_allowed()
-    honest_root = configured_honest_path()
-    return DishAdminApplication(initialize_database(DB_PATH), backend=AsanaBackend(), release_loader=lambda: resolve_release(honest_root, include_migrations=True))
+    lock = DatabaseProcessLock(
+        database_process_lock_path(DB_PATH), role="local-admin"
+    ).acquire()
+    try:
+        ServiceDatabaseOwnership(DB_PATH).assert_local_access_allowed()
+        honest_root = configured_honest_path()
+        app = DishAdminApplication(
+            initialize_database(DB_PATH),
+            backend=AsanaBackend(),
+            release_loader=lambda: resolve_release(honest_root, include_migrations=True),
+        )
+        app._database_process_lock = lock
+        return app
+    except Exception:
+        lock.release()
+        raise
 
 
 def _build_expire_lease_client(profile: str | None = None) -> DishAdminServiceClient:
@@ -681,6 +695,9 @@ def main(
             conn = getattr(app, "conn", None)
             if conn is not None:
                 conn.close()
+            process_lock = getattr(app, "_database_process_lock", None)
+            if process_lock is not None:
+                process_lock.release()
 
 
 if __name__ == "__main__":
