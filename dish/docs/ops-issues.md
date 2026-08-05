@@ -80,6 +80,14 @@ items are.
 | Illegal admission-control / reservation initial states | 2026-08-05 (directly code-verified) | Migration `0029` adds `BEFORE INSERT` guard triggers on `mutation_admission_controls` and `first_request_reservations`. Commit `fce152c`. |
 | Migration `0028` fails open when no admission-control row exists | 2026-08-05 (directly code-verified) | Migration `0029` adds `mutation_admission_controls_verified_open_guard` (`BEFORE UPDATE`) and `service_requests_stage6_admission_guard` (`BEFORE INSERT`), closing the fail-open path. Commit `fce152c`. |
 | Stage A treatment/baseline evidence | 2026-08-05 (directly generated and tested) | Governed generator records exact `source_only_commands` (`proposals`, `apply-proposal`, `review-approve`, `review-inspect`, `review-reject`, `review-queue`), canonical baseline SHA-256 `26d456e648e3e1e9b0a507de6483b675b1abe1cac80c94b32aeea77d76044ab5`, post-write `--check` passed, and `test_stage1_baseline_contract.py` reported 5 passed. Commit `09fa713`. |
+| Projection dispatch kill switch | 2026-08-05 (directly code-verified) | `ProjectionService.begin_attempt()` locks the event/epoch path and rechecks active epoch, `external_effects_enabled`, and active generation before dispatch (`dish_pg/transition.py`). |
+| Projection epoch retirement serialization | 2026-08-05 (directly code-verified) | Event insertion takes the active epoch shared lock; retirement takes the exclusive epoch lock, then locks non-terminal events and active attempts before superseding/blocking them (`dish_pg/transition.py`). |
+| Shadow-delivery settlement authority | 2026-08-05 (directly code-verified) | `_assert_delivery_claim()` checks state, token, owner, revision, and unexpired lease; `_settle_delivery_cas()` repeats them in the conditional update (`dish_pg/transition.py`). |
+| Final-evidence completion gate | 2026-08-05 (directly code-verified) | `complete_cutover()` rebuilds and validates a fresh `cutover_final` evidence bundle before advancing to `completed` (`dish_pg/cutover_control.py`). |
+| Shared legacy service/local process lock | 2026-08-05 (directly code-verified) | `ServiceProcessLock` guards the service; `DatabaseProcessLock` guards local `dish` and `dish-admin` access to the governed SQLite database (`dish_service/__main__.py`, `dish_tool/cli.py`, `dish_tool/admin_cli.py`). |
+| Migration-target helper current head | 2026-08-05 (directly code-verified) | Release/bootstrap/acceptance helpers derive or assert `0029_cutover_authority_admission_fixes` through `ALEMBIC_HEAD`/`DEFAULT_SCHEMA_HEAD`; the Stage 6 runbook names the same head. |
+| Stale `dish_pg/shadow_worker.py.orig` hygiene claim | 2026-08-05 (directly tree-verified) | No `.orig` file exists under `dish_pg` in the supplied snapshot. |
+| Stage 6 runbook migration-head claim | 2026-08-05 (directly doc-verified) | `docs/database-backend-stage6-runbook.md` consistently names `0029_cutover_authority_admission_fixes`; it does not reference `0015` as the target head. |
 
 ## Provisionally done — not independently reverified
 
@@ -130,20 +138,14 @@ still unchecked directly.
 
 | Item | Priority | Owner | Local effort | Last verified |
 | --- | --- | --- | --- | --- |
-| Projection dispatch kill switch (`begin_attempt()` doesn't recheck `external_effects_enabled`) | Must-fix | Mixed | Medium | 2026-08-04 (ChatGPT claim only) |
-| Projection epoch retirement not serialized against event insertion/settlement | Later | Mixed | Medium | 2026-08-04 (ChatGPT claim only) |
-| Shadow-delivery lease settlement lacks expiry/owner/revision enforcement | Later | Mixed | Medium | 2026-08-04 (ChatGPT claim only) |
 | Planning-challenge settlement not single-winner | Skip | Mixed | Medium | 2026-08-04 (ChatGPT claim only) |
 | Source-import concurrency (lost counter increments) | Skip | Mixed | Medium | 2026-08-04 (ChatGPT claim only) |
 | Verification/`inspect` read-model parity (internal `verify` leaks into public continuation) | Later | Mixed | Medium | 2026-08-04 (ChatGPT claim only) |
 | Independent reconciliation membership (expected corpus derived circularly from existing mappings) | Later | Mixed | Hard | 2026-08-04 (ChatGPT claim only) |
-| Final-evidence completion gate missing (cutover can complete before final bundle validated) | Must-fix — pending a check whether anything reads `completed` downstream | Mixed | Medium | 2026-08-04 (ChatGPT claim only) |
 | Offline Alembic support (version-width contract mismatch) | Later | ChatGPT | Medium | 2026-08-04 (ChatGPT claim only) |
 | External-effect ABA protection (no proof external version unchanged) | Later | Mixed | Hard | 2026-08-04 (ChatGPT claim only) |
 | PostgreSQL contention classification (`23505`/`40P01`/`40001` not mapped to retry) | Later | Mixed | Medium | 2026-08-04 (ChatGPT claim only) |
-| Shared service/local lifetime process lock | Skip | Mixed | Medium | 2026-08-04 (ChatGPT claim only) |
 | Backup ambiguity / reservation recovery on rename-fault | Skip | Mixed | Hard | 2026-08-04 (ChatGPT claim only) — see `database-backend-postgresql-test-plan.md` §2 |
-| Native/SQLite migration-target helper still asserts wrong head (`0018` vs `0028`) | Must-fix before trusting certification, not a runtime launch blocker | ChatGPT | Easy | 2026-08-04 (ChatGPT claim only) |
 | Commit-before-response / lost-response replay harness | Later | Mixed | Hard | 2026-08-04 (ChatGPT claim only) — see `database-backend-postgresql-test-plan.md` §1 |
 
 ## Cat-3 repo hygiene — claimed pure repo fixes, not independently verified
@@ -153,10 +155,8 @@ still unchecked directly.
 | Missing semantic-invariant diagnostic mappings in `_semantic_relationship` | Later | ChatGPT | Easy | 2026-08-04 (ChatGPT claim only) |
 | Admin command metadata scattered across `admin.py`/`admin_cli.py`/`application.py` | Skip | ChatGPT | Easy | 2026-08-04 (ChatGPT claim only) |
 | Read-only submission/destination authority still imported from `step9` | Skip | ChatGPT | Easy | 2026-08-04 (ChatGPT claim only) |
-| Delete stale `dish_pg/shadow_worker.py.orig` | Later | ChatGPT | Easy | 2026-08-04 (independently corroborated — found unprompted by a fork in this session) |
 | Three missing ORM index declarations (present only in migrations) | Later | ChatGPT | Easy | 2026-08-04 (ChatGPT claim only) |
 | Nested continuation still exposes internal `verify` action | Later | ChatGPT | Easy | 2026-08-04 (ChatGPT claim only) |
-| Stage 6 runbook still references `0015` instead of `0028` | Skip | ChatGPT | Easy | 2026-08-04 (ChatGPT claim only) |
 | `DishService` typed seams incomplete (coordinators still accept `service: Any`) | Skip | ChatGPT | Easy | 2026-08-04 (ChatGPT claim only) |
 
 ## Docs needing refresh
