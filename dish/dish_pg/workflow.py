@@ -174,7 +174,7 @@ class WorkflowAuthorityRepository:
         reservation = None
         if candidate_exists:
             control = self.session.get(rel.MutationAdmissionControl, spec.generation_id)
-            if control is None or control.state != "open":
+            if control is None:
                 raise MutationAdmissionClosed("PostgreSQL mutation admission is closed")
             reservation = self.session.scalar(
                 select(reservations.FirstRequestReservation)
@@ -184,11 +184,37 @@ class WorkflowAuthorityRepository:
                 )
                 .with_for_update()
             )
-            if reservation is None:
-                raise MutationAdmissionClosed(
-                    "open PostgreSQL mutation admission lacks a first-request reservation"
-                )
-            if reservation.state == "reserved":
+            cutover = (
+                None
+                if reservation is None
+                else self.session.get(rel.CutoverRun, reservation.cutover_run_id)
+            )
+            if control.state == "open":
+                if (
+                    reservation is None
+                    or reservation.state != "consumed"
+                    or cutover is None
+                    or cutover.candidate_id != control.candidate_id
+                    or cutover.state not in {"first_admission_verified", "completed"}
+                ):
+                    raise MutationAdmissionClosed(
+                        "open PostgreSQL mutation admission lacks a verified consumed first request"
+                    )
+                reservation = None
+            elif control.state == "closed":
+                if (
+                    reservation is None
+                    or cutover is None
+                    or cutover.candidate_id != control.candidate_id
+                    or cutover.state != "admission_open"
+                ):
+                    raise MutationAdmissionClosed(
+                        "PostgreSQL mutation admission is closed pending first-request gate"
+                    )
+                if reservation.state != "reserved":
+                    raise MutationAdmissionClosed(
+                        "PostgreSQL mutation admission is closed pending first-admission verification"
+                    )
                 reserved_identity = (
                     reservation.request_id == spec.request_id
                     and reservation.command_name == spec.command_name
@@ -201,15 +227,8 @@ class WorkflowAuthorityRepository:
                     raise FirstRequestReservationMismatch(
                         "first PostgreSQL mutation does not match the reserved request"
                     )
-            elif reservation.state == "consumed":
-                # The exact-first gate is terminal after successful consumption.
-                # Later new requests follow normal open-admission behavior; an
-                # exact replay was already returned from the request lookup above.
-                reservation = None
             else:
-                raise FirstRequestReservationMismatch(
-                    "first PostgreSQL request reservation is cancelled"
-                )
+                raise MutationAdmissionClosed("PostgreSQL mutation admission is closed")
 
         row = wf.ServiceRequest(
             request_id=spec.request_id,
@@ -227,11 +246,14 @@ class WorkflowAuthorityRepository:
         self.session.add(row)
         try:
             self.session.flush()
-            if reservation is not None and self.session.bind.dialect.name != "postgresql":
-                reservation.state = "consumed"
-                reservation.reservation_revision += 1
-                reservation.consumed_at = spec.admitted_at
-                self.session.flush()
+            if reservation is not None:
+                if self.session.bind.dialect.name == "postgresql":
+                    self.session.refresh(reservation)
+                else:
+                    reservation.state = "consumed"
+                    reservation.reservation_revision += 1
+                    reservation.consumed_at = spec.admitted_at
+                    self.session.flush()
         except IntegrityError as exc:
             if "mutation admission is closed" in str(exc).lower():
                 raise MutationAdmissionClosed("PostgreSQL mutation admission is closed") from exc

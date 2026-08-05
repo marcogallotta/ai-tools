@@ -1,24 +1,28 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import json
 from pathlib import Path
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 
 from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
 from dish_pg.release import ALEMBIC_HEAD, ReleaseAuthorityError, ReleaseCandidateService
+from dish_pg.release_status import AcceptanceCheck, CandidateEvaluation
 from dish_pg.workflow import (
     ExecutionSpec,
     MutationAdmissionClosed,
     RequestSpec,
     StoredOutcome,
     WorkflowAuthorityService,
+    sha256_json,
 )
 from tests.support.postgresql.release import (
     HASH_A,
@@ -169,7 +173,7 @@ def _burn_and_open_admission(factory, ids, context, task_id, candidate_id, cutov
         control = service.open_mutation_admission(
             cutover_run_id=cutover_id, opened_at=NOW + timedelta(minutes=7)
         )
-        assert control.state == "open"
+        assert control.state == "closed"
     return first_request_id, first_run_id
 
 
@@ -294,6 +298,10 @@ def _verify_and_complete(factory, ids, context, candidate_id, cutover_id, reques
             request_id=request_id,
             verified_at=NOW + timedelta(minutes=9),
         )
+        control = session.get(rel.MutationAdmissionControl, context["generation_id"])
+        assert control is not None
+        assert control.state == "open"
+        assert control.opened_at == (NOW + timedelta(minutes=9)).replace(tzinfo=None)
         completed = service.complete_cutover(
             cutover_run_id=cutover_id, completed_at=NOW + timedelta(minutes=10)
         )
@@ -378,15 +386,22 @@ def test_first_admission_rejects_non_strict_post_request_reconciliation(
                 protocol_release=candidate.protocol_release,
                 openapi_release=candidate.openapi_release,
                 routing_release=candidate.routing_release,
-                status="activated",
+                status="assembling",
                 candidate_revision=1,
-                validation_bundle_sha256=candidate.validation_bundle_sha256,
+                validation_bundle_sha256=None,
                 created_at=candidate.created_at,
-                validated_at=candidate.validated_at,
-                approved_at=candidate.approved_at,
-                terminal_at=candidate.terminal_at,
+                validated_at=None,
+                approved_at=None,
+                terminal_at=None,
             )
             session.add(other)
+            session.flush()
+            other.status = "activated"
+            other.candidate_revision = 2
+            other.validation_bundle_sha256 = candidate.validation_bundle_sha256
+            other.validated_at = candidate.validated_at
+            other.approved_at = candidate.approved_at
+            other.terminal_at = candidate.terminal_at
             session.flush()
             reconciliation.candidate_id = other.candidate_id
         else:
@@ -467,12 +482,12 @@ def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: P
         assert "trim(legacy_bundle_id)" in checks[
             "ck_authority_activations_legacy_bundle_nonblank"
         ]
-        assert ALEMBIC_HEAD == "0028_consumed_first_request_open_admission"
+        assert ALEMBIC_HEAD == "0029_cutover_authority_admission_fixes"
     finally:
         engine.dispose()
 
 
-def test_consumed_first_reservation_allows_second_request_and_first_replay(workflow_db) -> None:
+def test_consumed_first_reservation_blocks_second_request_until_verification(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     candidate_id, closure_id, cutover_id, fence_id = _prepare_approved_cutover(
         factory, ids, context, task_id
@@ -494,31 +509,33 @@ def test_consumed_first_reservation_allows_second_request_and_first_replay(workf
             generation_id=context["generation_id"],
             run_id=second_run_id,
         )
-        second = workflow.admit_request(
-            RequestSpec(
-                request_id=second_request_id,
-                generation_id=context["generation_id"],
-                run_id=second_run_id,
-                owner_id="owner-1",
-                principal_class="agent",
-                command_name="start",
-                canonical_payload={
-                    "command": "start",
-                    "arguments": {
-                        "task_id": str(task_id),
-                        "agent": "codex",
-                        "kind": "follow-up",
+        with pytest.raises(
+            MutationAdmissionClosed,
+            match="pending first-admission verification",
+        ):
+            workflow.admit_request(
+                RequestSpec(
+                    request_id=second_request_id,
+                    generation_id=context["generation_id"],
+                    run_id=second_run_id,
+                    owner_id="owner-1",
+                    principal_class="agent",
+                    command_name="start",
+                    canonical_payload={
+                        "command": "start",
+                        "arguments": {
+                            "task_id": str(task_id),
+                            "agent": "codex",
+                            "kind": "follow-up",
+                        },
+                        "owner_id": "owner-1",
+                        "run_id": str(second_run_id),
                     },
-                    "owner_id": "owner-1",
-                    "run_id": str(second_run_id),
-                },
-                protocol_release="protocol-1",
-                dish_release="dish-pg-stage6",
-                admitted_at=NOW + timedelta(minutes=9),
+                    protocol_release="protocol-1",
+                    dish_release="dish-pg-stage6",
+                    admitted_at=NOW + timedelta(minutes=9),
+                )
             )
-        )
-        assert not second.replayed
-        assert second.request.request_id == second_request_id
 
         accepted_first = session.get(wf.ServiceRequest, first_request_id)
         assert accepted_first is not None
@@ -539,3 +556,295 @@ def test_consumed_first_reservation_allows_second_request_and_first_replay(workf
         assert first_replay.replayed
         assert first_replay.outcome is not None
         assert first_replay.outcome.result_code == "OK"
+
+        with pytest.raises(
+            IntegrityError,
+            match="mutation admission opens only after verified first admission",
+        ), session.begin_nested():
+            session.execute(
+                text(
+                    """UPDATE mutation_admission_controls
+                       SET state = 'open',
+                           control_revision = control_revision + 1,
+                           opened_at = :opened_at,
+                           updated_at = :opened_at
+                     WHERE generation_id = :generation_id"""
+                ),
+                {
+                    "generation_id": context["generation_id"].hex,
+                    "opened_at": NOW + timedelta(minutes=9),
+                },
+            )
+            session.flush()
+
+
+    with session_scope(factory) as session:
+        _complete_active_mapping_reconciliation(
+            session,
+            ids,
+            generation_id=context["generation_id"],
+            corpus_identity="post-first-admission-open-general",
+            started_at=NOW + timedelta(minutes=8),
+            completed_at=NOW + timedelta(minutes=9),
+        )
+        ReleaseCandidateService(session, uuid_factory=lambda: _next(ids)).verify_first_admission(
+            cutover_run_id=cutover_id,
+            request_id=first_request_id,
+            verified_at=NOW + timedelta(minutes=9),
+        )
+        control = session.get(rel.MutationAdmissionControl, context["generation_id"])
+        assert control is not None and control.state == "open"
+
+    with session_scope(factory) as session:
+        second = WorkflowAuthorityService(session, uuid_factory=lambda: _next(ids)).admit_request(
+            RequestSpec(
+                request_id=second_request_id,
+                generation_id=context["generation_id"],
+                run_id=second_run_id,
+                owner_id="owner-1",
+                principal_class="agent",
+                command_name="start",
+                canonical_payload={
+                    "command": "start",
+                    "arguments": {
+                        "task_id": str(task_id),
+                        "agent": "codex",
+                        "kind": "follow-up",
+                    },
+                    "owner_id": "owner-1",
+                    "run_id": str(second_run_id),
+                },
+                protocol_release="protocol-1",
+                dish_release="dish-pg-stage6",
+                admitted_at=NOW + timedelta(minutes=10),
+            )
+        )
+        assert not second.replayed
+        assert second.request.request_id == second_request_id
+
+
+
+def test_rollback_burn_rechecks_candidate_quiescence_immediately_before_burn(
+    workflow_db, monkeypatch
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    candidate_id, closure_id, cutover_id, fence_id = _prepare_approved_cutover(
+        factory, ids, context, task_id
+    )
+    _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fence_id)
+
+    calls: list[tuple[object, object]] = []
+    with session_scope(factory) as session:
+        service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
+
+        ordering: list[str] = []
+        monkeypatch.setattr(
+            service,
+            "_fence_rollback_burn_state",
+            lambda: ordering.append("fence"),
+        )
+
+        def failed_evaluation(*, candidate_id, as_of):
+            ordering.append("evaluate")
+            calls.append((candidate_id, as_of))
+            return CandidateEvaluation(
+                candidate_id=candidate_id,
+                checks=(
+                    AcceptanceCheck(
+                        "quiescent_cutover_authority",
+                        False,
+                        {"authority_operations": 1},
+                    ),
+                ),
+            )
+
+        monkeypatch.setattr(service, "evaluate_candidate", failed_evaluation)
+        with pytest.raises(
+            ReleaseAuthorityError,
+            match="failed immediately before rollback burn: quiescent_cutover_authority",
+        ):
+            service.burn_rollback(
+                cutover_run_id=cutover_id,
+                legacy_bundle_id="legacy-bundle-sha256:" + HASH_A,
+                burned_at=NOW + timedelta(minutes=6),
+            )
+        assert ordering == ["fence", "evaluate"]
+        assert calls == [(candidate_id, NOW + timedelta(minutes=6))]
+        activation = session.scalar(
+            select(models.AuthorityActivation).where(
+                models.AuthorityActivation.generation_id == context["generation_id"],
+                models.AuthorityActivation.outcome == "activated",
+            )
+        )
+        assert activation is None
+
+
+def test_sqlite_direct_sql_initial_state_and_generation_guards(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    candidate_id, closure_id, cutover_id, fence_id = _prepare_approved_cutover(
+        factory, ids, context, task_id
+    )
+    _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fence_id)
+    _burn_and_open_admission(factory, ids, context, task_id, candidate_id, cutover_id)
+
+    with session_scope(factory) as session:
+        invalid_statements = (
+            (
+                "release candidate must initially be assembling",
+                """INSERT INTO release_candidates (
+                    candidate_id,generation_id,source_import_batch_id,shadow_baseline_id,
+                    projection_epoch_id,source_release,source_commit,ledger_through_commit,
+                    schema_head,dish_release,honest_release,protocol_release,openapi_release,
+                    routing_release,status,candidate_revision,validation_bundle_sha256,
+                    created_at,validated_at,approved_at,terminal_at
+                )
+                SELECT :new_id,generation_id,source_import_batch_id,shadow_baseline_id,
+                       projection_epoch_id,source_release,source_commit,ledger_through_commit,
+                       schema_head,dish_release,honest_release,protocol_release,openapi_release,
+                       routing_release,'validated',1,validation_bundle_sha256,
+                       created_at,validated_at,NULL,NULL
+                  FROM release_candidates LIMIT 1""",
+                {"new_id": _next(ids).hex},
+            ),
+            (
+                "mutation admission control must initially be closed",
+                """INSERT INTO mutation_admission_controls (
+                    generation_id,candidate_id,state,control_revision,opened_at,updated_at
+                )
+                SELECT generation_id,candidate_id,'open',1,updated_at,updated_at
+                  FROM mutation_admission_controls LIMIT 1""",
+                {},
+            ),
+            (
+                "first-request reservation must initially be reserved",
+                """INSERT INTO first_request_reservations (
+                    reservation_id,plan_id,cutover_run_id,candidate_id,generation_id,
+                    request_id,command_name,owner_id,principal_class,run_id,
+                    canonical_payload_sha256,state,reservation_revision,reserved_at,consumed_at
+                )
+                SELECT :new_id,plan_id,cutover_run_id,candidate_id,generation_id,
+                       request_id,command_name,owner_id,principal_class,run_id,
+                       canonical_payload_sha256,'cancelled',1,reserved_at,NULL
+                  FROM first_request_reservations LIMIT 1""",
+                {"new_id": _next(ids).hex},
+            ),
+            (
+                "release candidate must initially be assembling",
+                """INSERT INTO release_candidates (
+                    candidate_id,generation_id,source_import_batch_id,shadow_baseline_id,
+                    projection_epoch_id,source_release,source_commit,ledger_through_commit,
+                    schema_head,dish_release,honest_release,protocol_release,openapi_release,
+                    routing_release,status,candidate_revision,validation_bundle_sha256,
+                    created_at,validated_at,approved_at,terminal_at
+                )
+                SELECT :new_id,generation_id,source_import_batch_id,shadow_baseline_id,
+                       projection_epoch_id,source_release,source_commit,ledger_through_commit,
+                       schema_head,dish_release,honest_release,protocol_release,openapi_release,
+                       routing_release,'assembling',2,NULL,
+                       created_at,NULL,NULL,NULL
+                  FROM release_candidates LIMIT 1""",
+                {"new_id": _next(ids).hex},
+            ),
+            (
+                "mutation admission control must initially be closed",
+                """INSERT INTO mutation_admission_controls (
+                    generation_id,candidate_id,state,control_revision,opened_at,updated_at
+                )
+                SELECT generation_id,candidate_id,'closed',2,NULL,updated_at
+                  FROM mutation_admission_controls LIMIT 1""",
+                {},
+            ),
+            (
+                "first-request reservation must initially be reserved",
+                """INSERT INTO first_request_reservations (
+                    reservation_id,plan_id,cutover_run_id,candidate_id,generation_id,
+                    request_id,command_name,owner_id,principal_class,run_id,
+                    canonical_payload_sha256,state,reservation_revision,reserved_at,consumed_at
+                )
+                SELECT :new_id,plan_id,cutover_run_id,candidate_id,generation_id,
+                       request_id,command_name,owner_id,principal_class,run_id,
+                       canonical_payload_sha256,'reserved',2,reserved_at,NULL
+                  FROM first_request_reservations LIMIT 1""",
+                {"new_id": _next(ids).hex},
+            ),
+        )
+        for message, statement, params in invalid_statements:
+            with pytest.raises(IntegrityError, match=message), session.begin_nested():
+                session.execute(text(statement), params)
+                session.flush()
+
+        other_generation_id = _next(ids)
+        session.add(
+            models.AuthorityGeneration(
+                generation_id=other_generation_id,
+                predecessor_generation_id=None,
+                creation_reason="initial_cutover",
+                external_restore_control_id=None,
+                schema_head=ALEMBIC_HEAD,
+                dish_release="dish-pg-stage6",
+                status="pending",
+                created_at=NOW,
+                retired_at=None,
+            )
+        )
+        session.flush()
+        with pytest.raises(IntegrityError, match="FOREIGN KEY constraint failed"), session.begin_nested():
+            session.execute(
+                text(
+                    """INSERT INTO release_candidates (
+                        candidate_id,generation_id,source_import_batch_id,shadow_baseline_id,
+                        projection_epoch_id,source_release,source_commit,ledger_through_commit,
+                        schema_head,dish_release,honest_release,protocol_release,openapi_release,
+                        routing_release,status,candidate_revision,validation_bundle_sha256,
+                        created_at,validated_at,approved_at,terminal_at
+                    )
+                    SELECT :candidate_id,:generation_id,source_import_batch_id,shadow_baseline_id,
+                           projection_epoch_id,source_release,source_commit,ledger_through_commit,
+                           schema_head,dish_release,honest_release,protocol_release,openapi_release,
+                           routing_release,'assembling',1,NULL,created_at,NULL,NULL,NULL
+                      FROM release_candidates LIMIT 1"""
+                ),
+                {
+                    "candidate_id": _next(ids).hex,
+                    "generation_id": other_generation_id.hex,
+                },
+            )
+            session.flush()
+
+
+def test_sqlite_direct_sql_missing_control_fails_closed(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        _service, _candidate_id = _prepare_candidate(session, ids, context, task_id)
+        run_id = _next(ids)
+        request_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        session.execute(
+            text("DELETE FROM mutation_admission_controls WHERE generation_id = :generation_id"),
+            {"generation_id": context["generation_id"].hex},
+        )
+        payload = {
+            "command": "start",
+            "arguments": {"task_id": str(task_id)},
+        }
+        with pytest.raises(IntegrityError, match="mutation admission is closed"):
+            session.execute(
+                text(
+                    """INSERT INTO service_requests (
+                        request_id,generation_id,run_id,owner_id,principal_class,
+                        command_name,canonical_payload_sha256,canonical_payload,
+                        protocol_release,dish_release,admitted_at
+                    ) VALUES (
+                        :request_id,:generation_id,:run_id,'owner-1','agent','start',
+                        :payload_sha,:payload,'protocol-1','dish-pg-stage6',:admitted_at
+                    )"""
+                ),
+                {
+                    "request_id": request_id.hex,
+                    "generation_id": context["generation_id"].hex,
+                    "run_id": run_id.hex,
+                    "payload_sha": sha256_json(payload),
+                    "payload": json.dumps(payload),
+                    "admitted_at": NOW,
+                },
+            )

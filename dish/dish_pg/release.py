@@ -48,7 +48,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0028_consumed_first_request_open_admission"
+ALEMBIC_HEAD = "0029_cutover_authority_admission_fixes"
 
 
 class ReleaseCandidateService(

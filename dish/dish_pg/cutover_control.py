@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Collection, Mapping
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from dish_service.legacy_writer_fence import (
     LEGACY_WRITER_FENCE_PROBE_PLAN,
@@ -576,6 +576,19 @@ class CutoverControlAuthority:
             activated_at,
         )
         return run
+    def _fence_rollback_burn_state(self) -> None:
+        bind = self.session.get_bind()
+        if bind.dialect.name != "postgresql":
+            return
+        preparer = bind.dialect.identifier_preparer
+        table_names = sorted(
+            preparer.quote(table.name)
+            for table in models.Base.metadata.tables.values()
+        )
+        self.session.execute(
+            text(f"LOCK TABLE {', '.join(table_names)} IN SHARE MODE")
+        )
+
     def burn_rollback(
         self,
         *,
@@ -586,15 +599,6 @@ class CutoverControlAuthority:
         _require_nonblank(legacy_bundle_id, "legacy_bundle_id")
         run = self._cutover(cutover_run_id)
         candidate = self._candidate(run.candidate_id)
-        revalidation = revalidate_candidate_manifest(
-            self.session, uuid_factory=self.uuid_factory, candidate=candidate,
-            revalidated_at=burned_at,
-        )
-        if revalidation.result != "matched":
-            raise ReleaseAuthorityError("approved candidate authority manifest is stale")
-        approval = self.session.scalar(
-            select(rel.CutoverApproval).where(rel.CutoverApproval.candidate_id == candidate.candidate_id)
-        )
         if run.state == "rollback_burned":
             existing = self.session.scalar(
                 select(models.AuthorityActivation).where(
@@ -612,7 +616,7 @@ class CutoverControlAuthority:
             ):
                 raise ReleaseAuthorityError("rollback-burn identity conflict")
             return existing
-        if run.state != "activated" or approval is None:
+        if run.state != "activated":
             raise ReleaseAuthorityError("rollback burn requires activated approved cutover")
         activation_checkpoint = self.session.scalar(
             select(rel.CutoverCheckpoint).where(
@@ -622,12 +626,6 @@ class CutoverControlAuthority:
         )
         if activation_checkpoint is None:
             raise ReleaseAuthorityError("rollback burn lacks final Asana closure activation evidence")
-        closure_id_value = activation_checkpoint.payload.get("final_asana_closure_id")
-        if closure_id_value is None:
-            raise ReleaseAuthorityError("activation checkpoint lacks final Asana closure identity")
-        self._current_approved_final_asana_closure(
-            candidate.candidate_id, expected_closure_id=uuid.UUID(str(closure_id_value))
-        )
         _require_at_or_after(
             burned_at,
             activation_checkpoint.recorded_at,
@@ -635,9 +633,66 @@ class CutoverControlAuthority:
             floor_field="authority activation",
         )
         self._require_not_future(burned_at, "burned_at")
+
+        self.session.flush()
+        self._fence_rollback_burn_state()
+        self.session.expire_all()
+        run = self._cutover(cutover_run_id)
+        candidate = self._candidate(run.candidate_id)
+        if run.state != "activated" or candidate.status != "approved":
+            raise ReleaseAuthorityError("rollback burn authority changed while acquiring the burn fence")
+        approval = self.session.scalar(
+            select(rel.CutoverApproval).where(
+                rel.CutoverApproval.candidate_id == candidate.candidate_id
+            )
+        )
+        if approval is None:
+            raise ReleaseAuthorityError("rollback burn requires activated approved cutover")
+        activation_checkpoint = self.session.scalar(
+            select(rel.CutoverCheckpoint).where(
+                rel.CutoverCheckpoint.cutover_run_id == cutover_run_id,
+                rel.CutoverCheckpoint.checkpoint_kind == "authority_activated_admission_closed",
+            )
+        )
+        if activation_checkpoint is None:
+            raise ReleaseAuthorityError("rollback burn lacks final Asana closure activation evidence")
+
+        evaluation = self.evaluate_candidate(
+            candidate_id=candidate.candidate_id, as_of=burned_at
+        )
+        if not evaluation.passed:
+            failed = ", ".join(check.code for check in evaluation.checks if not check.passed)
+            raise ReleaseAuthorityError(
+                f"candidate release and quiescence gates failed immediately before rollback burn: {failed}"
+            )
+        revalidation = revalidate_candidate_manifest(
+            self.session,
+            uuid_factory=self.uuid_factory,
+            candidate=candidate,
+            revalidated_at=burned_at,
+        )
+        if revalidation.result != "matched":
+            raise ReleaseAuthorityError("approved candidate authority manifest is stale")
+        fences = self.session.scalars(
+            select(rel.LegacyWriterFence).where(
+                rel.LegacyWriterFence.candidate_id == candidate.candidate_id
+            )
+        ).all()
+        if not fences or any(fence.state != "verified" for fence in fences):
+            raise ReleaseAuthorityError("rollback burn requires every legacy writer fence to remain verified")
+        for fence in fences:
+            validate_writer_fence_observation(self.session, fence=fence)
+
+        closure_id_value = activation_checkpoint.payload.get("final_asana_closure_id")
+        if closure_id_value is None:
+            raise ReleaseAuthorityError("activation checkpoint lacks final Asana closure identity")
+        self._current_approved_final_asana_closure(
+            candidate.candidate_id, expected_closure_id=uuid.UUID(str(closure_id_value))
+        )
         batch = self.session.get(tx.SourceImportBatch, candidate.source_import_batch_id)
         if batch is None:
             raise ReleaseAuthorityError("release candidate import batch is missing")
+
         row = models.AuthorityActivation(
             activation_id=self.uuid_factory(),
             generation_id=candidate.generation_id,
@@ -663,7 +718,13 @@ class CutoverControlAuthority:
         self._checkpoint(
             run,
             "rollback_burned",
-            {"activation_id": str(row.activation_id), "legacy_bundle_id": legacy_bundle_id},
+            {
+                "activation_id": str(row.activation_id),
+                "legacy_bundle_id": legacy_bundle_id,
+                "fresh_candidate_checks": evaluation.as_dict(),
+                "fresh_manifest_revalidation_id": str(revalidation.revalidation_id),
+                "writer_fence_ids": [str(fence.fence_id) for fence in fences],
+            },
             burned_at,
         )
         self.session.flush()
@@ -1072,11 +1133,11 @@ class CutoverControlAuthority:
         candidate = self._candidate(run.candidate_id)
         control = self.session.get(rel.MutationAdmissionControl, candidate.generation_id)
         if run.state == "admission_open":
-            if control is None or control.state != "open":
+            if control is None or control.state != "closed" or control.opened_at is not None:
                 raise ReleaseAuthorityError("cutover state and admission control disagree")
             return control
         if run.state != "rollback_burned" or control is None or control.state != "closed":
-            raise ReleaseAuthorityError("mutation admission opens only after durable rollback burn")
+            raise ReleaseAuthorityError("first-request admission opens only after durable rollback burn")
         burned_at = self._cutover_checkpoint_time(cutover_run_id, "rollback_burned")
         _require_at_or_after(
             opened_at,
@@ -1098,10 +1159,20 @@ class CutoverControlAuthority:
         plan = self.session.scalar(
             select(rel.FirstAdmissionPlan).where(rel.FirstAdmissionPlan.cutover_run_id == cutover_run_id)
         )
-        if runtime is None or worker is None or plan is None:
-            raise ReleaseAuthorityError(
-                "mutation admission requires runtime attestation, projection-worker readiness, and first-admission plan"
+        reservation = self.session.scalar(
+            select(reservations.FirstRequestReservation).where(
+                reservations.FirstRequestReservation.cutover_run_id == cutover_run_id,
+                reservations.FirstRequestReservation.candidate_id == candidate.candidate_id,
+                reservations.FirstRequestReservation.generation_id == candidate.generation_id,
             )
+        )
+        if runtime is None or worker is None or plan is None or reservation is None:
+            raise ReleaseAuthorityError(
+                "first-request admission requires runtime attestation, projection-worker readiness, "
+                "first-admission plan, and reservation"
+            )
+        if reservation.state != "reserved":
+            raise ReleaseAuthorityError("first-request reservation is not available for admission")
         if worker.projection_epoch_id != candidate.projection_epoch_id:
             raise ReleaseAuthorityError("projection-worker readiness is for the wrong epoch")
         runtime_paths = {
@@ -1122,22 +1193,21 @@ class CutoverControlAuthority:
             _utc_comparable(runtime.recorded_at) > _utc_comparable(opened_at)
             or _utc_comparable(worker.ready_at) > _utc_comparable(opened_at)
             or _utc_comparable(plan.recorded_at) > _utc_comparable(opened_at)
+            or _utc_comparable(reservation.reserved_at) > _utc_comparable(opened_at)
         ):
-            raise ReleaseAuthorityError("admission evidence must be durable before admission opens")
-        control.state = "open"
-        control.control_revision += 1
-        control.opened_at = opened_at
-        control.updated_at = opened_at
+            raise ReleaseAuthorityError("first-request admission evidence must be durable before the gate opens")
         self._advance_cutover(run, "admission_open")
         self._checkpoint(
             run,
-            "mutation_admission_opened",
+            "first_request_admission_opened",
             {
                 "generation_id": str(candidate.generation_id),
+                "admission_control_state": control.state,
                 "runtime_attestation_id": str(runtime.attestation_id),
                 "projection_worker_readiness_id": str(worker.readiness_id),
                 "worker_readiness_completion": readiness_details,
                 "first_admission_plan_id": str(plan.plan_id),
+                "first_request_reservation_id": str(reservation.reservation_id),
             },
             opened_at,
         )
@@ -1152,11 +1222,25 @@ class CutoverControlAuthority:
     ) -> rel.CutoverRun:
         run = self._cutover(cutover_run_id)
         if run.state == "first_admission_verified":
+            candidate = self._candidate(run.candidate_id)
+            control = self.session.get(rel.MutationAdmissionControl, candidate.generation_id)
+            if control is None or control.state != "open":
+                raise ReleaseAuthorityError("verified first admission lacks open mutation admission")
             return run
         if run.state != "admission_open":
             raise ReleaseAuthorityError("first admission can be verified only after admission opens")
         candidate = self._candidate(run.candidate_id)
         control = self.session.get(rel.MutationAdmissionControl, candidate.generation_id)
+        reservation = self.session.scalar(
+            select(reservations.FirstRequestReservation).where(
+                reservations.FirstRequestReservation.cutover_run_id == cutover_run_id,
+                reservations.FirstRequestReservation.candidate_id == candidate.candidate_id,
+                reservations.FirstRequestReservation.generation_id == candidate.generation_id,
+            )
+        )
+        first_request_gate_at = self._cutover_checkpoint_time(
+            cutover_run_id, "first_request_admission_opened"
+        )
         plan = self.session.scalar(
             select(rel.FirstAdmissionPlan).where(rel.FirstAdmissionPlan.cutover_run_id == cutover_run_id)
         )
@@ -1227,13 +1311,16 @@ class CutoverControlAuthority:
         if (
             not chronology_valid
             or control is None
-            or control.state != "open"
-            or control.opened_at is None
+            or control.state != "closed"
+            or control.opened_at is not None
+            or reservation is None
+            or reservation.state != "consumed"
+            or reservation.request_id != request_id
             or plan is None
             or plan.request_id != request_id
             or request is None
             or request.generation_id != candidate.generation_id
-            or request.admitted_at < control.opened_at
+            or _utc_comparable(request.admitted_at) < _utc_comparable(first_request_gate_at)
             or request.command_name != plan.command_name
             or request.canonical_payload.get("arguments")
             != plan.payload.get("command_arguments")
@@ -1263,10 +1350,18 @@ class CutoverControlAuthority:
                 "first admission lacks exact committed execution, audit, projection, and reconciliation evidence"
             )
         self._advance_cutover(run, "first_admission_verified")
+        self.session.flush()
+        control.state = "open"
+        control.control_revision += 1
+        control.opened_at = verified_at
+        control.updated_at = verified_at
+        self.session.flush()
         self._checkpoint(
             run,
             "first_admission_verified",
             {
+                "mutation_admission_state": control.state,
+                "mutation_admission_revision": control.control_revision,
                 "request_id": str(request_id),
                 "outcome_id": str(outcome.outcome_id),
                 "execution_id": str(execution.execution_id),
@@ -1281,6 +1376,7 @@ class CutoverControlAuthority:
             },
             verified_at,
         )
+        self.session.flush()
         return run
     def complete_cutover(self, *, cutover_run_id: uuid.UUID, completed_at: datetime) -> rel.CutoverRun:
         run = self._cutover(cutover_run_id)
