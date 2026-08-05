@@ -99,6 +99,7 @@ items are.
 | Item | Priority | Owner | Local effort | Last verified | Evidence |
 | --- | --- | --- | --- | --- | --- |
 | Shadow-baseline capture vs close/disqualify race | Later | Mixed | Medium | 2026-08-04 (fork-verified) | `capture_envelope()`/`close_baseline()` (`transition.py:232,632`) use unlocked `session.get()`, no `.with_for_update()` |
+| `test_native_initial_state_insert_guards_reject_direct_sql` fails against live PostgreSQL | Later (test-only; no production code path affected) | Mixed | Medium | 2026-08-05 (directly code-verified, reproduced live) | `tests/postgresql/native/test_first_request_reservation_single_gate.py:381` — the second `raw.execute()` after a caught `psycopg.errors.RaiseException` hits `InFailedSqlTransaction`, even though `raw.autocommit = True` is set on the connection beforehand. Likely `autocommit` isn't taking effect on the already-open psycopg3 connection/transaction. Reproduced running `native-concurrency` lane against `postgresql-postgres-1` (127.0.0.1:55432): 21/22 passed, this one failed. Discovered incidentally while adding the projection-epoch-lifecycle tests to the `native-concurrency` lane (commit `3437bcc`); not investigated further. |
 
 The other six rows previously listed here (rollback-burn quiescence, first-request admission
 reopening, missing generation-bound FKs, illegal candidate/admission-control/reservation INSERT
