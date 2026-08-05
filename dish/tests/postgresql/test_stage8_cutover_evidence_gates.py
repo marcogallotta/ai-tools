@@ -122,6 +122,7 @@ def _burn_rollback(session, ids, context, task_id):
         cutover_run_id=run.cutover_run_id,
         legacy_bundle_id="legacy-bundle-sha256:" + HASH_A,
         burned_at=NOW + timedelta(minutes=6),
+        required_writer_inventory={fence.target_identity},
     )
     return service, candidate_id, run.cutover_run_id
 

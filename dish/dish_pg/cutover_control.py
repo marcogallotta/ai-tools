@@ -595,6 +595,7 @@ class CutoverControlAuthority:
         cutover_run_id: uuid.UUID,
         legacy_bundle_id: str,
         burned_at: datetime,
+        required_writer_inventory: Collection[str] | None = None,
     ) -> models.AuthorityActivation:
         _require_nonblank(legacy_bundle_id, "legacy_bundle_id")
         run = self._cutover(cutover_run_id)
@@ -681,7 +682,11 @@ class CutoverControlAuthority:
         if not fences or any(fence.state != "verified" for fence in fences):
             raise ReleaseAuthorityError("rollback burn requires every legacy writer fence to remain verified")
         for fence in fences:
-            validate_writer_fence_observation(self.session, fence=fence)
+            validate_writer_fence_observation(
+                self.session,
+                fence=fence,
+                required_writer_inventory=required_writer_inventory,
+            )
 
         closure_id_value = activation_checkpoint.payload.get("final_asana_closure_id")
         if closure_id_value is None:

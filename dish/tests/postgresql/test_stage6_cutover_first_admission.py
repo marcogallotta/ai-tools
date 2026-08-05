@@ -139,6 +139,7 @@ def _burn_and_open_admission(factory, ids, context, task_id, candidate_id, cutov
             cutover_run_id=cutover_id,
             legacy_bundle_id="legacy-bundle-sha256:" + HASH_A,
             burned_at=NOW + timedelta(minutes=6),
+            required_writer_inventory={"legacy-service@laptop"},
         )
         assert activation.rollback_burned_at is not None
         candidate = service.candidate_status(candidate_id)
@@ -434,6 +435,7 @@ def test_rollback_burn_replay_requires_exact_bundle_and_timestamp(workflow_db) -
             cutover_run_id=cutover_id,
             legacy_bundle_id="legacy-bundle:" + HASH_A,
             burned_at=burned_at,
+            required_writer_inventory={"legacy-service@laptop"},
         )
         replay = service.burn_rollback(
             cutover_run_id=cutover_id,

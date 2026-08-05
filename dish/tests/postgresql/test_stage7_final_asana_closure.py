@@ -141,6 +141,7 @@ def test_final_asana_change_invalidates_activation_until_recaptured_and_recertif
             cutover_run_id=cutover.cutover_run_id,
             legacy_bundle_id="legacy-bundle-sha256:" + HASH_A,
             burned_at=NOW + timedelta(minutes=10),
+            required_writer_inventory={fence.target_identity},
         )
         checkpoint = session.scalar(
             select(rel.CutoverCheckpoint).where(
