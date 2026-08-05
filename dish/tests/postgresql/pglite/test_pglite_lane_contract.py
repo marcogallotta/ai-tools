@@ -44,3 +44,12 @@ def test_pglite_report_is_explicitly_non_certifying() -> None:
     source = (ROOT / "scripts" / "dish-pg-pglite").read_text()
     assert '"certification_evidence": False' in source
     assert '"native_postgresql_certified": False' in source
+
+
+def test_pglite_runner_owns_each_node_process_lifecycle() -> None:
+    source = (ROOT / "scripts" / "dish-pg-pglite").read_text()
+    assert "one_fresh_pytest_process_per_governed_node" in source
+    assert "start_new_session=True" in source
+    assert "--dish-internal-governed-node" in source
+    assert 'stdout=log_handle' in source
+    assert '"TIMEOUT"' in source

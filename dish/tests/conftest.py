@@ -140,6 +140,17 @@ def pytest_addoption(parser):
         help="run the non-certification PGlite PostgreSQL-semantic development lane",
     )
     parser.addoption(
+        "--dish-internal-governed-node",
+        default=None,
+        help="internal governed-runner exact node selection",
+    )
+    parser.addoption(
+        "--dish-internal-inventory-report",
+        type=pathlib.Path,
+        default=None,
+        help="internal governed-runner inventory output",
+    )
+    parser.addoption(
         "--flake-candidates",
         action="store_true",
         default=False,
@@ -302,6 +313,7 @@ def _select_items(config, items):
         item
         for item in items
         if item.get_closest_marker(QUARANTINE_MARKER) is None
+        and item.get_closest_marker("pglite") is None
     ]
 
 
@@ -311,7 +323,28 @@ def _is_complete_repository_collection(config) -> bool:
     return len(config.args) == 1 and pathlib.Path(config.args[0]).resolve() in roots
 
 
+def _internal_governed_runner_requested(config) -> bool:
+    return bool(
+        config.getoption("--dish-internal-governed-node")
+        or config.getoption("--dish-internal-inventory-report")
+    )
+
+
+def _validate_internal_governed_runner(config) -> None:
+    if not _internal_governed_runner_requested(config):
+        return
+    if os.environ.get("DISH_INTERNAL_GOVERNED_RUNNER") != "1":
+        raise pytest.UsageError(
+            "internal governed-runner options may be used only by repository lane scripts"
+        )
+    if not (config.getoption("--pglite") or config.getoption("--quarantine")):
+        raise pytest.UsageError(
+            "internal governed-runner options require --pglite or --quarantine"
+        )
+
+
 def pytest_collection_modifyitems(config, items):
+    _validate_internal_governed_runner(config)
     violations = _flake_policy_violations(items)
     if _is_complete_repository_collection(config):
         violations.extend(_smoke_invariant_owner_violations(items))
@@ -334,6 +367,17 @@ def pytest_collection_modifyitems(config, items):
         )
 
     selected = _select_items(config, items)
+    governed_inventory = sorted(item.nodeid for item in selected)
+    config._governed_runner_inventory = governed_inventory
+    internal_node = config.getoption("--dish-internal-governed-node")
+    if internal_node is not None:
+        exact = [item for item in selected if item.nodeid == internal_node]
+        if len(exact) != 1:
+            raise pytest.UsageError(
+                f"internal governed node {internal_node!r} is not in the selected lane inventory"
+            )
+        selected = exact
+
     native_nodeids = {
         item.nodeid
         for item in selected
@@ -352,6 +396,27 @@ def pytest_collection_modifyitems(config, items):
 
 
 def pytest_collection_finish(session):
+    inventory_output = session.config.getoption("--dish-internal-inventory-report")
+    if (
+        inventory_output is not None
+        and os.environ.get("DISH_INTERNAL_GOVERNED_RUNNER") == "1"
+    ):
+        payload = {
+            "format": "dish-governed-pytest-inventory-v1",
+            "selector": (
+                "pglite" if session.config.getoption("--pglite") else "quarantine"
+            ),
+            "nodeids": list(
+                getattr(session.config, "_governed_runner_inventory", ())
+            ),
+            "selected_nodeids": [item.nodeid for item in session.items],
+        }
+        inventory_output.parent.mkdir(parents=True, exist_ok=True)
+        inventory_output.write_text(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+
     state = getattr(session.config, "_native_postgresql_state", None)
     if state is None:
         return
