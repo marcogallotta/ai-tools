@@ -432,8 +432,9 @@ same candidate against that exact closure. Authority activation binds the post-f
 closure must cover the durable legacy-writer fence boundary, its recertification must follow that
 boundary, and activation must follow the recertification. Once the verified fence is durable, the
 closure need not claim observation into the future through the later authorization timestamp.
-Rollback burn revalidates the activation-bound closure; routing cannot stand in for authority
-closure.
+Rollback burn acquires a transaction-scoped PostgreSQL write fence, then reruns the complete
+candidate, quiescence, writer-fence, manifest, and activation-bound closure checks immediately before
+the irreversible transition. Routing cannot stand in for authority closure.
 
 Stage 8 strengthens production evidence through `0007_cutover_evidence_gates`. A passed rehearsal
 must contain the checkpoint set prescribed for its rehearsal class. Writer-fence verification binds
@@ -442,15 +443,19 @@ that rejection occurred before body loading. After rollback burn and while admis
 the release service records the exact service/worker artifacts and PostgreSQL route probe, a
 projection-worker readiness proof backed by complete post-burn reconciliation, and one immutable
 first-admission plan whose canonical task identity is checked against the candidate generation before
-admission can open. Commands requiring a pre-existing open operation are excluded because candidate
+the isolated first-request gate can open. Commands requiring a pre-existing open operation are
+excluded because candidate
 validation closes that corpus; `create` is excluded because a new task identity cannot be prebound.
 The plan binds exact command arguments and
 derives its projection-event count
-from command semantics rather than operator input. Admission cannot open before all three records are
-durable. First-admission verification requires the planned request and arguments, a committed execution and immutable successful outcome,
+from command semantics rather than operator input. The control row remains `closed`: only the exact
+reserved first request is admitted and its consumption does not admit unrelated mutations.
+First-admission verification requires the planned request and arguments, a committed execution and
+immutable successful outcome,
 execution-bound governed audit, fulfilled or repaired invocation-audit obligation, the exact applied
 projection-event count, and a complete post-request reconciliation covering every active mapping.
-The final evidence bundle binds these records and their durable cutover checkpoints.
+Only successful first-admission verification changes the control to `open`; the final evidence bundle
+binds these records and their durable cutover checkpoints.
 
 Revision `0008_fail_closed_admission_outbox` then closes two retained safety gaps: once a release candidate exists, a missing admission-control row is treated as closed, and the command port always retains transactional projection authority instead of permitting a projectionless mutation path. Pre-candidate development generations keep their prior admission behavior.
 Revision `0009_candidate_replacement_control` aligns the PostgreSQL transition guard with the
@@ -996,3 +1001,6 @@ allowing lifecycle collaborators to be tested without constructing the complete 
 admin acquisition/settlement remain facade-owned private operations behind those typed ports because they
 share exact recovery, cleanup, and result-finalization ordering; this pass does not split that authority.
 
+Revision `0029_cutover_authority_admission_fixes` makes this authority database-enforced: candidate
+dependencies must share the candidate generation, candidate/control/reservation inserts must start in
+their legal revision-1 states, and a candidate generation with no admission-control row fails closed.

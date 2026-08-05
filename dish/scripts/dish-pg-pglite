@@ -1,39 +1,124 @@
 #!/usr/bin/env python3
-"""Run the non-certification PGlite development and quarantine lanes."""
+"""Run the non-certification PGlite lane with one supervised pytest process per node."""
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import xml.etree.ElementTree as ET
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
+
+import psutil
 
 ROOT = Path(__file__).resolve().parents[1]
 PGLITE_FOUNDATIONAL_QUARANTINE = (
     "tests/postgresql/pglite/test_pglite_migrations.py::test_native_fixture_reset_uses_alembic_history",
 )
+_INTERNAL_RUNNER_ENV = "DISH_INTERNAL_GOVERNED_RUNNER"
 _INFRASTRUCTURE_SIGNATURES = (
-    "server closed the connection",
+    "server closed the connection unexpectedly",
     "connection refused",
+    "connection reset by peer",
     "connection reset",
     "broken pipe",
-    "pglite",
-    "tcp startup",
-    "operationalerror",
+    "could not connect to server",
+    "failed to start within",
+    "pglite process died during startup",
+    "tcp server failed to start",
+    "timed out waiting for tcp server",
 )
+
+
+@dataclass(frozen=True)
+class ProcessIdentity:
+    pid: int
+    create_time: float
+
+
+@dataclass
+class CommandResult:
+    command: list[str]
+    exit_code: int | None
+    duration_seconds: float
+    timed_out: bool
+    log_path: str
+    log_sha256: str
+    tracked_descendants: int
+    forced_cleanup: bool
+    cleanup_remaining: list[int]
+
+
+class DescendantTracker:
+    """Record descendants while a child runs, including children that later reparent."""
+
+    def __init__(self, root_pid: int) -> None:
+        self.root_pid = root_pid
+        self._identities: dict[int, ProcessIdentity] = {}
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> list[ProcessIdentity]:
+        self._stop.set()
+        self._thread.join(timeout=1.0)
+        self._snapshot()
+        return list(self._identities.values())
+
+    def _run(self) -> None:
+        while not self._stop.wait(0.05):
+            self._snapshot()
+
+    def _snapshot(self) -> None:
+        try:
+            root = psutil.Process(self.root_pid)
+            children = root.children(recursive=True)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            return
+        for child in children:
+            try:
+                self._identities[child.pid] = ProcessIdentity(
+                    pid=child.pid,
+                    create_time=child.create_time(),
+                )
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
 
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dish-pg-pglite")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--node-timeout-seconds",
+        type=float,
+        default=180.0,
+        help="hard timeout for each governed pytest node (default: 180)",
+    )
+    parser.add_argument(
+        "--collection-timeout-seconds",
+        type=float,
+        default=120.0,
+        help="hard timeout for each inventory collection (default: 120)",
+    )
+    parser.add_argument(
+        "--cleanup-grace-seconds",
+        type=float,
+        default=3.0,
+        help="grace period before stuck child processes are killed (default: 3)",
+    )
     return parser
 
 
@@ -53,27 +138,163 @@ def _write_atomic(path: Path, value: object) -> None:
         temp.unlink(missing_ok=True)
 
 
-def _run(command: list[str]) -> dict[str, Any]:
+def _sha256_path(path: Path) -> str:
+    digest = hashlib.sha256()
+    if path.is_file():
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _same_process(identity: ProcessIdentity) -> psutil.Process | None:
+    try:
+        process = psutil.Process(identity.pid)
+        if abs(process.create_time() - identity.create_time) > 0.01:
+            return None
+        return process
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+
+
+def _signal_process_groups(processes: Iterable[psutil.Process], sig: signal.Signals) -> None:
+    groups: set[int] = set()
+    own_group = os.getpgrp()
+    for process in processes:
+        try:
+            group = os.getpgid(process.pid)
+        except (ProcessLookupError, PermissionError):
+            continue
+        if group != own_group:
+            groups.add(group)
+    for group in groups:
+        try:
+            os.killpg(group, sig)
+        except (ProcessLookupError, PermissionError):
+            continue
+
+
+def _cleanup_processes(
+    identities: Iterable[ProcessIdentity], *, grace_seconds: float
+) -> tuple[bool, list[int]]:
+    unique = {identity.pid: identity for identity in identities}
+    processes = [process for identity in unique.values() if (process := _same_process(identity))]
+    if not processes:
+        return False, []
+
+    _signal_process_groups(processes, signal.SIGTERM)
+    for process in processes:
+        try:
+            process.terminate()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    _, alive = psutil.wait_procs(processes, timeout=grace_seconds)
+    if alive:
+        _signal_process_groups(alive, signal.SIGKILL)
+        for process in alive:
+            try:
+                process.kill()
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        _, alive = psutil.wait_procs(alive, timeout=grace_seconds)
+    remaining: list[int] = []
+    for process in alive:
+        try:
+            if process.is_running():
+                remaining.append(process.pid)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    return True, sorted(remaining)
+
+
+def _run_supervised(
+    command: list[str],
+    *,
+    log_path: Path,
+    workspace: Path,
+    timeout_seconds: float,
+    cleanup_grace_seconds: float,
+    env: dict[str, str],
+) -> CommandResult:
+    workspace.mkdir(parents=True, exist_ok=True)
+    temp_root = workspace / "tmp"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    child_env = dict(env)
+    child_env["TMPDIR"] = str(temp_root)
+
     started = time.monotonic()
-    completed = subprocess.run(
-        command,
-        cwd=ROOT,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        check=False,
+    timed_out = False
+    exit_code: int | None = None
+    with log_path.open("wb") as log_handle:
+        process = subprocess.Popen(
+            command,
+            cwd=ROOT,
+            env=child_env,
+            stdin=subprocess.DEVNULL,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            close_fds=True,
+        )
+        root_identity = ProcessIdentity(
+            pid=process.pid,
+            create_time=psutil.Process(process.pid).create_time(),
+        )
+        tracker = DescendantTracker(process.pid)
+        tracker.start()
+        try:
+            exit_code = process.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+            try:
+                exit_code = process.wait(timeout=cleanup_grace_seconds)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                try:
+                    exit_code = process.wait(timeout=cleanup_grace_seconds)
+                except subprocess.TimeoutExpired:
+                    exit_code = None
+        identities = tracker.stop()
+
+    descendant_count = len({identity.pid for identity in identities})
+    forced_cleanup, cleanup_remaining = _cleanup_processes(
+        [root_identity, *identities],
+        grace_seconds=cleanup_grace_seconds,
     )
-    output = completed.stdout
-    return {
-        "command": command,
-        "exit_code": completed.returncode,
-        "duration_seconds": round(time.monotonic() - started, 3),
-        "output": output,
-        "output_sha256": hashlib.sha256(output.encode()).hexdigest(),
-    }
+    try:
+        subprocess.run(
+            ["rm", "-rf", str(temp_root)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            timeout=cleanup_grace_seconds,
+        )
+    except subprocess.TimeoutExpired:
+        cleanup_remaining.append(-1)
+    return CommandResult(
+        command=command,
+        exit_code=exit_code,
+        duration_seconds=round(time.monotonic() - started, 3),
+        timed_out=timed_out,
+        log_path=str(log_path),
+        log_sha256=_sha256_path(log_path),
+        tracked_descendants=descendant_count,
+        forced_cleanup=forced_cleanup,
+        cleanup_remaining=cleanup_remaining,
+    )
 
 
 def _junit_summary(path: Path) -> dict[str, Any]:
+    """Summarize JUnit without treating arbitrary PGlite text as infrastructure."""
     if not path.is_file():
         return {
             "tests": 0,
@@ -94,27 +315,22 @@ def _junit_summary(path: Path) -> dict[str, Any]:
     for case in cases:
         classname = case.get("classname", "")
         name = case.get("name", "")
-        if classname:
-            node = f"{classname.replace('.', '/')}.py::{name}"
-        else:
-            node = name
+        node = f"{classname.replace('.', '/')}.py::{name}" if classname else name
         nodeids.append(node)
         if case.find("skipped") is not None:
             skipped += 1
             continue
         failure = case.find("failure")
         error = case.find("error")
-        if error is not None:
-            infrastructure_failures += 1
-            failed_cases.append(node)
+        problem = failure if failure is not None else error
+        if problem is None:
             continue
-        if failure is not None:
-            detail = ((failure.text or "") + " " + (failure.get("message") or "")).lower()
-            if any(signature in detail for signature in _INFRASTRUCTURE_SIGNATURES):
-                infrastructure_failures += 1
-            else:
-                assertion_failures += 1
-            failed_cases.append(node)
+        detail = ((problem.text or "") + " " + (problem.get("message") or "")).lower()
+        if any(signature in detail for signature in _INFRASTRUCTURE_SIGNATURES):
+            infrastructure_failures += 1
+        else:
+            assertion_failures += 1
+        failed_cases.append(node)
     passed = len(cases) - skipped - assertion_failures - infrastructure_failures
     return {
         "tests": len(cases),
@@ -128,47 +344,323 @@ def _junit_summary(path: Path) -> dict[str, Any]:
 
 
 def _required_inventory_present(summary: dict[str, Any], required: tuple[str, ...]) -> bool:
+    """Return whether every required node ID is present in the JUnit inventory."""
     return set(required).issubset(set(summary.get("nodeids", ())))
+
+
+def _failure_detail(path: Path) -> tuple[str, int, int, int]:
+    if not path.is_file():
+        return "missing JUnit report", 0, 0, 0
+    try:
+        root = ET.parse(path).getroot()
+    except ET.ParseError as exc:
+        return f"invalid JUnit report: {exc}", 0, 0, 0
+    cases = root.findall(".//testcase")
+    failures = 0
+    errors = 0
+    skipped = 0
+    details: list[str] = []
+    for case in cases:
+        if case.find("skipped") is not None:
+            skipped += 1
+        failure = case.find("failure")
+        error = case.find("error")
+        if failure is not None:
+            failures += 1
+            details.append((failure.text or "") + " " + (failure.get("message") or ""))
+        if error is not None:
+            errors += 1
+            details.append((error.text or "") + " " + (error.get("message") or ""))
+    return "\n".join(details), len(cases), failures + errors, skipped
+
+
+def _classify_node(
+    *, result: CommandResult, junit_path: Path
+) -> tuple[str, int, int, int, str]:
+    detail, tests, failed, skipped = _failure_detail(junit_path)
+    lowered = detail.lower()
+    if result.timed_out:
+        return "timeout", tests, 0, 1, "node timeout"
+    if result.cleanup_remaining:
+        return "infrastructure", tests, 0, 1, "child process cleanup incomplete"
+    if result.exit_code == 0 and tests == 1 and failed == 0:
+        return ("skipped" if skipped else "passed"), tests, 0, 0, detail
+    if failed:
+        if any(signature in lowered for signature in _INFRASTRUCTURE_SIGNATURES):
+            return "infrastructure", tests, 0, 1, detail
+        return "failed", tests, 1, 0, detail
+
+    log_path = Path(result.log_path)
+    log_detail = (
+        log_path.read_text(encoding="utf-8", errors="replace")
+        if log_path.is_file()
+        else ""
+    )
+    if any(signature in log_detail.lower() for signature in _INFRASTRUCTURE_SIGNATURES):
+        return "infrastructure", tests, 0, 1, log_detail
+    return "failed", tests, 1, 0, detail or log_detail
+
+
+def _collect_inventory(
+    *,
+    python: str,
+    selector: str,
+    lane_dir: Path,
+    timeout_seconds: float,
+    cleanup_grace_seconds: float,
+) -> tuple[list[str], CommandResult, str | None]:
+    inventory_path = lane_dir / "inventory.json"
+    command = [
+        python,
+        "-m",
+        "pytest",
+        selector,
+        "--collect-only",
+        "-q",
+        "--dish-internal-inventory-report",
+        str(inventory_path),
+    ]
+    env = os.environ.copy()
+    env[_INTERNAL_RUNNER_ENV] = "1"
+    result = _run_supervised(
+        command,
+        log_path=lane_dir / "collection.log",
+        workspace=lane_dir / "collection-work",
+        timeout_seconds=timeout_seconds,
+        cleanup_grace_seconds=cleanup_grace_seconds,
+        env=env,
+    )
+    if result.timed_out:
+        return [], result, "inventory collection timed out"
+    if result.cleanup_remaining:
+        return [], result, "inventory collection child cleanup was incomplete"
+    if result.exit_code != 0:
+        return [], result, f"inventory collection exited {result.exit_code}"
+    if not inventory_path.is_file():
+        return [], result, "inventory collection did not write its report"
+    try:
+        payload = json.loads(inventory_path.read_text(encoding="utf-8"))
+        nodeids = payload["nodeids"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        return [], result, f"invalid inventory report: {exc}"
+    if not isinstance(nodeids, list) or not all(isinstance(node, str) for node in nodeids):
+        return [], result, "invalid inventory node list"
+    if len(nodeids) != len(set(nodeids)):
+        return [], result, "inventory contains duplicate node IDs"
+    return list(nodeids), result, None
+
+
+def _write_aggregate_junit(
+    *, lane_name: str, node_results: list[dict[str, Any]], output: Path
+) -> None:
+    suite = ET.Element(
+        "testsuite",
+        {
+            "name": f"dish-pglite-{lane_name}",
+            "tests": str(len(node_results)),
+            "failures": str(sum(item["assertion_failures"] for item in node_results)),
+            "errors": str(sum(item["infrastructure_failures"] for item in node_results)),
+            "skipped": str(sum(item["status"] == "skipped" for item in node_results)),
+            "time": str(round(sum(item["duration_seconds"] for item in node_results), 3)),
+        },
+    )
+    for item in node_results:
+        case = ET.SubElement(
+            suite,
+            "testcase",
+            {
+                "classname": "dish.pglite.governed",
+                "name": item["nodeid"],
+                "time": str(item["duration_seconds"]),
+            },
+        )
+        if item["status"] == "skipped":
+            ET.SubElement(case, "skipped")
+        elif item["status"] == "failed":
+            ET.SubElement(case, "failure", {"message": "assertion failure"}).text = item["detail"]
+        elif item["status"] in {"infrastructure", "timeout"}:
+            ET.SubElement(case, "error", {"message": item["status"]}).text = item["detail"]
+    output.parent.mkdir(parents=True, exist_ok=True)
+    ET.ElementTree(suite).write(output, encoding="utf-8", xml_declaration=True)
+
+
+def _collection_failure_counts(
+    collection: CommandResult, collection_error: str | None
+) -> tuple[int, int]:
+    if collection_error is None:
+        return 0, 0
+    if collection.timed_out or collection.cleanup_remaining:
+        return 0, 1
+    log = Path(collection.log_path)
+    detail = log.read_text(encoding="utf-8", errors="replace").lower() if log.is_file() else ""
+    if any(signature in detail for signature in _INFRASTRUCTURE_SIGNATURES):
+        return 0, 1
+    return 1, 0
+
+
+def _run_lane(
+    *,
+    python: str,
+    selector: str,
+    name: str,
+    artifact_root: Path,
+    node_timeout_seconds: float,
+    collection_timeout_seconds: float,
+    cleanup_grace_seconds: float,
+) -> dict[str, Any]:
+    lane_dir = artifact_root / name
+    lane_dir.mkdir(parents=True, exist_ok=True)
+    inventory, collection, collection_error = _collect_inventory(
+        python=python,
+        selector=selector,
+        lane_dir=lane_dir,
+        timeout_seconds=collection_timeout_seconds,
+        cleanup_grace_seconds=cleanup_grace_seconds,
+    )
+    node_results: list[dict[str, Any]] = []
+    if collection_error is None:
+        for index, nodeid in enumerate(inventory, start=1):
+            print(f"BEGIN {name} {index}/{len(inventory)} {nodeid}", flush=True)
+            node_dir = lane_dir / f"node-{index:03d}"
+            junit_path = node_dir / "junit.xml"
+            log_path = node_dir / "pytest.log"
+            command = [
+                python,
+                "-m",
+                "pytest",
+                selector,
+                "--dish-internal-governed-node",
+                nodeid,
+                "-q",
+                "--junitxml",
+                str(junit_path),
+            ]
+            env = os.environ.copy()
+            env[_INTERNAL_RUNNER_ENV] = "1"
+            result = _run_supervised(
+                command,
+                log_path=log_path,
+                workspace=node_dir / "work",
+                timeout_seconds=node_timeout_seconds,
+                cleanup_grace_seconds=cleanup_grace_seconds,
+                env=env,
+            )
+            status, tests, assertion_failures, infrastructure_failures, detail = _classify_node(
+                result=result,
+                junit_path=junit_path,
+            )
+            label = "TIMEOUT" if status == "timeout" else ("PASS" if status in {"passed", "skipped"} else "FAIL")
+            print(f"{label} {name} {index}/{len(inventory)} {nodeid}", flush=True)
+            node_results.append(
+                {
+                    "nodeid": nodeid,
+                    "status": status,
+                    "tests": tests,
+                    "assertion_failures": assertion_failures,
+                    "infrastructure_failures": infrastructure_failures,
+                    "detail": detail[-4000:],
+                    "junit_path": str(junit_path),
+                    "junit_sha256": _sha256_path(junit_path),
+                    **asdict(result),
+                }
+            )
+
+    aggregate_junit = lane_dir / "aggregate.junit.xml"
+    _write_aggregate_junit(
+        lane_name=name,
+        node_results=node_results,
+        output=aggregate_junit,
+    )
+    collection_assertions, collection_infrastructure = _collection_failure_counts(
+        collection, collection_error
+    )
+    assertion_failures = (
+        sum(item["assertion_failures"] for item in node_results)
+        + collection_assertions
+    )
+    infrastructure_failures = (
+        sum(item["infrastructure_failures"] for item in node_results)
+        + collection_infrastructure
+    )
+    passed_nodes = sum(item["status"] == "passed" for item in node_results)
+    skipped_nodes = sum(item["status"] == "skipped" for item in node_results)
+    lane_passed = (
+        collection_error is None
+        and bool(inventory)
+        and len(node_results) == len(inventory)
+        and assertion_failures == 0
+        and infrastructure_failures == 0
+    )
+    return {
+        "selector": selector,
+        "inventory": inventory,
+        "inventory_count": len(inventory),
+        "collection": asdict(collection),
+        "collection_error": collection_error,
+        "nodes": node_results,
+        "aggregate_junit_path": str(aggregate_junit),
+        "aggregate_junit_sha256": _sha256_path(aggregate_junit),
+        "counts": {
+            "tests": sum(item["tests"] for item in node_results),
+            "passed": passed_nodes,
+            "skipped": skipped_nodes,
+            "assertion_failures": assertion_failures,
+            "infrastructure_failures": infrastructure_failures,
+            "timeouts": sum(item["status"] == "timeout" for item in node_results),
+            "forced_cleanup_nodes": sum(item["forced_cleanup"] for item in node_results),
+        },
+        "passed": lane_passed,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    with tempfile.TemporaryDirectory(prefix="dish-pglite-report-") as temp_name:
-        temp = Path(temp_name)
-        primary_xml = temp / "primary.xml"
-        quarantine_xml = temp / "quarantine.xml"
-        primary = _run(
-            [args.python, "-m", "pytest", "--pglite", "-q", "--junitxml", str(primary_xml)]
-        )
-        quarantine = _run(
-            [
-                args.python,
-                "-m",
-                "pytest",
-                "--quarantine",
-                "-q",
-                "--junitxml",
-                str(quarantine_xml),
-            ]
-        )
-        primary_counts = _junit_summary(primary_xml)
-        quarantine_counts = _junit_summary(quarantine_xml)
+    if args.node_timeout_seconds <= 0 or args.collection_timeout_seconds <= 0:
+        raise SystemExit("timeouts must be positive")
+    if args.cleanup_grace_seconds <= 0:
+        raise SystemExit("cleanup grace must be positive")
 
-    quarantine_inventory_present = _required_inventory_present(
-        quarantine_counts, PGLITE_FOUNDATIONAL_QUARANTINE
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    artifact_root = args.output.parent / f"{args.output.stem}.artifacts"
+    if artifact_root.exists():
+        shutil.rmtree(artifact_root)
+    artifact_root.mkdir(parents=True)
+
+    primary = _run_lane(
+        python=args.python,
+        selector="--pglite",
+        name="primary",
+        artifact_root=artifact_root,
+        node_timeout_seconds=args.node_timeout_seconds,
+        collection_timeout_seconds=args.collection_timeout_seconds,
+        cleanup_grace_seconds=args.cleanup_grace_seconds,
+    )
+    quarantine = _run_lane(
+        python=args.python,
+        selector="--quarantine",
+        name="quarantine",
+        artifact_root=artifact_root,
+        node_timeout_seconds=args.node_timeout_seconds,
+        collection_timeout_seconds=args.collection_timeout_seconds,
+        cleanup_grace_seconds=args.cleanup_grace_seconds,
+    )
+    quarantine_inventory_present = set(PGLITE_FOUNDATIONAL_QUARANTINE).issubset(
+        set(quarantine["inventory"])
     )
     passed = (
-        primary["exit_code"] == 0
-        and primary_counts["tests"] > 0
-        and quarantine["exit_code"] == 0
+        primary["passed"]
+        and quarantine["passed"]
         and quarantine_inventory_present
     )
     report = {
-        "format": "dish-pglite-development-report-v2",
+        "format": "dish-pglite-development-report-v3",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "lane": "pglite_development",
-        "primary": {**primary, "counts": primary_counts},
-        "quarantine": {**quarantine, "counts": quarantine_counts},
+        "execution_model": "one_fresh_pytest_process_per_governed_node",
+        "node_timeout_seconds": args.node_timeout_seconds,
+        "artifact_root": str(artifact_root),
+        "primary": primary,
+        "quarantine": quarantine,
         "foundational_quarantine_inventory": list(PGLITE_FOUNDATIONAL_QUARANTINE),
         "foundational_quarantine_inventory_present": quarantine_inventory_present,
         "passed": passed,
@@ -176,17 +668,17 @@ def main(argv: list[str] | None = None) -> int:
         "native_postgresql_certified": False,
         "failure_classification": {
             "assertion_failures": (
-                primary_counts["assertion_failures"]
-                + quarantine_counts["assertion_failures"]
+                primary["counts"]["assertion_failures"]
+                + quarantine["counts"]["assertion_failures"]
             ),
             "infrastructure_failures": (
-                primary_counts["infrastructure_failures"]
-                + quarantine_counts["infrastructure_failures"]
+                primary["counts"]["infrastructure_failures"]
+                + quarantine["counts"]["infrastructure_failures"]
             ),
         },
     }
     report["report_sha256"] = hashlib.sha256(
-        json.dumps(report, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(report, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
     _write_atomic(args.output, report)
     print(
@@ -195,9 +687,12 @@ def main(argv: list[str] | None = None) -> int:
                 "ok": report["passed"],
                 "certification_evidence": False,
                 "native_postgresql_certified": False,
+                "primary_nodes": primary["inventory_count"],
+                "quarantine_nodes": quarantine["inventory_count"],
                 "assertion_failures": report["failure_classification"]["assertion_failures"],
                 "infrastructure_failures": report["failure_classification"]["infrastructure_failures"],
                 "path": str(args.output),
+                "artifact_root": str(artifact_root),
                 "report_sha256": report["report_sha256"],
             },
             sort_keys=True,

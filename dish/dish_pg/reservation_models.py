@@ -12,8 +12,10 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     Uuid,
+    event,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.schema import DDL
 
 from .models import Base
 
@@ -90,3 +92,16 @@ class FirstRequestReservation(Base):
             "generation_id", "candidate_id", name="uq_first_request_reservation_authority"
         ),
     )
+
+
+event.listen(
+    FirstRequestReservation.__table__,
+    "after_create",
+    DDL(
+        "CREATE TRIGGER first_request_reservations_initial_state_guard "
+        "BEFORE INSERT ON first_request_reservations "
+        "WHEN NEW.state <> 'reserved' OR NEW.reservation_revision <> 1 "
+        "BEGIN SELECT RAISE(ABORT, "
+        "'first-request reservation must initially be reserved at revision 1'); END"
+    ).execute_if(dialect="sqlite"),
+)

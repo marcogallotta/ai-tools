@@ -25,7 +25,7 @@ def test_ordinary_authority_change_selects_focused_owners_and_smoke() -> None:
 def test_mixed_migration_and_release_change_takes_lane_union() -> None:
     plan = build_plan(
         [
-            "dish_pg/migrations/versions/0028_consumed_first_request_open_admission.py",
+            "dish_pg/migrations/versions/0029_cutover_authority_admission_fixes.py",
             "dish_pg/release_validation.py",
         ],
         policy_path=POLICY,

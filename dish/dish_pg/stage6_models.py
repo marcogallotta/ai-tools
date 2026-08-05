@@ -82,6 +82,24 @@ class ReleaseCandidate(Base):
             "(status = 'aborted' AND terminal_at IS NOT NULL)",
             name="status_timestamps_consistent",
         ),
+        ForeignKeyConstraint(
+            ["source_import_batch_id", "generation_id"],
+            ["source_import_batches.import_batch_id", "source_import_batches.generation_id"],
+            name="fk_release_candidate_import_generation",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["shadow_baseline_id", "generation_id"],
+            ["shadow_baselines.shadow_baseline_id", "shadow_baselines.generation_id"],
+            name="fk_release_candidate_shadow_generation",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["projection_epoch_id", "generation_id"],
+            ["projection_epochs.projection_epoch_id", "projection_epochs.generation_id"],
+            name="fk_release_candidate_projection_generation",
+            ondelete="RESTRICT",
+        ),
         UniqueConstraint(
             "generation_id", "source_import_batch_id", "source_commit", name="uq_release_candidate_source"
         ),
@@ -595,6 +613,60 @@ def _install_sqlite_immutability_triggers() -> None:
         )
 
 
+def _install_sqlite_initial_state_guards() -> None:
+    specs = (
+        (
+            "release_candidates",
+            "release_candidates_initial_state_guard",
+            "NEW.status <> 'assembling' OR NEW.candidate_revision <> 1",
+            "release candidate must initially be assembling at revision 1",
+        ),
+        (
+            "mutation_admission_controls",
+            "mutation_admission_controls_initial_state_guard",
+            "NEW.state <> 'closed' OR NEW.control_revision <> 1",
+            "mutation admission control must initially be closed at revision 1",
+        ),
+    )
+    for table_name, trigger_name, condition, message in specs:
+        event.listen(
+            Base.metadata.tables[table_name],
+            "after_create",
+            DDL(
+                f"CREATE TRIGGER {trigger_name} BEFORE INSERT ON {table_name} "
+                f"WHEN {condition} BEGIN SELECT RAISE(ABORT, '{message}'); END"
+            ).execute_if(dialect="sqlite"),
+        )
+
+
+def _install_sqlite_verified_open_guard() -> None:
+    table = Base.metadata.tables["mutation_admission_controls"]
+    event.listen(
+        table,
+        "after_create",
+        DDL(
+            "CREATE TRIGGER mutation_admission_controls_verified_open_guard "
+            "BEFORE UPDATE ON mutation_admission_controls "
+            "WHEN NEW.state = 'open' AND ("
+            "OLD.state <> 'closed' "
+            "OR NEW.generation_id <> OLD.generation_id "
+            "OR NEW.candidate_id <> OLD.candidate_id "
+            "OR NEW.control_revision <> OLD.control_revision + 1 "
+            "OR NOT EXISTS ("
+            "SELECT 1 FROM cutover_runs run "
+            "JOIN first_request_reservations reservation "
+            "ON reservation.cutover_run_id = run.cutover_run_id "
+            "AND reservation.candidate_id = run.candidate_id "
+            "WHERE run.candidate_id = NEW.candidate_id "
+            "AND run.state = 'first_admission_verified' "
+            "AND reservation.generation_id = NEW.generation_id "
+            "AND reservation.state = 'consumed')) "
+            "BEGIN SELECT RAISE(ABORT, "
+            "'mutation admission opens only after verified first admission'); END"
+        ).execute_if(dialect="sqlite"),
+    )
+
+
 def _install_sqlite_admission_guard() -> None:
     requests = Base.metadata.tables["service_requests"]
     event.listen(
@@ -606,11 +678,29 @@ def _install_sqlite_admission_guard() -> None:
             "WHEN EXISTS (SELECT 1 FROM release_candidates rc "
             "WHERE rc.generation_id = NEW.generation_id) "
             "AND NOT EXISTS (SELECT 1 FROM mutation_admission_controls mac "
-            "WHERE mac.generation_id = NEW.generation_id AND mac.state = 'open') "
+            "JOIN first_request_reservations reservation "
+            "ON reservation.generation_id = mac.generation_id "
+            "AND reservation.candidate_id = mac.candidate_id "
+            "JOIN cutover_runs run "
+            "ON run.cutover_run_id = reservation.cutover_run_id "
+            "AND run.candidate_id = mac.candidate_id "
+            "WHERE mac.generation_id = NEW.generation_id AND ("
+            "(mac.state = 'open' AND reservation.state = 'consumed' "
+            "AND run.state IN ('first_admission_verified','completed')) OR ("
+            "mac.state = 'closed' AND reservation.state = 'reserved' "
+            "AND run.state = 'admission_open' "
+            "AND reservation.request_id = NEW.request_id "
+            "AND reservation.command_name = NEW.command_name "
+            "AND reservation.owner_id = NEW.owner_id "
+            "AND reservation.principal_class = NEW.principal_class "
+            "AND reservation.run_id = NEW.run_id "
+            "AND reservation.canonical_payload_sha256 = NEW.canonical_payload_sha256))) "
             "BEGIN SELECT RAISE(ABORT, 'PostgreSQL mutation admission is closed'); END"
         ).execute_if(dialect="sqlite"),
     )
 
 
 _install_sqlite_immutability_triggers()
+_install_sqlite_initial_state_guards()
+_install_sqlite_verified_open_guard()
 _install_sqlite_admission_guard()

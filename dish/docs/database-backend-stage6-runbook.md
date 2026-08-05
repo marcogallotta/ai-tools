@@ -382,8 +382,8 @@ ordering is:
   checkpoint follows every verification;
 - activation follows verified fencing and the closure record while remaining covered by
   `closed_through_at`; rollback burn follows activation;
-- runtime attestation, worker readiness, and the first-admission plan follow rollback burn; admission
-  opening follows all three;
+- runtime attestation, worker readiness, and the first-admission plan follow rollback burn; the isolated
+  first-request gate follows all three while general mutation admission remains closed;
 - first-admission verification follows request admission, committed execution/outcome, audit,
   terminal invocation obligation, applied outbox events, and completed reconciliation.
 
@@ -409,7 +409,9 @@ scripts/dish-pg-release cutover-burn-rollback CUTOVER_UUID \
 **Stop point:** after this commits, ordinary return to Asana/SQLite authority is prohibited. Recover
 PostgreSQL; do not remove the legacy fence or reverse-import Asana.
 
-After confirming the burn row and closed admission control are durable, record the exact deployed
+Rollback burn first fences concurrent writes and reruns all candidate, quiescence, manifest,
+writer-fence, and closure checks against fresh state. After confirming the burn row and closed
+admission control are durable, record the exact deployed
 runtime and route while admission is still closed:
 
 ```sh
@@ -439,17 +441,20 @@ scripts/dish-pg-release first-admission-plan CUTOVER_UUID \
   --file /secure/evidence/first-admission-plan.json
 ```
 
-Only after all three immutable records exist:
+Only after all three immutable records exist, open the isolated first-request gate. This command does
+not open ordinary mutation admission; the control remains `closed`:
 
 ```sh
 scripts/dish-pg-release cutover-open-admission CUTOVER_UUID \
   --opened-at RFC3339_WITH_OFFSET
 ```
 
-Issue exactly the planned request through the target service. Fulfil or repair its invocation-audit
+Issue exactly the planned request through the target service. Any unrelated new request remains
+rejected after reservation consumption until verification succeeds. Fulfil or repair its invocation-audit
 obligation and complete a post-request reconciliation covering every active projection mapping.
 Confirm the immutable successful outcome, committed execution, governed audit, exact applied
-projection-event count and complete reconciliation, then record:
+projection-event count and complete reconciliation, then record. The verification transition alone
+opens ordinary mutation admission:
 
 ```sh
 scripts/dish-pg-release cutover-verify-first-admission CUTOVER_UUID REQUEST_UUID \
@@ -509,7 +514,7 @@ State meanings:
 | `fenced` | closed | conditionally allowed |
 | `activated` | closed | conditionally allowed before burn |
 | `rollback_burned` | closed | prohibited |
-| `admission_open` | open | prohibited |
+| `admission_open` | closed; exact reserved first request only | prohibited |
 | `first_admission_verified` | open | prohibited |
 | `completed` | open | prohibited |
 | `aborted` | closed | terminal pre-burn path |

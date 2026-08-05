@@ -195,10 +195,17 @@ Run PGlite separately with:
   --output .test-artifacts/pglite/report.json
 ```
 
-The report is explicitly non-certifying. It runs the normal PGlite inventory and the foundational
-quarantine inventory separately, refuses to let the quarantined lifecycle test disappear silently,
-and classifies assertion failures separately from infrastructure/lifecycle failures. PGlite success
-never sets native PostgreSQL certification true.
+The report is explicitly non-certifying. It first collects each governed inventory from the complete
+repository, then runs every selected node in its own fresh pytest process. Each node has a hard
+timeout, file-backed stdout/stderr and JUnit evidence, and forced cleanup of its pytest process group
+plus any detached Node/PGlite descendants recorded while it ran. The runner prints `BEGIN`, `PASS`,
+`FAIL`, or `TIMEOUT` for each exact node and writes the per-node artifacts beside the JSON report.
+This isolation is runner-only: manual lane selectors combined with explicit test paths remain
+prohibited, and the ordinary pytest suite excludes the separately governed PGlite inventory. The
+normal PGlite inventory and foundational quarantine inventory remain separate; the
+runner refuses to let the quarantined lifecycle test disappear silently and classifies known
+connection-lifecycle failures separately from assertion or schema failures. PGlite success never
+sets native PostgreSQL certification true.
 
 ## Flaky-test classifications
 

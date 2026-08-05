@@ -555,12 +555,13 @@ The exact commands and deployment tooling are implementation details, but the au
 12. Prepare the authority activation and initial PostgreSQL generation.
 13. Deploy the coherent target service, Action/OpenAPI, protocol, and routing release while mutation admission remains closed.
 14. Activate PostgreSQL authority durably.
-15. Commit rollback-burn evidence; once committed, return to legacy authority is prohibited even if no PostgreSQL mutation request has yet been admitted.
-16. Open PostgreSQL mutation admission only after rollback burn is durable and only for the active generation and release set.
-17. Start or enable downstream projection workers and corpus reconciliation.
-18. Verify old direct endpoints, credentials, and processes cannot mutate.
-19. Run immediate post-activation health, read, replay, mutation, projection, and stale-client probes.
-20. Record cutover completion or enter the applicable recovery boundary.
+15. Fence relevant PostgreSQL state, rerun all burn-relevant candidate and quiescence checks, and commit rollback-burn evidence; once committed, return to legacy authority is prohibited even if no PostgreSQL mutation request has yet been admitted.
+16. Open only the isolated exact-first-request gate after rollback burn and deployment readiness are durable; keep ordinary mutation admission closed.
+17. Admit and verify the exact reserved first request, including committed outcome, audit, projection, and post-request reconciliation evidence; only successful verification opens ordinary mutation admission.
+18. Start or enable downstream projection workers and corpus reconciliation.
+19. Verify old direct endpoints, credentials, and processes cannot mutate.
+20. Run immediate post-activation health, read, replay, mutation, projection, and stale-client probes.
+21. Record cutover completion or enter the applicable recovery boundary.
 
 Routing changes alone do not transfer authority. Credential revocation or equivalent hard fencing is mandatory, not best effort.
 
@@ -594,7 +595,7 @@ Before rollback-burn evidence commits, cutover may abort back to the still-froze
 
 ### 14.2 After rollback burn
 
-Once rollback-burn evidence commits, ordinary rollback to Asana is prohibited, even if no PostgreSQL mutation request has yet been admitted. Mutation admission opens only after the burn is durable.
+Once rollback-burn evidence commits, ordinary rollback to Asana is prohibited, even if no PostgreSQL mutation request has yet been admitted. The exact reserved first request may be admitted after post-burn readiness, but ordinary mutation admission remains closed until that request is successfully verified.
 
 Recovery uses:
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import runpy
 from datetime import timedelta
 from pathlib import Path
@@ -9,6 +10,7 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import inspect, select, text
+from sqlalchemy.exc import IntegrityError
 
 from dish_pg import models
 from dish_pg import stage5_models as tx
@@ -20,6 +22,11 @@ from dish_pg.release import (
     ReleaseAuthorityError,
     ReleaseCandidateService,
     sha256_json,
+)
+from dish_pg.workflow import (
+    MutationAdmissionClosed,
+    RequestSpec,
+    WorkflowAuthorityService,
 )
 from dish_service.legacy_writer_fence import (
     engage_legacy_writer_fence,
@@ -471,15 +478,68 @@ def test_admission_requires_post_burn_runtime_worker_and_first_request_evidence(
         )
         assert plan.expected_projection_events == 0
         assert plan.payload["command_arguments"]["task_id"] == str(task_id)
+        canonical_payload = {
+            "command": "start",
+            "arguments": {
+                "task_id": str(task_id),
+                "agent": "codex",
+                "kind": "initial",
+            },
+            "owner_id": "owner-1",
+            "run_id": str(first_run_id),
+        }
+        with pytest.raises(
+            IntegrityError,
+            match="mutation admission is closed",
+        ), session.begin_nested():
+            session.execute(
+                text(
+                    """INSERT INTO service_requests (
+                        request_id,generation_id,run_id,owner_id,principal_class,
+                        command_name,canonical_payload_sha256,canonical_payload,
+                        protocol_release,dish_release,admitted_at
+                    ) VALUES (
+                        :request_id,:generation_id,:run_id,'owner-1','agent','start',
+                        :payload_sha,:payload,'protocol-1','dish-pg-stage6',:admitted_at
+                    )"""
+                ),
+                {
+                    "request_id": first_request_id.hex,
+                    "generation_id": context["generation_id"].hex,
+                    "run_id": first_run_id.hex,
+                    "payload_sha": sha256_json(canonical_payload),
+                    "payload": json.dumps(canonical_payload),
+                    "admitted_at": NOW + timedelta(minutes=6),
+                },
+            )
+            session.flush()
+        with pytest.raises(
+            MutationAdmissionClosed,
+            match="pending first-request gate",
+        ):
+            WorkflowAuthorityService(session).admit_request(
+                RequestSpec(
+                    request_id=first_request_id,
+                    generation_id=context["generation_id"],
+                    run_id=first_run_id,
+                    owner_id="owner-1",
+                    principal_class="agent",
+                    command_name="start",
+                    canonical_payload=canonical_payload,
+                    protocol_release="protocol-1",
+                    dish_release="dish-pg-stage6",
+                    admitted_at=NOW + timedelta(minutes=6),
+                )
+            )
         control = service.open_mutation_admission(
             cutover_run_id=cutover_run_id,
             opened_at=NOW + timedelta(minutes=7),
         )
-        assert control.state == "open"
+        assert control.state == "closed"
         checkpoint = session.scalar(
             select(rel.CutoverCheckpoint).where(
                 rel.CutoverCheckpoint.cutover_run_id == cutover_run_id,
-                rel.CutoverCheckpoint.checkpoint_kind == "mutation_admission_opened",
+                rel.CutoverCheckpoint.checkpoint_kind == "first_request_admission_opened",
             )
         )
         assert checkpoint is not None

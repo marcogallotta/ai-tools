@@ -50,6 +50,9 @@ class SourceImportBatch(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
+        UniqueConstraint(
+            "import_batch_id", "generation_id", name="uq_source_import_batch_generation_identity"
+        ),
         CheckConstraint("length(source_database_sha256) = 64", name="source_hash_length"),
         CheckConstraint("expected_entities >= 0 AND imported_entities >= 0", name="nonnegative_counts"),
         CheckConstraint("imported_entities <= expected_entities", name="count_not_over_expected"),
@@ -111,6 +114,9 @@ class ShadowBaseline(Base):
             "(status = 'closed' AND terminal_at IS NOT NULL AND disqualification_reason IS NULL) OR "
             "(status = 'disqualified' AND terminal_at IS NOT NULL AND disqualification_reason IS NOT NULL)",
             name="terminal_payload_consistent",
+        ),
+        UniqueConstraint(
+            "shadow_baseline_id", "generation_id", name="uq_shadow_baseline_generation_identity"
         ),
         UniqueConstraint("generation_id", "baseline_sequence", name="uq_shadow_baseline_sequence"),
         Index(
@@ -296,6 +302,9 @@ class ProjectionEpoch(Base):
             "(status = 'active' AND retired_at IS NULL) OR "
             "(status = 'retired' AND retired_at IS NOT NULL)",
             name="retirement_consistent",
+        ),
+        UniqueConstraint(
+            "projection_epoch_id", "generation_id", name="uq_projection_epoch_generation_identity"
         ),
         UniqueConstraint("generation_id", "epoch_number", name="uq_projection_epoch_number"),
         Index(

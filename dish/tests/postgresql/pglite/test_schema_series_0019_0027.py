@@ -8,6 +8,8 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, text
 
+from dish_pg.release import ALEMBIC_HEAD
+
 from tests.postgresql.pglite.test_0019_request_run_owner_consistency import (
     _insert_generation,
     _insert_request,
@@ -60,7 +62,7 @@ def test_populated_0018_predecessor_upgrades_linearly_to_0027(pglite) -> None:
             connection.commit()
             assert connection.execute(
                 text("SELECT version_num FROM alembic_version")
-            ).scalar_one() == "0027_server_default_alignment"
+            ).scalar_one() == ALEMBIC_HEAD
             assert connection.execute(
                 text(
                     "SELECT owner_id FROM service_requests "
