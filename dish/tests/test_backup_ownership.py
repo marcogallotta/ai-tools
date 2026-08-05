@@ -218,3 +218,78 @@ def test_prearmed_restore_lockout_survives_enrichment_failure(monkeypatch, tmp_p
     assert fault is not None
     assert fault["kind"] == "backup_restore_in_progress"
     assert service.health()["maintenance"]["restore_recovery_required"] is True
+
+
+def test_common_database_lock_excludes_local_cli_and_admin(monkeypatch, tmp_path):
+    import dish_tool.cli as cli_module
+    import dish_tool.admin_cli as admin_module
+    from dish_service.database_ownership import database_process_lock_path
+    from dish_service.process_lock import DatabaseProcessLock
+
+    db_path = tmp_path / "shared.db"
+    monkeypatch.setenv("DISH_MODE", "local")
+    monkeypatch.delenv("DISH_SERVICE_URL", raising=False)
+    monkeypatch.setattr(cli_module, "DB_PATH", db_path)
+    monkeypatch.setattr(admin_module, "DB_PATH", db_path)
+
+    held = DatabaseProcessLock(
+        database_process_lock_path(db_path), role="service"
+    ).acquire()
+    try:
+        with pytest.raises(DishRuleError) as cli_error:
+            cli_module.build_application()
+        with pytest.raises(DishRuleError) as admin_error:
+            admin_module.build_application()
+    finally:
+        held.release()
+
+    assert cli_error.value.rule == "database_process_lock_held"
+    assert admin_error.value.rule == "database_process_lock_held"
+
+
+def test_local_application_holds_common_lock_until_released(monkeypatch, tmp_path):
+    import dish_tool.cli as cli_module
+    from dish_service.database_ownership import database_process_lock_path
+    from dish_service.process_lock import DatabaseProcessLock
+
+    db_path = tmp_path / "local.db"
+    monkeypatch.setenv("DISH_MODE", "local")
+    monkeypatch.delenv("DISH_SERVICE_URL", raising=False)
+    honest = tmp_path / "honest"
+    honest.mkdir()
+    monkeypatch.setenv("DISH_HONEST_PATH", str(honest))
+    monkeypatch.setattr(cli_module, "DB_PATH", db_path)
+    app = cli_module.build_application()
+    try:
+        with pytest.raises(DishRuleError):
+            DatabaseProcessLock(
+                database_process_lock_path(db_path), role="local-admin"
+            ).acquire()
+    finally:
+        app.conn.close()
+        app._database_process_lock.release()
+
+    reacquired = DatabaseProcessLock(
+        database_process_lock_path(db_path), role="local-admin"
+    ).acquire()
+    reacquired.release()
+
+
+def test_service_owned_marker_fsyncs_parent_directory(monkeypatch, tmp_path):
+    import dish_service.database_ownership as ownership_module
+
+    owner = ServiceDatabaseOwnership(tmp_path / "shared.db")
+    fsynced: list[str] = []
+    real_fsync = ownership_module.os.fsync
+
+    def observe(fd):
+        try:
+            fsynced.append(os.readlink(f"/proc/self/fd/{fd}"))
+        except OSError:
+            fsynced.append("unknown")
+        return real_fsync(fd)
+
+    monkeypatch.setattr(ownership_module.os, "fsync", observe)
+    owner.mark()
+
+    assert any(Path(value) == owner.path.parent for value in fsynced if value != "unknown")

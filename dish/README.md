@@ -22,7 +22,7 @@ which Action listener Funnel exposes; it does not own workflow state or credenti
 
 ### Local test mode
 
-Local mode remains available for controlled, single-agent tests and development. Set `DISH_MODE=local` explicitly; an unset mode fails closed. It is not a multi-agent lock and must not be used with `DISH_LIVE_MODE=1`. Once `dish-service` has marked a database as service-owned, direct local CLI/admin access to that database remains forbidden even while the service is stopped.
+Local mode remains available for controlled, single-agent tests and development. Set `DISH_MODE=local` explicitly; an unset mode fails closed, and local mode must not be used with `DISH_LIVE_MODE=1`. Service mode, local `dish`, and local `dish-admin` all acquire incompatible exclusive forms of the same canonical OS process lock before opening the governed database for mutation and hold it until their database/process lifetime ends. The persistent service-owned marker remains policy evidence rather than the concurrency primitive: once `dish-service` has marked a database as service-owned, direct local CLI/admin access to that database remains forbidden even while the service is stopped.
 
 ## Installation
 
@@ -165,9 +165,12 @@ change requires `--authorize-route-change`, and production additionally requires
 across restart, and the command uses the route Etag plus an exact read-back.
 
 Keep `DISH_DB_PATH` in one stable host-state location independent of any checkout or worktree. The
-service derives its process lock and persistent ownership marker from the canonical database target,
-so pathname aliases do not create another authority. A service-owned database cannot later be
-opened through direct local mode.
+service and both direct local entry points derive one common process lock and the persistent ownership
+marker from the canonical database target, so pathname aliases do not create another authority. Each
+mutable opener takes the exclusive OS lock before opening the database and holds it for the full
+database/process lifetime. The service-owned marker is separately replaced and parent-directory
+fsynced as durable policy evidence; it is not used as the concurrency primitive. A service-owned
+database cannot later be opened through direct local mode.
 
 Each instance's two listeners are one supervised service. Failure to bind either listener stops
 startup and closes the other. On shutdown, one process-wide admission gate closes both surfaces before either
@@ -361,11 +364,16 @@ Before dispatch, `dish-admin` prints the request UUID and `DISH_CLIENT_RUN_ID` t
 
 An interrupted Planning reopen blocks only that task from another reopen or Planning start. Check
 `GET /health` at `startup.planning_reopen_recovery`: `resume_safe` means exact replay may perform the
-original update because the completion timestamp is unchanged; `applied_pending_replay` means the
-live task is already incomplete and exact replay will confirm it without another update. Use the
-returned command verbatim, including the original reason and request UUID. Contradictory live
-evidence remains uncertain and requires explicit Marco-authorized reconciliation rather than a new
-request UUID.
+original update only because the exact completion baseline is still present and deployment-certified
+version evidence proves no intervening mutation; `applied_pending_replay` means the live task is
+already incomplete and exact replay will confirm it without another update. A returned-to-baseline
+state with an advanced version, or without reliable version evidence, remains uncertain. Use the
+returned command verbatim, including the original reason and request UUID. Contradictory or
+version-ambiguous live evidence requires explicit Marco-authorized reconciliation rather than a new
+request UUID. `DISH_ASANA_MODIFIED_AT_RELIABLE_EFFECTS` is unset by default and may list only
+independently verified effect classes (`content`, `movement`, `completion`); do not enable a class
+until the deployed Asana account/API behavior has been verified to advance `modified_at` for that
+class, including mutate-then-revert and read-after-write cases.
 
 ## Backup and restore
 

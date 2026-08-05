@@ -49,6 +49,11 @@ class CompletedBackend(Backend):
         else:
             task["completed"] = self.completed
             task["modified_at"] = self.modified_at
+        task["_dish_version_evidence"] = {
+            "source": "test.modified_at",
+            "value": task["modified_at"],
+            "reliable_for": ["content", "movement", "completion"],
+        }
         return task
 
     def update_task_completed(self, *, task_gid, completed):

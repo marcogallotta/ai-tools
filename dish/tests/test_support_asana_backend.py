@@ -19,7 +19,7 @@ def test_stateful_asana_backend_preserves_adapter_task_shape_and_mutations():
         "name": "Changed",
         "notes": "new",
         "completed": True,
-        "modified_at": "now",
+        "modified_at": "test-v3",
         "projects": [{"gid": COOKING_PROJECT_GID}],
         "memberships": [
             {
@@ -27,6 +27,11 @@ def test_stateful_asana_backend_preserves_adapter_task_shape_and_mutations():
                 "section": {"gid": "vq"},
             }
         ],
+        "_dish_version_evidence": {
+            "source": "test.modified_at",
+            "value": "test-v3",
+            "reliable_for": ["content", "movement", "completion"],
+        },
     }
     assert backend.writes == 2
     assert backend.moves == 1

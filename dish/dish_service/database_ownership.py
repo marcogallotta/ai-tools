@@ -17,9 +17,14 @@ def canonical_database_path(db_path: Path) -> Path:
     return Path(db_path).expanduser().resolve(strict=False)
 
 
-def service_process_lock_path(db_path: Path) -> Path:
+def database_process_lock_path(db_path: Path) -> Path:
     canonical = canonical_database_path(db_path)
     return canonical.with_suffix(canonical.suffix + ".service.lock")
+
+
+def service_process_lock_path(db_path: Path) -> Path:
+    """Compatibility alias for the shared database process lock path."""
+    return database_process_lock_path(db_path)
 
 
 class ServiceDatabaseOwnership:
@@ -52,6 +57,11 @@ class ServiceDatabaseOwnership:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temp_path, self.path)
+            directory_fd = os.open(self.path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
             temp_path = None
         finally:
             if temp_path is not None:

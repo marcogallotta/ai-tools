@@ -2564,7 +2564,171 @@ BEFORE DELETE ON semantic_proposal_changes
 BEGIN SELECT RAISE(ABORT, 'semantic proposal changes are append-only'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37, 38: _MIGRATION_38}
+_MIGRATION_39 = """
+ALTER TABLE write_attempts ADD COLUMN expected_modified_at TEXT;
+ALTER TABLE write_attempts ADD COLUMN version_source TEXT;
+ALTER TABLE write_attempts ADD COLUMN version_reliable INTEGER NOT NULL DEFAULT 0
+    CHECK(version_reliable IN (0,1));
+ALTER TABLE movement_attempts ADD COLUMN expected_modified_at TEXT;
+ALTER TABLE movement_attempts ADD COLUMN version_source TEXT;
+ALTER TABLE movement_attempts ADD COLUMN version_reliable INTEGER NOT NULL DEFAULT 0
+    CHECK(version_reliable IN (0,1));
+ALTER TABLE planning_reopen_attempts ADD COLUMN expected_version_source TEXT;
+ALTER TABLE planning_reopen_attempts ADD COLUMN expected_version_reliable INTEGER NOT NULL DEFAULT 0
+    CHECK(expected_version_reliable IN (0,1));
+
+DROP TRIGGER write_attempt_intent_immutable_update;
+CREATE TRIGGER write_attempt_intent_immutable_update
+BEFORE UPDATE ON write_attempts
+WHEN NEW.attempt_id IS NOT OLD.attempt_id
+  OR NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.expected_identity IS NOT OLD.expected_identity
+  OR NEW.intended_identity IS NOT OLD.intended_identity
+  OR NEW.started_at IS NOT OLD.started_at
+  OR NEW.purpose IS NOT OLD.purpose
+  OR NEW.intended_title IS NOT OLD.intended_title
+  OR NEW.intended_notes IS NOT OLD.intended_notes
+  OR NEW.schema_version IS NOT OLD.schema_version
+  OR NEW.context_json IS NOT OLD.context_json
+  OR NEW.expected_modified_at IS NOT OLD.expected_modified_at
+  OR NEW.version_source IS NOT OLD.version_source
+  OR NEW.version_reliable IS NOT OLD.version_reliable
+BEGIN SELECT RAISE(ABORT, 'write attempt intent is immutable'); END;
+
+DROP TRIGGER movement_attempt_intent_immutable_update;
+CREATE TRIGGER movement_attempt_intent_immutable_update
+BEFORE UPDATE ON movement_attempts
+WHEN NEW.attempt_id IS NOT OLD.attempt_id
+  OR NEW.operation_id IS NOT OLD.operation_id
+  OR NEW.expected_section_gid IS NOT OLD.expected_section_gid
+  OR NEW.intended_section_gid IS NOT OLD.intended_section_gid
+  OR NEW.started_at IS NOT OLD.started_at
+  OR NEW.purpose IS NOT OLD.purpose
+  OR NEW.expected_modified_at IS NOT OLD.expected_modified_at
+  OR NEW.version_source IS NOT OLD.version_source
+  OR NEW.version_reliable IS NOT OLD.version_reliable
+BEGIN SELECT RAISE(ABORT, 'movement attempt intent is immutable'); END;
+
+DROP TRIGGER planning_reopen_attempts_identity_immutable_update;
+CREATE TRIGGER planning_reopen_attempts_identity_immutable_update
+BEFORE UPDATE ON planning_reopen_attempts
+WHEN NEW.attempt_id IS NOT OLD.attempt_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.request_id IS NOT OLD.request_id
+  OR NEW.expected_identity IS NOT OLD.expected_identity
+  OR NEW.expected_section_gid IS NOT OLD.expected_section_gid
+  OR NEW.expected_modified_at IS NOT OLD.expected_modified_at
+  OR NEW.expected_version_source IS NOT OLD.expected_version_source
+  OR NEW.expected_version_reliable IS NOT OLD.expected_version_reliable
+  OR NEW.reason IS NOT OLD.reason
+  OR NEW.actor_run_id IS NOT OLD.actor_run_id
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'planning reopen attempt identity is immutable'); END;
+
+DROP TRIGGER planning_reopen_attempts_status_monotonic_update;
+CREATE TRIGGER planning_reopen_attempts_status_monotonic_update
+BEFORE UPDATE OF outcome, finished_at, confirmed_modified_at ON planning_reopen_attempts
+WHEN NOT (
+       (OLD.outcome='started' AND NEW.outcome IN ('confirmed','not_applied','uncertain'))
+    OR (OLD.outcome='uncertain' AND NEW.outcome IN ('confirmed','not_applied'))
+)
+ OR NEW.finished_at IS NULL
+BEGIN SELECT RAISE(ABORT, 'planning reopen attempt completion is one-way'); END;
+
+DROP TRIGGER backup_creations_identity_immutable_update;
+DROP TRIGGER backup_creations_status_monotonic_update;
+DROP TRIGGER backup_creations_append_only_delete;
+DROP INDEX backup_creations_status_idx;
+ALTER TABLE backup_creations RENAME TO backup_creations_v38;
+CREATE TABLE backup_creations (
+    request_id TEXT PRIMARY KEY REFERENCES service_requests(request_id),
+    backup_id TEXT NOT NULL UNIQUE CHECK(length(trim(backup_id)) > 0),
+    status TEXT NOT NULL CHECK(status IN ('reserved','confirmed','not_applied','uncertain')),
+    sha256 TEXT,
+    size_bytes INTEGER,
+    created_at TEXT NOT NULL,
+    completed_at TEXT,
+    resolution_reason TEXT,
+    CHECK (
+        (status='reserved' AND sha256 IS NULL AND size_bytes IS NULL
+                           AND completed_at IS NULL AND resolution_reason IS NULL)
+     OR (status='confirmed' AND length(trim(sha256)) > 0 AND size_bytes >= 0
+                            AND completed_at IS NOT NULL)
+     OR (status='not_applied' AND sha256 IS NULL AND size_bytes IS NULL
+                              AND completed_at IS NOT NULL)
+     OR (status='uncertain' AND completed_at IS NOT NULL
+                          AND ((sha256 IS NULL AND size_bytes IS NULL)
+                            OR (length(trim(sha256)) > 0 AND size_bytes >= 0)))
+    )
+);
+INSERT INTO backup_creations(
+    request_id, backup_id, status, sha256, size_bytes, created_at, completed_at,
+    resolution_reason
+)
+SELECT request_id, backup_id,
+       CASE status WHEN 'completed' THEN 'confirmed' ELSE status END,
+       sha256, size_bytes, created_at, completed_at,
+       CASE status WHEN 'completed' THEN 'migrated_confirmed' ELSE NULL END
+  FROM backup_creations_v38;
+DROP TABLE backup_creations_v38;
+CREATE INDEX backup_creations_status_idx
+    ON backup_creations(status, created_at);
+CREATE TRIGGER backup_creations_identity_immutable_update
+BEFORE UPDATE ON backup_creations
+WHEN NEW.request_id IS NOT OLD.request_id
+  OR NEW.backup_id IS NOT OLD.backup_id
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'backup creation identity is immutable'); END;
+CREATE TRIGGER backup_creations_status_monotonic_update
+BEFORE UPDATE OF status, sha256, size_bytes, completed_at, resolution_reason
+ON backup_creations
+WHEN NOT (
+       (OLD.status='reserved' AND NEW.status IN ('confirmed','not_applied','uncertain'))
+    OR (OLD.status='uncertain' AND NEW.status IN ('confirmed','not_applied'))
+)
+ OR NEW.completed_at IS NULL
+ OR (NEW.status='confirmed' AND (
+       NEW.sha256 IS NULL OR length(trim(NEW.sha256))=0
+       OR NEW.size_bytes IS NULL OR NEW.size_bytes < 0))
+ OR (NEW.status='not_applied' AND (
+       NEW.sha256 IS NOT NULL OR NEW.size_bytes IS NOT NULL))
+BEGIN SELECT RAISE(ABORT, 'backup creation outcome is monotonic'); END;
+CREATE TRIGGER backup_creations_terminal_immutable_update
+BEFORE UPDATE ON backup_creations
+WHEN OLD.status IN ('confirmed','not_applied')
+BEGIN SELECT RAISE(ABORT, 'terminal backup creation is immutable'); END;
+CREATE TRIGGER backup_creations_append_only_delete
+BEFORE DELETE ON backup_creations
+BEGIN SELECT RAISE(ABORT, 'backup creations are append-only'); END;
+
+DROP TRIGGER service_requests_status_monotonic_update;
+CREATE TRIGGER service_requests_status_monotonic_update
+BEFORE UPDATE OF status, operation_id, task_gid, result_json, completed_at, resolution_result_json, resolved_at
+ON service_requests
+WHEN NOT (
+    (OLD.status='pending'
+     AND NEW.status IN ('completed','uncertain')
+     AND NEW.result_json IS NOT NULL AND NEW.completed_at IS NOT NULL
+     AND NEW.resolution_result_json IS NULL AND NEW.resolved_at IS NULL)
+ OR (OLD.status='uncertain' AND NEW.status='completed'
+     AND NEW.operation_id IS OLD.operation_id
+     AND NEW.task_gid IS OLD.task_gid
+     AND NEW.result_json IS OLD.result_json
+     AND NEW.completed_at IS OLD.completed_at
+     AND NEW.resolution_result_json IS NOT NULL AND NEW.resolved_at IS NOT NULL)
+ OR (OLD.status='completed' AND NEW.status='completed'
+     AND OLD.command='backup-create'
+     AND NEW.operation_id IS OLD.operation_id
+     AND NEW.task_gid IS OLD.task_gid
+     AND NEW.result_json IS OLD.result_json
+     AND NEW.completed_at IS OLD.completed_at
+     AND OLD.resolution_result_json IS NULL
+     AND NEW.resolution_result_json IS NOT NULL AND NEW.resolved_at IS NOT NULL)
+)
+BEGIN SELECT RAISE(ABORT, 'service request completion or resolution is invalid'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37, 38: _MIGRATION_38, 39: _MIGRATION_39}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -2931,11 +3095,14 @@ def _semantic_relationship(
             "targets": [{
                 "record_type": "service_requests",
                 "selector": _semantic_selector(row, "request_id"),
-                "fields": ["command", "status", "result_json", "completed_at"],
+                "fields": [
+                    "command", "status", "result_json", "resolution_result_json",
+                    "completed_at", "resolved_at",
+                ],
             }],
             "required_predicate": (
-                "completed backup creation metadata exactly matches a completed successful "
-                "backup-create service result for the same request"
+                "confirmed backup creation is bound to its exact backup-create request; "
+                "when the authoritative request result is successful, its metadata matches exactly"
             ),
         },
         "backup_creation_result_missing": {
@@ -2946,7 +3113,7 @@ def _semantic_relationship(
                 "fields": ["backup_id", "status", "sha256", "size_bytes"],
             }],
             "required_predicate": (
-                "every completed successful backup-create request has one completed "
+                "every authoritative successful backup-create result has one confirmed "
                 "backup_creations row with the same backup identity and metadata"
             ),
         },
@@ -3881,25 +4048,33 @@ def _validate_planning_intent_evidence(
 def _validate_backup_and_reset_evidence(
     conn: sqlite3.Connection, problems: list[dict[str, Any]]
 ) -> None:
-    for row in conn.execute("SELECT * FROM backup_creations WHERE status='completed'"):
+    def authoritative_backup_result(request: sqlite3.Row) -> dict[str, Any] | None:
+        try:
+            encoded = request["resolution_result_json"] or request["result_json"]
+            result = json.loads(encoded or "null")
+        except (TypeError, ValueError):
+            return None
+        return result if isinstance(result, dict) else None
+
+    for row in conn.execute("SELECT * FROM backup_creations WHERE status='confirmed'"):
         request = conn.execute(
             "SELECT * FROM service_requests WHERE request_id=?", (row["request_id"],)
         ).fetchone()
-        valid = False
-        if request is not None and request["command"] == "backup-create" and request["status"] == "completed":
-            try:
-                result = json.loads(request["result_json"] or "null")
-            except (TypeError, ValueError):
-                result = None
-            backup = (result.get("data") or {}).get("backup") if isinstance(result, dict) else None
-            valid = bool(
-                isinstance(result, dict)
-                and result.get("ok")
-                and isinstance(backup, dict)
-                and backup.get("backup_id") == row["backup_id"]
-                and backup.get("sha256") == row["sha256"]
-                and backup.get("size_bytes") == row["size_bytes"]
-            )
+        valid = bool(request is not None and request["command"] == "backup-create")
+        if valid and request["status"] == "completed":
+            result = authoritative_backup_result(request)
+            if isinstance(result, dict) and result.get("ok"):
+                backup = (result.get("data") or {}).get("backup")
+                valid = bool(
+                    isinstance(backup, dict)
+                    and backup.get("backup_id") == row["backup_id"]
+                    and backup.get("sha256") == row["sha256"]
+                    and backup.get("size_bytes") == row["size_bytes"]
+                )
+            # A completed failure with exact confirmed destination evidence is a
+            # supported crash/reconciliation frontier. Startup or exact replay
+            # may add the successful resolution result without replacing the
+            # original first outcome.
         if not valid:
             problems.append(_semantic_problem(
                 conn,
@@ -3908,15 +4083,24 @@ def _validate_backup_and_reset_evidence(
                 row["request_id"],
             ))
     for request in conn.execute(
-        """SELECT * FROM service_requests
-             WHERE command='backup-create' AND status='completed'
-               AND json_extract(result_json, '$.ok')=1"""
+        "SELECT * FROM service_requests WHERE command='backup-create' AND status='completed'"
     ):
+        result = authoritative_backup_result(request)
+        if not isinstance(result, dict) or not result.get("ok"):
+            continue
+        backup = (result.get("data") or {}).get("backup")
         creation = conn.execute(
-            "SELECT status FROM backup_creations WHERE request_id=?",
+            "SELECT * FROM backup_creations WHERE request_id=?",
             (request["request_id"],),
         ).fetchone()
-        if creation is None or creation["status"] != "completed":
+        if not (
+            creation is not None
+            and creation["status"] == "confirmed"
+            and isinstance(backup, dict)
+            and backup.get("backup_id") == creation["backup_id"]
+            and backup.get("sha256") == creation["sha256"]
+            and backup.get("size_bytes") == creation["size_bytes"]
+        ):
             problems.append(_semantic_problem(
                 conn,
                 "backup_creation_result_missing",

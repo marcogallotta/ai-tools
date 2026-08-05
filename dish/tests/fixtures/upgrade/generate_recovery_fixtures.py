@@ -114,11 +114,14 @@ def build(output_dir: str | Path | None = None) -> None:
     add_operation(conn, op=op, task=task, expected=old_id)
     conn.execute("""INSERT INTO write_attempts(
         attempt_id, operation_id, expected_identity, intended_identity, outcome,
-        started_at, purpose, intended_title, intended_notes, schema_version, context_json
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        started_at, purpose, intended_title, intended_notes, schema_version, context_json,
+        expected_modified_at, version_source, version_reliable
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         ("wa-applied", op, old_id, ident(new_t, new_n), "started", NOW,
-         "content_write", new_t, new_n, "2", json.dumps({"scenario": "applied"})))
+         "content_write", new_t, new_n, "2", json.dumps({"scenario": "applied"}),
+         "fixture", "test.modified_at", 1))
     sidecars.append({"task_gid": task, "title": new_t, "notes": new_n,
+                     "modified_at": "effect-v1",
                      "section_gid": "verification", "expected_recovery": "applied", "contradictory_request": "not-applied", "expected_row_diff": {"table": "write_attempts", "id": "wa-applied", "column": "outcome", "before": "started", "after": "confirmed"}})
     scenarios.append({"id": "write-applied", "task_gid": task,
                       "covers": ["started write", "live applied", "truthful identities"]})
@@ -131,11 +134,14 @@ def build(output_dir: str | Path | None = None) -> None:
     add_operation(conn, op=op, task=task, expected=old_id)
     conn.execute("""INSERT INTO write_attempts(
         attempt_id, operation_id, expected_identity, intended_identity, outcome,
-        started_at, purpose, intended_title, intended_notes, schema_version, context_json
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        started_at, purpose, intended_title, intended_notes, schema_version, context_json,
+        expected_modified_at, version_source, version_reliable
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         ("wa-not-applied", op, old_id, ident(new_t, new_n), "started", NOW,
-         "content_write", new_t, new_n, "2", json.dumps({"scenario": "not_applied"})))
+         "content_write", new_t, new_n, "2", json.dumps({"scenario": "not_applied"}),
+         "fixture", "test.modified_at", 1))
     sidecars.append({"task_gid": task, "title": old_t, "notes": old_n,
+                     "modified_at": "fixture",
                      "section_gid": "verification", "expected_recovery": "not_applied", "contradictory_request": "applied", "expected_row_diff": {"table": "write_attempts", "id": "wa-not-applied", "column": "outcome", "before": "started", "after": "not_applied"}})
     scenarios.append({"id": "write-not-applied", "task_gid": task,
                       "covers": ["started write", "live not applied", "truthful identities"]})
@@ -149,11 +155,14 @@ def build(output_dir: str | Path | None = None) -> None:
     add_operation(conn, op=op, task=task, expected=old_id, status="uncertain")
     conn.execute("""INSERT INTO write_attempts(
         attempt_id, operation_id, expected_identity, intended_identity, outcome,
-        started_at, purpose, intended_title, intended_notes, schema_version, context_json
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+        started_at, purpose, intended_title, intended_notes, schema_version, context_json,
+        expected_modified_at, version_source, version_reliable
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         ("wa-uncertain", op, old_id, ident(new_t, new_n), "uncertain", NOW,
-         "content_write", new_t, new_n, "2", json.dumps({"scenario": "uncertain"})))
+         "content_write", new_t, new_n, "2", json.dumps({"scenario": "uncertain"}),
+         "fixture", "test.modified_at", 1))
     sidecars.append({"task_gid": task, "title": live_t, "notes": live_n,
+                     "modified_at": "external-v1",
                      "section_gid": "verification", "expected_recovery": "uncertain"})
     scenarios.append({"id": "write-uncertain", "task_gid": task,
                       "covers": ["uncertain write", "divergent live task", "multiple identities"]})
@@ -169,11 +178,13 @@ def build(output_dir: str | Path | None = None) -> None:
         add_operation(conn, op=op, task=task, expected=cid)
         conn.execute("""INSERT INTO movement_attempts(
             attempt_id, operation_id, expected_section_gid, intended_section_gid,
-            outcome, started_at, purpose
-        ) VALUES(?,?,?,?,?,?,?)""",
+            outcome, started_at, purpose, expected_modified_at, version_source,
+            version_reliable
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
             (f"ma-{suffix}", op, "verification", "destination", "started", NOW,
-             "destination_submission"))
+             "destination_submission", "fixture", "test.modified_at", 1))
         sidecars.append({"task_gid": task, "title": title, "notes": notes,
+                         "modified_at": "effect-v1" if expected == "applied" else "fixture",
                          "section_gid": live_section, "expected_recovery": expected})
         scenarios.append({"id": f"movement-{suffix}", "task_gid": task,
                           "covers": ["destination movement", f"live {expected}"]})

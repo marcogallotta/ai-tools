@@ -33,13 +33,19 @@ def test_backup_permission_failure_names_destination_not_live_database(monkeypat
     error = _error(result)
     assert result["code"] == "BACKEND_REJECTED"
     assert result["retryable"] is True
-    assert error == {
+    assert {key: error[key] for key in (
+        "rule", "resource", "reason", "error_type", "database_retained",
+        "backup_creation_outcome", "backup_creation_stage",
+    )} == {
         "rule": "backup_destination_unavailable",
         "resource": "managed_backup_directory",
         "reason": "permission_denied",
         "error_type": "PermissionError",
         "database_retained": True,
+        "backup_creation_outcome": "not_applied",
+        "backup_creation_stage": "pre_rename",
     }
+    assert error["backup_id"].endswith(".sqlite3")
     assert service.health()["database"]["ok"] is True
 
     recovered = service.create_backup(label="recovered")

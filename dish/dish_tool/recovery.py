@@ -75,6 +75,9 @@ def begin_operation_write_attempt(
     schema_version: str | None = None,
     purpose: str = "content_write",
     context: dict[str, object] | None = None,
+    expected_modified_at: str | None = None,
+    version_source: str | None = None,
+    version_reliable: bool = False,
 ) -> str:
     """Persist one complete write intent before the backend call begins."""
     attempt_id = str(uuid.uuid4())
@@ -83,11 +86,13 @@ def begin_operation_write_attempt(
             conn.execute(
                 """INSERT INTO write_attempts (
                     attempt_id, operation_id, expected_identity, intended_identity, outcome, started_at,
-                    purpose, intended_title, intended_notes, schema_version, context_json
-                ) VALUES (?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?)""",
+                    purpose, intended_title, intended_notes, schema_version, context_json,
+                    expected_modified_at, version_source, version_reliable
+                ) VALUES (?, ?, ?, ?, 'started', ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (attempt_id, operation_id, expected_identity, intended_identity, utc_now(), purpose,
                  intended_title, intended_notes, schema_version,
-                 None if context is None else json.dumps(context, sort_keys=True, separators=(",", ":"))),
+                 None if context is None else json.dumps(context, sort_keys=True, separators=(",", ":")),
+                 expected_modified_at, version_source, int(version_reliable)),
             )
             operation = conn.execute(
                 "SELECT task_gid FROM operations WHERE operation_id = ?",
@@ -171,6 +176,9 @@ def begin_movement_attempt(
     expected_section_gid: str | None,
     intended_section_gid: str,
     purpose: str = "unspecified",
+    expected_modified_at: str | None = None,
+    version_source: str | None = None,
+    version_reliable: bool = False,
 ) -> str:
     attempt_id = str(uuid.uuid4())
     try:
@@ -178,10 +186,11 @@ def begin_movement_attempt(
             conn.execute(
                 """INSERT INTO movement_attempts (
                     attempt_id, operation_id, expected_section_gid, intended_section_gid,
-                    outcome, started_at, purpose
-                ) VALUES (?, ?, ?, ?, 'started', ?, ?)""",
+                    outcome, started_at, purpose, expected_modified_at, version_source,
+                    version_reliable
+                ) VALUES (?, ?, ?, ?, 'started', ?, ?, ?, ?, ?)""",
                 (attempt_id, operation_id, expected_section_gid, intended_section_gid,
-                 utc_now(), purpose),
+                 utc_now(), purpose, expected_modified_at, version_source, int(version_reliable)),
             )
             operation = conn.execute(
                 "SELECT task_gid FROM operations WHERE operation_id = ?",

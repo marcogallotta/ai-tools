@@ -65,7 +65,9 @@ from .backup import BackupManager, BackupRecord
 from .backup_creation_journal import (
     complete_backup_creation,
     creation_for_request,
+    finish_backup_creation,
     reserve_backup_creation,
+    unresolved_backup_creations,
 )
 from .config import ServiceConfig
 from .shadow_capture import LegacyShadowCapture, ShadowCaptureSettings
@@ -3165,6 +3167,68 @@ class DishService:
         except _AuthoritativeReplayWon as replay:
             return replay.authoritative
 
+    def _reconcile_backup_creation_destination(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        request_id: str,
+        creation: Mapping[str, Any],
+    ) -> BackupRecord | None:
+        """Resolve only the exact reserved destination, never a generated replacement."""
+        backup_id = str(creation["backup_id"])
+        try:
+            record = self.backup_manager.confirm_existing_record(backup_id)
+        except DishRuleError as exc:
+            try:
+                with immediate_transaction(conn, "backup_creation_uncertain"):
+                    finish_backup_creation(
+                        conn, request_id=request_id, outcome="uncertain",
+                        reason=f"reconciliation:{exc.rule}", record=None,
+                    )
+            except DishRuleError as journal_exc:
+                raise journal_exc from exc
+            details = dict(exc.details)
+            details.update({
+                "request_id": request_id,
+                "backup_id": backup_id,
+                "backup_creation_outcome": "uncertain",
+                "exact_reserved_destination_reconciled": True,
+            })
+            raise DishRuleError(
+                "BACKEND_UNCERTAIN",
+                "the exact reserved backup destination could not be reconciled durably",
+                rule="backup_creation_reconciliation_uncertain",
+                retryable=False,
+                details=details,
+            ) from exc
+        with immediate_transaction(conn, "reconcile_backup_creation"):
+            finish_backup_creation(
+                conn, request_id=request_id,
+                outcome="confirmed" if record is not None else "not_applied",
+                reason=(
+                    "exact_destination_validated_and_directory_fsynced"
+                    if record is not None
+                    else "exact_destination_absent"
+                ),
+                record=record,
+            )
+        return record
+
+    @staticmethod
+    def _backup_not_applied_error(*, request_id: str, backup_id: str) -> DishRuleError:
+        return DishRuleError(
+            "BACKEND_REJECTED",
+            "the reserved backup destination is durably absent",
+            rule="backup_creation_not_applied",
+            retryable=True,
+            details={
+                "request_id": request_id,
+                "backup_id": backup_id,
+                "backup_creation_outcome": "not_applied",
+                "exact_reserved_destination_reconciled": True,
+            },
+        )
+
     def create_backup(
         self,
         *,
@@ -3175,12 +3239,12 @@ class DishService:
         with self._maintenance_gate.request():
             principal = principal or self._default_principal({}, admin=True)
             replay_started = False
+            creation = None
+            request_row = None
             try:
                 conn = self._initialize_database(
-                    surface="admin",
-                    command="backup-create",
-                    request_id=request_id,
-                    principal=principal,
+                    surface="admin", command="backup-create",
+                    request_id=request_id, principal=principal,
                 )
             except Exception as exc:
                 return error_envelope(
@@ -3188,50 +3252,61 @@ class DishService:
                 )
             try:
                 manager = self.backup_manager
-                creation = None
                 if request_id:
-                    row, replay_started = begin_request(
+                    request_row, replay_started = begin_request(
                         conn,
-                        request_id=request_id,
-                        owner_id=principal.owner_id,
-                        run_id=principal.run_id,
-                        command="backup-create",
+                        request_id=request_id, owner_id=principal.owner_id,
+                        run_id=principal.run_id, command="backup-create",
                         arguments={"label": label},
                     )
-                    prior = stored_result(row)
+                    creation = creation_for_request(conn, request_id)
+                    prior = stored_result(request_row)
+                    if prior is not None and bool(prior.get("ok")):
+                        return prior
+                    if not replay_started and creation is not None:
+                        recovered = self._reconcile_backup_creation_destination(
+                            conn, request_id=request_id, creation=creation
+                        )
+                        if recovered is not None:
+                            result = result_envelope(
+                                command="backup-create",
+                                data={
+                                    "backup": recovered.as_dict(),
+                                    "request_id": request_id,
+                                    "request_replayed": True,
+                                    "backup_recovered_from_interruption": True,
+                                },
+                            )
+                            return self._commit_backup_creation_result(
+                                conn, request_id=request_id, record=recovered, result=result
+                            )
+                        if request_row["status"] == "uncertain":
+                            result = error_envelope(
+                                "backup-create",
+                                self._backup_not_applied_error(
+                                    request_id=request_id, backup_id=creation["backup_id"]
+                                ),
+                            )
+                            result.setdefault("data", {})["request_id"] = request_id
+                            return complete_request(
+                                conn, request_id=request_id, result=result
+                            )
+                        if prior is not None:
+                            return prior
+                        result = error_envelope(
+                            "backup-create",
+                            self._backup_not_applied_error(
+                                request_id=request_id, backup_id=creation["backup_id"]
+                            ),
+                        )
+                        result.setdefault("data", {})["request_id"] = request_id
+                        return complete_request(conn, request_id=request_id, result=result)
                     if prior is not None:
                         return prior
-                    creation = creation_for_request(conn, request_id)
                     if not replay_started:
-                        if creation is None:
-                            raise pending_error("backup-create", request_id)
-                        recovered = manager.existing_record(creation["backup_id"])
-                        if recovered is None:
-                            exc = pending_error("backup-create", request_id)
-                            exc.details.update({
-                                "backup_id": creation["backup_id"],
-                                "backup_identity_reserved": True,
-                            })
-                            raise exc
-                        result = result_envelope(
-                            command="backup-create",
-                            data={
-                                "backup": recovered.as_dict(),
-                                "request_id": request_id,
-                                "request_replayed": True,
-                                "backup_recovered_from_interruption": True,
-                            },
-                        )
-                        return self._commit_backup_creation_result(
-                            conn,
-                            request_id=request_id,
-                            record=recovered,
-                            result=result,
-                        )
-
+                        raise pending_error("backup-create", request_id)
                     creation = reserve_backup_creation(
-                        conn,
-                        request_id=request_id,
+                        conn, request_id=request_id,
                         backup_id=manager.new_backup_id(label=label),
                     )
 
@@ -3248,10 +3323,34 @@ class DishService:
                         conn, request_id=request_id, record=record, result=result
                     )
                 return result
-            except DishRuleError as exc:
+            except DishRuleError as original_exc:
+                exc = original_exc
+                if request_id and creation is not None:
+                    try:
+                        recovered = self._reconcile_backup_creation_destination(
+                            conn, request_id=request_id, creation=creation
+                        )
+                    except DishRuleError as reconciliation_exc:
+                        exc = reconciliation_exc
+                    else:
+                        if recovered is not None:
+                            result = result_envelope(
+                                command="backup-create",
+                                data={
+                                    "backup": recovered.as_dict(),
+                                    "request_id": request_id,
+                                    "backup_recovered_from_ambiguous_completion": True,
+                                },
+                            )
+                            return self._commit_backup_creation_result(
+                                conn, request_id=request_id, record=recovered, result=result
+                            )
+                        if original_exc.code == "BACKEND_UNCERTAIN":
+                            exc = self._backup_not_applied_error(
+                                request_id=request_id, backup_id=creation["backup_id"]
+                            )
                 exc = _preserve_semantic_evidence_error(
-                    exc,
-                    execution_occurred=True,
+                    exc, execution_occurred=True,
                     request_id_consumed=bool(request_id and replay_started),
                 )
                 result = error_envelope("backup-create", exc)
@@ -3263,8 +3362,7 @@ class DishService:
                 result = error_envelope(
                     "backup-create",
                     _database_execution_unavailable_error(
-                        exc,
-                        request_id_consumed=bool(request_id and replay_started),
+                        exc, request_id_consumed=bool(request_id and replay_started),
                     ),
                 )
                 if request_id:
@@ -3701,6 +3799,62 @@ class DishService:
             self._restore_requests.complete(request_id=request_id, result=result)
             return result
 
+    def _reconcile_backup_creations_startup(
+        self, conn: sqlite3.Connection
+    ) -> dict[str, Any]:
+        summary: dict[str, Any] = {
+            "discovered": 0,
+            "confirmed": 0,
+            "not_applied": 0,
+            "uncertain": 0,
+            "errors": [],
+        }
+        for creation in unresolved_backup_creations(conn):
+            summary["discovered"] += 1
+            request_id = str(creation["request_id"])
+            try:
+                record = self._reconcile_backup_creation_destination(
+                    conn, request_id=request_id, creation=creation
+                )
+                request = conn.execute(
+                    "SELECT * FROM service_requests WHERE request_id=?",
+                    (request_id,),
+                ).fetchone()
+                if record is not None:
+                    result = result_envelope(
+                        command="backup-create",
+                        data={
+                            "backup": record.as_dict(),
+                            "request_id": request_id,
+                            "request_replayed": True,
+                            "backup_recovered_during_startup": True,
+                        },
+                    )
+                    self._commit_backup_creation_result(
+                        conn, request_id=request_id, record=record, result=result
+                    )
+                    summary["confirmed"] += 1
+                else:
+                    if request is not None and request["status"] in {"pending", "uncertain"}:
+                        result = error_envelope(
+                            "backup-create",
+                            self._backup_not_applied_error(
+                                request_id=request_id, backup_id=creation["backup_id"]
+                            ),
+                        )
+                        result.setdefault("data", {})["request_id"] = request_id
+                        complete_request(conn, request_id=request_id, result=result)
+                    summary["not_applied"] += 1
+            except DishRuleError as exc:
+                summary["uncertain"] += 1
+                summary["errors"].append({
+                    "request_id": request_id,
+                    "backup_id": creation["backup_id"],
+                    "rule": exc.rule,
+                    "error_type": type(exc).__name__,
+                })
+        return summary
+
     def startup_check(self) -> dict[str, Any]:
         """Report startup state and reconcile a durably checkpointed restore."""
         repaired = 0
@@ -3714,6 +3868,10 @@ class DishService:
             "discovered": 0, "confirmed": 0, "not_applied": 0,
             "resume_safe": 0, "applied_pending_replay": 0,
             "uncertain": 0, "pending": [], "errors": [],
+        }
+        backup_creation_recovery: dict[str, Any] = {
+            "discovered": 0, "confirmed": 0, "not_applied": 0,
+            "uncertain": 0, "errors": [],
         }
         try:
             with self._maintenance_gate.restore():
@@ -3732,6 +3890,14 @@ class DishService:
                     repaired = process_command_audit_repairs(conn)
                 except Exception as exc:
                     audit_repair_error_type = type(exc).__name__
+                try:
+                    backup_creation_recovery = (
+                        self._reconcile_backup_creations_startup(conn)
+                    )
+                except Exception as exc:
+                    backup_creation_recovery["errors"].append({
+                        "startup_error_type": type(exc).__name__,
+                    })
                 try:
                     planning_reopen_recovery = (
                         self._reconcile_planning_reopens_startup(conn)
@@ -3773,6 +3939,7 @@ class DishService:
             })
         startup["restore_recovery"] = recovery_summary
         startup["planning_reopen_recovery"] = planning_reopen_recovery
+        startup["backup_creation_recovery"] = backup_creation_recovery
         # Configuration is the listener-start boundary. Database, compatibility,
         # Asana, and restore faults leave the process available for diagnosis,
         # lease recovery, backup attempts, and administrative restore.

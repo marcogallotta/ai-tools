@@ -63,6 +63,7 @@ class StatefulAsanaBackend:
         self._before: dict[str, list[Callable[..., None]]] = defaultdict(list)
         self._after: dict[str, list[Callable[..., None]]] = defaultdict(list)
         self._forbidden: dict[str, str] = {}
+        self._version_sequence = 0
 
         if tasks is None:
             self.add_task(
@@ -102,6 +103,10 @@ class StatefulAsanaBackend:
             "completed": completed,
             "modified_at": modified_at,
         }
+
+    def _bump_modified_at(self, task_gid: str) -> None:
+        self._version_sequence += 1
+        self._task(task_gid)["modified_at"] = f"test-v{self._version_sequence}"
 
     @property
     def title(self) -> str:
@@ -229,6 +234,11 @@ class StatefulAsanaBackend:
                     "section": {"gid": item["section_gid"]},
                 }
             ],
+            "_dish_version_evidence": {
+                "source": "test.modified_at",
+                "value": item["modified_at"],
+                "reliable_for": ["content", "movement", "completion"],
+            },
         }
 
     def read_task(self, gid: str) -> dict[str, Any]:
@@ -254,6 +264,7 @@ class StatefulAsanaBackend:
         def effect() -> None:
             self._task(task_gid)["title"] = title
             self._task(task_gid)["notes"] = notes
+            self._bump_modified_at(task_gid)
 
         self._invoke("update_task_content", arguments, effect)
 
@@ -262,6 +273,7 @@ class StatefulAsanaBackend:
 
         def effect() -> None:
             self._task(task_gid)["completed"] = completed
+            self._bump_modified_at(task_gid)
 
         self._invoke("update_task_completed", arguments, effect)
 
@@ -270,5 +282,6 @@ class StatefulAsanaBackend:
 
         def effect() -> None:
             self._task(task_gid)["section_gid"] = section_gid
+            self._bump_modified_at(task_gid)
 
         self._invoke("move_task_to_section", arguments, effect)

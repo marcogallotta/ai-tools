@@ -21,7 +21,8 @@ from .database import initialize_database
 from .errors import DishRuleError
 from .releases import configured_honest_path, resolve_release
 from dish_service.client import DishServiceClient
-from dish_service.database_ownership import ServiceDatabaseOwnership
+from dish_service.database_ownership import ServiceDatabaseOwnership, database_process_lock_path
+from dish_service.process_lock import DatabaseProcessLock
 from .results import error_envelope, exit_status
 
 
@@ -352,16 +353,25 @@ def build_application(profile: str | None = None):
             "live mode requires the shared dish service",
             rule="shared_service_required",
         )
-    ServiceDatabaseOwnership(DB_PATH).assert_local_access_allowed()
-    honest_root = configured_honest_path()
-    conn = initialize_database(DB_PATH)
-    return DishApplication(
-        conn,
-        AsanaBackend(),
-        release_loader=lambda role=None: resolve_release(
-            honest_root, protocol_role=role
-        ),
-    )
+    lock = DatabaseProcessLock(
+        database_process_lock_path(DB_PATH), role="local-cli"
+    ).acquire()
+    try:
+        ServiceDatabaseOwnership(DB_PATH).assert_local_access_allowed()
+        honest_root = configured_honest_path()
+        conn = initialize_database(DB_PATH)
+        app = DishApplication(
+            conn,
+            AsanaBackend(),
+            release_loader=lambda role=None: resolve_release(
+                honest_root, protocol_role=role
+            ),
+        )
+        app._database_process_lock = lock
+        return app
+    except Exception:
+        lock.release()
+        raise
 
 
 def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
@@ -475,3 +485,6 @@ def main(
             conn = getattr(app, "conn", None)
             if conn is not None:
                 conn.close()
+            process_lock = getattr(app, "_database_process_lock", None)
+            if process_lock is not None:
+                process_lock.release()

@@ -51,19 +51,32 @@ def _immutable_backup_validation_error(
     )
 
 
-def _backup_destination_error(exc: OSError, *, reason: str) -> DishRuleError:
-    """Classify managed-backup filesystem failure without blaming the live DB."""
-
+def _backup_destination_error(
+    exc: OSError, *, reason: str, outcome: str, stage: str, backup_id: str
+) -> DishRuleError:
+    """Classify managed-backup filesystem failure by rename/durability stage."""
+    uncertain = outcome == "uncertain"
     return DishRuleError(
-        "BACKEND_REJECTED",
-        "managed backup destination is unavailable; the live database was not changed",
-        rule="backup_destination_unavailable",
-        retryable=True,
+        "BACKEND_UNCERTAIN" if uncertain else "BACKEND_REJECTED",
+        (
+            "managed backup rename or durability is uncertain"
+            if uncertain
+            else "managed backup failed before destination rename"
+        ),
+        rule=(
+            "backup_creation_post_rename_uncertain"
+            if uncertain
+            else "backup_destination_unavailable"
+        ),
+        retryable=not uncertain,
         details={
             "resource": "managed_backup_directory",
             "reason": reason,
             "error_type": type(exc).__name__,
             "database_retained": True,
+            "backup_id": backup_id,
+            "backup_creation_outcome": outcome,
+            "backup_creation_stage": stage,
         },
     )
 
@@ -226,7 +239,10 @@ class BackupManager:
                 if isinstance(exc, (FileExistsError, NotADirectoryError))
                 else "path_unavailable"
             )
-            raise _backup_destination_error(exc, reason=reason) from exc
+            raise _backup_destination_error(
+                exc, reason=reason, outcome="not_applied",
+                stage="pre_rename", backup_id=destination.name
+            ) from exc
 
         source = initialize_database(self.db_path)
         temp_path: Path | None = None
@@ -247,7 +263,10 @@ class BackupManager:
                     if isinstance(exc, NotADirectoryError)
                     else "path_unavailable"
                 )
-                raise _backup_destination_error(exc, reason=reason) from exc
+                raise _backup_destination_error(
+                    exc, reason=reason, outcome="not_applied",
+                    stage="pre_rename", backup_id=destination.name
+                ) from exc
             target = self._raw_connection(temp_path)
             try:
                 source.backup(target)
@@ -257,8 +276,6 @@ class BackupManager:
             try:
                 os.replace(temp_path, destination)
                 temp_path = None
-                self._fsync_directory(destination.parent)
-                return self._record(destination)
             except OSError as exc:
                 reason = (
                     "permission_denied"
@@ -267,7 +284,23 @@ class BackupManager:
                     if isinstance(exc, NotADirectoryError)
                     else "path_unavailable"
                 )
-                raise _backup_destination_error(exc, reason=reason) from exc
+                outcome = "uncertain" if destination.exists() else "not_applied"
+                raise _backup_destination_error(
+                    exc, reason=reason, outcome=outcome, stage="rename_call",
+                    backup_id=destination.name
+                ) from exc
+            record = self._record(destination)
+            try:
+                self._fsync_directory(destination.parent)
+            except OSError as exc:
+                reason = "permission_denied" if isinstance(exc, PermissionError) else "path_unavailable"
+                error = _backup_destination_error(
+                    exc, reason=reason, outcome="uncertain", stage="post_rename_fsync",
+                    backup_id=destination.name
+                )
+                error.details.update(record.as_dict())
+                raise error from exc
+            return record
         finally:
             source.close()
             if temp_path is not None:
@@ -294,6 +327,22 @@ class BackupManager:
                 raise _immutable_backup_validation_error(exc, backup_id=path.name) from exc
             raise
         return self._record(path)
+
+    def confirm_existing_record(self, backup_id: str) -> BackupRecord | None:
+        """Validate the exact destination and make its directory entry durable now."""
+        record = self.existing_record(backup_id)
+        if record is None:
+            return None
+        try:
+            self._fsync_directory(self.backup_dir)
+        except OSError as exc:
+            error = _backup_destination_error(
+                exc, reason="path_unavailable", outcome="uncertain",
+                stage="reconciliation_fsync", backup_id=backup_id
+            )
+            error.details.update(record.as_dict())
+            raise error from exc
+        return record
 
     def create(
         self,
