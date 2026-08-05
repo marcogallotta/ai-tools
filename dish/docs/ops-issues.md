@@ -7,8 +7,8 @@ not a live source of truth — it will go stale the same way
 verified" column before trusting an "open" or "done" mark on anything more
 than a few weeks old.
 
-Snapshot date: 2026-08-04. Repo HEAD at snapshot: `b90f42c` (main),
-worktree `worktree-disqualify-baseline` not yet merged.
+Snapshot date: 2026-08-04, partially refreshed 2026-08-05. Repo HEAD at last refresh: `10ded82`
+(main).
 
 ## Priority key
 
@@ -73,6 +73,12 @@ items are.
 | Legacy-writer inventory — enumeration | 2026-08-04 (repo search + Marco confirmation) | Complete set: `dish-service-prod.service`, `dish` CLI, `dish-admin` CLI. Repo search of `scripts/` found no other write path to legacy SQLite/Asana — the `dish-pg-*` scripts that touch SQLite operate on disposable rehearsal/test spool DBs, not authoritative state. Marco confirmed no writer exists outside the repo (no cron/manual/external process). |
 | Legacy-writer inventory — enforcement | 2026-08-05 (directly code-verified, fixed and tested) | `validate_writer_fence_observation()` (`release_validation.py:310-382`); threaded through `verify_writer_fence()`, `mark_fenced()`, `activate_authority()`, and `burn_rollback()` (`cutover_control.py`); commits `1d4729b`, `b7d0d0f`, `9c18ea6`. Exact set-equality against `required_writer_inventory`, fails closed on `None`/empty/blank/duplicate, correct `missing_writer_targets`/`extra_writer_targets` diagnostics. `burn_rollback()` was missing the parameter entirely (`TypeError` on every call, caught by rerunning the `release-cutover` test lane) — fixed in `9c18ea6`. `scripts/dish-pg-release` now passes the real confirmed inventory (`dish-service-prod.service`, `dish`, `dish-admin`) to all four cutover subcommands. `release-cutover` lane: 75 passed. |
 | Writer-fence planned/deployed binding | 2026-08-05 (directly code-verified) | `legacy_writer_fence.py`; commit `b7d0d0f`. SHA-256 digest comparison between prepared manifest and deployed on-disk bytes, checked before every state transition including idempotent re-entry. |
+| Rollback-burn skips fresh quiescence evaluation | 2026-08-05 (directly code-verified) | `burn_rollback()` now reruns `evaluate_candidate()` immediately before the irreversible transition (`cutover_control.py:661-668`), fails closed on any failed check. Commit `fce152c`, migration `0029`. |
+| First-request admission reopens before `verify_first_admission()` | 2026-08-05 (directly code-verified) | `verify_first_admission()` (`cutover_control.py:1221-1238`) is the only path that opens general mutation admission; consuming the reservation alone leaves admission closed. Commit `fce152c`, migration `0029`. |
+| Missing generation-bound candidate FKs | 2026-08-05 (directly code-verified) | Migration `0029` adds composite FK constraints binding each candidate's `source_import_batch_id`/`shadow_baseline_id`/`projection_epoch_id` to its own `generation_id`, plus a populated-data preflight that aborts on existing lineage mismatches. Commit `fce152c`. |
+| Illegal candidate initial states admitted on INSERT | 2026-08-05 (directly code-verified) | Migration `0029` adds a `BEFORE INSERT` guard trigger on `release_candidates` (`release_candidates_initial_state_guard`). Commit `fce152c`. |
+| Illegal admission-control / reservation initial states | 2026-08-05 (directly code-verified) | Migration `0029` adds `BEFORE INSERT` guard triggers on `mutation_admission_controls` and `first_request_reservations`. Commit `fce152c`. |
+| Migration `0028` fails open when no admission-control row exists | 2026-08-05 (directly code-verified) | Migration `0029` adds `mutation_admission_controls_verified_open_guard` (`BEFORE UPDATE`) and `service_requests_stage6_admission_guard` (`BEFORE INSERT`), closing the fail-open path. Commit `fce152c`. |
 
 ## Provisionally done — not independently reverified
 
@@ -92,13 +98,19 @@ items are.
 
 | Item | Priority | Owner | Local effort | Last verified | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| Rollback-burn skips fresh quiescence evaluation | Must-fix | Mixed | Medium | 2026-08-04 (fork-verified) | `burn_rollback()` (`cutover_control.py:514`) never calls `evaluate_candidate()`; only `activate_authority()` (line 430) does, where quiescence gating lives (`release.py:795-802`) |
 | Shadow-baseline capture vs close/disqualify race | Later | Mixed | Medium | 2026-08-04 (fork-verified) | `capture_envelope()`/`close_baseline()` (`transition.py:232,632`) use unlocked `session.get()`, no `.with_for_update()` |
-| First-request admission reopens before `verify_first_admission()` | Must-fix | Mixed | Medium | 2026-08-04 (fork-verified) | The reservation itself is exact, but once consumed, migration `0028`'s trigger returns `NEW` unconditionally for later unrelated requests — the system admits them before the reserved request has been verified. Proven by existing test `test_native_unrelated_valid_second_request_succeeds`. "Reservation mechanism done" and "admission state machine open" are not contradictory. |
-| Missing generation-bound candidate FKs | Must-fix | Mixed | Medium | 2026-08-04 (fork-verified) | `ReleaseCandidate` (`stage6_models.py:34-44`) has independent FKs to generation/batch/baseline/epoch with no composite constraint tying them to the same generation |
-| Illegal candidate initial states admitted on INSERT | Must-fix | Mixed | Medium | 2026-08-04 (fork-verified) | Migration `0022` installs guards for UPDATE/DELETE transitions only, not INSERT |
-| Illegal admission-control / reservation initial states | Must-fix | Mixed | Medium | 2026-08-04 (fork-verified) | Same migration family; no INSERT-time guard on `mutation_admission_controls` or `first_request_reservations` |
-| Migration `0028` fails open when no admission-control row exists | Must-fix | Mixed | Medium | 2026-08-04 (fork-verified) | `IF NOT FOUND THEN RETURN NEW; END IF;` (lines 52-54) |
+
+The other six rows previously listed here (rollback-burn quiescence, first-request admission
+reopening, missing generation-bound FKs, illegal candidate/admission-control/reservation INSERT
+states, migration `0028` failing open) were all fixed in commit `fce152c` ("Enforce cutover
+admission authority", migration `0029_cutover_authority_admission_fixes.py`, applied from a
+ChatGPT-drafted patch, already on `main`). Directly re-verified 2026-08-05 against current code:
+`burn_rollback()` now reruns `evaluate_candidate()` before the irreversible transition
+(`cutover_control.py:661`); `verify_first_admission()` gates when mutation admission opens
+(`cutover_control.py:1221-1238`); migration `0029` installs `BEFORE INSERT` guard triggers on
+`release_candidates`, `mutation_admission_controls`, and `first_request_reservations`, plus
+composite FK constraints binding each candidate's import batch/shadow baseline/projection epoch
+to its generation. Moved to Done below.
 
 ## Partial — mechanism exists, real gap remains
 
