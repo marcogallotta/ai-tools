@@ -13,7 +13,14 @@ from dish_tool.constants import EXIT_STATUS_BY_CODE
 from dish_tool.errors import DishRuleError
 from dish_tool.results import result_envelope
 
+from .command_spec import REPLAY_SAFE_COMMANDS
 from .identifiers import require_asana_gid, require_dish_uuid
+
+
+def _request_id_for_command(command: str, request_id: str | None) -> str | None:
+    if request_id is None and command in REPLAY_SAFE_COMMANDS:
+        return str(uuid.uuid4())
+    return request_id
 
 
 _RESULT_ENVELOPE_FIELDS = frozenset(
@@ -291,8 +298,7 @@ class DishServiceClient:
         if arguments is not None and keyword_arguments:
             raise TypeError("provide command arguments as a mapping or keywords, not both")
         prepared = dict(arguments or keyword_arguments)
-        if command in {"create", "start", "prepare", "approve", "reject", "submit"} and request_id is None:
-            request_id = str(uuid.uuid4())
+        request_id = _request_id_for_command(command, request_id)
         return self._result_request(
             f"/v1/commands/{command}",
             method="POST",
@@ -335,8 +341,7 @@ class DishServiceClient:
     def renew_lease(
         self, operation_id: str, *, request_id: str | None = None
     ) -> dict[str, Any]:
-        if request_id is None:
-            request_id = str(uuid.uuid4())
+        request_id = _request_id_for_command("renew-lease", request_id)
         return self._result_request(
             f"/v1/leases/{operation_id}/renew",
             method="POST",
@@ -493,8 +498,7 @@ class DishActionClient(DishServiceClient):
         if arguments is not None and keyword_arguments:
             raise TypeError("provide command arguments as a mapping or keywords, not both")
         prepared = dict(arguments or keyword_arguments)
-        if command in {"create", "start", "prepare", "approve", "reject", "submit", "renew-lease"} and request_id is None:
-            request_id = str(uuid.uuid4())
+        request_id = _request_id_for_command(command, request_id)
         return self._result_request(
             f"/v1/action/{command}",
             method="POST",
@@ -507,8 +511,7 @@ class DishActionClient(DishServiceClient):
     def renew_lease(
         self, operation_id: str, *, request_id: str | None = None
     ) -> dict[str, Any]:
-        if request_id is None:
-            request_id = str(uuid.uuid4())
+        request_id = _request_id_for_command("renew-lease", request_id)
         return self._result_request(
             "/v1/action/renew-lease",
             method="POST",

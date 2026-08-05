@@ -160,7 +160,11 @@ def _assert_full_lifecycle_persistence(service, transport, task_gid, operation_i
         assert conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 2
         assert conn.execute(
             "SELECT COUNT(*) FROM service_requests WHERE status='completed'"
-        ).fetchone()[0] == 9
+        ).fetchone()[0] == 10
+        assert conn.execute(
+            "SELECT COUNT(*) FROM service_requests "
+            "WHERE command='inspect' AND status='completed'"
+        ).fetchone()[0] == 1
         assert conn.execute(
             "SELECT COUNT(*) FROM planning_intent_challenges WHERE status='consumed'"
         ).fetchone()[0] == 1

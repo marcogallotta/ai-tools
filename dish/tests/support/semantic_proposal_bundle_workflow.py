@@ -107,3 +107,93 @@ def _case_test_service_fresh_invocation_claims_approved_bundle_without_old_run_i
         assert proposal["applied_identity"]
     finally:
         conn.close()
+
+
+def _approved_service_proposal_runtime(tmp_path):
+    import uuid
+
+    from dish_service.application import DishService
+    from dish_service.config import ServiceConfig
+    from dish_service.leases import ServicePrincipal
+    from tests.support.service_foundation import _release_loader
+    from tests.support.verification import Backend
+
+    task_gid = "123456789"
+    backend = Backend(task_gid=task_gid)
+    honest = tmp_path / "honest"
+    honest.mkdir()
+    service = DishService(
+        ServiceConfig(
+            db_path=tmp_path / "shared.db",
+            honest_root=honest,
+            port=0,
+            agent_token="agent-secret",
+            admin_token="admin-secret",
+            action_token="action-secret",
+        ),
+        backend_factory=lambda: backend,
+        release_loader=_release_loader(honest),
+    )
+    constructor = ServicePrincipal("constructor", str(uuid.uuid4()))
+    started = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": task_gid, "kind": "initial"},
+        principal=constructor,
+        request_id=str(uuid.uuid4()),
+    )
+    assert service.execute_agent(
+        "prepare",
+        {
+            "agent": "gpt",
+            "model": "gpt-5.6-sol",
+            "submission_id": started["submission_id"],
+            "file_text": TASK,
+        },
+        principal=constructor,
+        request_id=str(uuid.uuid4()),
+    )["ok"]
+    proposer = ServicePrincipal("proposer", str(uuid.uuid4()))
+    assert service.execute_agent(
+        "start",
+        {
+            "agent": "codex",
+            "task_gid": task_gid,
+            "kind": "verification",
+            "independence_attestation": "independent",
+        },
+        principal=proposer,
+        request_id=str(uuid.uuid4()),
+    )["ok"]
+    assert service.execute_agent(
+        "inspect",
+        {"agent": "codex", "submission_id": started["submission_id"]},
+        principal=proposer,
+        request_id=str(uuid.uuid4()),
+    )["ok"]
+    queued = service.execute_agent(
+        "reject",
+        {
+            "agent": "codex",
+            "model": "gpt-5.6-sol",
+            "submission_id": started["submission_id"],
+            "route": "large",
+            "reason": "Apply the settled whole-scallion default.",
+            "file_text": TASK.replace(
+                "Locks: Keep crisp",
+                "Locks: Keep crisp | Use whole scallion",
+            ),
+        },
+        principal=proposer,
+        request_id=str(uuid.uuid4()),
+    )
+    proposal_id = queued["data"]["proposal_id"]
+    assert service.execute_admin(
+        "review-approve",
+        {
+            "proposal_id": proposal_id,
+            "reason": "Marco approves this exact linked correction bundle.",
+        },
+        principal=ServicePrincipal("marco", str(uuid.uuid4())),
+        request_id=str(uuid.uuid4()),
+    )["ok"]
+    return service, backend, proposal_id, task_gid

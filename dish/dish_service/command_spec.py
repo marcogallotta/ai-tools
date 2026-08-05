@@ -13,7 +13,16 @@ from .identifiers import (
     require_dish_uuid,
 )
 
-AGENT_MUTATION_COMMANDS = {"create", "start", "prepare", "approve", "reject", "submit", "apply-proposal"}
+AGENT_MUTATION_COMMANDS = {
+    "create",
+    "inspect",
+    "start",
+    "prepare",
+    "approve",
+    "reject",
+    "submit",
+    "apply-proposal",
+}
 ACTION_LEASE_COMMAND = "renew-lease"
 REPLAY_SAFE_COMMANDS = AGENT_MUTATION_COMMANDS | {ACTION_LEASE_COMMAND}
 REPLAY_CAPABLE_COMMANDS = REPLAY_SAFE_COMMANDS

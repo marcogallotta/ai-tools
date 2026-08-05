@@ -170,12 +170,12 @@ includes the command, canonical arguments, authenticated owner identity, and run
 
 | Surface | Replay-bound mutations |
 |---|---|
-| Agent Action/private CLI | `create`, `start`, `prepare`, `approve`, `reject`, `submit` |
+| Agent Action/private CLI | `create`, `inspect`, `start`, `prepare`, `approve`, `reject`, `submit`, `apply-proposal` |
 | Marco admin workflow | `attention`, `inspect`, `holds`, `review-queue`, `review-inspect`, `review-approve`, `review-reject`, `migrate`, `reopen`, `recover`, `repair-destination`, `supply-evidence`, `record-human-decision`, `authorize-governed-change`, `discard`, `abandon-operation`, `reconcile-abandonment` |
 | Lease lifecycle | private agent lease renewal; Action `renew-lease`; Marco-admin `recover-lease` and `expire-lease` |
 | Backup lifecycle | `backup-create`, `backup-restore` |
 
-No mutation endpoint is exempt from request identity. Read-only `sections`, `read`, `inspect`, and `health` do not create replay records and do not accept a request ID as mutation authority.
+No mutation endpoint is exempt from request identity. Agent `inspect` is also replay-bound because it records durable Verification evidence. Read-only `sections`, `section-tasks`, `read`, and `health` do not create replay records and do not accept a request ID as mutation authority.
 The connected `renew-lease` Action uses the common body shape: `arguments.operation_id` is replay-bound
 alongside `client.run_id` and `client.request_id`; it is not supplied as a top-level or path parameter.
 
@@ -190,9 +190,10 @@ alongside `client.run_id` and `client.request_id`; it is not supplied as a top-l
 - A completed `submit` is replayed from the request ledger. A fresh request ID for the same already-completed logical submission is also satisfied from exact signed-content and destination-movement evidence, without reacquiring a lease or repeating the external movement.
 - Ordinary request records live in `service_requests` and survive service restart. `backup-restore` uses an atomic sibling sidecar journal because the restore replaces the database that contains ordinary request records. The sidecar binds the request to the selected backup, monotonic exact-effect checkpoints, and terminal result across replacement and restart. Checkpoints identify the source bytes, prepared candidate, exact pre-restore destination, pre-replacement live files, installed bytes, validation, and rollback when applicable. A restarted restore resumes or reconstructs only when those durable identities match; a legacy pending row without a checkpoint remains non-retryable and is never inferred or blindly repeated.
 
-The bundled CLI and admin clients generate an ID internally for most first mutation calls, but most
-command-line interfaces neither accept a request ID nor expose the generated value after a transport
-failure. Those callers must inspect live and durable state instead of blindly rerunning the mutation.
+The bundled CLI and admin clients generate an ID internally for most first consequential calls.
+`dish inspect` and `dish apply-proposal` accept `--request-id` for exact response-loss replay;
+most other command-line interfaces neither accept a request ID nor expose the generated value after
+a transport failure. Those callers must inspect live and durable state instead of blindly rerunning the mutation.
 `dish-admin expire-lease` is the explicit exception: it accepts `--request-id`, prints both request ID
 and `DISH_CLIENT_RUN_ID` to flushed stderr before dispatch, and requires the same authenticated admin
 principal, run ID, request ID, normalized target, and trimmed reason for exact replay. Marco must

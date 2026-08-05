@@ -28,6 +28,12 @@ from tests.support.request_restore import Backend
 
 AGENT_ARGUMENTS = {
     "create": {"agent": "gpt", "title": "Dish"},
+    "inspect": {"agent": "gpt", "submission_id": OPERATION_ID},
+    "apply-proposal": {
+        "agent": "gpt",
+        "model": "gpt-5.6-sol",
+        "proposal_id": OPERATION_ID,
+    },
     "start": {"agent": "gpt", "task_gid": "123456789", "kind": "initial"},
     "prepare": {
         "agent": "gpt", "model": "model", "submission_id": OPERATION_ID,
@@ -44,6 +50,96 @@ AGENT_ARGUMENTS = {
     },
     "submit": {"submission_id": OPERATION_ID},
 }
+
+
+def test_inspect_exact_replay_returns_first_result_without_duplicate_evidence(tmp_path):
+    from dish_tool.database import initialize_database
+    from tests.support.service_leases import _service
+    from tests.support.verification import Backend as VerificationBackend, TASK
+
+    backend = VerificationBackend()
+    service = _service(tmp_path, backend)
+    constructor = ServicePrincipal(owner_id="constructor", run_id=str(uuid.uuid4()))
+    started = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": "t", "kind": "initial"},
+        principal=constructor,
+        request_id=str(uuid.uuid4()),
+    )
+    assert started["ok"]
+    prepared = service.execute_agent(
+        "prepare",
+        {
+            "agent": "gpt",
+            "model": "gpt-5.6-sol",
+            "submission_id": started["submission_id"],
+            "file_text": TASK,
+        },
+        principal=constructor,
+        request_id=str(uuid.uuid4()),
+    )
+    assert prepared["ok"]
+
+    verifier = ServicePrincipal(owner_id="verifier", run_id=str(uuid.uuid4()))
+    verification = service.execute_agent(
+        "start",
+        {
+            "agent": "codex",
+            "task_gid": "t",
+            "kind": "verification",
+            "independence_attestation": "independent fresh run",
+        },
+        principal=verifier,
+        request_id=str(uuid.uuid4()),
+    )
+    assert verification["ok"]
+
+    request_id = str(uuid.uuid4())
+    arguments = {
+        "agent": "codex",
+        "submission_id": started["submission_id"],
+    }
+    first = service.execute_agent(
+        "inspect", arguments, principal=verifier, request_id=request_id
+    )
+    replayed = service.execute_agent(
+        "inspect", arguments, principal=verifier, request_id=request_id
+    )
+
+    assert first["ok"]
+    assert first["data"]["request_id"] == request_id
+    assert "request_replayed" not in first["data"]
+    assert replayed["ok"]
+    assert replayed["data"]["request_replayed"] is True
+    assert replayed["data"]["request_id"] == request_id
+    assert (
+        replayed["data"]["dish_inspect_fact"]["fact_id"]
+        == first["data"]["dish_inspect_fact"]["fact_id"]
+    )
+    assert replayed["allowed_actions"] == first["allowed_actions"]
+
+    mismatch = service.execute_agent(
+        "inspect",
+        {**arguments, "agent": "gpt"},
+        principal=verifier,
+        request_id=request_id,
+    )
+    assert mismatch["code"] == "CONFLICT"
+    assert mismatch["errors"][0]["rule"] == "service_request_identity_conflict"
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM dish_inspect_facts WHERE operation_id=?",
+            (started["submission_id"],),
+        ).fetchone()[0] == 1
+        request = conn.execute(
+            "SELECT command,status FROM service_requests WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+        assert tuple(request) == ("inspect", "completed")
+    finally:
+        conn.close()
 
 
 @pytest.mark.parametrize("command", sorted(AGENT_ARGUMENTS))

@@ -27,9 +27,9 @@ EXPECTED_ACTION_COMMANDS = (
     "renew-lease",
 )
 EXPECTED_REPLAY_SAFE_COMMANDS = frozenset(
-    {"create", "start", "prepare", "approve", "reject", "submit", "apply-proposal", "renew-lease"}
+    {"create", "inspect", "start", "prepare", "approve", "reject", "submit", "apply-proposal", "renew-lease"}
 )
-EXPECTED_READ_ONLY_COMMANDS = frozenset({"sections", "section-tasks", "read", "inspect", "proposals"})
+EXPECTED_READ_ONLY_COMMANDS = frozenset({"sections", "section-tasks", "read", "proposals"})
 EXPECTED_CONSEQUENTIAL = {
     command: command in EXPECTED_REPLAY_SAFE_COMMANDS
     for command in EXPECTED_ACTION_COMMANDS

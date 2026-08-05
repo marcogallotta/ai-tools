@@ -1,11 +1,16 @@
 import json
 import threading
+import uuid
 from pathlib import Path
 
 import pytest
 
 from dish_service.application import DishService
-from dish_service.client import DishAdminServiceClient, DishServiceClient
+from dish_service.client import (
+    DishActionClient,
+    DishAdminServiceClient,
+    DishServiceClient,
+)
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
 from dish_tool import admin_cli, cli
@@ -127,6 +132,62 @@ def test_sections_result_omits_agent_and_admin_tokens(tmp_path):
         _stop(server, thread)
     assert "agent-secret" not in json.dumps(result)
     assert "admin-secret" not in json.dumps(result)
+
+
+@pytest.mark.parametrize(
+    ("client_type", "expected_path"),
+    [
+        (DishServiceClient, "/v1/commands/apply-proposal"),
+        (DishActionClient, "/v1/action/apply-proposal"),
+    ],
+)
+def test_apply_proposal_clients_generate_and_preserve_request_identity(
+    client_type, expected_path
+):
+    payloads = []
+
+    class CapturingClient(client_type):
+        def _result_request(self, path, *, method, payload):
+            assert path == expected_path
+            assert method == "POST"
+            payloads.append(payload)
+            return {"ok": True}
+
+    client = CapturingClient(
+        "http://dish.invalid",
+        token="agent-secret",
+        run_id="11111111-1111-4111-8111-111111111111",
+    )
+    arguments = {
+        "proposal_id": "22222222-2222-4222-8222-222222222222",
+        "agent": "gpt",
+        "model": "gpt-5.6-sol",
+    }
+    client.execute("apply-proposal", arguments)
+    explicit = "33333333-3333-4333-8333-333333333333"
+    client.execute("apply-proposal", arguments, request_id=explicit)
+
+    generated = payloads[0]["client"]["request_id"]
+    assert str(uuid.UUID(generated)) == generated
+    assert generated != "00000000-0000-0000-0000-000000000000"
+    assert payloads[1]["client"]["request_id"] == explicit
+
+
+def test_apply_proposal_cli_accepts_explicit_request_identity():
+    request_id = "33333333-3333-4333-8333-333333333333"
+    parsed = cli.build_parser().parse_args(
+        [
+            "apply-proposal",
+            "22222222-2222-4222-8222-222222222222",
+            "--agent",
+            "gpt",
+            "--model",
+            "gpt-5.6-sol",
+            "--request-id",
+            request_id,
+        ]
+    )
+    assert parsed.request_id == request_id
 
 
 def test_admin_cli_builds_remote_admin_client(monkeypatch):

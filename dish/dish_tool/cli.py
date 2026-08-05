@@ -168,6 +168,7 @@ def build_parser() -> JsonArgumentParser:
     inspect = subparsers.add_parser("inspect", help="inspect a prior tool operation's recorded state")
     inspect.add_argument("submission_id")
     inspect.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    inspect.add_argument("--request-id")
 
     proposals = subparsers.add_parser(
         "proposals", help="list Marco-approved semantic proposals ready for exact application"
@@ -181,6 +182,7 @@ def build_parser() -> JsonArgumentParser:
     apply_proposal.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
     apply_proposal.add_argument("--model", required=True)
     apply_proposal.add_argument("--run-id")
+    apply_proposal.add_argument("--request-id")
 
     start = subparsers.add_parser(
         "start", help="open a Planning/Research/Verification/change operation on a task"

@@ -99,6 +99,7 @@ from .restore_request_journal import RestoreRequestJournal
 _READ_ONLY_AGENT_COMMANDS = {"sections", "section-tasks", "read", "inspect", "proposals"}
 _LEASED_AGENT_COMMANDS = {"prepare", "approve", "reject", "submit", "apply-proposal"}
 _MUTATING_AGENT_COMMANDS = {"create", "start", *_LEASED_AGENT_COMMANDS}
+_REPLAYED_AGENT_COMMANDS = _MUTATING_AGENT_COMMANDS | {"inspect"}
 _RUN_ID_AGENT_COMMANDS = {"start", "prepare", "approve", "reject", "apply-proposal"}
 _HANDOFF_PHASES = {"await_verification", "held_evidence", "held_human"}
 
@@ -2096,7 +2097,7 @@ class DishService:
         request_id: str | None,
     ) -> dict[str, Any] | None:
         prepared = state.prepared_arguments
-        if command in _MUTATING_AGENT_COMMANDS and request_id:
+        if command in _REPLAYED_AGENT_COMMANDS and request_id:
             state.request_row, state.replay_started = state.replay.begin(
                 state.conn,
                 request_id=request_id,
@@ -2429,7 +2430,7 @@ class DishService:
         )
         if result.get("data", {}).get("service_recovery_required"):
             result["allowed_actions"] = []
-        if request_id and command in _MUTATING_AGENT_COMMANDS:
+        if request_id and command in _REPLAYED_AGENT_COMMANDS:
             result.setdefault("data", {})["request_id"] = request_id
             if (
                 command == "start"
@@ -2554,7 +2555,7 @@ class DishService:
                 ),
                 authoritative_view=view,
             )
-        if request_id and command in _MUTATING_AGENT_COMMANDS and state.replay_started:
+        if request_id and command in _REPLAYED_AGENT_COMMANDS and state.replay_started:
             result.setdefault("data", {})["request_id"] = request_id
             state.replay.complete(state.conn, request_id=request_id, result=result)
         return result

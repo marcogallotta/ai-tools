@@ -96,9 +96,9 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
         (ROOT / "docs" / "runtime-contract.md").read_text(encoding="utf-8").split()
     )
 
-    assert "`create`, `start`, `prepare`, `approve`, `reject`, `submit`" in action_guide
+    assert "`create`, `inspect`, `start`, `prepare`, `approve`, `reject`, `submit`, `apply-proposal`" in action_guide
     assert (
-        "Read-only `sections`, `section-tasks`, `read`, and `inspect` do not accept a request ID"
+        "Read-only `sections`, `section-tasks`, and `read` do not accept a request ID"
         in action_guide
     )
     assert "first authoritative success or expected failure" in action_guide

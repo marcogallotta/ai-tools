@@ -3,7 +3,10 @@ from dish_tool.admin import DishAdminApplication
 from dish_tool.errors import DishRuleError
 from dish_tool.semantic_proposals import queue_semantic_proposal
 from tests.support.verification import TASK, make_app, review_and_inspect
-from tests.support.semantic_proposal_bundle_workflow import _case_test_service_fresh_invocation_claims_approved_bundle_without_old_run_identity
+from tests.support.semantic_proposal_bundle_workflow import (
+    _approved_service_proposal_runtime,
+    _case_test_service_fresh_invocation_claims_approved_bundle_without_old_run_identity,
+)
 
 
 
@@ -328,3 +331,81 @@ def test_service_rejects_bundle_and_exposes_fresh_verification_round(tmp_path):
     assert fresh["ok"]
     assert fresh["submission_id"] == started["submission_id"]
     assert fresh["data"]["service_access"]["state"] == "owned"
+
+
+@pytest.mark.smoke
+def test_action_apply_proposal_exact_replay_does_not_apply_bundle_twice(tmp_path):
+    import uuid
+
+    from dish_service.client import DishActionClient
+    from dish_service.http import build_server
+    from dish_tool.database import initialize_database
+    from tests.support.thread_teardown import start_server_thread, stop_server
+
+    service, backend, proposal_id, task_gid = _approved_service_proposal_runtime(tmp_path)
+    server = build_server(service)
+    thread = start_server_thread(server, daemon=True, name="apply-proposal-replay")
+    host, port = server.server_address
+    client = DishActionClient(
+        f"http://{host}:{port}", token="action-secret", run_id=str(uuid.uuid4())
+    )
+    try:
+        available = client.execute(
+            "start",
+            {
+                "agent": "gpt",
+                "task_gid": task_gid,
+                "kind": "verification",
+                "independence_attestation": "independent",
+            },
+        )
+        assert available["allowed_actions"] == ["apply-proposal"]
+        request_id = str(uuid.uuid4())
+        arguments = {
+            "proposal_id": proposal_id,
+            "agent": "gpt",
+            "model": "gpt-5.6-sol",
+        }
+        first = client.execute("apply-proposal", arguments, request_id=request_id)
+        writes_after_first = backend.writes
+        replayed = client.execute("apply-proposal", arguments, request_id=request_id)
+        mismatch = client.execute(
+            "apply-proposal",
+            {**arguments, "model": "different-model"},
+            request_id=request_id,
+        )
+    finally:
+        stop_server(server, thread)
+
+    assert first["ok"]
+    assert first["data"]["request_id"] == request_id
+    assert first["data"]["proposal"]["status"] == "applied"
+    assert replayed["ok"]
+    assert replayed["data"]["request_replayed"] is True
+    assert replayed["data"]["request_id"] == request_id
+    assert replayed["data"]["proposal"] == first["data"]["proposal"]
+    assert backend.writes == writes_after_first
+    assert mismatch["code"] == "CONFLICT"
+    assert mismatch["errors"][0]["rule"] == "service_request_identity_conflict"
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        proposal = conn.execute(
+            "SELECT status,claimed_run_id,applied_identity,operation_id "
+            "FROM semantic_proposals WHERE proposal_id=?",
+            (proposal_id,),
+        ).fetchone()
+        assert proposal["status"] == "applied"
+        assert proposal["claimed_run_id"] == client.run_id
+        assert proposal["applied_identity"]
+        assert conn.execute(
+            "SELECT COUNT(*) FROM verification_cycles WHERE operation_id=?",
+            (proposal["operation_id"],),
+        ).fetchone()[0] == 2
+        assert conn.execute(
+            "SELECT COUNT(*) FROM service_requests "
+            "WHERE request_id=? AND command='apply-proposal' AND status='completed'",
+            (request_id,),
+        ).fetchone()[0] == 1
+    finally:
+        conn.close()

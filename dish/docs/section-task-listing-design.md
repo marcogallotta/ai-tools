@@ -99,8 +99,7 @@ result with `tasks: []` and `count: 0`.
 
 The command should use the existing backend failure mapping. A missing or inaccessible section is a
 rejected read, not an uncertain mutation, and is safe to call again according to the ordinary
-read-only error contract. Like `sections`, `read`, and `inspect`, it needs no client request UUID or
-request-replay record.
+read-only error contract. Like `sections` and `read`, it needs no client request UUID or request-replay record.
 
 ## Owning changes
 

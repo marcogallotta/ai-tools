@@ -52,15 +52,14 @@ Add an operating instruction with all of these requirements:
   that response remain in the same run. A later Marco message starts a new execution and uses a new
   UUID; a new chat is not required. An automatic continuation without a new Marco message is not a
   new run.
-- Before every mutation—`create`, `start`, `prepare`, `approve`, `reject`, `submit`, and lease
-  renewal—create a new non-nil canonical lowercase UUID as `client.request_id` and preserve it with
-  the attempted call. Read-only `sections`, `section-tasks`, `read`, and `inspect` do not accept a
-  request ID. Dish binds the first authoritative success or expected failure to the exact command, canonical
+- Before every consequential call—`create`, `inspect`, `start`, `prepare`, `approve`, `reject`,
+  `submit`, `apply-proposal`, and lease renewal—create a new non-nil canonical lowercase UUID as `client.request_id` and preserve it with
+  the attempted call. Read-only `sections`, `section-tasks`, and `read` do not accept a request ID. Dish binds the first authoritative success or expected failure to the exact command, canonical
   arguments, authenticated owner, and run. If the response is lost, repeat only that exact call with
   the same UUID; a completed replay returns the stored result with `data.request_replayed: true`.
   Reusing the UUID for different work conflicts. A matching pending or uncertain request is not
   executed again, so never generate a new UUID merely to bypass that outcome.
-- If read-only `sections`, `section-tasks`, `read`, or `inspect` returns no Dish JSON envelope because of a
+- If read-only `sections`, `section-tasks`, or `read` returns no Dish JSON envelope because of a
   transport-level client error, retry the exact same read up to two times. If it still fails, stop
   and report the error. This bounded read retry does not apply to mutations; after a lost mutation
   response, replay only the exact call with its original `client.request_id`.
