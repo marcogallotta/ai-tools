@@ -22,6 +22,7 @@
 # attributed to a different command elsewhere in a compound line.
 
 import json
+import os
 import re
 import shlex
 import sys
@@ -98,27 +99,53 @@ def segments_of(cmd):
     return [s for s in split_segments(cmd) if s.strip()]
 
 
-# rm anywhere in a segment (word-identity, not substring, so npm/charm/etc.
-# don't match). Skip the prompt when every target literally starts with
-# /tmp/ - scratch space, not worth an approval round-trip. Any non-/tmp
-# target (or no resolvable target) falls back to asking, since paths built
-# from variables/expansions aren't visible to this hook as literal text.
+RM_WRAPPERS = {"sudo", "env", "nice", "ionice"}
+
+# Prefixes exempt from the rm approval prompt: scratch space that's cheap to
+# regenerate/re-download. Both the literal "~/Downloads/" text (the hook
+# sees the raw, pre-shell-expansion command string) and the expanded
+# absolute path are accepted, in case the target was already written out in
+# full.
+RM_EXEMPT_PREFIXES = ("/tmp/", "~/Downloads/", os.path.expanduser("~/Downloads/"))
+
+
+def is_exempt_rm_target(target):
+    return target.startswith(RM_EXEMPT_PREFIXES)
+
+
+# Find the index of "rm" only when it is the actual command being invoked -
+# the first token, or the first token after simple wrappers (sudo/env/nice/
+# ionice) and their own flags/VAR=val assignments. This deliberately does
+# NOT match "rm" appearing later in a segment as someone else's subcommand,
+# e.g. "docker rm <container>" or "docker volume rm <vol>" - those are a
+# different program's own removal command, not GNU rm, and are out of scope
+# for this check (docker's own destructive ops are handled by check_docker).
+def rm_command_index(tokens):
+    idx = 0
+    while idx < len(tokens) and basename_token(tokens[idx]) in RM_WRAPPERS:
+        idx += 1
+        while idx < len(tokens) and (
+            tokens[idx].startswith("-") or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[idx])
+        ):
+            idx += 1
+    if idx < len(tokens) and is_word(tokens[idx], "rm"):
+        return idx
+    return None
+
+
+# Skip the prompt when every target literally starts with an exempt prefix
+# (/tmp/ or ~/Downloads/) - scratch space, not worth an approval round-trip.
+# Any other target (or no resolvable target) falls back to asking, since
+# paths built from variables/expansions aren't visible to this hook as
+# literal text.
 def check_rm(segments):
     for seg in segments:
         tokens = tokenize(seg)
-        if not any(is_word(t, "rm") for t in tokens):
+        idx = rm_command_index(tokens)
+        if idx is None:
             continue
-        targets = []
-        found = False
-        for t in tokens:
-            if not found:
-                if is_word(t, "rm"):
-                    found = True
-                continue
-            if t.startswith("-"):
-                continue
-            targets.append(t)
-        if targets and all(t.startswith("/tmp/") for t in targets):
+        targets = [t for t in tokens[idx + 1:] if not t.startswith("-")]
+        if targets and all(is_exempt_rm_target(t) for t in targets):
             continue
         return ask("[destructive-op-guard] Destructive: 'rm' requires explicit approval.")
     return None

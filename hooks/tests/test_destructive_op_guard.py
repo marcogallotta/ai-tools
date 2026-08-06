@@ -112,6 +112,34 @@ class TestRm:
         decision = run_hook(destructive_op_guard, 'echo "rm -rf /"', monkeypatch, capsys)
         assert_allowed(decision)
 
+    def test_docker_rm_container_not_confused_with_rm(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(destructive_op_guard, "docker rm pg17-extract", monkeypatch, capsys)
+        assert_allowed(decision)
+
+    def test_docker_volume_rm_not_confused_with_rm(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(destructive_op_guard, "docker volume rm myvol", monkeypatch, capsys)
+        assert_allowed(decision)
+
+    def test_sudo_rm_non_tmp_target_still_asked(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(destructive_op_guard, "sudo rm -rf foo", monkeypatch, capsys)
+        assert_asked(decision, "'rm' requires explicit approval")
+
+    def test_sudo_rm_tmp_target_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(destructive_op_guard, "sudo rm -rf /tmp/foo", monkeypatch, capsys)
+        assert_allowed(decision)
+
+    def test_rm_downloads_tilde_target_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(destructive_op_guard, "rm -rf ~/Downloads/foo.zip", monkeypatch, capsys)
+        assert_allowed(decision)
+
+    def test_rm_downloads_absolute_target_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(destructive_op_guard, "rm -rf /home/marco/Downloads/foo.zip", monkeypatch, capsys)
+        assert_allowed(decision)
+
+    def test_rm_mixed_tmp_and_downloads_targets_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(destructive_op_guard, "rm -rf /tmp/foo ~/Downloads/bar", monkeypatch, capsys)
+        assert_allowed(decision)
+
 
 class TestDocker:
     def test_compose_down_v_asked(self, destructive_op_guard, monkeypatch, capsys):
