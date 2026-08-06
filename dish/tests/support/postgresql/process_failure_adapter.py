@@ -4,11 +4,11 @@ from __future__ import annotations
 import fcntl
 import json
 import os
-import socket
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from dish_pg.process_failure_rehearsal import notify_process_barrier
 from dish_pg.projection_worker import ExternalAttempt, ExternalObservation
 from dish_pg.reconciliation_worker import ExternalCorpusItem, ReconciliationRecord
 from dish_pg.workflow import sha256_json
@@ -21,21 +21,7 @@ def _required_env(name: str) -> str:
     return value
 
 
-def _barrier(label: str, payload: dict[str, Any] | None = None) -> None:
-    socket_path = _required_env("DISH_SECTION1_BARRIER_SOCKET")
-    message = {"label": label, "pid": os.getpid(), "payload": payload or {}}
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.connect(socket_path)
-        client.sendall(json.dumps(message, sort_keys=True).encode("utf-8") + b"\n")
-        received = b""
-        while not received.endswith(b"\n"):
-            chunk = client.recv(4096)
-            if not chunk:
-                raise RuntimeError(f"barrier {label!r} closed without release")
-            received += chunk
-    response = json.loads(received.decode("utf-8"))
-    if response != {"action": "continue", "label": label}:
-        raise RuntimeError(f"barrier {label!r} received invalid release {response!r}")
+_barrier = notify_process_barrier
 
 
 @contextmanager
@@ -71,11 +57,25 @@ class DeterministicExternalAdapter:
             _barrier("before_claim")
 
     def prepare(self, claim) -> ExternalAttempt:
-        if _scenario() == "after_claim":
+        scenario = _scenario()
+        if scenario == "after_claim":
             _barrier(
                 "after_claim_before_durable_intent",
                 {"event_id": str(claim.event_id), "claim_revision": claim.claim_revision},
             )
+        if scenario == "long_running_projection_restart":
+            with _ledger_lock() as (_path, ledger):
+                prepare_calls = int(ledger.get("prepare_calls", 0)) + 1
+                ledger["prepare_calls"] = prepare_calls
+            if prepare_calls == 2:
+                _barrier(
+                    "long_running_projection_before_second_attempt",
+                    {
+                        "event_id": str(claim.event_id),
+                        "claim_revision": claim.claim_revision,
+                        "prepare_calls": prepare_calls,
+                    },
+                )
         return ExternalAttempt(
             request_identity=f"section1:{claim.event_id}",
             request_payload=dict(claim.payload),
@@ -236,12 +236,16 @@ def _applied_observation(
 def fetch_corpus(corpus_identity: str):
     if _scenario() == "reconciliation_before_transaction":
         _barrier("after_corpus_fetch_before_reconciliation_transaction")
-    return (
+    item_count = int(os.environ.get("DISH_SECTION1_RECONCILIATION_ITEM_COUNT", "1"))
+    if item_count < 1:
+        raise RuntimeError("reconciliation item count must be positive")
+    return tuple(
         ExternalCorpusItem(
-            item_identity=f"corpus:{corpus_identity}:item-1",
+            item_identity=f"corpus:{corpus_identity}:item-{index}",
             entity_kind="task",
-            payload={"external_id": "123456789"},
-        ),
+            payload={"external_id": str(123456788 + index)},
+        )
+        for index in range(1, item_count + 1)
     )
 
 

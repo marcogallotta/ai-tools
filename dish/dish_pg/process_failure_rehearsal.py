@@ -1,10 +1,10 @@
-"""Partial native-PostgreSQL worker-process rehearsal for validation-plan §1.
+"""Rerunnable native-PostgreSQL process-failure rehearsal for validation-plan §1.
 
-The rehearsal owns a dedicated Docker Compose PostgreSQL instance and invokes a
-literal inventory of projection/reconciliation worker process tests. It never
-substitutes SQLite, PGlite, or in-process calls for native/process evidence.
-Command-process requirements remain blocked until a deployable PostgreSQL
-command-service entry point exists as separate implementation work.
+The package owns a dedicated Docker Compose PostgreSQL instance and invokes a
+literal inventory of real command and worker subprocess tests. It never
+substitutes SQLite, PGlite, mocks, or in-process calls for native/process
+evidence. Scripted implementation completeness is reported separately from
+native execution and certification.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ import re
 import select
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -44,46 +45,58 @@ POSTGRES_URL_USERINFO_PATTERN = re.compile(
 )
 
 PROCESS_TEST_INVENTORY = (
+    "tests/postgresql/native/test_process_failure_command.py::test_command_process_commit_before_response_replays_without_duplicate_mutation",
+    "tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers",
     "tests/postgresql/native/test_process_failure_projection.py::test_process_failure_before_claim",
     "tests/postgresql/native/test_process_failure_projection.py::test_process_failure_after_claim_before_durable_intent",
     "tests/postgresql/native/test_process_failure_projection.py::test_process_failure_after_durable_intent_before_external_call",
     "tests/postgresql/native/test_process_failure_projection.py::test_process_failure_after_ambiguous_external_response",
     "tests/postgresql/native/test_process_failure_projection.py::test_process_failure_after_settlement_before_shutdown",
     "tests/postgresql/native/test_process_failure_takeover.py::test_process_takeover_is_lease_gated_fenced_and_task_local",
+    "tests/postgresql/native/test_process_failure_supervision.py::test_long_running_projection_worker_is_supervised_and_restarted",
+    "tests/postgresql/native/test_process_failure_supervision.py::test_reconciliation_worker_is_supervised_and_restarted",
+    "tests/postgresql/native/test_process_failure_reconciliation.py::test_reconciliation_process_loss_after_durable_run_creation_resumes_exact_run",
+    "tests/postgresql/native/test_process_failure_reconciliation.py::test_reconciliation_process_loss_after_partial_corpus_resumes_without_duplicate_items",
     "tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect",
     "tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down",
 )
 
 NODE_REQUIREMENTS = {
-    PROCESS_TEST_INVENTORY[0]: "projection_before_claim",
-    PROCESS_TEST_INVENTORY[1]: "projection_after_claim_before_intent",
-    PROCESS_TEST_INVENTORY[2]: "projection_after_intent_before_call",
-    PROCESS_TEST_INVENTORY[3]: "projection_after_ambiguous_response",
-    PROCESS_TEST_INVENTORY[4]: "projection_after_settlement",
-    PROCESS_TEST_INVENTORY[5]: "worker_takeover_and_fencing",
-    PROCESS_TEST_INVENTORY[6]: "postgresql_disconnect_projection_worker",
-    PROCESS_TEST_INVENTORY[7]: "postgresql_disconnect_reconciliation_worker",
+    PROCESS_TEST_INVENTORY[0]: "command_commit_before_response_and_exact_replay",
+    PROCESS_TEST_INVENTORY[1]: "command_disconnect_active_transaction_and_recovery",
+    PROCESS_TEST_INVENTORY[2]: "projection_before_claim",
+    PROCESS_TEST_INVENTORY[3]: "projection_after_claim_before_intent",
+    PROCESS_TEST_INVENTORY[4]: "projection_after_intent_before_call",
+    PROCESS_TEST_INVENTORY[5]: "projection_after_ambiguous_response",
+    PROCESS_TEST_INVENTORY[6]: "projection_after_settlement",
+    PROCESS_TEST_INVENTORY[7]: "worker_takeover_and_fencing",
+    PROCESS_TEST_INVENTORY[8]: "long_running_projection_supervision_and_restart",
+    PROCESS_TEST_INVENTORY[9]: "reconciliation_worker_supervision_and_restart",
+    PROCESS_TEST_INVENTORY[10]: "reconciliation_loss_after_durable_run_creation",
+    PROCESS_TEST_INVENTORY[11]: "reconciliation_loss_after_partially_recorded_corpus",
+    PROCESS_TEST_INVENTORY[12]: "postgresql_disconnect_projection_worker",
+    PROCESS_TEST_INVENTORY[13]: "postgresql_disconnect_reconciliation_worker",
 }
 
 NODE_SCENARIOS = {
-    PROCESS_TEST_INVENTORY[0]: "projection-before-claim",
-    PROCESS_TEST_INVENTORY[1]: "projection-after-claim-before-intent",
-    PROCESS_TEST_INVENTORY[2]: "projection-after-intent-before-call",
-    PROCESS_TEST_INVENTORY[3]: "projection-after-ambiguous-response",
-    PROCESS_TEST_INVENTORY[4]: "projection-after-settlement",
-    PROCESS_TEST_INVENTORY[5]: "worker-takeover-and-fencing",
-    PROCESS_TEST_INVENTORY[6]: "postgresql-disconnect-projection-worker",
-    PROCESS_TEST_INVENTORY[7]: "postgresql-disconnect-reconciliation-worker",
+    PROCESS_TEST_INVENTORY[0]: "command-commit-before-response-replay",
+    PROCESS_TEST_INVENTORY[1]: "command-disconnect-active-transaction",
+    PROCESS_TEST_INVENTORY[2]: "projection-before-claim",
+    PROCESS_TEST_INVENTORY[3]: "projection-after-claim-before-intent",
+    PROCESS_TEST_INVENTORY[4]: "projection-after-intent-before-call",
+    PROCESS_TEST_INVENTORY[5]: "projection-after-ambiguous-response",
+    PROCESS_TEST_INVENTORY[6]: "projection-after-settlement",
+    PROCESS_TEST_INVENTORY[7]: "worker-takeover-and-fencing",
+    PROCESS_TEST_INVENTORY[8]: "long-running-projection-supervision-restart",
+    PROCESS_TEST_INVENTORY[9]: "reconciliation-worker-supervision-restart",
+    PROCESS_TEST_INVENTORY[10]: "reconciliation-loss-after-durable-run",
+    PROCESS_TEST_INVENTORY[11]: "reconciliation-loss-after-partial-corpus",
+    PROCESS_TEST_INVENTORY[12]: "postgresql-disconnect-projection-worker",
+    PROCESS_TEST_INVENTORY[13]: "postgresql-disconnect-reconciliation-worker",
 }
 
-COMMAND_PROCESS_BLOCKER = (
-    "No deployable PostgreSQL command/service process exists in the received repository: "
-    "dish_pg.protocol.PostgresProtocolService is an in-process adapter and has no listener/main "
-    "entry point. A deployable PostgreSQL command-service entry point is separate required "
-    "implementation work before commit-before-response loss, governed-mutation disconnect, and "
-    "exact replay after recovery can be rehearsed across a real command-process boundary. This "
-    "rehearsal does not add a test-only command server."
-)
+NOT_IMPLEMENTED_SCENARIOS: tuple[str, ...] = ()
+
 CONTENTION_POLICY_NOTE = (
     "The implemented IntegrityError contention mappings are confined to request admission "
     "(WorkflowRepository.admit_request) and actor-lease acquisition "
@@ -179,6 +192,26 @@ def redact_evidence_log(path: Path) -> None:
     os.chmod(path, 0o600)
     with path.open("r+b") as handle:
         os.fsync(handle.fileno())
+
+
+def notify_process_barrier(label: str, payload: dict[str, Any] | None = None) -> None:
+    """Publish a deterministic process boundary and wait for the test controller."""
+    socket_path = os.environ.get("DISH_SECTION1_BARRIER_SOCKET", "").strip()
+    if not socket_path:
+        raise RuntimeError("missing required rehearsal barrier socket")
+    message = {"label": label, "pid": os.getpid(), "payload": payload or {}}
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(socket_path)
+        client.sendall(json.dumps(message, sort_keys=True).encode("utf-8") + b"\n")
+        received = b""
+        while not received.endswith(b"\n"):
+            chunk = client.recv(4096)
+            if not chunk:
+                raise RuntimeError(f"barrier {label!r} closed without release")
+            received += chunk
+    response = json.loads(received.decode("utf-8"))
+    if response != {"action": "continue", "label": label}:
+        raise RuntimeError(f"barrier {label!r} received invalid release {response!r}")
 
 
 def _close_log(handle: Any) -> None:
@@ -526,58 +559,69 @@ def _read_json_files(directory: Path) -> list[dict[str, Any]]:
     return values
 
 
-def _requirements_from_cases(cases: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+def _section1_pytest_command(*, python: str, junit: Path) -> list[str]:
+    """Build the literal §1 run without invoking the repository-wide lane selector."""
+
+    # ``--native-postgresql`` is a governed full-repository selector. This package owns a
+    # smaller literal inventory after independently proving the dedicated native server, so
+    # it uses ``--postgresql`` with exact node IDs instead of violating lane collection rules.
+    return [
+        python,
+        "-m",
+        "pytest",
+        "--postgresql",
+        "--junitxml",
+        str(junit),
+        "-q",
+        *PROCESS_TEST_INVENTORY,
+    ]
+
+
+def _requirements_from_cases(
+    cases: dict[str, dict[str, Any]],
+    *,
+    unavailable_reason: str | None = None,
+) -> list[dict[str, Any]]:
     requirements: list[dict[str, Any]] = []
     for nodeid in PROCESS_TEST_INVENTORY:
         result = cases.get(nodeid)
+        if result is not None:
+            status = result["status"]
+            detail = result["detail"]
+        elif unavailable_reason is not None:
+            status = "blocked_by_unavailable_native_infrastructure"
+            detail = unavailable_reason
+        else:
+            status = "not_run"
+            detail = None
         requirements.append(
             {
                 "requirement": NODE_REQUIREMENTS[nodeid],
                 "nodeid": nodeid,
                 "scenario": NODE_SCENARIOS[nodeid],
-                "status": "not_run" if result is None else result["status"],
-                "detail": None if result is None else result["detail"],
+                "implementation_status": "implemented",
+                "status": status,
+                "detail": detail,
             }
         )
-    requirements.extend(
-        [
-            {
-                "requirement": "command_commit_before_response_and_exact_replay",
-                "status": "blocked",
-                "separate_required_implementation_work": True,
-                "code_paths": [
-                    "dish_pg/protocol.py:PostgresProtocolService",
-                    "dish_pg/command_port.py:PostgresCommandPort.execute",
-                ],
-                "missing_prerequisite": COMMAND_PROCESS_BLOCKER,
-            },
-            {
-                "requirement": "governed_mutation_disconnect_and_exact_replay_after_recovery",
-                "status": "blocked",
-                "separate_required_implementation_work": True,
-                "code_paths": [
-                    "dish_pg/protocol.py:PostgresProtocolService",
-                    "dish_pg/database.py:session_scope",
-                ],
-                "missing_prerequisite": COMMAND_PROCESS_BLOCKER,
-            },
-            {
-                "requirement": "deadlock_and_serialization_policy",
-                "status": "not_exercised_no_defined_policy",
-                "covered_elsewhere_not_repeated": [
-                    "dish_pg/workflow.py:WorkflowRepository.admit_request IntegrityError -> ContentionLost",
-                    "dish_pg/workflow.py:WorkflowAuthorityService.acquire_actor_lease IntegrityError -> ContentionLost",
-                    "tests/postgresql/native/test_stage_a_concurrency.py ten-way request/lease races",
-                ],
-                "currently_undefined_policy_paths": [
-                    "dish_pg/database.py:session_scope (40P01/40001 rollback and re-raise)",
-                    "dish_pg/command_port.py:PostgresCommandPort.execute",
-                    "dish_pg/projection_worker.py:ProjectionWorker.run_once",
-                    "dish_pg/reconciliation_worker.py:ReconciliationWorker.run_once",
-                ],
-                "detail": CONTENTION_POLICY_NOTE,
-            },
-        ]
+    requirements.append(
+        {
+            "requirement": "deadlock_and_serialization_policy",
+            "implementation_status": "not_applicable_no_defined_policy",
+            "status": "not_exercised_no_defined_policy",
+            "covered_elsewhere_not_repeated": [
+                "dish_pg/workflow.py:WorkflowRepository.admit_request IntegrityError -> ContentionLost",
+                "dish_pg/workflow.py:WorkflowAuthorityService.acquire_actor_lease IntegrityError -> ContentionLost",
+                "tests/postgresql/native/test_stage_a_concurrency.py ten-way request/lease races",
+            ],
+            "currently_undefined_policy_paths": [
+                "dish_pg/database.py:session_scope (40P01/40001 rollback and re-raise)",
+                "dish_pg/command_port.py:PostgresCommandPort.execute",
+                "dish_pg/projection_worker.py:ProjectionWorker.run_once",
+                "dish_pg/reconciliation_worker.py:ReconciliationWorker.run_once",
+            ],
+            "detail": CONTENTION_POLICY_NOTE,
+        }
     )
     return requirements
 
@@ -776,13 +820,27 @@ def _validate_evidence(
 
 def _base_report(args: argparse.Namespace, *, run_evidence: Path) -> dict[str, Any]:
     return {
-        "format": "dish-postgresql-worker-process-failure-rehearsal-v2",
+        "format": "dish-postgresql-process-failure-rehearsal-v4",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
-        "scope": "partial-worker-process-rehearsal-for-database-backend-postgresql-test-plan-section-1",
-        "delivery_classification": "partial_worker_process_rehearsal",
-        "section1_implemented": False,
+        "scope": "rerunnable-process-failure-package-for-database-backend-postgresql-test-plan-section-1",
+        "delivery_classification": (
+            "complete_section1_scripted_package"
+            if not NOT_IMPLEMENTED_SCENARIOS
+            else "incomplete_section1_scripted_package"
+        ),
+        "section1_scripted_package_complete": not NOT_IMPLEMENTED_SCENARIOS,
+        "section1_implementation_status": (
+            "complete" if not NOT_IMPLEMENTED_SCENARIOS else "incomplete"
+        ),
+        "section1_implemented": not NOT_IMPLEMENTED_SCENARIOS,
         "section1_certified": False,
-        "command_process_requirements_blocked": True,
+        "not_implemented_scenarios": list(NOT_IMPLEMENTED_SCENARIOS),
+        "implemented_scenario_count": len(PROCESS_TEST_INVENTORY),
+        "required_scenario_count": len(PROCESS_TEST_INVENTORY) + len(NOT_IMPLEMENTED_SCENARIOS),
+        "native_execution_blocked_scenarios": [],
+        "native_execution_blocker": None,
+        "command_process_requirements_blocked": False,
+        "remaining_native_scenarios_blocked": False,
         "native_postgresql_required": True,
         "separate_os_processes_required": True,
         "source_contract_substitutions_allowed": False,
@@ -811,6 +869,137 @@ def _finalize(report: dict[str, Any]) -> None:
     report["report_sha256"] = hashlib.sha256(_canonical_bytes(report)).hexdigest()
 
 
+COMMAND_CHILD_MODE = "_command-child"
+COMMAND_CHILD_CONFIG_FORMAT = "dish-section1-command-child-config-v1"
+COMMAND_CHILD_RESULT_FORMAT = "dish-section1-command-child-result-v1"
+COMMAND_CHILD_SCENARIOS = frozenset(
+    {"normal", "after_execution_before_commit", "after_commit_before_response"}
+)
+
+
+def _command_child_main(argv: list[str]) -> int:
+    """Execute one real PostgreSQL command transaction in a disposable child process."""
+    if len(argv) != 1:
+        print("command child requires exactly one configuration path", file=sys.stderr)
+        return 64
+    config_path = Path(argv[0]).expanduser().resolve(strict=True)
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(
+            f"command child configuration is unreadable: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 64
+    if not isinstance(config, dict) or config.get("format") != COMMAND_CHILD_CONFIG_FORMAT:
+        print("command child configuration has an invalid format", file=sys.stderr)
+        return 64
+    try:
+        output = Path(str(config["output"])).expanduser().resolve(strict=False)
+        scenario = str(config.get("scenario", "normal"))
+        command_name = str(config["command_name"])
+        action_token = str(config["action_token"])
+        private_token = str(config["private_token"])
+        body = dict(config["body"])
+        owner_id = str(config["owner_id"])
+        now = datetime.fromisoformat(str(config["now"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        print(
+            f"command child configuration is incomplete: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        return 64
+    if scenario not in COMMAND_CHILD_SCENARIOS:
+        print(f"command child scenario is unsupported: {scenario!r}", file=sys.stderr)
+        return 64
+
+    from sqlalchemy.orm import Session, sessionmaker
+
+    from dish_pg.command_port import PostgresCommandPort
+    from dish_pg.protocol import PostgresProtocolService, ScopedBearerAuthenticator
+
+    dsn = os.environ.get("DISH_SECTION1_COMMAND_DSN", "").strip()
+    if not dsn:
+        print("command child is missing its PostgreSQL DSN", file=sys.stderr)
+        return 64
+    engine = create_engine(dsn, future=True, pool_pre_ping=True)
+    factory = sessionmaker(
+        bind=engine,
+        class_=Session,
+        autoflush=False,
+        expire_on_commit=False,
+        future=True,
+    )
+    session = factory()
+    try:
+        service = PostgresProtocolService(
+            PostgresCommandPort(
+                session,
+                cursor_secret=b"dish-section1-command-process-secret",
+            ),
+            ScopedBearerAuthenticator(
+                action_token=action_token,
+                private_token=private_token,
+            ),
+        )
+        result = service.handle(
+            command_name=command_name,
+            authorization=f"Bearer {action_token}",
+            body_loader=lambda: body,
+            owner_id=owner_id,
+            now=now,
+            route_scope="action",
+        )
+        if scenario == "after_execution_before_commit":
+            notify_process_barrier(
+                "after_command_execution_before_commit",
+                {
+                    "result": result,
+                    "result_sha256": hashlib.sha256(_canonical_bytes(result)).hexdigest(),
+                },
+            )
+        session.commit()
+        if scenario == "after_commit_before_response":
+            notify_process_barrier(
+                "after_authoritative_commit_before_response",
+                {
+                    "result": result,
+                    "result_sha256": hashlib.sha256(_canonical_bytes(result)).hexdigest(),
+                },
+            )
+        write_json_atomic(
+            output,
+            {
+                "format": COMMAND_CHILD_RESULT_FORMAT,
+                "status": "success",
+                "result": result,
+                "result_sha256": hashlib.sha256(_canonical_bytes(result)).hexdigest(),
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        return 0
+    except Exception as exc:
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        write_json_atomic(
+            output,
+            {
+                "format": COMMAND_CHILD_RESULT_FORMAT,
+                "status": "error",
+                "error_type": type(exc).__name__,
+                "error": redact_evidence_text(str(exc)),
+                "recorded_at": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+        print(f"{type(exc).__name__}: {redact_evidence_text(str(exc))}", file=sys.stderr)
+        return 1
+    finally:
+        session.close()
+        engine.dispose()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dish-pg-process-failure")
     parser.add_argument("--output", type=Path, required=True)
@@ -835,25 +1024,48 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _unavailable_report_fields(*, cases: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+def _unavailable_report_fields(
+    *,
+    infrastructure_error: str,
+    cases: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     current_cases = {} if cases is None else cases
+    blocked_requirements = [
+        NODE_REQUIREMENTS[nodeid]
+        for nodeid in PROCESS_TEST_INVENTORY
+        if nodeid not in current_cases
+    ]
     return {
         "postgresql_identity": None,
-        "requirements": _requirements_from_cases(current_cases),
+        "requirements": _requirements_from_cases(
+            current_cases, unavailable_reason=infrastructure_error
+        ),
         "test_summary": _test_summary(current_cases),
         "scenario_evidence": [],
         "processes": [],
+        "external_commands": [],
         "worker_external_commands": [],
         "evidence_validation": {
-            "ok": True,
-            "errors": [],
+            "status": "not_run_blocked_by_unavailable_native_infrastructure",
+            "ok": False,
+            "errors": [infrastructure_error],
             "valid_scenario_count": 0,
             "valid_process_count": 0,
             "valid_external_command_count": 0,
             "expected_scenario_count": 0,
         },
-        "worker_process_rehearsal_status": "not_run",
+        "native_execution_blocked_scenarios": blocked_requirements,
+        "native_execution_blocker": infrastructure_error,
+        "remaining_native_scenarios_blocked": bool(blocked_requirements),
+        "process_failure_rehearsal_status": (
+            "blocked_by_unavailable_native_infrastructure"
+        ),
+        "process_failure_native_evidence_validated": False,
+        "worker_process_rehearsal_status": (
+            "blocked_by_unavailable_native_infrastructure"
+        ),
         "worker_process_native_evidence_validated": False,
+        "section1_certified": False,
     }
 
 
@@ -908,16 +1120,19 @@ def main(argv: list[str] | None = None) -> int:
         detail = "Docker Compose is unavailable"
         if probe_failures:
             detail += "; probes failed: " + " | ".join(probe_failures)
+        infrastructure_error = (
+            detail
+            + "; a dedicated native PostgreSQL process was not started, and SQLite/PGlite "
+            "were not substituted"
+        )
         report.update(
             {
-                "status": "unavailable",
+                "status": "blocked",
                 "ok": False,
-                "infrastructure_error": (
-                    detail
-                    + "; a dedicated native PostgreSQL process was not started, and SQLite/PGlite "
-                    "were not substituted"
+                "infrastructure_error": infrastructure_error,
+                **_unavailable_report_fields(
+                    infrastructure_error=infrastructure_error
                 ),
-                **_unavailable_report_fields(),
             }
         )
         _finalize(report)
@@ -983,14 +1198,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         commands.append(up)
         if not _command_succeeded(up):
+            infrastructure_error = (
+                "dedicated PostgreSQL Compose startup failed: " + _command_failure(up)
+            )
             report.update(
                 {
-                    "status": "unavailable",
+                    "status": "blocked",
                     "ok": False,
-                    "infrastructure_error": (
-                        "dedicated PostgreSQL Compose startup failed: " + _command_failure(up)
+                    "infrastructure_error": infrastructure_error,
+                    **_unavailable_report_fields(
+                        infrastructure_error=infrastructure_error
                     ),
-                    **_unavailable_report_fields(),
                 }
             )
             return_code = 3
@@ -1001,17 +1219,10 @@ def main(argv: list[str] | None = None) -> int:
                 raise RehearsalConfigurationError(
                     "connected PostgreSQL identity does not match the dedicated Compose target"
                 )
-            pytest_command = [
-                args.python,
-                "-m",
-                "pytest",
-                "--postgresql",
-                "--native-postgresql",
-                "--junitxml",
-                str(junit),
-                "-q",
-                *PROCESS_TEST_INVENTORY,
-            ]
+            pytest_command = _section1_pytest_command(
+                python=args.python,
+                junit=junit,
+            )
             pytest_run = run_external_command(
                 pytest_command,
                 cwd=ROOT,
@@ -1040,36 +1251,43 @@ def main(argv: list[str] | None = None) -> int:
             )
             requirements = _requirements_from_cases(cases)
             summary = _test_summary(cases)
-            worker_failures = [
+            process_failures = [
                 item
                 for item in requirements[: len(PROCESS_TEST_INVENTORY)]
                 if item["status"] != "passed"
             ]
-            worker_ok = (
+            process_ok = (
                 _command_succeeded(pytest_run)
-                and not worker_failures
+                and not process_failures
                 and evidence_validation["ok"]
             )
-            if worker_ok:
-                status, return_code = "partial", 2
-                worker_status = "passed"
+            if process_ok:
+                status, return_code = "pass", 0
+                process_status = "passed"
             else:
                 status, return_code = "fail", 1
-                worker_status = "failed"
+                process_status = "failed"
             report.update(
                 {
                     "status": status,
-                    "ok": False,
+                    "ok": process_ok,
+                    "section1_certified": process_ok,
+                    "native_execution_blocked_scenarios": [],
+                    "native_execution_blocker": None,
+                    "remaining_native_scenarios_blocked": False,
                     "infrastructure_error": None,
                     "postgresql_identity": identity,
                     "requirements": requirements,
                     "test_summary": summary,
                     "scenario_evidence": scenario_records,
                     "processes": process_records,
+                    "external_commands": worker_command_records,
                     "worker_external_commands": worker_command_records,
                     "evidence_validation": evidence_validation,
-                    "worker_process_rehearsal_status": worker_status,
-                    "worker_process_native_evidence_validated": worker_ok,
+                    "process_failure_rehearsal_status": process_status,
+                    "process_failure_native_evidence_validated": process_ok,
+                    "worker_process_rehearsal_status": process_status,
+                    "worker_process_native_evidence_validated": process_ok,
                     "pytest": {
                         "final_exit_status": pytest_run["final_exit_status"],
                         "completion_state": pytest_run["completion_state"],
@@ -1082,16 +1300,49 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
     except (OSError, RehearsalConfigurationError, SQLAlchemyError, subprocess.SubprocessError) as exc:
-        report.update(
-            {
-                "status": "unavailable" if not startup_ok else "fail",
-                "ok": False,
-                "infrastructure_error": f"{type(exc).__name__}: {exc}",
-                "postgresql_identity": identity,
-                **_unavailable_report_fields(),
-            }
-        )
-        return_code = 3 if not startup_ok else 1
+        infrastructure_error = f"{type(exc).__name__}: {exc}"
+        if not startup_ok:
+            report.update(
+                {
+                    "status": "blocked",
+                    "ok": False,
+                    "infrastructure_error": infrastructure_error,
+                    **_unavailable_report_fields(
+                        infrastructure_error=infrastructure_error
+                    ),
+                }
+            )
+            return_code = 3
+        else:
+            report.update(
+                {
+                    "status": "fail",
+                    "ok": False,
+                    "section1_certified": False,
+                    "infrastructure_error": infrastructure_error,
+                    "postgresql_identity": identity,
+                    "requirements": _requirements_from_cases({}),
+                    "test_summary": _test_summary({}),
+                    "scenario_evidence": [],
+                    "processes": [],
+                    "external_commands": [],
+                    "worker_external_commands": [],
+                    "evidence_validation": {
+                        "status": "execution_failed_before_evidence_validation",
+                        "ok": False,
+                        "errors": [infrastructure_error],
+                        "valid_scenario_count": 0,
+                        "valid_process_count": 0,
+                        "valid_external_command_count": 0,
+                        "expected_scenario_count": 0,
+                    },
+                    "process_failure_rehearsal_status": "failed",
+                    "process_failure_native_evidence_validated": False,
+                    "worker_process_rehearsal_status": "failed",
+                    "worker_process_native_evidence_validated": False,
+                }
+            )
+            return_code = 1
     finally:
         if startup_ok:
             logs = run_external_command(
@@ -1121,10 +1372,14 @@ def main(argv: list[str] | None = None) -> int:
                 cleanup_errors.append("PostgreSQL cleanup failed: " + _command_failure(down))
         report["commands"] = commands
         report["cleanup_errors"] = cleanup_errors
-        if cleanup_errors and report.get("status") in {"partial", "fail"}:
+        if cleanup_errors and report.get("status") in {"pass", "fail"}:
             report["status"] = "fail"
+            report["process_failure_native_evidence_validated"] = False
+            report["process_failure_rehearsal_status"] = "failed"
             report["worker_process_native_evidence_validated"] = False
             report["worker_process_rehearsal_status"] = "failed"
+            report["section1_certified"] = False
+            report["ok"] = False
             return_code = 1
         _finalize(report)
         write_json_atomic(output, report)
@@ -1144,4 +1399,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == COMMAND_CHILD_MODE:
+        raise SystemExit(_command_child_main(sys.argv[2:]))
     raise SystemExit(main())

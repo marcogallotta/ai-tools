@@ -16,12 +16,19 @@ from typing import Any
 import psycopg
 from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.engine import make_url
+from sqlalchemy.orm import Session, sessionmaker
 
+from dish_pg import models
+from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
+from dish_pg.transition import ProjectionService
 from dish_pg.process_failure_rehearsal import (
+    COMMAND_CHILD_CONFIG_FORMAT,
+    COMMAND_CHILD_RESULT_FORMAT,
     redact_command_for_evidence,
     redact_evidence_log,
+    redact_evidence_text,
     run_external_command,
     write_json_atomic,
 )
@@ -30,6 +37,12 @@ ROOT = Path(__file__).resolve().parents[3]
 ADAPTER = "tests.support.postgresql.process_failure_adapter:DeterministicExternalAdapter"
 FETCHER = "tests.support.postgresql.process_failure_adapter:fetch_corpus"
 COMPARATOR = "tests.support.postgresql.process_failure_adapter:compare_item"
+RECONCILIATION_CHILD_MODE = "_reconciliation-child"
+RECONCILIATION_CHILD_CONFIG_FORMAT = "dish-section1-reconciliation-child-config-v1"
+RECONCILIATION_CHILD_RESULT_FORMAT = "dish-section1-reconciliation-child-result-v1"
+RECONCILIATION_CHILD_SCENARIOS = frozenset(
+    {"normal", "after_durable_run_creation", "after_partial_corpus"}
+)
 
 
 class ProcessRehearsalFailure(AssertionError):
@@ -551,6 +564,178 @@ def start_projection_worker(
     )
 
 
+def start_command_process(
+    *,
+    dsn: str,
+    tmp_path: Path,
+    run_id: uuid.UUID,
+    request_id: uuid.UUID,
+    output: Path,
+    now: datetime,
+    arguments: dict[str, Any],
+    scenario: str = "normal",
+    barrier: BarrierServer | None = None,
+    command_name: str = "create",
+    owner_id: str = "owner-1",
+) -> ChildProcess:
+    evidence = _evidence_root(tmp_path)
+    configs = evidence / "command-configs"
+    configs.mkdir(parents=True, exist_ok=True)
+    identity = uuid.uuid4().hex
+    config_path = configs / f"command-{identity}.json"
+    write_json_atomic(
+        config_path,
+        {
+            "format": COMMAND_CHILD_CONFIG_FORMAT,
+            "output": str(output),
+            "scenario": scenario,
+            "command_name": command_name,
+            "owner_id": owner_id,
+            "action_token": "section1-action-token",
+            "private_token": "section1-private-token",
+            "now": now.isoformat(),
+            "body": {
+                "client": {"run_id": str(run_id), "request_id": str(request_id)},
+                "arguments": dict(arguments),
+            },
+        },
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "dish_pg.process_failure_rehearsal",
+        "_command-child",
+        str(config_path),
+    ]
+    return _start_child(
+        command,
+        tmp_path=tmp_path,
+        barrier=barrier,
+        ledger=tmp_path / "command-unused-ledger.json",
+        scenario=scenario,
+        label=f"command-{command_name}",
+        env_overrides={"DISH_SECTION1_COMMAND_DSN": dsn},
+    )
+
+
+def read_command_result(path: Path, *, expected_status: str = "success") -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("format") != COMMAND_CHILD_RESULT_FORMAT:
+        raise ProcessRehearsalFailure(f"command result has invalid format: {path}")
+    if payload.get("status") != expected_status:
+        raise ProcessRehearsalFailure(
+            f"command result status is {payload.get('status')!r}, expected {expected_status!r}: {path}"
+        )
+    return payload
+
+
+def command_snapshot(factory, *, request_id: uuid.UUID) -> dict[str, Any]:
+    with session_scope(factory) as session:
+        request_count = int(
+            session.scalar(
+                select(func.count()).select_from(wf.ServiceRequest).where(
+                    wf.ServiceRequest.request_id == request_id
+                )
+            )
+            or 0
+        )
+        outcome = session.scalar(
+            select(wf.ServiceRequestOutcome).where(
+                wf.ServiceRequestOutcome.request_id == request_id
+            )
+        )
+        executions = list(
+            session.scalars(
+                select(wf.CommandExecution).where(
+                    wf.CommandExecution.request_id == request_id
+                )
+            )
+        )
+        execution_ids = [row.execution_id for row in executions]
+        if execution_ids:
+            tasks = list(
+                session.scalars(
+                    select(models.DishTask).where(
+                        models.DishTask.command_execution_id.in_(execution_ids)
+                    )
+                )
+            )
+            task_ids = [row.task_id for row in tasks]
+            table_counts = {
+                "content_versions": int(
+                    session.scalar(
+                        select(func.count()).select_from(models.ContentVersion).where(
+                            models.ContentVersion.command_execution_id.in_(execution_ids)
+                        )
+                    )
+                    or 0
+                ),
+                "membership_events": int(
+                    session.scalar(
+                        select(func.count()).select_from(models.TaskProjectMembershipEvent).where(
+                            models.TaskProjectMembershipEvent.command_execution_id.in_(execution_ids)
+                        )
+                    )
+                    or 0
+                ),
+                "placement_events": int(
+                    session.scalar(
+                        select(func.count()).select_from(models.TaskSectionPlacementEvent).where(
+                            models.TaskSectionPlacementEvent.command_execution_id.in_(execution_ids)
+                        )
+                    )
+                    or 0
+                ),
+                "completion_events": int(
+                    session.scalar(
+                        select(func.count()).select_from(models.TaskCompletionEvent).where(
+                            models.TaskCompletionEvent.command_execution_id.in_(execution_ids)
+                        )
+                    )
+                    or 0
+                ),
+                "projection_events": int(
+                    session.scalar(
+                        select(func.count()).select_from(tx.ProjectionOutboxEvent).where(
+                            tx.ProjectionOutboxEvent.command_execution_id.in_(execution_ids)
+                        )
+                    )
+                    or 0
+                ),
+            }
+        else:
+            tasks = []
+            task_ids = []
+            table_counts = {
+                "content_versions": 0,
+                "membership_events": 0,
+                "placement_events": 0,
+                "completion_events": 0,
+                "projection_events": 0,
+            }
+    return {
+        "request_count": request_count,
+        "outcome_count": 0 if outcome is None else 1,
+        "execution_count": len(executions),
+        "execution_ids": [str(row.execution_id) for row in executions],
+        "execution_statuses": [row.status for row in executions],
+        "task_count": len(tasks),
+        "task_ids": [str(value) for value in task_ids],
+        **table_counts,
+        "outcome": (
+            None
+            if outcome is None
+            else {
+                "class": outcome.outcome_class,
+                "code": outcome.result_code,
+                "http_status": outcome.http_status,
+                "payload": dict(outcome.result_payload),
+                "sha256": outcome.result_sha256,
+            }
+        ),
+    }
+
+
 def start_reconciliation_worker(
     *,
     dsn: str,
@@ -561,6 +746,7 @@ def start_reconciliation_worker(
     output: Path,
     scenario: str = "normal",
     barrier: BarrierServer | None = None,
+    item_count: int = 1,
     expected_database: str | None = None,
     expected_schema_head: str | None = None,
     expected_release: str | None = None,
@@ -585,6 +771,8 @@ def start_reconciliation_worker(
         "--log-level",
         "INFO",
     ]
+    if item_count < 1:
+        raise ValueError("reconciliation item_count must be positive")
     identity_values = (
         expected_database,
         expected_schema_head,
@@ -617,7 +805,154 @@ def start_reconciliation_worker(
         ledger=ledger,
         scenario=scenario,
         label="reconciliation",
+        env_overrides={"DISH_SECTION1_RECONCILIATION_ITEM_COUNT": str(item_count)},
     )
+
+
+def start_reconciliation_checkpoint_process(
+    *,
+    dsn: str,
+    tmp_path: Path,
+    ledger: Path,
+    generation_id: uuid.UUID,
+    corpus_identity: str,
+    output: Path,
+    item_count: int,
+    mode: str,
+    scenario: str = "normal",
+    barrier: BarrierServer | None = None,
+    reconciliation_run_id: uuid.UUID | None = None,
+    now: datetime | None = None,
+) -> ChildProcess:
+    """Start the existing §1 child harness at durable reconciliation checkpoints."""
+
+    if item_count < 1:
+        raise ValueError("reconciliation item_count must be positive")
+    if not corpus_identity.strip():
+        raise ValueError("reconciliation corpus_identity must be non-blank")
+    if mode not in {"start", "resume"}:
+        raise ValueError("reconciliation checkpoint mode must be start or resume")
+    if mode == "resume" and reconciliation_run_id is None:
+        raise ValueError("resume mode requires reconciliation_run_id")
+    if mode == "start" and reconciliation_run_id is not None:
+        raise ValueError("start mode must not provide reconciliation_run_id")
+    if scenario not in RECONCILIATION_CHILD_SCENARIOS:
+        raise ValueError(f"unsupported reconciliation child scenario {scenario!r}")
+    evidence = _evidence_root(tmp_path)
+    configs = evidence / "reconciliation-configs"
+    configs.mkdir(parents=True, exist_ok=True)
+    identity = uuid.uuid4().hex
+    config_path = configs / f"reconciliation-{identity}.json"
+    write_json_atomic(
+        config_path,
+        {
+            "format": RECONCILIATION_CHILD_CONFIG_FORMAT,
+            "output": str(output),
+            "mode": mode,
+            "scenario": scenario,
+            "generation_id": str(generation_id),
+            "corpus_identity": corpus_identity,
+            "item_count": item_count,
+            "reconciliation_run_id": (
+                None if reconciliation_run_id is None else str(reconciliation_run_id)
+            ),
+            "now": (now or datetime.now(timezone.utc)).isoformat(),
+        },
+    )
+    command = [
+        sys.executable,
+        "-m",
+        "tests.support.postgresql.process_failure",
+        RECONCILIATION_CHILD_MODE,
+        str(config_path),
+    ]
+    return _start_child(
+        command,
+        tmp_path=tmp_path,
+        barrier=barrier,
+        ledger=ledger,
+        scenario=scenario,
+        label=f"reconciliation-checkpoint-{mode}",
+        env_overrides={
+            "DISH_SECTION1_RECONCILIATION_DSN": dsn,
+            "DISH_SECTION1_RECONCILIATION_ITEM_COUNT": str(item_count),
+        },
+    )
+
+
+def read_reconciliation_child_result(
+    path: Path, *, expected_status: str = "success"
+) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("format") != RECONCILIATION_CHILD_RESULT_FORMAT:
+        raise ProcessRehearsalFailure(f"reconciliation child result has invalid format: {path}")
+    if payload.get("status") != expected_status:
+        raise ProcessRehearsalFailure(
+            f"reconciliation child status is {payload.get('status')!r}, "
+            f"expected {expected_status!r}: {path}"
+        )
+    return payload
+
+
+def reconciliation_snapshot(
+    factory,
+    *,
+    generation_id: uuid.UUID,
+    corpus_identity: str,
+) -> dict[str, Any]:
+    with session_scope(factory) as session:
+        runs = list(
+            session.scalars(
+                select(tx.ProjectionReconciliationRun)
+                .where(
+                    tx.ProjectionReconciliationRun.generation_id == generation_id,
+                    tx.ProjectionReconciliationRun.corpus_identity == corpus_identity,
+                )
+                .order_by(tx.ProjectionReconciliationRun.started_at)
+            )
+        )
+        run_ids = [row.reconciliation_run_id for row in runs]
+        items = (
+            []
+            if not run_ids
+            else list(
+                session.scalars(
+                    select(tx.ProjectionReconciliationItem)
+                    .where(
+                        tx.ProjectionReconciliationItem.reconciliation_run_id.in_(run_ids)
+                    )
+                    .order_by(
+                        tx.ProjectionReconciliationItem.reconciliation_run_id,
+                        tx.ProjectionReconciliationItem.item_identity,
+                    )
+                )
+            )
+        )
+    items_by_run: dict[uuid.UUID, list[tx.ProjectionReconciliationItem]] = {
+        run_id: [] for run_id in run_ids
+    }
+    for item in items:
+        items_by_run[item.reconciliation_run_id].append(item)
+    return {
+        "run_count": len(runs),
+        "item_count": len(items),
+        "runs": [
+            {
+                "reconciliation_run_id": str(row.reconciliation_run_id),
+                "status": row.status,
+                "expected_items": int(row.expected_items),
+                "processed_items": int(row.processed_items),
+                "completed": row.completed_at is not None,
+                "item_identities": [
+                    item.item_identity for item in items_by_run[row.reconciliation_run_id]
+                ],
+                "item_outcomes": [
+                    item.outcome for item in items_by_run[row.reconciliation_run_id]
+                ],
+            }
+            for row in runs
+        ],
+    }
 
 
 def read_ledger(path: Path) -> dict[str, Any]:
@@ -881,3 +1216,151 @@ def compose_control(action: str, *, timeout: float | None = None) -> dict[str, A
             f"failure={result['failure']} log={result['log_path']}"
         )
     return result
+
+def _reconciliation_child_main(argv: list[str]) -> int:
+    if len(argv) != 1:
+        print("reconciliation child requires exactly one configuration path", file=sys.stderr)
+        return 64
+    config_path = Path(argv[0]).expanduser().resolve(strict=True)
+    try:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"reconciliation child configuration is unreadable: {exc}", file=sys.stderr)
+        return 64
+    if not isinstance(config, dict) or config.get("format") != RECONCILIATION_CHILD_CONFIG_FORMAT:
+        print("reconciliation child configuration has an invalid format", file=sys.stderr)
+        return 64
+    try:
+        output = Path(str(config["output"])).expanduser().resolve(strict=False)
+        mode = str(config["mode"])
+        scenario = str(config["scenario"])
+        generation_id = uuid.UUID(str(config["generation_id"]))
+        corpus_identity = str(config["corpus_identity"])
+        item_count = int(config["item_count"])
+        raw_run_id = config.get("reconciliation_run_id")
+        reconciliation_run_id = None if raw_run_id is None else uuid.UUID(str(raw_run_id))
+        now = datetime.fromisoformat(str(config["now"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        print(f"reconciliation child configuration is incomplete: {exc}", file=sys.stderr)
+        return 64
+    if mode not in {"start", "resume"}:
+        print(f"reconciliation child mode is unsupported: {mode!r}", file=sys.stderr)
+        return 64
+    if scenario not in RECONCILIATION_CHILD_SCENARIOS:
+        print(f"reconciliation child scenario is unsupported: {scenario!r}", file=sys.stderr)
+        return 64
+    if (
+        item_count < 1
+        or not corpus_identity.strip()
+        or (mode == "resume" and reconciliation_run_id is None)
+        or (mode == "start" and reconciliation_run_id is not None)
+    ):
+        print("reconciliation child configuration has invalid progress fields", file=sys.stderr)
+        return 64
+    dsn = os.environ.get("DISH_SECTION1_RECONCILIATION_DSN", "").strip()
+    if not dsn:
+        print("reconciliation child is missing its PostgreSQL DSN", file=sys.stderr)
+        return 64
+
+    from tests.support.postgresql.process_failure_adapter import compare_item, fetch_corpus
+
+    engine = create_engine(dsn, future=True, pool_pre_ping=True)
+    factory = sessionmaker(
+        bind=engine,
+        class_=Session,
+        autoflush=False,
+        expire_on_commit=False,
+        future=True,
+    )
+    try:
+        corpus = tuple(fetch_corpus(corpus_identity))
+        if len(corpus) != item_count:
+            raise ProcessRehearsalFailure(
+                f"configured item_count {item_count} does not match fetched corpus {len(corpus)}"
+            )
+        if mode == "start":
+            with session_scope(factory) as session:
+                run = ProjectionService(session).start_reconciliation(
+                    generation_id=generation_id,
+                    corpus_identity=corpus_identity,
+                    expected_items=len(corpus),
+                    started_at=now,
+                )
+                reconciliation_run_id = run.reconciliation_run_id
+            if scenario == "after_durable_run_creation":
+                from dish_pg.process_failure_rehearsal import notify_process_barrier
+
+                notify_process_barrier(
+                    "after_durable_reconciliation_run_creation",
+                    {
+                        "reconciliation_run_id": str(reconciliation_run_id),
+                        "expected_items": len(corpus),
+                        "processed_items": 0,
+                    },
+                )
+        if reconciliation_run_id is None:
+            raise ProcessRehearsalFailure("reconciliation run identity was not established")
+        for index, item in enumerate(corpus):
+            with session_scope(factory) as session:
+                record = compare_item(session, generation_id, item)
+                ProjectionService(session).record_reconciliation_item(
+                    reconciliation_run_id=reconciliation_run_id,
+                    item_identity=record.item_identity,
+                    entity_kind=record.entity_kind,
+                    mapping_id=record.mapping_id,
+                    outcome=record.outcome,
+                    evidence=record.evidence,
+                    recorded_at=now,
+                )
+            if scenario == "after_partial_corpus" and index == 0:
+                from dish_pg.process_failure_rehearsal import notify_process_barrier
+
+                notify_process_barrier(
+                    "after_partially_recorded_reconciliation_corpus",
+                    {
+                        "reconciliation_run_id": str(reconciliation_run_id),
+                        "expected_items": len(corpus),
+                        "processed_items": 1,
+                        "recorded_item_identity": item.item_identity,
+                    },
+                )
+        with session_scope(factory) as session:
+            completed = ProjectionService(session).complete_reconciliation(
+                reconciliation_run_id=reconciliation_run_id,
+                completed_at=now,
+            )
+            result = {
+                "format": RECONCILIATION_CHILD_RESULT_FORMAT,
+                "status": "success",
+                "mode": mode,
+                "scenario": scenario,
+                "reconciliation_run_id": str(completed.reconciliation_run_id),
+                "run_status": completed.status,
+                "expected_items": int(completed.expected_items),
+                "processed_items": int(completed.processed_items),
+            }
+        write_json_atomic(output, result)
+        return 0
+    except Exception as exc:
+        write_json_atomic(
+            output,
+            {
+                "format": RECONCILIATION_CHILD_RESULT_FORMAT,
+                "status": "error",
+                "error_type": type(exc).__name__,
+                "error": redact_evidence_text(str(exc)),
+            },
+        )
+        print(
+            f"{type(exc).__name__}: {redact_evidence_text(str(exc))}",
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        engine.dispose()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == RECONCILIATION_CHILD_MODE:
+        raise SystemExit(_reconciliation_child_main(sys.argv[2:]))
+    raise SystemExit("unsupported process-failure support invocation")
