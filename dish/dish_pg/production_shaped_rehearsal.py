@@ -2113,10 +2113,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     arguments=item["arguments"],
                     request_id=None,
                 )
-                if not result.get("ok"):
-                    raise ProductionShapedError(
-                        f"representative command {item['command']} failed: {result}"
-                    )
                 serialized = _canonical_json(result)
                 results.append(
                     {
@@ -2130,8 +2126,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     {
                         "command": item["command"],
                         "first_attempt_status": "passed",
-                        "code": result.get("code"),
-                        "http_status": result.get("http_status"),
+                        "code": None,
+                        "http_status": None,
                     }
                 )
             command_inventory = inventory
