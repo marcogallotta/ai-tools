@@ -122,6 +122,46 @@ is recorded as a gap rather than empty evidence. Inspect axis-specific differenc
 raw transport shape as parity. Mismatch and gap counts are evidence, not authority failures; disabling
 the dark launch must not affect the live service.
 
+## TEST dark-launch acceptance sequence
+
+This acceptance package is separate from the §§1–4 PostgreSQL validation program. It composes the
+existing host-capture and worker-restart rehearsals; it does not replace or duplicate their
+assertions. Run it only against the real TEST service and `dish_stage_a_dark_test` database:
+
+```sh
+DISH_PG_DATABASE_URL="$DISH_PG_DATABASE_URL" \
+  .venv/bin/python scripts/dish-pg-dark-launch-test-acceptance \
+  --agent codex \
+  --expected-source "$(git rev-parse HEAD)" \
+  --capture-timeout-seconds 900 \
+  --worker-timeout-seconds 2400 \
+  --termination-grace-seconds 10 \
+  --output .test-artifacts/dark-launch-test-acceptance/report.json
+```
+
+The runner refuses non-TEST service identity, database names, state paths, path aliases, and output
+inside permanent Dish product state. It executes each child once without automatic reruns. Each child
+runs in its own process group with a finite deadline; timeout sends `SIGTERM` to the group, escalates
+to `SIGKILL` after the configured grace period, and records the timeout, cleanup, stdout, stderr, and
+report evidence. The runner preserves the capture report and worker scratch evidence, strips
+Asana/service credentials from the worker environment, and emits one bounded aggregate JSON report.
+
+The aggregate records the exact source identity and child commands, child report hashes,
+first-attempt statuses, preserved failure paths, and a final `pass`, `fail`, `partial`, or `blocked`
+status. A capture failure or either child timeout is `fail`. `partial` is reserved for a completed
+earlier stage followed by a genuinely unavailable later prerequisite; `blocked` is reserved for an
+unavailable preflight prerequisite.
+
+The cross-child checks confirm that private CLI and GPT Action observations stayed unchanged and
+that the active projection epoch remains effects-disabled. Shadow-origin exclusion is proved
+separately from that switch: inside one rollback-only database transaction, the runner temporarily
+enables the active epoch, creates equivalent eligible live- and shadow-origin probe rows on the same
+rehearsal task, and makes the shadow row earlier in claim order. A separate observer transaction
+still sees effects disabled and cannot see either synthetic row. The real
+`ProjectionService.claim_next` nevertheless selects the later live row while leaving the shadow row
+pending, creates no projection attempt or external adapter path, then rolls back. A final transaction
+verifies the synthetic rows are absent and external effects are still disabled.
+
 ## Immediate disable
 
 Create the kill switch without editing service configuration:

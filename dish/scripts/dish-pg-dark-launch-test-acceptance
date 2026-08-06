@@ -1,0 +1,1488 @@
+#!/usr/bin/env python3
+"""Compose the two real TEST dark-launch rehearsals into one acceptance run.
+
+This runner is intentionally thin.  It does not reproduce capture, spool,
+worker-restart, claim-expiry, fencing, or ordering assertions owned by the two
+child rehearsals.  It supplies TEST-only safety gates, preserves each child's
+first attempt, consumes their reports, and performs the acceptance-only
+postconditions that span both rehearsals.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import os
+import re
+import signal
+import shlex
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+TEST_ENV_PATH = Path("/home/marco/.config/dish-service/test.env")
+TEST_STATE_ROOT = Path("/home/marco/.local/state/dish/test")
+TEST_SQLITE_PATH = TEST_STATE_ROOT / "shared.sqlite3"
+TEST_SERVICE_UNIT = "dish-service-test.service"
+TEST_PRIVATE_PORT = 8765
+TEST_ACTION_PORT = 8766
+EXPECTED_DATABASE = "dish_stage_a_dark_test"
+SYSTEMCTL = Path("/usr/bin/systemctl")
+CAPTURE_SCRIPT = ROOT / "scripts/dish-pg-host-capture-rehearsal"
+WORKER_SCRIPT = ROOT / "scripts/dish-pg-certify-shadow-worker-restart"
+FORMAT = "dish-dark-launch-test-acceptance-v1"
+DEFAULT_CAPTURE_TIMEOUT_SECONDS = 900.0
+DEFAULT_WORKER_TIMEOUT_SECONDS = 2400.0
+DEFAULT_TERMINATION_GRACE_SECONDS = 10.0
+_ARCHIVE_SHA_RE = re.compile(r"[0-9a-f]{64}")
+_GIT_OID_RE = re.compile(r"[0-9a-f]{40,64}")
+_ASSIGNMENT = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=")
+_WORKER_SECRET_NAME = re.compile(
+    r"(?:ASANA|TOKEN|ADAPTER|PASSWORD|SECRET|CREDENTIAL|API_KEY|ACCESS_KEY|PRIVATE_KEY)",
+    re.IGNORECASE,
+)
+
+
+class AcceptanceError(RuntimeError):
+    """A fail-closed acceptance or evidence error."""
+
+
+class PrerequisiteUnavailable(AcceptanceError):
+    """A genuine external prerequisite is unavailable for this run."""
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _canonical_hash(value: Any) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return _sha256_bytes(payload.encode("utf-8"))
+
+
+def _write_json_atomic(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(value, handle, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _decode_env_value(raw: str) -> str:
+    lexer = shlex.shlex(raw.strip(), posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    values = list(lexer)
+    if not values:
+        return ""
+    if len(values) != 1:
+        raise AcceptanceError("unsupported multi-token value in TEST service environment")
+    return values[0]
+
+
+def _parse_env(path: Path) -> dict[str, str]:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise PrerequisiteUnavailable(
+            f"cannot read TEST service environment: {path}: {exc}"
+        ) from exc
+    except UnicodeDecodeError as exc:
+        raise AcceptanceError(
+            f"TEST service environment is not valid UTF-8: {path}: {exc}"
+        ) from exc
+    values: dict[str, str] = {}
+    for number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        match = _ASSIGNMENT.match(line)
+        if match is None:
+            raise AcceptanceError(f"unsupported TEST environment line {number}")
+        values[match.group(1)] = _decode_env_value(line[match.end() :])
+    return values
+
+
+def _required(values: Mapping[str, str], name: str) -> str:
+    value = values.get(name, "").strip()
+    if not value:
+        raise AcceptanceError(f"required TEST environment value is missing: {name}")
+    return value
+
+
+def _resolved_path(value: str) -> Path:
+    return Path(value).expanduser().resolve(strict=False)
+
+
+def _within(path: Path, parent: Path) -> bool:
+    return path == parent or parent in path.parents
+
+
+def _same_existing_object(left: Path, right: Path) -> bool:
+    try:
+        return left.exists() and right.exists() and left.samefile(right)
+    except OSError:
+        return False
+
+
+def _verify_distinct_test_paths(paths: Mapping[str, Path]) -> dict[str, str]:
+    resolved = {name: path.resolve(strict=False) for name, path in paths.items()}
+    for name, path in resolved.items():
+        if not _within(path, TEST_STATE_ROOT):
+            raise AcceptanceError(f"refusing non-TEST {name} path: {path}")
+    names = sorted(resolved)
+    for index, left_name in enumerate(names):
+        for right_name in names[index + 1 :]:
+            left = resolved[left_name]
+            right = resolved[right_name]
+            if (
+                left == right
+                or left in right.parents
+                or right in left.parents
+                or _same_existing_object(left, right)
+            ):
+                raise AcceptanceError(
+                    f"TEST paths alias or overlap: "
+                    f"{left_name}={left} and {right_name}={right}"
+                )
+    return {name: str(path) for name, path in resolved.items()}
+
+
+def _is_credential_name(name: str) -> bool:
+    upper = name.upper()
+    return bool(
+        _WORKER_SECRET_NAME.search(name)
+        or upper == "PGPASSWORD"
+        or upper == "DATABASE_URL"
+        or upper.endswith("_URL")
+        or upper.endswith("_DSN")
+    )
+
+
+def _git_identity() -> dict[str, Any]:
+    def git(*arguments: str) -> str:
+        completed = subprocess.run(
+            ["git", "-C", str(ROOT), *arguments],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if completed.returncode != 0:
+            raise AcceptanceError(
+                f"cannot resolve source identity with git {' '.join(arguments)}: "
+                f"{completed.stderr.strip()}"
+            )
+        return completed.stdout.strip()
+
+    commit = git("rev-parse", "HEAD").lower()
+    tree = git("rev-parse", "HEAD^{tree}").lower()
+    if _GIT_OID_RE.fullmatch(commit) is None or _GIT_OID_RE.fullmatch(tree) is None:
+        raise AcceptanceError("Git returned a non-immutable source identity")
+    dirty = bool(git("status", "--porcelain", "--untracked-files=no"))
+    return {"git_commit": commit, "git_tree": tree, "tracked_tree_clean": not dirty}
+
+
+def _database_identity(database_url: str) -> dict[str, Any]:
+    from sqlalchemy import text
+
+    from dish_pg.config import DatabaseSettings
+    from dish_pg.db import create_database_engine
+
+    engine = create_database_engine(DatabaseSettings(url=database_url))
+    try:
+        if engine.dialect.name != "postgresql":
+            raise AcceptanceError("refusing non-PostgreSQL acceptance target")
+        try:
+            with engine.connect() as connection:
+                row = connection.execute(
+                    text(
+                        "SELECT current_database(), current_user, "
+                        "inet_server_addr()::text, inet_server_port(), version()"
+                    )
+                ).one()
+        except Exception as exc:
+            raise PrerequisiteUnavailable(
+                "TEST PostgreSQL is unavailable for dark-launch acceptance"
+            ) from exc
+        identity = {
+            "database": row[0],
+            "user": row[1],
+            "server_address": row[2],
+            "server_port": row[3],
+            "version": row[4],
+        }
+        if identity["database"] != EXPECTED_DATABASE:
+            raise AcceptanceError(
+                f"refusing database {identity['database']!r}; expected {EXPECTED_DATABASE!r}"
+            )
+        return identity
+    finally:
+        engine.dispose()
+
+
+def _service_identity() -> dict[str, str]:
+    try:
+        completed = subprocess.run(
+            [
+                str(SYSTEMCTL),
+                "show",
+                TEST_SERVICE_UNIT,
+                "--no-pager",
+                "--property=LoadState",
+                "--property=ActiveState",
+                "--property=SubState",
+                "--property=FragmentPath",
+                "--property=EnvironmentFiles",
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        raise PrerequisiteUnavailable(
+            f"cannot inspect {TEST_SERVICE_UNIT}: {exc}"
+        ) from exc
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise PrerequisiteUnavailable(
+            f"cannot inspect {TEST_SERVICE_UNIT}: {detail}"
+        )
+    properties = dict(
+        line.split("=", 1)
+        for line in completed.stdout.splitlines()
+        if "=" in line
+    )
+    if properties.get("LoadState") != "loaded":
+        raise PrerequisiteUnavailable(f"{TEST_SERVICE_UNIT} is not loaded")
+    if properties.get("ActiveState") != "active" or properties.get("SubState") != "running":
+        raise PrerequisiteUnavailable(
+            f"{TEST_SERVICE_UNIT} is not active/running: "
+            f"{properties.get('ActiveState')}/{properties.get('SubState')}"
+        )
+    fragment = Path(properties.get("FragmentPath", "")).resolve(strict=False)
+    if fragment.name != TEST_SERVICE_UNIT:
+        raise AcceptanceError(f"refusing unexpected TEST service fragment: {fragment}")
+    environment_files = properties.get("EnvironmentFiles", "")
+    if str(TEST_ENV_PATH) not in environment_files:
+        raise AcceptanceError(
+            f"{TEST_SERVICE_UNIT} does not declare the TEST environment file"
+        )
+    return {
+        "load_state": properties["LoadState"],
+        "active_state": properties["ActiveState"],
+        "sub_state": properties["SubState"],
+        "fragment_path": str(fragment),
+        "environment_files": environment_files,
+    }
+
+
+def _preflight(*, database_url: str) -> tuple[dict[str, Any], list[str]]:
+    if TEST_ENV_PATH.resolve(strict=False) != Path(
+        "/home/marco/.config/dish-service/test.env"
+    ):
+        raise AcceptanceError("internal TEST environment path contract changed")
+    env = _parse_env(TEST_ENV_PATH)
+    sqlite_path = _resolved_path(_required(env, "DISH_DB_PATH"))
+    private_port = int(_required(env, "DISH_SERVICE_PORT"))
+    action_port = int(_required(env, "DISH_ACTION_PORT"))
+    private_bind = env.get("DISH_SERVICE_BIND", "127.0.0.1").strip()
+    action_bind = env.get("DISH_ACTION_BIND", "127.0.0.1").strip()
+    if sqlite_path != TEST_SQLITE_PATH:
+        raise AcceptanceError(f"refusing non-TEST SQLite authority path: {sqlite_path}")
+    if private_port != TEST_PRIVATE_PORT or action_port != TEST_ACTION_PORT:
+        raise AcceptanceError(
+            f"refusing unexpected TEST ports: private={private_port}, action={action_port}"
+        )
+    if private_bind not in {"127.0.0.1", "localhost"} or action_bind not in {
+        "127.0.0.1",
+        "localhost",
+    }:
+        raise AcceptanceError("TEST listeners must remain loopback-only")
+
+    spool = _resolved_path(_required(env, "DISH_DARK_LAUNCH_SPOOL_PATH"))
+    emergency = _resolved_path(_required(env, "DISH_DARK_LAUNCH_EMERGENCY_DIR"))
+    kill_switch = _resolved_path(_required(env, "DISH_DARK_LAUNCH_KILL_SWITCH"))
+    paths = _verify_distinct_test_paths(
+        {
+            "sqlite_authority": sqlite_path,
+            "spool": spool,
+            "emergency": emergency,
+            "kill_switch": kill_switch,
+        }
+    )
+    service = _service_identity()
+    database = _database_identity(database_url)
+    secret_values = [
+        value
+        for name, value in env.items()
+        if value and _is_credential_name(name)
+    ]
+    secret_values.append(database_url)
+    return (
+        {
+            "status": "pass",
+            "service": {
+                "unit": TEST_SERVICE_UNIT,
+                "environment_path": str(TEST_ENV_PATH),
+                **service,
+                "private_listener": f"{private_bind}:{private_port}",
+                "action_listener": f"{action_bind}:{action_port}",
+            },
+            "database": database,
+            "paths": paths,
+        },
+        secret_values,
+    )
+
+
+def _redact_file(path: Path, secrets: Iterable[str]) -> None:
+    replacements = sorted({value for value in secrets if value}, key=len, reverse=True)
+    if not replacements or not path.exists():
+        return
+    temporary = path.with_name(f".{path.name}.redacted")
+    with path.open("r", encoding="utf-8", errors="replace") as source, temporary.open(
+        "w", encoding="utf-8"
+    ) as target:
+        for line in source:
+            for secret in replacements:
+                line = line.replace(secret, "<redacted>")
+            target.write(line)
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, path)
+
+
+def _finite_positive_seconds(value: float | str) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError) as exc:
+        raise argparse.ArgumentTypeError("timeout must be a finite positive number") from exc
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise argparse.ArgumentTypeError("timeout must be a finite positive number")
+    return seconds
+
+
+def _process_group_exists(process_group_id: int) -> bool:
+    try:
+        os.killpg(process_group_id, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_for_process_group_exit(
+    process: subprocess.Popen[str], timeout: float
+) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        process.poll()
+        if not _process_group_exists(process.pid):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
+
+
+def _terminate_process_group(
+    process: subprocess.Popen[str], *, grace_seconds: float
+) -> dict[str, Any]:
+    process_group_id = process.pid
+    evidence: dict[str, Any] = {
+        "process_group_id": process_group_id,
+        "term_sent": False,
+        "kill_sent": False,
+        "direct_kill_fallback": False,
+        "grace_seconds": grace_seconds,
+    }
+    if _process_group_exists(process_group_id):
+        try:
+            os.killpg(process_group_id, signal.SIGTERM)
+            evidence["term_sent"] = True
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            evidence["term_error"] = f"{type(exc).__name__}: {exc}"
+    group_exited = _wait_for_process_group_exit(process, grace_seconds)
+    if not group_exited:
+        try:
+            os.killpg(process_group_id, signal.SIGKILL)
+            evidence["kill_sent"] = True
+        except ProcessLookupError:
+            pass
+        except OSError as exc:
+            evidence["kill_error"] = f"{type(exc).__name__}: {exc}"
+        group_exited = _wait_for_process_group_exit(process, grace_seconds)
+    if process.poll() is None:
+        try:
+            process.wait(timeout=grace_seconds)
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+                evidence["direct_kill_fallback"] = True
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=grace_seconds)
+            except subprocess.TimeoutExpired:
+                evidence["direct_kill_wait_expired"] = True
+    evidence.update(
+        process_exited=process.poll() is not None,
+        process_group_exited=group_exited or not _process_group_exists(process_group_id),
+        final_returncode=process.returncode,
+    )
+    return evidence
+
+
+def _stream_evidence(path: Path) -> dict[str, Any]:
+    return {
+        "path": str(path),
+        "bytes": path.stat().st_size,
+        "sha256": _sha256_file(path),
+    }
+
+
+def _run_first_attempt(
+    *,
+    name: str,
+    command: list[str],
+    cwd: Path,
+    environment: Mapping[str, str],
+    artifact_dir: Path,
+    secrets: Iterable[str],
+    timeout_seconds: float,
+    termination_grace_seconds: float,
+) -> dict[str, Any]:
+    timeout_seconds = _finite_positive_seconds(timeout_seconds)
+    termination_grace_seconds = _finite_positive_seconds(termination_grace_seconds)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = artifact_dir / "stdout.txt"
+    stderr_path = artifact_dir / "stderr.txt"
+    started_at = _utcnow()
+    started = time.monotonic()
+    timed_out = False
+    spawn_error: str | None = None
+    process: subprocess.Popen[str] | None = None
+    cleanup: dict[str, Any] = {
+        "process_group_id": None,
+        "term_sent": False,
+        "kill_sent": False,
+        "direct_kill_fallback": False,
+        "grace_seconds": termination_grace_seconds,
+        "process_exited": False,
+        "final_returncode": None,
+    }
+    with stdout_path.open("w", encoding="utf-8") as stdout, stderr_path.open(
+        "w", encoding="utf-8"
+    ) as stderr:
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=cwd,
+                env=dict(environment),
+                stdin=subprocess.DEVNULL,
+                stdout=stdout,
+                stderr=stderr,
+                text=True,
+                start_new_session=True,
+            )
+            cleanup["process_group_id"] = process.pid
+            try:
+                process.wait(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                cleanup = _terminate_process_group(
+                    process, grace_seconds=termination_grace_seconds
+                )
+        except OSError as exc:
+            spawn_error = f"{type(exc).__name__}: {exc}"
+            stderr.write(f"child process could not start: {spawn_error}\n")
+    if process is not None and not timed_out:
+        cleanup.update(
+            process_exited=process.poll() is not None,
+            final_returncode=process.returncode,
+        )
+    os.chmod(stdout_path, 0o600)
+    os.chmod(stderr_path, 0o600)
+    _redact_file(stdout_path, secrets)
+    _redact_file(stderr_path, secrets)
+    returncode = process.returncode if process is not None else None
+    passed = returncode == 0 and not timed_out and spawn_error is None
+    result: dict[str, Any] = {
+        "name": name,
+        "first_attempt": True,
+        "command": command,
+        "started_at": started_at.isoformat(),
+        "duration_seconds": round(time.monotonic() - started, 3),
+        "exit_code": returncode,
+        "status": "pass" if passed else "fail",
+        "timeout": {
+            "configured_seconds": timeout_seconds,
+            "timed_out": timed_out,
+        },
+        "process_group": {
+            "started_new_session": True,
+            "process_group_id": cleanup.get("process_group_id"),
+        },
+        "cleanup": cleanup,
+        "stdout": _stream_evidence(stdout_path),
+        "stderr": _stream_evidence(stderr_path),
+    }
+    if spawn_error is not None:
+        result["spawn_error"] = spawn_error
+    return result
+
+def _line_value(path: Path, prefixes: Sequence[str]) -> str | None:
+    if not path.exists():
+        return None
+    value: str | None = None
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        stripped = line.strip()
+        for prefix in prefixes:
+            if stripped.startswith(prefix):
+                value = stripped[len(prefix) :].strip()
+    return value
+
+
+def _worker_run_marker(stdout_path: Path) -> str | None:
+    pattern = re.compile(r'^\s*"run_marker"\s*:\s*"([^"]+)"')
+    for line in stdout_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        match = pattern.match(line)
+        if match is not None:
+            return match.group(1)
+    return None
+
+
+def _copy_capture_report(result: dict[str, Any], artifact_dir: Path) -> dict[str, Any] | None:
+    stdout_path = Path(result["stdout"]["path"])
+    scratch_value = _line_value(
+        stdout_path,
+        ("Evidence and manual recovery:", "Recovery bundle:"),
+    )
+    result["preserved_original_scratch"] = scratch_value
+    if scratch_value is None:
+        return None
+    source = Path(scratch_value) / "report.json"
+    if not source.is_file():
+        return None
+    target = artifact_dir / "report.json"
+    shutil.copy2(source, target)
+    os.chmod(target, 0o600)
+    return {
+        "path": str(target),
+        "sha256": _sha256_file(target),
+        "bytes": target.stat().st_size,
+        "source_path": str(source),
+    }
+
+
+def _test_by_name(report: Mapping[str, Any], prefix: str) -> Mapping[str, Any]:
+    for item in report.get("tests", []):
+        if isinstance(item, Mapping) and str(item.get("name", "")).startswith(prefix):
+            return item
+    raise AcceptanceError(f"capture report omitted {prefix}")
+
+
+def _summaries(value: Any) -> Iterable[Mapping[str, Any]]:
+    if isinstance(value, Mapping):
+        if {"surface", "operation_id", "observable_sha256"}.issubset(value):
+            yield value
+        for child in value.values():
+            yield from _summaries(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _summaries(child)
+
+
+def _verify_capture_unchanged(capture_report: Mapping[str, Any]) -> dict[str, Any]:
+    tests = capture_report.get("tests")
+    if not isinstance(tests, list) or len(tests) != 3:
+        raise AcceptanceError("capture report must contain exactly three child tests")
+    if any(item.get("status") != "PASS" for item in tests if isinstance(item, Mapping)):
+        raise AcceptanceError("capture rehearsal did not pass all first-attempt tests")
+    restore = capture_report.get("restore")
+    if not isinstance(restore, Mapping) or not (
+        restore.get("env_hash_matches")
+        and restore.get("service_restarted")
+        and restore.get("service_healthy")
+        and not restore.get("errors")
+    ):
+        raise AcceptanceError("capture rehearsal did not prove exact TEST service restoration")
+
+    test1 = _test_by_name(capture_report, "TEST 1")
+    evidence1 = test1.get("evidence")
+    if not isinstance(evidence1, Mapping):
+        raise AcceptanceError("capture TEST 1 evidence is missing")
+    baseline: dict[tuple[str, str], str] = {}
+    probes = evidence1.get("stable_operation_probes")
+    if not isinstance(probes, list):
+        raise AcceptanceError("capture report omitted stable operation probes")
+    for probe in probes:
+        if not isinstance(probe, Mapping) or probe.get("stable") is not True:
+            continue
+        operation_id = str(probe.get("operation_id"))
+        surfaces = probe.get("surfaces")
+        if not isinstance(surfaces, Mapping):
+            continue
+        for surface in ("private", "action"):
+            item = surfaces.get(surface)
+            if not isinstance(item, Mapping) or item.get("stable") is not True:
+                continue
+            first = item.get("first")
+            second = item.get("second")
+            if not isinstance(first, Mapping) or not isinstance(second, Mapping):
+                continue
+            first_hash = str(first.get("observable_sha256"))
+            second_hash = str(second.get("observable_sha256"))
+            if first_hash != second_hash:
+                raise AcceptanceError(f"unstable {surface} baseline for {operation_id}")
+            baseline[(surface, operation_id)] = second_hash
+    if not baseline or {surface for surface, _ in baseline} != {"private", "action"}:
+        raise AcceptanceError("capture report did not establish both live listener baselines")
+
+    compared = {"private": 0, "action": 0}
+    post_baseline_keys = {
+        "capture_on_requests",
+        "broken_capture_request",
+        "accumulation_requests",
+        "post_restart_request",
+        "disabled_requests",
+        "resumed_requests",
+    }
+    for test in tests:
+        if not isinstance(test, Mapping):
+            continue
+        evidence = test.get("evidence")
+        if not isinstance(evidence, Mapping):
+            continue
+        for key in post_baseline_keys:
+            if key not in evidence:
+                continue
+            for summary in _summaries(evidence[key]):
+                surface = str(summary["surface"])
+                operation_id = str(summary["operation_id"])
+                observed = str(summary["observable_sha256"])
+                expected = baseline.get((surface, operation_id))
+                if expected is None or observed != expected:
+                    raise AcceptanceError(
+                        f"{surface} observable result changed for operation {operation_id}"
+                    )
+                compared[surface] += 1
+    if any(compared[surface] == 0 for surface in ("private", "action")):
+        raise AcceptanceError("capture report omitted post-baseline evidence for a live listener")
+    return {
+        "status": "pass",
+        "baseline_bindings": len(baseline),
+        "post_baseline_comparisons": compared,
+        "baseline_manifest_sha256": _canonical_hash(
+            [
+                {"surface": surface, "operation_id": operation, "sha256": digest}
+                for (surface, operation), digest in sorted(baseline.items())
+            ]
+        ),
+    }
+
+
+def _sanitize_worker_environment(
+    environment: Mapping[str, str], database_url: str
+) -> tuple[dict[str, str], dict[str, Any]]:
+    sanitized: dict[str, str] = {}
+    removed: list[str] = []
+    for name, value in environment.items():
+        if _is_credential_name(name):
+            removed.append(name)
+            continue
+        sanitized[name] = value
+    sanitized["DISH_PG_TEST_URL"] = database_url
+    forbidden_remaining = sorted(
+        name
+        for name in sanitized
+        if name != "DISH_PG_TEST_URL"
+        and _is_credential_name(name)
+    )
+    if forbidden_remaining:
+        raise AcceptanceError(
+            "worker environment still contains forbidden credentials: "
+            + ", ".join(forbidden_remaining)
+        )
+    return sanitized, {
+        "status": "pass",
+        "database_credential_channel": "DISH_PG_TEST_URL",
+        "removed_variable_names": sorted(removed),
+        "forbidden_variable_names_remaining": [],
+        "asana_credentials_present": False,
+        "service_tokens_present": False,
+        "projection_adapter_credentials_present": False,
+    }
+
+
+def _shadow_event_snapshot(event: Any) -> dict[str, Any]:
+    return {
+        "projection_event_id": event.projection_event_id,
+        "generation_id": event.generation_id,
+        "projection_epoch_id": event.projection_epoch_id,
+        "source_route": event.source_route,
+        "command_execution_id": event.command_execution_id,
+        "task_id": event.task_id,
+        "event_type": event.event_type,
+        "intent_payload": dict(event.intent_payload),
+        "intent_sha256": event.intent_sha256,
+    }
+
+
+def _probe_source_row(
+    session: Any, sources: Sequence[Mapping[str, Any]]
+) -> Mapping[str, Any]:
+    from sqlalchemy import func, select
+
+    from dish_pg import stage5_models as tx
+
+    for source in sources:
+        blockers = session.scalar(
+            select(func.count())
+            .select_from(tx.ProjectionOutboxEvent)
+            .where(
+                tx.ProjectionOutboxEvent.generation_id == source["generation_id"],
+                tx.ProjectionOutboxEvent.task_id == source["task_id"],
+                tx.ProjectionOutboxEvent.origin == "live",
+                tx.ProjectionOutboxEvent.state.not_in(("applied", "superseded")),
+            )
+        )
+        if not blockers:
+            return source
+    raise AcceptanceError(
+        "worker rehearsal left no shadow task eligible for the origin probe"
+    )
+
+
+def _clone_probe_event(
+    session: Any, *, source: Mapping[str, Any], origin: str, created_at: datetime
+) -> Any:
+    from sqlalchemy import func, select
+
+    from dish_pg import stage5_models as tx
+
+    event_id = uuid.uuid4()
+    sequence = int(
+        session.scalar(
+            select(func.coalesce(func.max(tx.ProjectionOutboxEvent.aggregate_sequence), 0)).where(
+                tx.ProjectionOutboxEvent.generation_id == source["generation_id"],
+                tx.ProjectionOutboxEvent.task_id == source["task_id"],
+            )
+        )
+        or 0
+    ) + 1
+    idempotency_key = _canonical_hash(
+        {
+            "probe": "dark-launch-origin-filter",
+            "projection_event_id": str(event_id),
+            "origin": origin,
+        }
+    )
+    event = tx.ProjectionOutboxEvent(
+        projection_event_id=event_id,
+        generation_id=source["generation_id"],
+        projection_epoch_id=source["projection_epoch_id"],
+        source_route=source["source_route"],
+        origin=origin,
+        command_execution_id=source["command_execution_id"],
+        task_id=source["task_id"],
+        event_type=source["event_type"],
+        aggregate_sequence=sequence,
+        idempotency_key=idempotency_key,
+        intent_payload=dict(source["intent_payload"]),
+        intent_sha256=source["intent_sha256"],
+        state="pending",
+        claim_owner=None,
+        claim_token=None,
+        claim_expires_at=None,
+        outbox_revision=1,
+        created_at=created_at,
+        terminal_at=None,
+    )
+    session.add(event)
+    session.flush()
+    return event
+
+
+def _prove_shadow_origin_filter(
+    factory: Any,
+    *,
+    projection_epoch_id: Any,
+    generation_id: Any,
+    sources: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    from sqlalchemy import func, select
+
+    from dish_pg import stage5_models as tx
+    from dish_pg.transition import ProjectionService
+
+    live_id: Any = None
+    shadow_id: Any = None
+    claim_id: Any = None
+    attempt_count: int | None = None
+    external_visibility: dict[str, Any] = {}
+    rolled_back = False
+    proof_error: BaseException | None = None
+    try:
+        with factory() as session:
+            try:
+                epoch_statement = select(tx.ProjectionEpoch).where(
+                    tx.ProjectionEpoch.projection_epoch_id == projection_epoch_id,
+                    tx.ProjectionEpoch.generation_id == generation_id,
+                    tx.ProjectionEpoch.status == "active",
+                )
+                if session.get_bind().dialect.name == "postgresql":
+                    epoch_statement = epoch_statement.with_for_update()
+                epoch = session.scalar(epoch_statement)
+                if epoch is None or epoch.external_effects_enabled is not False:
+                    raise AcceptanceError(
+                        "origin probe requires the effects-disabled active TEST epoch"
+                    )
+                source = _probe_source_row(session, sources)
+                epoch.external_effects_enabled = True
+                live = _clone_probe_event(
+                    session,
+                    source=source,
+                    origin="live",
+                    created_at=datetime(1900, 1, 2, tzinfo=timezone.utc),
+                )
+                shadow = _clone_probe_event(
+                    session,
+                    source=source,
+                    origin="shadow",
+                    created_at=datetime(1900, 1, 1, tzinfo=timezone.utc),
+                )
+                live_id = live.projection_event_id
+                shadow_id = shadow.projection_event_id
+                external_visibility = {
+                    "checked_from_separate_transaction": False,
+                    "external_effects_enabled": None,
+                    "synthetic_rows_visible": None,
+                }
+                if session.get_bind().dialect.name == "postgresql":
+                    with factory() as observer:
+                        observed_effects = observer.scalar(
+                            select(tx.ProjectionEpoch.external_effects_enabled).where(
+                                tx.ProjectionEpoch.projection_epoch_id
+                                == projection_epoch_id
+                            )
+                        )
+                        visible_rows = int(
+                            observer.scalar(
+                                select(func.count())
+                                .select_from(tx.ProjectionOutboxEvent)
+                                .where(
+                                    tx.ProjectionOutboxEvent.projection_event_id.in_(
+                                        (live_id, shadow_id)
+                                    )
+                                )
+                            )
+                            or 0
+                        )
+                    external_visibility = {
+                        "checked_from_separate_transaction": True,
+                        "external_effects_enabled": observed_effects,
+                        "synthetic_rows_visible": visible_rows,
+                    }
+                    if observed_effects is not False or visible_rows != 0:
+                        raise AcceptanceError(
+                            "origin probe became visible outside its rollback transaction"
+                        )
+                claim = ProjectionService(session).claim_next(
+                    worker_id=f"dark-launch-origin-proof-{uuid.uuid4().hex[:12]}",
+                    now=_utcnow(),
+                    ttl=timedelta(seconds=30),
+                )
+                claim_id = None if claim is None else claim.event_id
+                if claim_id != live_id:
+                    raise AcceptanceError(
+                        "origin probe did not select its eligible live-origin row"
+                    )
+                live = session.get(tx.ProjectionOutboxEvent, live_id)
+                shadow = session.get(tx.ProjectionOutboxEvent, shadow_id)
+                if live is None or live.state != "claimed":
+                    raise AcceptanceError("origin probe live row was not claimed")
+                if shadow is None or any(
+                    (
+                        shadow.state != "pending",
+                        shadow.claim_owner is not None,
+                        shadow.claim_token is not None,
+                        shadow.claim_expires_at is not None,
+                    )
+                ):
+                    raise AcceptanceError("origin probe shadow row became claimable")
+                attempt_count = int(
+                    session.scalar(
+                        select(func.count())
+                        .select_from(tx.ProjectionAttempt)
+                        .where(
+                            tx.ProjectionAttempt.projection_event_id.in_((live_id, shadow_id))
+                        )
+                    )
+                    or 0
+                )
+                if attempt_count != 0:
+                    raise AcceptanceError("origin probe created an external projection attempt")
+            except BaseException as exc:
+                proof_error = exc
+            finally:
+                session.rollback()
+                rolled_back = True
+    finally:
+        with factory() as verification:
+            epoch_effects = verification.scalar(
+                select(tx.ProjectionEpoch.external_effects_enabled).where(
+                    tx.ProjectionEpoch.projection_epoch_id == projection_epoch_id
+                )
+            )
+            remaining = 0
+            if live_id is not None and shadow_id is not None:
+                remaining = int(
+                    verification.scalar(
+                        select(func.count())
+                        .select_from(tx.ProjectionOutboxEvent)
+                        .where(
+                            tx.ProjectionOutboxEvent.projection_event_id.in_(
+                                (live_id, shadow_id)
+                            )
+                        )
+                    )
+                    or 0
+                )
+        restored = rolled_back and epoch_effects is False and remaining == 0
+        if not restored:
+            raise AcceptanceError(
+                "origin probe failed to restore the effects-disabled TEST database"
+            )
+    if proof_error is not None:
+        raise proof_error
+    return {
+        "live_origin_selected": claim_id == live_id,
+        "shadow_origin_selected": claim_id == shadow_id,
+        "shadow_preceded_live_in_claim_order": True,
+        "live_projection_event_id": str(live_id),
+        "shadow_projection_event_id": str(shadow_id),
+        "claim_projection_event_id": str(claim_id),
+        "external_effects_enabled_only_in_rollback_transaction": True,
+        "external_visibility": external_visibility,
+        "same_task_claim_conditions": True,
+        "projection_service_method": "ProjectionService.claim_next",
+        "projection_worker_constructed": False,
+        "external_adapter_constructed": False,
+        "projection_attempt_rows_created": attempt_count,
+        "asana_mutation_path_invoked": False,
+        "transaction_committed": False,
+        "transaction_rolled_back": rolled_back,
+        "synthetic_rows_absent_after_rollback": remaining == 0,
+        "external_effects_restored_disabled": epoch_effects is False,
+    }
+
+
+def _post_worker_checks(database_url: str, run_marker: str) -> dict[str, Any]:
+    from sqlalchemy import select
+    from sqlalchemy.exc import OperationalError
+
+    from dish_pg import models
+    from dish_pg import stage5_models as tx
+    from dish_pg.config import DatabaseSettings
+    from dish_pg.db import create_database_engine, session_factory
+
+    engine = create_database_engine(DatabaseSettings(url=database_url))
+    factory = session_factory(engine)
+    title_prefix = f"[rehearsal-cert {run_marker}]%"
+    try:
+        with factory() as session:
+            epochs = list(
+                session.execute(
+                    select(
+                        tx.ProjectionEpoch.projection_epoch_id,
+                        tx.ProjectionEpoch.generation_id,
+                        tx.ProjectionEpoch.external_effects_enabled,
+                    )
+                    .join(
+                        models.AuthorityGeneration,
+                        models.AuthorityGeneration.generation_id
+                        == tx.ProjectionEpoch.generation_id,
+                    )
+                    .where(
+                        tx.ProjectionEpoch.status == "active",
+                        models.AuthorityGeneration.status == "active",
+                    )
+                    .order_by(tx.ProjectionEpoch.projection_epoch_id)
+                )
+            )
+            shadow_events = list(
+                session.scalars(
+                    select(tx.ProjectionOutboxEvent)
+                    .where(
+                        tx.ProjectionOutboxEvent.origin == "shadow",
+                        select(models.ContentVersion.content_version_id)
+                        .where(
+                            models.ContentVersion.task_id
+                            == tx.ProjectionOutboxEvent.task_id,
+                            models.ContentVersion.title.like(title_prefix),
+                        )
+                        .exists(),
+                    )
+                    .order_by(tx.ProjectionOutboxEvent.projection_event_id)
+                )
+            )
+            before = [
+                (
+                    str(event.projection_event_id),
+                    event.state,
+                    event.claim_owner,
+                    None if event.claim_token is None else str(event.claim_token),
+                    event.claim_expires_at,
+                )
+                for event in shadow_events
+            ]
+            sources = [_shadow_event_snapshot(event) for event in shadow_events]
+        if len(epochs) != 1:
+            raise AcceptanceError(
+                f"expected exactly one active epoch for the active generation; found {len(epochs)}"
+            )
+        epoch = epochs[0]
+        if epoch.external_effects_enabled is not False:
+            raise AcceptanceError("active projection epoch enables external effects")
+        if not before:
+            raise AcceptanceError("worker rehearsal produced no shadow-origin projection rows")
+        unsafe = [
+            row
+            for row in before
+            if row[1] == "claimed" or any(row[index] for index in (2, 3, 4))
+        ]
+        if unsafe:
+            raise AcceptanceError("shadow-origin projection rows carry claim state")
+
+        origin_proof = _prove_shadow_origin_filter(
+            factory,
+            projection_epoch_id=epoch.projection_epoch_id,
+            generation_id=epoch.generation_id,
+            sources=sources,
+        )
+        with factory() as session:
+            after_events = list(
+                session.scalars(
+                    select(tx.ProjectionOutboxEvent)
+                    .where(
+                        tx.ProjectionOutboxEvent.origin == "shadow",
+                        select(models.ContentVersion.content_version_id)
+                        .where(
+                            models.ContentVersion.task_id
+                            == tx.ProjectionOutboxEvent.task_id,
+                            models.ContentVersion.title.like(title_prefix),
+                        )
+                        .exists(),
+                    )
+                    .order_by(tx.ProjectionOutboxEvent.projection_event_id)
+                )
+            )
+            after = [
+                (
+                    str(event.projection_event_id),
+                    event.state,
+                    event.claim_owner,
+                    None if event.claim_token is None else str(event.claim_token),
+                    event.claim_expires_at,
+                )
+                for event in after_events
+            ]
+        if before != after:
+            raise AcceptanceError("shadow-origin projection rows changed during origin probe")
+        state_counts: dict[str, int] = {}
+        for row in before:
+            state_counts[row[1]] = state_counts.get(row[1], 0) + 1
+        return {
+            "active_epoch": {
+                "status": "pass",
+                "projection_epoch_id": str(epoch.projection_epoch_id),
+                "generation_id": str(epoch.generation_id),
+                "external_effects_enabled": False,
+            },
+            "shadow_projection_claimability": {
+                "status": "pass",
+                "row_count": len(before),
+                "state_counts": state_counts,
+                "rows_unchanged": True,
+                "event_identity_sha256": _canonical_hash([row[0] for row in before]),
+                "origin_filter_proof": origin_proof,
+            },
+        }
+    except OperationalError as exc:
+        raise PrerequisiteUnavailable(
+            "TEST PostgreSQL became unavailable during post-worker acceptance checks"
+        ) from exc
+    finally:
+        engine.dispose()
+
+
+def _final_status(report: Mapping[str, Any]) -> str:
+    preflight = report.get("preflight")
+    capture = report.get("capture")
+    worker = report.get("worker_restart")
+    preflight_status = (
+        preflight.get("status") if isinstance(preflight, Mapping) else "fail"
+    )
+    if preflight_status == "blocked":
+        return "blocked"
+    if preflight_status != "pass":
+        return "fail"
+    if not isinstance(capture, Mapping):
+        return "fail"
+    capture_status = capture.get("first_attempt_status")
+    if capture_status == "blocked" and capture.get("attempted") is not True:
+        return "blocked"
+    if capture_status != "pass":
+        return "fail"
+    if not isinstance(worker, Mapping):
+        return "fail"
+    worker_status = worker.get("first_attempt_status")
+    if worker_status == "blocked" and worker.get("attempted") is not True:
+        return "partial"
+    if worker_status != "pass":
+        return "fail"
+    checks = report.get("acceptance_checks", {})
+    if not isinstance(checks, Mapping):
+        return "fail"
+    check_statuses = [
+        value.get("status") if isinstance(value, Mapping) else "fail"
+        for value in checks.values()
+    ]
+    if all(status == "pass" for status in check_statuses):
+        return "pass"
+    if (
+        "blocked" in check_statuses
+        and report.get("failure_kind") == "unavailable_prerequisite"
+    ):
+        return "partial"
+    return "fail"
+
+def _safe_error(exc: BaseException, secrets: Iterable[str]) -> str:
+    value = f"{type(exc).__name__}: {exc}"
+    for secret in sorted({item for item in secrets if item}, key=len, reverse=True):
+        value = value.replace(secret, "<redacted>")
+    return value
+
+
+def _preserved_evidence_paths(report: Mapping[str, Any]) -> list[str]:
+    paths: list[str] = []
+    for section_name in ("capture", "worker_restart"):
+        section = report.get(section_name)
+        if not isinstance(section, Mapping) or section.get("attempted") is not True:
+            continue
+        for stream_name in ("stdout", "stderr", "report"):
+            stream = section.get(stream_name)
+            if isinstance(stream, Mapping) and stream.get("path"):
+                paths.append(str(stream["path"]))
+        for key in ("preserved_original_scratch", "preserved_scratch"):
+            value = section.get(key)
+            if value:
+                paths.append(str(value))
+    return list(dict.fromkeys(paths))
+
+
+def _mark_failure_stage(report: dict[str, Any], exc: BaseException) -> None:
+    unavailable = isinstance(exc, PrerequisiteUnavailable)
+    status = "blocked" if unavailable else "fail"
+    report["failure_kind"] = "unavailable_prerequisite" if unavailable else "failure"
+    preflight = report.get("preflight")
+    if not isinstance(preflight, Mapping) or preflight.get("status") != "pass":
+        report["preflight"] = {"status": status}
+        return
+    capture = report.get("capture")
+    if not isinstance(capture, Mapping) or capture.get("attempted") is not True:
+        report["capture"] = {
+            "attempted": False,
+            "first_attempt_status": status,
+        }
+        report["first_attempt_statuses"]["host_capture_rehearsal"] = status
+        return
+    if capture.get("first_attempt_status") != "pass":
+        return
+    worker = report.get("worker_restart")
+    if not isinstance(worker, Mapping) or worker.get("attempted") is not True:
+        report["worker_restart"] = {
+            "attempted": False,
+            "first_attempt_status": status,
+        }
+        report["first_attempt_statuses"][
+            "shadow_worker_restart_rehearsal"
+        ] = status
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="dish-pg-dark-launch-test-acceptance")
+    parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--agent", choices=("claude", "gpt", "codex"), required=True)
+    parser.add_argument("--database-url-env", default="DISH_PG_DATABASE_URL")
+    parser.add_argument("--expected-source")
+    parser.add_argument("--source-archive-sha256")
+    parser.add_argument("--operation-id", action="append", default=[])
+    parser.add_argument(
+        "--capture-timeout-seconds",
+        type=_finite_positive_seconds,
+        default=DEFAULT_CAPTURE_TIMEOUT_SECONDS,
+    )
+    parser.add_argument(
+        "--worker-timeout-seconds",
+        type=_finite_positive_seconds,
+        default=DEFAULT_WORKER_TIMEOUT_SECONDS,
+    )
+    parser.add_argument(
+        "--termination-grace-seconds",
+        type=_finite_positive_seconds,
+        default=DEFAULT_TERMINATION_GRACE_SECONDS,
+    )
+    return parser
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    output = args.output.expanduser().resolve(strict=False)
+    if _within(output, Path("/home/marco/.local/state/dish").resolve(strict=False)):
+        _parser().error("--output must remain outside permanent Dish product state")
+    if args.source_archive_sha256 is not None and _ARCHIVE_SHA_RE.fullmatch(
+        args.source_archive_sha256.lower()
+    ) is None:
+        _parser().error("--source-archive-sha256 must be exactly 64 lowercase hexadecimal digits")
+    database_url = os.environ.get(args.database_url_env, "").strip()
+    if not database_url:
+        _parser().error(f"{args.database_url_env} is required")
+
+    artifact_root = output.parent / f"{output.stem}.artifacts"
+    artifact_root.mkdir(parents=True, exist_ok=True)
+    os.chmod(artifact_root, 0o700)
+    source: dict[str, Any] = {}
+    if args.source_archive_sha256 is not None:
+        source["received_archive_sha256"] = args.source_archive_sha256.lower()
+    report: dict[str, Any] = {
+        "format": FORMAT,
+        "generated_at": _utcnow().isoformat(),
+        "source_identity": source,
+        "preflight": {"status": "blocked"},
+        "capture": {"attempted": False, "first_attempt_status": "blocked"},
+        "worker_restart": {"attempted": False, "first_attempt_status": "blocked"},
+        "acceptance_checks": {
+            "private_cli_and_gpt_action_unchanged": {"status": "blocked"},
+            "worker_credential_isolation": {"status": "blocked"},
+            "active_epoch_external_effects_disabled": {"status": "blocked"},
+            "shadow_origin_projection_rows_unclaimable": {"status": "blocked"},
+        },
+        "child_commands": [],
+        "child_report_hashes": {
+            "host_capture_rehearsal": None,
+            "shadow_worker_restart_rehearsal": None,
+        },
+        "first_attempt_statuses": {
+            "host_capture_rehearsal": "blocked",
+            "shadow_worker_restart_rehearsal": "blocked",
+        },
+        "execution_limits": {
+            "capture_timeout_seconds": args.capture_timeout_seconds,
+            "worker_timeout_seconds": args.worker_timeout_seconds,
+            "termination_grace_seconds": args.termination_grace_seconds,
+        },
+        "preserved_failure_paths": [],
+        "final_status": "blocked",
+    }
+    secrets = [database_url]
+    try:
+        source.update(_git_identity())
+        if args.expected_source is not None and source["git_commit"] != args.expected_source.lower():
+            raise AcceptanceError(
+                "source identity mismatch: "
+                f"expected {args.expected_source}, observed {source['git_commit']}"
+            )
+        if source["tracked_tree_clean"] is not True:
+            raise AcceptanceError("acceptance requires a clean tracked source tree")
+        preflight, preflight_secrets = _preflight(database_url=database_url)
+        secrets.extend(preflight_secrets)
+        report["preflight"] = preflight
+
+        capture_dir = artifact_root / "capture"
+        capture_command = [
+            sys.executable,
+            str(CAPTURE_SCRIPT),
+            "--agent",
+            args.agent,
+            "--database-url-env",
+            args.database_url_env,
+            "--source-commit",
+            source["git_commit"],
+        ]
+        for operation_id in args.operation_id:
+            capture_command.extend(("--operation-id", operation_id))
+        report["child_commands"].append(capture_command)
+        report["capture"] = {"attempted": True, "first_attempt_status": "fail"}
+        report["first_attempt_statuses"]["host_capture_rehearsal"] = "fail"
+        capture_result = _run_first_attempt(
+            name="host-capture-rehearsal",
+            command=capture_command,
+            cwd=ROOT,
+            environment=os.environ,
+            artifact_dir=capture_dir,
+            secrets=secrets,
+            timeout_seconds=args.capture_timeout_seconds,
+            termination_grace_seconds=args.termination_grace_seconds,
+        )
+        capture_result["attempted"] = True
+        capture_result["first_attempt_status"] = capture_result.pop("status")
+        capture_report_file = _copy_capture_report(capture_result, capture_dir)
+        if capture_report_file is not None:
+            capture_result["report"] = capture_report_file
+            report["child_report_hashes"]["host_capture_rehearsal"] = capture_report_file[
+                "sha256"
+            ]
+        report["capture"] = capture_result
+        report["first_attempt_statuses"]["host_capture_rehearsal"] = capture_result[
+            "first_attempt_status"
+        ]
+        if capture_result["first_attempt_status"] != "pass" or capture_report_file is None:
+            report["preserved_failure_paths"].extend(
+                [capture_result["stdout"]["path"], capture_result["stderr"]["path"]]
+            )
+            raise AcceptanceError("capture rehearsal first attempt failed or omitted report.json")
+        capture_report = json.loads(Path(capture_report_file["path"]).read_text(encoding="utf-8"))
+        unchanged = _verify_capture_unchanged(capture_report)
+        report["acceptance_checks"]["private_cli_and_gpt_action_unchanged"] = unchanged
+
+        worker_environment, credential_isolation = _sanitize_worker_environment(
+            os.environ, database_url
+        )
+        report["acceptance_checks"]["worker_credential_isolation"] = credential_isolation
+        worker_dir = artifact_root / "worker-restart"
+        scratch_root = worker_dir / "scratch"
+        scratch_root.mkdir(parents=True, exist_ok=True)
+        worker_command = [
+            sys.executable,
+            str(WORKER_SCRIPT),
+            "--scratch-root",
+            str(scratch_root),
+            "--keep-scratch",
+        ]
+        report["child_commands"].append(worker_command)
+        report["worker_restart"] = {
+            "attempted": True,
+            "first_attempt_status": "fail",
+        }
+        report["first_attempt_statuses"][
+            "shadow_worker_restart_rehearsal"
+        ] = "fail"
+        worker_result = _run_first_attempt(
+            name="shadow-worker-restart-rehearsal",
+            command=worker_command,
+            cwd=ROOT,
+            environment=worker_environment,
+            artifact_dir=worker_dir,
+            secrets=secrets,
+            timeout_seconds=args.worker_timeout_seconds,
+            termination_grace_seconds=args.termination_grace_seconds,
+        )
+        worker_result["attempted"] = True
+        worker_result["first_attempt_status"] = worker_result.pop("status")
+        stdout_path = Path(worker_result["stdout"]["path"])
+        worker_result["preserved_scratch"] = _line_value(
+            stdout_path, ("scratch preserved at:",)
+        )
+        run_marker = _worker_run_marker(stdout_path)
+        worker_result["run_marker"] = run_marker
+        worker_report_path = worker_dir / "result.json"
+        _write_json_atomic(worker_report_path, worker_result)
+        worker_report = {
+            "path": str(worker_report_path),
+            "sha256": _sha256_file(worker_report_path),
+            "bytes": worker_report_path.stat().st_size,
+        }
+        worker_result["report"] = worker_report
+        report["child_report_hashes"]["shadow_worker_restart_rehearsal"] = worker_report[
+            "sha256"
+        ]
+        report["worker_restart"] = worker_result
+        report["first_attempt_statuses"]["shadow_worker_restart_rehearsal"] = worker_result[
+            "first_attempt_status"
+        ]
+        if worker_result["first_attempt_status"] != "pass" or run_marker is None:
+            report["preserved_failure_paths"].extend(
+                [worker_result["stdout"]["path"], worker_result["stderr"]["path"]]
+            )
+            if worker_result.get("preserved_scratch"):
+                report["preserved_failure_paths"].append(worker_result["preserved_scratch"])
+            raise AcceptanceError("worker-restart rehearsal first attempt failed")
+
+        post = _post_worker_checks(database_url, run_marker)
+        report["acceptance_checks"]["active_epoch_external_effects_disabled"] = post[
+            "active_epoch"
+        ]
+        report["acceptance_checks"]["shadow_origin_projection_rows_unclaimable"] = post[
+            "shadow_projection_claimability"
+        ]
+    except BaseException as exc:
+        _mark_failure_stage(report, exc)
+        report["failure"] = _safe_error(exc, secrets)
+        report["preserved_failure_paths"] = list(
+            dict.fromkeys(
+                [
+                    *report["preserved_failure_paths"],
+                    *_preserved_evidence_paths(report),
+                ]
+            )
+        )
+    finally:
+        report["final_status"] = _final_status(report)
+        report["report_sha256"] = _canonical_hash(report)
+        _write_json_atomic(output, report)
+
+    print(
+        json.dumps(
+            {
+                "final_status": report["final_status"],
+                "output": str(output),
+                "report_sha256": report["report_sha256"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    return 0 if report["final_status"] == "pass" else 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
