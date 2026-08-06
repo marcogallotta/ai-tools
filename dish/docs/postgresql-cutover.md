@@ -110,7 +110,7 @@ These should be fixed before broader migration work.
 - PostgreSQL lacks semantic-proposal/review/application authority.
 - PostgreSQL's Action contract is not legacy-compatible.
 - PostgreSQL and existing clients do not yet implement the approved canonical Dish `create` response (`dish_id`, optional `url`, optional `asana_task_gid`).
-- Production baseline capture is wired to a TEST-only manifest path.
+- Production baseline capture now has an explicit read-only manifest path; host execution and final import/reconciliation evidence remain outstanding.
 - No deployable production PostgreSQL authority service composition is present.
 - No concrete production Asana projection adapter is present.
 - No concrete production reconciliation fetcher/comparator is present.

@@ -566,8 +566,12 @@ PostgreSQL live requests. Generated workflow identifiers are translated only thr
 earlier comparison evidence from the same baseline and rollout order. Unknown or conflicting source
 to target bindings fail the shadow delivery instead of leaking a legacy UUID into PostgreSQL authority.
 `dish_pg.dark_launch` supplies baseline creation, bounded status, and capture enable/disable controls;
-`dish_pg.legacy_source` deterministically exports importer input from SQLite content heads plus a
-complete externally supplied location manifest.
+`dish_pg.location_manifest` preserves the fixed TEST capture and adds one explicit production-only,
+read-only capture bound to the fixed production service environment, Cooking project, and SQLite
+state root. Production capture exposes only exact Asana task reads, requires a non-zero SQLite corpus,
+and rejects mixed identities, credential ambiguity, source aliases, and symlinked output paths.
+`dish_pg.legacy_source` deterministically exports importer input from SQLite content heads plus that
+complete location manifest.
 
 This remains an isolated non-production target. Current production transports and workflow modules
 still do not import `dish_pg`; the legacy process imports only the local capture/spool bridge, Stage 5 projection records and adjudicates downstream intent, while

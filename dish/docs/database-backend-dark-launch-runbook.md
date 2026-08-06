@@ -11,9 +11,11 @@ should still remain `external_effects_enabled = false` as an independent operati
 ## Prepare
 
 1. Migrate the target PostgreSQL database to Alembic head.
-2. Capture the complete location manifest through the existing TEST authority path, then create the
-   importer NDJSON with `scripts/dish-pg-export-legacy`. Confirm the manifest and export contain the
-   same non-zero task corpus before continuing.
+2. Capture the complete location manifest through the explicit production read-only path:
+   `scripts/dish-pg-build-location-manifest --environment production --output <owner-only-path>`.
+   The command accepts only the fixed production service environment and fails closed on TEST or mixed
+   identity. Then create the importer NDJSON with `scripts/dish-pg-export-legacy`; confirm the manifest
+   and export contain the same non-zero task corpus before continuing.
 3. Create the first active PostgreSQL generation and its imported section registry. This is a
    one-time empty-target operation; the command refuses any existing authority generation or
    registry state and verifies both Git heads, the Honest version/schema/protocol assets, the exact

@@ -23,6 +23,7 @@ and are out of scope here.
 | Dark-launch kill switch and capture-only mode | Medium — first pass only stopped new capture, not the worker draining already-spooled/claimed envelopes; fixed |
 | Backlog, lag, mismatch, and gap reporting | Medium |
 | Deployment units and configuration templates | Medium |
+| Production-safe legacy location-manifest capture | Medium — explicit production identity, read-only SQLite and Asana task reads, fail-closed mixed-identity checks, and owner-only atomic output are implemented; live execution remains outstanding |
 
 ## Host-side work (Claude/Codex on this host)
 

@@ -160,7 +160,7 @@ Create one row for every known issue from:
 - PostgreSQL semantic proposal/Human Review gap.
 - Legacy GPT Actions compatibility gap.
 - canonical Dish UUID creation result and optional frontend URL.
-- TEST-only production baseline path.
+- Production baseline capture host execution and final import/reconciliation verification.
 - Missing deployable PostgreSQL authority composition.
 - Missing production Asana projection adapter.
 - Missing production reconciliation adapter.
