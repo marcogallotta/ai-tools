@@ -20,6 +20,7 @@ from dish_pg.production_shaped_runtime import ServiceRuntimeClient
 from dish_pg.release import ALEMBIC_HEAD
 from dish_pg.transition import ProjectionService
 from tests.support.postgresql.certification import postgresql_dsn
+from tests.support.postgresql.core import core_db
 from tests.support.postgresql.process_failure import compose_control
 from tests.support.postgresql.projection_attempts import native_workflow_db
 
