@@ -1854,7 +1854,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             work_root / "primary-data",
             work_root / "primary-socket",
             args.port_base,
-            DATABASE_PREFIX + "primary",
+            DATABASE_PREFIX + "primary_test",
             binaries,
             runner,
             archive_dir,
