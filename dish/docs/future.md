@@ -8,6 +8,10 @@ item still requires Marco's explicit approval and should be justified by real us
 For the implemented system, read [`architecture.md`](architecture.md),
 [`../README.md`](../README.md), and [`runtime-contract.md`](runtime-contract.md).
 
+For decided (but not yet implemented) workflow and administration design — Human Review lifecycle,
+safe reclaim, Marco override, whole-version rollback, and connected-agent execution updates — see
+[`workflow.md`](workflow.md).
+
 ## Already implemented — do not re-propose as future work
 
 The current release already includes:
@@ -414,28 +418,17 @@ a separate Cooking History project himself, entirely outside Dish. That gap is a
 the initial rollout, not launch-blocking — Dish's guarded lifecycle was always meant to stop at
 submission for v1.
 
-Post-rollout, expose a `log-cook` Action so the cooking agent logs how a cook went through Dish rather
-than an external file, with the resulting placement move (to a Cooked section, or into Cooking
-History) happening as a consequence of that log rather than a separate `mark-cooked` command.
-Cook-log data is new Dish-owned data with no existing Asana-side representation, so building it does
-not need to wait on the database-backend authority-migration decision (see the sequencing note
-above).
+The design for this is now decided, not speculative: see "Operational execution updates (cook
+logs)" in [`workflow.md`](workflow.md) for the append-only execution-update action, what it must
+record, and why it stays distinct from a canonical recipe mutation. Cook-log data is new Dish-owned
+data with no existing Asana-side representation, so building it does not need to wait on the
+database-backend authority-migration decision (see the sequencing note above).
 
 However this is built, cooking or logging a cook must never require the task to be unblocked or past
 any particular workflow state first. Keeping cooking agents outside governed workflow state today
 means Marco can still cook a dish that is stuck in Verification or otherwise hitting rough edges; any
-future `log-cook` action must preserve that same decoupling rather than gating on task state.
-
-Design questions include:
-
-- the exact cook-log command and append-only record, starting minimally (timestamp, agent, free-text
-  outcome) and expanding only if needed;
-- how comments or a future backend represent actual quantities, deviations, results, and next
-  action;
-- how a Marco override names the exact waived gate without weakening task-body signoff;
-- whether cooking reads need anything beyond the current exact task read.
-
-This should not permit cooking agents to mutate the signed task body.
+future execution-update action must preserve that same decoupling rather than gating on task state.
+It should not permit cooking agents to mutate the signed task body.
 
 ### Database-backed task store and separate frontend
 
