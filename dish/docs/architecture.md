@@ -25,6 +25,7 @@ are derived from it rather than maintained as disconnected sets.
 | test execution, flaky-test diagnosis, quarantine, or test artifacts | [`testing.md`](testing.md) |
 | post-rollout candidates, testing boundaries, and accepted launch limitations | [`known-issues.md`](known-issues.md) |
 | outstanding cutover/verification gaps or priority triage | [`ops-issues.md`](ops-issues.md) |
+| the PostgreSQL cutover design or its implementation-readiness plan | [`postgresql-cutover.md`](postgresql-cutover.md) and [`postgresql-cutover-imp.md`](postgresql-cutover-imp.md) |
 | GPT Action exposure or editor configuration | [`../deploy/gpt-action.md`](../deploy/gpt-action.md) |
 | Tailscale Serve or Funnel | [`../deploy/tailscale/README.md`](../deploy/tailscale/README.md) |
 | the protocol's own structure, canonical fields, process records, or change classes | `~/honest-pantry/dish-docs-design.md` and the relevant current Honest assets |
