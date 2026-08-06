@@ -113,13 +113,19 @@ automated assertion or the coverage already recorded above.
 
 ## Regression risk: script these, don't just prove them once
 
-As run so far (§3, 2026-08-04), these sections are one-off manual/agent-orchestrated proofs with
-no automated assertion behind them — unlike the coverage listed under "Covered elsewhere," nothing
-here reruns itself when `dish_pg/`, `dish_service/`, or the worker entry points change later. A
-regression (e.g. worker takeover breaking, or Postgres loss no longer failing closed) would go
-undetected until someone repeats this by hand again, or at cutover.
+The historical §3 proof from 2026-08-04 is now represented by the committed
+`scripts/dish-pg-runtime-wiring-rehearsal` runner. It owns a disposable TEST-only PostgreSQL
+Compose instance, starts the existing service plus projection and reconciliation worker entry
+points as separate OS processes, performs the fault sequence, and emits one bounded
+machine-readable report. The native node proves same-logical-worker restart after process death,
+different-worker takeover after claim expiry, stale-original rejection after takeover, and the
+complete external-attempt lifecycle: creation, terminal state, authoritative external observation,
+settlement adjudication, and no duplicate dispatch or settlement after restart or takeover. It
+also proves unsupported PostgreSQL TEST routes fail closed as not-found before adapter dispatch.
+A report is valid §3 evidence only when its first attempt and every explicit required-scenario
+field pass. `status=blocked` is an honest native-infrastructure result, never a substitute for
+native PostgreSQL and never permission to omit a scenario.
 
-Each section should eventually be a committed, rerunnable script (in the `scripts/dish-pg-*`
-family) that orchestrates the same fault injection and asserts the outcomes programmatically
-instead of narrating them, so it can be rerun cheaply after future changes. Not done as of this
-snapshot.
+Sections §1, §2, and §4 still need equivalent maintained runners or extension of an existing
+maintained runner where the authority and lifecycle are genuinely shared. Do not treat the §3
+script as evidence for their distinct failure, backup/PITR, or production-shaped-data requirements.

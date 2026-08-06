@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import queue
 import signal
 import threading
+import uuid
 from collections.abc import Sequence
+from pathlib import Path
 from types import FrameType
 from typing import Any
 
@@ -22,13 +25,26 @@ LOG = logging.getLogger("dish.service")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    return argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         prog="dish-service",
         description=(
             "Run the single-process Dish HTTP service. Runtime configuration is read "
             "from the service environment; see deploy/systemd/service.env.example."
         ),
     )
+    parser.add_argument(
+        "--postgresql-test-runtime",
+        action="store_true",
+        help="run the existing HTTP service against an explicitly bound TEST PostgreSQL authority",
+    )
+    parser.add_argument("--database-url")
+    parser.add_argument("--expected-database")
+    parser.add_argument("--expected-schema-head")
+    parser.add_argument("--expected-release")
+    parser.add_argument("--expected-generation-id", type=uuid.UUID)
+    parser.add_argument("--cursor-secret")
+    parser.add_argument("--state-dir", type=Path)
+    return parser
 
 
 def _serve(
@@ -181,10 +197,115 @@ def _run_configured_service(config: ServiceConfig) -> int:
                 signal.signal(signum, prior)
 
 
+def _required_postgresql_runtime_argument(args, name: str):
+    value = getattr(args, name)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            f"--{name.replace('_', '-')} is required for the PostgreSQL TEST runtime",
+            rule="postgresql_runtime_argument_required",
+            details={"argument": name},
+        )
+    return value
+
+
+def _postgresql_runtime_config(args) -> ServiceConfig:
+    if os.environ.get("DISH_PROFILE", "").strip().lower() != "test":
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "the PostgreSQL rehearsal service requires DISH_PROFILE=test",
+            rule="postgresql_runtime_profile_not_test",
+        )
+    populated_asana = sorted(
+        key for key, value in os.environ.items() if "ASANA" in key.upper() and value
+    )
+    if populated_asana:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "Asana credentials or configuration are reachable in the PostgreSQL rehearsal process",
+            rule="postgresql_runtime_asana_environment_reachable",
+            details={"environment_keys": populated_asana},
+        )
+    state_dir = Path(_required_postgresql_runtime_argument(args, "state_dir")).resolve()
+    state_dir.mkdir(parents=True, exist_ok=True)
+    config = ServiceConfig(
+        db_path=state_dir / "unused-legacy-authority.sqlite3",
+        honest_root=state_dir,
+        bind_host=os.environ.get("DISH_SERVICE_BIND", "127.0.0.1"),
+        port=int(os.environ.get("DISH_SERVICE_PORT", "0")),
+        action_bind_host=os.environ.get("DISH_ACTION_BIND", "127.0.0.1"),
+        action_port=int(os.environ.get("DISH_ACTION_PORT", "0")),
+        agent_token=os.environ.get("DISH_SERVICE_AGENT_TOKEN"),
+        admin_token=os.environ.get("DISH_SERVICE_ADMIN_TOKEN"),
+        action_token=os.environ.get("DISH_SERVICE_ACTION_TOKEN"),
+        legacy_writer_fence_path=None,
+    )
+    config.validate_runtime(require_action=True)
+    return config
+
+
+def _run_postgresql_test_runtime(args) -> int:
+    from dish_pg.postgres_service import PostgresRuntimeService
+
+    config = _postgresql_runtime_config(args)
+    expected_database = str(_required_postgresql_runtime_argument(args, "expected_database"))
+    if (
+        not expected_database.startswith("dish_")
+        or not expected_database.endswith("_test")
+        or "prod" in expected_database.lower()
+        or "production" in expected_database.lower()
+    ):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "expected PostgreSQL database must be a disposable dish_*_test database",
+            rule="postgresql_runtime_database_not_disposable",
+        )
+    cursor_secret = str(_required_postgresql_runtime_argument(args, "cursor_secret")).encode()
+    if len(cursor_secret) < 24:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "PostgreSQL cursor secret must contain at least 24 bytes",
+            rule="postgresql_runtime_cursor_secret_weak",
+        )
+    service = PostgresRuntimeService(
+        config,
+        database_url=str(_required_postgresql_runtime_argument(args, "database_url")),
+        cursor_secret=cursor_secret,
+        expected_database=expected_database,
+        expected_schema_head=str(
+            _required_postgresql_runtime_argument(args, "expected_schema_head")
+        ),
+        expected_release=str(_required_postgresql_runtime_argument(args, "expected_release")),
+        expected_generation_id=_required_postgresql_runtime_argument(
+            args, "expected_generation_id"
+        ),
+    )
+    try:
+        startup = service.startup_check()
+        if not startup["ok"] or startup["isolation"]["asana_environment_keys"]:
+            raise RuntimeError("PostgreSQL rehearsal service startup validation failed")
+        private_server, action_server = _build_servers(service)
+        stop_event = threading.Event()
+        handler = _signal_handler(stop_event)
+        previous: dict[int, Any] = {}
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            previous[signum] = signal.getsignal(signum)
+            signal.signal(signum, handler)
+        try:
+            return _run_servers(private_server, action_server, stop_event=stop_event)
+        finally:
+            for signum, prior in previous.items():
+                signal.signal(signum, prior)
+    finally:
+        service.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    build_parser().parse_args(argv)
+    args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     try:
+        if args.postgresql_test_runtime:
+            return _run_postgresql_test_runtime(args)
         config = ServiceConfig.from_env()
         config.validate_runtime(require_action=True)
         return _run_configured_service(config)

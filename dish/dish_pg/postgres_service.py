@@ -1,0 +1,206 @@
+"""TEST-only PostgreSQL authority adapter for the existing Dish HTTP service.
+
+This module deliberately reuses ``dish-service`` and ``dish_service.http``.  It
+does not introduce another listener, routing table, authentication model, or
+command framework.  The adapter is available only when the service process is
+started with its explicit PostgreSQL rehearsal flag and a TEST-only database.
+"""
+from __future__ import annotations
+
+import os
+import uuid
+from dataclasses import asdict
+from datetime import datetime, timezone
+from typing import Any, Mapping
+
+from sqlalchemy import select, text
+from sqlalchemy.exc import SQLAlchemyError
+
+from dish_service.leases import ServicePrincipal
+from dish_tool.errors import DishRuleError
+
+from . import models
+from .command_port import CommandCall, CommandPortError, PostgresCommandPort
+from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
+
+
+class PostgresRuntimeService:
+    """Expose PostgreSQL command authority through the established HTTP service."""
+
+    _SUPPORTED_HTTP_SURFACES = frozenset({"agent"})
+
+    def __init__(
+        self,
+        config,
+        *,
+        database_url: str,
+        cursor_secret: bytes,
+        expected_database: str,
+        expected_schema_head: str,
+        expected_release: str,
+        expected_generation_id: uuid.UUID,
+    ) -> None:
+        self.config = config
+        self._engine = create_database_engine(DatabaseSettings(url=database_url))
+        self._session_maker = session_factory(self._engine)
+        self._cursor_secret = cursor_secret
+        self._expected_database = expected_database
+        self._expected_schema_head = expected_schema_head
+        self._expected_release = expected_release
+        self._expected_generation_id = expected_generation_id
+
+    def close(self) -> None:
+        self._engine.dispose()
+
+    def supports_http_route(self, surface: str, _command: str) -> bool:
+        """Expose only routes implemented by this TEST-only adapter.
+
+        The shared service transport has lease, administration, backup, action,
+        and argument-failure routes for the production ``DishService`` facade.
+        This adapter intentionally implements only the agent command boundary;
+        unsupported routes must therefore be hidden before dispatch rather than
+        falling through to missing facade methods.
+        """
+
+        return surface in self._SUPPORTED_HTTP_SURFACES
+
+    def _identity(self) -> dict[str, Any]:
+        try:
+            with session_scope(self._session_maker) as session:
+                database_name = str(session.scalar(text("SELECT current_database()")))
+                schema_head = str(session.scalar(text("SELECT version_num FROM alembic_version")))
+                generation = session.scalar(
+                    select(models.AuthorityGeneration).where(
+                        models.AuthorityGeneration.status == "active"
+                    )
+                )
+                if generation is None:
+                    raise DishRuleError(
+                        "BACKEND_REJECTED",
+                        "PostgreSQL authority has no active generation",
+                        rule="postgresql_generation_missing",
+                    )
+        except DishRuleError:
+            raise
+        except SQLAlchemyError as exc:
+            raise DishRuleError(
+                "BACKEND_REJECTED",
+                "PostgreSQL authority is unavailable",
+                rule="postgresql_authority_unavailable",
+                retryable=True,
+                details={"error_type": type(exc).__name__},
+            ) from exc
+
+        observed = {
+            "database": database_name,
+            "schema_head": schema_head,
+            "dish_release": generation.dish_release,
+            "generation_id": str(generation.generation_id),
+            "generation_status": generation.status,
+        }
+        expected = {
+            "database": self._expected_database,
+            "schema_head": self._expected_schema_head,
+            "dish_release": self._expected_release,
+            "generation_id": str(self._expected_generation_id),
+            "generation_status": "active",
+        }
+        if observed != expected:
+            raise DishRuleError(
+                "BACKEND_REJECTED",
+                "PostgreSQL runtime identity does not match the rehearsal binding",
+                rule="postgresql_runtime_identity_mismatch",
+                details={"expected": expected, "observed": observed},
+            )
+        return observed
+
+    def startup_check(self) -> dict[str, Any]:
+        identity = self._identity()
+        return {
+            "ok": True,
+            "startup_ready": True,
+            "backend": "postgresql",
+            "profile": "test",
+            "pid": os.getpid(),
+            "identity": identity,
+            "isolation": {
+                "asana_environment_keys": sorted(
+                    key for key, value in os.environ.items() if "ASANA" in key.upper() and value
+                ),
+                "bind_host": self.config.bind_host,
+                "action_bind_host": self.config.action_bind_host,
+                "legacy_writer_fence_path": None,
+                "supported_http_surfaces": sorted(self._SUPPORTED_HTTP_SURFACES),
+            },
+        }
+
+    def health(self) -> dict[str, Any]:
+        try:
+            return self.startup_check()
+        except DishRuleError as exc:
+            return {
+                "ok": False,
+                "startup_ready": False,
+                "backend": "postgresql",
+                "profile": "test",
+                "pid": os.getpid(),
+                "code": exc.code,
+                "rule": exc.rule,
+                "retryable": exc.retryable,
+            }
+
+    def execute_agent(
+        self,
+        command: str,
+        arguments: Mapping[str, Any],
+        *,
+        principal: ServicePrincipal | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        if principal is None:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "service principal is required",
+                rule="service_principal_required",
+            )
+        try:
+            run_id = uuid.UUID(principal.run_id)
+            parsed_request_id = uuid.UUID(request_id) if request_id is not None else None
+        except ValueError as exc:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "service command identifiers are invalid",
+                rule="service_identifier_invalid",
+            ) from exc
+
+        try:
+            with session_scope(self._session_maker) as session:
+                result = PostgresCommandPort(
+                    session,
+                    cursor_secret=self._cursor_secret,
+                ).execute(
+                    CommandCall(
+                        command_name=command,
+                        arguments=dict(arguments),
+                        owner_id=principal.owner_id,
+                        principal_class="agent",
+                        run_id=run_id,
+                        request_id=parsed_request_id,
+                        now=datetime.now(timezone.utc),
+                    )
+                )
+            return asdict(result)
+        except CommandPortError as exc:
+            raise DishRuleError(
+                "CONFLICT",
+                str(exc),
+                rule="postgresql_command_rejected",
+            ) from exc
+        except SQLAlchemyError as exc:
+            raise DishRuleError(
+                "BACKEND_REJECTED",
+                "PostgreSQL authority is unavailable; governed mutation was not admitted",
+                rule="postgresql_authority_unavailable",
+                retryable=True,
+                details={"error_type": type(exc).__name__},
+            ) from exc

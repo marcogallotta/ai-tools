@@ -51,7 +51,7 @@ and §4 have not.
 | --- | --- | --- |
 | §1 Process-failure exercise | commit-before-response/lost-response replay, worker restart/takeover, PostgreSQL disconnect/recovery | Not run |
 | §2 Backup, restore, and PITR rehearsal | backup/restore, PITR, RPO/RTO, fail-closed on corrupt backup | Not run |
-| §3 Runtime wiring rehearsal | service + both workers against real PostgreSQL, cross-process proofs | Run 2026-08-04 against disposable local PostgreSQL (see `ops.md`). Proved: correct DB/generation targeting, claim→dispatch→settlement across process boundaries (stub adapter), worker takeover of an expired claim, fail-closed on PostgreSQL loss (no silent continuation, no stray claim, clean restart), reconciliation worker as a separate process, zero env-var coupling in either worker. Importer CLI reconfirmed to exist (full end-to-end run is §4, not attempted). |
+| §3 Runtime wiring rehearsal | service + both workers against real PostgreSQL, cross-process proofs | Historical run completed 2026-08-04. Maintained reproduction is now `scripts/dish-pg-runtime-wiring-rehearsal`, which records exact runtime identity, commands, PIDs, first-attempt outcomes, same-worker restart, different-worker takeover, stale-worker rejection, full external-attempt settlement, duplicate prevention, fail-closed/freshness paths, unsupported-route rejection, and TEST-only isolation in one report. A native run remains required after relevant changes; environment-only `status=blocked` is not a pass. Importer end-to-end remains §4. |
 | §4 Production-shaped local rehearsal | full sequence against sanitized production-shaped data | Not run |
 
 This is Must-fix, Local/Mixed, Hard local effort, gating a trusted cutover — do not let it get

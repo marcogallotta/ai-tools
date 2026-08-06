@@ -34,6 +34,7 @@ from types import FrameType
 from typing import Any, Mapping, Protocol, Sequence
 
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
+from .runtime_identity import add_runtime_identity_arguments, verify_optional_runtime_identity
 from .transition import ProjectionClaim, ProjectionService, TransitionAuthorityError
 
 LOGGER = logging.getLogger("dish.projection_worker")
@@ -237,6 +238,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="process at most one claim and exit; useful for supervised one-shot execution",
     )
+    add_runtime_identity_arguments(parser)
     return parser
 
 
@@ -244,8 +246,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
     engine = create_database_engine(DatabaseSettings(url=args.database_url))
+    maker = session_factory(engine)
+    verify_optional_runtime_identity(args, maker, role="projection_worker")
     worker = ProjectionWorker(
-        session_maker=session_factory(engine),
+        session_maker=maker,
         adapter=load_adapter(args.adapter),
         worker_id=args.worker_id,
         claim_ttl=timedelta(seconds=args.claim_ttl_seconds),

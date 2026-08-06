@@ -135,6 +135,7 @@ NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY = (
     "tests/postgresql/native/test_projection_worker.py::test_projection_worker_drains_one_pending_event_against_real_postgresql",
     "tests/postgresql/native/test_projection_worker.py::test_projection_worker_never_claims_real_shadow_evaluator_outbox",
     "tests/postgresql/native/test_reconciliation_worker.py::test_reconciliation_worker_completes_one_corpus_against_real_postgresql",
+    "tests/postgresql/native/test_runtime_wiring_rehearsal.py::test_runtime_wiring_rehearsal_across_service_and_worker_processes",
     "tests/postgresql/native/test_shadow_baseline_concurrency.py::test_native_admitted_capture_blocks_close_and_forces_close_to_reread",
     "tests/postgresql/native/test_shadow_baseline_concurrency.py::test_native_committed_close_rejects_waiting_capture",
     "tests/postgresql/native/test_shadow_baseline_concurrency.py::test_native_committed_disqualification_rejects_waiting_capture",

@@ -79,7 +79,10 @@ class DeterministicExternalAdapter:
         return ExternalAttempt(
             request_identity=f"section1:{claim.event_id}",
             request_payload=dict(claim.payload),
-            intended_external_id="123456789",
+            intended_external_id=str(
+                100_000_000_000_000_000
+                + (claim.event_id.int % 900_000_000_000_000_000)
+            ),
         )
 
     def attempt_and_observe(self, claim, attempt: ExternalAttempt) -> ExternalObservation:
@@ -88,7 +91,11 @@ class DeterministicExternalAdapter:
                 "after_durable_intent_before_external_call",
                 {"event_id": str(claim.event_id), "dispatch_identity": attempt.request_identity},
             )
-        identity = sha256_json(dict(attempt.request_payload))
+        identity = (
+            claim.idempotency_key
+            if claim.event_type == "create_task"
+            else sha256_json(dict(attempt.request_payload))
+        )
         with _ledger_lock() as (_path, ledger):
             ledger["dispatch_calls"] += 1
             ledger["effects"][attempt.request_identity] = {
@@ -101,7 +108,44 @@ class DeterministicExternalAdapter:
                 "after_ambiguous_external_response_before_settlement",
                 {"event_id": str(claim.event_id), "dispatch_identity": attempt.request_identity},
             )
-        return _applied_observation(identity)
+        if _scenario() == "downstream_failure":
+            if claim.event_type == "create_task":
+                observation_kind = "marker_search"
+                external_observation = {
+                    "source": "external_marker_search",
+                    "operation": claim.event_type,
+                    "correlation_marker": claim.payload.get("correlation_marker"),
+                    "observed_external_id": attempt.intended_external_id,
+                    "observed_absent": True,
+                    "failure_class": "downstream_rejected",
+                }
+            else:
+                observation_kind = "reread"
+                external_observation = {
+                    "source": "external_reread",
+                    "operation": claim.event_type,
+                    "observed_external_id": attempt.intended_external_id,
+                    "observed_absent": True,
+                    "failure_class": "downstream_rejected",
+                }
+            return ExternalObservation(
+                observed_applied=False,
+                observed_identity=None,
+                reread_complete=True,
+                evidence={"external_observation": external_observation},
+                observation_kind=observation_kind,
+                decision_reason="isolated adapter reported a definite downstream rejection",
+                create_matches=() if claim.event_type == "create_task" else None,
+            )
+        return _applied_observation(
+            identity,
+            operation=claim.event_type,
+            external_id=attempt.intended_external_id,
+            correlation_marker=claim.payload.get("correlation_marker"),
+            create_matches=(attempt.intended_external_id,)
+            if claim.event_type == "create_task" and attempt.intended_external_id
+            else None,
+        )
 
     def observe_recovery(self, claim, attempt: ExternalAttempt) -> ExternalObservation:
         with _ledger_lock() as (_path, ledger):
@@ -137,27 +181,55 @@ class DeterministicExternalAdapter:
                 },
                 decision_reason="complete isolated-adapter reread found no effect",
             )
-        return _applied_observation(str(effect["observed_identity"]), recovery=True)
+        return _applied_observation(
+            str(effect["observed_identity"]),
+            recovery=True,
+            operation=claim.event_type,
+            external_id=attempt.intended_external_id,
+            correlation_marker=claim.payload.get("correlation_marker"),
+            create_matches=(attempt.intended_external_id,)
+            if claim.event_type == "create_task" and attempt.intended_external_id
+            else None,
+        )
 
 
-def _applied_observation(identity: str, *, recovery: bool = False) -> ExternalObservation:
+def _applied_observation(
+    identity: str,
+    *,
+    recovery: bool = False,
+    operation: str = "update_task_document",
+    external_id: str | None = None,
+    correlation_marker: Any = None,
+    create_matches: tuple[str, ...] | None = None,
+) -> ExternalObservation:
+    if operation == "create_task":
+        observation_kind = "marker_search"
+        external_observation = {
+            "source": "external_marker_search",
+            "operation": operation,
+            "correlation_marker": correlation_marker,
+            "observed_external_id": external_id,
+        }
+    else:
+        observation_kind = "reread"
+        external_observation = {
+            "source": "external_reread",
+            "operation": operation,
+            "observed_external_id": external_id,
+            "observed_document_identity": identity,
+        }
     return ExternalObservation(
         observed_applied=True,
         observed_identity=identity,
         reread_complete=True,
-        evidence={
-            "external_observation": {
-                "source": "external_reread",
-                "operation": "update_task_document",
-                "observed_external_id": "123456789",
-                "observed_document_identity": identity,
-            }
-        },
+        evidence={"external_observation": external_observation},
+        observation_kind=observation_kind,
         decision_reason=(
             "isolated-adapter recovery reread confirmed effect"
             if recovery
             else "isolated-adapter post-call reread confirmed effect"
         ),
+        create_matches=create_matches,
     )
 
 

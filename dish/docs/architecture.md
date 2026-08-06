@@ -587,6 +587,16 @@ The shared service exposes two loopback listeners:
 - **private:** CLI, admin, health, migration, recovery, backup, and generated Action schema;
 - **Action:** bounded `/v1/action/*` workflow, Action lease renewal, and generated schema.
 
+The committed PostgreSQL §3 rehearsal may start this same transport through the explicit
+`--postgresql-test-runtime` mode. That mode is not a second service framework or deployment
+profile: it requires `DISH_PROFILE=test`, a disposable `dish_*_test` database, loopback listeners,
+TEST-only tokens, no populated Asana environment keys, and an exact database/schema/release/
+generation binding before listener startup. The PostgreSQL TEST adapter exposes only the agent
+command boundary it implements; lease, admin, Action, backup, and argument-failure POST routes are
+hidden as not-found before authentication, body parsing, or adapter dispatch. Projection and
+reconciliation still use their normal worker entry points with the same exact identity binding.
+This mode must never appear in production manifests or production preflight.
+
 Tailscale Serve exposes the private listener to trusted tailnet clients. Funnel exposes the Action
 listener. The Action token is invalid on private/admin routes, and the Action surface contains no
 raw Asana, migration, recovery, health, or backup route. `dish_service.command_spec` is shared by the

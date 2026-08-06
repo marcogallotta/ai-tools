@@ -109,6 +109,12 @@ class DishHTTPServer(ThreadingHTTPServer):
                 raise RuntimeError("cannot replace stop event after accepting connections")
             self._stop_event = stop_event
 
+    def supports_route(self, surface: str, command: str) -> bool:
+        checker = getattr(self.service, "supports_http_route", None)
+        if checker is None:
+            return True
+        return bool(checker(surface, command))
+
     @staticmethod
     def _close_socket(connection: socket.socket) -> None:
         try:
@@ -361,6 +367,12 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 )
                 return
             if self.server.surface_mode == "action" and surface != "action":
+                self._write_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"ok": False, "error": "not_found"},
+                )
+                return
+            if not self.server.supports_route(surface, command):
                 self._write_json(
                     HTTPStatus.NOT_FOUND,
                     {"ok": False, "error": "not_found"},

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
-from sqlalchemy import create_engine, func, select, text, update
+from sqlalchemy import create_engine, select, text, update
 from sqlalchemy.engine import make_url
 
 from dish_pg import stage5_models as tx
@@ -229,6 +229,50 @@ class ChildProcess:
         )
         return returncode
 
+    def terminate(self, *, timeout: float = 20.0) -> int:
+        """Request bounded graceful process-group shutdown, then force if needed."""
+
+        if not (timeout > 0.0 and timeout < float("inf")):
+            raise ValueError("child terminate timeout must be finite and positive")
+        termination_state = "none"
+        if self.process.poll() is None and self._signal_group(signal.SIGTERM):
+            termination_state = "sigterm"
+        try:
+            returncode = self.process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if self._signal_group(signal.SIGKILL):
+                termination_state = "sigkill"
+            try:
+                returncode = self.process.wait(timeout=10.0)
+            except subprocess.TimeoutExpired as exc:
+                self._close_log()
+                self.manifest.update(
+                    {
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                        "final_exit_status": None,
+                        "completion_state": "timed_out",
+                        "termination_state": "sigkill_unreaped",
+                        "detail": "graceful shutdown remained unreaped after SIGTERM/SIGKILL",
+                    }
+                )
+                write_json_atomic(self.manifest_path, self.manifest)
+                raise ProcessRehearsalFailure(
+                    f"terminated child process group remained unreaped; log={self.log_path}"
+                ) from exc
+        self._record_final(
+            final_exit_status=returncode,
+            completion_state="terminated" if termination_state != "none" else "completed",
+            termination_state=termination_state,
+            detail=(
+                "bounded graceful shutdown requested"
+                if termination_state == "sigterm"
+                else "graceful shutdown escalated to SIGKILL"
+                if termination_state == "sigkill"
+                else None
+            ),
+        )
+        return returncode
+
 
 def _evidence_root(fallback: Path) -> Path:
     value = os.environ.get("DISH_SECTION1_EVIDENCE_DIR")
@@ -242,10 +286,11 @@ def _child_environment(
     barrier: BarrierServer | None,
     ledger: Path,
     scenario: str,
+    overrides: dict[str, str] | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
     for key in list(env):
-        if "ASANA" in key.upper():
+        if key.startswith("DISH_") or "ASANA" in key.upper():
             env.pop(key, None)
     pythonpath = [str(ROOT)]
     if env.get("PYTHONPATH"):
@@ -263,6 +308,7 @@ def _child_environment(
         env["DISH_SECTION1_BARRIER_SOCKET"] = str(barrier.path)
     else:
         env.pop("DISH_SECTION1_BARRIER_SOCKET", None)
+    env.update(overrides or {})
     return env
 
 
@@ -274,6 +320,7 @@ def _start_child(
     ledger: Path,
     scenario: str,
     label: str,
+    env_overrides: dict[str, str] | None = None,
 ) -> ChildProcess:
     evidence = _evidence_root(tmp_path)
     logs = evidence / "process-logs"
@@ -287,7 +334,12 @@ def _start_child(
     process = subprocess.Popen(
         command,
         cwd=ROOT,
-        env=_child_environment(barrier=barrier, ledger=ledger, scenario=scenario),
+        env=_child_environment(
+            barrier=barrier,
+            ledger=ledger,
+            scenario=scenario,
+            overrides=env_overrides,
+        ),
         text=True,
         stdout=log_handle,
         stderr=subprocess.STDOUT,
@@ -316,6 +368,118 @@ def _start_child(
     return ChildProcess(process, command, log_path, manifest_path, manifest, log_handle)
 
 
+def start_postgresql_proxy(
+    *,
+    dsn: str,
+    tmp_path: Path,
+    listen_port: int,
+    label: str,
+) -> tuple[ChildProcess, str]:
+    """Start a loopback TCP proxy and return its process plus proxied DSN."""
+
+    url = make_url(dsn)
+    target_host = url.host or "127.0.0.1"
+    target_port = int(url.port or 5432)
+    ready_file = tmp_path / f"{label}-ready.json"
+    command = [
+        sys.executable,
+        "-m",
+        "tests.support.postgresql.tcp_proxy",
+        "--listen-host",
+        "127.0.0.1",
+        "--listen-port",
+        str(listen_port),
+        "--target-host",
+        target_host,
+        "--target-port",
+        str(target_port),
+        "--ready-file",
+        str(ready_file),
+    ]
+    child = _start_child(
+        command,
+        tmp_path=tmp_path,
+        barrier=None,
+        ledger=tmp_path / "unused-proxy-ledger.json",
+        scenario="postgresql-tcp-proxy",
+        label=label,
+    )
+    for _attempt in range(1000):
+        if ready_file.is_file():
+            payload = json.loads(ready_file.read_text(encoding="utf-8"))
+            if payload.get("pid") == child.process.pid:
+                proxied = url.set(host="127.0.0.1", port=listen_port)
+                return child, proxied.render_as_string(hide_password=False)
+        try:
+            returncode = child.process.wait(timeout=0.02)
+        except subprocess.TimeoutExpired:
+            continue
+        child.wait(expected=None)
+        raise ProcessRehearsalFailure(
+            f"PostgreSQL TCP proxy exited before readiness; exit={returncode}; "
+            f"log={child.log_path}"
+        )
+    child.terminate()
+    raise ProcessRehearsalFailure(
+        f"PostgreSQL TCP proxy did not become ready; log={child.log_path}"
+    )
+
+
+def start_postgresql_service(
+    *,
+    dsn: str,
+    tmp_path: Path,
+    expected_database: str,
+    expected_schema_head: str,
+    expected_release: str,
+    expected_generation_id: uuid.UUID,
+    private_port: int,
+    action_port: int,
+    agent_token: str,
+    admin_token: str,
+    action_token: str,
+) -> ChildProcess:
+    """Start the established ``dish-service`` entry point in TEST PostgreSQL mode."""
+
+    state_dir = tmp_path / "service-state"
+    command = [
+        sys.executable,
+        str(ROOT / "dish-service"),
+        "--postgresql-test-runtime",
+        "--database-url",
+        dsn,
+        "--expected-database",
+        expected_database,
+        "--expected-schema-head",
+        expected_schema_head,
+        "--expected-release",
+        expected_release,
+        "--expected-generation-id",
+        str(expected_generation_id),
+        "--cursor-secret",
+        "runtime-wiring-cursor-secret-32-bytes",
+        "--state-dir",
+        str(state_dir),
+    ]
+    return _start_child(
+        command,
+        tmp_path=tmp_path,
+        barrier=None,
+        ledger=tmp_path / "unused-service-ledger.json",
+        scenario="postgresql-runtime-service",
+        label="postgresql-service",
+        env_overrides={
+            "DISH_PROFILE": "test",
+            "DISH_SERVICE_BIND": "127.0.0.1",
+            "DISH_SERVICE_PORT": str(private_port),
+            "DISH_ACTION_BIND": "127.0.0.1",
+            "DISH_ACTION_PORT": str(action_port),
+            "DISH_SERVICE_AGENT_TOKEN": agent_token,
+            "DISH_SERVICE_ADMIN_TOKEN": admin_token,
+            "DISH_SERVICE_ACTION_TOKEN": action_token,
+        },
+    )
+
 
 def start_projection_worker(
     *,
@@ -327,6 +491,12 @@ def start_projection_worker(
     barrier: BarrierServer | None = None,
     once: bool = True,
     claim_ttl_seconds: int = 120,
+    expected_database: str | None = None,
+    expected_schema_head: str | None = None,
+    expected_release: str | None = None,
+    expected_generation_id: uuid.UUID | None = None,
+    identity_output: Path | None = None,
+    process_label: str | None = None,
 ) -> ChildProcess:
     command = [
         sys.executable,
@@ -347,13 +517,37 @@ def start_projection_worker(
     ]
     if once:
         command.append("--once")
+    identity_values = (
+        expected_database,
+        expected_schema_head,
+        expected_release,
+        expected_generation_id,
+        identity_output,
+    )
+    if any(value is not None for value in identity_values):
+        if not all(value is not None for value in identity_values):
+            raise ValueError("projection worker runtime identity arguments must be supplied together")
+        command.extend(
+            [
+                "--expected-database",
+                str(expected_database),
+                "--expected-schema-head",
+                str(expected_schema_head),
+                "--expected-release",
+                str(expected_release),
+                "--expected-generation-id",
+                str(expected_generation_id),
+                "--runtime-identity-output",
+                str(identity_output),
+            ]
+        )
     return _start_child(
         command,
         tmp_path=tmp_path,
         barrier=barrier,
         ledger=ledger,
         scenario=scenario,
-        label=f"projection-{worker_id}",
+        label=process_label or f"projection-{worker_id}",
     )
 
 
@@ -367,6 +561,10 @@ def start_reconciliation_worker(
     output: Path,
     scenario: str = "normal",
     barrier: BarrierServer | None = None,
+    expected_database: str | None = None,
+    expected_schema_head: str | None = None,
+    expected_release: str | None = None,
+    identity_output: Path | None = None,
 ) -> ChildProcess:
     command = [
         sys.executable,
@@ -387,6 +585,31 @@ def start_reconciliation_worker(
         "--log-level",
         "INFO",
     ]
+    identity_values = (
+        expected_database,
+        expected_schema_head,
+        expected_release,
+        identity_output,
+    )
+    if any(value is not None for value in identity_values):
+        if not all(value is not None for value in identity_values):
+            raise ValueError(
+                "reconciliation worker runtime identity arguments must be supplied together"
+            )
+        command.extend(
+            [
+                "--expected-database",
+                str(expected_database),
+                "--expected-schema-head",
+                str(expected_schema_head),
+                "--expected-release",
+                str(expected_release),
+                "--expected-generation-id",
+                str(generation_id),
+                "--runtime-identity-output",
+                str(identity_output),
+            ]
+        )
     return _start_child(
         command,
         tmp_path=tmp_path,
@@ -436,25 +659,36 @@ def event_snapshot(factory, event_ids: list[uuid.UUID]) -> dict[str, Any]:
             )
         )
         attempt_ids = [row.attempt_id for row in attempts]
-        observation_count = 0
-        adjudication_count = 0
+        observations = []
+        adjudications = []
         if attempt_ids:
-            observation_count = int(
-                session.scalar(
-                    select(func.count())
-                    .select_from(tx.ProjectionObservation)
+            observations = list(
+                session.scalars(
+                    select(tx.ProjectionObservation)
                     .where(tx.ProjectionObservation.attempt_id.in_(attempt_ids))
+                    .order_by(
+                        tx.ProjectionObservation.attempt_id,
+                        tx.ProjectionObservation.observation_sequence,
+                    )
                 )
-                or 0
             )
-            adjudication_count = int(
-                session.scalar(
-                    select(func.count())
-                    .select_from(tx.ProjectionAdjudication)
+            adjudications = list(
+                session.scalars(
+                    select(tx.ProjectionAdjudication)
                     .where(tx.ProjectionAdjudication.attempt_id.in_(attempt_ids))
+                    .order_by(
+                        tx.ProjectionAdjudication.attempt_id,
+                        tx.ProjectionAdjudication.adjudication_sequence,
+                    )
                 )
-                or 0
             )
+        correlations = list(
+            session.scalars(
+                select(tx.ProjectionCreateCorrelation)
+                .where(tx.ProjectionCreateCorrelation.projection_event_id.in_(event_ids))
+                .order_by(tx.ProjectionCreateCorrelation.projection_event_id)
+            )
+        )
     return {
         "events": [
             {
@@ -477,14 +711,52 @@ def event_snapshot(factory, event_ids: list[uuid.UUID]) -> dict[str, Any]:
                 "state": row.state,
                 "worker_id": row.worker_id,
                 "dispatch_identity": row.dispatch_identity,
+                "request_identity": row.request_identity,
+                "intended_external_id": row.intended_external_id,
                 "predecessor_attempt_id": (
                     None if row.predecessor_attempt_id is None else str(row.predecessor_attempt_id)
                 ),
+                "terminal": row.terminal_at is not None,
             }
             for row in attempts
         ],
-        "observation_count": observation_count,
-        "adjudication_count": adjudication_count,
+        "observations": [
+            {
+                "observation_id": str(row.observation_id),
+                "attempt_id": str(row.attempt_id),
+                "sequence": row.observation_sequence,
+                "kind": row.observation_kind,
+                "observed_applied": row.observed_applied,
+                "observed_identity": row.observed_identity,
+                "reread_complete": row.reread_complete,
+                "evidence": dict(row.evidence),
+            }
+            for row in observations
+        ],
+        "adjudications": [
+            {
+                "adjudication_id": str(row.adjudication_id),
+                "attempt_id": str(row.attempt_id),
+                "observation_id": str(row.observation_id),
+                "sequence": row.adjudication_sequence,
+                "outcome": row.outcome,
+                "decided_by": row.decided_by,
+                "decision_reason": row.decision_reason,
+            }
+            for row in adjudications
+        ],
+        "correlations": [
+            {
+                "event_id": str(row.projection_event_id),
+                "marker": row.marker,
+                "state": row.state,
+                "matched_external_id": row.matched_external_id,
+                "match_count": row.match_count,
+            }
+            for row in correlations
+        ],
+        "observation_count": len(observations),
+        "adjudication_count": len(adjudications),
     }
 
 

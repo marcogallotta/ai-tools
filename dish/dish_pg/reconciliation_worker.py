@@ -31,6 +31,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
+from .runtime_identity import add_runtime_identity_arguments, verify_optional_runtime_identity
 from . import stage5_models as tx
 from .transition import ProjectionService
 
@@ -227,6 +228,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         help="write a mode-0600 machine-checkable report for this exact run",
     )
+    add_runtime_identity_arguments(parser)
     return parser
 
 
@@ -234,8 +236,10 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
     engine = create_database_engine(DatabaseSettings(url=args.database_url))
+    maker = session_factory(engine)
+    verify_optional_runtime_identity(args, maker, role="reconciliation_worker")
     worker = ReconciliationWorker(
-        session_maker=session_factory(engine),
+        session_maker=maker,
         fetch_corpus=load_callable(args.fetcher),
         compare_item=load_callable(args.comparator),
         generation_id=args.generation_id,
@@ -262,7 +266,7 @@ def main(argv: list[str] | None = None) -> int:
             }
             report["report_sha256"] = hashlib.sha256(_canonical_json_bytes(report)).hexdigest()
         else:
-            report = reconciliation_report(session_factory(engine), run)
+            report = reconciliation_report(maker, run)
         if args.output is not None:
             _write_atomic(args.output, report)
         print(json.dumps(report, sort_keys=True, separators=(",", ":")))
