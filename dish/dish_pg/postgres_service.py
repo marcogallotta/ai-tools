@@ -248,7 +248,11 @@ class PostgresRuntimeService:
                 request_id=parsed_request_id,
                 command=command,
             )
-            return asdict(result)
+            payload = asdict(result)
+            data = dict(payload.pop("data"))
+            data["request_replayed"] = payload.pop("request_replayed")
+            payload["data"] = data
+            return payload
         except CommandPortError as exc:
             raise DishRuleError(
                 "CONFLICT",
