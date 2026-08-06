@@ -158,7 +158,7 @@ follow-on actions and explicitly tells the client not to retry the mutation. Ord
 write and approval retries remain naturally idempotent by exact live-state comparison. In service
 mode, all agent mutations are replay-bound, and every externally callable agent, administrative,
 lease, and backup mutation requires a client-generated non-nil UUID `client.request_id`; reads (`sections`,
-`read`, `inspect`, and `health`) do not. This includes `create`, `start`, `prepare`, `approve`,
+`section-tasks`, `read`, and `health`) do not. This includes `create`, `inspect`, `start`, `prepare`, `approve`,
 `reject`, and `submit`. Reuse that UUID only when retrying the exact same logical call after a lost
 response.
 
@@ -191,9 +191,18 @@ alongside `client.run_id` and `client.request_id`; it is not supplied as a top-l
 - Ordinary request records live in `service_requests` and survive service restart. `backup-restore` uses an atomic sibling sidecar journal because the restore replaces the database that contains ordinary request records. The sidecar binds the request to the selected backup, monotonic exact-effect checkpoints, and terminal result across replacement and restart. Checkpoints identify the source bytes, prepared candidate, exact pre-restore destination, pre-replacement live files, installed bytes, validation, and rollback when applicable. A restarted restore resumes or reconstructs only when those durable identities match; a legacy pending row without a checkpoint remains non-retryable and is never inferred or blindly repeated.
 
 The bundled CLI and admin clients generate an ID internally for most first consequential calls.
-`dish inspect` and `dish apply-proposal` accept `--request-id` for exact response-loss replay;
-most other command-line interfaces neither accept a request ID nor expose the generated value after
-a transport failure. Those callers must inspect live and durable state instead of blindly rerunning the mutation.
+`dish inspect` and `dish apply-proposal` accept `--request-id` for exact ambiguous-response replay.
+If either bundled client loses the transport response or receives an empty body, unreadable UTF-8,
+invalid JSON, or a result that fails the canonical envelope contract when dispatch may already
+have begun, it returns the same local non-retryable
+`BACKEND_UNCERTAIN / service_response_ambiguous` envelope
+containing the exact transmitted request ID and client run ID. The CLI also returns
+`data.replay_argv`, `data.replay_environment`, and `data.replay_command`, which repeat the original
+invocation with that same request and run identity. The client does not retry automatically. Run
+only that exact replay under the same authenticated principal and `DISH_CLIENT_RUN_ID`; do not issue
+an ordinary fresh retry. Most other command-line interfaces neither accept a request ID nor expose
+the generated value after an ambiguous response. Those callers must inspect live and durable state
+instead of blindly rerunning the mutation.
 `dish-admin expire-lease` is the explicit exception: it accepts `--request-id`, prints both request ID
 and `DISH_CLIENT_RUN_ID` to flushed stderr before dispatch, and requires the same authenticated admin
 principal, run ID, request ID, normalized target, and trimmed reason for exact replay. Marco must
@@ -239,7 +248,7 @@ There is intentionally no general-purpose `unblock` mutation for workflow state.
 
 ## Transport and external scope boundary
 
-HTTP bodies are executed only when exactly the declared `Content-Length` bytes were received; a short body is rejected before JSON parsing. Tokens reject surrounding whitespace, numeric timeouts must be finite and positive, and private lease/backup routes reject undeclared fields just like Action/admin routes. The CLI/admin client bounds connect and response waits independently (`connect_timeout`, default 10s; `response_timeout`, default 600s, since one command can legitimately span several sequential 40s Asana calls) and closes its connection after the response. Ordinary client calls map transport failures to structured service-unavailable results and reject noncanonical responses. `expire-lease` uses stricter phase-aware transport handling: DNS/TCP/TLS or socket-setup failure before dispatch is ordinary `BACKEND_REJECTED / service_unavailable`; timeout, disconnect, truncated body, invalid JSON, or noncanonical output after dispatch may have begun returns local non-retryable `BACKEND_UNCERTAIN / service_response_ambiguous` with the original request and run IDs and `required_next_action: retry_exact_request`. That local envelope is not journaled; exact replay obtains the authoritative stored service result.
+HTTP bodies are executed only when exactly the declared `Content-Length` bytes were received; a short body is rejected before JSON parsing. Tokens reject surrounding whitespace, numeric timeouts must be finite and positive, and private lease/backup routes reject undeclared fields just like Action/admin routes. The CLI/admin client bounds connect and response waits independently (`connect_timeout`, default 10s; `response_timeout`, default 600s, since one command can legitimately span several sequential 40s Asana calls) and closes its connection after the response. Ordinary client calls map transport failures to structured service-unavailable results and reject noncanonical responses. Consequential `inspect` and `apply-proposal` calls conservatively map transport loss, empty bodies, unreadable UTF-8, invalid JSON, and any canonical result-validation failure when dispatch may already have begun to local non-retryable `BACKEND_UNCERTAIN / service_response_ambiguous` with the exact transmitted request and run IDs, `safe_to_retry: false`, and `required_next_action: retry_exact_request`; exact replay is manual and the client never dispatches a second request automatically. `expire-lease` uses stricter phase-aware transport handling: DNS/TCP/TLS or socket-setup failure before dispatch is ordinary `BACKEND_REJECTED / service_unavailable`; timeout, disconnect, truncated body, invalid JSON, or noncanonical output after dispatch may have begun returns local non-retryable `BACKEND_UNCERTAIN / service_response_ambiguous` with the original request and run IDs and `required_next_action: retry_exact_request`. These local envelopes are not journaled; exact replay obtains the authoritative stored service result.
 
 Every complete task reread reasserts Cooking-project membership, so a task removed between the initial scope check and the authoritative read cannot open or continue an operation with a null placement. Asana section enumeration follows all pages. Verification start requires a non-blank, single-line independence attestation. CR, LF, tabs, ASCII controls, Unicode format characters, surrogates, line separators, and paragraph separators are rejected before request journaling, operation execution, Verification-cycle mutation, or attestation persistence; ordinary Unicode text remains valid. The same validator applies to every public route that accepts an attestation. Approval repeats only the exact verifier agent/run and inherits the exact persisted start attestation; its public shape does not accept the field. Every rejection route — Large, Evidence, and Human Review — repeats the exact verifier run and inherits that persisted attestation the same way; none of their public route shapes accept the field. Actor facts are scoped to an operation, allowing a run to participate legally in a later operation without rewriting earlier lineage.
 

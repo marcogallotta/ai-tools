@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 from typing import Sequence
 
@@ -402,6 +403,43 @@ def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
     }
 
 
+def _attach_exact_replay_command(
+    result: dict[str, object], arguments: Sequence[str]
+) -> None:
+    data = result.get("data")
+    if not isinstance(data, dict):
+        return
+    request_id = data.get("request_id")
+    if (
+        data.get("required_next_action") != "retry_exact_request"
+        or not isinstance(request_id, str)
+    ):
+        return
+    replay_arguments = list(arguments)
+    for index, argument in enumerate(replay_arguments):
+        if argument == "--request-id":
+            if index + 1 < len(replay_arguments):
+                replay_arguments[index + 1] = request_id
+            else:
+                replay_arguments.append(request_id)
+            break
+        if argument.startswith("--request-id="):
+            replay_arguments[index] = f"--request-id={request_id}"
+            break
+    else:
+        replay_arguments.extend(("--request-id", request_id))
+    replay_argv = ["dish", *replay_arguments]
+    run_id = data.get("run_id")
+    data["replay_argv"] = replay_argv
+    if isinstance(run_id, str):
+        data["replay_environment"] = {"DISH_CLIENT_RUN_ID": run_id}
+        data["replay_command"] = (
+            f"DISH_CLIENT_RUN_ID={shlex.quote(run_id)} {shlex.join(replay_argv)}"
+        )
+    else:
+        data["replay_command"] = shlex.join(replay_argv)
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -475,6 +513,7 @@ def main(
             task_gid=context["task_gid"],
             submission_id=context["submission_id"],
         )
+    _attach_exact_replay_command(result, arguments)
     try:
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return exit_status(result["code"])

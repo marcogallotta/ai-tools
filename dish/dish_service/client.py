@@ -17,6 +17,13 @@ from .command_spec import REPLAY_SAFE_COMMANDS
 from .identifiers import require_asana_gid, require_dish_uuid
 
 
+_AMBIGUOUS_RESPONSE_REPLAY_COMMANDS = frozenset({"inspect", "apply-proposal"})
+
+
+class _AmbiguousResponseError(Exception):
+    """The request may have been sent, but no trustworthy response was received."""
+
+
 def _request_id_for_command(command: str, request_id: str | None) -> str | None:
     if request_id is None and command in REPLAY_SAFE_COMMANDS:
         return str(uuid.uuid4())
@@ -75,6 +82,7 @@ class DishServiceClient:
         *,
         method: str = "GET",
         payload: Mapping[str, Any] | None = None,
+        ambiguous_after_dispatch: bool = False,
     ):
         body = None if payload is None else json.dumps(dict(payload), separators=(",", ":")).encode("utf-8")
         url = urlsplit(f"{self.base_url}{path}")
@@ -88,28 +96,39 @@ class DishServiceClient:
         # unreachable service should fail fast on connect.
         connection = connection_cls(url.hostname, url.port, timeout=self.connect_timeout)
         try:
-            connection.connect()
-            connection.sock.settimeout(self.response_timeout)
-            connection.request(
-                method,
-                target,
-                body=body,
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                    "Authorization": f"Bearer {self.token}",
-                },
-            )
-            response = connection.getresponse()
-            status = response.status
-            raw = response.read()
-        except (OSError, http.client.HTTPException) as exc:
-            raise DishRuleError(
-                "BACKEND_REJECTED",
-                "dish service is unavailable",
-                rule="service_unavailable",
-                retryable=True,
-            ) from exc
+            try:
+                connection.connect()
+                connection.sock.settimeout(self.response_timeout)
+            except (OSError, http.client.HTTPException) as exc:
+                raise DishRuleError(
+                    "BACKEND_REJECTED",
+                    "dish service is unavailable",
+                    rule="service_unavailable",
+                    retryable=True,
+                ) from exc
+            try:
+                connection.request(
+                    method,
+                    target,
+                    body=body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                        "Authorization": f"Bearer {self.token}",
+                    },
+                )
+                response = connection.getresponse()
+                status = response.status
+                raw = response.read()
+            except (OSError, http.client.HTTPException) as exc:
+                if ambiguous_after_dispatch:
+                    raise _AmbiguousResponseError from exc
+                raise DishRuleError(
+                    "BACKEND_REJECTED",
+                    "dish service is unavailable",
+                    rule="service_unavailable",
+                    retryable=True,
+                ) from exc
         finally:
             connection.close()
         if status >= 400:
@@ -135,9 +154,25 @@ class DishServiceClient:
         *,
         method: str = "GET",
         payload: Mapping[str, Any] | None = None,
+        ambiguous_after_dispatch: bool = False,
     ) -> dict[str, Any]:
-        result = self._json_request(path, method=method, payload=payload)
-        present = set(result) if isinstance(result, dict) else set()
+        result = self._json_request(
+            path,
+            method=method,
+            payload=payload,
+            ambiguous_after_dispatch=ambiguous_after_dispatch,
+        )
+        if not isinstance(result, dict):
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                (
+                    "dish service returned a noncanonical command result; "
+                    "verify DISH_SERVICE_URL points to the correct listener"
+                ),
+                rule="service_response_invalid",
+                details={"result_type": type(result).__name__},
+            )
+        present = set(result)
         missing = sorted(_RESULT_ENVELOPE_FIELDS - present)
         if missing:
             raise DishRuleError(
@@ -150,6 +185,73 @@ class DishServiceClient:
                 details={"missing_fields": missing},
             )
         return result
+
+    def _command_result_request(
+        self,
+        command: str,
+        path: str,
+        *,
+        request_id: str | None,
+        payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        ambiguous_response_requires_replay = (
+            command in _AMBIGUOUS_RESPONSE_REPLAY_COMMANDS
+            and request_id is not None
+        )
+        try:
+            result = self._result_request(
+                path,
+                method="POST",
+                payload=payload,
+                ambiguous_after_dispatch=ambiguous_response_requires_replay,
+            )
+        except _AmbiguousResponseError:
+            return self._ambiguous_command_result(
+                command=command, request_id=request_id
+            )
+        except DishRuleError as exc:
+            if (
+                ambiguous_response_requires_replay
+                and exc.rule == "service_response_invalid"
+            ):
+                return self._ambiguous_command_result(
+                    command=command, request_id=request_id
+                )
+            raise
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            if ambiguous_response_requires_replay:
+                return self._ambiguous_command_result(
+                    command=command, request_id=request_id
+                )
+            raise
+        if not ambiguous_response_requires_replay:
+            return result
+        try:
+            return self._validate_canonical_result(result, expected_command=command)
+        except (ValueError, TypeError):
+            return self._ambiguous_command_result(
+                command=command, request_id=request_id
+            )
+
+    def _ambiguous_command_result(
+        self, *, command: str, request_id: str
+    ) -> dict[str, Any]:
+        return result_envelope(
+            command=command,
+            ok=False,
+            code="BACKEND_UNCERTAIN",
+            retryable=False,
+            allowed_actions=[],
+            data={
+                "message": "the request may have reached the service, but no authoritative response was received",
+                "request_id": request_id,
+                "run_id": self.run_id,
+                "request_replay_required": True,
+                "required_next_action": "retry_exact_request",
+                "safe_to_retry": False,
+            },
+            errors=[{"rule": "service_response_ambiguous"}],
+        )
 
     @staticmethod
     def _validate_canonical_result(
@@ -299,9 +401,10 @@ class DishServiceClient:
             raise TypeError("provide command arguments as a mapping or keywords, not both")
         prepared = dict(arguments or keyword_arguments)
         request_id = _request_id_for_command(command, request_id)
-        return self._result_request(
+        return self._command_result_request(
+            command,
             f"/v1/commands/{command}",
-            method="POST",
+            request_id=request_id,
             payload={
                 "arguments": self._transport_arguments(prepared),
                 "client": self._client(request_id=request_id),
@@ -499,9 +602,10 @@ class DishActionClient(DishServiceClient):
             raise TypeError("provide command arguments as a mapping or keywords, not both")
         prepared = dict(arguments or keyword_arguments)
         request_id = _request_id_for_command(command, request_id)
-        return self._result_request(
+        return self._command_result_request(
+            command,
             f"/v1/action/{command}",
-            method="POST",
+            request_id=request_id,
             payload={
                 "arguments": self._transport_arguments(prepared),
                 "client": self._client(request_id=request_id),

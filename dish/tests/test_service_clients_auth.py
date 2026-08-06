@@ -147,9 +147,12 @@ def test_apply_proposal_clients_generate_and_preserve_request_identity(
     payloads = []
 
     class CapturingClient(client_type):
-        def _result_request(self, path, *, method, payload):
+        def _result_request(
+            self, path, *, method, payload, ambiguous_after_dispatch=False
+        ):
             assert path == expected_path
             assert method == "POST"
+            assert ambiguous_after_dispatch is True
             payloads.append(payload)
             return {"ok": True}
 
