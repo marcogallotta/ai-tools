@@ -1,8 +1,8 @@
 """Filesystem identity checks for dark-launch authority boundaries."""
 from __future__ import annotations
 
-import os
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -29,7 +29,11 @@ def paths_alias(left: Path, right: Path) -> bool:
     if left_path == right_path:
         return True
     try:
-        return left_path.exists() and right_path.exists() and os.path.samefile(left_path, right_path)
+        return (
+            left_path.exists()
+            and right_path.exists()
+            and os.path.samefile(left_path, right_path)
+        )
     except OSError:
         return False
 
@@ -64,6 +68,26 @@ def _validated_kill_switch(path: Path) -> Mapping[str, Any]:
             f"refusing to treat existing non-marker file as a dark-launch kill switch: {path}"
         )
     return payload
+
+
+def inspect_kill_switch(path: Path) -> dict[str, Any]:
+    """Classify a kill-switch path without creating, removing, or rewriting it."""
+    target = Path(path).expanduser().absolute()
+    if target.is_symlink():
+        return {"state": "invalid", "path": str(target), "reason": "kill switch is a symlink"}
+    try:
+        payload = _validated_kill_switch(target)
+    except FileNotFoundError:
+        return {"state": "clear", "path": str(target), "reason": "marker is absent"}
+    except KillSwitchPathError as exc:
+        return {"state": "invalid", "path": str(target), "reason": str(exc)}
+    return {
+        "state": "engaged",
+        "path": str(target),
+        "reason": "validated disable marker is present",
+        "marker_kind": payload.get("kind"),
+        "schema_version": payload.get("schema_version"),
+    }
 
 
 def engage_kill_switch(path: Path, payload: Mapping[str, Any]) -> bool:

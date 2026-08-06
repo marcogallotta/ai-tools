@@ -565,12 +565,21 @@ authority. This keeps source lineage stable across envelopes without colliding w
 PostgreSQL live requests. Generated workflow identifiers are translated only through immutable,
 earlier comparison evidence from the same baseline and rollout order. Unknown or conflicting source
 to target bindings fail the shadow delivery instead of leaking a legacy UUID into PostgreSQL authority.
-`dish_pg.dark_launch` supplies baseline creation, bounded status, and capture enable/disable controls;
-`dish_pg.location_manifest` preserves the fixed TEST capture and adds one explicit production-only,
-read-only capture bound to the fixed production service environment, Cooking project, and SQLite
-state root. Production capture exposes only exact Asana task reads, requires a non-zero SQLite corpus,
-and rejects mixed identities, credential ambiguity, source aliases, and symlinked output paths.
-`dish_pg.legacy_source` deterministically exports importer input from SQLite content heads plus that
+`dish_pg.dark_launch` supplies baseline creation, bounded status, and capture enable/disable controls.
+Status is a read-only observation boundary: it reports timestamped spool backlog/lag/capacity,
+PostgreSQL delivery/parity/gap counts, kill-switch state, optional worker state, and explicit
+operator-threshold health without changing capture or worker state. `dish_pg.location_manifest`
+preserves the fixed TEST capture and adds one explicit production-only, read-only capture bound to
+the fixed production service environment, Cooking project, and SQLite state root. Production capture
+exposes only exact Asana task reads, requires a non-zero SQLite corpus, and rejects mixed identities,
+credential ambiguity, source aliases, and symlinked output paths. `dish_pg.dark_launch_readiness` is
+the separate fail-closed production preflight. It validates environment and path isolation,
+receipt/import/generation/baseline/epoch identity, a checkpointed existing spool, and the installed
+stopped worker unit. PostgreSQL inspection uses an explicit read-only transaction followed by
+rollback; systemd inspection uses only `systemctl show` and rejects drop-ins, inline/pass-through
+environment, or an unexpected environment file. The preflight cannot create authority, spool state,
+markers, imports, unit changes, or external effects; an optional report path is evidence output only.
+`dish_pg.legacy_source` deterministically exports importer input from SQLite content heads plus the
 complete location manifest.
 
 This remains an isolated non-production target. Current production transports and workflow modules

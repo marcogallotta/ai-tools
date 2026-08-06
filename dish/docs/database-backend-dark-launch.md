@@ -1,8 +1,8 @@
 # Database backend dark launch
 
-Status: build work complete and safety-verified (independently reviewed, initial gap found and
-fixed, re-verified SAFE — see `database-backend-production-change-ledger.md` for the fix
-commits). Runtime wiring rehearsal and enablement remain outstanding. Tracks the specific path to
+Status: repository production-readiness surfaces implemented and source-tested. Production
+preflight, host installation, runtime wiring rehearsal, and enablement remain outstanding; the
+parallel production source-manifest package must land before production execution. Tracks the specific path to
 a live dark launch; a focused subset of `database-backend-imp.md`, not a replacement for it.
 
 Role: dark launch means PostgreSQL passively captures a real, accumulating copy of legacy
@@ -21,8 +21,9 @@ and are out of scope here.
 | No-external-effects enforcement | Medium — first pass had a real gap (shadow-origin outbox rows were claimable whenever the epoch flag was `true`); fixed with a DB-enforced `live`/`shadow` origin tag and an unconditional `claim_next` exclusion, independently re-verified SAFE |
 | Per-command shadow eligibility/treatment registry | Medium |
 | Dark-launch kill switch and capture-only mode | Medium — first pass only stopped new capture, not the worker draining already-spooled/claimed envelopes; fixed |
-| Backlog, lag, mismatch, and gap reporting | Medium |
-| Deployment units and configuration templates | Medium |
+| Bounded backlog, lag, capacity, mismatch, gap, kill-switch, worker, and threshold status | Medium |
+| Read-only production environment/path/database/spool/systemd preflight | Hard |
+| Deployment units and complete worker environment contract | Medium |
 | Production-safe legacy location-manifest capture | Medium — explicit production identity, read-only SQLite and Asana task reads, fail-closed mixed-identity checks, and owner-only atomic output are implemented; live execution remains outstanding |
 
 ## Host-side work (Claude/Codex on this host)
@@ -32,7 +33,7 @@ and are out of scope here.
 | Review the wiring against the authoritative checkout | Medium | Done |
 | Confirm the shadow path cannot reach live Asana writes | Medium | Done — independently reviewed twice (initial gap found, fix verified) |
 | Run it with the real PostgreSQL and service topology | Medium | Outstanding |
-| Validate real paths, permissions, credentials, and units | Medium | Outstanding |
+| Validate real paths, permissions, credentials, and units with production preflight | Medium | Outstanding |
 | Fix host-specific integration failures | Medium–Hard | Outstanding (depends on the rehearsal above) |
 | Enable and observe the dark launch | Medium | Outstanding — Marco-gated |
 

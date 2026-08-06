@@ -1,30 +1,80 @@
-# PostgreSQL dark launch runbook
+# PostgreSQL dark-launch runbook
 
-**Status: Draft — requires host review before enablement.**
+**Status: implementation complete; production preflight has not been executed.**
 
-The dark launch leaves SQLite/Asana authoritative. The legacy service captures command completion
-to an owner-only local spool; a separate worker delivers and evaluates those envelopes in
-PostgreSQL. The worker has no Asana adapter or credential. Shadow replay writes immutable
-`origin = shadow` outbox evidence that projection workers refuse unconditionally. Projection epochs
-should still remain `external_effects_enabled = false` as an independent operational guard.
+The dark launch leaves SQLite and Asana authoritative. The production service captures completed
+legacy commands into an owner-only local spool; a separate worker delivers and evaluates eligible
+envelopes in PostgreSQL. The worker receives no Asana, service, admin, Action, or projection-adapter
+credential. Shadow-origin projection rows are unconditionally excluded from projection claiming,
+and the active projection epoch must also keep `external_effects_enabled = false`.
 
-## Prepare
+Production service restarts, dark-launch mode changes, worker installation or lifecycle changes, and
+kill-switch changes are Marco-only. The commands below describe those authorized operations; an
+agent must not execute them without Marco's explicit authorization.
 
-1. Migrate the target PostgreSQL database to Alembic head.
-2. Capture the complete location manifest through the explicit production read-only path:
-   `scripts/dish-pg-build-location-manifest --environment production --output <owner-only-path>`.
-   The command accepts only the fixed production service environment and fails closed on TEST or mixed
-   identity. Then create the importer NDJSON with `scripts/dish-pg-export-legacy`; confirm the manifest
-   and export contain the same non-zero task corpus before continuing.
-3. Create the first active PostgreSQL generation and its imported section registry. This is a
-   one-time empty-target operation; the command refuses any existing authority generation or
-   registry state and verifies both Git heads, the Honest version/schema/protocol assets, the exact
-   NDJSON SHA256, the target database name, and the Alembic head:
+## Required production identities and paths
+
+Use explicit owner-only environment variables rather than substituting TEST identities:
+
+```sh
+DISH_PRODUCTION_SERVICE_ENV=/home/marco/.config/dish-service/prod.env
+DISH_DARK_LAUNCH_WORKER_ENV=/home/marco/.config/dish-service/dark-launch.env
+DISH_PG_LOCATION_MANIFEST=/home/marco/.local/state/dish/prod/dark-launch-evidence/location-manifest.json
+DISH_PG_LEGACY_NDJSON=/home/marco/.local/state/dish/prod/dark-launch-evidence/legacy.ndjson
+DISH_PG_BOOTSTRAP_RECEIPT=/home/marco/.local/state/dish/prod/dark-launch-evidence/bootstrap-receipt.json
+DISH_PG_DARK_LAUNCH_READINESS_REPORT=/home/marco/.local/state/dish/prod/dark-launch-evidence/readiness.json
+```
+
+The readiness command accepts only the actual production service environment at
+`/home/marco/.config/dish-service/prod.env`; another owner-only file under the same configuration
+root is not equivalent and fails closed. That file must explicitly define the dark-launch spool,
+emergency directory, and kill-switch paths. The command loads its effective dark-launch busy
+timeout and spool limits through `ServiceConfig`, including the service's existing defaults, then
+requires the effective spool, kill switch, and shared limits to match the explicit preflight inputs
+and worker environment exactly.
+
+Start the worker environment from `deploy/systemd/dark-launch.env.example`, keep it mode `0600`, and
+replace every placeholder. It must define every variable referenced by the committed unit, including
+`DISH_PG_EXPECTED_DATABASE_NAME` and `DISH_DARK_LAUNCH_KILL_SWITCH`. Numeric limits must be positive,
+reservation TTL must be at least 90 seconds, and delivered retention must be at least the reservation
+TTL. The readiness command rejects credential-bearing variables rather than redacting and accepting
+them.
+
+The production SQLite database, spool, emergency directory, kill switch, cursor secret, manifest,
+NDJSON, receipt, environment files, and report destination must remain under the approved production
+roots. They must be non-TEST, owner-safe, non-aliased paths without symlink traversal or hard links.
+
+## Prepare immutable source and PostgreSQL authority
+
+1. Migrate the explicit production PostgreSQL database to the repository Alembic head.
+2. Capture the complete source-location manifest through the explicit production read-only path:
+
+   ```sh
+   scripts/dish-pg-build-location-manifest \
+     --environment production \
+     --env-file "$DISH_PRODUCTION_SERVICE_ENV" \
+     --output "$DISH_PG_LOCATION_MANIFEST"
+   ```
+
+   The command accepts only the fixed production service environment, Cooking project, and SQLite
+   state root. It opens SQLite read-only, performs exact Asana task reads, requires a non-zero corpus,
+   and fails closed on TEST, mixed, aliased, or ambiguous identities.
+3. Export the exact legacy corpus using that manifest:
+
+   ```sh
+   scripts/dish-pg-export-legacy \
+     --database "$DISH_DB_PATH" \
+     --location-manifest "$DISH_PG_LOCATION_MANIFEST" \
+     --output "$DISH_PG_LEGACY_NDJSON"
+   ```
+
+4. Bootstrap the empty PostgreSQL target with the explicit database identity and preserve the
+   owner-only receipt:
 
    ```sh
    scripts/dish-pg-bootstrap-initial \
      --database-url "$DISH_PG_DATABASE_URL" \
-     --expected-database-name dish_stage_a_dark_test \
+     --expected-database-name "$DISH_PG_EXPECTED_DATABASE_NAME" \
      --source "$DISH_PG_LEGACY_NDJSON" \
      --source-generation "$DISH_DARK_LAUNCH_SOURCE_GENERATION" \
      --dish-repo /home/marco/ai-tools/dish \
@@ -34,9 +84,10 @@ should still remain `external_effects_enabled = false` as an independent operati
      --receipt "$DISH_PG_BOOTSTRAP_RECEIPT"
    ```
 
-   Preserve the owner-only receipt. Its `generation_id`, `import_run_id`, `binding_id`,
-   `source_bundle_sha256`, and `source_record_count` are the exact inputs to the remaining rehearsal.
-4. Create one open shadow baseline against the receipt's active generation:
+   Record the receipt's `generation_id`, `import_run_id`, `binding_id`,
+   `source_bundle_sha256`, and `source_record_count` in the operator shell without changing the
+   receipt.
+5. Create one open baseline bound to the same generation and source identity:
 
    ```sh
    scripts/dish-pg-dark-launch baseline-create \
@@ -47,10 +98,7 @@ should still remain `external_effects_enabled = false` as an independent operati
      --source-commit "$DISH_SOURCE_COMMIT"
    ```
 
-5. Import the exact NDJSON bound by the bootstrap receipt. The wrapper performs the real
-   `DishTask` idempotency check, verifies the bootstrapped preconditions, requires imported plus
-   skipped counts to equal the source record count, and compares every imported task's content,
-   alias, project membership, section placement, and completion head with its source record:
+6. Import the receipt-bound NDJSON:
 
    ```sh
    scripts/dish-pg-import-legacy \
@@ -63,9 +111,7 @@ should still remain `external_effects_enabled = false` as an independent operati
      --contract-binding-id "$DISH_PG_BINDING_ID"
    ```
 
-6. Activate one projection epoch for the generation before starting the shadow worker. This is an
-   explicit, idempotent operator decision and must be performed once per generation. Dark-launch
-   activation always keeps external effects disabled:
+7. Activate one effects-disabled projection epoch:
 
    ```sh
    scripts/dish-pg-dark-launch activate-epoch \
@@ -74,61 +120,150 @@ should still remain `external_effects_enabled = false` as an independent operati
      --reason "dark-launch shadow execution"
    ```
 
-7. Verify that the resolved live SQLite database, spool, emergency directory, and kill-switch paths
-   are pairwise distinct. Do not place the spool or kill switch behind a symlink or hard link to live
-   authority storage. Status and worker startup refuse a missing or incomplete spool rather than
-   creating one. The disable command creates a versioned marker without replacing an existing file;
-   enable-capture removes only that validated marker.
-8. Put the returned baseline UUID in the owner-only dark-launch worker environment file.
-9. Install `deploy/systemd/dish-shadow-worker.service`, but do not start it yet.
+8. Put the returned baseline UUID in `DISH_DARK_LAUNCH_BASELINE_ID`. Ensure the existing spool is
+   closed and checkpointed: strict readiness refuses a missing spool or any `-wal`/`-journal`
+   sidecar rather than creating, checkpointing, or repairing it.
+
+## Install the worker while stopped
+
+Marco may install the committed unit, reload systemd, and confirm that it remains disabled and
+inactive:
+
+```sh
+sudo install -o root -g root -m 0644 \
+  deploy/systemd/dish-shadow-worker.service \
+  /etc/systemd/system/dish-shadow-worker.service
+sudo systemctl daemon-reload
+systemctl is-enabled dish-shadow-worker.service
+systemctl is-active dish-shadow-worker.service
+```
+
+Expected state before readiness is `disabled` and `inactive`. Do not enable or start the worker yet.
+The readiness preflight uses only `systemctl show`; it fails if the installed digest differs from the
+repository unit, the unit is enabled, active, or failed, the installed file is unsafe, a drop-in or
+inline/pass-through environment is present, or the effective environment file is not exactly the
+explicit worker environment supplied to preflight.
+
+## Run the read-only production readiness preflight
+
+Run from the exact checkout intended for deployment:
+
+```sh
+scripts/dish-pg-dark-launch-readiness \
+  --service-environment "$DISH_PRODUCTION_SERVICE_ENV" \
+  --worker-environment "$DISH_DARK_LAUNCH_WORKER_ENV" \
+  --database-url "$DISH_PG_DATABASE_URL" \
+  --expected-database-name "$DISH_PG_EXPECTED_DATABASE_NAME" \
+  --manifest "$DISH_PG_LOCATION_MANIFEST" \
+  --legacy-ndjson "$DISH_PG_LEGACY_NDJSON" \
+  --bootstrap-receipt "$DISH_PG_BOOTSTRAP_RECEIPT" \
+  --spool-path "$DISH_DARK_LAUNCH_SPOOL_PATH" \
+  --kill-switch "$DISH_DARK_LAUNCH_KILL_SWITCH" \
+  --unit-name dish-shadow-worker.service \
+  --repository-unit deploy/systemd/dish-shadow-worker.service \
+  --report-path "$DISH_PG_DARK_LAUNCH_READINESS_REPORT"
+```
+
+The command emits one bounded JSON object. Every required check has `passed`, `status`, and a
+redacted actionable `reason`. The `service_environment` check includes the effective production
+spool, emergency directory, kill switch, and shared numeric limits; it fails if the service would
+start with values different from those certified for the worker. It opens PostgreSQL in an explicit
+read-only transaction and always rolls it back. It verifies exact database and Alembic identities;
+the active generation; receipt,
+import, registry, baseline, and effects-disabled epoch bindings; and the complete imported corpus.
+It reads an existing checkpointed spool in immutable mode and inspects systemd without changing it.
+It creates no generation, baseline, epoch, spool, marker, import, row, unit change, or external
+effect. `--report-path` writes only the requested owner-only evidence file.
+
+A fixture report proves output shape and decision logic only. Production readiness exists only after
+this command returns `status = "ready"` against the production inputs. `blocked` means a dependency
+was unavailable; `not_ready` means at least one authoritative check failed.
 
 ## Enable capture first
 
-1. Set `DISH_DARK_LAUNCH_MODE=capture` in the production legacy-service environment. Keep
-   `DISH_DARK_LAUNCH_BUSY_TIMEOUT_MS=50` unless host contention testing justifies another small,
-   positive value; capture must fail open well before the live request timeout. Set explicit host
-   limits for `DISH_DARK_LAUNCH_MAX_SPOOL_BYTES`, `DISH_DARK_LAUNCH_MAX_SPOOL_RECORDS`, and
-   `DISH_DARK_LAUNCH_MIN_FREE_BYTES`; reservation and completion writes are both checked inside their
-   transactions, and reaching any bound automatically creates the shared kill switch.
-2. Restart only the legacy service and issue representative normal commands.
-3. Check local spool status before starting PostgreSQL execution:
+After a ready report, Marco may set `DISH_DARK_LAUNCH_MODE=capture` in the production service
+environment and restart only the production legacy service. A PostgreSQL outage or spool failure
+must not change the live command result; emergency evidence is written under
+`DISH_DARK_LAUNCH_EMERGENCY_DIR` when possible.
 
-   ```sh
-   scripts/dish-pg-dark-launch status \
-     --database-url "$DISH_PG_DATABASE_URL" \
-     --spool-path "$DISH_DARK_LAUNCH_SPOOL_PATH" \
-     --baseline-id "$DISH_DARK_LAUNCH_BASELINE_ID"
-   ```
+Observe with explicit limits and operator-selected thresholds:
 
-A PostgreSQL outage or spool failure must not change the live command result. Spool failures are
-recorded under `DISH_DARK_LAUNCH_EMERGENCY_DIR` when possible.
+```sh
+scripts/dish-pg-dark-launch status \
+  --database-url "$DISH_PG_DATABASE_URL" \
+  --spool-path "$DISH_DARK_LAUNCH_SPOOL_PATH" \
+  --baseline-id "$DISH_DARK_LAUNCH_BASELINE_ID" \
+  --kill-switch "$DISH_DARK_LAUNCH_KILL_SWITCH" \
+  --worker-unit dish-shadow-worker.service \
+  --max-spool-bytes "$DISH_DARK_LAUNCH_MAX_SPOOL_BYTES" \
+  --max-spool-records "$DISH_DARK_LAUNCH_MAX_SPOOL_RECORDS" \
+  --min-free-bytes "$DISH_DARK_LAUNCH_MIN_FREE_BYTES" \
+  --busy-timeout-ms "$DISH_DARK_LAUNCH_BUSY_TIMEOUT_MS" \
+  --warning-backlog "$DISH_DARK_LAUNCH_WARNING_BACKLOG" \
+  --critical-backlog "$DISH_DARK_LAUNCH_CRITICAL_BACKLOG" \
+  --warning-lag-seconds "$DISH_DARK_LAUNCH_WARNING_LAG_SECONDS" \
+  --critical-lag-seconds "$DISH_DARK_LAUNCH_CRITICAL_LAG_SECONDS" \
+  --warning-capacity-percent "$DISH_DARK_LAUNCH_WARNING_CAPACITY_PERCENT" \
+  --critical-capacity-percent "$DISH_DARK_LAUNCH_CRITICAL_CAPACITY_PERCENT" \
+  --warning-mismatches "$DISH_DARK_LAUNCH_WARNING_MISMATCHES" \
+  --critical-mismatches "$DISH_DARK_LAUNCH_CRITICAL_MISMATCHES" \
+  --warning-gaps "$DISH_DARK_LAUNCH_WARNING_GAPS" \
+  --critical-gaps "$DISH_DARK_LAUNCH_CRITICAL_GAPS"
+```
+
+Status is read-only and bounded. It reports observation time, oldest-pending age, spool backlog and
+capacity, PostgreSQL delivery/parity/gap counts, kill-switch state, and optional worker state. Each
+threshold dimension reports `healthy`, `warning`, `critical`, or `unavailable` without changing
+capture or worker state. A missing warning/critical pair makes that dimension unavailable rather
+than guessing an operator policy.
 
 ## Enable shadow execution
 
-Set `DISH_DARK_LAUNCH_MODE=execute`, restart the legacy service, then start `dish-shadow-worker` only
-after capture is visibly accumulating. Envelopes captured while mode was `capture` remain capture-only
-evidence. The worker drains in rollout sequence, evaluates only commands marked `execute`, and records `capture_only` commands as explicit
-uncomparable gaps. It must not receive `ASANA_ENV`, `ASANA_PAT`, or any projection adapter.
+After capture is visibly accumulating and the status decision is acceptable, Marco may set
+`DISH_DARK_LAUNCH_MODE=execute`, restart the production legacy service, and start the worker.
+Envelopes captured in `capture` remain capture-only evidence. The worker drains in rollout order,
+records capture-only work as explicit gaps, validates the exact database identity and baseline, and
+exits before reading more work whenever the kill switch is engaged.
 
-Inspect status repeatedly, including `spool.capacity.accepting_new_records`. The worker compacts
-old delivered payloads after `DISH_DARK_LAUNCH_DELIVERED_RETENTION_SECONDS` while preserving replay
-fingerprints. Keep `DISH_DARK_LAUNCH_RESERVATION_TTL_SECONDS` at or above the legacy recovery
-quarantine (currently 90 seconds). An earlier unresolved reservation blocks all later spool delivery
-until it completes or ages into an explicit proof gap. PostgreSQL claims enforce the same sequence
-barrier after delivery. The worker also refuses a source-generation mismatch or a baseline whose target
-generation is no longer active, and execute/capture-only delivery requires an explicit positive rollout
-sequence. Workflow-ID translation uses only successful versioned comparisons and requires a one-to-one
-binding. Parity is based on a versioned shared response contract plus canonical pre-state, post-state,
-and transition effects. Result-created identities expand post-state capture, and a snapshot query error
-is recorded as a gap rather than empty evidence. Inspect axis-specific differences rather than treating
-raw transport shape as parity. Mismatch and gap counts are evidence, not authority failures; disabling
-the dark launch must not affect the live service.
+Inspect status repeatedly. Mismatches and gaps are evidence, not permission to change live authority.
+Do not enable projection effects, writer fencing, PostgreSQL admission, or production routing.
+
+## Immediate disable and rollback
+
+Marco can immediately disable both new capture and further worker delivery by engaging the shared
+kill switch:
+
+```sh
+scripts/dish-pg-dark-launch disable \
+  --kill-switch "$DISH_DARK_LAUNCH_KILL_SWITCH" \
+  --reason "operator reason"
+```
+
+The marker does not edit service configuration. The worker exits cleanly, so it must be restarted
+explicitly after any later resume. Existing spool and PostgreSQL evidence remain intact.
+
+Configuration rollback is separate:
+
+1. Restore the previously reviewed production service environment. Any mode or service-environment
+   change requires an explicit production service restart.
+2. Restore the previously reviewed worker environment or unit. Any worker environment or unit change
+   requires an explicit worker restart; unit replacement also requires `systemctl daemon-reload`.
+3. Keep the kill switch engaged while validating the restored configuration and status.
+4. Resume capture only through Marco's explicit action:
+
+   ```sh
+   scripts/dish-pg-dark-launch enable-capture \
+     --kill-switch "$DISH_DARK_LAUNCH_KILL_SWITCH"
+   ```
+
+   Removing the marker does not change `DISH_DARK_LAUNCH_MODE` and does not restart the worker. Set
+   the intended mode, restart the production service if its configuration changed, and restart the
+   worker explicitly only when execute-mode delivery is authorized.
 
 ## TEST dark-launch acceptance sequence
 
-This acceptance package is separate from the §§1–4 PostgreSQL validation program. It composes the
-existing host-capture and worker-restart rehearsals; it does not replace or duplicate their
-assertions. Run it only against the real TEST service and `dish_stage_a_dark_test` database:
+This acceptance package is separate from production readiness and from the §§1–4 PostgreSQL
+validation program. Run it only against the real TEST service and `dish_stage_a_dark_test` database:
 
 ```sh
 DISH_PG_DATABASE_URL="$DISH_PG_DATABASE_URL" \
@@ -141,53 +276,14 @@ DISH_PG_DATABASE_URL="$DISH_PG_DATABASE_URL" \
   --output .test-artifacts/dark-launch-test-acceptance/report.json
 ```
 
-The runner refuses non-TEST service identity, database names, state paths, path aliases, and output
-inside permanent Dish product state. It executes each child once without automatic reruns. Each child
-runs in its own process group with a finite deadline; timeout sends `SIGTERM` to the group, escalates
-to `SIGKILL` after the configured grace period, and records the timeout, cleanup, stdout, stderr, and
-report evidence. The runner preserves the capture report and worker scratch evidence, strips
-Asana/service credentials from the worker environment, and emits one bounded aggregate JSON report.
-
-The aggregate records the exact source identity and child commands, child report hashes,
-first-attempt statuses, preserved failure paths, and a final `pass`, `fail`, `partial`, or `blocked`
-status. A capture failure or either child timeout is `fail`. `partial` is reserved for a completed
-earlier stage followed by a genuinely unavailable later prerequisite; `blocked` is reserved for an
-unavailable preflight prerequisite.
-
-The cross-child checks confirm that private CLI and GPT Action observations stayed unchanged and
-that the active projection epoch remains effects-disabled. Shadow-origin exclusion is proved
-separately from that switch: inside one rollback-only database transaction, the runner temporarily
-enables the active epoch, creates equivalent eligible live- and shadow-origin probe rows on the same
-rehearsal task, and makes the shadow row earlier in claim order. A separate observer transaction
-still sees effects disabled and cannot see either synthetic row. The real
-`ProjectionService.claim_next` nevertheless selects the later live row while leaving the shadow row
-pending, creates no projection attempt or external adapter path, then rolls back. A final transaction
-verifies the synthetic rows are absent and external effects are still disabled.
-
-## Immediate disable
-
-Create the kill switch without editing service configuration:
-
-```sh
-scripts/dish-pg-dark-launch disable \
-  --kill-switch "$DISH_DARK_LAUNCH_KILL_SWITCH" \
-  --reason "operator reason"
-```
-
-This stops new legacy capture on the next request and causes `dish-shadow-worker` to exit before
-delivering or evaluating further envelopes. Existing spool and PostgreSQL evidence remain intact.
-Re-enable capture only by explicit operator action:
-
-```sh
-scripts/dish-pg-dark-launch enable-capture \
-  --kill-switch "$DISH_DARK_LAUNCH_KILL_SWITCH"
-```
-
-After removing the switch, restart `dish-shadow-worker` explicitly; the systemd unit exits cleanly
-while disabled and therefore does not restart itself.
+The runner refuses non-TEST service identity, database names, state paths, aliases, and permanent
+product-state output. It executes each child once, preserves bounded reports, strips service and
+Asana credentials from the worker environment, and reports `pass`, `fail`, `partial`, or `blocked`.
+A TEST acceptance result is not a production preflight result.
 
 ## Not part of dark launch
 
 Do not engage the legacy writer fence, open PostgreSQL mutation admission, enable projection external
 effects, burn rollback, or route callers to PostgreSQL. Backup/restore certification and production
-cutover acceptance remain later work.
+cutover acceptance remain later work under `docs/postgresql-cutover.md` and
+`docs/postgresql-cutover-imp.md`.

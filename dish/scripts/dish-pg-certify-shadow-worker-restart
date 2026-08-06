@@ -742,6 +742,8 @@ def worker_command(
         "dish_pg.shadow_worker",
         "--database-url",
         database_url,
+        "--expected-database-name",
+        EXPECTED_DATABASE,
         "--spool-path",
         str(spool_path),
         "--baseline-id",

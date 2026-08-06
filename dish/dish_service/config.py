@@ -5,6 +5,7 @@ import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 
 from dish_tool.constants import (
     DB_PATH,
@@ -182,59 +183,92 @@ class ServiceConfig:
             )
 
     @classmethod
-    def from_env(cls) -> "ServiceConfig":
+    def from_mapping(
+        cls,
+        environment: Mapping[str, str],
+        *,
+        db_path: Path | None = None,
+    ) -> "ServiceConfig":
+        """Build the runtime configuration from an explicit environment mapping."""
+        env = environment
+        raw_db_path = str(env.get("DISH_DB_PATH", "")).strip()
+        effective_db_path = (
+            db_path
+            if db_path is not None
+            else (Path(raw_db_path).expanduser() if raw_db_path else DB_PATH)
+        )
         return cls(
-            db_path=DB_PATH,
-            honest_root=configured_honest_path(),
-            bind_host=os.environ.get("DISH_SERVICE_BIND", "127.0.0.1").strip() or "127.0.0.1",
-            port=int(os.environ.get("DISH_SERVICE_PORT", "8765")),
-            action_bind_host=os.environ.get("DISH_ACTION_BIND", "127.0.0.1").strip() or "127.0.0.1",
-            action_port=int(os.environ.get("DISH_ACTION_PORT", "8766")),
-            max_body_bytes=int(os.environ.get("DISH_SERVICE_MAX_BODY_BYTES", str(2 * 1024 * 1024))),
-            request_timeout_seconds=float(os.environ.get("DISH_SERVICE_REQUEST_TIMEOUT", "30")),
-            lease_ttl_seconds=int(os.environ.get("DISH_SERVICE_LEASE_TTL_SECONDS", "1800")),
-            agent_token=os.environ.get("DISH_SERVICE_AGENT_TOKEN") or None,
-            admin_token=os.environ.get("DISH_SERVICE_ADMIN_TOKEN") or None,
-            action_token=os.environ.get("DISH_SERVICE_ACTION_TOKEN") or None,
+            db_path=effective_db_path,
+            honest_root=configured_honest_path(env),
+            bind_host=str(env.get("DISH_SERVICE_BIND", "127.0.0.1")).strip()
+            or "127.0.0.1",
+            port=int(env.get("DISH_SERVICE_PORT", "8765")),
+            action_bind_host=str(env.get("DISH_ACTION_BIND", "127.0.0.1")).strip()
+            or "127.0.0.1",
+            action_port=int(env.get("DISH_ACTION_PORT", "8766")),
+            max_body_bytes=int(
+                env.get("DISH_SERVICE_MAX_BODY_BYTES", str(2 * 1024 * 1024))
+            ),
+            request_timeout_seconds=float(
+                env.get("DISH_SERVICE_REQUEST_TIMEOUT", "30")
+            ),
+            lease_ttl_seconds=int(
+                env.get("DISH_SERVICE_LEASE_TTL_SECONDS", "1800")
+            ),
+            agent_token=env.get("DISH_SERVICE_AGENT_TOKEN") or None,
+            admin_token=env.get("DISH_SERVICE_ADMIN_TOKEN") or None,
+            action_token=env.get("DISH_SERVICE_ACTION_TOKEN") or None,
             backup_dir=(
-                Path(os.environ["DISH_SERVICE_BACKUP_DIR"]).expanduser()
-                if os.environ.get("DISH_SERVICE_BACKUP_DIR")
+                Path(env["DISH_SERVICE_BACKUP_DIR"]).expanduser()
+                if env.get("DISH_SERVICE_BACKUP_DIR")
                 else None
             ),
             legacy_writer_fence_path=(
-                Path(os.environ["DISH_LEGACY_WRITER_FENCE"]).expanduser()
-                if os.environ.get("DISH_LEGACY_WRITER_FENCE")
-                else DB_PATH.parent / "legacy-writer-fence.json"
+                Path(env["DISH_LEGACY_WRITER_FENCE"]).expanduser()
+                if env.get("DISH_LEGACY_WRITER_FENCE")
+                else effective_db_path.parent / "legacy-writer-fence.json"
             ),
-            dark_launch_mode=os.environ.get("DISH_DARK_LAUNCH_MODE", "off").strip().lower(),
+            dark_launch_mode=str(env.get("DISH_DARK_LAUNCH_MODE", "off"))
+            .strip()
+            .lower(),
             dark_launch_spool_path=(
-                Path(os.environ["DISH_DARK_LAUNCH_SPOOL_PATH"]).expanduser()
-                if os.environ.get("DISH_DARK_LAUNCH_SPOOL_PATH")
-                else DB_PATH.parent / "dark-launch-spool.sqlite3"
+                Path(env["DISH_DARK_LAUNCH_SPOOL_PATH"]).expanduser()
+                if env.get("DISH_DARK_LAUNCH_SPOOL_PATH")
+                else effective_db_path.parent / "dark-launch-spool.sqlite3"
             ),
             dark_launch_emergency_dir=(
-                Path(os.environ["DISH_DARK_LAUNCH_EMERGENCY_DIR"]).expanduser()
-                if os.environ.get("DISH_DARK_LAUNCH_EMERGENCY_DIR")
-                else DB_PATH.parent / "dark-launch-emergency"
+                Path(env["DISH_DARK_LAUNCH_EMERGENCY_DIR"]).expanduser()
+                if env.get("DISH_DARK_LAUNCH_EMERGENCY_DIR")
+                else effective_db_path.parent / "dark-launch-emergency"
             ),
-            dark_launch_source_generation=os.environ.get(
-                "DISH_DARK_LAUNCH_SOURCE_GENERATION", "legacy-sqlite"
+            dark_launch_source_generation=str(
+                env.get("DISH_DARK_LAUNCH_SOURCE_GENERATION", "legacy-sqlite")
             ).strip(),
             dark_launch_kill_switch_path=(
-                Path(os.environ["DISH_DARK_LAUNCH_KILL_SWITCH"]).expanduser()
-                if os.environ.get("DISH_DARK_LAUNCH_KILL_SWITCH")
-                else DB_PATH.parent / "dark-launch.disabled"
+                Path(env["DISH_DARK_LAUNCH_KILL_SWITCH"]).expanduser()
+                if env.get("DISH_DARK_LAUNCH_KILL_SWITCH")
+                else effective_db_path.parent / "dark-launch.disabled"
             ),
             dark_launch_busy_timeout_ms=int(
-                os.environ.get("DISH_DARK_LAUNCH_BUSY_TIMEOUT_MS", "50")
+                env.get("DISH_DARK_LAUNCH_BUSY_TIMEOUT_MS", "50")
             ),
             dark_launch_max_spool_bytes=int(
-                os.environ.get("DISH_DARK_LAUNCH_MAX_SPOOL_BYTES", str(512 * 1024 * 1024))
+                env.get(
+                    "DISH_DARK_LAUNCH_MAX_SPOOL_BYTES",
+                    str(512 * 1024 * 1024),
+                )
             ),
             dark_launch_max_spool_records=int(
-                os.environ.get("DISH_DARK_LAUNCH_MAX_SPOOL_RECORDS", "100000")
+                env.get("DISH_DARK_LAUNCH_MAX_SPOOL_RECORDS", "100000")
             ),
             dark_launch_min_free_bytes=int(
-                os.environ.get("DISH_DARK_LAUNCH_MIN_FREE_BYTES", str(1024 * 1024 * 1024))
+                env.get(
+                    "DISH_DARK_LAUNCH_MIN_FREE_BYTES",
+                    str(1024 * 1024 * 1024),
+                )
             ),
         )
+
+    @classmethod
+    def from_env(cls) -> "ServiceConfig":
+        return cls.from_mapping(os.environ, db_path=DB_PATH)

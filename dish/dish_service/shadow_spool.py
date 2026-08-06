@@ -157,6 +157,8 @@ class ShadowSpool:
         max_records: int = 100_000,
         min_free_bytes: int = 1024 * 1024 * 1024,
         create_if_missing: bool = True,
+        read_only: bool = False,
+        immutable_read_only: bool = False,
     ) -> None:
         for name, value in (
             ("busy_timeout_ms", busy_timeout_ms),
@@ -172,6 +174,12 @@ class ShadowSpool:
         self.max_records = max_records
         self.min_free_bytes = min_free_bytes
         self.create_if_missing = bool(create_if_missing)
+        self.read_only = bool(read_only)
+        self.immutable_read_only = bool(immutable_read_only)
+        if self.immutable_read_only and not self.read_only:
+            raise ValueError("immutable_read_only requires read_only")
+        if self.create_if_missing and self.read_only:
+            raise ValueError("read_only spool cannot create a database")
         self._initialize_lock = threading.Lock()
         self._initialized = False
 
@@ -180,6 +188,38 @@ class ShadowSpool:
         """Open an existing spool without ever creating a replacement database."""
         return cls(path, create_if_missing=False, **kwargs)
 
+    @classmethod
+    def open_existing_read_only(cls, path: Path, **kwargs: Any) -> "ShadowSpool":
+        """Inspect a quiescent existing spool without creating SQLite sidecars.
+
+        SQLite read-only WAL access can create or update ``-shm`` state.  The
+        strict inspection path therefore fails closed when a journal sidecar is
+        present and uses SQLite's immutable mode for a checkpointed database.
+        """
+        target = Path(path).expanduser()
+        for suffix in ("-journal", "-wal"):
+            if Path(f"{target}{suffix}").exists():
+                raise ShadowSpoolError(
+                    "read-only spool inspection requires a quiescent checkpointed database"
+                )
+        return cls(
+            target,
+            create_if_missing=False,
+            read_only=True,
+            immutable_read_only=True,
+            **kwargs,
+        )
+
+    @classmethod
+    def open_existing_live_read_only(cls, path: Path, **kwargs: Any) -> "ShadowSpool":
+        """Observe an active spool without writing rows or schema.
+
+        SQLite may update its WAL shared-memory coordination file while this
+        observer is connected.  Use :meth:`open_existing_read_only` for the
+        stricter preflight contract that must not touch source sidecars.
+        """
+        return cls(path, create_if_missing=False, read_only=True, **kwargs)
+
     def _open(self) -> sqlite3.Connection:
         if self.create_if_missing:
             self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -187,7 +227,11 @@ class ShadowSpool:
         else:
             if not self.path.is_file():
                 raise ShadowSpoolError(f"dark-launch spool does not exist: {self.path}")
-            target = f"{self.path.resolve().as_uri()}?mode=rw"
+            if self.read_only:
+                immutable = "&immutable=1" if self.immutable_read_only else ""
+                target = f"{self.path.resolve().as_uri()}?mode=ro{immutable}"
+            else:
+                target = f"{self.path.resolve().as_uri()}?mode=rw"
             uri = True
         conn = sqlite3.connect(
             target, uri=uri, timeout=self.busy_timeout_ms / 1000, isolation_level=None
@@ -195,7 +239,8 @@ class ShadowSpool:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
-        conn.execute("PRAGMA synchronous=NORMAL")
+        if not self.read_only:
+            conn.execute("PRAGMA synchronous=NORMAL")
         return conn
 
     def initialize(self) -> None:

@@ -55,9 +55,10 @@ production authority or migration source.
 The dark launch mirrors completed legacy commands into PostgreSQL while SQLite/Asana remains the
 sole production authority. It consists of a local durable spool in `dish-service` and the separate
 `dish_pg.shadow_worker`; it does not reuse the projection or reconciliation workers and cannot call
-Asana. Start with `docs/database-backend-dark-launch-runbook.md`. Install
-`deploy/systemd/dish-shadow-worker.service` only after its owner-only environment file is populated.
-The projection epoch must remain external-effect disabled.
+Asana. Start with `docs/database-backend-dark-launch-runbook.md`. Populate the owner-only worker
+environment from `deploy/systemd/dark-launch.env.example`, install the committed worker unit while
+it remains disabled and inactive, then run the machine-readable read-only readiness preflight. The
+projection epoch must remain external-effect disabled. A fixture report is not production readiness.
 
 Operator entry points:
 
@@ -65,6 +66,7 @@ Operator entry points:
 scripts/dish-pg-export-legacy --help
 scripts/dish-pg-bootstrap-initial --help
 scripts/dish-pg-import-legacy --help
+scripts/dish-pg-dark-launch-readiness --help
 scripts/dish-pg-dark-launch --help
 scripts/dish-pg-production-shaped-rehearsal --help
 .venv/bin/python -m dish_pg.shadow_worker --help
@@ -75,6 +77,12 @@ PostgreSQL authority target, verifies the exact database name and Alembic head, 
 to the NDJSON byte hash, verifies both Git checkouts, and creates the first generation immediately
 as `active`. Normal generation transition authority remains unchanged after that one empty-target
 operation.
+
+`dish-pg-dark-launch-readiness` validates the production service and worker environments, approved
+paths, manifest/export/receipt identities, existing spool, PostgreSQL generation/import/baseline/
+epoch state, kill switch, and installed worker unit without mutating those authorities. The bounded
+`dish-pg-dark-launch status` output adds explicit health decisions from operator-supplied backlog,
+lag, capacity, mismatch, and gap thresholds. Both commands redact credential values.
 
 `dish-pg-production-shaped-rehearsal` is the rerunnable Section 4 local rehearsal. Supply an exact
 clean Honest checkout, a sanitized production-shaped NDJSON corpus, its
@@ -151,8 +159,11 @@ sudo systemctl enable --now dish-service-test dish-service-prod dish-action-rout
 ```
 
 Populate `/home/marco/.config/dish-service/test.env` and `prod.env` from their examples before
-starting the units; both files must be mode `0600`. The distribution's generic `caddy.service` is
-disabled because Dish's router has a dedicated config, state directory, and unit.
+starting the units; both files must be mode `0600`. PostgreSQL dark-launch production readiness is
+bound specifically to `/home/marco/.config/dish-service/prod.env` and verifies that its effective
+spool, kill switch, and capacity settings match the worker configuration. The distribution's
+generic `caddy.service` is disabled because Dish's router has a dedicated config, state directory,
+and unit.
 
 The legacy `dish-service.service` conflicts with the test unit because both bind `8765/8766`; stop
 and disable it when installing `dish-service-test`. View logs with `journalctl -u
@@ -484,6 +495,8 @@ backup/restore, operational health, and private/public surface separation.
 - `docs/database-backend-stage6-runbook.md` — draft PostgreSQL release-candidate, rehearsal,
   legacy-fence, cutover, and recovery procedure; it does not constitute production approval.
 
-The production migration and cutover are complete. Git history preserves the retired migration
-tooling, evidence, and rollout runbook. Use the managed backup/restore commands above for recovery
-and require Marco's explicit authorization for any public Action route change.
+The historical statement that the production migration and cutover are complete applies only to the
+existing SQLite production-service migration. PostgreSQL dark launch and cutover remain gated by
+the readiness and cutover runbooks above; neither a fixture report nor repository implementation
+constitutes production approval. Git history preserves retired migration tooling and evidence. Use
+the managed backup/restore commands above for current recovery. Require Marco's explicit authorization for any public Action route change.

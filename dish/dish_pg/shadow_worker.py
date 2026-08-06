@@ -19,7 +19,8 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Mapping, Protocol
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.engine import make_url
 
 from dish_service.path_safety import require_distinct_paths
 from dish_service.shadow_spool import ShadowSpool, ShadowSpoolItem
@@ -826,6 +827,7 @@ class ShadowWorker:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Drain legacy dark-launch captures")
     parser.add_argument("--database-url", required=True)
+    parser.add_argument("--expected-database-name", required=True)
     parser.add_argument("--spool-path", required=True, type=Path)
     parser.add_argument("--baseline-id", required=True, type=uuid.UUID)
     parser.add_argument("--worker-id", required=True)
@@ -833,6 +835,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--comparator-release", required=True)
     parser.add_argument("--kill-switch", required=True, type=Path)
     parser.add_argument("--idle-seconds", type=float, default=1.0)
+    parser.add_argument("--busy-timeout-ms", type=int, default=50)
+    parser.add_argument("--max-spool-bytes", type=int, default=512 * 1024 * 1024)
+    parser.add_argument("--max-spool-records", type=int, default=100_000)
+    parser.add_argument("--min-free-bytes", type=int, default=1024 * 1024 * 1024)
     parser.add_argument(
         "--reservation-ttl-seconds", type=int, default=RECOVERY_QUARANTINE_SECONDS
     )
@@ -844,12 +850,41 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=getattr(logging, args.log_level.upper()))
+    for name in (
+        "busy_timeout_ms",
+        "max_spool_bytes",
+        "max_spool_records",
+        "min_free_bytes",
+        "reservation_ttl_seconds",
+        "delivered_retention_seconds",
+    ):
+        if getattr(args, name) <= 0:
+            raise SystemExit(f"{name.replace('_', '-')} must be positive")
+    if args.reservation_ttl_seconds < RECOVERY_QUARANTINE_SECONDS:
+        raise SystemExit(
+            f"reservation-ttl-seconds must be at least {RECOVERY_QUARANTINE_SECONDS}"
+        )
+    if args.delivered_retention_seconds < args.reservation_ttl_seconds:
+        raise SystemExit(
+            "delivered-retention-seconds must be at least reservation-ttl-seconds"
+        )
+    selected = make_url(args.database_url)
+    if selected.get_backend_name() != "postgresql":
+        raise SystemExit("shadow worker requires PostgreSQL")
+    if selected.database != args.expected_database_name:
+        raise SystemExit("PostgreSQL URL database does not match expected database name")
     secret = args.cursor_secret_file.read_bytes().strip()
     if len(secret) < 32:
         raise SystemExit("cursor secret must contain at least 32 bytes")
     engine = create_database_engine(DatabaseSettings(url=args.database_url))
     factory = session_factory(engine)
     try:
+        with engine.connect() as connection:
+            database_name = str(connection.scalar(text("SELECT current_database()")))
+        if database_name != args.expected_database_name:
+            raise SystemExit(
+                "connected PostgreSQL database does not match expected database name"
+            )
         with session_scope(factory) as session:
             baseline = session.get(tx.ShadowBaseline, args.baseline_id)
             if baseline is None:
@@ -874,7 +909,13 @@ def main(argv: list[str] | None = None) -> int:
         engine.dispose()
         raise
     worker = ShadowWorker(
-        spool=ShadowSpool.open_existing(args.spool_path),
+        spool=ShadowSpool.open_existing(
+            args.spool_path,
+            busy_timeout_ms=args.busy_timeout_ms,
+            max_bytes=args.max_spool_bytes,
+            max_records=args.max_spool_records,
+            min_free_bytes=args.min_free_bytes,
+        ),
         session_maker=factory,
         baseline_id=args.baseline_id,
         evaluator=CommandPortShadowEvaluator(cursor_secret=secret),
