@@ -1088,7 +1088,7 @@ def _counts(engine: Engine) -> dict[str, Any]:
             for row in connection.execute(
                 text(
                     "SELECT intent_payload ->> 'label' FROM projection_outbox_events "
-                    "WHERE intent_payload ? 'label' ORDER BY aggregate_sequence"
+                    "WHERE intent_payload ->> 'label' IS NOT NULL ORDER BY aggregate_sequence"
                 )
             )
         ]
@@ -1097,7 +1097,7 @@ def _counts(engine: Engine) -> dict[str, Any]:
             for row in connection.execute(
                 text(
                     "SELECT result_payload ->> 'label' FROM service_request_outcomes "
-                    "WHERE result_payload ? 'label' ORDER BY recorded_at"
+                    "WHERE result_payload ->> 'label' IS NOT NULL ORDER BY recorded_at"
                 )
             )
         ]
@@ -1106,7 +1106,7 @@ def _counts(engine: Engine) -> dict[str, Any]:
             for row in connection.execute(
                 text(
                     "SELECT required_metadata ->> 'label' FROM invocation_audit_obligations "
-                    "WHERE required_metadata ? 'label' ORDER BY created_at"
+                    "WHERE required_metadata ->> 'label' IS NOT NULL ORDER BY created_at"
                 )
             )
         ]
@@ -2422,9 +2422,9 @@ def _postgres_version(runner: Runner, binaries: Mapping[str, Path]) -> str:
     )
     version = result.stdout.strip()
     match = re.search(r"PostgreSQL\) (\d+\.\d+)(?:\s|$)", version)
-    if match is None or match.group(1) != "17.5":
+    if match is None or match.group(1) != "17.10":
         raise RehearsalError(
-            f"PostgreSQL 17.5 is required by the current deployment; got {version}"
+            f"PostgreSQL 17.10 is required by the current deployment; got {version}"
         )
     return version
 
