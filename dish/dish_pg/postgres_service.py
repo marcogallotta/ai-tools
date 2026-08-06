@@ -7,6 +7,7 @@ started with its explicit PostgreSQL rehearsal flag and a TEST-only database.
 """
 from __future__ import annotations
 
+import copy
 import json
 import os
 import socket
@@ -20,10 +21,19 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
+from dish_tool.results import error_envelope
 
 from . import models
 from .command_port import CommandCall, CommandPortError, PostgresCommandPort
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
+from .workflow import (
+    VALIDATION_FAILURE_REQUEST_KIND,
+    RequestIdentityConflict,
+    RequestSpec,
+    StoredOutcome,
+    WorkflowAuthorityError,
+    WorkflowAuthorityService,
+)
 
 
 def _section4_control_point(
@@ -196,6 +206,133 @@ class PostgresRuntimeService:
                 "rule": exc.rule,
                 "retryable": exc.retryable,
             }
+
+    def record_replay_validation_failure(
+        self,
+        command: str,
+        arguments: Mapping[str, Any],
+        *,
+        principal: ServicePrincipal,
+        request_id: str,
+        error: DishRuleError,
+    ) -> dict[str, Any]:
+        """Persist a pre-execution failure without opening mutation admission."""
+
+        try:
+            run_id = uuid.UUID(principal.run_id)
+            parsed_request_id = uuid.UUID(request_id)
+        except ValueError as exc:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "service command identifiers are invalid",
+                rule="service_identifier_invalid",
+            ) from exc
+
+        envelope = error_envelope(command, error)
+        envelope["data"]["request_id"] = request_id
+        validation_error = {
+            "code": envelope["code"],
+            "retryable": envelope["retryable"],
+            "message": envelope["data"]["message"],
+            "errors": [dict(item) for item in envelope["errors"]],
+        }
+        recorded_at = datetime.now(timezone.utc)
+        try:
+            with session_scope(self._session_maker) as session:
+                generation = session.scalar(
+                    select(models.AuthorityGeneration).where(
+                        models.AuthorityGeneration.status == "active"
+                    )
+                )
+                if generation is None:
+                    raise WorkflowAuthorityError("no active authority generation")
+                binding = session.scalar(
+                    select(models.HonestContractBinding)
+                    .where(
+                        models.HonestContractBinding.dish_release
+                        == generation.dish_release
+                    )
+                    .order_by(models.HonestContractBinding.resolved_at.desc())
+                    .limit(1)
+                )
+                if binding is None:
+                    raise WorkflowAuthorityError(
+                        "active release has no Honest contract binding"
+                    )
+                admission = WorkflowAuthorityService(session).record_validation_failure(
+                    spec=RequestSpec(
+                        request_id=parsed_request_id,
+                        generation_id=generation.generation_id,
+                        run_id=run_id,
+                        owner_id=principal.owner_id,
+                        principal_class="agent",
+                        command_name=command,
+                        canonical_payload={
+                            "request_kind": VALIDATION_FAILURE_REQUEST_KIND,
+                            "command": command,
+                            "arguments": dict(arguments),
+                            "owner_id": principal.owner_id,
+                            "run_id": str(run_id),
+                            "validation_error": validation_error,
+                        },
+                        protocol_release=binding.protocol_release,
+                        dish_release=generation.dish_release,
+                        admitted_at=recorded_at,
+                    ),
+                    outcome=StoredOutcome(
+                        outcome_id=uuid.uuid4(),
+                        outcome_class="rule_error",
+                        result_code=error.code,
+                        http_status=400,
+                        result_payload=envelope,
+                        immutable_success=False,
+                        recorded_at=recorded_at,
+                    ),
+                    audit_event_id=uuid.uuid4(),
+                    audit_event_type=f"{command}_validation_rejected",
+                    actor=f"{principal.owner_id}:{run_id}",
+                    audit_payload={
+                        "code": error.code,
+                        "data": dict(envelope["data"]),
+                        "errors": validation_error["errors"],
+                    },
+                    obligation_id=uuid.uuid4(),
+                    invocation_metadata={
+                        "surface": "postgresql-http-validation",
+                        "protocol_release": binding.protocol_release,
+                    },
+                )
+                session.flush()
+                if admission.outcome is None:
+                    raise WorkflowAuthorityError(
+                        "validation request has no authoritative outcome"
+                    )
+                authoritative = copy.deepcopy(admission.outcome.result_payload)
+            if admission.replayed:
+                authoritative.setdefault("data", {})["request_replayed"] = True
+                authoritative["data"]["request_id"] = request_id
+            return authoritative
+        except RequestIdentityConflict as exc:
+            raise DishRuleError(
+                "CONFLICT",
+                "request ID was already used for different work",
+                rule="service_request_identity_conflict",
+                details={"request_id": request_id},
+            ) from exc
+        except WorkflowAuthorityError as exc:
+            raise DishRuleError(
+                "CONFLICT",
+                str(exc),
+                rule="postgresql_command_rejected",
+            ) from exc
+        except SQLAlchemyError as exc:
+            raise DishRuleError(
+                "BACKEND_REJECTED",
+                "PostgreSQL authority is unavailable; validation failure was not recorded",
+                rule="postgresql_authority_unavailable",
+                retryable=True,
+                details={"error_type": type(exc).__name__},
+            ) from exc
 
     def execute_agent(
         self,

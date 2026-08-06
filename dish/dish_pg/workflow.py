@@ -14,6 +14,8 @@ from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
 
 from sqlalchemy import and_, func, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -21,6 +23,9 @@ from . import models
 from . import reservation_models as reservations
 from . import stage3_models as wf
 from . import stage6_models as rel
+
+
+VALIDATION_FAILURE_REQUEST_KIND = "pre_execution_validation_failure"
 
 
 class WorkflowAuthorityError(ValueError):
@@ -155,6 +160,160 @@ class WorkflowAuthorityRepository:
             bootstrap.consumed_at = row.registered_at
             self.session.flush()
 
+    @staticmethod
+    def _validation_payload_matches_spec(
+        payload: Mapping[str, Any], *, spec: RequestSpec
+    ) -> bool:
+        validation_error = payload.get("validation_error")
+        errors = (
+            validation_error.get("errors")
+            if isinstance(validation_error, Mapping)
+            else None
+        )
+        return (
+            spec.principal_class == "agent"
+            and payload.get("request_kind") == VALIDATION_FAILURE_REQUEST_KIND
+            and payload.get("command") == spec.command_name
+            and payload.get("owner_id") == spec.owner_id
+            and payload.get("run_id") == str(spec.run_id)
+            and isinstance(payload.get("arguments"), Mapping)
+            and isinstance(validation_error, Mapping)
+            and isinstance(validation_error.get("code"), str)
+            and isinstance(validation_error.get("retryable"), bool)
+            and isinstance(validation_error.get("message"), str)
+            and isinstance(errors, list)
+            and all(isinstance(item, Mapping) for item in errors)
+        )
+
+    @staticmethod
+    def _validation_outcome_matches_identity(
+        payload: Mapping[str, Any], *, outcome: StoredOutcome
+    ) -> bool:
+        validation_error = payload["validation_error"]
+        result = outcome.result_payload
+        data = result.get("data") if isinstance(result, Mapping) else None
+        return (
+            outcome.outcome_class == "rule_error"
+            and outcome.result_code == validation_error["code"]
+            and outcome.http_status == 400
+            and outcome.immutable_success is False
+            and isinstance(data, Mapping)
+            and result.get("ok") is False
+            and result.get("code") == validation_error["code"]
+            and result.get("retryable") == validation_error["retryable"]
+            and result.get("errors") == validation_error["errors"]
+            and data.get("message") == validation_error["message"]
+        )
+
+    @staticmethod
+    def _request_identity_matches(
+        request: wf.ServiceRequest, *, spec: RequestSpec, payload_sha: str
+    ) -> bool:
+        return (
+            request.generation_id == spec.generation_id
+            and request.run_id == spec.run_id
+            and request.owner_id == spec.owner_id
+            and request.principal_class == spec.principal_class
+            and request.command_name == spec.command_name
+            and request.canonical_payload_sha256 == payload_sha
+            and request.protocol_release == spec.protocol_release
+            and request.dish_release == spec.dish_release
+        )
+
+    def _insert_validation_request(
+        self, *, spec: RequestSpec, payload: Mapping[str, Any], payload_sha: str
+    ) -> bool:
+        values = {
+            "request_id": spec.request_id,
+            "generation_id": spec.generation_id,
+            "run_id": spec.run_id,
+            "owner_id": spec.owner_id,
+            "principal_class": spec.principal_class,
+            "command_name": spec.command_name,
+            "canonical_payload_sha256": payload_sha,
+            "canonical_payload": dict(payload),
+            "protocol_release": spec.protocol_release,
+            "dish_release": spec.dish_release,
+            "admitted_at": spec.admitted_at,
+        }
+        dialect = self.session.get_bind().dialect.name
+        if dialect == "postgresql":
+            statement = postgresql_insert(wf.ServiceRequest).values(**values)
+        elif dialect == "sqlite":
+            statement = sqlite_insert(wf.ServiceRequest).values(**values)
+        else:
+            raise WorkflowAuthorityError(
+                "validation request persistence requires PostgreSQL or SQLite"
+            )
+        inserted_request_id = self.session.scalar(
+            statement.on_conflict_do_nothing(
+                index_elements=[wf.ServiceRequest.request_id]
+            ).returning(wf.ServiceRequest.request_id)
+        )
+        self.session.flush()
+        return inserted_request_id is not None
+
+    def record_validation_failure(
+        self,
+        *,
+        spec: RequestSpec,
+        outcome: StoredOutcome,
+        audit_event_id: uuid.UUID,
+        audit_event_type: str,
+        actor: str,
+        audit_payload: Mapping[str, Any],
+        obligation_id: uuid.UUID,
+        invocation_metadata: Mapping[str, Any],
+    ) -> RequestAdmission:
+        """Bind and complete a pre-execution failure without mutation admission."""
+
+        self.require_active_run(
+            generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id
+        )
+        payload = dict(spec.canonical_payload)
+        if not self._validation_payload_matches_spec(payload, spec=spec):
+            raise WorkflowAuthorityError(
+                "validation request identity is incomplete or inconsistent"
+            )
+        if not self._validation_outcome_matches_identity(payload, outcome=outcome):
+            raise WorkflowAuthorityError(
+                "validation outcome does not match its stable error identity"
+            )
+        payload_sha = sha256_json(payload)
+        inserted = self._insert_validation_request(
+            spec=spec, payload=payload, payload_sha=payload_sha
+        )
+        request = self.session.get(wf.ServiceRequest, spec.request_id)
+        if request is None:
+            raise ContentionLost("validation request binding was not visible")
+        if not self._request_identity_matches(request, spec=spec, payload_sha=payload_sha):
+            raise RequestIdentityConflict("service request identity conflict")
+        existing = self.session.scalar(
+            select(wf.ServiceRequestOutcome).where(
+                wf.ServiceRequestOutcome.request_id == spec.request_id
+            )
+        )
+        if not inserted:
+            if existing is None:
+                raise ContentionLost("request outcome is not yet authoritative")
+            return RequestAdmission(request, True, existing)
+        if existing is not None:
+            raise ContentionLost("validation request unexpectedly had an outcome")
+        recorded = self.record_outcome(
+            request_id=spec.request_id,
+            outcome=outcome,
+            execution_id=None,
+            audit_event_id=audit_event_id,
+            audit_event_type=audit_event_type,
+            actor=actor,
+            audit_payload=audit_payload,
+            task_id=None,
+            operation_id=None,
+            obligation_id=obligation_id,
+            invocation_metadata=invocation_metadata,
+        )
+        return RequestAdmission(request, False, recorded)
+
     def admit_request(self, spec: RequestSpec) -> RequestAdmission:
         self.require_active_run(
             generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id
@@ -166,17 +325,9 @@ class WorkflowAuthorityRepository:
         payload_sha = sha256_json(payload)
         existing = self.session.get(wf.ServiceRequest, spec.request_id)
         if existing is not None:
-            identity = (
-                existing.generation_id == spec.generation_id
-                and existing.run_id == spec.run_id
-                and existing.owner_id == spec.owner_id
-                and existing.principal_class == spec.principal_class
-                and existing.command_name == spec.command_name
-                and existing.canonical_payload_sha256 == payload_sha
-                and existing.protocol_release == spec.protocol_release
-                and existing.dish_release == spec.dish_release
-            )
-            if not identity:
+            if not self._request_identity_matches(
+                existing, spec=spec, payload_sha=payload_sha
+            ):
                 raise RequestIdentityConflict("service request identity conflict")
             outcome = self.session.scalar(
                 select(wf.ServiceRequestOutcome).where(
@@ -568,6 +719,29 @@ class WorkflowAuthorityService:
 
     def admit_request(self, spec: RequestSpec) -> RequestAdmission:
         return self.repo.admit_request(spec)
+
+    def record_validation_failure(
+        self,
+        *,
+        spec: RequestSpec,
+        outcome: StoredOutcome,
+        audit_event_id: uuid.UUID,
+        audit_event_type: str,
+        actor: str,
+        audit_payload: Mapping[str, Any],
+        obligation_id: uuid.UUID,
+        invocation_metadata: Mapping[str, Any],
+    ) -> RequestAdmission:
+        return self.repo.record_validation_failure(
+            spec=spec,
+            outcome=outcome,
+            audit_event_id=audit_event_id,
+            audit_event_type=audit_event_type,
+            actor=actor,
+            audit_payload=audit_payload,
+            obligation_id=obligation_id,
+            invocation_metadata=invocation_metadata,
+        )
 
     def begin_execution(self, spec: ExecutionSpec) -> wf.CommandExecution:
         return self.repo.begin_execution(spec)

@@ -415,7 +415,11 @@ records, deterministic evidence bundles, exact candidate approval binding, fail-
 fence evidence, a resumable cutover checkpoint sequence, durable rollback-burn evidence, and a
 per-generation PostgreSQL mutation-admission control. An exact pre-burn abort leaves that control
 closed; a later replacement candidate for the same generation transactionally rebinds the existing
-control instead of attempting to create a second generation-primary row. Candidate validation
+control instead of attempting to create a second generation-primary row. Pre-execution command
+validation failures use the existing request/outcome authority with an explicit validation-only request
+identity. They remain outside mutation admission, never consume the cutover first-request reservation,
+and create no command execution; the database admission guard recognizes only that exact
+validation-only identity and continues to fail closed for ordinary writes. Candidate validation
 recomputes closure from the authoritative Stage 2–5 tables; it does not accept a checklist assertion in place of closed
 requests, operations, projection attempts, shadow gaps, registry/alias coverage, or mapped-corpus
 reconciliation. Evidence bundles exclude build time from their identity and stale bundles cannot be

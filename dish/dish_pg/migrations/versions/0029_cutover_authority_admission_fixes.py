@@ -296,15 +296,37 @@ def _install_postgresql_transition_guard() -> None:
     )
 
 
-def _install_postgresql_admission_function(*, isolated_first_request: bool) -> None:
+def _install_postgresql_admission_function(
+    *, isolated_first_request: bool, allow_validation_failures: bool = False
+) -> None:
+    validation_failure_bypass = ""
+    if allow_validation_failures:
+        validation_failure_bypass = """
+            IF NEW.principal_class = 'agent'
+               AND NEW.canonical_payload ->> 'request_kind' =
+                   'pre_execution_validation_failure'
+               AND NEW.canonical_payload ->> 'command' = NEW.command_name
+               AND NEW.canonical_payload ->> 'owner_id' = NEW.owner_id
+               AND NEW.canonical_payload ->> 'run_id' = NEW.run_id::text
+               AND json_typeof(NEW.canonical_payload -> 'arguments') = 'object'
+               AND json_typeof(NEW.canonical_payload -> 'validation_error') = 'object'
+               AND json_typeof(NEW.canonical_payload -> 'validation_error' -> 'code') = 'string'
+               AND json_typeof(NEW.canonical_payload -> 'validation_error' -> 'retryable') = 'boolean'
+               AND json_typeof(NEW.canonical_payload -> 'validation_error' -> 'message') = 'string'
+               AND json_typeof(NEW.canonical_payload -> 'validation_error' -> 'errors') = 'array' THEN
+                RETURN NEW;
+            END IF;
+        """
     if isolated_first_request:
-        body = """
+        body = f"""
             IF EXISTS (
                 SELECT 1 FROM legacy_request_tombstones tombstone
                  WHERE tombstone.request_id = NEW.request_id
             ) THEN
                 RAISE EXCEPTION 'request identity is reserved by legacy authority';
             END IF;
+
+            {validation_failure_bypass}
 
             SELECT candidate_id, state
               INTO control_candidate, control_state
@@ -466,16 +488,38 @@ def _install_sqlite_verified_open_guard() -> None:
     )
 
 
-def _install_sqlite_admission_guard() -> None:
+def _install_sqlite_admission_guard(
+    *, allow_validation_failures: bool = False
+) -> None:
+    validation_failure_bypass = ""
+    if allow_validation_failures:
+        validation_failure_bypass = """
+        AND NOT COALESCE((
+            NEW.principal_class = 'agent'
+            AND json_extract(NEW.canonical_payload, '$.request_kind') =
+                'pre_execution_validation_failure'
+            AND json_extract(NEW.canonical_payload, '$.command') = NEW.command_name
+            AND json_extract(NEW.canonical_payload, '$.owner_id') = NEW.owner_id
+            AND replace(json_extract(NEW.canonical_payload, '$.run_id'), '-', '') = NEW.run_id
+            AND json_type(NEW.canonical_payload, '$.arguments') = 'object'
+            AND json_type(NEW.canonical_payload, '$.validation_error') = 'object'
+            AND json_type(NEW.canonical_payload, '$.validation_error.code') = 'text'
+            AND json_type(NEW.canonical_payload, '$.validation_error.retryable')
+                IN ('true', 'false')
+            AND json_type(NEW.canonical_payload, '$.validation_error.message') = 'text'
+            AND json_type(NEW.canonical_payload, '$.validation_error.errors') = 'array'
+        ), 0)
+        """
     op.execute("DROP TRIGGER IF EXISTS service_requests_stage6_admission_guard")
     op.execute(
-        """
+        f"""
         CREATE TRIGGER service_requests_stage6_admission_guard
         BEFORE INSERT ON service_requests
         WHEN EXISTS (
             SELECT 1 FROM release_candidates candidate
              WHERE candidate.generation_id = NEW.generation_id
         )
+        {validation_failure_bypass}
         AND NOT EXISTS (
             SELECT 1
               FROM mutation_admission_controls control
