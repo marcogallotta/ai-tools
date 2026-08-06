@@ -44,13 +44,13 @@ or real external-system state).
 `database-backend-postgresql-test-plan.md` is the authoritative execution runbook for the
 Hard-local-effort verification work — it is not optional background reading, it is the actual
 procedure. Per that doc's own completion rule: "Local runtime validation is complete only when
-Sections 1 through 4 have reproducible evidence." As of this snapshot, §3 has been run; §1, §2,
-and §4 have not.
+Sections 1 through 4 have reproducible evidence." As of this snapshot, §3 has a historical run;
+§1, §2, and §4 have rerunnable tooling built but no successful native execution yet.
 
 | Section | Covers | Status |
 | --- | --- | --- |
-| §1 Process-failure exercise | commit-before-response/lost-response replay, worker restart/takeover, PostgreSQL disconnect/recovery | Not run |
-| §2 Backup, restore, and PITR rehearsal | backup/restore, PITR, RPO/RTO, fail-closed on corrupt backup | Not run |
+| §1 Process-failure exercise | commit-before-response/lost-response replay, worker restart/takeover, PostgreSQL disconnect/recovery | Rerunnable `scripts/dish-pg-process-failure` covers disconnect, projection, takeover, command-child replay, reconciliation-checkpoint resume, and worker supervision/restart scenarios; successful native execution is still required. |
+| §2 Backup, restore, and PITR rehearsal | backup/restore, PITR, RPO/RTO, fail-closed on corrupt backup | Rerunnable `scripts/dish-pg-recovery-rehearsal` covers backup/restore, PITR, and fail-closed corrupt-backup/missing-WAL paths; successful native execution is still required. |
 | §3 Runtime wiring rehearsal | service + both workers against real PostgreSQL, cross-process proofs | Historical run completed 2026-08-04. Maintained reproduction is now `scripts/dish-pg-runtime-wiring-rehearsal`, which records exact runtime identity, commands, PIDs, first-attempt outcomes, same-worker restart, different-worker takeover, stale-worker rejection, full external-attempt settlement, duplicate prevention, fail-closed/freshness paths, unsupported-route rejection, and TEST-only isolation in one report. A native run remains required after relevant changes; environment-only `status=blocked` is not a pass. Importer end-to-end remains §4. |
 | §4 Production-shaped local rehearsal | full sequence against sanitized production-shaped data | Rerunnable `scripts/dish-pg-production-shaped-rehearsal` implements all ten phases through the maintained §3 PostgreSQL TEST service path, barrier-driven process/database faults, and fail-safe cleanup; successful native execution is still required. |
 
