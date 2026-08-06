@@ -232,6 +232,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--claim-ttl-seconds", type=int, default=120)
     parser.add_argument("--idle-seconds", type=float, default=1.0)
     parser.add_argument("--log-level", default="INFO")
+    parser.add_argument(
+        "--once",
+        action="store_true",
+        help="process at most one claim and exit; useful for supervised one-shot execution",
+    )
     return parser
 
 
@@ -255,7 +260,10 @@ def main(argv: list[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
     try:
-        worker.run_forever()
+        if args.once:
+            worker.run_once()
+        else:
+            worker.run_forever()
     finally:
         engine.dispose()
     return 0
