@@ -186,6 +186,28 @@ reason unless `--postgresql` is present. They never substitute SQLite. The nativ
 owning test, then runs Alembic through `head`. It must not use `Base.metadata.create_all()`:
 hand-written PostgreSQL triggers and constraints are part of the behavior under certification.
 
+### Local PostgreSQL 17 server binaries (backup/PITR and production-shaped rehearsals)
+
+`scripts/dish-pg-recovery-rehearsal` (test-plan §2) and `scripts/dish-pg-production-shaped-rehearsal`
+(§4) drive `initdb`, `pg_ctl`, `postgres`, `createdb`, `pg_basebackup`, `pg_verifybackup`, and
+`pg_controldata` directly against a local disposable data directory via `--pg-bin`; a Docker-only
+PostgreSQL is not sufficient for these two sections. The host needs real PostgreSQL 17 server
+binaries installed, e.g. from the PGDG apt repository:
+
+```sh
+sudo install -d /usr/share/postgresql-common/pgdg
+sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(. /etc/os-release && echo $VERSION_CODENAME)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+sudo apt update
+sudo apt install postgresql-17
+```
+
+This installs binaries under `/usr/lib/postgresql/17/bin` (pass via `--pg-bin` if `discover_pg_bin()`
+does not find them) and also creates a system-wide PG17 cluster on port 5432 via
+`postgresql-common`; drop it with `sudo pg_dropcluster 17 main --stop` if you don't want a
+background instance running. Version 17 matches the `postgres:17.5` image used by the §1/§3 Compose
+rehearsals, so recovery evidence stays on the same major version across all four sections.
+
 ### PGlite development lane
 
 Run PGlite separately with:
