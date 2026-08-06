@@ -32,13 +32,17 @@ etc.) before trusting or removing it.
   behind — not guaranteed empty; check row counts before treating any
   rehearsal result as a clean-slate run.
 - **Status**: running continuously since 2026-08-02 (not torn down between
-  sessions). Confirmed via `docker ps` on 2026-08-04.
-- **Done against it**: §3 runtime wiring rehearsal, 2026-08-04 — service,
-  `projection_worker.py`, and `reconciliation_worker.py` run as separate
-  OS processes (no systemd). Full report was written to a session
-  scratchpad (not committed to the repo); result summary is in
-  `ops-issues.md`'s "Local runtime validation plan" table. §1, §2, §4
-  still not run.
+  sessions). Confirmed via `docker ps` on 2026-08-06 — still on `postgres:17.5`,
+  healthy, 46+ hours uptime.
+- **Done against it**: §3 runtime wiring rehearsal (this container), 2026-08-04
+  — service, `projection_worker.py`, and `reconciliation_worker.py` run as
+  separate OS processes (no systemd). §1 and §2 native runs on 2026-08-06 used
+  their own disposable Compose/native-binary instances (PostgreSQL 17.10, not
+  this container), not this long-lived one. Full reports were written to
+  session scratchpads (not committed to the repo); result summary is in
+  `ops-issues.md`'s "Local runtime validation plan" table. §3 rerun on
+  2026-08-06 reproduced a real `record_replay_validation_failure` gap
+  (see `ops-issues.md`); §4 still not run, blocked on the same gap.
 
 ## Production and test `dish-service`
 

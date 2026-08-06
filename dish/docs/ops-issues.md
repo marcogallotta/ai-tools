@@ -44,15 +44,27 @@ or real external-system state).
 `database-backend-postgresql-test-plan.md` is the authoritative execution runbook for the
 Hard-local-effort verification work — it is not optional background reading, it is the actual
 procedure. Per that doc's own completion rule: "Local runtime validation is complete only when
-Sections 1 through 4 have reproducible evidence." As of this snapshot, §3 has a historical run;
-§1, §2, and §4 have rerunnable tooling built but no successful native execution yet.
+Sections 1 through 4 have reproducible evidence." As of this snapshot (2026-08-06), §1 and §2 have
+passed native execution; §3 has a historical run plus a reproducing native failure on a real,
+confirmed-stable bug; §4 has not been run (blocked transitively on §3).
 
 | Section | Covers | Status |
 | --- | --- | --- |
-| §1 Process-failure exercise | commit-before-response/lost-response replay, worker restart/takeover, PostgreSQL disconnect/recovery | Rerunnable `scripts/dish-pg-process-failure` covers disconnect, projection, takeover, command-child replay, reconciliation-checkpoint resume, and worker supervision/restart scenarios; successful native execution is still required. |
-| §2 Backup, restore, and PITR rehearsal | backup/restore, PITR, RPO/RTO, fail-closed on corrupt backup | Rerunnable `scripts/dish-pg-recovery-rehearsal` covers backup/restore, PITR, and fail-closed corrupt-backup/missing-WAL paths; successful native execution is still required. |
-| §3 Runtime wiring rehearsal | service + both workers against real PostgreSQL, cross-process proofs | Historical run completed 2026-08-04. Maintained reproduction is now `scripts/dish-pg-runtime-wiring-rehearsal`, which records exact runtime identity, commands, PIDs, first-attempt outcomes, same-worker restart, different-worker takeover, stale-worker rejection, full external-attempt settlement, duplicate prevention, fail-closed/freshness paths, unsupported-route rejection, and TEST-only isolation in one report. A native run remains required after relevant changes; environment-only `status=blocked` is not a pass. Importer end-to-end remains §4. |
-| §4 Production-shaped local rehearsal | full sequence against sanitized production-shaped data | Rerunnable `scripts/dish-pg-production-shaped-rehearsal` implements all ten phases through the maintained §3 PostgreSQL TEST service path, barrier-driven process/database faults, and fail-safe cleanup; successful native execution is still required. |
+| §1 Process-failure exercise | commit-before-response/lost-response replay, worker restart/takeover, PostgreSQL disconnect/recovery | **Passed natively** (commit `445da12` fixed the fixture/import gaps). `scripts/dish-pg-process-failure` covers disconnect, projection, takeover, command-child replay, reconciliation-checkpoint resume, and worker supervision/restart scenarios: 14/14 scenarios, evidence validated. |
+| §2 Backup, restore, and PITR rehearsal | backup/restore, PITR, RPO/RTO, fail-closed on corrupt backup | **Passed natively** on 2026-08-06 (PostgreSQL 17.10 via PGDG). `scripts/dish-pg-recovery-rehearsal` covers backup/restore, PITR to an LSN, and fail-closed corrupt-backup/missing-WAL paths; `pg_verifybackup`/`pg_controldata` checks and RPO/RTO measurement completed. Required a jsonb-vs-json operator fix (`778d82c`) and the version-pin bump to 17.10 (`7fb8d0f`) to get a real local PG that PGDG still serves. |
+| §3 Runtime wiring rehearsal | service + both workers against real PostgreSQL, cross-process proofs | Historical run completed 2026-08-04; commit `18e6446` fixed unrelated fixture/import gaps. **Currently blocked** on a real, deterministically-reproducing bug: `PostgresRuntimeService` has no `record_replay_validation_failure` method. `dish_service/http.py`'s fail-closed error handler calls it unconditionally on validation failures for replay-sensitive commands, so it crashes with `AttributeError` and the client sees `RemoteDisconnected`. Root cause and fix shape (see below) are understood; not fixed here per standing instruction to escalate architectural gaps rather than patch them locally. |
+| §4 Production-shaped local rehearsal | full sequence against sanitized production-shaped data | **Not run.** `scripts/dish-pg-production-shaped-rehearsal` implements all ten phases through the maintained §3 PostgreSQL TEST service path, but §4 explicitly reuses that path and remains blocked until §3's `record_replay_validation_failure` gap is resolved. |
+
+**§3/§4 blocker detail**: PostgreSQL already has the replay/idempotency infrastructure the legacy
+SQLite path (`dish_service/request_replay.py`'s `begin_request`/`stored_result`/`complete_request`)
+provides — `ServiceRequest`/`ServiceRequestOutcome` models plus `WorkflowAuthorityService.admit_request`/
+`record_outcome` in `dish_pg/workflow.py` and `dish_pg/command_port.py`. This is not a missing
+subsystem; it's a missing adapter method on `PostgresRuntimeService` (`dish_pg/postgres_service.py`)
+that persists a validation failure into that existing model. One design point to resolve before
+writing it: `admit_request` runs full generation/mutation-admission gating meant for real command
+execution (`require_active_run`, destructive-restore reservation checks, etc.) — those gates
+shouldn't fire for a pre-admission validation failure, so the adapter likely needs either a lighter
+admission path or to bypass gating explicitly, rather than calling `admit_request` unmodified.
 
 This is Must-fix, Local/Mixed, Hard local effort, gating a trusted cutover — do not let it get
 dropped just because it isn't broken into individual claim rows below like the ChatGPT-sourced

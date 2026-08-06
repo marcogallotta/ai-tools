@@ -126,8 +126,17 @@ A report is valid §3 evidence only when its first attempt and every explicit re
 field pass. `status=blocked` is an honest native-infrastructure result, never a substitute for
 native PostgreSQL and never permission to omit a scenario.
 
-Sections §1 and §2 still need equivalent maintained runners or extension of an existing maintained
-runner where the authority and lifecycle are genuinely shared. Section §4 now has
-`scripts/dish-pg-production-shaped-rehearsal`; it reuses the §3 PostgreSQL TEST service path and
-remains incomplete until its native run succeeds. Do not treat the §3 script as evidence for the
-distinct §1 failure, §2 backup/PITR, or §4 production-shaped-data requirements.
+As of 2026-08-06, a native §3 rerun (after fixing unrelated fixture/import gaps in commit
+`18e6446`) produces a deterministic, reproducing first-attempt failure: `PostgresRuntimeService`
+has no `record_replay_validation_failure` method, so `dish_service/http.py`'s fail-closed error
+handler crashes with `AttributeError` on any validation failure for a replay-sensitive command.
+This is a real gap, not test flakiness — see `ops-issues.md`'s "§3/§4 blocker detail" for the fix
+shape. §4 is blocked transitively until it is resolved.
+
+Sections §1 and §2 have equivalent maintained runners and both now have successful native
+execution (§1: `scripts/dish-pg-process-failure`, fixed in commit `445da12`; §2:
+`scripts/dish-pg-recovery-rehearsal`, passed 2026-08-06 against PostgreSQL 17.10 after the
+jsonb/json operator fix in `778d82c`). Section §4 has `scripts/dish-pg-production-shaped-rehearsal`;
+it reuses the §3 PostgreSQL TEST service path and remains incomplete — both because its own native
+run hasn't been attempted and because it inherits §3's `record_replay_validation_failure` blocker.
+Do not treat the §3 script as evidence for the distinct §1, §2, or §4 requirements.
