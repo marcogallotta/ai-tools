@@ -87,6 +87,7 @@ def _bootstrap_registry(
     ids: Iterator[uuid.UUID],
     *,
     generation_status: str = "pending",
+    schema_head: str = "0002_core_authority_model",
 ) -> dict[str, uuid.UUID]:
     authority = AuthorityRepository(session)
     contracts = ContractBindingRepository(session)
@@ -114,7 +115,7 @@ def _bootstrap_registry(
             predecessor_generation_id=None,
             creation_reason="initial_cutover",
             external_restore_control_id=None,
-            schema_head="0002_core_authority_model",
+            schema_head=schema_head,
             dish_release="dish-42619b9",
             status=generation_status,
             created_at=NOW,

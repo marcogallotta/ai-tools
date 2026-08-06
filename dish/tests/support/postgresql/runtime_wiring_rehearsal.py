@@ -600,9 +600,10 @@ def run_runtime_wiring_rehearsal(core_db, tmp_path) -> dict[str, object]:
     database_name = str(make_url(dsn).database)
     with session_scope(factory) as session:
         schema_head = str(session.scalar(text("SELECT version_num FROM alembic_version")))
-        context = _bootstrap_registry(session, ids, generation_status="active")
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=schema_head
+        )
         generation = session.get(models.AuthorityGeneration, context["generation_id"])
-        generation.schema_head = schema_head
         epoch = ProjectionService(session, uuid_factory=lambda: next(ids)).activate_epoch(
             generation_id=context["generation_id"],
             activation_reason="section 3 runtime wiring rehearsal",

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from tests.support.postgresql.core import core_db
 from tests.support.postgresql.runtime_wiring_rehearsal import (
     run_runtime_wiring_rehearsal,
 )
