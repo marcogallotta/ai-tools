@@ -33,7 +33,7 @@ from sqlalchemy.orm import Session
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .runtime_identity import add_runtime_identity_arguments, verify_optional_runtime_identity
 from . import stage5_models as tx
-from .transition import ProjectionService
+from .transition import ProjectionService, TransitionAuthorityError
 
 LOGGER = logging.getLogger("dish.reconciliation_worker")
 
@@ -182,7 +182,47 @@ class ReconciliationWorker:
                 expected_items=len(corpus),
                 started_at=started_at,
             )
+            stored_items = {
+                str(item_identity): str(entity_kind)
+                for item_identity, entity_kind in session.execute(
+                    select(
+                        tx.ProjectionReconciliationItem.item_identity,
+                        tx.ProjectionReconciliationItem.entity_kind,
+                    ).where(
+                        tx.ProjectionReconciliationItem.reconciliation_run_id
+                        == run.reconciliation_run_id
+                    )
+                )
+            }
+            fetched_identities = [item.item_identity for item in corpus]
+            fetched_identity_set = set(fetched_identities)
+            missing_recorded = set(stored_items) - fetched_identity_set
+            if missing_recorded:
+                raise TransitionAuthorityError(
+                    "reconciliation corpus immutable inputs conflict"
+                )
             for item in corpus:
+                stored_kind = stored_items.get(item.item_identity)
+                if stored_kind is not None and stored_kind != item.entity_kind:
+                    raise TransitionAuthorityError(
+                        "reconciliation corpus immutable inputs conflict"
+                    )
+            if run.status != "running":
+                if (
+                    len(stored_items) != run.expected_items
+                    or len(fetched_identities) != run.expected_items
+                    or len(fetched_identity_set) != run.expected_items
+                    or set(stored_items) != fetched_identity_set
+                ):
+                    raise TransitionAuthorityError(
+                        "reconciliation corpus immutable inputs conflict"
+                    )
+                return run
+
+            persisted_identities = set(stored_items)
+            for item in corpus:
+                if item.item_identity in persisted_identities:
+                    continue
                 record = self._compare_item(session, self._generation_id, item)
                 service.record_reconciliation_item(
                     reconciliation_run_id=run.reconciliation_run_id,

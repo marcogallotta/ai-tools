@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping, Sequence
 
 from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session
 
 from . import models
@@ -2216,6 +2217,57 @@ class ProjectionService:
         self.session.flush()
         return drift
 
+    def _reconciliation_run_by_key(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        projection_epoch_id: uuid.UUID,
+        corpus_identity: str,
+        for_update: bool,
+    ) -> tx.ProjectionReconciliationRun | None:
+        statement = select(tx.ProjectionReconciliationRun).where(
+            tx.ProjectionReconciliationRun.generation_id == generation_id,
+            tx.ProjectionReconciliationRun.projection_epoch_id == projection_epoch_id,
+            tx.ProjectionReconciliationRun.corpus_identity == corpus_identity,
+        )
+        if for_update and self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        return self.session.scalar(statement)
+
+    def _lock_reconciliation_run(
+        self, reconciliation_run_id: uuid.UUID
+    ) -> tx.ProjectionReconciliationRun | None:
+        statement = select(tx.ProjectionReconciliationRun).where(
+            tx.ProjectionReconciliationRun.reconciliation_run_id == reconciliation_run_id
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        return self.session.scalar(statement)
+
+    def _assert_reconciliation_start_compatible(
+        self,
+        run: tx.ProjectionReconciliationRun,
+        *,
+        expected_items: int,
+    ) -> None:
+        if run.expected_items != expected_items:
+            raise TransitionAuthorityError("reconciliation corpus immutable inputs conflict")
+        if run.candidate_id is not None:
+            raise TransitionAuthorityError("reconciliation run authority conflict")
+        recorded_items = int(
+            self.session.scalar(
+                select(func.count())
+                .select_from(tx.ProjectionReconciliationItem)
+                .where(
+                    tx.ProjectionReconciliationItem.reconciliation_run_id
+                    == run.reconciliation_run_id
+                )
+            )
+            or 0
+        )
+        if recorded_items != run.processed_items:
+            raise TransitionAuthorityError("reconciliation run progress is inconsistent")
+
     def start_reconciliation(
         self,
         *,
@@ -2224,21 +2276,68 @@ class ProjectionService:
         expected_items: int,
         started_at: datetime,
     ) -> tx.ProjectionReconciliationRun:
-        epoch = self._active_epoch(generation_id)
-        row = tx.ProjectionReconciliationRun(
-            reconciliation_run_id=self.uuid_factory(),
+        if not corpus_identity.strip():
+            raise TransitionAuthorityError("reconciliation corpus identity is required")
+        if expected_items < 0:
+            raise TransitionAuthorityError("reconciliation expected item count cannot be negative")
+        epoch = self._active_epoch_for_generation(generation_id, shared=True)
+        generation = self.session.get(models.AuthorityGeneration, generation_id)
+        if epoch is None or generation is None or generation.status != "active":
+            raise TransitionAuthorityError("active projection epoch is required")
+        existing = self._reconciliation_run_by_key(
             generation_id=generation_id,
             projection_epoch_id=epoch.projection_epoch_id,
             corpus_identity=corpus_identity,
-            status="running",
-            expected_items=expected_items,
-            processed_items=0,
-            started_at=started_at,
-            completed_at=None,
+            for_update=True,
         )
-        self.session.add(row)
-        self.session.flush()
-        return row
+        if existing is not None:
+            self._assert_reconciliation_start_compatible(
+                existing, expected_items=expected_items
+            )
+            return existing
+
+        reconciliation_run_id = self.uuid_factory()
+        row_values = {
+            "reconciliation_run_id": reconciliation_run_id,
+            "generation_id": generation_id,
+            "projection_epoch_id": epoch.projection_epoch_id,
+            "corpus_identity": corpus_identity,
+            "status": "running",
+            "expected_items": expected_items,
+            "processed_items": 0,
+            "started_at": started_at,
+            "completed_at": None,
+        }
+        if self.session.get_bind().dialect.name != "postgresql":
+            row = tx.ProjectionReconciliationRun(**row_values)
+            self.session.add(row)
+            self.session.flush()
+            return row
+
+        inserted_run_id = self.session.scalar(
+            postgresql_insert(tx.ProjectionReconciliationRun)
+            .values(**row_values)
+            .on_conflict_do_nothing(constraint="uq_reconciliation_corpus")
+            .returning(tx.ProjectionReconciliationRun.reconciliation_run_id)
+        )
+        if inserted_run_id is not None:
+            inserted = self._lock_reconciliation_run(inserted_run_id)
+            if inserted is None:
+                raise TransitionAuthorityError("reconciliation insert was not observable")
+            return inserted
+
+        existing = self._reconciliation_run_by_key(
+            generation_id=generation_id,
+            projection_epoch_id=epoch.projection_epoch_id,
+            corpus_identity=corpus_identity,
+            for_update=True,
+        )
+        if existing is None:
+            raise TransitionAuthorityError("reconciliation conflict did not resolve")
+        self._assert_reconciliation_start_compatible(
+            existing, expected_items=expected_items
+        )
+        return existing
 
     def record_reconciliation_item(
         self,
@@ -2251,7 +2350,7 @@ class ProjectionService:
         evidence: Mapping[str, Any],
         recorded_at: datetime,
     ) -> tx.ProjectionReconciliationItem:
-        run = self.session.get(tx.ProjectionReconciliationRun, reconciliation_run_id)
+        run = self._lock_reconciliation_run(reconciliation_run_id)
         if run is None or run.status != "running":
             raise TransitionAuthorityError("reconciliation run is not active")
         existing = self.session.scalar(
@@ -2289,7 +2388,7 @@ class ProjectionService:
     def complete_reconciliation(
         self, *, reconciliation_run_id: uuid.UUID, completed_at: datetime
     ) -> tx.ProjectionReconciliationRun:
-        run = self.session.get(tx.ProjectionReconciliationRun, reconciliation_run_id)
+        run = self._lock_reconciliation_run(reconciliation_run_id)
         if run is None or run.status != "running":
             raise TransitionAuthorityError("reconciliation run is not active")
         if run.processed_items != run.expected_items:

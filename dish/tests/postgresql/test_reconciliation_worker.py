@@ -15,6 +15,7 @@ from dish_pg.reconciliation_worker import (
 )
 from dish_pg.transition import ProjectionService, TransitionAuthorityError
 from tests.support.postgresql.core import NOW
+from tests.support.postgresql.release import _prepare_candidate
 from tests.support.postgresql.workflow import workflow_db
 
 
@@ -75,6 +76,261 @@ def test_worker_records_complete_corpus_through_projection_service(workflow_db) 
                 tx.ProjectionReconciliationItem.reconciliation_run_id == run.reconciliation_run_id
             )
         ) == 2
+
+
+def test_completed_worker_replay_returns_same_run_without_duplicate_work(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    _activate_epoch(factory, ids, context["generation_id"])
+    compare_calls: list[str] = []
+
+    corpus = (
+        ExternalCorpusItem("task:1", "task", {"gid": "1"}),
+        ExternalCorpusItem("task:2", "task", {"gid": "2"}),
+    )
+
+    def compare(_session, _generation_id, item: ExternalCorpusItem):
+        compare_calls.append(item.item_identity)
+        return ReconciliationRecord(
+            item_identity=item.item_identity,
+            entity_kind=item.entity_kind,
+            mapping_id=None,
+            outcome="matched",
+            evidence=dict(item.payload),
+        )
+
+    worker = ReconciliationWorker(
+        session_maker=factory,
+        fetch_corpus=lambda _identity: corpus,
+        compare_item=compare,
+        generation_id=context["generation_id"],
+        corpus_identity="corpus-replayed",
+        clock=lambda: NOW,
+    )
+
+    first = worker.run_once()
+    repeated = worker.run_once()
+
+    assert repeated.reconciliation_run_id == first.reconciliation_run_id
+    assert repeated.status == "complete"
+    assert compare_calls == ["task:1", "task:2"]
+    with session_scope(factory) as session:
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionReconciliationRun)
+        ) == 1
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionReconciliationItem)
+        ) == 2
+
+
+def test_worker_restart_resumes_only_missing_reconciliation_items(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    _activate_epoch(factory, ids, context["generation_id"])
+    corpus = (
+        ExternalCorpusItem("task:1", "task", {"gid": "1"}),
+        ExternalCorpusItem("task:2", "task", {"gid": "2"}),
+    )
+    with session_scope(factory) as session:
+        service = ProjectionService(session, uuid_factory=lambda: next(ids))
+        started = service.start_reconciliation(
+            generation_id=context["generation_id"],
+            corpus_identity="corpus-resume",
+            expected_items=2,
+            started_at=NOW,
+        )
+        service.record_reconciliation_item(
+            reconciliation_run_id=started.reconciliation_run_id,
+            item_identity="task:1",
+            entity_kind="task",
+            mapping_id=None,
+            outcome="matched",
+            evidence={"gid": "1"},
+            recorded_at=NOW,
+        )
+
+    compare_calls: list[str] = []
+
+    def compare(_session, _generation_id, item: ExternalCorpusItem):
+        compare_calls.append(item.item_identity)
+        return ReconciliationRecord(
+            item_identity=item.item_identity,
+            entity_kind=item.entity_kind,
+            mapping_id=None,
+            outcome="matched",
+            evidence=dict(item.payload),
+        )
+
+    resumed = ReconciliationWorker(
+        session_maker=factory,
+        fetch_corpus=lambda _identity: corpus,
+        compare_item=compare,
+        generation_id=context["generation_id"],
+        corpus_identity="corpus-resume",
+        clock=lambda: NOW,
+    ).run_once()
+
+    assert resumed.reconciliation_run_id == started.reconciliation_run_id
+    assert resumed.status == "complete"
+    assert compare_calls == ["task:2"]
+    with session_scope(factory) as session:
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionReconciliationRun)
+        ) == 1
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionReconciliationItem)
+        ) == 2
+
+
+def test_repeated_start_fails_closed_on_immutable_count_conflict(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    _activate_epoch(factory, ids, context["generation_id"])
+    with session_scope(factory) as session:
+        first = ProjectionService(session, uuid_factory=lambda: next(ids)).start_reconciliation(
+            generation_id=context["generation_id"],
+            corpus_identity="corpus-count-conflict",
+            expected_items=1,
+            started_at=NOW,
+        )
+
+    with pytest.raises(TransitionAuthorityError, match="immutable inputs conflict"):
+        with session_scope(factory) as session:
+            ProjectionService(session).start_reconciliation(
+                generation_id=context["generation_id"],
+                corpus_identity="corpus-count-conflict",
+                expected_items=2,
+                started_at=NOW,
+            )
+
+    with session_scope(factory) as session:
+        stored = session.get(tx.ProjectionReconciliationRun, first.reconciliation_run_id)
+        assert stored.expected_items == 1
+        assert stored.status == "running"
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionReconciliationRun)
+        ) == 1
+
+
+def test_repeated_start_fails_closed_on_candidate_bound_authority(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        _prepare_candidate(session, ids, context, task_id)
+
+    with pytest.raises(TransitionAuthorityError, match="authority conflict"):
+        with session_scope(factory) as session:
+            ProjectionService(session).start_reconciliation(
+                generation_id=context["generation_id"],
+                corpus_identity="candidate-release-corpus@42619b9",
+                expected_items=3,
+                started_at=NOW,
+            )
+
+    with session_scope(factory) as session:
+        candidate_run = session.scalar(
+            select(tx.ProjectionReconciliationRun).where(
+                tx.ProjectionReconciliationRun.corpus_identity
+                == "candidate-release-corpus@42619b9"
+            )
+        )
+        assert candidate_run.candidate_id is not None
+        assert candidate_run.status == "complete"
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionReconciliationRun).where(
+                tx.ProjectionReconciliationRun.corpus_identity
+                == "candidate-release-corpus@42619b9"
+            )
+        ) == 1
+
+
+def test_completed_replay_fails_closed_on_changed_corpus_membership(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    _activate_epoch(factory, ids, context["generation_id"])
+
+    def compare(_session, _generation_id, item: ExternalCorpusItem):
+        return ReconciliationRecord(
+            item_identity=item.item_identity,
+            entity_kind=item.entity_kind,
+            mapping_id=None,
+            outcome="matched",
+            evidence=dict(item.payload),
+        )
+
+    first_worker = ReconciliationWorker(
+        session_maker=factory,
+        fetch_corpus=lambda _identity: (
+            ExternalCorpusItem("task:1", "task", {"gid": "1"}),
+            ExternalCorpusItem("task:2", "task", {"gid": "2"}),
+        ),
+        compare_item=compare,
+        generation_id=context["generation_id"],
+        corpus_identity="corpus-membership-conflict",
+        clock=lambda: NOW,
+    )
+    first = first_worker.run_once()
+    unexpected_compare_calls: list[str] = []
+
+    conflicting_worker = ReconciliationWorker(
+        session_maker=factory,
+        fetch_corpus=lambda _identity: (
+            ExternalCorpusItem("task:1", "task", {"gid": "1"}),
+            ExternalCorpusItem("task:3", "task", {"gid": "3"}),
+        ),
+        compare_item=lambda _session, _generation_id, item: (
+            unexpected_compare_calls.append(item.item_identity)
+            or compare(_session, _generation_id, item)
+        ),
+        generation_id=context["generation_id"],
+        corpus_identity="corpus-membership-conflict",
+        clock=lambda: NOW,
+    )
+
+    with pytest.raises(TransitionAuthorityError, match="immutable inputs conflict"):
+        conflicting_worker.run_once()
+    assert unexpected_compare_calls == []
+    with session_scope(factory) as session:
+        stored = session.get(tx.ProjectionReconciliationRun, first.reconciliation_run_id)
+        assert stored.status == "complete"
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionReconciliationRun)
+        ) == 1
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionReconciliationItem)
+        ) == 2
+
+
+def test_completed_run_fences_stale_reconciliation_writer(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    _activate_epoch(factory, ids, context["generation_id"])
+    with session_scope(factory) as session:
+        service = ProjectionService(session, uuid_factory=lambda: next(ids))
+        run = service.start_reconciliation(
+            generation_id=context["generation_id"],
+            corpus_identity="corpus-stale-writer",
+            expected_items=0,
+            started_at=NOW,
+        )
+        service.complete_reconciliation(
+            reconciliation_run_id=run.reconciliation_run_id,
+            completed_at=NOW,
+        )
+
+    with pytest.raises(TransitionAuthorityError, match="not active"):
+        with session_scope(factory) as session:
+            ProjectionService(session).record_reconciliation_item(
+                reconciliation_run_id=run.reconciliation_run_id,
+                item_identity="task:late",
+                entity_kind="task",
+                mapping_id=None,
+                outcome="matched",
+                evidence={"gid": "late"},
+                recorded_at=NOW,
+            )
+
+    with session_scope(factory) as session:
+        stored = session.get(tx.ProjectionReconciliationRun, run.reconciliation_run_id)
+        assert stored.status == "complete"
+        assert stored.processed_items == 0
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionReconciliationItem)
+        ) == 0
 
 
 def test_worker_preserves_blocked_authority_result(workflow_db) -> None:
