@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import psycopg
-from sqlalchemy import create_engine, select, text, update
+from sqlalchemy import create_engine, func, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session, sessionmaker
 

@@ -7,7 +7,7 @@ import pytest
 
 from dish_pg.database import session_scope
 from tests.support.postgresql.certification import postgresql_dsn
-from tests.support.postgresql.core import _import_one
+from tests.support.postgresql.core import _import_one, core_db
 from tests.support.postgresql.process_failure import (
     BarrierServer,
     event_snapshot,

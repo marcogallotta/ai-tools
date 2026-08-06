@@ -8,6 +8,7 @@ import pytest
 from dish_pg.database import session_scope
 from dish_pg.transition import ProjectionService
 from tests.support.postgresql.certification import postgresql_dsn
+from tests.support.postgresql.core import core_db
 from tests.support.postgresql.process_failure import (
     BarrierServer,
     read_reconciliation_child_result,

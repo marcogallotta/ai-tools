@@ -9,6 +9,7 @@ from dish_pg.database import session_scope
 from dish_pg.transition import ProjectionService
 from dish_pg.workflow import sha256_json
 from tests.support.postgresql.certification import postgresql_dsn
+from tests.support.postgresql.core import core_db
 from tests.support.postgresql.process_failure import (
     BarrierServer,
     command_snapshot,

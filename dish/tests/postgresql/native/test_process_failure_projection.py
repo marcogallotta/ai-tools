@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from tests.support.postgresql.certification import postgresql_dsn
+from tests.support.postgresql.core import core_db
 from tests.support.postgresql.process_failure import (
     BarrierServer,
     SettlementNotification,

@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
 from tests.support.postgresql.certification import postgresql_dsn
+from tests.support.postgresql.core import core_db
 from tests.support.postgresql.process_failure import (
     BarrierServer,
     compose_control,

@@ -404,8 +404,10 @@ def _compose_payload(*, database: str, port: int, user: str, password: str) -> s
         "      interval: 1s\n"
         "      timeout: 3s\n"
         "      retries: 60\n"
-        "    tmpfs:\n"
-        "      - /var/lib/postgresql/data\n"
+        "    volumes:\n"
+        "      - pgdata:/var/lib/postgresql/data\n"
+        "volumes:\n"
+        "  pgdata:\n"
     )
 
 
