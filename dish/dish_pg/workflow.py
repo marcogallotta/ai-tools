@@ -129,20 +129,39 @@ class WorkflowAuthorityRepository:
         return run
 
     def register_run(self, row: wf.ServiceRun) -> None:
-        self.require_active_generation(row.generation_id)
+        generation = self.require_active_generation(row.generation_id)
+        bootstrap = None
+        if generation.creation_reason == "destructive_restore" and row.bootstrap_id is None:
+            raise StaleAuthorityError("restored generation requires external bootstrap authority")
         if row.bootstrap_id is not None:
-            bootstrap = self.session.get(models.GenerationBootstrapAuthority, row.bootstrap_id)
+            statement = select(models.GenerationBootstrapAuthority).where(
+                models.GenerationBootstrapAuthority.bootstrap_id == row.bootstrap_id
+            )
+            if self.session.get_bind().dialect.name == "postgresql":
+                statement = statement.with_for_update().execution_options(populate_existing=True)
+            bootstrap = self.session.scalar(statement)
             if bootstrap is None or bootstrap.generation_id != row.generation_id:
                 raise StaleAuthorityError("bootstrap authority does not match generation")
             if bootstrap.retired_at is not None:
                 raise StaleAuthorityError("bootstrap authority is retired")
+            if bootstrap.consumed_at is not None:
+                raise StaleAuthorityError("bootstrap authority is already consumed")
+            if bootstrap.capability_digest != row.capability_digest:
+                raise StaleAuthorityError("bootstrap authority capability does not match")
         self.session.add(row)
         self.session.flush()
+        if generation.creation_reason == "destructive_restore":
+            assert bootstrap is not None
+            bootstrap.consumed_at = row.registered_at
+            self.session.flush()
 
     def admit_request(self, spec: RequestSpec) -> RequestAdmission:
         self.require_active_run(
             generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id
         )
+        generation = self.session.get(models.AuthorityGeneration, spec.generation_id)
+        if generation is None:
+            raise StaleAuthorityError("authority generation is not active")
         payload = dict(spec.canonical_payload)
         payload_sha = sha256_json(payload)
         existing = self.session.get(wf.ServiceRequest, spec.request_id)
@@ -171,6 +190,10 @@ class WorkflowAuthorityRepository:
                 rel.ReleaseCandidate.generation_id == spec.generation_id
             ).limit(1)
         ) is not None
+        if generation.creation_reason == "destructive_restore" and not candidate_exists:
+            raise MutationAdmissionClosed(
+                "restored generation mutation admission requires deliberate reissue control"
+            )
         reservation = None
         if candidate_exists:
             control = self.session.get(rel.MutationAdmissionControl, spec.generation_id)
@@ -782,6 +805,11 @@ class WorkflowAuthorityService:
         execution = self.session.get(wf.CommandExecution, execution_id)
         if lease is None or execution is None:
             raise WorkflowAuthorityError("unknown lease or execution")
+        if execution.generation_id != lease.generation_id:
+            raise StaleAuthorityError("lease and execution belong to different generations")
+        self.repo.require_active_run(
+            generation_id=lease.generation_id, run_id=run_id, owner_id=owner_id
+        )
         if (
             lease.state != "active"
             or lease.run_id != run_id

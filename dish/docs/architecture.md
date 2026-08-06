@@ -429,6 +429,34 @@ fence after route-scope authentication and before
 request-body loading, so malformed, oversized, or valid mutation bodies cannot bypass a cutover
 fence.
 
+Native PostgreSQL destructive recovery is a private operator boundary, not a public backup command.
+`scripts/dish-pg-recovery-rehearsal` is reachable only as an explicit operator process; normal service,
+worker, projection, dark-launch, and public-route composition do not import or invoke it. The command
+creates only explicitly owned disposable clusters, archives WAL, takes a physical `pg_basebackup`,
+verifies the manifest independently, restores into separate cluster directories, and recovers separate
+targets to recorded LSN boundaries. Every external PostgreSQL, migration, Git, reconciliation, and
+cleanup command has a finite deadline, process-group termination, preserved output, and explicit
+manual-cleanup evidence when cleanup cannot complete. Backup finalization is restart-recoverable:
+a separate process verifies and reconciles only the exact candidate/final/reservation tuple and does
+not discard an existing finalized backup before that check.
+
+A recovered database retains historical rows but not current authority. `recovery_control.py` requires
+an external control receipt bound to the exact verified backup manifest and evidence digest, source
+system identifier, recovery timeline, target type and LSN, observed completion LSN, a digest of the
+recovered server instance identity (data directory, postmaster start, and port), database, schema head,
+predecessor generation, and complete release coordinates. Promotion additionally requires
+exactly one candidate already authorized by the existing immutable release evidence, approval,
+approval-manifest binding, and current manifest revalidation contract; assembling, aborted, stale,
+superseded, or ambiguous candidates fail closed. Only then may the operator path create and activate
+a new `destructive_restore` generation. That promotion retires predecessor projection epochs, starts
+the new epoch with external effects disabled, and issues one capability-bound bootstrap authority.
+`workflow.py` locks and consumes that bootstrap exactly once; restored runs, requests, leases, workers,
+principals, and bootstrap replays remain fenced. Ordinary mutation admission for the restored
+generation remains closed until the separate release/reissue authority establishes the governed
+admission state. Rehearsal reports derive Git and relevant-tree identity when metadata exists, or bind
+the executed recovery files and configuration through a source manifest; caller labels are never
+treated as proof. Selected recovery-point age is test evidence, not a production RPO claim.
+
 Stage 7 closes the final Asana-authoritative interval through
 `0006_final_asana_closure`. `ReleaseCandidateService` records an immutable final Asana capture,
 observation high-water mark, watcher identity and gap-free closed-through timestamp. Any relevant
