@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:17.5
+    image: postgres:17.10
     environment:
       POSTGRES_DB: dish_stage_a_test
       POSTGRES_USER: dish

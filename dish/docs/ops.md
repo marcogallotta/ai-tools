@@ -19,7 +19,11 @@ etc.) before trusting or removing it.
   touching either `dish-service` profile or production PostgreSQL.
 - **Where**: `docker-compose`, project `postgresql`, config at
   `deploy/postgresql/compose.yaml`. Container `postgresql-postgres-1`,
-  image `postgres:17.5`.
+  image `postgres:17.10` as of the compose file — the running container was
+  created on `postgres:17.5` (2026-08-02) and was not recreated by this bump;
+  recreate it (`docker compose -f deploy/postgresql/compose.yaml up -d`,
+  which will pull `17.10` and replace the container) if version parity with
+  §2's native check matters for whatever you're using it for.
 - **Connection**: `postgresql://dish:dish@127.0.0.1:55432/dish_stage_a_test`
   (bound to `127.0.0.1` only).
 - **Schema state as of 2026-08-04**: migrated to Alembic head, full

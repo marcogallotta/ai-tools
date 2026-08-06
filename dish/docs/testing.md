@@ -205,7 +205,7 @@ sudo apt install postgresql-17
 This installs binaries under `/usr/lib/postgresql/17/bin` (pass via `--pg-bin` if `discover_pg_bin()`
 does not find them) and also creates a system-wide PG17 cluster on port 5432 via
 `postgresql-common`; drop it with `sudo pg_dropcluster 17 main --stop` if you don't want a
-background instance running. Version 17 matches the `postgres:17.5` image used by the §1/§3 Compose
+background instance running. Version 17.10 matches the `postgres:17.10` image used by the §1/§3 Compose
 rehearsals, so recovery evidence stays on the same major version across all four sections.
 
 ### PGlite development lane

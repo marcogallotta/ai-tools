@@ -93,8 +93,8 @@ def test_native_certification_rejects_zero_executed_tests(
         dialect="postgresql",
         driver="psycopg",
         database="disposable",
-        server_version="17.5",
-        server_version_full="PostgreSQL 17.5 on x86_64-pc-linux-gnu",
+        server_version="17.10",
+        server_version_full="PostgreSQL 17.10 on x86_64-pc-linux-gnu",
         server_address="127.0.0.1",
         server_port=55432,
     )
