@@ -66,6 +66,7 @@ scripts/dish-pg-export-legacy --help
 scripts/dish-pg-bootstrap-initial --help
 scripts/dish-pg-import-legacy --help
 scripts/dish-pg-dark-launch --help
+scripts/dish-pg-production-shaped-rehearsal --help
 .venv/bin/python -m dish_pg.shadow_worker --help
 ```
 
@@ -74,6 +75,20 @@ PostgreSQL authority target, verifies the exact database name and Alembic head, 
 to the NDJSON byte hash, verifies both Git checkouts, and creates the first generation immediately
 as `active`. Normal generation transition authority remains unchanged after that one empty-target
 operation.
+
+`dish-pg-production-shaped-rehearsal` is the rerunnable Section 4 local rehearsal. Supply an exact
+clean Honest checkout, a sanitized production-shaped NDJSON corpus, its
+`dish-production-shaped-corpus-manifest-v1` manifest, the received archive/commit identity, and
+separate work/evidence/report paths. Run `--describe-input-identities` from the exact clean Dish
+commit first; the manifest's `source_manifest.identity` and `deployment_identity.identity` must
+match those emitted values. The command owns all PostgreSQL resources and five reserved loopback
+ports; it never accepts a production DSN or credentials. Pass `--service-entry-point` with the clean Git-tracked PostgreSQL TEST runtime supplied by the
+runtime-wiring integration. The entry point must implement the `dish-service --postgresql-test-runtime` loopback HTTP path. When that integration resource is unavailable, the implemented service and command
+phases report `blocked_runtime_infrastructure`; they are never represented as unimplemented. Worker,
+fault, and recovery phases use explicit process barriers rather than timing sleeps. It writes a
+`dish-postgresql-production-shaped-rehearsal-v1` report and exits nonzero for blocked or failed
+execution. A local pass is recovery evidence for that exact corpus and build only, not a production
+RPO/RTO claim or production cutover authorization.
 
 ## Service-host configuration
 

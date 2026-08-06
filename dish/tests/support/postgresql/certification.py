@@ -132,6 +132,8 @@ NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY = (
     "tests/postgresql/native/test_process_failure_supervision.py::test_long_running_projection_worker_is_supervised_and_restarted",
     "tests/postgresql/native/test_process_failure_supervision.py::test_reconciliation_worker_is_supervised_and_restarted",
     "tests/postgresql/native/test_process_failure_takeover.py::test_process_takeover_is_lease_gated_fenced_and_task_local",
+    "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_process_loss_replays_without_duplicate_effects",
+    "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once",
     "tests/postgresql/native/test_projection_epoch_lifecycle_concurrency.py::test_native_disable_during_candidate_selection_prevents_claim",
     "tests/postgresql/native/test_projection_epoch_lifecycle_concurrency.py::test_native_disable_after_claim_blocks_durable_dispatch_attempt",
     "tests/postgresql/native/test_projection_epoch_lifecycle_concurrency.py::test_native_event_insertion_admitted_before_retirement_is_superseded",

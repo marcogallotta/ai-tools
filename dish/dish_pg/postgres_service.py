@@ -7,7 +7,9 @@ started with its explicit PostgreSQL rehearsal flag and a TEST-only database.
 """
 from __future__ import annotations
 
+import json
 import os
+import socket
 import uuid
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -22,6 +24,52 @@ from dish_tool.errors import DishRuleError
 from . import models
 from .command_port import CommandCall, CommandPortError, PostgresCommandPort
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
+
+
+def _section4_control_point(
+    *, point: str, request_id: uuid.UUID | None, command: str
+) -> None:
+    """Reach an explicit Section 4 barrier in PostgreSQL TEST runtime only."""
+
+    configured = os.environ.get("DISH_SECTION4_SERVICE_CONTROL_POINT", "").strip()
+    if configured != point or request_id is None:
+        return
+    expected_request = os.environ.get("DISH_SECTION4_SERVICE_REQUEST_ID", "").strip()
+    if expected_request != str(request_id):
+        return
+    socket_path = os.environ.get("DISH_SECTION4_SERVICE_BARRIER_SOCKET", "").strip()
+    if not socket_path:
+        raise RuntimeError("Section 4 service control point omitted its barrier socket")
+    label = (
+        "service_after_execute_before_commit"
+        if point == "after_execute_before_commit"
+        else "service_after_commit_before_response"
+    )
+    message = {
+        "schema": "dish-section4-barrier-event-v1",
+        "label": label,
+        "pid": os.getpid(),
+        "payload": {"command": command, "command_request_id": str(request_id)},
+    }
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(socket_path)
+        client.sendall(
+            json.dumps(message, sort_keys=True, separators=(",", ":")).encode("utf-8") + b"\n"
+        )
+        received = bytearray()
+        while not received.endswith(b"\n"):
+            chunk = client.recv(4096)
+            if not chunk:
+                raise RuntimeError(f"Section 4 barrier {label!r} closed without release")
+            received.extend(chunk)
+    response = json.loads(received.decode("utf-8"))
+    expected = {
+        "schema": "dish-section4-barrier-event-v1",
+        "action": "continue",
+        "label": label,
+    }
+    if response != expected:
+        raise RuntimeError(f"Section 4 barrier {label!r} returned invalid release")
 
 
 class PostgresRuntimeService:
@@ -189,6 +237,17 @@ class PostgresRuntimeService:
                         now=datetime.now(timezone.utc),
                     )
                 )
+                session.flush()
+                _section4_control_point(
+                    point="after_execute_before_commit",
+                    request_id=parsed_request_id,
+                    command=command,
+                )
+            _section4_control_point(
+                point="after_commit_before_response",
+                request_id=parsed_request_id,
+                command=command,
+            )
             return asdict(result)
         except CommandPortError as exc:
             raise DishRuleError(

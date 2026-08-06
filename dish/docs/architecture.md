@@ -457,6 +457,28 @@ admission state. Rehearsal reports derive Git and relevant-tree identity when me
 the executed recovery files and configuration through a source manifest; caller labels are never
 treated as proof. Selected recovery-point age is test evidence, not a production RPO claim.
 
+`scripts/dish-pg-production-shaped-rehearsal` is the separate Section 4 operator boundary. It accepts
+only a digest-bound sanitized corpus and manifest, creates no evidence tables, and sequences the
+existing migration, bootstrap/import, reconciliation, and projection-worker entry points over owned
+local resources. Its reconciliation and projection adapters have no network client; projection effects
+are mode-0600 JSON files beneath the owned evidence root. Service execution reuses the clean Git-tracked `dish-service` entry point passed as
+`--service-entry-point` with its explicit `--postgresql-test-runtime` mode. Commands use the existing
+loopback HTTP transport; the orchestrator does not invent another listener, routing model, or public
+Action surface. Service loss, projection-worker loss, reconciliation-worker loss, and
+PostgreSQL disconnects are synchronized at explicit barriers. Recovery assertions count request,
+execution, task, projection, and reconciliation effects to reject duplicate or partial outcomes.
+Physical backup, independent restore, WAL archival, and PITR call the Section 2 recovery helpers
+directly. Child processes receive an explicit allowlisted environment, five loopback ports are recorded in
+the owned-root marker, and retained roots are not reused until cleaned. Cleanup records each child PID,
+process group, log, cluster port, data directory, and exact manual commands. The work root is deleted
+only after every owned child has exited and `pg_ctl status` confirms every cluster is stopped. Before native startup, the runner verifies the clean Dish and Honest commits
+and requires the corpus manifest's source/deployment identities to equal the current hashes. Any
+unverifiable source/corpus/environment boundary produces a blocked or failed machine report rather
+than partial certification. The filesystem report binds the received archive/commit identity,
+commit/tree, source manifest, deployment identity, corpus, native PostgreSQL identity, first
+attempts, outputs, durations, and recovery-point age; it does not create durable certification
+authority or claim production RPO/RTO.
+
 Stage 7 closes the final Asana-authoritative interval through
 `0006_final_asana_closure`. `ReleaseCandidateService` records an immutable final Asana capture,
 observation high-water mark, watcher identity and gap-free closed-through timestamp. Any relevant

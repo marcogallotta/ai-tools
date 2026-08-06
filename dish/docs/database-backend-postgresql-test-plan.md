@@ -126,6 +126,8 @@ A report is valid §3 evidence only when its first attempt and every explicit re
 field pass. `status=blocked` is an honest native-infrastructure result, never a substitute for
 native PostgreSQL and never permission to omit a scenario.
 
-Sections §1, §2, and §4 still need equivalent maintained runners or extension of an existing
-maintained runner where the authority and lifecycle are genuinely shared. Do not treat the §3
-script as evidence for their distinct failure, backup/PITR, or production-shaped-data requirements.
+Sections §1 and §2 still need equivalent maintained runners or extension of an existing maintained
+runner where the authority and lifecycle are genuinely shared. Section §4 now has
+`scripts/dish-pg-production-shaped-rehearsal`; it reuses the §3 PostgreSQL TEST service path and
+remains incomplete until its native run succeeds. Do not treat the §3 script as evidence for the
+distinct §1 failure, §2 backup/PITR, or §4 production-shaped-data requirements.

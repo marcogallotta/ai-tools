@@ -288,6 +288,7 @@ class Runner:
         timeout_seconds: float,
         env: Mapping[str, str] | None = None,
         check: bool = True,
+        inherit_env: bool = True,
     ) -> subprocess.CompletedProcess[str]:
         if timeout_seconds <= 0:
             raise ValueError("command timeout must be positive")
@@ -311,7 +312,11 @@ class Runner:
                     text=True,
                     stdout=stdout_handle,
                     stderr=stderr_handle,
-                    env=None if env is None else {**os.environ, **env},
+                    env=(
+                        None
+                        if env is None and inherit_env
+                        else ({**os.environ, **(env or {})} if inherit_env else dict(env or {}))
+                    ),
                     start_new_session=True,
                 )
                 process_group_id = process.pid
