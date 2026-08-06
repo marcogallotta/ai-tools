@@ -56,6 +56,19 @@ class TestSplitSegments:
         segs = destructive_op_guard.split_segments('echo "a; b | c"')
         assert len(segs) == 1
 
+    def test_bare_newline_splits_like_semicolon(self, destructive_op_guard):
+        segs = destructive_op_guard.split_segments("a\nb")
+        assert [s.strip() for s in segs] == ["a", "b"]
+
+    def test_backslash_newline_continuation_stays_one_segment(self, destructive_op_guard):
+        segs = destructive_op_guard.split_segments("a --foo \\\n  --bar")
+        assert len(segs) == 1
+        assert segs[0] == "a --foo   --bar"
+
+    def test_newline_inside_double_quotes_not_split(self, destructive_op_guard):
+        segs = destructive_op_guard.split_segments('echo "a\nb"')
+        assert len(segs) == 1
+
 
 class TestGitFalsePositiveRepros:
     # Real repro from a live session: a destructive word appearing only
@@ -118,6 +131,24 @@ class TestRm:
 
     def test_docker_volume_rm_not_confused_with_rm(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "docker volume rm myvol", monkeypatch, capsys)
+        assert_allowed(decision)
+
+    # Real repro: a bare rm of a /tmp/ target stacked on a plain newline
+    # above an unrelated multi-line command. Before split_segments handled
+    # bare newlines, both lines were tokenized as one segment and the second
+    # command's --pg-bin argument (a non-/tmp path) was misread as another
+    # rm target, wrongly triggering approval despite the rm target being
+    # exempt.
+    def test_rm_tmp_target_stacked_above_unrelated_command_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard,
+            "rm -rf /tmp/scratchpad/section2-work\n"
+            ".venv/bin/python scripts/dish-pg-recovery-rehearsal \\\n"
+            "  --report /tmp/scratchpad/section2-report.json \\\n"
+            "  --pg-bin /usr/lib/postgresql/17/bin",
+            monkeypatch,
+            capsys,
+        )
         assert_allowed(decision)
 
     def test_sudo_rm_non_tmp_target_still_asked(self, destructive_op_guard, monkeypatch, capsys):

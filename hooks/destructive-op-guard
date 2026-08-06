@@ -51,24 +51,37 @@ def deny(reason):
 
 
 def split_segments(cmd):
-    """Split on unquoted ; | & (single chars, so && / || split into two
-    segments with an empty one between — filtered out by callers), leaving
-    quoted spans untouched."""
+    """Split on unquoted ; | & and bare newlines (single chars, so && / ||
+    split into two segments with an empty one between — filtered out by
+    callers), leaving quoted spans untouched. A bare newline ends a command
+    exactly like ';' does in real bash, so it splits too — otherwise two
+    unrelated stacked commands (e.g. "rm -rf /tmp/x\npython foo --bar baz")
+    get tokenized as one segment and a later command's arguments get
+    misread as targets of an earlier command's check. An unquoted
+    backslash immediately before a newline is a shell line-continuation,
+    not a terminator, so that pair is elided and the segment stays open."""
     segments = []
     seg = []
     in_single = in_double = False
-    for c in cmd:
+    i = 0
+    n = len(cmd)
+    while i < n:
+        c = cmd[i]
         if c == "'" and not in_double:
             in_single = not in_single
             seg.append(c)
         elif c == '"' and not in_single:
             in_double = not in_double
             seg.append(c)
-        elif not in_single and not in_double and c in ";|&":
+        elif not in_single and not in_double and c == "\\" and i + 1 < n and cmd[i + 1] == "\n":
+            i += 2
+            continue
+        elif not in_single and not in_double and c in ";|&\n":
             segments.append("".join(seg))
             seg = []
         else:
             seg.append(c)
+        i += 1
     segments.append("".join(seg))
     return segments
 
