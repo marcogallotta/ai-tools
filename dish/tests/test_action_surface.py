@@ -204,6 +204,50 @@ def test_action_accepts_maximum_supported_task_gid(tmp_path, running_server):
     assert calls == 1
 
 
+
+@pytest.mark.smoke
+@pytest.mark.parametrize("advertised_command", ["prepare", "reject"])
+def test_connected_advertised_workflow_actions_are_callable(
+    tmp_path, running_server, advertised_command
+):
+    _backend, _server, _thread, url = running_server()
+    action = DishActionClient(
+        url,
+        token="action-secret",
+        run_id="d46d9810-1fb8-4ad5-bf65-8336a9a7e1ba",
+    )
+    started = action.execute(
+        "start", agent="gpt", task_gid="123456789", kind="initial"
+    )
+    inspected = action.execute(
+        "inspect", agent="gpt", submission_id=started["submission_id"]
+    )
+
+    assert inspected["allowed_actions"] == ["prepare", "reject"]
+    assert inspected["allowed_actions"] == inspected["data"]["authoritative_view"]["legal_actions"]
+    assert advertised_command in inspected["allowed_actions"]
+
+    if advertised_command == "prepare":
+        result = action.execute(
+            "prepare",
+            agent="gpt",
+            model="gpt-5.6-sol",
+            submission_id=started["submission_id"],
+            file_text=TASK,
+        )
+    else:
+        result = action.execute(
+            "reject",
+            agent="gpt",
+            submission_id=started["submission_id"],
+            reason="Human review is required before construction.",
+            route="human-review",
+            resume_status="pending-research",
+        )
+
+    assert result["ok"] is True
+
+
 def test_service_refuses_to_advertise_non_callable_connected_action():
     result = {"ok": True, "allowed_actions": [], "data": {}}
     with pytest.raises(DishRuleError) as exc:

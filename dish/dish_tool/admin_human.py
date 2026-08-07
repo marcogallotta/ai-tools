@@ -250,7 +250,31 @@ def render_admin_result(
                 lines.append(f"Release hold: dish-admin review-approve {proposal_id}")
             elif status == "approved":
                 lines.append("")
-                lines.append(f"Agent next: dish apply-proposal {proposal_id} --agent <agent> --model <model>")
+                agent_action = data.get("agent_action")
+                if isinstance(agent_action, Mapping) and agent_action.get("command") == "apply-proposal":
+                    lines.append(
+                        f"Agent next: dish apply-proposal {proposal_id} --agent <agent> --model <model>"
+                    )
+                else:
+                    view = data.get("authoritative_view")
+                    proposal_view = (
+                        view.get("semantic_proposal")
+                        if isinstance(view, Mapping)
+                        and isinstance(view.get("semantic_proposal"), Mapping)
+                        else {}
+                    )
+                    block = (
+                        proposal_view.get("block")
+                        if isinstance(proposal_view.get("block"), Mapping)
+                        else None
+                    )
+                    if block is not None:
+                        lines.append(
+                            "Agent application is currently blocked: "
+                            f"{_clean(block.get('rule')) or 'authoritative state'}."
+                        )
+                    if operation_id:
+                        lines.append(f"Refresh: dish-admin inspect {operation_id}")
     elif command == "attention" and ok:
         items = (
             data.get("attention_items")

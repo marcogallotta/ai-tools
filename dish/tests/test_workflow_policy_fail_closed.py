@@ -64,3 +64,50 @@ def test_each_unsafe_authority_fact_suppresses_all_actions(baseline, changes):
     snapshot = replace(baseline(), **changes)
 
     assert legal_actions(snapshot) == []
+
+@pytest.mark.invariant_workflow_action_authority
+@pytest.mark.parametrize(
+    ("status", "actionable", "expected"),
+    [
+        ("pending", False, []),
+        ("approved", True, ["apply-proposal"]),
+        ("approved", False, []),
+        ("claimed", True, ["apply-proposal"]),
+        ("claimed", False, []),
+    ],
+)
+def test_semantic_proposal_lifecycle_is_owned_by_legal_action_policy(status, actionable, expected):
+    snapshot = replace(
+        _verification_snapshot(),
+        semantic_proposal_status=status,
+        semantic_proposal_actionable=actionable,
+    )
+
+    assert legal_actions(snapshot) == expected
+
+@pytest.mark.invariant_workflow_action_authority
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        (
+            {
+                "abandonment_status": "awaiting_successor_claim",
+                "abandonment_required_command": "start",
+                "abandonment_required_start_kind": "verification",
+            },
+            ["verify"],
+        ),
+        (
+            {
+                "abandonment_status": "completed",
+                "abandonment_required_command": "start",
+                "abandonment_required_start_kind": "verification",
+                "abandonment_continuation_ready": True,
+            },
+            ["verify"],
+        ),
+        ({"abandonment_status": "started"}, []),
+    ],
+)
+def test_recovery_continuations_are_derived_by_the_same_legal_action_owner(changes, expected):
+    assert legal_actions(replace(_verification_snapshot(), **changes)) == expected

@@ -31,7 +31,7 @@ The principal writer is the default `dish-service` process. It writes SQLite and
 | Live title and notes | Governed Asana effect through `ExactTaskGateway` | Exact reread through `dish_tool/task_gateway.py` | Content identity and confirmed content versions in SQLite | Candidate files are ephemeral inputs |
 | Cooking-project placement and completion | Asana | Exact gateway reread | Confirmed movement/completion evidence | First-membership assumptions are prohibited legacy behavior |
 | Workflow operation and phase | SQLite workflow use cases | `CurrentWorkflowService` and repositories | Result envelopes and `allowed_actions` | `submissions` storage is read-only compatibility only |
-| Legal actions | `workflow_policy.legal_actions` over one current snapshot | Command applications and response rendering | Nested authoritative views | Persisted phase candidates are not legal-action authority |
+| Legal actions | `workflow_policy.legal_actions` over one current snapshot plus explicit proposal/abandonment facts | Command applications, service principal filtering, and PostgreSQL planner consumers | Nested authoritative views and exposed connected actions | Persisted phase candidates, proposal status alone, and transport allowlists are not legal-action authority |
 | Request identity and first result | `dish_service/request_replay.py` in SQLite | Request coordinators | `data.request_replayed` response decoration | Incomplete historical rows without evidence remain blocking |
 | Service lease and execution claim | Lease/operation coordinators in SQLite | Request gates and workflow mutation authority | Lease guidance in responses | A terminal-operation lease may remain as a safe cleanup tail |
 | External-effect intent and outcome | SQLite attempt journals | Recovery and workflow code | Audit and recovery guidance | `uncertain` is unresolved evidence, not permission to retry |
@@ -59,8 +59,8 @@ SQLite commands use explicit writer transactions and savepoints owned by the wor
 ## Normal flow
 
 1. Resolve the supported Honest release and validate the exact live task.
-2. Read durable workflow state and build one `WorkflowSnapshot`.
-3. Derive legal actions from that snapshot.
+2. Read durable workflow state and build one `WorkflowSnapshot`, including exact semantic-proposal actionability and any abandonment-continuation facts.
+3. Derive legal actions once with `workflow_policy.legal_actions`; consumers may only project or authorization-filter that result.
 4. For a mutation, persist command/external-effect intent in the current authority.
 5. Perform and reread the external effect where required.
 6. Commit terminal evidence and return a response derived from the same authoritative state.

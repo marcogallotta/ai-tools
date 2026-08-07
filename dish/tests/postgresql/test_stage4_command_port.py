@@ -29,7 +29,7 @@ from dish_pg.planner import (
 from dish_pg.protocol import AuthenticationError, PostgresProtocolService, ScopedBearerAuthenticator
 from dish_pg.read_model import InvalidCursor
 from dish_pg.transition import ProjectionService
-from dish_tool.workflow_policy import WorkflowSnapshot
+from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.command import _call, _port
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
@@ -46,6 +46,50 @@ def test_stage4_ports_every_retained_mutation_and_action_path() -> None:
     assert document["paths"]["/v1/action/inspect"]["post"]["x-openai-isConsequential"] is True
     checked_in = json.loads((ROOT / "openapi/dish-postgresql-action.openapi.json").read_text())
     assert checked_in == document
+
+
+@pytest.mark.parametrize(
+    ("command", "principal"),
+    [
+        ("prepare", "agent"),
+        ("reject", "verification"),
+        ("approve", "verification"),
+        ("submit", "agent"),
+    ],
+)
+def test_postgresql_planner_matches_shared_legal_actions(command: str, principal: str) -> None:
+    workflow = WorkflowSnapshot(
+        operation_status="open",
+        operation_phase="prepare_required",
+        persisted_actions=("prepare", "reject"),
+        live_status="pending-research",
+        live_section_gid="rq",
+        verification_queue_gid="vq",
+        verifier_established=False,
+        latest_cycle_outcome=None,
+        latest_cycle_route=None,
+        validation_rules=(),
+        operation_kind="initial",
+    )
+    allowed = legal_actions(workflow)
+    snapshot = AuthoritativeSnapshot(
+        generation_id=str(uuid.uuid4()),
+        task_id=str(uuid.uuid4()),
+        fence=AuthorityFence(1, 1, 1, 1, 1, "prepare_required"),
+        workflow=workflow,
+        task_exists=True,
+    )
+
+    plan = plan_command(
+        snapshot=snapshot,
+        intent=CanonicalCommandIntent(command, {}, principal, "owner", str(uuid.uuid4())),
+        pinned_now=NOW,
+    )
+
+    assert plan.legal is (command in allowed)
+    if not plan.legal:
+        assert plan.result_code == "ACTION_NOT_LEGAL"
+        assert plan.recovery_guidance["allowed_actions"] == tuple(allowed)
 
 
 def test_planner_delegates_legality_and_adjudicates_exact_effects() -> None:

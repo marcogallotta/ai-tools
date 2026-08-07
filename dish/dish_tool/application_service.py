@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable, TypeVar
 
 from .database import pending_operation_steps, phase_candidate_actions
@@ -255,6 +255,21 @@ class CurrentWorkflowService:
             )
         pending_steps = tuple(row["step_name"] for row in pending_operation_steps(self.conn, operation_id))
         migration_required = bool(op["migration_reconciliation_required"])
+        from .semantic_proposals import semantic_proposal_action_facts
+
+        proposal_facts = semantic_proposal_action_facts(
+            self.conn,
+            operation_id=operation_id,
+            live_title=live.title,
+            live_notes=live.notes,
+            current_cycle_id=(
+                None
+                if cycle is None or cycle["completed_at"] is not None
+                else str(cycle["cycle_id"])
+            ),
+            expected_schema_version=str(op["schema_version"]),
+            schema=schema,
+        )
         snapshot = WorkflowSnapshot(
             operation_status=op["status"],
             operation_phase=op["phase"],
@@ -278,6 +293,12 @@ class CurrentWorkflowService:
             preconstruction_hold=preconstruction_hold,
             destination_repair_required=destination_repair_required,
             dish_inspect_current=dish_inspect_current,
+            semantic_proposal_status=(
+                None if proposal_facts is None else str(proposal_facts["status"])
+            ),
+            semantic_proposal_actionable=bool(
+                proposal_facts is not None and proposal_facts.get("actionable")
+            ),
         )
         recovery_reasons: list[str] = []
         if op["status"] == "uncertain":
@@ -322,6 +343,14 @@ class CurrentWorkflowService:
             "recovery_required": bool(recovery_reasons),
             "recovery_reasons": recovery_reasons,
         }
+        if proposal_facts is not None:
+            facts["semantic_proposal"] = proposal_facts
+            if proposal_facts["status"] == "pending":
+                facts.update({
+                    "required_admin_action": "review-inspect",
+                    "continuation_surface": "private-admin",
+                    "connected_action_available": False,
+                })
         if malformed_material_change_rules:
             facts.update({
                 "required_admin_action": "manual-reconciliation",
@@ -352,7 +381,6 @@ class CurrentWorkflowService:
 
     def authoritative_view(self, operation_id: str, *, schema=None) -> dict[str, object]:
         snapshot, facts = self._snapshot(operation_id, schema=schema)
-        facts["legal_actions"] = legal_actions(snapshot)
         abandonment = self.conn.execute(
             """SELECT abandonment.*, succession.successor_operation_id AS linked_successor_id
                  FROM abandonment_attempts AS abandonment
@@ -374,6 +402,7 @@ class CurrentWorkflowService:
             (operation_id, operation_id, operation_id),
         ).fetchone()
         if abandonment is None:
+            facts["legal_actions"] = legal_actions(snapshot)
             return facts
 
         if abandonment["status"] == "completed":
@@ -397,6 +426,7 @@ class CurrentWorkflowService:
                 or continuation["run_id"] is not None
                 or continuation["verifier_agent"] is not None
             ):
+                facts["legal_actions"] = legal_actions(snapshot)
                 return facts
             required_action = {
                 "surface": "connected-agent",
@@ -410,9 +440,16 @@ class CurrentWorkflowService:
                     "target_cycle_id": abandonment["continuation_cycle_id"],
                 },
             }
+            snapshot = replace(
+                snapshot,
+                abandonment_status="completed",
+                abandonment_required_command="start",
+                abandonment_required_start_kind="verification",
+                abandonment_continuation_ready=True,
+            )
             facts.update(
                 {
-                    "legal_actions": ["verify"],
+                    "legal_actions": legal_actions(snapshot),
                     "required_start_kind": "verification",
                     "target_operation_id": abandonment[
                         "continuation_operation_id"
@@ -440,16 +477,28 @@ class CurrentWorkflowService:
             stored.get("required_action") if isinstance(stored, dict) else None
         )
         if abandonment["status"] == "awaiting_successor_claim":
-            internal_action = (
-                "verify"
+            required_command = (
+                str(required_action.get("command"))
+                if isinstance(required_action, dict) and required_action.get("command")
+                else None
+            )
+            required_arguments = (
+                required_action.get("arguments")
                 if isinstance(required_action, dict)
-                and required_action.get("arguments", {}).get("kind")
-                == "verification"
-                else "start"
+                and isinstance(required_action.get("arguments"), dict)
+                else {}
             )
-            facts["legal_actions"] = (
-                [internal_action] if isinstance(required_action, dict) else []
+            snapshot = replace(
+                snapshot,
+                abandonment_status="awaiting_successor_claim",
+                abandonment_required_command=required_command,
+                abandonment_required_start_kind=(
+                    str(required_arguments.get("kind"))
+                    if required_arguments.get("kind") is not None
+                    else None
+                ),
             )
+            facts["legal_actions"] = legal_actions(snapshot)
             if isinstance(required_action, dict):
                 facts["required_action"] = required_action
                 arguments = required_action.get("arguments")
@@ -467,7 +516,10 @@ class CurrentWorkflowService:
             facts["connected_action_available"] = bool(facts["legal_actions"])
             return facts
 
-        facts["legal_actions"] = []
+        snapshot = replace(
+            snapshot, abandonment_status=str(abandonment["status"])
+        )
+        facts["legal_actions"] = legal_actions(snapshot)
         facts["connected_action_available"] = False
         if abandonment["status"] in {"started", "blocked_manual_reconciliation"}:
             spec = exact_action(
@@ -516,6 +568,77 @@ class CurrentWorkflowService:
     def assert_action(self, operation_id: str, action: str, *, schema=None) -> dict[str, object]:
         view = self.authoritative_view(operation_id, schema=schema)
         if action not in view["legal_actions"]:
+            proposal = view.get("semantic_proposal")
+            if isinstance(proposal, dict):
+                proposal_status = str(proposal.get("status") or "")
+                if action == "apply-proposal":
+                    block = proposal.get("block")
+                    if isinstance(block, dict):
+                        block_rule = block.get("rule")
+                        raise DishRuleError(
+                            str(block.get("code") or "CONFLICT"),
+                            str(block.get("message") or "semantic proposal is not currently applicable"),
+                            rule=None if block_rule is None else str(block_rule),
+                            retryable=block.get("retryable"),
+                            details=(
+                                block.get("details")
+                                if isinstance(block.get("details"), dict)
+                                else {}
+                            ),
+                            errors=(
+                                block.get("errors")
+                                if isinstance(block.get("errors"), list)
+                                else ()
+                            ),
+                        )
+                    if proposal_status == "pending":
+                        raise DishRuleError(
+                            "WRONG_STATE",
+                            "proposal is not approved and claimable",
+                            rule="semantic_proposal_not_claimable",
+                            details={"status": proposal_status},
+                        )
+                    if proposal_status == "claimed":
+                        raise DishRuleError(
+                            "CONFLICT",
+                            "approved proposal is already claimed by another run",
+                            rule="semantic_proposal_claimed",
+                            details={"claimed_run_id": proposal.get("claimed_run_id")},
+                        )
+                if proposal_status in {"pending", "approved", "claimed"}:
+                    proposal_actionable = "apply-proposal" in view["legal_actions"]
+                    if proposal_status == "pending":
+                        next_action = "review-inspect"
+                        instruction = (
+                            f"Marco must review proposal {proposal.get('proposal_id')}."
+                        )
+                    elif proposal_actionable:
+                        next_action = "apply-proposal"
+                        instruction = (
+                            "A fresh eligible run must apply proposal "
+                            f"{proposal.get('proposal_id')} exactly as stored."
+                        )
+                    else:
+                        next_action = "inspect"
+                        instruction = (
+                            "Inspect the proposal's authoritative block before attempting "
+                            "another workflow action."
+                        )
+                    details = {
+                        "proposal_id": proposal.get("proposal_id"),
+                        "proposal_status": proposal_status,
+                        "required_action": next_action,
+                        "instruction": instruction,
+                    }
+                    if not proposal_actionable and isinstance(proposal.get("block"), dict):
+                        details["proposal_block"] = proposal["block"]
+                    raise DishRuleError(
+                        "WRONG_STATE",
+                        "this task is parked on a durable semantic proposal",
+                        rule="semantic_proposal_application_required",
+                        retryable=False,
+                        details=details,
+                    )
             code = "WRONG_STATE"
             rule = "operation_action_not_allowed"
             message = f"{action} is not legal for the current operation state"
@@ -814,10 +937,7 @@ class CurrentWorkflowService:
         return self.mutate(operation_id, "reject", executor, schema=schema)
 
     def apply_proposal(self, operation_id: str, executor: Callable[[], T], *, schema=None):
-        self.operation(operation_id)
-        return self._execute_claimed(
-            operation_id, "apply-proposal", executor, schema=schema, assert_action=False
-        )
+        return self.mutate(operation_id, "apply-proposal", executor, schema=schema)
 
     def submit(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         return self.mutate(operation_id, "submit", executor, schema=schema)

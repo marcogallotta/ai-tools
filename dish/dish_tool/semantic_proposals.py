@@ -14,7 +14,13 @@ from .database import (
     utc_now,
 )
 from .governed_diff import canonical_diff, governed_changes, validate_semantic_proposal
-from .task_document import DocumentParseError, document_parse_error_payloads, parse_task_document
+from .task_document import (
+    DocumentParseError,
+    document_parse_error_payloads,
+    finding_payload,
+    parse_task_document,
+    validate_task_document,
+)
 from .errors import DishRuleError
 from .transactions import immediate_transaction
 
@@ -256,6 +262,123 @@ def semantic_proposal_drift_details(
         for path, (old, new) in canonical_diff(baseline_document, live_document).items()
     ]
     return details
+
+
+def semantic_proposal_action_facts(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    live_title: str,
+    live_notes: str,
+    current_cycle_id: str | None,
+    expected_schema_version: str,
+    schema=None,
+) -> dict[str, Any] | None:
+    """Return read-only facts used by the workflow legal-action authority.
+
+    The mutation path still repeats these checks after it owns the execution claim;
+    this projection exists so callers do not advertise ``apply-proposal`` from a
+    looser status-only test than the command itself enforces.
+    """
+
+    row = active_proposal_for_operation(conn, operation_id)
+    if row is None:
+        return None
+    facts: dict[str, Any] = {
+        "proposal_id": row["proposal_id"],
+        "status": row["status"],
+        "candidate_identity": row["candidate_identity"],
+        "baseline_identity": row["baseline_identity"],
+        "cycle_id": row["cycle_id"],
+        "claimed_agent": row["claimed_agent"],
+        "claimed_run_id": row["claimed_run_id"],
+        "actionable": False,
+    }
+    if row["status"] not in {"approved", "claimed"}:
+        return facts
+
+    if current_cycle_id is None:
+        facts["block"] = {
+            "code": "WRONG_STATE",
+            "message": "operation has no pending Verification cycle",
+            "rule": "verification_cycle_missing",
+            "details": {},
+        }
+        return facts
+    if str(current_cycle_id) != str(row["cycle_id"]):
+        facts["block"] = {
+            "code": "CONFLICT",
+            "message": "the proposal's Verification cycle is no longer current",
+            "rule": "semantic_proposal_cycle_stale",
+            "details": {
+                "proposal_cycle_id": row["cycle_id"],
+                "current_cycle_id": current_cycle_id,
+            },
+        }
+        return facts
+
+    live_identity = content_identity(live_title, live_notes).digest
+    live_matches_baseline = live_identity == row["baseline_identity"]
+    candidate_already_live = live_identity == row["candidate_identity"]
+    facts["candidate_already_live"] = candidate_already_live
+    if not live_matches_baseline and not candidate_already_live:
+        facts["block"] = {
+            "code": "CONFLICT",
+            "message": "the live task content changed after the proposal was created",
+            "rule": "semantic_proposal_stale",
+            "details": {
+                **semantic_proposal_drift_details(
+                    conn, row, live_title=live_title, live_notes=live_notes
+                ),
+                "live_matches_candidate": False,
+                "required_action": (
+                    "Inspect the exact title/notes diff before deciding whether fresh review is "
+                    "required. Due date, section, assignee, completion, and comments are not "
+                    "part of semantic proposal content identity."
+                ),
+            },
+        }
+        return facts
+
+    try:
+        if live_matches_baseline:
+            baseline_title, baseline_notes = live_title, live_notes
+        else:
+            baseline_title, baseline_notes = semantic_proposal_baseline_content(conn, row)
+        _, candidate_document = validate_semantic_proposal_integrity(
+            conn,
+            row,
+            baseline_title=baseline_title,
+            baseline_notes=baseline_notes,
+        )
+        check = validate_task_document(
+            candidate_document,
+            expected_schema_version=expected_schema_version,
+            schema=schema,
+        )
+        if not check.ok:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                (
+                    "approved candidate already live but failed deterministic validation"
+                    if candidate_already_live
+                    else "candidate failed deterministic validation"
+                ),
+                errors=[finding_payload(finding) for finding in check.findings],
+            )
+    except DishRuleError as exc:
+        facts["block"] = {
+            "code": exc.code,
+            "message": str(exc),
+            "rule": exc.rule,
+            "details": dict(exc.details),
+            "errors": [dict(item) for item in exc.errors],
+            "retryable": exc.retryable,
+        }
+        return facts
+
+    facts["actionable"] = True
+    return facts
 
 
 def proposal_changes(conn: sqlite3.Connection, proposal_id: str) -> tuple[dict[str, Any], ...]:

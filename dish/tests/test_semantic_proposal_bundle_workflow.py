@@ -77,6 +77,20 @@ def test_governed_large_correction_queues_one_bundle_and_fresh_run_applies_it(tm
     )
     assert approved["ok"]
     assert approved["data"]["proposal"]["status"] == "approved"
+    assert "agent_action" not in approved["data"]
+    reviewed = admin.execute("review-inspect", proposal_id=proposal_id)
+    assert reviewed["data"]["authoritative_view"]["legal_actions"] == ["apply-proposal"]
+    assert reviewed["data"]["agent_action"] == {
+        "command": "apply-proposal", "arguments": {"proposal_id": proposal_id}
+    }
+    authoritative = admin.execute("inspect", submission_id=operation_id)
+    assert authoritative["data"]["agent_actions_now"] == [{
+        "command": "apply-proposal", "arguments": {"proposal_id": proposal_id}
+    }]
+    assert authoritative["data"]["authoritative_view"]["legal_actions"] == ["apply-proposal"]
+    claimable = app.execute("proposals", agent="gpt")
+    assert claimable["allowed_actions"] == ["apply-proposal"]
+    assert [item["proposal_id"] for item in claimable["data"]["proposals"]] == [proposal_id]
     # Approval is authorization, not application.
     assert "Use whole scallion" not in backend.notes
     assert app.conn.execute(
@@ -267,6 +281,12 @@ def test_apply_reconciles_exact_approved_candidate_when_it_is_already_live(tmp_p
     backend.title = proposal["candidate_title"]
     backend.notes = proposal["candidate_notes"]
 
+    recoverable = admin.execute("inspect", submission_id=operation_id)
+    assert recoverable["data"]["authoritative_view"]["legal_actions"] == ["apply-proposal"]
+    assert recoverable["data"]["agent_actions_now"] == [{
+        "command": "apply-proposal", "arguments": {"proposal_id": proposal_id}
+    }]
+
     applied = app.execute(
         "apply-proposal", proposal_id=proposal_id, agent="gpt",
         model="gpt-5.6-sol", run_id="fresh-applicant",
@@ -333,6 +353,115 @@ def test_pending_or_approved_proposal_parks_original_verification_actions(tmp_pa
     )
     assert blocked["code"] == "WRONG_STATE"
     assert blocked["errors"][0]["rule"] == "semantic_proposal_application_required"
+
+
+def test_approved_proposal_is_not_advertised_after_exact_content_staleness(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    candidate = tmp_path / "proposal-stale-after-approval.txt"
+    candidate.write_text(
+        TASK.replace("Locks: Keep crisp", "Locks: Keep crisp | Use whole scallion")
+    )
+    queued = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large", reason="Linked governed correction",
+        file_path=str(candidate), run_id="proposal-author",
+    )
+    proposal_id = queued["data"]["proposal_id"]
+    admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
+    assert admin.execute(
+        "review-approve", proposal_id=proposal_id, reason="Marco approves exact bundle."
+    )["ok"]
+
+    backend.notes = backend.notes.replace(
+        "Purpose: Compare texture", "Purpose: Compare changed texture"
+    )
+
+    inspected = admin.execute("inspect", submission_id=operation_id)
+    view = inspected["data"]["authoritative_view"]
+    assert view["legal_actions"] == []
+    assert inspected["data"]["agent_actions_now"] == []
+    assert view["semantic_proposal"]["block"]["rule"] == "semantic_proposal_stale"
+    assert any(
+        change["path"] == "planning.Purpose"
+        for change in view["semantic_proposal"]["block"]["details"]["content_changes"]
+    )
+    reviewed = admin.execute("review-inspect", proposal_id=proposal_id)
+    assert "agent_action" not in reviewed["data"]
+    assert (
+        reviewed["data"]["authoritative_view"]["semantic_proposal"]["block"]["rule"]
+        == "semantic_proposal_stale"
+    )
+    cancelled = admin.execute(
+        "discard", submission_id=operation_id, reason="cancel stale proposal operation"
+    )
+    assert cancelled["code"] == "WRONG_STATE"
+    assert cancelled["errors"][0]["required_action"] == "inspect"
+    assert cancelled["errors"][0]["proposal_block"]["rule"] == "semantic_proposal_stale"
+
+    claimable = app.execute("proposals", agent="gpt")
+    assert claimable["allowed_actions"] == []
+    assert claimable["data"]["count"] == 0
+
+    parked = app.execute("submit", submission_id=operation_id)
+    assert parked["code"] == "WRONG_STATE"
+    assert parked["errors"][0]["rule"] == "semantic_proposal_application_required"
+    assert parked["errors"][0]["required_action"] == "inspect"
+    assert parked["errors"][0]["proposal_block"]["rule"] == "semantic_proposal_stale"
+
+    blocked = app.execute(
+        "apply-proposal", proposal_id=proposal_id, agent="gpt",
+        model="gpt-5.6-sol", run_id="fresh-applicant",
+    )
+    assert blocked["code"] == "CONFLICT"
+    assert blocked["errors"][0]["rule"] == "semantic_proposal_stale"
+    assert any(
+        change["path"] == "planning.Purpose"
+        for change in blocked["errors"][0]["content_changes"]
+    )
+
+
+def test_approved_proposal_requires_open_verification_cycle_everywhere(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    candidate = tmp_path / "proposal-cycle-missing.txt"
+    candidate.write_text(
+        TASK.replace("Locks: Keep crisp", "Locks: Keep crisp | Use whole scallion")
+    )
+    queued = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large", reason="Linked governed correction",
+        file_path=str(candidate), run_id="proposal-author",
+    )
+    proposal_id = queued["data"]["proposal_id"]
+    admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
+    assert admin.execute(
+        "review-approve", proposal_id=proposal_id, reason="Marco approves exact bundle."
+    )["ok"]
+
+    app.conn.execute(
+        "UPDATE verification_cycles SET completed_at='2026-08-07T00:00:00Z' "
+        "WHERE operation_id=? AND completed_at IS NULL",
+        (operation_id,),
+    )
+    app.conn.commit()
+
+    inspected = admin.execute("inspect", submission_id=operation_id)
+    view = inspected["data"]["authoritative_view"]
+    assert view["legal_actions"] == []
+    assert view["semantic_proposal"]["block"]["rule"] == "verification_cycle_missing"
+
+    claimable = app.execute("proposals", agent="gpt")
+    assert claimable["allowed_actions"] == []
+    assert claimable["data"]["count"] == 0
+
+    blocked = app.execute(
+        "apply-proposal", proposal_id=proposal_id, agent="gpt",
+        model="gpt-5.6-sol", run_id="fresh-applicant",
+    )
+    assert blocked["code"] == "WRONG_STATE"
+    assert blocked["errors"][0]["rule"] == "verification_cycle_missing"
+
 
 def test_rejected_proposal_creates_no_authorization_and_restarts_verification(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
@@ -452,6 +581,49 @@ def test_service_fresh_invocation_claims_approved_bundle_without_old_run_identit
     assert proposal["claimed_run_id"] == "fresh-applicant"
     assert proposal["claimed_run_id"] != proposal["proposer_run_id"]
     assert proposal["applied_identity"]
+
+
+def test_proposal_application_legality_matches_service_admin_and_execution(tmp_path):
+    import uuid
+
+    from dish_service.leases import ServicePrincipal
+
+    service, _backend, proposal_id, task_gid = _approved_service_proposal_runtime(tmp_path)
+    admin = service.execute_admin(
+        "review-inspect",
+        {"proposal_id": proposal_id},
+        principal=ServicePrincipal("marco", str(uuid.uuid4())),
+        request_id=str(uuid.uuid4()),
+    )
+    applicant = ServicePrincipal("applicant", str(uuid.uuid4()))
+    exposed = service.execute_agent(
+        "start",
+        {
+            "agent": "gpt",
+            "task_gid": task_gid,
+            "kind": "verification",
+            "independence_attestation": "independent",
+        },
+        principal=applicant,
+        request_id=str(uuid.uuid4()),
+    )
+
+    assert admin["data"]["authoritative_view"]["legal_actions"] == ["apply-proposal"]
+    assert exposed["data"]["authoritative_view"]["legal_actions"] == ["apply-proposal"]
+    assert exposed["allowed_actions"] == ["apply-proposal"]
+    assert exposed["data"]["agent_action"] == {
+        "command": "apply-proposal", "arguments": {"proposal_id": proposal_id}
+    }
+
+    applied = service.execute_agent(
+        "apply-proposal",
+        {"proposal_id": proposal_id, "agent": "gpt", "model": "gpt-5.6-sol"},
+        principal=applicant,
+        request_id=str(uuid.uuid4()),
+    )
+    assert applied["ok"] is True
+    assert applied["data"]["proposal"]["status"] == "applied"
+
 
 def test_post_write_application_failure_keeps_proposal_claimed_for_recovery(tmp_path, monkeypatch):
     import dish_tool.step8 as step8_module

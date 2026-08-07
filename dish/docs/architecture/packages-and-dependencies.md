@@ -76,7 +76,7 @@ Package boundaries preserve recovery ownership: transport failures become canoni
 
 ## Current debt and temporary compatibility
 
-There is an intentional import cycle at the package level: CLI modules in `dish_tool` use `dish_service.client`, while `dish_service` composes `dish_tool` applications. This is a client/runtime seam, not permission for arbitrary mutual dependencies. `dish_pg` imports selected legacy policy and identifier helpers to preserve semantics during migration; those bridges should shrink as target-native ownership becomes complete.
+There is an intentional import cycle at the package level: CLI modules in `dish_tool` use `dish_service.client`, while `dish_service` composes `dish_tool` applications. The connected-result projection in `dish_tool.commands` may also lazily read the accepted Stage A3 command metadata from `dish_service.command_spec`; it must not import service execution or transport authority. These are narrow client/metadata seams, not permission for arbitrary mutual dependencies. `dish_pg` imports selected legacy policy and identifier helpers to preserve semantics during migration; those bridges should shrink as target-native ownership becomes complete.
 
 ## Related documents
 

@@ -26,6 +26,7 @@ class ActionCommandSpec:
     principal: ActionPrincipal
     request_id_required: bool
     private_route: ActionRoute = "agent"
+    workflow_action: str | None = None
 
     @property
     def cli_exposed(self) -> bool:
@@ -38,12 +39,14 @@ def _action(
     *,
     request_id: bool,
     private_route: ActionRoute = "agent",
+    workflow_action: str | None = None,
 ) -> ActionCommandSpec:
     return ActionCommandSpec(
         name=name,
         principal=principal,
         request_id_required=request_id,
         private_route=private_route,
+        workflow_action=workflow_action,
     )
 
 
@@ -52,13 +55,13 @@ SECTIONS_COMMAND = _action("sections", "reader", request_id=False)
 SECTION_TASKS_COMMAND = _action("section-tasks", "reader", request_id=False)
 READ_COMMAND = _action("read", "reader", request_id=False)
 PROPOSALS_COMMAND = _action("proposals", "reader", request_id=False)
-APPLY_PROPOSAL_COMMAND = _action("apply-proposal", "agent", request_id=True)
+APPLY_PROPOSAL_COMMAND = _action("apply-proposal", "agent", request_id=True, workflow_action="apply-proposal")
 INSPECT_COMMAND = _action("inspect", "verification", request_id=True)
 START_COMMAND = _action("start", "agent", request_id=True)
-PREPARE_COMMAND = _action("prepare", "agent", request_id=True)
-APPROVE_COMMAND = _action("approve", "verification", request_id=True)
-REJECT_COMMAND = _action("reject", "verification", request_id=True)
-SUBMIT_COMMAND = _action("submit", "agent", request_id=True)
+PREPARE_COMMAND = _action("prepare", "agent", request_id=True, workflow_action="prepare")
+APPROVE_COMMAND = _action("approve", "verification", request_id=True, workflow_action="approve")
+REJECT_COMMAND = _action("reject", "verification", request_id=True, workflow_action="reject")
+SUBMIT_COMMAND = _action("submit", "agent", request_id=True, workflow_action="submit")
 RENEW_LEASE_COMMAND = _action(
     "renew-lease", "agent", request_id=True, private_route="lease"
 )

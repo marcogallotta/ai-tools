@@ -29,6 +29,12 @@ class WorkflowSnapshot:
     preconstruction_hold: bool = False
     destination_repair_required: bool = False
     dish_inspect_current: bool = False
+    semantic_proposal_status: str | None = None
+    semantic_proposal_actionable: bool = False
+    abandonment_status: str | None = None
+    abandonment_required_command: str | None = None
+    abandonment_required_start_kind: str | None = None
+    abandonment_continuation_ready: bool = False
 
 
 def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
@@ -39,7 +45,41 @@ def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
         snapshot.pending_steps
         or snapshot.unresolved_attempts
         or snapshot.migration_reconciliation_required
-        or not snapshot.identity_matches
+    ):
+        return []
+    if snapshot.semantic_proposal_status in {"pending", "approved", "claimed"}:
+        if snapshot.abandonment_status is not None:
+            return []
+        if (
+            snapshot.semantic_proposal_status in {"approved", "claimed"}
+            and snapshot.semantic_proposal_actionable
+        ):
+            return ["apply-proposal"]
+        return []
+    if snapshot.abandonment_status is not None:
+        if snapshot.abandonment_status == "completed":
+            if (
+                snapshot.abandonment_continuation_ready
+                and snapshot.abandonment_required_command == "start"
+            ):
+                return [
+                    "verify"
+                    if snapshot.abandonment_required_start_kind == "verification"
+                    else "start"
+                ]
+            return []
+        if (
+            snapshot.abandonment_status == "awaiting_successor_claim"
+            and snapshot.abandonment_required_command == "start"
+        ):
+            return [
+                "verify"
+                if snapshot.abandonment_required_start_kind == "verification"
+                else "start"
+            ]
+        return []
+    if (
+        not snapshot.identity_matches
         or not snapshot.placement_matches
         or not snapshot.held_baseline_matches
     ):

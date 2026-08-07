@@ -1502,7 +1502,7 @@ class DishService:
                 ORDER BY created_at,proposal_id LIMIT 1""",
             (operation_id,),
         ).fetchone()
-        if proposal is not None:
+        if proposal is not None and not isinstance(data.get("semantic_proposal"), dict):
             data["semantic_proposal"] = {
                 "proposal_id": proposal["proposal_id"],
                 "status": proposal["status"],
@@ -1564,21 +1564,34 @@ class DishService:
                     "required_admin_action": "review-inspect",
                 }
             elif proposal_status == "approved":
-                actions = ["apply-proposal"]
-                data["agent_action"] = {
-                    "command": "apply-proposal",
-                    "arguments": {"proposal_id": proposal_id},
-                }
-                access = {
-                    "state": "approved_semantic_proposal_available",
-                    "proposal_id": proposal_id,
-                }
+                if "apply-proposal" in actions:
+                    data["agent_action"] = {
+                        "command": "apply-proposal",
+                        "arguments": {"proposal_id": proposal_id},
+                    }
+                    access = {
+                        "state": "approved_semantic_proposal_available",
+                        "proposal_id": proposal_id,
+                    }
+                else:
+                    proposal_facts = data.get("semantic_proposal")
+                    block = (
+                        proposal_facts.get("block")
+                        if isinstance(proposal_facts, dict)
+                        and isinstance(proposal_facts.get("block"), dict)
+                        else {}
+                    )
+                    access = {
+                        "state": "approved_semantic_proposal_blocked",
+                        "rule": block.get("rule", "semantic_proposal_not_claimable"),
+                        "proposal_id": proposal_id,
+                    }
             elif proposal["claimed_run_id"] == principal.run_id:
-                actions = ["apply-proposal"]
-                data["agent_action"] = {
-                    "command": "apply-proposal",
-                    "arguments": {"proposal_id": proposal_id},
-                }
+                if "apply-proposal" in actions:
+                    data["agent_action"] = {
+                        "command": "apply-proposal",
+                        "arguments": {"proposal_id": proposal_id},
+                    }
                 access = {
                     "state": "semantic_proposal_claimed_by_run",
                     "proposal_id": proposal_id,
@@ -2410,6 +2423,28 @@ class DishService:
                     result["allowed_actions"] = []
                     result["retryable"] = False
         result_operation_id = state.operation_id or result.get("submission_id")
+        if (
+            not result.get("ok")
+            and result_operation_id
+            and any(
+                isinstance(error, dict)
+                and error.get("rule") == "semantic_proposal_application_required"
+                for error in result.get("errors", ())
+            )
+        ):
+            # A discovery-style command can be rejected because a proposal has
+            # become the only legal continuation. Project that continuation from
+            # the same workflow owner instead of reconstructing it from proposal
+            # status in the service layer.
+            view = expose_authoritative_view(
+                state.app.operation_service.authoritative_view(
+                    str(result_operation_id), schema=self._release(None).schema
+                )
+            )
+            result.setdefault("data", {})["authoritative_view"] = view
+            self._synchronize_exposed_actions(
+                result, list(view.get("legal_actions") or [])
+            )
         if result.get("ok") and result_operation_id and command in _MUTATING_AGENT_COMMANDS:
             result = self._finalize_successful_lease(
                 result=result,

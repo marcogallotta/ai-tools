@@ -101,19 +101,6 @@ def _principal_matches(definition: CommandDefinition, principal_class: str) -> b
     return False
 
 
-def _requires_current_action(command_name: str) -> bool:
-    return command_name in {
-        "prepare",
-        "approve",
-        "reject",
-        "submit",
-        "reopen",
-        "supply-evidence",
-        "record-human-decision",
-        "resolved",
-    }
-
-
 def plan_command(
     *,
     snapshot: AuthoritativeSnapshot,
@@ -172,10 +159,10 @@ def plan_command(
             audit_event_type="abandonment_fence_rejected",
             recovery_guidance={"abandonment_id": snapshot.open_abandonment_id},
         )
-    if _requires_current_action(intent.command_name):
+    if definition.workflow_action is not None:
         assert snapshot.workflow is not None
         allowed = tuple(legal_actions(snapshot.workflow))
-        if intent.command_name not in allowed:
+        if definition.workflow_action not in allowed:
             return CommandPlan(
                 definition=definition,
                 legal=False,

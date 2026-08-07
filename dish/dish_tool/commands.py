@@ -37,36 +37,24 @@ from .human_actions import PromptField, exact_action, relay_text, template_actio
 from .validation_scope import scope_for_command
 
 
-_AGENT_EXPOSED_ACTIONS = {
-    "approve", "create", "inspect", "prepare", "read", "reject",
-    "section-tasks", "sections", "start", "submit", "proposals", "apply-proposal",
-}
-_ADMIN_ONLY_ACTIONS = {
-    "record-human-decision", "resolved", "reconcile-abandonment", "reopen",
-    "repair-destination", "supply-evidence",
-}
-
-
 def _exposed_action_contract(
     actions: list[str] | tuple[str, ...],
 ) -> tuple[list[str], str | None, str | None]:
-    """Translate internal workflow actions to commands exposed to agents.
+    """Project internal workflow actions onto accepted connected command metadata."""
+    # Import lazily so dish_tool can still be imported while dish_service is
+    # constructing its application module.  The metadata is the accepted Stage
+    # A3 command/exposure owner; this module does not keep a second action list.
+    from dish_service.command_spec import ACTION_COMMAND_DEFINITIONS
 
-    Internal policy may require a Marco-admin continuation. Those commands must
-    never appear in an agent response's ``allowed_actions`` because the Action
-    and agent CLI cannot execute them. The exact private continuation remains
-    visible as a diagnostic.
-    """
+    from .admin_command_spec import ADMIN_COMMANDS
+
     required_start_kind = "verification" if "verify" in actions else None
     translated = ["start" if action == "verify" else action for action in actions]
+    exposed = [action for action in translated if action in ACTION_COMMAND_DEFINITIONS]
     required_admin_action = next(
-        (action for action in translated if action in _ADMIN_ONLY_ACTIONS),
+        (action for action in translated if action in ADMIN_COMMANDS),
         None,
     )
-    exposed = [
-        action for action in translated
-        if action in _AGENT_EXPOSED_ACTIONS
-    ]
     return exposed, required_start_kind, required_admin_action
 
 
@@ -104,6 +92,8 @@ def _exposed_result_contract(
     )
     if required_admin_action is not None:
         exposed_data["required_admin_action"] = required_admin_action
+    if "semantic_proposal" in view:
+        exposed_data["semantic_proposal"] = view["semantic_proposal"]
     if view.get("recovery_required"):
         for key in (
             "recovery_required",
@@ -1191,7 +1181,6 @@ def _step7_approve(
 ) -> dict[str, Any]:
     from .step7 import approve_live
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
-    _assert_no_parked_semantic_proposal(self.conn, operation_id)
     route_release = self._load_release(None)
     routed = self.operation_service.route(operation_id, command="approve", protocol_version=route_release.protocol_version)
     exists = routed.row
@@ -1236,36 +1225,8 @@ def _step7_approve(
 _step7_command_approve = _step7_approve
 
 
-def _assert_no_parked_semantic_proposal(conn: sqlite3.Connection, operation_id: str) -> None:
-    row = conn.execute(
-        """SELECT proposal_id,status FROM semantic_proposals
-             WHERE operation_id=? AND status IN ('pending','approved','claimed')
-             ORDER BY created_at DESC LIMIT 1""",
-        (operation_id,),
-    ).fetchone()
-    if row is None:
-        return
-    action = "review-inspect" if row["status"] == "pending" else "apply-proposal"
-    raise DishRuleError(
-        "WRONG_STATE",
-        "this task is parked on a durable semantic proposal",
-        rule="semantic_proposal_application_required",
-        retryable=False,
-        details={
-            "proposal_id": row["proposal_id"],
-            "proposal_status": row["status"],
-            "required_action": action,
-            "instruction": (
-                f"Marco must review proposal {row['proposal_id']}."
-                if row["status"] == "pending"
-                else f"A fresh eligible run must apply proposal {row['proposal_id']} exactly as stored."
-            ),
-        },
-    )
-
 def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, file_path: str | None = None, correction: str = "none", reviewed_identity: str | None = None, semantic_review_complete: bool = False, provenance_complete: bool = False, run_id: str | None = None) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
-    _assert_no_parked_semantic_proposal(self.conn, operation_id)
     exists = self.conn.execute("SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)).fetchone()
     if exists is not None and correction == "small" and not file_path:
         raise DishRuleError(
@@ -1300,7 +1261,6 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None =
 
 def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, blocker_metric: str | None = None, blocker_actual: float | None = None, blocker_limit: float | None = None, blocker_delta: float | None = None, blocker_unit: str | None = None, blocker_basis: str | None = None) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
-    _assert_no_parked_semantic_proposal(self.conn, operation_id)
     reason = validate_rejection_reason(reason)
     route_release = self._load_release(None)
     routed = self.operation_service.route(operation_id, command="reject", protocol_version=route_release.protocol_version)
@@ -1354,10 +1314,21 @@ def _step_semantic_proposals(
 ) -> dict[str, Any]:
     from .semantic_proposals import list_semantic_proposals
 
+    release = self._load_release("verification")
     rows = list_semantic_proposals(self.conn, statuses=("approved",))
     proposals = []
     for item in rows:
         row = dict(item)
+        view = self.operation_service.current.authoritative_view(
+            str(row["operation_id"]), schema=release.schema
+        )
+        proposal_facts = view.get("semantic_proposal")
+        if (
+            "apply-proposal" not in view.get("legal_actions", ())
+            or not isinstance(proposal_facts, Mapping)
+            or proposal_facts.get("proposal_id") != row["proposal_id"]
+        ):
+            continue
         row.pop("candidate_notes", None)
         row["agent_action"] = {
             "command": "apply-proposal",
@@ -1421,7 +1392,6 @@ def _step_apply_semantic_proposal(
 
 def _step9_submit(self, *, trace: CommandTrace, submission_id: str) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
-    _assert_no_parked_semantic_proposal(self.conn, operation_id)
     route_release = self._load_release(None)
     routed = self.operation_service.route(operation_id, command="submit", protocol_version=route_release.protocol_version)
     exists = routed.row

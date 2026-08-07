@@ -29,16 +29,16 @@ Agent callers use the private `/v1/commands/{command}` surface; GPT Action uses 
 
 ## Authority and data ownership
 
-`command_spec.py` owns typed Action command identity, principal class, request-ID policy, private route/CLI exposure, and argument schemas. `admin_command_spec.py` owns admin command identity, target kind, identifier field, lease/backend requirements, and supported transports. `results.py` owns canonical legacy result-field names and public required-field metadata. `http_routing.py` owns path recognition while reusing command identities from those descriptive sources. `DishApplication` and `DishAdminApplication` own command dispatch and result construction. `CurrentWorkflowService` owns whether a mutation is legal.
+`command_spec.py` owns typed Action command identity, principal class, request-ID policy, private route/CLI exposure, workflow-action identity for commands that map directly to one legal workflow action, and argument schemas. `admin_command_spec.py` owns admin command identity, target kind, identifier field, lease/backend requirements, and supported transports. `results.py` owns canonical legacy result-field names and public required-field metadata. `http_routing.py` owns path recognition while reusing command identities from those descriptive sources. `DishApplication` and `DishAdminApplication` own command dispatch and result construction. `CurrentWorkflowService` owns whether a mutation is legal.
 
 ## Invariants
 
 - Authenticate protected routes before loading/parsing the body.
 - Reject duplicate JSON keys recursively, ambiguous media types, unknown fields, and invalid command shapes before workflow execution.
-- Public Action exposure is an explicit allowlist; private/admin commands never become public by route coincidence.
+- Public Action exposure comes from `ACTION_COMMAND_DEFINITIONS`; private/admin commands never become public by route coincidence, and result rendering does not keep a second hard-coded exposed-action set.
 - Read-only commands do not accept request IDs. Every externally callable mutation that supports replay requires a non-nil canonical request UUID.
 - A result envelope does not reconstruct legal actions from a state string; it uses the exact authoritative view supplied by the workflow owner.
-- CLI, HTTP, and OpenAPI derive classifications from shared registries rather than parallel hard-coded sets.
+- CLI, HTTP, OpenAPI, legacy result projection, and PostgreSQL shared-command metadata derive command identity/exposure from the accepted command specs rather than parallel hard-coded sets.
 
 ## Process and transaction boundaries
 
@@ -104,7 +104,7 @@ Expected authenticated Action rule failures remain canonical Dish envelopes inst
 
 ## Current debt and temporary compatibility
 
-The current service and PostgreSQL target have separate command registries because they represent different authority stages. For commands shared with the current Action surface, `dish_pg/command_contract.py` reuses current command identity, principal, and request-replay policy while continuing to own target-only profile, task/operation requirements, retention, and exposure decisions. It explicitly marks backup commands retired and must not silently redefine current legacy transport behavior. The private frontend OpenAPI is a separate artifact and is not merged with the Action schema.
+The current service and PostgreSQL target have separate command registries because they represent different authority stages. For commands shared with the current Action surface, `dish_pg/command_contract.py` reuses current command identity, principal, request-replay policy, and direct workflow-action identity while continuing to own target-only profile, task/operation requirements, retention, and exposure decisions. The PostgreSQL planner gates those commands through `workflow_policy.legal_actions`; it does not maintain a separate set of commands that require workflow legality. It explicitly marks backup commands retired and must not silently redefine current legacy transport behavior. The private frontend OpenAPI is a separate artifact and is not merged with the Action schema.
 
 ## Related documents
 

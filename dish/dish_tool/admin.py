@@ -59,29 +59,55 @@ def _clean_required(value: Any, *, rule: str, label: str) -> str:
 
 
 def _assert_no_active_semantic_proposal(
-    conn: sqlite3.Connection, operation_id: str, *, requested_command: str
+    conn: sqlite3.Connection,
+    operation_id: str,
+    *,
+    requested_command: str,
+    authoritative_view: Mapping[str, Any] | None = None,
 ) -> None:
     proposal = active_proposal_for_operation(conn, operation_id)
     if proposal is None:
         return
-    next_command = (
-        "review-inspect" if proposal["status"] == "pending" else "apply-proposal"
+    proposal_status = str(proposal["status"])
+    view_proposal = (
+        authoritative_view.get("semantic_proposal")
+        if isinstance(authoritative_view, Mapping)
+        and isinstance(authoritative_view.get("semantic_proposal"), Mapping)
+        else {}
     )
+    legal_actions = (
+        tuple(authoritative_view.get("legal_actions") or ())
+        if isinstance(authoritative_view, Mapping)
+        else ()
+    )
+    if proposal_status == "pending":
+        next_command = "review-inspect"
+        instruction = f"Review proposal {proposal['proposal_id']} before other admin recovery."
+    elif "apply-proposal" in legal_actions:
+        next_command = "apply-proposal"
+        instruction = (
+            f"Have a fresh eligible agent apply proposal {proposal['proposal_id']} exactly as stored."
+        )
+    else:
+        next_command = "inspect"
+        instruction = (
+            f"Inspect proposal {proposal['proposal_id']} and its authoritative block before "
+            "attempting recovery or cancellation."
+        )
+    details: dict[str, Any] = {
+        "proposal_id": proposal["proposal_id"],
+        "proposal_status": proposal_status,
+        "requested_command": requested_command,
+        "required_action": next_command,
+        "instruction": instruction,
+    }
+    if isinstance(view_proposal.get("block"), Mapping):
+        details["proposal_block"] = dict(view_proposal["block"])
     raise DishRuleError(
         "WRONG_STATE",
         "the operation is parked on a durable semantic proposal",
         rule="semantic_proposal_application_required",
-        details={
-            "proposal_id": proposal["proposal_id"],
-            "proposal_status": proposal["status"],
-            "requested_command": requested_command,
-            "required_action": next_command,
-            "instruction": (
-                f"Review proposal {proposal['proposal_id']} before other admin recovery."
-                if proposal["status"] == "pending"
-                else f"Have a fresh agent apply proposal {proposal['proposal_id']} exactly as stored."
-            ),
-        },
+        details=details,
     )
 
 
@@ -395,14 +421,26 @@ def _command_inspect(
         actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
         problem = "This Verification attempt is safely parked while Marco reviews a semantic proposal."
     elif proposal is not None and proposal["status"] == "approved":
-        waiting_for = "a fresh agent to apply Marco's approved proposal"
-        problem = "Marco approved the exact proposal bundle; it is ready for a fresh agent to apply."
-        agent_actions_override = [
-            {
-                "command": "apply-proposal",
-                "arguments": {"proposal_id": proposal["proposal_id"]},
-            }
-        ]
+        if "apply-proposal" in view.get("legal_actions", ()):
+            waiting_for = "a fresh agent to apply Marco's approved proposal"
+            problem = "Marco approved the exact proposal bundle; it is ready for a fresh agent to apply."
+            agent_actions_override = [
+                {
+                    "command": "apply-proposal",
+                    "arguments": {"proposal_id": proposal["proposal_id"]},
+                }
+            ]
+        else:
+            administrative_blocker = True
+            waiting_for = "authoritative proposal reconciliation"
+            problem = (
+                "Marco approved the proposal, but its authoritative state no longer permits "
+                "application."
+            )
+            operator_instruction = (
+                "Inspect the authoritative proposal block; do not tell an agent to apply the "
+                "proposal unless Dish advertises apply-proposal again."
+            )
     elif proposal is not None and proposal["status"] == "claimed":
         administrative_blocker = True
         waiting_for = "the agent currently applying Marco's approved proposal"
@@ -630,11 +668,26 @@ def _attention_category(data: Mapping[str, Any]) -> tuple[str, str]:
     proposal = data.get("semantic_proposal")
     if isinstance(proposal, Mapping):
         proposal_status = str(proposal.get("status") or "")
+        proposal_view = view.get("semantic_proposal")
+        proposal_block = (
+            proposal_view.get("block")
+            if isinstance(proposal_view, Mapping)
+            and isinstance(proposal_view.get("block"), Mapping)
+            else None
+        )
         if proposal_status == "pending":
             return "needs_marco", "a semantic proposal is waiting for Marco's review"
         if proposal_status == "approved":
-            return "healthy", "an approved proposal is ready for a fresh agent to apply"
+            if "apply-proposal" in view.get("legal_actions", ()):
+                return "healthy", "an approved proposal is ready for a fresh agent to apply"
+            rule = None if proposal_block is None else proposal_block.get("rule")
+            return "unsafe", f"an approved proposal is blocked by {rule or 'authoritative state'}"
         if proposal_status == "claimed":
+            if proposal_block is not None:
+                return "unsafe", (
+                    "a claimed proposal is blocked by "
+                    f"{proposal_block.get('rule') or 'authoritative state'}"
+                )
             if data.get("service_lease") is not None:
                 return "healthy", "an agent is applying an approved proposal"
             return "unsafe", "an approved proposal claim exists without an active applying lease"
@@ -1441,6 +1494,22 @@ def _command_review_inspect(
     data: dict[str, Any] = {"review_item": item}
     if item["item_type"] == "semantic_proposal":
         data["proposal"] = item
+        if self.operation_service is not None and self.operation_service.current is not None:
+            from .commands import expose_authoritative_view
+
+            release = None if self.release_loader is None else self.release_loader()
+            schema = None if release is None else release.schema
+            view = expose_authoritative_view(
+                self.operation_service.current.authoritative_view(
+                    str(item["operation_id"]), schema=schema
+                )
+            )
+            data["authoritative_view"] = view
+            if "apply-proposal" in view.get("legal_actions", ()):
+                data["agent_action"] = {
+                    "command": "apply-proposal",
+                    "arguments": {"proposal_id": item["proposal_id"]},
+                }
     else:
         if item["item_type"] == "verification_hold":
             spec = exact_action(
@@ -1546,12 +1615,10 @@ def _command_review_approve(
                 "The complete linked change bundle is approved and detached from the proposer run."
             ),
             "next_step": (
-                f"An eligible agent may run `dish apply-proposal {clean_id}` to install the exact stored candidate."
+                "Approval does not apply the proposal. Refresh the authoritative operation "
+                f"state with `dish-admin inspect {approved['operation_id']}` and follow only "
+                "the action Dish advertises there."
             ),
-            "agent_action": {
-                "command": "apply-proposal",
-                "arguments": {"proposal_id": clean_id},
-            },
         },
     )
 
@@ -1622,7 +1689,14 @@ def _command_authorize_governed_change(self, *, trace: AdminTrace, submission_id
     if op is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     _assert_no_active_semantic_proposal(
-        self.conn, operation_id, requested_command="authorize-governed-change"
+        self.conn,
+        operation_id,
+        requested_command="authorize-governed-change",
+        authoritative_view=(
+            None
+            if self.operation_service is None or self.operation_service.current is None
+            else self.operation_service.current.authoritative_view(operation_id)
+        ),
     )
     if op["status"] != "open":
         raise DishRuleError(
@@ -1983,7 +2057,10 @@ def _command_abandon_operation(
     if operation is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     _assert_no_active_semantic_proposal(
-        self.conn, operation_id, requested_command="abandon-operation"
+        self.conn,
+        operation_id,
+        requested_command="abandon-operation",
+        authoritative_view=self.operation_service.current.authoritative_view(operation_id),
     )
     trace.submission_id = operation_id
     trace.task_gid = operation["task_gid"]
@@ -2158,7 +2235,14 @@ def _current_operation_discard(self, *, trace: AdminTrace, submission_id: str, r
     if op is None:
         raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
     _assert_no_active_semantic_proposal(
-        self.conn, operation_id, requested_command="discard"
+        self.conn,
+        operation_id,
+        requested_command="discard",
+        authoritative_view=(
+            None
+            if self.operation_service is None or self.operation_service.current is None
+            else self.operation_service.current.authoritative_view(operation_id)
+        ),
     )
     if op["status"] not in {"open", "uncertain"}:
         raise DishRuleError("WRONG_STATE", "operation is not cancellable", rule="operation_not_cancellable", details={"actual": op["status"]})

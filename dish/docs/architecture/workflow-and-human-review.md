@@ -26,16 +26,16 @@ Actors are planner/researcher, verifier, material editor, Marco/admin, and servi
 
 ## Authority and data ownership
 
-`CurrentWorkflowService._snapshot` reads the operation, exact live task, current section registry, cycle, actor facts, pending steps, unresolved attempts, and signoff/hold evidence. `workflow_policy.legal_actions` is the only owner of the current legal action list. Stage modules own the transition side effects. Admin continuations target exact recorded operations, cycles, holds, proposals, or abandonment attempts.
+`CurrentWorkflowService._snapshot` reads the operation, exact live task, current section registry, cycle, actor facts, pending steps, unresolved attempts, signoff/hold evidence, and active semantic-proposal facts. `CurrentWorkflowService.authoritative_view` adds exact abandonment-continuation facts, but `workflow_policy.legal_actions` is the only owner that turns those facts into the current legal action list. Stage modules own transition side effects. Admin continuations target exact recorded operations, cycles, holds, proposals, or abandonment attempts.
 
 ## Invariants
 
 - There is one open/active operation authority per task under the current schema constraints.
-- Legal actions are derived from one exact snapshot; no caller maintains a parallel state-to-action matrix.
+- Legal actions are derived by `workflow_policy.legal_actions` from one exact snapshot plus explicit proposal/abandonment facts; no caller maintains a parallel state-to-action matrix or status-only proposal action table.
 - Verification binds an independent verifier agent/run, exact reviewed identity, current cycle, inspection fact, and signoff lineage.
 - Approval is not submission. Submission requires the signed Ready identity and handles destination movement separately.
 - Evidence and Human Review holds preserve exact baselines and expose only the recorded continuation.
-- Proposal approval is separate from proposal application; application consumes the exact approved bundle and remains auditable.
+- Proposal approval is separate from proposal application; `semantic_proposal_action_facts` supplies exact cycle/content/integrity facts, `workflow_policy.legal_actions` decides whether `apply-proposal` is legal, and the mutation path repeats the P0 checks after claim before consuming the approved bundle.
 - Abandonment is not generic lease expiry. It is a route-preserving recovery workflow with exact successor/target evidence.
 - A prepared successor claim cannot be replaced with a nearby open operation or later cycle.
 
@@ -56,14 +56,14 @@ The action snapshot is built before mutation and revalidated inside command exec
 
 ## Failure, replay, recovery, and concurrency
 
-Content or placement drift removes legal actions. Pending steps and unresolved attempts also fail closed. A crash after a workflow commit but before service-request completion is recovered from the operation execution and stored workflow result, not by repeating the transition. Holds and abandonment attempts are task-level mutation fences. Concurrent same-task starts, preparations, claims, or discards are serialized by database constraints/locks; independent tasks remain independent.
+Ordinary workflow content or required-placement drift removes legal actions. Semantic-proposal applicability instead follows the P0 proposal content-identity and current-cycle rules: exact candidate-already-live recovery is valid, while section and other operational metadata do not invalidate the approved content bundle. Pending steps and unresolved attempts also fail closed. A crash after a workflow commit but before service-request completion is recovered from the operation execution and stored workflow result, not by repeating the transition. Holds and abandonment attempts are task-level mutation fences. Concurrent same-task starts, preparations, claims, or discards are serialized by database constraints/locks; independent tasks remain independent.
 
 ## Change routing
 
 - Change state/action predicates in `dish_tool/workflow_policy.py` and snapshot inputs in `dish_tool/application_service.py`.
 - Change one stage transition in its owning `stepN.py` module and shared domain helper.
 - Add a human continuation only with an exact persisted target and a typed admin command specification.
-- Add proposal behavior in `semantic_proposals.py` and review/application surfaces; do not turn approval into immediate hidden application.
+- Add proposal state facts in `semantic_proposals.py`, legal-action rules in `workflow_policy.py`, and mutation behavior in the review/application use cases; do not turn approval into immediate hidden application or advertise `apply-proposal` from status alone.
 - Do not implement workflow rules in HTTP, CLI rendering, Asana adapters, or persistence query helpers.
 
 ## Proving tests

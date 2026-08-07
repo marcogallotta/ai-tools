@@ -39,6 +39,7 @@ class CommandDefinition:
     retained: bool = True
     action_exposed: bool = False
     description: str = ""
+    workflow_action: str | None = None
 
 
 def _current_action(
@@ -58,6 +59,7 @@ def _current_action(
         task_required=task_required,
         operation_required=operation_required,
         action_exposed=True,
+        workflow_action=current.workflow_action,
     )
 
 
@@ -83,10 +85,10 @@ COMMAND_DEFINITIONS = {
         CommandDefinition("abandon-operation", "R", "admin", True, True, True),
         CommandDefinition("reconcile-abandonment", "R", "admin", True, True, True),
         CommandDefinition("reopen-planning", "L", "admin", True, True, False),
-        CommandDefinition("reopen", "R", "admin", True, True, True),
-        CommandDefinition("supply-evidence", "R", "admin", True, True, True),
-        CommandDefinition("record-human-decision", "R", "admin", True, True, True),
-        CommandDefinition("resolved", "R", "admin", True, True, True),
+        CommandDefinition("reopen", "R", "admin", True, True, True, workflow_action="reopen"),
+        CommandDefinition("supply-evidence", "R", "admin", True, True, True, workflow_action="supply-evidence"),
+        CommandDefinition("record-human-decision", "R", "admin", True, True, True, workflow_action="record-human-decision"),
+        CommandDefinition("resolved", "R", "admin", True, True, True, workflow_action="resolved"),
         CommandDefinition("authorize-governed-change", "L", "admin", True, True, False),
         CommandDefinition("recover-lease", "R", "admin", True, True, False),
         CommandDefinition("expire-lease", "L", "admin", True, True, False),
