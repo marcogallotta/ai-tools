@@ -197,7 +197,8 @@ Create confirmation keeps its exact external marker-search and one-match correla
 non-create effects, a local request digest or echoed intended identity is never sufficient.
 Confirmation requires a complete external reread or drift scan for the intended external task and an
 operation-specific observed fact: document identity for `update_task_document`, membership identity
-for `move_task`, or completion identity for `set_completion`. A proved external absence may classify
+for `move_task`, completion identity for `set_completion`, or the whole intended authoritative-state
+identity for `reproject`. A proved external absence may classify
 `not_applied`; a conflicting or unavailable observation remains `uncertain`. Shadow-origin rows stay
 structurally excluded from live claims, and unresolved earlier live events continue to block later
 per-task rollout sequence.

@@ -1,19 +1,240 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
 
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
-from dish_pg.transition import TransitionAuthorityError
+from dish_pg.transition import ProjectionService, TransitionAuthorityError
+from dish_pg.workflow import sha256_json
 from tests.support.postgresql.projection_attempts import (
     external_evidence,
     projection,
     seed_events,
 )
 from tests.support.postgresql.workflow import NOW, workflow_db
+
+
+def _reproject_attempt(workflow_db):
+    factory, ids, context, task_id = workflow_db
+    authoritative_snapshot = {
+        "notes": "canonical",
+        "section_id": str(context["section_id"]),
+        "completed": False,
+    }
+    with session_scope(factory) as session:
+        service = projection(session, ids)
+        service.activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="reproject adjudication",
+            created_at=NOW,
+            external_effects_enabled=True,
+        )
+        service.bind_imported_mappings(
+            generation_id=context["generation_id"],
+            bound_at=NOW,
+        )
+        mapping = session.scalar(
+            select(tx.TaskProjectionMapping).where(tx.TaskProjectionMapping.task_id == task_id)
+        )
+        drift = service.record_drift_and_reproject(
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            task_mapping_id=mapping.mapping_id,
+            drift_kind="document",
+            external_snapshot={"notes": "edited outside Dish"},
+            authoritative_snapshot=authoritative_snapshot,
+            evidence={"scan": "reproject-adjudication"},
+            detected_at=NOW,
+        )
+        claim = service.claim_next(
+            worker_id="reproject-worker",
+            now=NOW,
+            ttl=timedelta(minutes=1),
+        )
+        attempt = service.begin_attempt(
+            event_id=drift.reproject_event_id,
+            claim_token=claim.claim_token,
+            claim_revision=claim.claim_revision,
+            worker_id="reproject-worker",
+            request_identity="reproject-request",
+            request_payload={"notes": "canonical"},
+            intended_external_id="123456789",
+            started_at=NOW,
+        )
+    return factory, drift.reproject_event_id, claim, attempt, sha256_json(authoritative_snapshot)
+
+
+def _reproject_evidence(*, identity=None, external_id="123456789", absent=False, source="external_reread"):
+    fact = {
+        "source": source,
+        "operation": "reproject",
+        "observed_external_id": external_id,
+    }
+    if identity is not None:
+        fact["observed_reproject_state_identity"] = identity
+    if absent:
+        fact["observed_absent"] = True
+    return {"external_observation": fact}
+
+
+def _settle_reproject(
+    factory,
+    event_id,
+    claim,
+    attempt,
+    *,
+    observed_applied,
+    observed_identity,
+    evidence,
+):
+    with session_scope(factory) as session:
+        result = projection(session).record_observation_and_adjudicate(
+            attempt_id=attempt.attempt_id,
+            observation_kind="reread",
+            observed_applied=observed_applied,
+            observed_identity=observed_identity,
+            reread_complete=True,
+            evidence=evidence,
+            decided_by="automatic",
+            decision_reason="reproject external reread",
+            observed_at=NOW,
+            claim_token=claim.claim_token,
+            claim_revision=claim.claim_revision,
+            worker_id="reproject-worker",
+        )
+        return result.outcome, session.get(tx.ProjectionOutboxEvent, event_id).state
+
+
+def test_reproject_matching_independent_state_reread_confirms_applied(workflow_db) -> None:
+    factory, event_id, claim, attempt, state_identity = _reproject_attempt(workflow_db)
+    outcome, state = _settle_reproject(
+        factory,
+        event_id,
+        claim,
+        attempt,
+        observed_applied=True,
+        observed_identity=state_identity,
+        evidence=_reproject_evidence(identity=state_identity),
+    )
+    assert outcome == "confirmed"
+    assert state == "applied"
+
+
+def test_reproject_verified_external_absence_remains_not_applied(workflow_db) -> None:
+    factory, event_id, claim, attempt, _state_identity = _reproject_attempt(workflow_db)
+    outcome, state = _settle_reproject(
+        factory,
+        event_id,
+        claim,
+        attempt,
+        observed_applied=False,
+        observed_identity=None,
+        evidence=_reproject_evidence(absent=True),
+    )
+    assert outcome == "not_applied"
+    assert state == "pending"
+
+
+@pytest.mark.parametrize(
+    ("observed_identity", "evidence_factory"),
+    [
+        pytest.param("state", lambda state: {}, id="missing-evidence"),
+        pytest.param(
+            "state",
+            lambda state: {"external_observation": "malformed"},
+            id="malformed-evidence",
+        ),
+        pytest.param(
+            "state",
+            lambda state: _reproject_evidence(identity=state, external_id="987654321"),
+            id="mismatched-target",
+        ),
+        pytest.param(
+            "mismatch",
+            lambda state: _reproject_evidence(identity="mismatch"),
+            id="mismatched-state-identity",
+        ),
+        pytest.param(
+            "stale",
+            lambda state: _reproject_evidence(identity="stale"),
+            id="stale-state-identity",
+        ),
+        pytest.param(
+            "state",
+            lambda state: _reproject_evidence(identity=state, source="local_cache"),
+            id="non-independent-source",
+        ),
+    ],
+)
+def test_reproject_missing_mismatched_or_non_independent_evidence_stays_uncertain(
+    workflow_db, observed_identity, evidence_factory
+) -> None:
+    factory, event_id, claim, attempt, state_identity = _reproject_attempt(workflow_db)
+    actual_identity = state_identity if observed_identity == "state" else observed_identity
+    outcome, state = _settle_reproject(
+        factory,
+        event_id,
+        claim,
+        attempt,
+        observed_applied=True,
+        observed_identity=actual_identity,
+        evidence=evidence_factory(state_identity),
+    )
+    assert outcome == "uncertain"
+    assert state == "uncertain"
+
+
+@pytest.mark.parametrize(
+    ("event_type", "identity_field"),
+    [
+        ("update_task_document", "observed_document_identity"),
+        ("move_task", "observed_membership_identity"),
+        ("set_completion", "observed_completion_identity"),
+    ],
+)
+def test_existing_non_create_external_observation_identity_contract_is_unchanged(
+    event_type, identity_field
+) -> None:
+    identity = "existing-operation-identity"
+    assert ProjectionService._is_independent_external_observation(
+        event=SimpleNamespace(event_type=event_type, intent_payload={}),
+        attempt=SimpleNamespace(intended_external_id="123456789"),
+        observation_kind="reread",
+        observed_applied=True,
+        observed_identity=identity,
+        evidence={
+            "external_observation": {
+                "source": "external_reread",
+                "operation": event_type,
+                "observed_external_id": "123456789",
+                identity_field: identity,
+            }
+        },
+    )
+
+
+def test_existing_create_external_marker_contract_is_unchanged() -> None:
+    marker = "dish-correlation-marker"
+    assert ProjectionService._is_independent_external_observation(
+        event=SimpleNamespace(
+            event_type="create_task", intent_payload={"correlation_marker": marker}
+        ),
+        attempt=SimpleNamespace(intended_external_id=None),
+        observation_kind="marker_search",
+        observed_applied=True,
+        observed_identity=marker,
+        evidence={
+            "external_observation": {
+                "source": "external_marker_search",
+                "operation": "create_task",
+                "correlation_marker": marker,
+            }
+        },
+    )
 
 
 def _stale_settlement_scenario(

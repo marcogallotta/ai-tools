@@ -65,8 +65,9 @@ from .recovery_rehearsal import (
     iso,
     utc_now,
 )
+from .services import CoreAuthorityService, ImportedTaskSpec
 from .transition import ProjectionService
-from .workflow import WorkflowAuthorityService
+from .workflow import WorkflowAuthorityService, sha256_json
 
 ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY = ROOT.parent
@@ -727,6 +728,47 @@ def _run_module(
     )
 
 
+def _authoritative_projection_snapshot(
+    session,
+    *,
+    generation_id: uuid.UUID,
+    task_id: uuid.UUID,
+) -> dict[str, Any]:
+    head = session.get(core_models.TaskAuthorityHead, (generation_id, task_id))
+    if head is None:
+        raise ProductionShapedError("projection fixture task authority is missing")
+    activation = session.get(
+        core_models.ContentActivation, head.current_content_activation_id
+    )
+    if activation is None:
+        raise ProductionShapedError("projection fixture content activation is missing")
+    content = session.get(core_models.ContentVersion, activation.content_version_id)
+    placement = session.get(core_models.CurrentTaskSectionPlacement, (generation_id, task_id))
+    completion = session.get(core_models.CurrentTaskCompletion, (generation_id, task_id))
+    if content is None or placement is None or completion is None:
+        raise ProductionShapedError("projection fixture current state is incomplete")
+    project_ids = sorted(
+        str(value)
+        for value in session.scalars(
+            select(core_models.CurrentTaskProjectMembership.project_id).where(
+                core_models.CurrentTaskProjectMembership.generation_id == generation_id,
+                core_models.CurrentTaskProjectMembership.task_id == task_id,
+                core_models.CurrentTaskProjectMembership.is_member.is_(True),
+            )
+        )
+    )
+    return {
+        "task_id": str(task_id),
+        "title": content.title,
+        "body": content.body,
+        "identity_scheme": content.identity_scheme,
+        "content_identity": content.content_identity,
+        "project_ids": project_ids,
+        "section_id": None if placement.section_id is None else str(placement.section_id),
+        "completed": bool(completion.completed),
+    }
+
+
 def _prepare_projection(engine, generation_id: uuid.UUID, corpus: Path, local_store: Path) -> dict[str, Any]:
     with session_scope(session_factory(engine)) as session:
         service = ProjectionService(session)
@@ -741,6 +783,11 @@ def _prepare_projection(engine, generation_id: uuid.UUID, corpus: Path, local_st
         )
         first = json.loads(next(line for line in corpus.read_text(encoding="utf-8").splitlines() if line.strip()))
         task_id = uuid.UUID(first["task_id"])
+        authoritative_snapshot = _authoritative_projection_snapshot(
+            session,
+            generation_id=generation_id,
+            task_id=task_id,
+        )
         event = service._record_event(
             generation_id=generation_id,
             execution_id=None,
@@ -749,6 +796,7 @@ def _prepare_projection(engine, generation_id: uuid.UUID, corpus: Path, local_st
             payload={
                 "reason": "section4_local_projection",
                 "local_store_path": str(local_store),
+                "authoritative_snapshot": authoritative_snapshot,
             },
             source_route="service",
             origin="live",
@@ -883,17 +931,84 @@ def _seed_projection_event(
     reason: str,
 ) -> uuid.UUID:
     with session_scope(session_factory(engine)) as session:
+        authoritative_snapshot = _authoritative_projection_snapshot(
+            session,
+            generation_id=generation_id,
+            task_id=task_id,
+        )
         event = ProjectionService(session)._record_event(
             generation_id=generation_id,
             execution_id=None,
             task_id=task_id,
             event_type="reproject",
-            payload={"reason": reason, "local_store_path": str(local_store)},
+            payload={
+                "reason": reason,
+                "local_store_path": str(local_store),
+                "authoritative_snapshot": authoritative_snapshot,
+            },
             source_route="service",
             origin="live",
             created_at=utc_now(),
         )
         return event.projection_event_id
+
+
+def _import_projection_fault_task(
+    engine,
+    *,
+    generation_id: uuid.UUID,
+    import_run_id: uuid.UUID,
+    contract_binding_id: uuid.UUID,
+    project_id: uuid.UUID,
+    section_id: uuid.UUID,
+    scenario: str,
+) -> uuid.UUID:
+    task_id = uuid.uuid5(uuid.NAMESPACE_URL, f"dish-section4-projection-fault:{scenario}")
+    alias_suffix = int.from_bytes(hashlib.sha256(scenario.encode("utf-8")).digest()[:6], "big")
+    asana_gid = str(8_000_000_000_000_000 + alias_suffix)
+    title = f"Sanitized Section 4 projection fault {scenario}"
+    body = f"Isolated local-only projection fault fixture for {scenario}."
+    content_identity = sha256_json(
+        {
+            "scenario": scenario,
+            "title": title,
+            "body": body,
+            "section_id": str(section_id),
+        }
+    )
+    with session_scope(session_factory(engine)) as session:
+        CoreAuthorityService(session).import_task_document(
+            generation_id=generation_id,
+            import_run_id=import_run_id,
+            contract_binding_id=contract_binding_id,
+            spec=ImportedTaskSpec(
+                task_id=task_id,
+                asana_task_gid=asana_gid,
+                title=title,
+                body=body,
+                identity_scheme="section4-fault-v1",
+                content_identity=content_identity,
+                project_ids=(project_id,),
+                section_id=section_id,
+                completed=False,
+                observed_at=utc_now(),
+            ),
+        )
+        ProjectionService(session).bind_imported_mappings(
+            generation_id=generation_id,
+            bound_at=utc_now(),
+        )
+        task = session.get(core_models.DishTask, task_id)
+        mapping = session.scalar(
+            select(projection_models.TaskProjectionMapping).where(
+                projection_models.TaskProjectionMapping.generation_id == generation_id,
+                projection_models.TaskProjectionMapping.task_id == task_id,
+                projection_models.TaskProjectionMapping.state == "active",
+            )
+        )
+        if task is None or task.creation_route != "import" or mapping is None:
+            raise ProductionShapedError("projection fault task import provenance is incomplete")
+    return task_id
 
 
 def _projection_snapshot(engine, event_id: uuid.UUID) -> dict[str, Any]:
@@ -2145,12 +2260,33 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         phases.classified("representative_commands", representative_phase)
 
         def fault_phase() -> tuple[str, str, Mapping[str, Any]]:
+            generation_id = uuid.UUID(phase_context["bootstrap"]["generation_id"])
+            import_run_id = uuid.UUID(phase_context["bootstrap"]["import_run_id"])
+            binding_id = uuid.UUID(phase_context["bootstrap"]["binding_id"])
+            process_loss_task_id = _import_projection_fault_task(
+                engine,
+                generation_id=generation_id,
+                import_run_id=import_run_id,
+                contract_binding_id=binding_id,
+                project_id=args.project_id,
+                section_id=args.section_id,
+                scenario="process-loss",
+            )
+            database_disconnect_task_id = _import_projection_fault_task(
+                engine,
+                generation_id=generation_id,
+                import_run_id=import_run_id,
+                contract_binding_id=binding_id,
+                project_id=args.project_id,
+                section_id=args.section_id,
+                scenario="database-disconnect",
+            )
             worker_scenarios = {
                 "projection_worker_loss_and_restart": _projection_process_loss_scenario(
                     engine=engine,
                     primary=primary,
-                    generation_id=uuid.UUID(phase_context["bootstrap"]["generation_id"]),
-                    task_id=phase_context["task_uuid"],
+                    generation_id=generation_id,
+                    task_id=process_loss_task_id,
                     evidence_dir=evidence_dir,
                     runner=runner,
                     children=worker_children,
@@ -2158,8 +2294,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 "projection_worker_postgresql_disconnect": _projection_database_disconnect_scenario(
                     engine=engine,
                     primary=primary,
-                    generation_id=uuid.UUID(phase_context["bootstrap"]["generation_id"]),
-                    task_id=phase_context["task_uuid"],
+                    generation_id=generation_id,
+                    task_id=database_disconnect_task_id,
                     evidence_dir=evidence_dir,
                     runner=runner,
                     children=worker_children,
@@ -2185,6 +2321,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     expected_items=int(corpus_manifest["record_count"]),
                 ),
             }
+            if (
+                process_loss_task_id == database_disconnect_task_id
+                or process_loss_task_id == phase_context["task_uuid"]
+                or database_disconnect_task_id == phase_context["task_uuid"]
+            ):
+                raise ProductionShapedError(
+                    "projection fault scenarios did not receive isolated tasks"
+                )
             if runtime is None:
                 return (
                     "blocked",
@@ -2206,6 +2350,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                             "command": "blocked_runtime_unavailable",
                             "projection": "passed",
                             "reconciliation": "passed",
+                        },
+                        "projection_fault_task_ids": {
+                            "process_loss": str(process_loss_task_id),
+                            "database_disconnect": str(database_disconnect_task_id),
                         },
                     },
                 )
@@ -2230,6 +2378,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                         "command": "passed",
                         "projection": "passed",
                         "reconciliation": "passed",
+                    },
+                    "projection_fault_task_ids": {
+                        "process_loss": str(process_loss_task_id),
+                        "database_disconnect": str(database_disconnect_task_id),
                     },
                     "synchronization": "explicit_unix_socket_barriers_no_fault_sleeps",
                 },

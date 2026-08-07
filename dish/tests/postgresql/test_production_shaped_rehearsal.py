@@ -6,10 +6,15 @@ import json
 import subprocess
 import sys
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from sqlalchemy import func, select
 
+from dish_pg import models as core_models
+from dish_pg import stage5_models as projection_models
+from dish_pg.database import session_scope
 from dish_pg.production_shaped_rehearsal import (
     MANIFEST_SCHEMA,
     PHASES,
@@ -23,6 +28,7 @@ from dish_pg.production_shaped_rehearsal import (
     _cleanup_owned_resources,
     _cluster_cleanup_evidence,
     _deployment_configuration_identity,
+    _import_projection_fault_task,
     _load_corpus_manifest,
     _report_hash,
     _validate_manifest_bindings,
@@ -36,6 +42,7 @@ from dish_pg.production_shaped_rehearsal import (
 from dish_pg.postgres_service import _section4_control_point
 from dish_pg.production_shaped_runtime import BarrierServer, ServiceRuntimeClient, reach_barrier
 from dish_pg.production_shaped_support import (
+    LocalProjectionAdapter,
     _atomic_json as support_atomic_json,
     _owned_evidence_path,
     corpus_identity,
@@ -43,6 +50,9 @@ from dish_pg.production_shaped_support import (
     parse_corpus_identity,
 )
 from dish_pg.recovery_rehearsal import RehearsalBlocked, Runner
+from dish_pg.transition import ProjectionClaim, ProjectionService
+from dish_pg.workflow import sha256_json
+from tests.support.postgresql.workflow import NOW, workflow_db
 
 
 def _record(tmp_path: Path) -> dict[str, object]:
@@ -115,6 +125,159 @@ def test_local_projection_output_requires_owned_evidence_and_mode_0600(tmp_path)
     assert output.stat().st_mode & 0o777 == 0o600
     with pytest.raises(ValueError, match="not beneath owned"):
         _owned_evidence_path(tmp_path / "outside.json")
+
+
+def _local_projection_claim(tmp_path: Path) -> tuple[ProjectionClaim, Path, dict[str, object]]:
+    evidence = tmp_path / "evidence"
+    evidence.mkdir()
+    (evidence / ".dish-section4-evidence").write_text(
+        json.dumps({"schema": REPORT_SCHEMA}) + "\n", encoding="utf-8"
+    )
+    output = evidence / "projection.json"
+    projected_state: dict[str, object] = {
+        "task_id": "77777777-7777-4777-8777-777777777777",
+        "title": "Canonical projected state",
+        "body": "Exact local-only external state.",
+        "project_ids": ["1ae6e7ba-31e3-5dc5-9565-4ea37b49ac97"],
+        "section_id": "8b5bfb31-b986-5116-a207-569a5ba95907",
+        "completed": False,
+    }
+    claim = ProjectionClaim(
+        event_id=uuid.uuid4(),
+        claim_token=uuid.uuid4(),
+        claim_revision=2,
+        claim_expires_at=datetime.now(timezone.utc) + timedelta(minutes=2),
+        task_id=uuid.UUID(str(projected_state["task_id"])),
+        aggregate_sequence=1,
+        event_type="reproject",
+        payload={
+            "local_store_path": str(output),
+            "authoritative_snapshot": projected_state,
+        },
+        idempotency_key="a" * 64,
+    )
+    return claim, output, projected_state
+
+
+def test_local_projection_adapter_emits_reproject_external_observation_and_reuses_it_for_recovery(
+    tmp_path,
+):
+    claim, output, projected_state = _local_projection_claim(tmp_path)
+    adapter = LocalProjectionAdapter()
+    attempt = adapter.prepare(claim)
+    observation = adapter.attempt_and_observe(claim, attempt)
+    expected_identity = sha256_json(projected_state)
+    fact = observation.evidence["external_observation"]
+    projected = json.loads(output.read_text(encoding="utf-8"))
+    assert projected["event_type"] == claim.event_type
+    assert projected["projected_state"] == projected_state
+    assert observation.observed_applied is True
+    assert observation.observed_identity == expected_identity
+    assert fact == {
+        "source": "external_reread",
+        "operation": "reproject",
+        "observed_external_id": f"local-task:{claim.task_id}",
+        "observed_reproject_state_identity": expected_identity,
+    }
+
+    recovery = adapter.observe_recovery(claim, attempt)
+    assert recovery.observed_applied is True
+    assert recovery.observed_identity == expected_identity
+    assert recovery.evidence["external_observation"] == fact
+
+
+def test_local_projection_adapter_missing_store_proves_external_absence(tmp_path):
+    claim, _output, _projected_state = _local_projection_claim(tmp_path)
+    observation = LocalProjectionAdapter().observe_recovery(
+        claim, LocalProjectionAdapter().prepare(claim)
+    )
+    assert observation.observed_applied is False
+    assert observation.observed_identity is None
+    assert observation.reread_complete is True
+    assert observation.evidence["external_observation"] == {
+        "source": "external_reread",
+        "operation": "reproject",
+        "observed_external_id": f"local-task:{claim.task_id}",
+        "observed_absent": True,
+    }
+
+
+def test_local_projection_adapter_malformed_reread_stays_uncertain(tmp_path):
+    claim, output, _projected_state = _local_projection_claim(tmp_path)
+    adapter = LocalProjectionAdapter()
+    attempt = adapter.prepare(claim)
+    output.write_text("{not-json", encoding="utf-8")
+    observation = adapter.observe_recovery(claim, attempt)
+    assert observation.observed_applied is None
+    assert observation.observed_identity is None
+    assert observation.reread_complete is False
+    assert observation.evidence["external_observation"]["operation"] == claim.event_type
+
+
+def test_projection_fault_tasks_use_distinct_import_provenance(workflow_db):
+    factory, _ids, context, reconciliation_task_id = workflow_db
+    with session_scope(factory) as session:
+        ProjectionService(session).activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="Section 4 fault task isolation",
+            created_at=NOW,
+            external_effects_enabled=True,
+        )
+    engine = factory.kw["bind"]
+    process_task_id = _import_projection_fault_task(
+        engine,
+        generation_id=context["generation_id"],
+        import_run_id=context["import_run_id"],
+        contract_binding_id=context["binding_id"],
+        project_id=context["project_id"],
+        section_id=context["section_id"],
+        scenario="process-loss",
+    )
+    disconnect_task_id = _import_projection_fault_task(
+        engine,
+        generation_id=context["generation_id"],
+        import_run_id=context["import_run_id"],
+        contract_binding_id=context["binding_id"],
+        project_id=context["project_id"],
+        section_id=context["section_id"],
+        scenario="database-disconnect",
+    )
+    assert len({reconciliation_task_id, process_task_id, disconnect_task_id}) == 3
+    with session_scope(factory) as session:
+        tasks = [
+            session.get(core_models.DishTask, value)
+            for value in (process_task_id, disconnect_task_id)
+        ]
+        assert all(task.creation_route == "import" for task in tasks)
+        assert all(task.import_run_id == context["import_run_id"] for task in tasks)
+        mapping_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(projection_models.TaskProjectionMapping)
+                .where(
+                    projection_models.TaskProjectionMapping.task_id.in_(
+                        (process_task_id, disconnect_task_id)
+                    ),
+                    projection_models.TaskProjectionMapping.state == "active",
+                )
+            )
+            or 0
+        )
+        prior_event_count = int(
+            session.scalar(
+                select(func.count())
+                .select_from(projection_models.ProjectionOutboxEvent)
+                .where(
+                    projection_models.ProjectionOutboxEvent.task_id.in_(
+                        (process_task_id, disconnect_task_id)
+                    )
+                )
+            )
+            or 0
+        )
+        assert mapping_count == 2
+        assert prior_event_count == 0
+
 
 def test_corpus_manifest_binds_sanitized_corpus(tmp_path):
     corpus, manifest, expected = _corpus_and_manifest(tmp_path)

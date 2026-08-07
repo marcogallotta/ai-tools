@@ -24,6 +24,7 @@ from .production_shaped_runtime import reach_barrier
 from .projection_worker import ExternalAttempt, ExternalObservation
 from .reconciliation_worker import ExternalCorpusItem, ReconciliationRecord
 from .transition import ProjectionClaim
+from .workflow import sha256_json
 
 CORPUS_PREFIX = "dish-sanitized-ndjson-v1|"
 EVIDENCE_MARKER = ".dish-section4-evidence"
@@ -224,16 +225,19 @@ class LocalProjectionAdapter:
 
     def prepare(self, claim: ProjectionClaim) -> ExternalAttempt:
         store = _owned_evidence_path(claim.payload["local_store_path"])
+        request_payload: dict[str, Any] = {
+            "store_path": str(store),
+            "task_id": str(claim.task_id),
+            "event_id": str(claim.event_id),
+            "event_type": claim.event_type,
+            "intent_sha256": sha256_json(dict(claim.payload)),
+        }
+        authoritative_snapshot = claim.payload.get("authoritative_snapshot")
+        if claim.event_type == "reproject" and isinstance(authoritative_snapshot, Mapping):
+            request_payload["projected_state"] = dict(authoritative_snapshot)
         return ExternalAttempt(
             request_identity=f"section4-local:{claim.idempotency_key}",
-            request_payload={
-                "store_path": str(store),
-                "task_id": str(claim.task_id),
-                "event_id": str(claim.event_id),
-                "intent_sha256": hashlib.sha256(
-                    json.dumps(dict(claim.payload), sort_keys=True, separators=(",", ":")).encode()
-                ).hexdigest(),
-            },
+            request_payload=request_payload,
             intended_external_id=f"local-task:{claim.task_id}",
         )
 
@@ -247,16 +251,17 @@ class LocalProjectionAdapter:
                 {"event_id": str(claim.event_id), "request_identity": attempt.request_identity},
             )
         store = _owned_evidence_path(attempt.request_payload["store_path"])
-        _atomic_json(
-            store,
-            {
-                "schema": "dish-section4-local-projection-v1",
-                "request_identity": attempt.request_identity,
-                "task_id": str(claim.task_id),
-                "event_id": str(claim.event_id),
-                "intent_sha256": attempt.request_payload["intent_sha256"],
-            },
-        )
+        projected: dict[str, Any] = {
+            "schema": "dish-section4-local-projection-v1",
+            "request_identity": attempt.request_identity,
+            "task_id": str(claim.task_id),
+            "event_id": str(claim.event_id),
+            "event_type": claim.event_type,
+            "intent_sha256": attempt.request_payload["intent_sha256"],
+        }
+        if "projected_state" in attempt.request_payload:
+            projected["projected_state"] = attempt.request_payload["projected_state"]
+        _atomic_json(store, projected)
         with _effect_ledger() as ledger:
             if ledger is not None:
                 ledger["dispatch_calls"] = int(ledger.get("dispatch_calls", 0)) + 1
@@ -270,34 +275,87 @@ class LocalProjectionAdapter:
                 "projection_after_effect_before_observation",
                 {"event_id": str(claim.event_id), "request_identity": attempt.request_identity},
             )
-        return self._observe(attempt)
+        return self._observe(claim, attempt)
 
     def observe_recovery(
         self, claim: ProjectionClaim, attempt: ExternalAttempt
     ) -> ExternalObservation:
-        del claim
         with _effect_ledger() as ledger:
             if ledger is not None:
                 ledger["recovery_observations"] = int(
                     ledger.get("recovery_observations", 0)
                 ) + 1
-        return self._observe(attempt)
+        return self._observe(claim, attempt)
 
     @staticmethod
-    def _observe(attempt: ExternalAttempt) -> ExternalObservation:
+    def _observe(claim: ProjectionClaim, attempt: ExternalAttempt) -> ExternalObservation:
         store = _owned_evidence_path(attempt.request_payload["store_path"])
-        applied = store.is_file()
         evidence: dict[str, Any] = {
             "schema": "dish-section4-local-projection-observation-v1",
             "store_path": str(store),
             "external_io": False,
         }
-        if applied:
-            evidence["store_sha256"] = sha256_file(store)
+        fact: dict[str, Any] = {
+            "source": "external_reread",
+            "operation": claim.event_type,
+        }
+        evidence["external_observation"] = fact
+        if not store.is_file():
+            fact["observed_external_id"] = attempt.intended_external_id
+            fact["observed_absent"] = True
+            return ExternalObservation(
+                observed_applied=False,
+                observed_identity=None,
+                reread_complete=True,
+                evidence=evidence,
+                decision_reason="local projection store reread proves absence",
+            )
+        try:
+            observed = json.loads(store.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            fact["reason"] = f"malformed local projection observation: {type(exc).__name__}"
+            return ExternalObservation(
+                observed_applied=None,
+                observed_identity=None,
+                reread_complete=False,
+                evidence=evidence,
+                decision_reason="local projection store reread was not usable",
+            )
+        evidence["store_sha256"] = sha256_file(store)
+        if not isinstance(observed, Mapping):
+            fact["reason"] = "local projection observation is not an object"
+            return ExternalObservation(
+                observed_applied=None,
+                observed_identity=None,
+                reread_complete=False,
+                evidence=evidence,
+                decision_reason="local projection store reread was not usable",
+            )
+        observed_task_id = str(observed.get("task_id") or "").strip()
+        if observed_task_id:
+            fact["observed_external_id"] = f"local-task:{observed_task_id}"
+        if (
+            observed.get("schema") != "dish-section4-local-projection-v1"
+            or observed.get("event_type") != claim.event_type
+        ):
+            fact["reason"] = "local projection observation schema or operation mismatch"
+            return ExternalObservation(
+                observed_applied=None,
+                observed_identity=None,
+                reread_complete=True,
+                evidence=evidence,
+                decision_reason="local projection store reread did not prove the intended operation",
+            )
+        observed_identity = None
+        if claim.event_type == "reproject":
+            projected_state = observed.get("projected_state")
+            if isinstance(projected_state, Mapping):
+                observed_identity = sha256_json(dict(projected_state))
+                fact["observed_reproject_state_identity"] = observed_identity
         return ExternalObservation(
-            observed_applied=applied,
-            observed_identity=attempt.intended_external_id if applied else None,
+            observed_applied=True if observed_identity is not None else None,
+            observed_identity=observed_identity,
             reread_complete=True,
             evidence=evidence,
-            decision_reason="local projection store reread",
+            decision_reason="local projection store independent state reread",
         )

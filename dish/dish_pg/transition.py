@@ -1538,6 +1538,13 @@ class ProjectionService:
         self.session.flush()
 
     @staticmethod
+    def _reproject_state_identity(event: tx.ProjectionOutboxEvent) -> str | None:
+        authoritative_snapshot = event.intent_payload.get("authoritative_snapshot")
+        if not isinstance(authoritative_snapshot, Mapping):
+            return None
+        return sha256_json(dict(authoritative_snapshot))
+
+    @staticmethod
     def _is_independent_external_observation(
         *,
         event: tx.ProjectionOutboxEvent,
@@ -1574,6 +1581,13 @@ class ProjectionService:
             return fact.get("observed_absent") is True
         if observed_applied is not True or not str(observed_identity or "").strip():
             return False
+        if event.event_type == "reproject":
+            intended_state_identity = ProjectionService._reproject_state_identity(event)
+            return (
+                intended_state_identity is not None
+                and observed_identity == intended_state_identity
+                and fact.get("observed_reproject_state_identity") == intended_state_identity
+            )
         identity_field = {
             "update_task_document": "observed_document_identity",
             "move_task": "observed_membership_identity",
@@ -1892,9 +1906,12 @@ class ProjectionService:
             observed_identity=observed_identity,
             evidence=evidence_payload,
         )
-        intended_identity = (
-            event.idempotency_key if event.event_type == "create_task" else attempt.request_sha256
-        )
+        if event.event_type == "create_task":
+            intended_identity = event.idempotency_key
+        elif event.event_type == "reproject":
+            intended_identity = self._reproject_state_identity(event) or attempt.request_sha256
+        else:
+            intended_identity = attempt.request_sha256
         observation_sequence = int(
             self.session.scalar(
                 select(func.coalesce(func.max(tx.ProjectionObservation.observation_sequence), 0)).where(
