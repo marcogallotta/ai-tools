@@ -103,7 +103,7 @@ Implementation re-baselines the live governed domain that exists at that time. C
 
 ### 3.10 Compatibility policy
 
-Backward compatibility with the current command names, request envelopes, response shapes, and GPT Action schema is not required. The service contract, OpenAPI/Action schema, agent instructions, examples, and protocol identity must change coherently at the authority switch.
+Backward compatibility with the current command names, input semantics, authorization behavior, and general result envelope is a fundamental requirement, including the deployed GPT Action schema — GPT Actions remain a supported surface at cutover. Preserve them unless this design explicitly changes them. The one approved, explicit exception is the `create` response contract migration (see `postgresql-cutover.md` §4.1): it returns the canonical Dish identity (`dish_id`) and, once known, `asana_task_gid`, never a Dish UUID in the legacy `task_gid` field. That change — and any other explicitly approved change — still requires the deployed GPT Action schema, agent instructions, client code, and any scripts consuming the changed surface to be updated coherently before general PostgreSQL admission opens.
 
 ### 3.11 Evidence-based rollout duration
 
