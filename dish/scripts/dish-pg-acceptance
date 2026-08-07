@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import ast
 import hashlib
 import json
 import os
@@ -18,6 +17,10 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE_PATH = ROOT / "docs/database-backend-stage-a-baseline.json"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from dish_pg.release import ALEMBIC_HEAD  # noqa: E402
 EXCLUDED_PARTS = {
     ".git",
     ".venv",
@@ -50,7 +53,6 @@ FOCUSED_TEST_SELECTORS = (
 FOCUSED_TEST_EXPRESSION = " or ".join(FOCUSED_TEST_SELECTORS)
 BASELINE_IDENTITY_TEST_SELECTORS = (
     "test_frozen_governing_sources_have_exact_hashes",
-    "test_frozen_characterization_corpus_has_exact_hashes",
 )
 BASELINE_IDENTITY_TEST_EXPRESSION = " or ".join(BASELINE_IDENTITY_TEST_SELECTORS)
 REQUIRED_FOCUSED_TEST_EXPRESSION = (
@@ -144,20 +146,6 @@ def _write_atomic(path: Path, value: Any) -> None:
             pass
 
 
-def _literal_string_assignment(path: Path, name: str) -> str:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    for statement in tree.body:
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if not isinstance(target, ast.Name) or target.id != name:
-            continue
-        value = ast.literal_eval(statement.value)
-        if isinstance(value, str):
-            return value
-    raise ValueError(f"cannot resolve literal {name} from {path.relative_to(ROOT)}")
-
-
 def _baseline_release_readiness() -> dict[str, Any]:
     reasons: list[str] = []
     try:
@@ -181,11 +169,7 @@ def _baseline_release_readiness() -> dict[str, Any]:
     ):
         reasons.append("source_commit is not a full immutable Git object ID")
 
-    try:
-        release_head = _literal_string_assignment(ROOT / "dish_pg/release.py", "ALEMBIC_HEAD")
-    except (OSError, SyntaxError, ValueError) as exc:
-        reasons.append(f"cannot resolve current release schema head: {exc}")
-        release_head = None
+    release_head = ALEMBIC_HEAD
     if (
         rules.get("schema_head_must_match_release_head") is True
         and baseline.get("schema_head") != release_head

@@ -67,16 +67,16 @@ scripts/dish-pg-acceptance \
 
 The acceptance report contains the pinned focused-test selectors (Stages 1–8 plus later release-safety
 owners), complete source-file manifest, source-manifest SHA-256, each gate command and exit status,
-captured output and output hash, and a report SHA-256. Source acceptance excludes only the two
-governed baseline-identity hash tests from the focused and complete-suite commands and records them
-as a separate `baseline_identity_gate`. A stale baseline may therefore leave
-`source_acceptance_passed=true` while `production_acceptance_complete=false`; it is never relabelled
-as passing evidence. Any nonzero required source gate remains a failing report. Rerun after fixing
-the cause and record a new evidence revision.
+captured output and output hash, and a report SHA-256. Source acceptance separates the governed
+production-source digest check as `baseline_identity_gate`. The baseline no longer freezes hashes of
+the test-file corpus. Canonical Stage 1 regeneration remains in the focused gate, so a stale baseline
+is a source-acceptance failure as well as a failed identity gate. Any nonzero required source gate
+remains a failing report. Rerun after fixing the cause and record a new evidence revision.
 
-The final source repository gate is the complete non-baseline suite. `--skip-full` is for development
-rehearsal only and cannot satisfy production acceptance. Governed re-baselining and a passing
-`baseline_identity_gate` remain separately mandatory before production acceptance is complete.
+The final source repository gate is the complete suite apart from the separately executed baseline
+identity check. `--skip-full` is for development rehearsal only and cannot satisfy production
+acceptance. Governed re-baselining and a passing `baseline_identity_gate` remain separately mandatory
+before production acceptance is complete.
 
 ### 3.1 Native PostgreSQL certification
 

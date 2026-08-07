@@ -36,7 +36,6 @@ def test_stage_a_acceptance_selection_pins_all_release_safety_owners() -> None:
     baseline = tuple(namespace["BASELINE_IDENTITY_TEST_SELECTORS"])
     assert baseline == (
         "test_frozen_governing_sources_have_exact_hashes",
-        "test_frozen_characterization_corpus_has_exact_hashes",
     )
     assert namespace["BASELINE_IDENTITY_TEST_EXPRESSION"] == " or ".join(baseline)
     assert namespace["REQUIRED_FOCUSED_TEST_EXPRESSION"] == (

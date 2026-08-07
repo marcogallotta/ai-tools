@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 """Deterministically regenerate or verify the checked-in Stage A baseline.
 
-File identities are SHA-256 digests of repository bytes exactly as stored.  The
-only normalization is deterministic inventory ordering and canonical JSON
-serialization (sorted keys, two-space indentation, one trailing newline).
+File identities are SHA-256 digests of repository bytes exactly as stored. The
+baseline inventories are derived from executable owners rather than by parsing
+source layout. The baseline does not freeze test filenames or helper layout.
 """
 from __future__ import annotations
 
 import argparse
-import ast
 import hashlib
 import json
 import os
-import re
+import sqlite3
 import sys
 import tempfile
 from pathlib import Path
@@ -24,6 +23,11 @@ BASELINE_PATH = ROOT / "docs/database-backend-stage-a-baseline.json"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from dish_pg.release import ALEMBIC_HEAD  # noqa: E402
+from dish_service.command_spec import ACTION_COMMANDS  # noqa: E402
+from dish_tool.admin_command_spec import ADMIN_COMMANDS  # noqa: E402
+from dish_tool.database_schema import migrate_database  # noqa: E402
+
 
 class BaselineRegenerationError(ValueError):
     """The checked-in baseline cannot be regenerated without investigation."""
@@ -33,140 +37,36 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _literal_assignments(path: Path) -> dict[str, Any]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    values: dict[str, Any] = {}
-
-    def evaluate(node: ast.AST) -> Any:
-        if isinstance(node, ast.Constant):
-            return node.value
-        if isinstance(node, ast.Name):
-            return values[node.id]
-        if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-            result = [evaluate(item) for item in node.elts]
-            if isinstance(node, ast.Tuple):
-                return tuple(result)
-            if isinstance(node, ast.Set):
-                return set(result)
-            return result
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
-            return evaluate(node.left) | evaluate(node.right)
-        raise ValueError(f"unsupported literal expression: {ast.dump(node)}")
-
-    for statement in tree.body:
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-            continue
-        target = statement.targets[0]
-        if not isinstance(target, ast.Name):
-            continue
-        try:
-            values[target.id] = evaluate(statement.value)
-        except (KeyError, ValueError):
-            continue
-    return values
-
-
-_SQLITE_TABLE_STATEMENT = re.compile(
-    r"CREATE TABLE(?: IF NOT EXISTS)?\s+(?P<create>[A-Za-z0-9_]+)"
-    r"|ALTER TABLE\s+(?P<rename_old>[A-Za-z0-9_]+)\s+RENAME TO\s+(?P<rename_new>[A-Za-z0-9_]+)"
-    r"|DROP TABLE(?: IF EXISTS)?\s+(?P<drop>[A-Za-z0-9_]+)"
-)
-
-
-def _required_literal(path: Path, name: str) -> Any:
-    values = _literal_assignments(path)
-    if name not in values:
-        raise BaselineRegenerationError(
-            f"cannot resolve literal {name} from {path.relative_to(ROOT)}"
-        )
-    return values[name]
-
-
-def _first_string_call_arguments(path: Path, function_name: str) -> list[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    values: list[str] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-            continue
-        if node.func.id != function_name or not node.args:
-            continue
-        first = node.args[0]
-        if isinstance(first, ast.Constant) and isinstance(first.value, str):
-            values.append(first.value)
-    if not values:
-        raise BaselineRegenerationError(
-            f"cannot resolve {function_name}(...) command inventory from "
-            f"{path.relative_to(ROOT)}"
-        )
-    duplicates = sorted({value for value in values if values.count(value) > 1})
-    if duplicates:
-        raise BaselineRegenerationError(
-            f"duplicate {function_name}(...) command definitions in "
-            f"{path.relative_to(ROOT)}: {duplicates}"
-        )
-    return values
-
-
 def _sqlite_tables() -> list[str]:
-    """Walk CREATE/RENAME/DROP TABLE statements in source order, keeping each
-    table at the list slot of its first CREATE even when a migration renames
-    it away, recreates it under the original name, and drops the stale copy.
-    """
-    source = (ROOT / "dish_tool/database_schema.py").read_text(encoding="utf-8")
-    slots: list[str | None] = []
-    original_name_of_slot: dict[int, str] = {}
-
-    def _slot_holding(name: str) -> int | None:
-        return next((index for index, held in enumerate(slots) if held == name), None)
-
-    for match in _SQLITE_TABLE_STATEMENT.finditer(source):
-        if match.group("create"):
-            name = match.group("create")
-            if _slot_holding(name) is not None:
-                continue
-            restored_slot = next(
-                (index for index, original in original_name_of_slot.items() if original == name),
-                None,
+    conn = sqlite3.connect(":memory:", isolation_level=None)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        migrate_database(conn)
+        return [
+            row[0]
+            for row in conn.execute(
+                """SELECT name FROM sqlite_master
+                   WHERE type='table' AND name NOT LIKE 'sqlite_%'
+                   ORDER BY name"""
             )
-            if restored_slot is not None:
-                slots[restored_slot] = name
-            else:
-                original_name_of_slot[len(slots)] = name
-                slots.append(name)
-        elif match.group("rename_old"):
-            old_name, new_name = match.group("rename_old"), match.group("rename_new")
-            slot = _slot_holding(old_name)
-            if slot is not None:
-                slots[slot] = new_name
-        elif match.group("drop"):
-            name = match.group("drop")
-            slot = _slot_holding(name)
-            if slot is not None:
-                slots[slot] = None
-    return [name for name in slots if name is not None]
+        ]
+    finally:
+        conn.close()
 
 
 def generated_baseline() -> dict[str, Any]:
     baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
-    action_commands = _first_string_call_arguments(
-        ROOT / "dish_service/command_spec.py", "_action"
-    )
-    admin_commands = sorted(
-        _first_string_call_arguments(ROOT / "dish_tool/admin_command_spec.py", "_spec")
-    )
+    baseline.pop("characterization_test_sha256", None)
+
+    action_commands = list(ACTION_COMMANDS)
+    admin_commands = sorted(ADMIN_COMMANDS)
     baseline["action_commands"] = action_commands
     baseline["admin_commands"] = admin_commands
-    baseline["schema_head"] = _required_literal(
-        ROOT / "dish_pg/release.py", "ALEMBIC_HEAD"
-    )
+    baseline["schema_head"] = ALEMBIC_HEAD
     baseline["sqlite_tables"] = _sqlite_tables()
     baseline["governing_source_sha256"] = {
         relative: _sha256(ROOT / relative)
         for relative in sorted(baseline["governing_source_sha256"])
-    }
-    baseline["characterization_test_sha256"] = {
-        str(path.relative_to(ROOT)): _sha256(path)
-        for path in sorted((ROOT / "tests").glob("test_*.py"))
     }
 
     current_commands = set(action_commands) | set(admin_commands)
@@ -188,11 +88,8 @@ def generated_baseline() -> dict[str, Any]:
             "command treatment classification requires governed review: "
             f"missing={missing}, unknown={unknown}, overlap={overlap}"
         )
+
     return baseline
-
-
-def encoded_baseline() -> bytes:
-    return (json.dumps(generated_baseline(), indent=2, sort_keys=True) + "\n").encode()
 
 
 def _write_atomic(path: Path, data: bytes) -> None:
@@ -230,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.write and args.reason is not None:
         print("Stage A baseline generation blocked: --reason is accepted only with --write")
         return 2
+
     try:
         generated_value = generated_baseline()
     except (BaselineRegenerationError, KeyError, OSError, ValueError) as exc:
@@ -238,11 +136,10 @@ def main(argv: list[str] | None = None) -> int:
             f"{exc}. Governed rebaseline or investigation is required."
         )
         return 2
+
     if args.write:
         generated_value["last_rebaseline_reason"] = args.reason.strip()
-    generated = (
-        json.dumps(generated_value, indent=2, sort_keys=True) + "\n"
-    ).encode()
+    generated = (json.dumps(generated_value, indent=2, sort_keys=True) + "\n").encode()
     if args.check:
         stored = BASELINE_PATH.read_bytes()
         if stored != generated:
@@ -264,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print(f"Stage A baseline matches canonical regeneration: {_sha256(BASELINE_PATH)}")
         return 0
+
     destination = BASELINE_PATH if args.write else args.output
     assert destination is not None
     _write_atomic(destination, generated)

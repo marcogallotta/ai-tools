@@ -3,11 +3,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import sqlite3
 from pathlib import Path
 from typing import Any
 
 from dish_service.command_spec import ACTION_COMMANDS
 from dish_tool.admin_command_spec import ADMIN_COMMANDS
+from dish_tool.database_schema import migrate_database
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE_PATH = ROOT / "docs/database-backend-stage-a-baseline.json"
@@ -19,6 +21,25 @@ def _sha256(path: Path) -> str:
 
 def _baseline() -> dict[str, Any]:
     return json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
+
+
+def _sqlite_tables() -> list[str]:
+    # Deliberately independent from the baseline generator: this test is the
+    # oracle for the generated table inventory, so sharing its query/helper
+    # would make the check self-confirming.
+    conn = sqlite3.connect(":memory:", isolation_level=None)
+    try:
+        conn.execute("PRAGMA foreign_keys = ON")
+        migrate_database(conn)
+        names = [
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        ]
+        return sorted(name for name in names if not name.startswith("sqlite_"))
+    finally:
+        conn.close()
 
 
 def test_frozen_command_inventory_matches_current_surfaces() -> None:
@@ -41,55 +62,8 @@ def test_frozen_command_inventory_matches_current_surfaces() -> None:
     )
 
 
-_SQLITE_TABLE_STATEMENT = re.compile(
-    r"CREATE TABLE(?: IF NOT EXISTS)?\s+(?P<create>[A-Za-z0-9_]+)"
-    r"|ALTER TABLE\s+(?P<rename_old>[A-Za-z0-9_]+)\s+RENAME TO\s+(?P<rename_new>[A-Za-z0-9_]+)"
-    r"|DROP TABLE(?: IF EXISTS)?\s+(?P<drop>[A-Za-z0-9_]+)"
-)
-
-
-def _sqlite_tables(source: str) -> list[str]:
-    """Walk CREATE/RENAME/DROP TABLE statements in source order, keeping each
-    table at the list slot of its first CREATE even when a migration renames
-    it away, recreates it under the original name, and drops the stale copy.
-    """
-    slots: list[str | None] = []
-    original_name_of_slot: dict[int, str] = {}
-
-    def _slot_holding(name: str) -> int | None:
-        return next((index for index, held in enumerate(slots) if held == name), None)
-
-    for match in _SQLITE_TABLE_STATEMENT.finditer(source):
-        if match.group("create"):
-            name = match.group("create")
-            if _slot_holding(name) is not None:
-                continue
-            restored_slot = next(
-                (index for index, original in original_name_of_slot.items() if original == name),
-                None,
-            )
-            if restored_slot is not None:
-                slots[restored_slot] = name
-            else:
-                original_name_of_slot[len(slots)] = name
-                slots.append(name)
-        elif match.group("rename_old"):
-            old_name, new_name = match.group("rename_old"), match.group("rename_new")
-            slot = _slot_holding(old_name)
-            if slot is not None:
-                slots[slot] = new_name
-        elif match.group("drop"):
-            name = match.group("drop")
-            slot = _slot_holding(name)
-            if slot is not None:
-                slots[slot] = None
-    return [name for name in slots if name is not None]
-
-
 def test_frozen_sqlite_authority_inventory_matches_schema() -> None:
-    baseline = _baseline()
-    source = (ROOT / "dish_tool/database_schema.py").read_text(encoding="utf-8")
-    assert _sqlite_tables(source) == baseline["sqlite_tables"]
+    assert _sqlite_tables() == _baseline()["sqlite_tables"]
 
 
 def test_frozen_governing_sources_have_exact_hashes() -> None:
@@ -101,13 +75,8 @@ def test_frozen_governing_sources_have_exact_hashes() -> None:
     assert actual == baseline["governing_source_sha256"]
 
 
-def test_frozen_characterization_corpus_has_exact_hashes() -> None:
-    baseline = _baseline()
-    actual = {
-        str(path.relative_to(ROOT)): _sha256(path)
-        for path in sorted((ROOT / "tests").glob("test_*.py"))
-    }
-    assert actual == baseline["characterization_test_sha256"]
+def test_stage_a_baseline_does_not_freeze_test_file_hashes() -> None:
+    assert "characterization_test_sha256" not in _baseline()
 
 
 def test_canonical_stage_a_regeneration_matches_checked_in_bytes(tmp_path: Path) -> None:
@@ -141,16 +110,12 @@ def test_canonical_stage_a_regeneration_matches_checked_in_bytes(tmp_path: Path)
     assert "matches canonical regeneration" in checked.stdout
 
 
-def test_governed_stage_a_write_requires_a_reason(tmp_path: Path) -> None:
+def test_governed_stage_a_write_requires_a_reason() -> None:
     import subprocess
     import sys
 
     completed = subprocess.run(
-        [
-            sys.executable,
-            str(ROOT / "scripts" / "dish-pg-stage-a-baseline"),
-            "--write",
-        ],
+        [sys.executable, str(ROOT / "scripts" / "dish-pg-stage-a-baseline"), "--write"],
         cwd=ROOT,
         text=True,
         stdout=subprocess.PIPE,

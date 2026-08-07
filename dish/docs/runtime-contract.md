@@ -158,7 +158,7 @@ follow-on actions and explicitly tells the client not to retry the mutation. Ord
 write and approval retries remain naturally idempotent by exact live-state comparison. In service
 mode, all agent mutations are replay-bound, and every externally callable agent, administrative,
 lease, and backup mutation requires a client-generated non-nil UUID `client.request_id`; reads (`sections`,
-`section-tasks`, `read`, and `health`) do not. This includes `create`, `inspect`, `start`, `prepare`, `approve`,
+`section-tasks`, `read`, `proposals`, and `health`) do not. This includes `create`, `inspect`, `start`, `prepare`, `approve`,
 `reject`, and `submit`. Reuse that UUID only when retrying the exact same logical call after a lost
 response.
 
@@ -175,7 +175,7 @@ includes the command, canonical arguments, authenticated owner identity, and run
 | Lease lifecycle | private agent lease renewal; Action `renew-lease`; Marco-admin `recover-lease` and `expire-lease` |
 | Backup lifecycle | `backup-create`, `backup-restore` |
 
-No mutation endpoint is exempt from request identity. Agent `inspect` is also replay-bound because it records durable Verification evidence. Read-only `sections`, `section-tasks`, `read`, and `health` do not create replay records and do not accept a request ID as mutation authority.
+No mutation endpoint is exempt from request identity. Agent `inspect` is also replay-bound because it records durable Verification evidence. Read-only `sections`, `section-tasks`, `read`, `proposals`, and `health` do not create replay records and do not accept a request ID as mutation authority.
 The connected `renew-lease` Action uses the common body shape: `arguments.operation_id` is replay-bound
 alongside `client.run_id` and `client.request_id`; it is not supplied as a top-level or path parameter.
 
