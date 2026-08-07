@@ -1599,8 +1599,16 @@ def _reconciliation_process_loss_scenario(
         output=replacement_output,
     )
     after = _reconciliation_snapshot(engine)
-    if after["runs"] != before["runs"] + 1 or after["items"] != before["items"] + expected_items:
-        raise ProductionShapedError("reconciliation restart duplicated or omitted durable effects")
+    if after != before:
+        raise ProductionShapedError(
+            "reconciliation restart duplicated or omitted durable effects"
+        )
+    if report["processed_items"] != expected_items or report["outcome_counts"].get(
+        "matched"
+    ) != expected_items:
+        raise ProductionShapedError(
+            "reconciliation restart did not confirm the corpus as already reconciled"
+        )
     return {
         "status": "passed",
         "control_point": "reconciliation_after_fetch_before_transaction",
@@ -1666,9 +1674,15 @@ def _reconciliation_database_disconnect_scenario(
         output=replacement_output,
     )
     after = _reconciliation_snapshot(engine)
-    if after["runs"] != before["runs"] + 1 or after["items"] != before["items"] + expected_items:
+    if after != before:
         raise ProductionShapedError(
             "reconciliation database recovery duplicated or omitted durable effects"
+        )
+    if report["processed_items"] != expected_items or report["outcome_counts"].get(
+        "matched"
+    ) != expected_items:
+        raise ProductionShapedError(
+            "reconciliation database recovery did not confirm the corpus as already reconciled"
         )
     return {
         "status": "passed",
