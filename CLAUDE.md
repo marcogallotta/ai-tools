@@ -21,6 +21,8 @@ python3 -m venv .venv
 .venv/bin/python scripts/dish-test-plan --base <revision>
 ```
 
+If you are ChatGPT working from an uploaded or archived copy of this repo rather than the live filesystem: `dish/.venv/bin/python` is a symlink to the host Python that built it, not a self-contained interpreter, so on a relocated copy it can resolve to a different Python version than the one its packages were installed under. That makes a populated `.venv` misreport itself as empty — that's a version mismatch, not a missing dependency. Don't delete or rebuild it on that basis alone: compare `.venv`'s Python version (`pyvenv.cfg`) to the current `python3 --version` first. If they differ, rebuild a fresh `.venv` against the current interpreter and install normally. If normal installation then fails for lack of network/package-index access, report that honestly as a sandbox limitation — never report it as the repository lacking a dependency.
+
 Use the test planner for the complete changed-path set and execute the union of focused tests and semantically required governed lanes. New in-scope paths must be classified in `dish/test_selection/ownership.csv`. Run the ordinary full suite before final delivery of a completed change block. Testing policy and evidence boundaries are in `dish/docs/testing.md` and `dish/docs/architecture/testing-boundaries.md`.
 
 Do not package `.venv`, test caches, or generated test artifacts. Do not add runtime mutation paths, duplicate workflow authority in transports or CLIs, or preserve compatibility without a real producer or database-preservation requirement.
