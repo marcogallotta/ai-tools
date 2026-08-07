@@ -1,6 +1,10 @@
-import pytest
 import json
+from dataclasses import replace
 
+import pytest
+
+from dish_service import command_spec
+from dish_service import openapi
 from dish_service.openapi import action_openapi
 from tests.support.action_contract import (
     EXPECTED_ACTION_COMMANDS,
@@ -8,6 +12,36 @@ from tests.support.action_contract import (
     EXPECTED_DISH_UUID_SCHEMA,
     assert_action_openapi_contract,
 )
+
+
+@pytest.mark.smoke
+def test_action_openapi_derives_shared_metadata_from_command_definitions(monkeypatch):
+    definitions = dict(command_spec.ACTION_COMMAND_DEFINITIONS)
+    definitions["read"] = replace(definitions["read"], request_id_required=True)
+    definitions["create"] = replace(definitions["create"], private_route="lease")
+    definitions["renew-lease"] = replace(
+        definitions["renew-lease"], private_route="agent"
+    )
+    monkeypatch.setattr(openapi, "ACTION_COMMAND_DEFINITIONS", definitions)
+
+    spec = action_openapi(server_url="https://dish.example.test")
+
+    read = spec["paths"]["/v1/action/read"]["post"]
+    read_client = read["requestBody"]["content"]["application/json"]["schema"][
+        "properties"
+    ]["client"]
+    assert read["x-openai-isConsequential"] is True
+    assert "request_id" in read_client["required"]
+    assert "request_id" in read_client["properties"]
+    assert "replay-bound" in read["description"].lower()
+
+    create = spec["paths"]["/v1/action/create"]["post"]
+    assert create["summary"] == "Renew the current GPT Action operation lease"
+    assert create["responses"]["200"]["description"] == "Canonical lease result"
+
+    renew = spec["paths"]["/v1/action/renew-lease"]["post"]
+    assert renew["summary"] == "Run dish renew-lease"
+    assert renew["responses"]["200"]["description"] == "Canonical dish workflow result"
 
 
 @pytest.mark.smoke

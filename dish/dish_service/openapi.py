@@ -7,11 +7,11 @@ from dish_tool.results import RESULT_OPENAPI_REQUIRED_FIELDS
 from dish_tool.validation_scope import VALIDATION_SCOPE_VALUES
 
 from .command_spec import (
-    ACTION_COMMANDS,
+    ACTION_COMMAND_DEFINITIONS,
     CLIENT_REQUEST_ID_SCHEMA,
     CLIENT_RUN_ID_SCHEMA,
     DISH_UUID_SCHEMA,
-    REPLAY_SAFE_COMMANDS,
+    ActionCommandSpec,
     action_openapi_argument_schema,
 )
 
@@ -23,8 +23,8 @@ REPLAY_MUTATION_DESCRIPTION = (
 )
 
 
-def _action_operation_description(command: str) -> str:
-    if command in REPLAY_SAFE_COMMANDS:
+def _action_operation_description(spec: ActionCommandSpec) -> str:
+    if spec.request_id_required:
         return REPLAY_MUTATION_DESCRIPTION
     return (
         "Read-only Action. It does not accept client.request_id, create a replay record, or "
@@ -212,18 +212,21 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
         },
     }
     paths: dict[str, Any] = {}
-    for command in ACTION_COMMANDS:
+    for spec in ACTION_COMMAND_DEFINITIONS.values():
+        command = spec.name
+        request_id_required = spec.request_id_required
+        is_lease_command = spec.private_route == "lease"
         argument_schema = action_openapi_argument_schema(command)
         paths[f"/v1/action/{command}"] = {
             "post": {
                 "operationId": f"dish_{command.replace('-', '_')}",
-                "x-openai-isConsequential": command in REPLAY_SAFE_COMMANDS,
+                "x-openai-isConsequential": request_id_required,
                 "summary": (
                     "Renew the current GPT Action operation lease"
-                    if command == "renew-lease"
+                    if is_lease_command
                     else f"Run dish {command}"
                 ),
-                "description": _action_operation_description(command),
+                "description": _action_operation_description(spec),
                 "security": [{"actionBearer": []}],
                 "requestBody": {
                     "required": True,
@@ -236,13 +239,13 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                                 "properties": {
                                     "client": {
                                         "type": "object",
-                                        "required": (["run_id", "request_id"] if command in REPLAY_SAFE_COMMANDS else ["run_id"]),
+                                        "required": (["run_id", "request_id"] if request_id_required else ["run_id"]),
                                         "additionalProperties": False,
                                         "properties": {
                                             "run_id": dict(CLIENT_RUN_ID_SCHEMA),
                                             **(
                                                 {"request_id": dict(CLIENT_REQUEST_ID_SCHEMA)}
-                                                if command in REPLAY_SAFE_COMMANDS
+                                                if request_id_required
                                                 else {}
                                             ),
                                         },
@@ -257,7 +260,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                     "200": {
                         "description": (
                             "Canonical lease result"
-                            if command == "renew-lease"
+                            if is_lease_command
                             else "Canonical dish workflow result"
                         ),
                         "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResultEnvelope"}}},
