@@ -98,6 +98,27 @@ def require_env() -> dict[str, str]:
     return values
 
 
+def resolve_project_identity(service_env_path: str) -> tuple[str, str]:
+    """Return (project_gid, project_id) for the real Cooking project, read from
+    the service environment file rather than any script-level default."""
+    from dish_pg.location_manifest import target_uuid
+
+    path = Path(service_env_path)
+    project_gid = ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        if key.strip() == "DISH_COOKING_PROJECT_GID":
+            project_gid = value.strip()
+    if not project_gid:
+        raise PrepareError(
+            f"{service_env_path} is missing DISH_COOKING_PROJECT_GID"
+        )
+    return project_gid, str(target_uuid("project", project_gid))
+
+
 def resolve_source_commit() -> str:
     supplied = os.environ.get("DISH_SOURCE_COMMIT", "").strip()
     if supplied:
@@ -149,6 +170,7 @@ def main() -> int:
         env = require_env()
         source_commit = resolve_source_commit()
         honest_repo = os.environ.get("DISH_HONEST_REPO", "/home/marco/honest-pantry").strip()
+        project_gid, project_id = resolve_project_identity(env["DISH_PRODUCTION_SERVICE_ENV"])
 
         migrate_schema(env["DISH_PG_DATABASE_URL"])
 
@@ -195,6 +217,8 @@ def main() -> int:
                 "--dish-commit", source_commit,
                 "--honest-repo", honest_repo,
                 "--honest-commit", env["HONEST_SOURCE_COMMIT"],
+                "--project-id", project_id,
+                "--project-gid", project_gid,
                 "--receipt", env["DISH_PG_BOOTSTRAP_RECEIPT"],
             ],
         )

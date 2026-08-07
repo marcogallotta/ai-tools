@@ -707,8 +707,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--schema-head", default=DEFAULT_SCHEMA_HEAD)
     parser.add_argument("--protocol-version", default=SUPPORTED_PROTOCOL_VERSION)
     parser.add_argument("--task-schema-version", default=SUPPORTED_TASK_SCHEMA_VERSION)
-    parser.add_argument("--project-id", type=uuid.UUID, default=DEFAULT_PROJECT_ID)
-    parser.add_argument("--project-gid", default=DEFAULT_PROJECT_GID)
+    parser.add_argument("--project-id", type=uuid.UUID, required=True)
+    parser.add_argument("--project-gid", required=True)
     parser.add_argument("--project-name", default="Cooking")
     parser.add_argument("--receipt", type=Path)
     return parser
