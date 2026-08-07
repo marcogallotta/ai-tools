@@ -2,13 +2,18 @@ services:
   postgres:
     image: postgres:17.10
     environment:
-      POSTGRES_DB: dish_stage_a_test
-      POSTGRES_USER: dish
-      POSTGRES_PASSWORD: dish
+      POSTGRES_DB: ${DISH_POSTGRES_DB}
+      POSTGRES_USER: ${DISH_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${DISH_POSTGRES_PASSWORD}
     ports:
-      - "127.0.0.1:55432:5432"
+      - "127.0.0.1:${DISH_POSTGRES_HOST_PORT}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U dish -d dish_stage_a_test"]
+      test: ["CMD-SHELL", "pg_isready -U ${DISH_POSTGRES_USER} -d ${DISH_POSTGRES_DB}"]
       interval: 2s
       timeout: 3s
       retries: 30
+
+volumes:
+  pgdata:

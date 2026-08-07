@@ -46,6 +46,16 @@ roots. They must be non-TEST, owner-safe, non-aliased paths without symlink trav
 
 ## Prepare immutable source and PostgreSQL authority
 
+0. Ensure the production PostgreSQL container is running before anything below. It is
+   code-defined, not manually provisioned: `deploy/postgresql/compose.yaml` (shared with TEST,
+   selected by `--env-file` and `-p` project name) plus the systemd unit
+   `deploy/systemd/dish-postgres-prod.service`, whose environment file
+   (`/home/marco/.config/dish-service/postgres-prod.env`, from
+   `deploy/systemd/postgres-prod.env.example`) supplies `DISH_POSTGRES_DB`,
+   `DISH_POSTGRES_USER`, `DISH_POSTGRES_PASSWORD`, and `DISH_POSTGRES_HOST_PORT`. Installing the
+   unit under `/etc/systemd/system` and starting it is Marco-only (outside the passwordless
+   `dish-service-{prod,test}` sudo grant); once installed, `DISH_PG_DATABASE_URL` and
+   `DISH_PG_EXPECTED_DATABASE_NAME` used below must match the same database name, user, and port.
 1. Migrate the explicit production PostgreSQL database to the repository Alembic head.
 2. Capture the complete source-location manifest through the explicit production read-only path:
 

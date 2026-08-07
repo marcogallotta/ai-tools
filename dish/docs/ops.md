@@ -24,6 +24,19 @@ etc.) before trusting or removing it.
   `docker compose up -d` reused the container's anonymous data volume
   rather than discarding it, so the existing schema and fixture rows
   survived the recreate (same-major-version binary upgrade).
+- **Pending migration (2026-08-07, not yet applied to the running container)**:
+  `deploy/postgresql/compose.yaml` was made env-driven (`DISH_POSTGRES_DB`,
+  `DISH_POSTGRES_USER`, `DISH_POSTGRES_PASSWORD`, `DISH_POSTGRES_HOST_PORT`,
+  plus a declared named volume) so the same file serves both TEST and
+  production, and a systemd unit (`deploy/systemd/dish-postgres-test.service`,
+  env at `~/.config/dish-service/postgres-test.env` from
+  `deploy/systemd/postgres-test.env.example`) now owns its start/stop instead
+  of an ad hoc `docker compose up -d`. The live container above still
+  predates this and was not recreated under the unit as part of this change
+  -- next time it's touched, migrate it onto the unit (`docker compose -p
+  postgresql down` won't match the new project name `dish-postgres-test`, so
+  this is a deliberate cutover, not a drop-in swap) rather than assuming it
+  already runs that way.
 - **Connection**: `postgresql://dish:dish@127.0.0.1:55432/dish_stage_a_test`
   (bound to `127.0.0.1` only).
 - **Schema state as of 2026-08-06**: migrated to Alembic head, 103 tables

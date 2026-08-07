@@ -1,0 +1,18 @@
+[Unit]
+Description=Dish PostgreSQL (test)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=marco
+WorkingDirectory=/home/marco/ai-tools/dish
+EnvironmentFile=/home/marco/.config/dish-service/postgres-test.env
+ExecStart=/usr/bin/docker compose -p dish-postgres-test -f deploy/postgresql/compose.yaml up -d
+ExecStop=/usr/bin/docker compose -p dish-postgres-test -f deploy/postgresql/compose.yaml down
+TimeoutStartSec=2min
+
+[Install]
+WantedBy=multi-user.target
