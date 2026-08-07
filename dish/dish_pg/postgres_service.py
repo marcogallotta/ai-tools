@@ -36,10 +36,18 @@ from .workflow import (
 )
 
 
+_SECTION4_CONTROL_POINTS_FIRED: set[tuple[str, str]] = set()
+
+
 def _section4_control_point(
     *, point: str, request_id: uuid.UUID | None, command: str
 ) -> None:
-    """Reach an explicit Section 4 barrier in PostgreSQL TEST runtime only."""
+    """Reach an explicit Section 4 barrier in PostgreSQL TEST runtime only.
+
+    Fires at most once per (point, request_id) per process: a retried request
+    reusing the same request_id (idempotent-replay scenarios) must not hit an
+    already-torn-down barrier on its second pass through this code path.
+    """
 
     configured = os.environ.get("DISH_SECTION4_SERVICE_CONTROL_POINT", "").strip()
     if configured != point or request_id is None:
@@ -47,6 +55,10 @@ def _section4_control_point(
     expected_request = os.environ.get("DISH_SECTION4_SERVICE_REQUEST_ID", "").strip()
     if expected_request != str(request_id):
         return
+    fired_key = (point, str(request_id))
+    if fired_key in _SECTION4_CONTROL_POINTS_FIRED:
+        return
+    _SECTION4_CONTROL_POINTS_FIRED.add(fired_key)
     socket_path = os.environ.get("DISH_SECTION4_SERVICE_BARRIER_SOCKET", "").strip()
     if not socket_path:
         raise RuntimeError("Section 4 service control point omitted its barrier socket")
