@@ -58,7 +58,7 @@ Evidence is distributed across workflow, replay, Asana lifecycle, recovery, and 
 
 ## Current debt and temporary compatibility
 
-The current Asana/SQLite split and several migration-era artifacts are temporary. Sidecars and compatibility state should be justified by concrete recovery/operational needs, not by a blanket architectural prohibition or permission.
+The current Asana/SQLite split and several migration-era artifacts are temporary. Sidecars and compatibility state should be justified by concrete recovery/operational needs, not by a blanket architectural prohibition or permission. The `submissions` table and associated read/migration diagnostics remain compatibility state; production exposes no API that creates, transitions, or recovers a legacy submission.
 
 ## Related documents
 
