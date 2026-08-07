@@ -9,7 +9,8 @@ from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
 from dish_pg.command_effects import CommandEffectSpec, effect_spec_for, expected_projection_count
-from dish_pg.command_port import CommandEffectMismatch, PostgresCommandPort
+from dish_pg.command_effect_runtime import CommandEffectMismatch
+from dish_pg.command_port import PostgresCommandPort
 from dish_pg.database import session_scope
 from dish_pg.transition import ProjectionService
 from tests.support.postgresql.workflow import _next, _register_run, workflow_db

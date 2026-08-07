@@ -345,7 +345,7 @@ STAGE_A_CASES = (
     ),
     MutationCase(
         mutation_id="stage-a-command-effect-verifier",
-        target="dish_pg/command_port.py",
+        target="dish_pg/command_effect_runtime.py",
         before="if projection_types != expected.projection_event_types:",
         after="if False:",
         tests=(

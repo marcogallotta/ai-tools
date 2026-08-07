@@ -10,7 +10,7 @@ import hashlib
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Mapping
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -19,7 +19,12 @@ from . import models
 from . import stage3_models as wf
 from . import stage5_models as projection
 from .command_contract import definition_for
-from .command_effects import CommandEffectSpec, effect_spec_for
+from .command_effects import effect_spec_for
+from .command_effect_runtime import (
+    ProjectionAuthority,
+    assert_committed_command_effects,
+    record_projection_intent,
+)
 from .document_authority import (
     CanonicalDocumentError,
     destination_gid,
@@ -60,9 +65,6 @@ class CommandPortError(ValueError):
     """Base error for canonical command admission or execution."""
 
 
-class CommandEffectMismatch(RuntimeError):
-    """Committed handler effects disagree with the authoritative command specification."""
-
 
 class CommandRuleError(CommandPortError):
     def __init__(
@@ -101,34 +103,6 @@ class CommandResult:
     retryable: bool = False
     request_replayed: bool = False
 
-
-class ProjectionAuthority(Protocol):
-    def record(
-        self,
-        *,
-        generation_id: uuid.UUID,
-        execution_id: uuid.UUID,
-        task_id: uuid.UUID,
-        event_type: str,
-        payload: Mapping[str, Any],
-        origin: str,
-        created_at: datetime,
-    ) -> uuid.UUID: ...
-
-    def recover(
-        self,
-        *,
-        attempt_id: uuid.UUID,
-        route: str,
-        arguments: Mapping[str, Any],
-        actor: str,
-        recovered_at: datetime,
-        expected_task_id: uuid.UUID | None = None,
-    ) -> Mapping[str, Any]: ...
-
-    def unresolved_attempt_id(self, task_id: uuid.UUID) -> uuid.UUID | None: ...
-
-    def task_freshness(self, task_id: uuid.UUID) -> Mapping[str, Any]: ...
 
 
 class PostgresCommandPort:
@@ -338,8 +312,11 @@ class PostgresCommandPort:
                     operation=operation,
                 )
                 self.session.flush()
-                self._assert_committed_effects(
-                    call=call,
+                assert_committed_command_effects(
+                    self.session,
+                    command_name=call.command_name,
+                    arguments=call.arguments,
+                    now=call.now,
                     execution=execution,
                     task=task,
                     operation=operation,
@@ -2963,132 +2940,9 @@ class PostgresCommandPort:
             )
         )
 
-    def _assert_committed_effects(
-        self,
-        *,
-        call: CommandCall,
-        execution: wf.CommandExecution,
-        task: models.DishTask | None,
-        operation: wf.WorkflowOperation | None,
-        expected: CommandEffectSpec,
-        result_data: Mapping[str, Any],
-    ) -> None:
-        projection_types = tuple(
-            self.session.scalars(
-                select(projection.ProjectionOutboxEvent.event_type)
-                .where(
-                    projection.ProjectionOutboxEvent.command_execution_id
-                    == execution.execution_id
-                )
-                .order_by(projection.ProjectionOutboxEvent.aggregate_sequence)
-            ).all()
-        )
-        if projection_types != expected.projection_event_types:
-            raise CommandEffectMismatch(
-                f"{call.command_name} projection effects mismatch: "
-                f"expected {expected.projection_event_types!r}, observed {projection_types!r}"
-            )
-
-        if not expected.verify_mutation_effects:
-            return
-        if task is None or operation is None:
-            raise CommandEffectMismatch(
-                f"{call.command_name} effect verification requires task and operation authority"
-            )
-
-        observed: set[str] = set()
-        execution_id = execution.execution_id
-        if self.session.scalar(
-            select(models.ContentActivation.content_activation_id).where(
-                models.ContentActivation.command_execution_id == execution_id
-            )
-        ) is not None:
-            observed.add(
-                "activate_corrected_content_version"
-                if call.command_name in {"approve", "reject"}
-                else "activate_content_version"
-            )
-        if self.session.scalar(
-            select(models.TaskSectionPlacementEvent.placement_event_id).where(
-                models.TaskSectionPlacementEvent.command_execution_id == execution_id
-            )
-        ) is not None:
-            observed.add("place_verification_queue")
-        if self.session.scalar(
-            select(wf.OperationStep.step_id).where(
-                wf.OperationStep.command_execution_id == execution_id
-            )
-        ) is not None:
-            observed.add("append_operation_step")
-        if self.session.scalar(
-            select(wf.VerificationCycle.cycle_id).where(
-                wf.VerificationCycle.created_by_execution_id == execution_id
-            )
-        ) is not None:
-            observed.add("open_verification_cycle")
-        if self.session.scalar(
-            select(wf.VerificationCorrection.correction_id).where(
-                wf.VerificationCorrection.command_execution_id == execution_id
-            )
-        ) is not None:
-            observed.add("record_verification_correction")
-        if self.session.scalar(
-            select(wf.VerificationSignoff.signoff_id).where(
-                wf.VerificationSignoff.command_execution_id == execution_id
-            )
-        ) is not None:
-            observed.add("record_verification_signoff")
-        if self.session.scalar(
-            select(wf.EvidenceHold.hold_id).where(
-                wf.EvidenceHold.opened_by_execution_id == execution_id
-            )
-        ) is not None:
-            observed.add("open_evidence_hold")
-        if self.session.scalar(
-            select(wf.HumanReviewRequirement.requirement_id).where(
-                wf.HumanReviewRequirement.opened_by_execution_id == execution_id
-            )
-        ) is not None:
-            observed.add("open_human_review")
-
-        if call.command_name == "reject":
-            rejected_cycle = self.session.scalar(
-                select(wf.VerificationCycle.cycle_id).where(
-                    wf.VerificationCycle.operation_id == operation.operation_id,
-                    wf.VerificationCycle.lifecycle == "rejected",
-                    wf.VerificationCycle.outcome.in_(("rejected", "verification-hold")),
-                    wf.VerificationCycle.terminal_at == call.now,
-                )
-            )
-            if rejected_cycle is not None:
-                observed.add("reject_verification_cycle")
-
-        expected_phase = {
-            "prepare": "await_verification",
-            "approve": "await_submission",
-            "reject": (
-                "held_human"
-                if result_data.get("verification_hold")
-                else {
-                    "large": "await_verification",
-                    "evidence": "held_evidence",
-                    "human-review": "held_human",
-                    "human_review": "held_human",
-                }.get(str(call.arguments.get("route", "large")), "held_human")
-            ),
-        }[call.command_name]
-        if operation.phase == expected_phase:
-            observed.add("advance_operation")
-
-        expected_mutations = set(expected.mutation_kinds)
-        if observed != expected_mutations:
-            raise CommandEffectMismatch(
-                f"{call.command_name} authoritative effects mismatch: "
-                f"expected {sorted(expected_mutations)!r}, observed {sorted(observed)!r}"
-            )
-
     def _project(self, generation_id, execution_id, task_id, event_type, payload, at) -> str:
-        value = self.projection_recorder.record(
+        return record_projection_intent(
+            self.projection_recorder,
             generation_id=generation_id,
             execution_id=execution_id,
             task_id=task_id,
@@ -3097,7 +2951,7 @@ class PostgresCommandPort:
             origin=self.projection_origin,
             created_at=at,
         )
-        return str(value)
+
 
     def _store_outcome(self, *, call, execution_id, task_id, operation_id, ok, code, http_status, data, audit_event_type) -> None:
         self.workflow.repo.record_outcome(
