@@ -99,9 +99,9 @@ items are.
 | Shadow-delivery settlement authority | 2026-08-05 (directly code-verified) | `_assert_delivery_claim()` checks state, token, owner, revision, and unexpired lease; `_settle_delivery_cas()` repeats them in the conditional update (`dish_pg/transition.py`). |
 | Final-evidence completion gate | 2026-08-05 (directly code-verified) | `complete_cutover()` rebuilds and validates a fresh `cutover_final` evidence bundle before advancing to `completed` (`dish_pg/cutover_control.py`). |
 | Shared legacy service/local process lock | 2026-08-05 (directly code-verified) | `ServiceProcessLock` guards the service; `DatabaseProcessLock` guards local `dish` and `dish-admin` access to the governed SQLite database (`dish_service/__main__.py`, `dish_tool/cli.py`, `dish_tool/admin_cli.py`). |
-| Migration-target helper current head | 2026-08-05 (directly code-verified) | Release/bootstrap/acceptance helpers derive or assert `0029_cutover_authority_admission_fixes` through `ALEMBIC_HEAD`/`DEFAULT_SCHEMA_HEAD`; the Stage 6 runbook names the same head. |
+| Migration-target helper current head | 2026-08-07 (directly code-verified) | Release/bootstrap/acceptance helpers derive or assert `0030_validation_failure_admission` through `ALEMBIC_HEAD`/`DEFAULT_SCHEMA_HEAD`; the Stage 6 runbook names the same head. |
 | Stale `dish_pg/shadow_worker.py.orig` hygiene claim | 2026-08-05 (directly tree-verified) | No `.orig` file exists under `dish_pg` in the supplied snapshot. |
-| Stage 6 runbook migration-head claim | 2026-08-05 (directly doc-verified) | `docs/database-backend-stage6-runbook.md` consistently names `0029_cutover_authority_admission_fixes`; it does not reference `0015` as the target head. |
+| Stage 6 runbook migration-head claim | 2026-08-07 (directly doc-verified) | `docs/database-backend-stage6-runbook.md` consistently names `0030_validation_failure_admission`; historical migration references remain explicit where needed. |
 
 ## Provisionally done — not independently reverified
 

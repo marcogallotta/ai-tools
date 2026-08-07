@@ -105,8 +105,10 @@ def _case_test_service_fresh_invocation_claims_approved_bundle_without_old_run_i
         assert proposal["proposer_run_id"] == "proposal-run"
         assert proposal["claimed_run_id"] == "fresh-applicant"
         assert proposal["applied_identity"]
+        result = dict(proposal)
     finally:
         conn.close()
+    return result
 
 
 def _approved_service_proposal_runtime(tmp_path):

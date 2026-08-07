@@ -231,7 +231,17 @@ def test_one_operation_cannot_hold_two_active_semantic_proposals(tmp_path):
 
 @pytest.mark.smoke
 def test_service_fresh_invocation_claims_approved_bundle_without_old_run_identity(tmp_path) -> None:
-    return _case_test_service_fresh_invocation_claims_approved_bundle_without_old_run_identity(tmp_path)
+    proposal = (
+        _case_test_service_fresh_invocation_claims_approved_bundle_without_old_run_identity(
+            tmp_path
+        )
+    )
+
+    assert proposal["status"] == "applied"
+    assert proposal["proposer_run_id"] == "proposal-run"
+    assert proposal["claimed_run_id"] == "fresh-applicant"
+    assert proposal["claimed_run_id"] != proposal["proposer_run_id"]
+    assert proposal["applied_identity"]
 
 def test_post_write_application_failure_keeps_proposal_claimed_for_recovery(tmp_path, monkeypatch):
     import dish_tool.step8 as step8_module

@@ -16,13 +16,12 @@ from dish_pg.recovery_control import (
 )
 from dish_pg import recovery_rehearsal
 from dish_pg.recovery_rehearsal import _cleanup_rehearsal, _source_manifest
-from tests.postgresql.test_recovery_control import (
+from tests.support.postgresql.core import NOW, core_db
+from tests.support.postgresql.recovery_control import (
     _control,
-    core_db,
     _physical_state,
     _setup,
 )
-from tests.support.postgresql.core import NOW
 
 
 def _activate_candidate(

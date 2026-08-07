@@ -53,6 +53,14 @@ WORKFLOW_BUILDER_CONTRACTS = {
         classification="persistence_shape",
         rationale="Exercises abandonment insertion constraints inside an explicit writer transaction.",
     ),
+    "support/backend_service_resilience.py::_aba_operation": WorkflowBuilderContract(
+        classification="persistence_shape",
+        rationale=(
+            "Creates one valid operation persistence shape for the backend-effect "
+            "ABA recovery tests; those consumers isolate write-outcome evidence "
+            "rather than asserting workflow producer equivalence."
+        ),
+    ),
     "support/semantic_evidence.py::insert_operation": WorkflowBuilderContract(
         classification="persistence_shape",
         rationale="Deliberately inserts incomplete operation evidence for semantic-validator diagnostics.",

@@ -23,7 +23,6 @@ from tests.support.backend_service_resilience import (
     ScopeRaceBackend,
     RejectedWriteBackend,
     ReturnedBaselineWithAdvancedVersionBackend,
-    _aba_operation,
 )
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from dish_pg import runtime_wiring_rehearsal as rehearsal
+from tests.support.postgresql.runtime_wiring_evidence import valid_scenario_evidence
 
 
 def _command_record(label: str, command: list[str], *, exit_status: int) -> dict:
@@ -26,39 +27,65 @@ def test_exact_node_uses_postgresql_fixture_without_governed_lane_selector(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     commands: list[tuple[str, list[str]]] = []
-    scenario = {
-        "scenario": "runtime-wiring-section3",
-        "completion_state": "scenario_assertions_completed",
-        "evidence": {"service_health": {"identity": {"database": "dish_section3_test"}}},
-    }
+    identity = {"database": "dish_section3_runtime_wiring_test"}
     monkeypatch.setattr(
         rehearsal, "_find_compose_command", lambda **_kwargs: (["docker", "compose"], [])
     )
     monkeypatch.setattr(rehearsal, "_probe_native", lambda _dsn: {"ok": True})
 
     def fake_run(command, **kwargs):
-        commands.append((kwargs["label"], list(command)))
-        return _command_record(kwargs["label"], list(command), exit_status=0)
+        command = list(command)
+        label = kwargs["label"]
+        commands.append((label, command))
+        if label == "pytest-section3-runtime-wiring-first-attempt":
+            junit = Path(command[command.index("--junitxml") + 1])
+            evidence = junit.parent
+            junit.write_text(
+                "<testsuite><testcase "
+                'classname="tests.postgresql.native.test_runtime_wiring_rehearsal" '
+                'name="test_runtime_wiring_rehearsal_across_service_and_worker_processes" '
+                'time="0.1" /></testsuite>',
+                encoding="utf-8",
+            )
+            scenarios = evidence / "scenarios"
+            processes = evidence / "processes"
+            identities = evidence / "runtime-identities"
+            scenarios.mkdir()
+            processes.mkdir()
+            identities.mkdir()
+            (scenarios / "scenario.json").write_text(
+                json.dumps(
+                    {
+                        "scenario": "runtime-wiring-section3",
+                        "completion_state": "scenario_assertions_completed",
+                        "evidence": valid_scenario_evidence(identity),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            for pid, process_label in enumerate(
+                sorted(rehearsal.REQUIRED_PROCESS_LABELS), start=1001
+            ):
+                (processes / f"{pid}.json").write_text(
+                    json.dumps(
+                        {
+                            "label": process_label,
+                            "pid": pid,
+                            "command": ["python", "worker.py", process_label],
+                            "completion_state": "completed",
+                            "termination_state": "none",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            for role in sorted(rehearsal.REQUIRED_IDENTITY_ROLES):
+                (identities / f"{role}.json").write_text(
+                    json.dumps({"ok": True, "role": role, "identity": identity}),
+                    encoding="utf-8",
+                )
+        return _command_record(label, command, exit_status=0)
 
     monkeypatch.setattr(rehearsal, "run_external_command", fake_run)
-    monkeypatch.setattr(
-        rehearsal,
-        "_parse_junit",
-        lambda _path: ({rehearsal.TEST_NODE: {"status": "passed"}}, []),
-    )
-    monkeypatch.setattr(rehearsal, "_load_single_scenario", lambda _path: (scenario, []))
-    monkeypatch.setattr(rehearsal, "_read_json_files", lambda _path: [])
-    monkeypatch.setattr(
-        rehearsal,
-        "_validate_evidence",
-        lambda **_kwargs: {
-            "ok": True,
-            "errors": [],
-            "process_count": 0,
-            "distinct_pid_count": 0,
-            "runtime_identity_report_count": 0,
-        },
-    )
 
     result = rehearsal.main(
         [

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import copy
 import json
 import urllib.error
 import urllib.request
@@ -15,27 +14,12 @@ from dish_service.config import ServiceConfig
 from dish_service.http import DishHTTPServer
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
+from tests.support.postgresql.runtime_validation import (
+    runtime_service,
+    without_replay_metadata,
+)
 from tests.support.postgresql.workflow import _next, _register_run, workflow_db
 from tests.support.thread_teardown import start_server_thread, stop_server
-
-SECRET = b"postgres-validation-replay-secret"
-
-
-def _runtime_service(factory, tmp_path: Path) -> PostgresRuntimeService:
-    service = PostgresRuntimeService.__new__(PostgresRuntimeService)
-    service.config = ServiceConfig(
-        db_path=tmp_path / "unused.sqlite3",
-        honest_root=tmp_path,
-        port=0,
-        action_port=0,
-        agent_token="postgres-agent-token",
-        admin_token="postgres-admin-token",
-        action_token=None,
-        legacy_writer_fence_path=None,
-    )
-    service._session_maker = factory
-    service._cursor_secret = SECRET
-    return service
 
 
 def _post_json(url: str, *, body: dict[str, object]) -> tuple[int, dict[str, object]]:
@@ -56,14 +40,6 @@ def _post_json(url: str, *, body: dict[str, object]) -> tuple[int, dict[str, obj
         return response.status, json.loads(response.read().decode("utf-8"))
 
 
-def _without_replay_metadata(payload: dict[str, object]) -> dict[str, object]:
-    normalized = copy.deepcopy(payload)
-    data = normalized.get("data")
-    assert isinstance(data, dict)
-    data.pop("request_replayed", None)
-    return normalized
-
-
 def test_http_first_and_replay_envelopes_differ_only_by_replay_metadata(
     workflow_db, tmp_path: Path
 ) -> None:
@@ -78,7 +54,7 @@ def test_http_first_and_replay_envelopes_differ_only_by_replay_metadata(
             owner="cli",
         )
 
-    service = _runtime_service(factory, tmp_path)
+    service = runtime_service(factory, tmp_path)
     body = {
         "client": {"run_id": str(run_id), "request_id": str(request_id)},
         "arguments": {"operation_id": "not-a-uuid"},
@@ -102,7 +78,7 @@ def test_http_first_and_replay_envelopes_differ_only_by_replay_metadata(
     assert first["retryable"] is False
     assert "request_replayed" not in first["data"]
     assert replay["data"]["request_replayed"] is True
-    assert _without_replay_metadata(replay) == first
+    assert without_replay_metadata(replay) == first
     with session_scope(factory) as session:
         assert int(
             session.scalar(
@@ -140,7 +116,7 @@ def test_normal_postgresql_runtime_query_is_unchanged(workflow_db, tmp_path: Pat
             run_id=run_id,
         )
 
-    result = _runtime_service(factory, tmp_path).execute_agent(
+    result = runtime_service(factory, tmp_path).execute_agent(
         "sections",
         {},
         principal=ServicePrincipal.from_values("owner-1", str(run_id)),

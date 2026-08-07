@@ -5,20 +5,72 @@ from pathlib import Path
 
 
 REVIEWED_PRIVATE_FAULT_SEAMS = {
-    ("test_small_correction_lineage.py", "_validate_semantic_evidence"),
-    ("test_restore_restart_and_rollback_durability.py", "_snapshot_to"),
-    ("test_restore_restart_and_rollback_durability.py", "_fsync_directory"),
-    ("test_submission_concurrency_atomicity.py", "_finalize_successful_lease"),
-    ("test_small_correction_recovery_and_diagnostics.py", "_validate_semantic_evidence"),
-    ("test_flake_tooling.py", "_run_command"),
-    ("test_flake_tooling.py", "_write_summary"),
-    ("test_planning_intent_confirmation.py", "_build_agent_application"),
-    ("test_service_semantic_error_classification.py", "_assert_mutation_ready"),
-    ("test_transport.py", "__init__"),
-    ("test_committed_success_boundaries.py", "_write_emergency_repair"),
-    ("test_material_change_grammar.py", "_signed_identity"),
-    ("test_dish_admin_expire_lease_authority.py", "_linux_process_start"),
+    ("test_small_correction_lineage.py", "_validate_semantic_evidence"): (
+        "Semantic-evidence verifier failure boundary."
+    ),
+    ("test_restore_restart_and_rollback_durability.py", "_snapshot_to"): (
+        "Filesystem snapshot interruption boundary."
+    ),
+    ("test_restore_restart_and_rollback_durability.py", "_fsync_directory"): (
+        "Durability flush failure boundary."
+    ),
+    ("test_submission_concurrency_atomicity.py", "_finalize_successful_lease"): (
+        "Lease-finalization race boundary."
+    ),
+    ("test_small_correction_recovery_and_diagnostics.py", "_validate_semantic_evidence"): (
+        "Semantic-evidence recovery failure boundary."
+    ),
+    ("test_flake_tooling.py", "_run_command"): "External command execution boundary.",
+    ("test_flake_tooling.py", "_write_summary"): "Atomic summary persistence boundary.",
+    ("test_planning_intent_confirmation.py", "_build_agent_application"): (
+        "Application construction boundary for intent confirmation."
+    ),
+    ("test_service_semantic_error_classification.py", "_assert_mutation_ready"): (
+        "Mutation-readiness rejection boundary; no-op replacements remain forbidden below."
+    ),
+    ("test_transport.py", "__init__"): "Transport client construction boundary.",
+    ("test_committed_success_boundaries.py", "_write_emergency_repair"): (
+        "Emergency-repair persistence failure boundary."
+    ),
+    ("test_material_change_grammar.py", "_signed_identity"): (
+        "Signed-identity generation boundary."
+    ),
+    ("test_dish_admin_expire_lease_authority.py", "_linux_process_start"): (
+        "Operating-system process identity boundary."
+    ),
+    ("postgresql/test_process_failure_execution_boundaries.py", "_start_child"): (
+        "Exact subprocess-spawn boundary used to prove DSNs remain environment-only."
+    ),
+    ("postgresql/test_production_shaped_rehearsal.py", "_source_identity"): (
+        "Received-source identity boundary for isolated orchestration tests."
+    ),
+    (
+        "postgresql/test_production_shaped_rehearsal.py",
+        "_deployment_configuration_identity",
+    ): "Deployment-manifest identity boundary.",
+    ("postgresql/test_production_shaped_rehearsal.py", "_checkout_identity"): (
+        "Honest-checkout identity boundary before native availability is assessed."
+    ),
+    ("postgresql/test_production_shaped_runtime_contracts.py", "_wait_health"): (
+        "Real service-health transport boundary."
+    ),
+    ("postgresql/test_production_shaped_runtime_contracts.py", "_http_json"): (
+        "Real HTTP request/response transport boundary."
+    ),
+    ("postgresql/test_recovery_review_corrections.py", "_verified_source_identity"): (
+        "Verified received-source identity boundary for cleanup reporting."
+    ),
+    ("postgresql/test_recovery_review_corrections.py", "_run"): (
+        "Bounded recovery orchestration failure boundary."
+    ),
+    ("postgresql/test_runtime_wiring_review_corrections.py", "_find_compose_command"): (
+        "External Docker Compose discovery boundary."
+    ),
+    ("postgresql/test_runtime_wiring_review_corrections.py", "_probe_native"): (
+        "Native PostgreSQL connectivity probe boundary."
+    ),
 }
+
 
 
 def _test_python_files():
@@ -82,6 +134,7 @@ def test_private_fault_injection_seams_are_explicitly_reviewed():
                         f"{key[0]}:{node.lineno}: mutation authority must not be replaced by a no-op"
                     )
 
-    stale = REVIEWED_PRIVATE_FAULT_SEAMS - observed
+    stale = set(REVIEWED_PRIVATE_FAULT_SEAMS) - observed
+    assert all(reason.strip() for reason in REVIEWED_PRIVATE_FAULT_SEAMS.values())
     assert not violations, "unreviewed private test seams:\n" + "\n".join(violations)
     assert not stale, f"remove stale private-seam allowlist entries: {sorted(stale)}"

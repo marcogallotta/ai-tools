@@ -12,7 +12,6 @@ from dish_pg import reservation_models as reservations
 from dish_pg import stage3_models as wf
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
-from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.workflow import (
     MutationAdmissionClosed,
     RequestSpec,
@@ -20,32 +19,15 @@ from dish_pg.workflow import (
     WorkflowAuthorityService,
     sha256_json,
 )
-from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
 from tests.support.postgresql.concurrency import run_concurrent_workers, wait_at_barrier
 from tests.support.postgresql.release import HASH_A, _prepare_candidate
+from tests.support.postgresql.runtime_validation import (
+    runtime_service,
+    without_replay_metadata,
+)
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
-
-SECRET = b"postgres-validation-replay-secret"
-
-
-def _runtime_service(factory, tmp_path: Path) -> PostgresRuntimeService:
-    service = PostgresRuntimeService.__new__(PostgresRuntimeService)
-    service.config = ServiceConfig(
-        db_path=tmp_path / "unused.sqlite3",
-        honest_root=tmp_path,
-        port=0,
-        action_port=0,
-        agent_token="postgres-agent-token",
-        admin_token="postgres-admin-token",
-        action_token=None,
-        legacy_writer_fence_path=None,
-    )
-    service._session_maker = factory
-    service._cursor_secret = SECRET
-    return service
-
 
 def _validation_error(field: str = "operation_id") -> DishRuleError:
     return DishRuleError(
@@ -105,20 +87,12 @@ def _validation_runtime(workflow_db, tmp_path: Path):
         ids,
         context,
         task_id,
-        _runtime_service(factory, tmp_path),
+        runtime_service(factory, tmp_path),
         ServicePrincipal.from_values("owner-1", str(run_id)),
         run_id,
         request_id,
         {"operation_id": "not-a-uuid"},
     )
-
-
-def _without_replay_metadata(payload: dict[str, object]) -> dict[str, object]:
-    normalized = copy.deepcopy(payload)
-    data = normalized.get("data")
-    assert isinstance(data, dict)
-    data.pop("request_replayed", None)
-    return normalized
 
 
 def _seed_closed_reservation(factory, ids, context, task_id):
@@ -259,7 +233,7 @@ def test_validation_failure_persists_and_exactly_replays(workflow_db, tmp_path: 
         error=_validation_error(),
     )
     assert replay["data"]["request_replayed"] is True
-    assert _without_replay_metadata(replay) == first
+    assert without_replay_metadata(replay) == first
     with session_scope(factory) as session:
         assert _row_counts(session, request_id) == _expected_counts()
 
@@ -360,7 +334,7 @@ def test_destructive_restore_gate_does_not_replace_validation_error(
                 )
             )
 
-    result = _runtime_service(factory, tmp_path).record_replay_validation_failure(
+    result = runtime_service(factory, tmp_path).record_replay_validation_failure(
         "create",
         {"operation_id": "not-a-uuid"},
         principal=ServicePrincipal.from_values("owner-1", str(run_id)),
@@ -391,7 +365,7 @@ def test_concurrent_identical_validation_failures_converge(workflow_db, tmp_path
     results = run_concurrent_workers(2, record)
     replay_flags = [result["data"].get("request_replayed") for result in results]
     assert sorted(replay_flags, key=lambda value: value is True) == [None, True]
-    assert _without_replay_metadata(results[0]) == _without_replay_metadata(results[1])
+    assert without_replay_metadata(results[0]) == without_replay_metadata(results[1])
     with session_scope(factory) as session:
         assert _row_counts(session, request_id) == _expected_counts()
 

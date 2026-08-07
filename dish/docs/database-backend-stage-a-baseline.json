@@ -85,7 +85,7 @@
     "tests/test_authorization_provenance.py": "8043238e3d13b78d87c9689b69d9f4556d4e8946af00739239146d2ca69ffad1",
     "tests/test_backend_contracts.py": "4d34ea12586478780513c476cfc295d58ac8f1cb9c673a4fa3ce252eee313ef9",
     "tests/test_backend_effect_recovery_resilience.py": "9838449ad1134c6f98b4798d382d66a8467aa33963cfa0b52b832d055d81c78a",
-    "tests/test_backend_service_resilience.py": "2bafde28b887b5e3912521abed7d3013fd79bb6766a507226e8a98a54b4a18bc",
+    "tests/test_backend_service_resilience.py": "63881e9dffe8e8d7be21564e5ea81d5e844ea95af6f35f30616b9c095081cad0",
     "tests/test_backup_creation_durability.py": "d16434ea76f64f92e18cad798cd8ec547e9c6090203ded05b1187d0c250d948c",
     "tests/test_backup_ownership.py": "ef43f42e4fc67ca7f62f748e0f42da9b4869d8ade738dcfc98427294c833ae51",
     "tests/test_backup_validation_and_reporting.py": "6ee92389be5c9327b9d48b63e69972315ea6b3ee59986ca9a06ab4ef1491b992",
@@ -194,7 +194,7 @@
     "tests/test_schema_paths.py": "00927a099e6f74cc374b08963e07e127ec793cadbfc1985b2654b88b683f769f",
     "tests/test_semantic_evidence_diagnostics.py": "8df3d18f15ef1b661c06d8a497eab10d8a4ed1ef6d704ea34f8ccb3fb53aedff",
     "tests/test_semantic_invariant_diagnostic_coverage.py": "3f2b296517a5797952f3c3b891ac5b3aad07f095292e403afb043cef3794e3bd",
-    "tests/test_semantic_proposal_bundle_workflow.py": "f9a7e976c0501b7322bef5987956b5e83323225b4c580e103611ccf5c9264720",
+    "tests/test_semantic_proposal_bundle_workflow.py": "3b4ac304b67b72ce0d0e6b113149127f4ab29a7cd93b3b1978c8dd09ae2f8a10",
     "tests/test_service_clients_auth.py": "f08d5172432a04cc66b4cde193a67ecdcfbf7ddd34c205854ac894490319821e",
     "tests/test_service_coordinator_structure.py": "31404157f9a43b9938a608ae9421d8b1eb328a4a1a9a30288da1f86dd31a72b9",
     "tests/test_service_foundations.py": "e559bf749e3805df1aab1e0e520f930bb9ebc7cfa86735f68849c9dd24663529",
@@ -220,7 +220,7 @@
     "tests/test_test_duplicate_contract.py": "45ba881397c7bc02f3a6dc002b7fdd5e76e0c25d9a21e5be0d89d6dd22987e6d",
     "tests/test_test_filename_contract.py": "80f53bf26dc1e07eb691e41fca2305433f1a706d4d327123f3c847372a0ab5d7",
     "tests/test_test_import_hygiene.py": "7f8c196a071fcc596a4a7af441ec6fa194266f1275a8c05575adfc0b5b63ab2e",
-    "tests/test_test_mock_boundary_contract.py": "0f8d4a9872b112ca9152d8077a5da79f32f7461fe2a1a019ed9fe9c4dcb794e0",
+    "tests/test_test_mock_boundary_contract.py": "6f958fb0d5f5e34ad08deca8746dc23558d0cddb34c8660fe3289757ed611375",
     "tests/test_test_module_import_contract.py": "ba764da4b7e04c4d9ae7e3f02ee93bf716295d815edb7b26677d950e2098c29b",
     "tests/test_test_name_contract.py": "364e511ae54a4b5707d4892c9e1e4db4a1976caace7fbe26045935594bf1571d",
     "tests/test_test_oracle_independence.py": "d97193038a7598240f2e2557de228d818a8c2a7638e1f9bdcfcd0c6f4d9ec8ad",
@@ -256,7 +256,7 @@
     "live Asana governed projects/sections/tasks"
   ],
   "governing_source_sha256": {
-    "dish_pg/release.py": "d3957dfaed97cea2e61c95c208d70a07904d46e4a26714b9f663221cf29df967",
+    "dish_pg/release.py": "7ed6a52d7f7abdd0d93ddd3294a7db08b734e77a2ce4b44759ea00465e6a0459",
     "dish_service/application.py": "ddb60526cef5c90f9852335decd40467ec5af0d7015d3b86410d2b8cee7542da",
     "dish_service/command_spec.py": "4af6c17d2b47de7df764d15fecb59eac7497e9c36eb87eeb46622e259b3740db",
     "dish_tool/admin_cli.py": "d903dca43479eaa1a0e000294607b41ba5f10d82731a9a76193640d04640bff0",
@@ -269,7 +269,7 @@
     "scripts/dish-pg-acceptance": "8dc0681def2890f8fe98576225bd2f50a6c309d36b05d100c76402284f22cd5c",
     "scripts/dish-pg-stage-a-baseline": "1273a2d412aca19fc7b99f4124d04eed4382acef2413921f382d2bf1a073f0b4"
   },
-  "last_rebaseline_reason": "Record complete consequential ambiguous-response boundary and replay contracts.",
+  "last_rebaseline_reason": "Rebaseline the corrected current tree at Alembic head 0030_validation_failure_admission after bootstrap/readiness metadata alignment and test-governance support consolidation.",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "New PostgreSQL implementation tests use the tests/postgresql/ namespace and are not part of the frozen legacy characterization corpus.",
@@ -278,7 +278,7 @@
     "The evidence characterizes immutable source commit 7dff85921f005c62929c46d347a7ab29ae463480; this evidence-only commit follows it and does not alter characterized runtime source."
   ],
   "production_change_epoch": "2026-08-05",
-  "schema_head": "0029_cutover_authority_admission_fixes",
+  "schema_head": "0030_validation_failure_admission",
   "source_commit": "7dff85921f005c62929c46d347a7ab29ae463480",
   "source_commit_time": "2026-08-05T11:09:00+00:00",
   "source_only_commands": [

@@ -1,7 +1,6 @@
 """SQLite compatibility coverage for populated cutover-authority upgrades."""
 from __future__ import annotations
 
-from dish_pg.release import ALEMBIC_HEAD
 from tests.support.postgresql.cutover_authority_migration import (
     PREDECESSOR_REVISION,
     TARGET_REVISION,
@@ -17,7 +16,7 @@ def test_populated_cutover_authority_upgrade_accepts_matching_generation_lineage
     database.initialize(PREDECESSOR_REVISION)
     seed_candidate_dependency_predecessor(database, mismatched=False)
     database.upgrade(TARGET_REVISION)
-    database.assert_revision(ALEMBIC_HEAD)
+    database.assert_revision(TARGET_REVISION)
 
 
 def test_populated_cutover_authority_upgrade_rejects_mismatched_generation_lineage(
