@@ -65,7 +65,7 @@
     "tests/test_action_model_validation.py": "461f8dcbde046f67dd11b12e4dbd5063365ae48de19f1e3c5ad8909f2610f549",
     "tests/test_action_replay_contract.py": "b8795bd2ba934ff3452668dfee9c641b6e082191ad1c67b2350b3f827078a69f",
     "tests/test_action_router_switch.py": "cea2943594efb79a85dbfcd64318180a59f342d408fb3c683b7c3e3c8a2fc004",
-    "tests/test_action_surface.py": "d7f8ccfacedc67f2fd998557b82989c38f014fb3b67d17111c355aa723ccb4b5",
+    "tests/test_action_surface.py": "07d645e036e8bf26572c37ab98fbe03cbb4dee95b31eedc7f30797e1b250b749",
     "tests/test_action_surface_identifier_contract.py": "610ca7d467aadf1919aca25aa4ea936d84cdf5fea131dd3d83b19ac68ba0bbe1",
     "tests/test_action_surface_openapi.py": "a9e12393b439f8c653aeadc743b41b5209d99de49ac8f39abb6aef56137b2df6",
     "tests/test_actor_lease_attempt_context.py": "61b33e29934a759380e6e48e1028b3e855211592189b84df37ac92846144186b",
@@ -195,7 +195,7 @@
     "tests/test_schema_paths.py": "00927a099e6f74cc374b08963e07e127ec793cadbfc1985b2654b88b683f769f",
     "tests/test_semantic_evidence_diagnostics.py": "8df3d18f15ef1b661c06d8a497eab10d8a4ed1ef6d704ea34f8ccb3fb53aedff",
     "tests/test_semantic_invariant_diagnostic_coverage.py": "3f2b296517a5797952f3c3b891ac5b3aad07f095292e403afb043cef3794e3bd",
-    "tests/test_semantic_proposal_bundle_workflow.py": "3b4ac304b67b72ce0d0e6b113149127f4ab29a7cd93b3b1978c8dd09ae2f8a10",
+    "tests/test_semantic_proposal_bundle_workflow.py": "b85ca6de99abf1eb3d62e4067ea0be5a5c91eed6bfb0fca4a058a3845ccd106e",
     "tests/test_service_clients_auth.py": "f08d5172432a04cc66b4cde193a67ecdcfbf7ddd34c205854ac894490319821e",
     "tests/test_service_coordinator_structure.py": "31404157f9a43b9938a608ae9421d8b1eb328a4a1a9a30288da1f86dd31a72b9",
     "tests/test_service_foundations.py": "e559bf749e3805df1aab1e0e520f930bb9ebc7cfa86735f68849c9dd24663529",
@@ -225,7 +225,6 @@
     "tests/test_test_module_import_contract.py": "ba764da4b7e04c4d9ae7e3f02ee93bf716295d815edb7b26677d950e2098c29b",
     "tests/test_test_name_contract.py": "364e511ae54a4b5707d4892c9e1e4db4a1976caace7fbe26045935594bf1571d",
     "tests/test_test_oracle_independence.py": "d97193038a7598240f2e2557de228d818a8c2a7638e1f9bdcfcd0c6f4d9ec8ad",
-    "tests/test_test_size_contract.py": "1a35354212f6d9647e97f6c8af82e74d274ba281d8a273baa38eef34f130dab5",
     "tests/test_test_thread_teardown_contract.py": "ffc37837031fbb02b819c98b170092d1443a205a683c679b9316d7baba1abe72",
     "tests/test_transport.py": "71c0760232e22da70d77970c971e138dd4ba8824aceeb21b3dfde511d9d4d6a6",
     "tests/test_transport_contract_resilience.py": "0ea66d1db8c3597d6d2dd3a379739460888a89ba0ea7976d08ef2d9f826d2c97",
@@ -237,7 +236,6 @@
     "tests/test_verification_atomicity_and_route_recovery.py": "c7266c4d00a3768ee82b9a25527ca472dea407b78e95e43f5ea8dd639a9c8408",
     "tests/test_verifier_attestation_safety.py": "dffa70aab48cdaa18e35d3900a36f3a3a2ee8d8ae1fec5a07deddbc4acb2c22c",
     "tests/test_workflow_authority.py": "d71b4947e1747fc8ef7e6ed6e2f78fee3111df57075a2393da5cf562d411506d",
-    "tests/test_workflow_builder_ownership.py": "09c0ffeaac49c714e53474931663d6453015487e6c8dd88c7961e01cd424bfa1",
     "tests/test_workflow_policy_fail_closed.py": "c3787ac2a4e9a52e178aeacd0ff0bea67241f503653138e0962903d38aeb3d3e",
     "tests/test_workflow_recovery.py": "f902da72c082c8e5d0da0c9c849c564a2440b9ff7f55242330f5577de1d2cc61",
     "tests/test_workflow_recovery_matrix.py": "c824a2b6a055f8f0c62a36ac42e96613938b633a91a8f274343f86f97b05a95b"
@@ -258,7 +256,7 @@
   ],
   "governing_source_sha256": {
     "dish_pg/release.py": "7ed6a52d7f7abdd0d93ddd3294a7db08b734e77a2ce4b44759ea00465e6a0459",
-    "dish_service/application.py": "ddb60526cef5c90f9852335decd40467ec5af0d7015d3b86410d2b8cee7542da",
+    "dish_service/application.py": "4dd0fa88b52706c26ff13029cb715b8addcc038edd7e1c8db56ac0f4023d5ec7",
     "dish_service/command_spec.py": "d323e6862b1b9d1f7d883abefb49379b432ffc24ba5e4693472e9dddb676e002",
     "dish_tool/admin_cli.py": "95596c168798415cc12b1f2bdeee9a0f76f796b9bca20f0ece03e12170f293bc",
     "dish_tool/admin_command_spec.py": "7b34dbb187bcfc98fe08f1056711e2a2e90304f2455a4e43a45aed4f735bc907",
@@ -270,7 +268,7 @@
     "scripts/dish-pg-acceptance": "8dc0681def2890f8fe98576225bd2f50a6c309d36b05d100c76402284f22cd5c",
     "scripts/dish-pg-stage-a-baseline": "2ca757b55377eff8c39f97be6ed3d1cc930e0a99221f149aae16b9febd0b0cca"
   },
-  "last_rebaseline_reason": "Stage A5 removes unused repository and test-only SQLite helper APIs and migrates their characterization consumers without changing governed runtime behavior.",
+  "last_rebaseline_reason": "Regenerate after 438ea91 (dish P0: human review reliability) and 836b46c test-file deletions left the baseline stale",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "New PostgreSQL implementation tests use the tests/postgresql/ namespace and are not part of the frozen legacy characterization corpus.",
