@@ -5,7 +5,7 @@ architecture. Tracked gaps, post-rollout issue candidates, and accepted launch l
 [`known-issues.md`](known-issues.md). This is design triage, not implementation authorization. Any
 item still requires Marco's explicit approval and should be justified by real usage evidence.
 
-For the implemented system, read [`architecture.md`](architecture.md),
+For the implemented system, read [architecture index](architecture/index.md),
 [`../README.md`](../README.md), and [`runtime-contract.md`](runtime-contract.md).
 
 For decided (but not yet implemented) workflow and administration design — Human Review lifecycle,

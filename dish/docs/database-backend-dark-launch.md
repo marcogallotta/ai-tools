@@ -43,7 +43,7 @@ and are out of scope here.
   instance: read-only evidence, never production authority; what's safe to touch (status checks)
   versus Marco-only (mode, kill switch, service lifecycle).
 - `dish/README.md` — operator entry points: how to start/stop/check status of the dark launch.
-- `dish/docs/architecture.md` — describes the shadow-capture worker, kill switch, and
+- `dish/docs/architecture/dark-launch.md` — describes the shadow-capture worker, kill switch, and
   capture-only enforcement.
 - `dish/docs/database-backend-dark-launch-runbook.md` — new operator runbook with the full
   prepare/enable/disable command sequence; this tracker doc stays the status/effort summary, the

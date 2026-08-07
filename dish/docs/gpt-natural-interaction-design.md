@@ -18,7 +18,7 @@ rollout.
   `future.md`, which points here for detail. Implement only if v1/v2's known limitations cause real
   recurring friction.
 
-Current behavior remains defined by [`architecture.md`](architecture.md) and
+Current behavior remains defined by [architecture index](architecture/index.md) and
 [`runtime-contract.md`](runtime-contract.md); the Custom GPT payload remains
 `~/honest-pantry/dish-custom-gpt-instructions.md` until an approved change lands there.
 
@@ -230,8 +230,7 @@ This should be one shared internal enumeration method that v3's `dish_find` can 
 reuse, not a second implementation.
 
 **Concurrency: a shared in-process lock, owned and ordered explicitly.** All governed mutations
-already converge on the single `dish-service` process (`architecture.md`: "the only supported
-multi-agent authority"). A lock instantiated inside a per-request command handler, application
+already converge on the single `dish-service` process (`architecture/system-context.md`: the supported multi-agent authority converges on the service). A lock instantiated inside a per-request command handler, application
 object, or workflow service would not serialize anything, since each service request constructs its
 own such objects — the lock must be owned by the long-lived `DishService` instance shared by both
 listeners, not by anything created fresh per request.
@@ -359,7 +358,7 @@ input is unchanged, only its response `data` (already an open field) gains conte
 - `create`'s collision-check implementation, its shared enumeration method, the shared
   `DishService`-owned lock (acquired after journaling, at backend/app construction, released in
   `finally`), and the normalization function;
-- `architecture.md`, since a process-shared create mutex and its relationship to request-journal
+- `architecture/operations-leases-and-fencing.md` and `architecture/request-replay-and-idempotency.md`, since a process-shared create mutex and its relationship to request-journal
   ordering is real concurrency architecture, even without a new Action or durable authority;
 - `runtime-contract.md`, documenting the collision envelope, the `required_followup`/
   `required_user_action` split between the single- and multiple-collision outcomes, and the precise
@@ -405,7 +404,7 @@ Two further additive changes, on top of v1 and v2:
 - Never resolve ambiguity silently: auto-resolve only on an unambiguous single exact-title match;
   whenever more than one plausible candidate remains after the agent's narrowing pass, surface that
   narrowed set for Marco to pick from explicitly.
-- Preserve every existing invariant in `architecture.md`: one action authority
+- Preserve every existing invariant in `architecture/index.md`: one action authority
   (`workflow_policy.legal_actions`-equivalent stays the only source of legal transitions), the
   bounded Action surface, no semantic judgment inside the deterministic tool, and Cooking placement
   selected only by Cooking project GID, never by first membership.
@@ -657,11 +656,9 @@ The full flow a GPT session follows for any dish reference, once `dish_find` exi
 ### Landing scope (v3)
 
 Because this adds a new runtime surface and generalizes an authority boundary, implementation is not
-complete with just the tool code. Per `architecture.md`'s own rule ("update this document in the
-same commit when a change... adds a runtime surface... or changes which component owns a durable
-fact"), the same landing must also update:
+complete with just the tool code. Per `architecture/extension-rules.md`, the same landing must update the owning architecture documents in the implementation commit:
 
-- `architecture.md` and `runtime-contract.md`;
+- the routed architecture domain documents and `runtime-contract.md`;
 - `deploy/gpt-action.md`;
 - `dish_service.command_spec`, and the generated/checked-in Action OpenAPI it drives;
 - HTTP dispatch and authentication-surface tests for the new Action;

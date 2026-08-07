@@ -38,7 +38,7 @@ incorporates the external long-term design review but remains intentionally unap
 |---|---|
 | Revision | 19 |
 | Date | 31 July 2026 |
-| Part I status | **Implemented, with the prepared-successor drift correction awaiting merge at the time of this revision.** Core abandonment and the first corrective patch are complete. The remaining correction closes the live content/placement drift loop for unclaimed Planning/Research successors. Current runtime behavior must be sourced from `docs/architecture.md` and `docs/runtime-contract.md` after that patch lands. |
+| Part I status | **Implemented, with the prepared-successor drift correction awaiting merge at the time of this revision.** Core abandonment and the first corrective patch are complete. The remaining correction closes the live content/placement drift loop for unclaimed Planning/Research successors. Current runtime behavior must be sourced from `docs/architecture/index.md` and `docs/runtime-contract.md` after that patch lands. |
 | Part II status | **Superseded and abandoned by human decision on 31 July 2026. Do not implement, continue, or review unless Marco explicitly reopens this exact design. Database-backend work takes priority; recovery architecture will be reconsidered after that migration.** |
 | Supersedes | Revision 18 |
 | Source basis | Revision 18, shipped Part I implementation, current architecture/runtime contract, `future.md`, and a code-grounded review of the deployed GPT Action, request replay, leases, workflow routes, and Verification provenance. |
@@ -51,7 +51,7 @@ incorporates the external long-term design review but remains intentionally unap
 ## Reading rule
 
 - Part I is a historical and release-readiness summary. The current executable contract lives in
-  `docs/architecture.md` and `docs/runtime-contract.md`.
+  `docs/architecture/index.md` and `docs/runtime-contract.md`.
 - Part II is a design draft. It may be reviewed and revised, but it must not be implemented until
   its fixed approval gate is satisfied.
 - No Part II concept adds a requirement to Part I retroactively.
@@ -397,7 +397,7 @@ Rules:
 This avoids the invalid fallback of treating every chat under the shared `gpt-action` owner as one
 actor. Until trusted transport sessions exist and this model cuts over, the current task-wide run
 lineage remains the executable Verification-independence rule
-(`dish_tool/step5.py:218–261`, `docs/architecture.md:120–129`).
+(`dish_tool/step5.py:218–261`; see `docs/architecture/workflow-and-human-review.md`).
 
 ### 6.2 Verification independence
 
@@ -426,7 +426,7 @@ The initial disqualifying-lineage query must preserve current semantics: any tas
 material-editor lineage disqualifies that actor/session from Verification. The current runtime also
 requires exact `reviewed_content_version_id`, actor fact, inspection fact, attestation, and queue
 placement; reviewed identity alone is insufficient
-(`dish_tool/application_service.py:77–106`, `docs/architecture.md:120–139`).
+(`dish_tool/application_service.py:77–106`; see `docs/architecture/workflow-and-human-review.md`).
 
 `operations.run_id` and `verification_cycles.run_id` may remain historical projections during
 migration, but must not remain independent mutation-authority sources after cutover.

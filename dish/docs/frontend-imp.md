@@ -8,7 +8,7 @@ normative. This document owns every implementation change required because of th
 regardless of whether that change lands in browser code, the private service, application/query
 services, PostgreSQL queries or storage, deployment, or tests.
 
-Read [`architecture.md`](architecture.md), [`runtime-contract.md`](runtime-contract.md),
+Read [architecture index](architecture/index.md), [`runtime-contract.md`](runtime-contract.md),
 [`database-backend.md`](database-backend.md),
 [`database-backend-imp.md`](database-backend-imp.md), and
 [`database-backend-migration.md`](database-backend-migration.md) as governing authority contracts.

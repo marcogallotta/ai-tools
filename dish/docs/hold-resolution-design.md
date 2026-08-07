@@ -76,7 +76,7 @@ ordering; see the flag in [`future.md`](future.md).
 
 Beyond the new command itself, this touches: `reject`/`approve` Action arguments and the
 generated OpenAPI where they interact with the new continuation, `admin_cli.py` and admin
-dispatch, command templates returned by `read`/`inspect`, `architecture.md` and
+dispatch, command templates returned by `read`/`inspect`, `architecture/workflow-and-human-review.md` and
 `runtime-contract.md`, and both the checked-in GPT template and the separate live
 custom-GPT instructions (per this repo's `CLAUDE.md` sync requirement). "Talk first" (#1)
 and "synchronous is the default" (#3, #4) also need the corresponding wording in

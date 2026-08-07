@@ -488,15 +488,15 @@ backup/restore, operational health, and private/public surface separation.
 
 ## Documentation map
 
-- `docs/architecture.md` — mandatory agent change map: authorities, invariants, owning layers, and routed reading.
+- `docs/architecture/index.md` — canonical agent change map: authorities, invariants, owning layers, and task-routed reading.
 - `docs/testing.md` — authoritative test gates, flake detection, candidate/quarantine policy, and artifact handling.
 - `docs/runtime-contract.md` — JSON meanings, exit statuses, retry rules, and operational recovery.
 - `docs/future.md` — only work that is not already implemented.
 - `docs/database-backend-stage6-runbook.md` — draft PostgreSQL release-candidate, rehearsal,
   legacy-fence, cutover, and recovery procedure; it does not constitute production approval.
 
-The historical statement that the production migration and cutover are complete applies only to the
-existing SQLite production-service migration. PostgreSQL dark launch and cutover remain gated by
+The earlier cutover-complete statement applies only to the existing SQLite production-service
+migration. PostgreSQL dark launch and cutover remain gated by
 the readiness and cutover runbooks above; neither a fixture report nor repository implementation
 constitutes production approval. Git history preserves retired migration tooling and evidence. Use
 the managed backup/restore commands above for current recovery. Require Marco's explicit authorization for any public Action route change.

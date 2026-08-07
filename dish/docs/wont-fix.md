@@ -4,7 +4,7 @@ This file archives items considered and deliberately not acted on: won't-fix dec
 test-coverage gaps judged acceptable. It exists so a future review doesn't re-surface these as new
 findings. It is not actively maintained, can go stale, and is not implementation authorization.
 Current authority boundaries and runtime behavior remain defined by
-[`architecture.md`](architecture.md) and [`runtime-contract.md`](runtime-contract.md).
+[architecture index](architecture/index.md) and [`runtime-contract.md`](runtime-contract.md).
 
 Every write-up below was drafted by an AI agent, not Marco. He has not reviewed or approved any
 individual severity claim or blurb; treat them as rough, unvetted starting points rather than his

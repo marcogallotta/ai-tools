@@ -115,7 +115,7 @@ items are.
 | --- | --- |
 | Stage A "top-level success ⇒ production success" | `dish-pg-acceptance` already reports `acceptance_scope="source_contract"` separately from `production_acceptance_complete` |
 | Source vs PG `inspect` identical request semantics | Not a real requirement: migration baseline treats target `inspect` as `retain:E`; only the deployed OpenAPI/instructions need to switch together |
-| Closure-through-activation | Not a defect under current architecture; current `architecture.md` only requires closure through the writer-fence boundary |
+| Closure-through-activation | Not a defect under current architecture; current `architecture/operations-leases-and-fencing.md` requires closure through the writer-fence boundary |
 
 ## Confirmed open — verified directly against code (high confidence)
 

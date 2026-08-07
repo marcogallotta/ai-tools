@@ -2,7 +2,7 @@
 
 This file lists known gaps queued for future work, ordered by priority. An entry is not
 implementation authorization. Current authority boundaries and runtime behavior remain defined by
-[`architecture.md`](architecture.md) and [`runtime-contract.md`](runtime-contract.md).
+[architecture index](architecture/index.md) and [`runtime-contract.md`](runtime-contract.md).
 
 Won't-fix decisions and accepted test-coverage gaps are archived in
 [`wont-fix.md`](wont-fix.md), not listed here — check there before re-proposing one of those as a

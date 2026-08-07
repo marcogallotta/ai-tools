@@ -208,7 +208,9 @@ def test_checked_in_contract_documents_current_access_and_deployment():
     assert "No mutation endpoint is exempt from request identity" in runtime
     assert "DISH_LIVE_MODE=1" in runtime and "DISH_MODE=service" in runtime
     assert "Action listener, intended for Tailscale Funnel" in runtime
-    assert "production migration and cutover are complete" in readme
+    assert "PostgreSQL dark launch and cutover remain gated" in readme
+    assert "neither a fixture report nor repository implementation" in readme
+    assert "constitutes production approval" in readme
     assert "explicit authorization for any public Action route change" in readme
     assert "--https=8444" in tailscale and "--https=443" in tailscale
     assert "port 443 is free" in tailscale and "do not overwrite" in tailscale

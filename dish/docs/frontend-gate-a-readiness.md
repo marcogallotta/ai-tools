@@ -19,7 +19,7 @@ PostgreSQL models are already the deployed production authority.
 ## Evidence inspected
 
 - Product and implementation contracts: `docs/frontend.md`, `docs/frontend-imp.md`.
-- Runtime authority map: `docs/architecture.md`, `docs/runtime-contract.md`.
+- Runtime authority map: `docs/architecture/index.md`, `docs/runtime-contract.md`.
 - Listener and drain path: `dish_service/http.py`, `dish_service/__main__.py`.
 - Existing service configuration and bearer authentication: `dish_service/config.py`,
   `dish_service/auth.py`.

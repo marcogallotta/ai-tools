@@ -41,6 +41,6 @@ def test_legacy_mutation_symbols_are_absent_from_production():
 
 
 def test_legacy_submission_storage_is_documented_as_read_only():
-    architecture = (ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
+    architecture = (ROOT / "docs" / "architecture" / "authority-and-data-ownership.md").read_text(encoding="utf-8")
     normalized = " ".join(architecture.split())
     assert "production exposes no API that creates, transitions, or recovers a legacy submission" in normalized

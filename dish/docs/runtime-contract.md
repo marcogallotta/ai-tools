@@ -1,7 +1,7 @@
 # Dish runtime contract reference
 
 Command syntax and invocation live in `dish --help` / `dish <stage> --help` / `dish-admin --help`,
-setup lives in `dish/README.md`, and internal design lives in [`architecture.md`](architecture.md).
+setup lives in `dish/README.md`, and internal design lives in [architecture index](architecture/index.md).
 Always invoke the `dish`/`dish-admin` wrapper scripts, not `python -m dish_tool...`; the latter does
 not run the CLI entrypoint.
 This document is the reference for what a response actually means once you've made a call: the JSON
