@@ -186,6 +186,34 @@ reason unless `--postgresql` is present. They never substitute SQLite. The nativ
 owning test, then runs Alembic through `head`. It must not use `Base.metadata.create_all()`:
 hand-written PostgreSQL triggers and constraints are part of the behavior under certification.
 
+### §1 process-failure rehearsal (Compose-driven, not part of native certification)
+
+Native certification's inventory (previous section) is auto-discovered: it globs every
+`tests/postgresql/native/test_*.py` file with no filtering for Compose dependency. A subset of that
+inventory needs live control over the PostgreSQL server process itself (stop/start/disconnect) and
+therefore FAILS — it does not skip — when collected and run standalone without a Compose-controlled
+target. Do not treat those failures as native-certification defects; run the dedicated rehearsal
+instead:
+
+```sh
+.venv/bin/python scripts/dish-pg-process-failure \
+  --output .test-artifacts/process-failure/report.json \
+  --evidence-dir .test-artifacts/process-failure/evidence
+```
+
+This spins up its own disposable Docker Compose PostgreSQL stack (own port, own database, own
+lifecycle) and runs a fixed, literal 14-node inventory (`PROCESS_TEST_INVENTORY` in
+`dish_pg/process_failure_rehearsal.py`) covering §1 process-failure command handling, projection,
+takeover, supervision, reconciliation, and disconnect scenarios. It deliberately invokes pytest
+with `--postgresql` but not `--native-postgresql`, so it never triggers the governed
+full-repository-collection rule for native lanes.
+
+**Known gap:** `test_section4_service_database_disconnect_rolls_back_then_recovers_once`
+(`tests/postgresql/native/test_production_shaped_runtime.py`) also calls `compose_control()`
+against the live TEST PostgreSQL target, but it is in neither this rehearsal's fixed inventory nor
+any other runner's Compose wiring. It currently has no runner that passes cleanly. Tracked
+separately; do not assume `dish-pg-process-failure` covers it.
+
 ### Local PostgreSQL 17 server binaries (backup/PITR and production-shaped rehearsals)
 
 `scripts/dish-pg-recovery-rehearsal` (test-plan §2) and `scripts/dish-pg-production-shaped-rehearsal`
