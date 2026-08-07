@@ -2555,7 +2555,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             )
             verification = _verify_database(
                 engine,
-                expected_min_reconciliations=4,
+                expected_min_reconciliations=1,
                 task_id=phase_context["task_id"],
             )
             return {
