@@ -69,6 +69,7 @@ Package boundaries preserve recovery ownership: transport failures become canoni
 
 - `tests/test_action_authority_structure.py` proves shared action authority is not duplicated.
 - `tests/test_admin_command_spec.py` proves the typed admin registry drives surfaces consistently.
+- `tests/test_test_module_import_contract.py` proves reusable workflow/test construction helpers stay under `tests/support` rather than becoming a second collected-test namespace.
 - `tests/test_dish_transaction_ownership.py` proves transaction ownership boundaries.
 - `tests/postgresql/test_stage_a_release_decomposition.py` proves PostgreSQL release components remain separated.
 - `tests/postgresql/test_stage4_command_port.py` proves command-port delegation.

@@ -20,6 +20,7 @@ This document owns command discovery, route/surface boundaries, and the handoff 
 - Authentication: `dish_service/auth.py`.
 - OpenAPI generation: `dish_service/openapi.py` and checked-in `openapi/dish-action.openapi.json`.
 - Command applications: `dish_tool/commands.py`, `dish_tool/admin.py`.
+- Human/admin action specification and terminal rendering: `dish_tool/human_actions.py`, `dish_tool/admin_human.py`; these render authoritative decisions but do not own workflow legality.
 - PostgreSQL retained/retired command classification: `dish_pg/command_contract.py`.
 
 ## Actors, processes, and stores

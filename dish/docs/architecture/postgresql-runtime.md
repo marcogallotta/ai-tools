@@ -42,7 +42,7 @@ Current production does **not** read these PostgreSQL tables as live authority. 
 - One active authority generation and one current activation exist under database constraints.
 - Requests, actors, operations, mappings, workers, and evidence are generation/epoch-bound.
 - Same-task contention is fenced without a global cross-task serialization point.
-- Authoritative command state and projection intent commit in one PostgreSQL transaction.
+- Authoritative command state and projection intent commit in one PostgreSQL transaction; `command_effect_runtime.py` verifies that the handler produced the declared projection and covered mutation effects before that caller-owned transaction can succeed.
 - Projection effects are disabled until an active epoch explicitly allows them.
 - A `reproject` event is confirmed against its own recorded whole-state identity (the `authoritative_snapshot` payload field, compared through `_reproject_state_identity`), never through the shared `identity_field` mapping used for `update_task_document`/`move_task`/`set_completion`; that mapping never included `reproject` and treating it as covered left reproject work permanently unconfirmable as applied.
 - Release candidates bind exact source, schema, generation, registry, import, reconciliation, closure, and runtime evidence.
@@ -85,6 +85,7 @@ Projection dispatch/recovery preserves immutable original dispatch identity. Rec
 - Add persistence in a new Alembic revision and matching ORM/service/repository tests; do not edit frozen historical revisions.
 - Change request/validation replay identity in `dish_pg/workflow.py` and `dish_pg/postgres_service.py`, with migration/admission guards when the database gate changes; do not smuggle validation errors through ordinary command execution.
 - Put command semantics in the command port/planner/workflow services, not protocol transport.
+- Put branch-sensitive effect declarations in `command_effects.py` and persistence-facing command-effect recording/verification in `command_effect_runtime.py`; do not duplicate either inside command handlers or workers.
 - Put projection and reconciliation lifecycle authority in `transition.py`; workers only fetch/drive owned service transitions and process boundaries.
 - Change release/cutover gates in the typed evidence/status/control modules and exact gate tests together.
 - Do not wire PostgreSQL into production default startup by changing a flag alone; authority activation, fencing, routing, credentials, workers, recovery, and evidence must converge.

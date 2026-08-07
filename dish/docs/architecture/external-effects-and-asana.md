@@ -15,7 +15,8 @@ This document owns the exact external-effect protocol and the boundary between a
 - Attempt persistence/finalization: `dish_tool/database.py`, `dish_tool/recovery.py`.
 - Submission/destination handling: `dish_tool/step9.py`, `dish_tool/submission_authority.py`.
 - Asana generic-write guard: `dish_tool/generic_asana_guard.py`.
-- PostgreSQL projection model/service: `dish_pg/stage5_models.py`, `dish_pg/transition.py`.
+- PostgreSQL command projection-intent contract/runtime seam: `dish_pg/command_effects.py`, `dish_pg/command_effect_runtime.py`.
+- PostgreSQL projection settlement model/service: `dish_pg/stage5_models.py`, `dish_pg/transition.py`.
 - Projection worker and reconciliation: `dish_pg/projection_worker.py`, `dish_pg/reconciliation_worker.py`.
 
 ## Actors, processes, and stores
@@ -77,7 +78,8 @@ A lost network response can mean the effect happened. Recovery compares exact cu
 - Change Asana API mechanics in `dish_tool/backend.py`; preserve the gateway contract.
 - Change exact read/write/move semantics in `task_gateway.py`/`task_store.py` and attempt persistence together.
 - Change workflow response to an effect outcome in the owning stage module, not the adapter.
-- Change target projection semantics in `dish_pg/transition.py` and worker tests; workers must not reimplement claim/adjudication logic.
+- Change command-side projection intent or committed-effect verification in `dish_pg/command_effects.py` / `dish_pg/command_effect_runtime.py`; keep transaction ownership with the command caller.
+- Change target projection settlement semantics in `dish_pg/transition.py` and worker tests; workers must not reimplement claim/adjudication logic.
 - Do not use the generic Asana CLI/helper to mutate governed Cooking tasks.
 
 ## Proving tests
