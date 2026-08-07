@@ -1977,7 +1977,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         binaries = discover_pg_bin(args.pg_bin)
         pg_version = _postgres_version(runner, binaries)
         archive_dir = work_root / "wal-archive"
-        _, restore_helper = _write_archive_helpers(work_root / "wal-helpers", archive_dir)
+        _, restore_helper = _write_archive_helpers(work_root, archive_dir)
         primary = Cluster(
             "section4-primary",
             work_root / "primary-data",
