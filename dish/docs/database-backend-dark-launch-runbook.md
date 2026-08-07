@@ -139,6 +139,12 @@ agreed way to handle this:
    database and redo the same sequence fresh, immediately followed by enabling capture. This keeps
    the stale-snapshot gap as small as practical.
 
+`scripts/dish-pg-production-prepare` scripts steps 1-7 of the "Prepare immutable source and
+PostgreSQL authority" sequence below as one repeatable command, so both the rehearsal and the
+pre-go-live resync run identically. It takes the same environment variables documented in that
+section, never restarts the service, and never touches capture mode, the kill switch, or the
+worker. Run it once now, and again after the maintenance-window wipe.
+
 There is no dedicated reset script; the wipe is a manual drop/recreate (or full truncate) of the
 production PostgreSQL database. It is a distinct destructive action from the rehearsal steps above
 and requires Marco's explicit authorization at the time it is performed, separate from any earlier

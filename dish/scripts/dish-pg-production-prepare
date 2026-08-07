@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+"""Repeatable production PostgreSQL prepare sequence (rehearse now, resync before go-live).
+
+Runs the "Prepare immutable source and PostgreSQL authority" sequence from
+docs/database-backend-dark-launch-runbook.md end to end, against the explicit
+production paths and credentials supplied via environment variables:
+
+  1. Migrate the target PostgreSQL database to the repository Alembic head.
+  2. Capture the location manifest from the real production SQLite database (read-only).
+  3. Export the legacy corpus using that manifest.
+  4. Bootstrap the PostgreSQL target from that export (target must be empty).
+  5. Create one open baseline bound to the bootstrap generation.
+  6. Import the receipt-bound legacy export.
+  7. Activate one effects-disabled projection epoch.
+
+It never restarts the production service, changes DISH_DARK_LAUNCH_MODE, touches the
+kill switch, or installs/starts the shadow worker -- those remain Marco-only actions
+described later in the runbook. Intended to be run twice: once now as a rehearsal, and
+again from a freshly wiped PostgreSQL database immediately before capture is enabled, to
+keep the pre-capture staleness window as small as practical. There is no wipe step here;
+wiping the target database is a separate, explicitly authorized action.
+
+Required environment variables (see the runbook for definitions):
+  DISH_PRODUCTION_SERVICE_ENV   e.g. /home/marco/.config/dish-service/prod.env
+  DISH_DB_PATH                  production SQLite database path
+  DISH_PG_DATABASE_URL          production PostgreSQL connection URL
+  DISH_PG_EXPECTED_DATABASE_NAME
+  DISH_PG_LOCATION_MANIFEST     output path for the location manifest
+  DISH_PG_LEGACY_NDJSON         output path for the legacy export
+  DISH_PG_BOOTSTRAP_RECEIPT     output path for the bootstrap receipt
+  DISH_DARK_LAUNCH_SOURCE_GENERATION
+  DISH_SOURCE_COMMIT            dish repo commit (defaults to current HEAD)
+  HONEST_SOURCE_COMMIT          honest-pantry repo commit
+  DISH_DARK_LAUNCH_SPOOL_PATH   spool path (existing, checkpointed spool)
+
+Optional:
+  DISH_HONEST_REPO              defaults to /home/marco/honest-pantry
+
+Example:
+
+  DISH_PRODUCTION_SERVICE_ENV=/home/marco/.config/dish-service/prod.env \\
+  DISH_DB_PATH=/home/marco/.local/state/dish/prod/shared.sqlite3 \\
+  DISH_PG_DATABASE_URL='postgresql+psycopg://...' \\
+  DISH_PG_EXPECTED_DATABASE_NAME=dish_stage_a_prod \\
+  DISH_PG_LOCATION_MANIFEST=/home/marco/.local/state/dish/prod/dark-launch-evidence/location-manifest.json \\
+  DISH_PG_LEGACY_NDJSON=/home/marco/.local/state/dish/prod/dark-launch-evidence/legacy.ndjson \\
+  DISH_PG_BOOTSTRAP_RECEIPT=/home/marco/.local/state/dish/prod/dark-launch-evidence/bootstrap-receipt.json \\
+  DISH_DARK_LAUNCH_SOURCE_GENERATION=prod-rehearsal-1 \\
+  HONEST_SOURCE_COMMIT=<sha> \\
+  DISH_DARK_LAUNCH_SPOOL_PATH=/home/marco/.local/state/dish/prod/dark-launch-spool.sqlite3 \\
+    .venv/bin/python scripts/dish-pg-production-prepare
+"""
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+REQUIRED_ENV = (
+    "DISH_PRODUCTION_SERVICE_ENV",
+    "DISH_DB_PATH",
+    "DISH_PG_DATABASE_URL",
+    "DISH_PG_EXPECTED_DATABASE_NAME",
+    "DISH_PG_LOCATION_MANIFEST",
+    "DISH_PG_LEGACY_NDJSON",
+    "DISH_PG_BOOTSTRAP_RECEIPT",
+    "DISH_DARK_LAUNCH_SOURCE_GENERATION",
+    "HONEST_SOURCE_COMMIT",
+    "DISH_DARK_LAUNCH_SPOOL_PATH",
+)
+
+
+class PrepareError(RuntimeError):
+    pass
+
+
+def log(message: str) -> None:
+    print(f"[dish-pg-production-prepare] {message}", flush=True)
+
+
+def require_env() -> dict[str, str]:
+    values = {key: os.environ.get(key, "").strip() for key in REQUIRED_ENV}
+    missing = [key for key, value in values.items() if not value]
+    if missing:
+        raise PrepareError(
+            "missing required environment variable(s): " + ", ".join(missing)
+        )
+    return values
+
+
+def resolve_source_commit() -> str:
+    supplied = os.environ.get("DISH_SOURCE_COMMIT", "").strip()
+    if supplied:
+        return supplied
+    completed = subprocess.run(
+        ["git", "-C", str(REPO_ROOT), "rev-parse", "HEAD"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise PrepareError("cannot resolve DISH_SOURCE_COMMIT; set it explicitly")
+    return completed.stdout.strip()
+
+
+def run_step(name: str, command: list[str]) -> str:
+    log(f"Step: {name}")
+    log("  " + " ".join(command))
+    completed = subprocess.run(
+        command, cwd=REPO_ROOT, text=True, capture_output=True, check=False
+    )
+    if completed.returncode != 0:
+        sys.stderr.write(completed.stdout)
+        sys.stderr.write(completed.stderr)
+        raise PrepareError(f"step failed: {name} (exit {completed.returncode})")
+    if completed.stdout.strip():
+        log(f"  output: {completed.stdout.strip()[:2000]}")
+    return completed.stdout
+
+
+def migrate_schema(database_url: str) -> None:
+    from alembic.config import Config
+    from alembic import command
+
+    cfg = Config(str(REPO_ROOT / "alembic.ini"))
+    cfg.set_main_option("script_location", str(REPO_ROOT / "dish_pg/migrations"))
+    cfg.set_main_option("sqlalchemy.url", database_url)
+    log("Step: migrate PostgreSQL schema to Alembic head")
+    command.upgrade(cfg, "head")
+
+
+def main() -> int:
+    try:
+        env = require_env()
+        source_commit = resolve_source_commit()
+        honest_repo = os.environ.get("DISH_HONEST_REPO", "/home/marco/honest-pantry").strip()
+
+        migrate_schema(env["DISH_PG_DATABASE_URL"])
+
+        run_step(
+            "capture production location manifest (read-only SQLite)",
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts/dish-pg-build-location-manifest"),
+                "--environment", "production",
+                "--env-file", env["DISH_PRODUCTION_SERVICE_ENV"],
+                "--output", env["DISH_PG_LOCATION_MANIFEST"],
+            ],
+        )
+
+        run_step(
+            "export legacy corpus",
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts/dish-pg-export-legacy"),
+                "--database", env["DISH_DB_PATH"],
+                "--location-manifest", env["DISH_PG_LOCATION_MANIFEST"],
+                "--output", env["DISH_PG_LEGACY_NDJSON"],
+            ],
+        )
+
+        receipt_stdout = run_step(
+            "bootstrap PostgreSQL target",
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts/dish-pg-bootstrap-initial"),
+                "--database-url", env["DISH_PG_DATABASE_URL"],
+                "--expected-database-name", env["DISH_PG_EXPECTED_DATABASE_NAME"],
+                "--source", env["DISH_PG_LEGACY_NDJSON"],
+                "--source-generation", env["DISH_DARK_LAUNCH_SOURCE_GENERATION"],
+                "--dish-repo", str(REPO_ROOT),
+                "--dish-commit", source_commit,
+                "--honest-repo", honest_repo,
+                "--honest-commit", env["HONEST_SOURCE_COMMIT"],
+                "--receipt", env["DISH_PG_BOOTSTRAP_RECEIPT"],
+            ],
+        )
+        receipt = json.loads(Path(env["DISH_PG_BOOTSTRAP_RECEIPT"]).read_text(encoding="utf-8"))
+        for field in ("generation_id", "import_run_id", "binding_id", "source_bundle_sha256", "source_record_count"):
+            if field not in receipt:
+                raise PrepareError(f"bootstrap receipt is missing required field: {field}")
+
+        baseline_stdout = run_step(
+            "create open baseline",
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts/dish-pg-dark-launch"),
+                "baseline-create",
+                "--database-url", env["DISH_PG_DATABASE_URL"],
+                "--spool-path", env["DISH_DARK_LAUNCH_SPOOL_PATH"],
+                "--generation-id", str(receipt["generation_id"]),
+                "--source-generation", env["DISH_DARK_LAUNCH_SOURCE_GENERATION"],
+                "--source-commit", source_commit,
+            ],
+        )
+        baseline = json.loads(baseline_stdout)
+        baseline_id = baseline["shadow_baseline_id"]
+
+        run_step(
+            "import receipt-bound legacy corpus",
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts/dish-pg-import-legacy"),
+                "--database-url", env["DISH_PG_DATABASE_URL"],
+                "--source", env["DISH_PG_LEGACY_NDJSON"],
+                "--expected-source-sha256", str(receipt["source_bundle_sha256"]),
+                "--expected-record-count", str(receipt["source_record_count"]),
+                "--generation-id", str(receipt["generation_id"]),
+                "--import-run-id", str(receipt["import_run_id"]),
+                "--contract-binding-id", str(receipt["binding_id"]),
+            ],
+        )
+
+        run_step(
+            "activate effects-disabled projection epoch",
+            [
+                sys.executable,
+                str(REPO_ROOT / "scripts/dish-pg-dark-launch"),
+                "activate-epoch",
+                "--database-url", env["DISH_PG_DATABASE_URL"],
+                "--generation-id", str(receipt["generation_id"]),
+                "--reason", "dark-launch shadow execution",
+            ],
+        )
+
+        log("Prepare sequence complete.")
+        log(f"  generation_id = {receipt['generation_id']}")
+        log(f"  import_run_id = {receipt['import_run_id']}")
+        log(f"  binding_id    = {receipt['binding_id']}")
+        log(f"  baseline_id   = {baseline_id}")
+        log("Set DISH_DARK_LAUNCH_BASELINE_ID to the baseline_id above before enabling capture.")
+        log("No capture mode change, kill-switch change, service restart, or worker action was taken.")
+        return 0
+    except PrepareError as exc:
+        log(f"FAILED: {exc}")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
