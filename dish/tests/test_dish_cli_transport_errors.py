@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from dish_tool import admin_cli, cli
 from dish_tool.errors import DishRuleError
 
@@ -147,6 +149,115 @@ def test_reject_cli_rejects_removed_compatibility_flags():
             assert exc.rule == "invalid_arguments"
         else:
             raise AssertionError(f"{flag} was accepted despite having no consumer")
+
+
+@pytest.mark.parametrize(
+    ("argv", "field", "expected"),
+    [
+        (
+            ["create", "--title", "Canonical", "--agent", "codex"],
+            "agent",
+            "codex",
+        ),
+        (
+            ["start", "123", "--agent", "gpt", "--kind", "verification"],
+            "kind",
+            "verification",
+        ),
+        (
+            [
+                "start",
+                "123",
+                "--agent",
+                "gpt",
+                "--kind",
+                "change",
+                "--change-level",
+                "large",
+            ],
+            "change_level",
+            "large",
+        ),
+        (
+            [
+                "start",
+                "123",
+                "--agent",
+                "gpt",
+                "--kind",
+                "planning",
+                "--intent-basis",
+                "agent_override",
+            ],
+            "intent_basis",
+            "agent_override",
+        ),
+        (
+            [
+                "prepare",
+                "00000000-0000-4000-8000-000000000000",
+                "--agent",
+                "gpt",
+                "--model",
+                "gpt-5.6-sol",
+                "--file",
+                "candidate.txt",
+                "--material-classification",
+                "non-material",
+            ],
+            "material_classification",
+            "non-material",
+        ),
+        (
+            [
+                "approve",
+                "00000000-0000-4000-8000-000000000000",
+                "--agent",
+                "gpt",
+                "--model",
+                "gpt-5.6-sol",
+                "--correction",
+                "small",
+            ],
+            "correction",
+            "small",
+        ),
+        (
+            [
+                "reject",
+                "00000000-0000-4000-8000-000000000000",
+                "--agent",
+                "gpt",
+                "--reason",
+                "reason",
+                "--route",
+                "human-review",
+                "--resume-status",
+                "pending-research",
+            ],
+            "route",
+            "human-review",
+        ),
+    ],
+)
+def test_agent_cli_preserves_command_choice_behavior(argv, field, expected):
+    parsed = cli.build_parser().parse_args(argv)
+
+    assert getattr(parsed, field) == expected
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["create", "--title", "Canonical", "--agent", "unknown"],
+        ["start", "123", "--agent", "gpt", "--kind", "unknown"],
+    ],
+)
+def test_agent_cli_rejects_values_outside_canonical_enums(argv):
+    with pytest.raises(DishRuleError) as exc:
+        cli.build_parser().parse_args(argv)
+
+    assert exc.value.rule == "invalid_arguments"
 
 
 class HumanAdminClient:

@@ -23,6 +23,7 @@ from .errors import DishRuleError
 from .releases import configured_honest_path, resolve_release
 from dish_service.client import DishServiceClient
 from dish_service.command_spec import (
+    ARGUMENT_SCHEMAS,
     APPROVE_COMMAND,
     APPLY_PROPOSAL_COMMAND,
     CREATE_COMMAND,
@@ -49,6 +50,11 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
 
 TOPIC_COMMANDS = ("planning", "research", "verification")
+
+
+def _canonical_enum_choices(command, field: str) -> tuple[str, ...]:
+    return tuple(ARGUMENT_SCHEMAS[command.name]["properties"][field]["enum"])
+
 
 _TOPIC_WALKTHROUGHS: dict[str, str] = {
     "planning": """\
@@ -161,20 +167,20 @@ def build_parser() -> JsonArgumentParser:
         )
 
     create = subparsers.add_parser(CREATE_COMMAND.name, help="open a new canonical Cooking task")
-    create.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    create.add_argument("--agent", required=True, choices=_canonical_enum_choices(CREATE_COMMAND, "agent"))
     create.add_argument("--title", required=True)
 
     sections = subparsers.add_parser(
         SECTIONS_COMMAND.name, help="list Cooking project sections and gids"
     )
-    sections.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    sections.add_argument("--agent", required=True, choices=_canonical_enum_choices(SECTIONS_COMMAND, "agent"))
 
     section_tasks = subparsers.add_parser(
         SECTION_TASKS_COMMAND.name,
         help="list the tasks currently placed in a Cooking project section",
     )
     section_tasks.add_argument("section_gid")
-    section_tasks.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    section_tasks.add_argument("--agent", required=True, choices=_canonical_enum_choices(SECTION_TASKS_COMMAND, "agent"))
     section_tasks.add_argument(
         "--cursor", default=None, help="opaque next_cursor from a prior section-tasks page"
     )
@@ -183,27 +189,27 @@ def build_parser() -> JsonArgumentParser:
         READ_COMMAND.name, help="read the exact live task through the tool"
     )
     read.add_argument("task_gid")
-    read.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    read.add_argument("--agent", required=True, choices=_canonical_enum_choices(READ_COMMAND, "agent"))
 
     inspect = subparsers.add_parser(
         INSPECT_COMMAND.name, help="inspect a prior tool operation's recorded state"
     )
     inspect.add_argument("submission_id")
-    inspect.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    inspect.add_argument("--agent", required=True, choices=_canonical_enum_choices(INSPECT_COMMAND, "agent"))
     inspect.add_argument("--request-id")
 
     proposals = subparsers.add_parser(
         PROPOSALS_COMMAND.name,
         help="list Marco-approved semantic proposals ready for exact application",
     )
-    proposals.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    proposals.add_argument("--agent", required=True, choices=_canonical_enum_choices(PROPOSALS_COMMAND, "agent"))
 
     apply_proposal = subparsers.add_parser(
         APPLY_PROPOSAL_COMMAND.name,
         help="claim and apply one exact Marco-approved proposal bundle",
     )
     apply_proposal.add_argument("proposal_id")
-    apply_proposal.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    apply_proposal.add_argument("--agent", required=True, choices=_canonical_enum_choices(APPLY_PROPOSAL_COMMAND, "agent"))
     apply_proposal.add_argument("--model", required=True)
     apply_proposal.add_argument("--run-id")
     apply_proposal.add_argument("--request-id")
@@ -213,11 +219,11 @@ def build_parser() -> JsonArgumentParser:
         help="open a Planning/Research/Verification/change operation on a task",
     )
     start.add_argument("task_gid")
-    start.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    start.add_argument("--agent", required=True, choices=_canonical_enum_choices(START_COMMAND, "agent"))
     start.add_argument(
         "--kind",
         required=True,
-        choices=("planning", "initial", "change", "verification"),
+        choices=_canonical_enum_choices(START_COMMAND, "kind"),
         help=(
             "planning=Planning boundary check; initial=first Research construction; "
             "change=a later material or non-material edit after signoff; "
@@ -228,7 +234,7 @@ def build_parser() -> JsonArgumentParser:
     start.add_argument("--independence-attestation")
     start.add_argument(
         "--change-level",
-        choices=("small", "large"),
+        choices=_canonical_enum_choices(START_COMMAND, "change_level"),
         help="required with --kind change: small preserves settled construction, large materially changes it",
     )
     start.add_argument("--change-reason")
@@ -242,7 +248,7 @@ def build_parser() -> JsonArgumentParser:
     )
     start.add_argument(
         "--intent-basis",
-        choices=("user_requested", "agent_override"),
+        choices=_canonical_enum_choices(START_COMMAND, "intent_basis"),
         help="explicit basis for a confirmed Planning start",
     )
     start.add_argument(
@@ -272,12 +278,12 @@ def build_parser() -> JsonArgumentParser:
         ),
     )
     prepare.add_argument("submission_id")
-    prepare.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    prepare.add_argument("--agent", required=True, choices=_canonical_enum_choices(PREPARE_COMMAND, "agent"))
     prepare.add_argument("--model", required=True)
     prepare.add_argument("--file", dest="file_path", required=True)
     prepare.add_argument(
         "--material-classification",
-        choices=("material", "non-material"),
+        choices=_canonical_enum_choices(PREPARE_COMMAND, "material_classification"),
         help=(
             "required only for a post-signoff change that alters the canonical body: "
             "classify that exact diff; Dish may force non-material to material when a "
@@ -295,13 +301,13 @@ def build_parser() -> JsonArgumentParser:
         ),
     )
     approve.add_argument("submission_id")
-    approve.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    approve.add_argument("--agent", required=True, choices=_canonical_enum_choices(APPROVE_COMMAND, "agent"))
     approve.add_argument("--model", required=True)
     approve.add_argument("--file", dest="file_path")
     approve.add_argument(
         "--correction",
         required=True,
-        choices=("none", "small"),
+        choices=_canonical_enum_choices(APPROVE_COMMAND, "correction"),
         help="none=sign as-is; small=fix-in-place execution-compliance correction, then sign in the same pass",
     )
     approve.add_argument("--reviewed-identity")
@@ -319,12 +325,12 @@ def build_parser() -> JsonArgumentParser:
         ),
     )
     reject.add_argument("submission_id")
-    reject.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
+    reject.add_argument("--agent", required=True, choices=_canonical_enum_choices(REJECT_COMMAND, "agent"))
     reject.add_argument("--model")
     reject.add_argument("--reason", required=True)
     reject.add_argument(
         "--route",
-        choices=("large", "evidence", "human-review"),
+        choices=_canonical_enum_choices(REJECT_COMMAND, "route"),
         help=(
             "large=materially changes identity/quantities/route, needs a fresh independent verifier; "
             "evidence=only Marco can supply a missing fact; "
