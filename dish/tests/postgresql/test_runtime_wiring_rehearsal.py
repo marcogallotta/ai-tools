@@ -53,6 +53,9 @@ def test_runtime_wiring_rehearsal_emits_bounded_blocked_report(
 ) -> None:
     output = tmp_path / "report.json"
     evidence = tmp_path / "evidence"
+    for key in list(os.environ):
+        if "ASANA" in key.upper() or key.startswith("DISH_"):
+            monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("PATH", "")
     monkeypatch.setenv("ASANA_ACCESS_TOKEN", "must-not-propagate")
     monkeypatch.setenv("DISH_SERVICE_URL", "http://127.0.0.1:8775")
