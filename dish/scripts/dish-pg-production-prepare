@@ -35,6 +35,10 @@ Required environment variables (see the runbook for definitions):
 
 Optional:
   DISH_HONEST_REPO              defaults to /home/marco/honest-pantry
+  DISH_PG_CAPTURE_ENVIRONMENT   "production" (default) or "test" -- passed straight through to
+                                 dish-pg-build-location-manifest's --environment. Use "test" only
+                                 for a dry run of this script against TEST identity/paths before
+                                 ever pointing it at real production data.
 
 Example:
 
@@ -112,8 +116,13 @@ def resolve_source_commit() -> str:
 def run_step(name: str, command: list[str]) -> str:
     log(f"Step: {name}")
     log("  " + " ".join(command))
+    child_env = dict(os.environ)
+    existing_pythonpath = child_env.get("PYTHONPATH", "")
+    child_env["PYTHONPATH"] = (
+        str(REPO_ROOT) if not existing_pythonpath else f"{REPO_ROOT}{os.pathsep}{existing_pythonpath}"
+    )
     completed = subprocess.run(
-        command, cwd=REPO_ROOT, text=True, capture_output=True, check=False
+        command, cwd=REPO_ROOT, text=True, capture_output=True, check=False, env=child_env
     )
     if completed.returncode != 0:
         sys.stderr.write(completed.stdout)
@@ -143,12 +152,20 @@ def main() -> int:
 
         migrate_schema(env["DISH_PG_DATABASE_URL"])
 
+        capture_environment = os.environ.get("DISH_PG_CAPTURE_ENVIRONMENT", "production").strip()
+        if capture_environment not in ("production", "test"):
+            raise PrepareError(
+                f"DISH_PG_CAPTURE_ENVIRONMENT must be 'production' or 'test', got {capture_environment!r}"
+            )
+        if capture_environment == "test":
+            log("DISH_PG_CAPTURE_ENVIRONMENT=test -- this is a TEST-identity dry run, not production prepare.")
+
         run_step(
-            "capture production location manifest (read-only SQLite)",
+            f"capture {capture_environment} location manifest (read-only SQLite)",
             [
                 sys.executable,
                 str(REPO_ROOT / "scripts/dish-pg-build-location-manifest"),
-                "--environment", "production",
+                "--environment", capture_environment,
                 "--env-file", env["DISH_PRODUCTION_SERVICE_ENV"],
                 "--output", env["DISH_PG_LOCATION_MANIFEST"],
             ],
