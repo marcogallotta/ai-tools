@@ -244,7 +244,13 @@ def _valid_scenario_evidence(identity: dict) -> dict:
         "postgresql_loss": {
             "health_while_down": {"ok": False},
             "health_after_restart": {"ok": True},
-            "mutation_result": {"code": "BACKEND_REJECTED", "retryable": True},
+            "mutation_status": 503,
+            "mutation_result": {
+                "ok": False,
+                "code": "BACKEND_REJECTED",
+                "retryable": True,
+                "errors": [{"rule": "postgresql_authority_unavailable"}],
+            },
             "request_absent_after_restart": True,
             "task_absent_after_restart": True,
         },

@@ -353,6 +353,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         request = {}
         principal = None
         request_id = None
+        agent_command_dispatched = False
         try:
             if command == "unknown":
                 self._write_json(
@@ -526,6 +527,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 arguments = request.get("arguments", {})
                 if not isinstance(arguments, dict):
                     raise DishRuleError("INVALID_ARGUMENT", "arguments must be a JSON object", rule="arguments_object_required")
+                agent_command_dispatched = True
                 payload = self.server.service.execute_agent(
                     command, arguments, principal=principal, request_id=request_id
                 )
@@ -533,7 +535,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         except DishRuleError as exc:
             replay_payload = None
             if (
-                (
+                not agent_command_dispatched
+                and (
                     (surface in {"action", "agent"} and command in REPLAY_CAPABLE_COMMANDS)
                     or surface in {
                         "lease",
@@ -577,11 +580,16 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                                     error=exc,
                                 )
                         except DishRuleError as replay_exc:
-                            replay_payload = error_envelope(command, replay_exc)
+                            if replay_exc.rule == "postgresql_authority_unavailable":
+                                exc = replay_exc
+                            else:
+                                replay_payload = error_envelope(command, replay_exc)
             if replay_payload is not None:
                 self._write_json(HTTPStatus.OK, replay_payload)
                 return
-            if exc.rule in {"service_auth_required", "service_auth_invalid"}:
+            if exc.rule == "postgresql_authority_unavailable":
+                status = HTTPStatus.SERVICE_UNAVAILABLE
+            elif exc.rule in {"service_auth_required", "service_auth_invalid"}:
                 status = HTTPStatus.UNAUTHORIZED
             elif exc.rule == "service_scope_forbidden":
                 status = HTTPStatus.FORBIDDEN

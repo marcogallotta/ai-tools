@@ -529,7 +529,15 @@ def _validate_evidence(
         if (pg_loss.get("health_after_restart") or {}).get("ok") is not True:
             errors.append("service health did not recover after PostgreSQL path restart")
         mutation = pg_loss.get("mutation_result") or {}
-        if mutation.get("code") != "BACKEND_REJECTED" or mutation.get("retryable") is not True:
+        mutation_errors = mutation.get("errors") or []
+        if (
+            pg_loss.get("mutation_status") != 503
+            or mutation.get("ok") is not False
+            or mutation.get("code") != "BACKEND_REJECTED"
+            or mutation.get("retryable") is not True
+            or not mutation_errors
+            or mutation_errors[0].get("rule") != "postgresql_authority_unavailable"
+        ):
             errors.append("PostgreSQL-loss fail-closed mutation path was not proven")
         if pg_loss.get("request_absent_after_restart") is not True:
             errors.append("failed mutation request absence after restart was not proven")

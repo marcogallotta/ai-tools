@@ -779,10 +779,11 @@ def run_runtime_wiring_rehearsal(core_db, tmp_path) -> dict[str, object]:
             request_id=failed_request,
             arguments={"title": "Must not commit while PostgreSQL is down"},
         )
-        assert failed_status >= 400
+        assert failed_status == 503
         assert failed_closed["ok"] is False
         assert failed_closed["code"] == "BACKEND_REJECTED"
         assert failed_closed["retryable"] is True
+        assert failed_closed["errors"][0]["rule"] == "postgresql_authority_unavailable"
         current_proxy, restarted_service_dsn = start_postgresql_proxy(
             dsn=dsn,
             tmp_path=tmp_path,
