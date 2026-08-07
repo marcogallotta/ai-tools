@@ -59,6 +59,25 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                 "type": "object",
                 "additionalProperties": True,
                 "properties": {
+                    "agent_guidance": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": ["source", "state_specific", "instructions"],
+                        "properties": {
+                            "source": {"type": "string", "const": "dish"},
+                            "state_specific": {"type": "boolean", "const": True},
+                            "instructions": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "minItems": 1,
+                            },
+                        },
+                        "description": (
+                            "Immediate operating guidance rendered by Dish from this exact result. "
+                            "It is contextual guidance, not a second source of workflow legality; "
+                            "allowed_actions remains authoritative."
+                        ),
+                    },
                     "request_id": {
                         **DISH_UUID_SCHEMA,
                         "description": (

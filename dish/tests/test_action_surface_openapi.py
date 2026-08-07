@@ -68,6 +68,11 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     envelope_submission = spec["components"]["schemas"]["ResultEnvelope"]["properties"]["submission_id"]
     assert envelope_submission["format"] == "uuid"
     assert envelope_submission["pattern"] == EXPECTED_DISH_UUID_SCHEMA["pattern"]
+    guidance = spec["components"]["schemas"]["ResultEnvelope"]["properties"]["data"]["properties"]["agent_guidance"]
+    assert guidance["properties"]["source"]["const"] == "dish"
+    assert guidance["properties"]["state_specific"]["const"] is True
+    assert guidance["properties"]["instructions"]["minItems"] == 1
+
     finding_current = spec["components"]["schemas"]["ResultEnvelope"]["properties"]["errors"]["items"]["properties"]["current"]
     assert finding_current["type"] == ["string", "object", "null"]
     assert "exact submitted value" in finding_current["description"].lower()

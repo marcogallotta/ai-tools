@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 
 import pytest
 
+from dish_service.action_guidance import action_agent_guidance
 from dish_service.application import DishService
 from dish_service.client import DishActionClient, DishAdminServiceClient, DishServiceClient
 from dish_service.config import ServiceConfig
@@ -25,12 +26,19 @@ from tests.support.action_http import _raw_post, running_server
 
 
 @pytest.mark.smoke
-def test_cli_and_action_return_identical_sections_result(tmp_path, running_server):
+def test_action_adds_contextual_guidance_without_changing_canonical_sections_result(
+    tmp_path, running_server
+):
     _backend, server, thread, url = running_server()
     cli = DishServiceClient(url, token="cli-secret", run_id="9940d276-a582-5787-b6d9-b4fba846e271")
     action = DishActionClient(url, token="action-secret", run_id="7b87f6d2-db66-5199-882f-07841e94589c")
     cli_result = cli.execute("sections", agent="gpt")
     action_result = action.execute("sections", agent="gpt")
+
+    guidance = action_result["data"].pop("agent_guidance")
+    assert guidance["source"] == "dish"
+    assert guidance["state_specific"] is True
+    assert "Use only allowed_actions" in guidance["instructions"][0]
     assert cli_result == action_result
 @pytest.mark.smoke
 def test_action_credential_is_rejected_from_cli_and_admin_surfaces(tmp_path, running_server):
@@ -255,3 +263,30 @@ def test_service_refuses_to_advertise_non_callable_connected_action():
     assert exc.value.rule == "allowed_action_surface_mismatch"
     assert "not-a-real-action" in exc.value.details["unsupported_actions"]
     assert "apply-proposal" in exc.value.details["callable_actions"]
+
+
+def test_action_guidance_renders_state_specific_continuations():
+    result = {
+        "ok": True,
+        "command": "approve",
+        "code": "OK",
+        "allowed_actions": ["submit"],
+        "data": {"batch_may_continue": True},
+    }
+
+    guidance = action_agent_guidance(result)
+
+    assert "Call submit in this same run." in guidance["instructions"]
+    assert any("safely parked" in item for item in guidance["instructions"])
+
+
+def test_action_guidance_fails_closed_on_backend_uncertainty():
+    guidance = action_agent_guidance({
+        "ok": False,
+        "command": "prepare",
+        "code": "BACKEND_UNCERTAIN",
+        "allowed_actions": [],
+        "data": {},
+    })
+
+    assert any("Stop." in item and "new request ID" in item for item in guidance["instructions"])

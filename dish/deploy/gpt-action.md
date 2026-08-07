@@ -42,119 +42,43 @@ Funnel host.
 
 ## Instructions for the GPT
 
-Add an operating instruction with all of these requirements:
+Keep the permanent GPT contract small. Dish returns state-specific operating guidance in
+`data.agent_guidance`; follow that guidance when it appears rather than relying on remembered
+workflow procedure.
 
-- Use the machine identifier `agent: gpt` whenever the operation schema accepts an agent; Dish
-  renders that identifier as the human-readable actor name `Custom GPT`.
-- Create one non-nil canonical lowercase UUID as `client.run_id` for the current agent run and reuse
-  it for every Action call and lease renewal in that run. One run is one assistant execution
-  triggered by one Marco message: all tool calls, retries, and continuations made while producing
-  that response remain in the same run. A later Marco message starts a new execution and uses a new
-  UUID; a new chat is not required. An automatic continuation without a new Marco message is not a
-  new run.
-- Before every consequential call—`create`, `inspect`, `start`, `prepare`, `approve`, `reject`,
-  `submit`, `apply-proposal`, and lease renewal—create a new non-nil canonical lowercase UUID as `client.request_id` and preserve it with
-  the attempted call. Read-only `sections`, `section-tasks`, and `read` do not accept a request ID. Dish binds the first authoritative success or expected failure to the exact command, canonical
-  arguments, authenticated owner, and run. If the response is lost, repeat only that exact call with
-  the same UUID; a completed replay returns the stored result with `data.request_replayed: true`.
-  Reusing the UUID for different work conflicts. A matching pending or uncertain request is not
-  executed again, so never generate a new UUID merely to bypass that outcome.
-- If read-only `sections`, `section-tasks`, or `read` returns no Dish JSON envelope because of a
-  transport-level client error, retry the exact same read up to two times. If it still fails, stop
-  and report the error. This bounded read retry does not apply to mutations; after a lost mutation
-  response, replay only the exact call with its original `client.request_id`.
-- To find a `task_gid` to act on without one already in hand, call `sections` to resolve the
-  Research Queue or Verification Queue GID, then call `section-tasks` with that `section_gid` to
-  list the tasks currently placed there. Asana section placement is a display convenience only,
-  not workflow authority: it can lag or be moved by hand, so it never substitutes for the task's own
-  recorded status. Confirm eligibility from the task returned by `read`/`start`, not from its
-  presence in a `section-tasks` listing.
-- `section-tasks` returns one page at a time. Omit `cursor` for the first page; if
-  `data.next_cursor` is non-null, call `section-tasks` again with that exact value as `cursor` to
-  fetch the next page, and stop once `data.next_cursor` is null. Never invent a cursor value or
-  reuse one from a different `section_gid`.
-- The authenticated `client.run_id` is both lease ownership and the durable agent-run identity. The
-  service applies it to `start`, `prepare`, `approve`, and `reject`; do not invent a separate
-  workflow run ID. A redundant `arguments.run_id`, when supplied, must match it exactly.
-- Independent Verification requires that run ID to differ from the run that constructed or last
-  materially edited the candidate. A new operation ID, cycle ID, actor/model identity, or
-  `independence_attestation` does not establish independence. A non-blank attestation is required as
-  supplementary audit context only on Verification start, and it cannot replace `client.run_id`.
-  Approval and every rejection route — including Large — inherit the exact persisted start
-  attestation automatically and do not accept the field; never send `independence_attestation` on
-  `reject`.
-- For an ordinary Verification start, omit both `target_operation_id` and `target_cycle_id`.
-  `submission_id` from `read` identifies the open operation for later commands; it is not a
-  Verification target. Supply the two target fields only together, and only when Dish explicitly
-  returns that exact pair for an abandonment continuation. Never infer either target from `read`.
-- Planning start requires a guaranteed two-call intent gate. On the first `start` with
-  `kind: planning`, omit `intent_challenge_id`, `intent_basis`, and `override_reason`; Dish returns
-  `CONFIRMATION_REQUIRED` without opening an operation or lease. Do not treat task legality, a prior
-  conversation summary, or the returned `start` action as proof that Marco requested Planning. Make
-  the fresh follow-up call with the returned challenge and `intent_basis: user_requested` only when
-  Marco explicitly requested Planning for that exact task. Otherwise ask Marco, or deliberately use
-  `intent_basis: agent_override` with a concrete non-blank explanation of why the agent is overriding
-  the absence of an explicit request. Never populate an intent basis on the first call to evade the
-  challenge. Preserve the first request UUID for exact replay after response loss, and use a new
-  request UUID for the confirmed follow-up. Never reuse a challenge for another task, run, or start.
-- Follow only the returned `allowed_actions`. A completed cross-stage handoff names `start` plus
-  `data.required_start_kind`; pass that exact value as `arguments.kind` and do not reopen the terminal
-  prior operation. In particular, Planning → Research returns `required_start_kind: initial`: call
-  `start` with `kind: initial` to begin Research, and never start another Planning operation.
-  After Verification `start`, call `inspect` before making an approval or rejection decision. Do not
-  reconstruct workflow transitions from conversation history.
-- Treat `file_text` as the complete candidate. Never send a partial patch or assume that the service
-  can read a local file. For approval with `correction: none`, omit `file_text`: Dish signs the exact
-  inspected candidate. For `correction: small`, supply the complete corrected candidate as
-  `file_text`. `approve` never accepts `correction: large`. A Large correction is never sent through
-  `approve`: call `reject` with `route: large`, `file_text` (the complete corrected candidate), and
-  `reason` instead.
-- A tool pass proves deterministic conformance only; complete the semantic work required by the
-  stage protocol returned by Dish.
-- `pending-human-review` is only for a durable, scoped decision future runs must preserve, per the
-  protocol's eligibility test — not any question Marco could answer. Resolve routine clarification,
-  agent-owned correction, and the brief's settled fields (e.g. `Role`) directly instead.
-- When Dish returns `human_action`, treat it as the authoritative Marco instruction. Before the
-  command, relay its summary, every `details` item, effect, required input, and after-success step in
-  plain language. Then relay the rendered command exactly. Do not rebuild a command from raw
-  operation, cycle, hold, lease, or identity fields. If Dish returns `required_admin_action:
-  inspect`, tell Marco to run the exact `dish-admin inspect` command and wait for the result.
-- `record-human-decision` records a decision and releases its hold; it does not mutate governed
-  fields. When Dish returns `semantic_proposal_queued`, the exact candidate and every linked governed
-  change are durably parked for Marco review. Relay the rationale, proposal ID, and exact
-  `dish-admin review-inspect` command. Do not reconstruct field commands. If
-  `batch_may_continue=true`, continue unrelated queue tasks. A Human Review or Evidence hold with
-  this flag is also safely parked; Human Review appears in `dish-admin review-queue`. In a later run,
-  use `dish proposals` and
-  `dish apply-proposal` to install an approved bundle exactly as stored; never edit it or reuse the
-  proposer run ID. Application opens a fresh Verification cycle and does not sign or submit. If
-  Marco rejects a proposal, do not resubmit the same semantic bundle; a fresh Verification round may
-  propose a materially different correction that addresses his rejection.
-- In an explicitly requested batch, keep a set of task GIDs already handled in this run and skip
-  them if section pagination returns them again. A parked proposal, Human Review/Evidence hold, or
-  completed Large correction is not a batch stop when Dish returns `batch_may_continue=true`.
-  Continue until no unprocessed eligible task remains or Dish reports an unsafe/tooling state.
-- After the third consecutive non-approved Large Verification round, `verification-hold` stops the
-  flow; tell Marco to run `dish-admin resolved <operation-id>`, which releases the unchanged
-  corrected candidate into a fresh Verification round without approving or signing it.
-- After successful Verification approval returns `submit`, call `submit` in the same pass.
-- Never retry `BACKEND_UNCERTAIN`, steal an expired lease, call a private/admin route, or repair an
-  Asana task directly. An exact transport replay with the original `client.request_id` is allowed only
-  when no result was received; once Dish returns `BACKEND_UNCERTAIN`, stop and give Marco the complete
-  result.
+- Use `agent: gpt` wherever an Action accepts an agent.
+- One Marco message is one agent run. Create one fresh canonical lowercase UUID as
+  `client.run_id` and reuse it for every Action call, retry, and automatic continuation while
+  answering that message. A later Marco message uses a new run ID. Never change run IDs to bypass
+  ownership or manufacture Verification independence.
+- For every Action mutation, create a fresh canonical lowercase UUID as `client.request_id`. If a
+  mutation response is lost, replay only the exact same request with the same request ID. Never use
+  a new request ID to bypass a pending/uncertain request, and never retry `BACKEND_UNCERTAIN`.
+  Read-only Actions do not accept request IDs; if a read fails at transport level with no Dish
+  envelope, retry that exact read at most twice, then stop and report it.
+- Treat each Dish result as workflow authority. Follow `allowed_actions`, `service_access`,
+  `data.agent_guidance`, validation findings, continuation fields, and `human_action`. Never infer a
+  transition or invent/reconstruct operation, cycle, lease, hold, proposal, recovery, target, or
+  admin-command identifiers. Asana section placement is discovery only, never workflow authority.
+- Planning authorization must be real. The first Planning `start` deliberately returns a challenge.
+  Confirm it with `intent_basis: user_requested` only when Marco explicitly requested Planning for
+  that exact task; otherwise ask him or use the explicit agent-override route with a real reason.
+  Discussion or task legality alone is not authorization.
+- Independent Verification requires a genuinely different run from the run that constructed or last
+  materially edited the candidate. New operation/cycle IDs or an attestation do not create
+  independence. Use abandonment continuation targets only when Dish explicitly returns the exact
+  target pair.
+- When an Action requires candidate text, send the complete exact candidate, never a partial patch
+  or assumed local file. Follow the imported Action schema for correction-specific argument shapes.
+- When Dish returns `human_action`, relay it faithfully, including its effect and required input, and
+  relay its rendered command exactly. Never synthesize an admin/recovery command. Wait for Marco's
+  confirmation when Dish requires an admin continuation.
+- A deterministic tool pass is not the semantic stage work. Complete the semantic work required by
+  the routed Dish protocol, while letting Dish's current response determine the legal continuation.
 
-The canonical result meanings and retry rules remain in `../docs/runtime-contract.md`; do not copy a
-second result-code policy into the GPT instructions.
-
-## Lease handling
-
-The default lease lasts 30 minutes. If work on an active operation approaches that limit, call
-`dish_renew_lease` with the operation UUID in `arguments.operation_id`, the same `client.run_id`, and
-a fresh `client.request_id`. Do not supply the operation UUID as a top-level or path parameter. A
-handoff may release the actor lease while leaving
-the task operation active; follow the returned actions rather than renewing after handoff.
-
-If a lease expires, stop. `recover-lease` is only for the same durable chat/run; it never transfers an open Verification cycle to a fresh run. A fresh run must not act merely because semantic `current_run.eligible` is true. Follow `service_access` and `allowed_actions`: when ownership belongs to an unavailable run, Dish suppresses `approve`/`reject` and returns an exact `abandon-operation` or `dish-admin inspect` action. Relay it exactly, wait for confirmation, then refresh the authoritative Dish action. Never invent a replacement operation, lease ID, or target.
+State-specific procedures such as pagination, handoffs, proposal application, batch continuation,
+submission, holds, and lease/recovery handling belong in the Action schema or the Dish response, not
+in permanent GPT instructions.
 
 ## Preview gate
 

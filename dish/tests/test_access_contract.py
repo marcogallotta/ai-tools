@@ -88,6 +88,9 @@ def test_private_and_public_listeners_have_disjoint_route_surfaces(tmp_path, cap
         _stop(private, private_thread)
         _stop(action, action_thread)
 
+    guidance = public_result["data"].pop("agent_guidance")
+    assert guidance["source"] == "dish"
+    assert guidance["state_specific"] is True
     assert private_result == public_result
     assert private_result["ok"]
     assert getattr(hidden_action.value, "rule", None) == "service_response_invalid"
@@ -221,13 +224,15 @@ def test_checked_in_contract_documents_current_access_and_deployment():
     assert "Authorization: Bearer <DISH_SERVICE_ACTION_TOKEN>" in action_guide
     assert "client.run_id" in action_guide and "allowed_actions" in action_guide
     assert "canonical lowercase UUID" in action_guide
-    assert "After Verification" in action_guide and "call `inspect`" in action_guide
+    assert "data.agent_guidance" in action_guide
+    assert "State-specific procedures" in action_guide
     assert "all agent mutations are replay-bound" in runtime
     assert all(
         f"`{command}`" in runtime
         for command in ("create", "start", "prepare", "approve", "reject", "submit")
     )
-    assert "BACKEND_UNCERTAIN" in action_guide and "recover-lease" in action_guide
+    assert "BACKEND_UNCERTAIN" in action_guide
+    assert "admin/recovery command" in action_guide
 
 
 def test_deployment_assets_keep_secrets_host_side_and_action_schema_trimmed():

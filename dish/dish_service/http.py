@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
+from .action_guidance import attach_action_agent_guidance
 
 from .application import DishService
 from .application import _ADMIN_OPERATION_TARGET_COMMANDS
@@ -531,6 +532,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 payload = self.server.service.execute_agent(
                     command, arguments, principal=principal, request_id=request_id
                 )
+            if surface == "action":
+                payload = attach_action_agent_guidance(payload)
             self._write_json(HTTPStatus.OK, payload)
         except DishRuleError as exc:
             replay_payload = None
@@ -585,6 +588,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                             else:
                                 replay_payload = error_envelope(command, replay_exc)
             if replay_payload is not None:
+                if surface == "action":
+                    replay_payload = attach_action_agent_guidance(replay_payload)
                 self._write_json(HTTPStatus.OK, replay_payload)
                 return
             if exc.rule == "postgresql_authority_unavailable":
@@ -607,10 +612,10 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 status = HTTPStatus.UNSUPPORTED_MEDIA_TYPE
             else:
                 status = HTTPStatus.BAD_REQUEST
-            self._write_json(
-                status,
-                error_envelope(command, exc),
-            )
+            error_payload = error_envelope(command, exc)
+            if surface == "action":
+                error_payload = attach_action_agent_guidance(error_payload)
+            self._write_json(status, error_payload)
         except Exception:
             request_id = str(uuid.uuid4())
             LOG.exception(

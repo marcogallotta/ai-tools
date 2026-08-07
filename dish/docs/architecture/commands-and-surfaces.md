@@ -38,6 +38,7 @@ Agent callers use the private `/v1/commands/{command}` surface; GPT Action uses 
 - Public Action exposure comes from `ACTION_COMMAND_DEFINITIONS`; private/admin commands never become public by route coincidence, and result rendering does not keep a second hard-coded exposed-action set.
 - Read-only commands do not accept request IDs. Every externally callable mutation that supports replay requires a non-nil canonical request UUID.
 - A result envelope does not reconstruct legal actions from a state string; it uses the exact authoritative view supplied by the workflow owner.
+- The public GPT Action transport may add `data.agent_guidance` rendered from that exact canonical result. Guidance is contextual caller help, never workflow authority: it must not add legal actions, invent identifiers, or contradict `allowed_actions`.
 - CLI, HTTP, OpenAPI, legacy result projection, and PostgreSQL shared-command metadata derive command identity/exposure from the accepted command specs rather than parallel hard-coded sets.
 
 ## Process and transaction boundaries

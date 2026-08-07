@@ -109,14 +109,12 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
         (ROOT / "docs" / "runtime-contract.md").read_text(encoding="utf-8").split()
     )
 
-    assert "`create`, `inspect`, `start`, `prepare`, `approve`, `reject`, `submit`, `apply-proposal`" in action_guide
-    assert (
-        "Read-only `sections`, `section-tasks`, and `read` do not accept a request ID"
-        in action_guide
-    )
-    assert "first authoritative success or expected failure" in action_guide
-    assert "Reusing the UUID for different work conflicts" in action_guide
-    assert "pending or uncertain request is not executed again" in action_guide
+    assert "data.agent_guidance" in action_guide
+    assert "For every Action mutation, create a fresh canonical lowercase UUID" in action_guide
+    assert "replay only the exact same request with the same request ID" in action_guide
+    assert "Never use a new request ID to bypass a pending/uncertain request" in action_guide
+    assert "Read-only Actions do not accept request IDs" in action_guide
+    assert "State-specific procedures" in action_guide
 
     assert "expected argument, state, authorization, and workflow failures are stored" in runtime
     assert "the first response is not labelled as a replay" in runtime
