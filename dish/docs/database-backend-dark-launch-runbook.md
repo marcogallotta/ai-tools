@@ -124,6 +124,26 @@ roots. They must be non-TEST, owner-safe, non-aliased paths without symlink trav
    closed and checkpointed: strict readiness refuses a missing spool or any `-wal`/`-journal`
    sidecar rather than creating, checkpointing, or repairing it.
 
+## Agreed approach: rehearse now, resync before go-live
+
+Bootstrapping PostgreSQL from a legacy export is a one-time snapshot. Nothing in this runbook
+backfills SQLite/Asana activity that happens between that snapshot and capture mode being enabled,
+so a long gap between bootstrap and go-live leaves PostgreSQL stale for that whole window. The
+agreed way to handle this:
+
+1. Run the full "Prepare immutable source and PostgreSQL authority" sequence now, against real
+   production paths, credentials, and data, as a rehearsal. Capture stays off and PostgreSQL stays
+   non-authoritative throughout, so this has no live effect; it validates the procedure end-to-end
+   ahead of time.
+2. Before actually enabling capture, during a maintenance window, wipe the production PostgreSQL
+   database and redo the same sequence fresh, immediately followed by enabling capture. This keeps
+   the stale-snapshot gap as small as practical.
+
+There is no dedicated reset script; the wipe is a manual drop/recreate (or full truncate) of the
+production PostgreSQL database. It is a distinct destructive action from the rehearsal steps above
+and requires Marco's explicit authorization at the time it is performed, separate from any earlier
+authorization to run the rehearsal.
+
 ## Install the worker while stopped
 
 Marco may install the committed unit, reload systemd, and confirm that it remains disabled and
