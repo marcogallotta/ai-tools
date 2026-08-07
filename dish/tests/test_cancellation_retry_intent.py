@@ -28,6 +28,14 @@ class Backend:
             "memberships": [{"project": {"gid": "1215089183018968"}, "section": {"gid": self.section}}],
         }
 
+    def list_sections(self, project_gid):
+        return [
+            {"gid": self.section, "name": "Research Queue"},
+            {"gid": "verification-queue", "name": "Verification Queue"},
+            {"gid": "sourcing", "name": "Sourcing"},
+            {"gid": "reference", "name": "Reference"},
+        ]
+
 
 def _operation(tmp_path: Path):
     conn = initialize_database(tmp_path / "db.sqlite")
