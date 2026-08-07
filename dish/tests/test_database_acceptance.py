@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 
-from dish_tool.database import create_operation, mark_operation_completion, confirm_task_content
+from dish_tool.database import create_operation, confirm_task_content
 import dish_tool.database_schema as database_schema
 from dish_tool.database_initialization import initialize_database
 from dish_tool.database_schema import MIGRATIONS
@@ -63,9 +63,15 @@ def test_confirmed_attempts_require_evidence_bindings(tmp_path):
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute("UPDATE movement_attempts SET outcome='confirmed' WHERE attempt_id=?", (ma,))
 
-    mark_operation_completion(conn, op["operation_id"], "content_write")
-    with pytest.raises(sqlite3.IntegrityError):
-        mark_operation_completion(conn, op["operation_id"], "signoff")
+    conn.execute(
+        "UPDATE operations SET content_write_completed_at='now' WHERE operation_id=?",
+        (op["operation_id"],),
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="approved signed cycle"):
+        conn.execute(
+            "UPDATE operations SET signoff_completed_at='now' WHERE operation_id=?",
+            (op["operation_id"],),
+        )
 
 
 def test_reader_lock_has_structured_retryable_diagnostic(monkeypatch, tmp_path):

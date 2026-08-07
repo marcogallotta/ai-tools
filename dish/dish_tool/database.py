@@ -1657,39 +1657,6 @@ def complete_abandonment_in_transaction(
     )
     return get_abandonment_attempt(conn, abandonment_id)
 
-def mark_operation_completion(
-    conn: sqlite3.Connection, operation_id: str, marker: str
-) -> sqlite3.Row:
-    columns = {
-        "content_write": "content_write_completed_at",
-        "signoff": "signoff_completed_at",
-        "movement": "movement_completed_at",
-    }
-    try:
-        column = columns[marker]
-    except KeyError as exc:
-        raise ValueError(f"unknown completion marker: {marker}") from exc
-    with savepoint_transaction(conn, "operation_marker"):
-        conn.execute(
-            f"UPDATE operations SET {column} = ? WHERE operation_id = ?",
-            (utc_now(), operation_id),
-        )
-        row = conn.execute(
-            "SELECT * FROM operations WHERE operation_id = ?", (operation_id,)
-        ).fetchone()
-        if row is None:
-            raise DishRuleError(
-                "NOT_FOUND", f"operation not found: {operation_id}",
-                rule="operation_not_found",
-            )
-        record_audit(
-            conn, submission_id=None, task_gid=row["task_gid"],
-            operation_id=operation_id, event_type="operation.marker",
-            actor_agent=None, details={"marker": marker},
-            result_code="OK", result_ok=True,
-        )
-    return row
-
 
 def create_verification_cycle(
     conn: sqlite3.Connection, *, operation_id: str, task_gid: str,
@@ -1722,16 +1689,6 @@ def create_verification_cycle(
         )
     return row
 
-
-def inspect_legacy_submissions(conn: sqlite3.Connection, *, task_gid: str | None = None) -> list[sqlite3.Row]:
-    if task_gid is None:
-        return conn.execute(
-            "SELECT * FROM legacy_submission_quarantine ORDER BY quarantined_at, rowid"
-        ).fetchall()
-    return conn.execute(
-        "SELECT * FROM legacy_submission_quarantine WHERE task_gid = ? ORDER BY quarantined_at, rowid",
-        (task_gid,),
-    ).fetchall()
 
 
 _OPERATION_PHASE_ACTIONS = {

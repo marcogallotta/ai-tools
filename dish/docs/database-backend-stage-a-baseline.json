@@ -100,7 +100,7 @@
     "tests/test_consequential_response_loss.py": "b96dfbc659917e6170254e485377c759eaccea06a44e0cc53eaebcfd01257daf",
     "tests/test_consequential_response_validation.py": "50739f2c36633992e0c48143580ec07f598c73ff549b7a47f4b775f0b30cef05",
     "tests/test_core_models_and_dispatch.py": "ceb41da4c3150c0beaa7630d45b9e4da79abb53b15b0b8b2ac05c74e164d3aa7",
-    "tests/test_database_acceptance.py": "3c47c46b41cd32ca06ba4d6b3faa380058e2500c973732c6d92fc7d12631b083",
+    "tests/test_database_acceptance.py": "229db33eeb73091d54293fbc6eb4f30c3e842105717213e690ae07290bdcd9b4",
     "tests/test_database_boundary_lane.py": "1fce6e1b3d9975e42317854a90eb6e2203b20c026b0abf72c7caca1278b5f535",
     "tests/test_database_concurrency_constraints.py": "314ad6883ad28168d0c11172d0f2a66cb6dcff8da77c760bc6a0569f8efadcbb",
     "tests/test_database_initialization_diagnostics.py": "ead034026daf759361acaf9dcaac79d3df39c6c89d7e81ec48e3ddf283999fb7",
@@ -137,7 +137,7 @@
     "tests/test_dish_tool_step10_contract.py": "2d4b84d87021b57ca18e1be829bff072558ee8b52f31e34c79f65e6fb7952bb4",
     "tests/test_dish_tool_step10_protocol_hooks.py": "fb2464b8708466621d1ea1affd4795f84b7d7432c5d63332c2eec7262ac70bc1",
     "tests/test_dish_tool_step2_canonical.py": "9eb3e6cf675e87d5563333260a7c949181255ec705da4dd6b9bb8ba1c383305d",
-    "tests/test_dish_tool_step3_persistence.py": "3f3dc39cf824afbe4bfc49ef793c6b63902c0df24c46cc5ab909744b9f4ea7eb",
+    "tests/test_dish_tool_step3_persistence.py": "ecd212e64866d535e4ef49201d187063a8817aa0b6988a35970829f9c2b9802d",
     "tests/test_dish_tool_step5_commands.py": "8590610d25bd952d1d12fb01bebefcf0fb095ba7531653a5701188c5b8b0c30b",
     "tests/test_dish_tool_step6_prepare.py": "2117ff4e1d69f4c0123251de3dd6e93f516e0779f85a339b413bbd5c9338324e",
     "tests/test_dish_tool_step7_verification.py": "91fbbf9d3673040ab52e5d41cbfc3abdbd4f38abd5c763a113167063649fa6e8",
@@ -270,7 +270,7 @@
     "scripts/dish-pg-acceptance": "8dc0681def2890f8fe98576225bd2f50a6c309d36b05d100c76402284f22cd5c",
     "scripts/dish-pg-stage-a-baseline": "2ca757b55377eff8c39f97be6ed3d1cc930e0a99221f149aae16b9febd0b0cca"
   },
-  "last_rebaseline_reason": "Stage A3: consolidate descriptive command identity, replay/principal exposure, and result metadata without runtime execution changes.",
+  "last_rebaseline_reason": "Stage A5 removes unused repository and test-only SQLite helper APIs and migrates their characterization consumers without changing governed runtime behavior.",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "New PostgreSQL implementation tests use the tests/postgresql/ namespace and are not part of the frozen legacy characterization corpus.",

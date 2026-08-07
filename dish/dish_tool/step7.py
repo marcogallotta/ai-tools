@@ -7,9 +7,9 @@ from typing import Any, Mapping
 
 from .constants import COOKING_PROJECT_GID
 from .database import (
-    mark_operation_completion, record_audit, transition_operation, assert_fresh_verifier,
+    record_audit, transition_operation, assert_fresh_verifier,
     record_actor_fact, declare_operation_step, complete_operation_step, content_identity,
-    record_dish_inspect_fact, savepoint_transaction, complete_abandonment_in_transaction,
+    record_dish_inspect_fact, complete_abandonment_in_transaction,
 )
 from .transactions import savepoint_transaction
 from .errors import DishRuleError

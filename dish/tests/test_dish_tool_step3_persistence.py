@@ -12,8 +12,6 @@ from dish_tool.database import (
     create_operation,
     create_verification_cycle,
     initialize_database,
-    inspect_legacy_submissions,
-    mark_operation_completion,
     finalize_confirmed_movement_attempt,
 )
 from dish_tool.errors import DishRuleError
@@ -126,7 +124,7 @@ def test_one_open_operation_per_task_and_stale_identity_are_atomic(tmp_path):
     assert conn.execute("SELECT count(*) FROM operations WHERE status='open'").fetchone()[0] == 0
 
 
-def test_markers_verification_cycle_and_attempts_are_independent_and_audited(tmp_path):
+def test_verification_cycle_and_attempts_are_independent_and_audited(tmp_path):
     conn = initialize_database(tmp_path / "dish.db")
     identity = confirm_task_content(
         conn, task_gid="task", title="Dish", notes="Body", schema_version="2"
@@ -158,13 +156,6 @@ def test_markers_verification_cycle_and_attempts_are_independent_and_audited(tmp
     assert cycle["protocol_release"] == "1.0.10"
     assert cycle["verifier_agent"] == "gpt"
 
-    marked = mark_operation_completion(conn, op_id, "content_write")
-    assert marked["content_write_completed_at"]
-    assert marked["signoff_completed_at"] is None
-    assert marked["movement_completed_at"] is None
-    with pytest.raises(sqlite3.IntegrityError, match="approved signed cycle"):
-        mark_operation_completion(conn, op_id, "signoff")
-
     write_id = begin_operation_write_attempt(
         conn,
         operation_id=op_id,
@@ -187,7 +178,6 @@ def test_markers_verification_cycle_and_attempts_are_independent_and_audited(tmp
     assert [row["event_type"] for row in events] == [
         "operation.created",
         "verification_cycle.created",
-        "operation.marker",
         "write_attempt.started",
         "write_attempt.finished",
         "movement_attempt.started",
@@ -235,7 +225,11 @@ def test_legacy_nonterminal_rows_are_backed_up_and_quarantined(tmp_path):
     finally:
         backup_conn.close()
 
-    rows = inspect_legacy_submissions(conn, task_gid="task")
+    rows = conn.execute(
+        "SELECT * FROM legacy_submission_quarantine WHERE task_gid=? "
+        "ORDER BY quarantined_at, rowid",
+        ("task",),
+    ).fetchall()
     assert len(rows) == 1
     assert rows[0]["legacy_status"] == "ready"
     payload = json.loads(rows[0]["row_json"])

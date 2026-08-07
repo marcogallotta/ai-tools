@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Iterable
 
-from sqlalchemy import Select, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import models
@@ -259,25 +259,3 @@ class TaskRepository:
         self.session.add(current_placement)
         self.session.add(current_completion)
         self.session.flush()
-
-    def task_head(
-        self, *, generation_id: uuid.UUID, task_id: uuid.UUID
-    ) -> models.TaskAuthorityHead | None:
-        return self.session.get(models.TaskAuthorityHead, (generation_id, task_id))
-
-    def task_by_external_alias(
-        self, *, external_system: str, external_id: str
-    ) -> models.DishTask | None:
-        statement: Select[tuple[models.DishTask]] = (
-            select(models.DishTask)
-            .join(
-                models.TaskExternalAlias,
-                models.TaskExternalAlias.task_id == models.DishTask.task_id,
-            )
-            .where(
-                models.TaskExternalAlias.external_system == external_system,
-                models.TaskExternalAlias.external_id == external_id,
-                models.TaskExternalAlias.state == "active",
-            )
-        )
-        return self.session.scalar(statement)
