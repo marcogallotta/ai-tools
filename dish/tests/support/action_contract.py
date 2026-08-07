@@ -9,15 +9,28 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from dish_service.command_spec import (
-    ACTION_COMMANDS,
-    READ_ONLY_ACTION_COMMANDS,
-    REPLAY_SAFE_COMMANDS,
+EXPECTED_ACTION_COMMANDS = (
+    "apply-proposal",
+    "approve",
+    "create",
+    "inspect",
+    "prepare",
+    "proposals",
+    "read",
+    "reject",
+    "renew-lease",
+    "section-tasks",
+    "sections",
+    "start",
+    "submit",
 )
-
-EXPECTED_ACTION_COMMANDS = ACTION_COMMANDS
-EXPECTED_REPLAY_SAFE_COMMANDS = REPLAY_SAFE_COMMANDS
-EXPECTED_READ_ONLY_COMMANDS = READ_ONLY_ACTION_COMMANDS
+EXPECTED_READ_ONLY_COMMANDS = frozenset(
+    {"proposals", "read", "section-tasks", "sections"}
+)
+EXPECTED_REPLAY_SAFE_COMMANDS = frozenset(
+    command for command in EXPECTED_ACTION_COMMANDS
+    if command not in EXPECTED_READ_ONLY_COMMANDS
+)
 EXPECTED_CONSEQUENTIAL = {
     command: command in EXPECTED_REPLAY_SAFE_COMMANDS
     for command in EXPECTED_ACTION_COMMANDS
