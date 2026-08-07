@@ -222,8 +222,7 @@ def _git_identity() -> dict[str, Any]:
 def _database_identity(database_url: str) -> dict[str, Any]:
     from sqlalchemy import text
 
-    from dish_pg.config import DatabaseSettings
-    from dish_pg.db import create_database_engine
+    from dish_pg.database import DatabaseSettings, create_database_engine
 
     engine = create_database_engine(DatabaseSettings(url=database_url))
     try:
@@ -1023,8 +1022,7 @@ def _post_worker_checks(database_url: str, run_marker: str) -> dict[str, Any]:
 
     from dish_pg import models
     from dish_pg import stage5_models as tx
-    from dish_pg.config import DatabaseSettings
-    from dish_pg.db import create_database_engine, session_factory
+    from dish_pg.database import DatabaseSettings, create_database_engine, session_factory
 
     engine = create_database_engine(DatabaseSettings(url=database_url))
     factory = session_factory(engine)
