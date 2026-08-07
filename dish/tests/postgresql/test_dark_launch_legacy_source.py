@@ -26,6 +26,7 @@ def test_legacy_source_is_deterministic_and_importer_compatible(tmp_path):
     manifest=tmp_path/"locations.json"
     manifest.write_text(json.dumps({"tasks":{"123":{
         "task_id":str(task_id),"project_ids":[str(project_id)],"section_id":str(section_id),
+        "section_gid":"901",
         "completed":False,"observed_at":"2026-08-03T09:01:00+00:00"}}}))
     first=tmp_path/"one.ndjson"; second=tmp_path/"two.ndjson"
     assert export_legacy_source(database=db, location_manifest=manifest, output=first)==1

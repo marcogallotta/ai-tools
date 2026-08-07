@@ -17,12 +17,11 @@ from dish_pg.bootstrap import (
     DEFAULT_PROJECT_GID,
     DEFAULT_PROJECT_ID,
     DEFAULT_SCHEMA_HEAD,
-    DEFAULT_SECTION_GID,
-    DEFAULT_SECTION_ID,
     HonestCheckout,
     InitialBootstrapSpec,
     bootstrap_initial_generation,
     inspect_source_bundle,
+    section_specs_from_bundle,
 )
 from dish_pg.dark_launch_readiness import (
     ArtifactBinding,
@@ -39,6 +38,10 @@ from tests.support.postgresql.core import HASH_A, HASH_B, NOW
 from tests.support.postgresql.dark_launch_readiness import record
 
 
+DEFAULT_SECTION_GID = "1216891250619908"
+DEFAULT_SECTION_ID = uuid.UUID("8b5bfb31-b986-5116-a207-569a5ba95907")
+
+
 @dataclass
 class _AuthorityFixture:
     engine: Any
@@ -51,7 +54,7 @@ class _AuthorityFixture:
 
 
 def _artifact_files(tmp_path: Path, *, task_id: uuid.UUID):
-    task_record = record(task_id, DEFAULT_PROJECT_ID, DEFAULT_SECTION_ID)
+    task_record = record(task_id, DEFAULT_PROJECT_ID, DEFAULT_SECTION_ID, DEFAULT_SECTION_GID)
     ndjson = tmp_path / "legacy.ndjson"
     ndjson.write_text(json.dumps(task_record, sort_keys=True) + "\n", encoding="utf-8")
     manifest = tmp_path / "manifest.json"
@@ -65,6 +68,7 @@ def _artifact_files(tmp_path: Path, *, task_id: uuid.UUID):
                             "task_id",
                             "project_ids",
                             "section_id",
+                            "section_gid",
                             "completed",
                             "observed_at",
                             "existence_state",
@@ -78,7 +82,6 @@ def _artifact_files(tmp_path: Path, *, task_id: uuid.UUID):
     source = inspect_source_bundle(
         ndjson,
         project_id=DEFAULT_PROJECT_ID,
-        section_id=DEFAULT_SECTION_ID,
     )
     honest = HonestCheckout(
         root=tmp_path,
@@ -98,10 +101,7 @@ def _artifact_files(tmp_path: Path, *, task_id: uuid.UUID):
         project_id=DEFAULT_PROJECT_ID,
         project_gid=DEFAULT_PROJECT_GID,
         project_name="Cooking",
-        section_id=DEFAULT_SECTION_ID,
-        section_gid=DEFAULT_SECTION_GID,
-        section_name="Research Queue",
-        workflow_role="research_queue",
+        sections=section_specs_from_bundle(source),
     )
     return manifest, ndjson, spec
 

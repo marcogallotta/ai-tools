@@ -78,6 +78,7 @@ def export_legacy_source(*, database: Path, location_manifest: Path, output: Pat
                 "content_identity": row["last_confirmed_identity"],
                 "project_ids": [str(uuid.UUID(str(value))) for value in location["project_ids"]],
                 "section_id": str(uuid.UUID(str(location["section_id"]))),
+                "section_gid": str(location["section_gid"]),
                 "completed": bool(location["completed"]),
                 "observed_at": str(location["observed_at"]),
                 "existence_state": str(location.get("existence_state", "ordinary")),

@@ -36,6 +36,7 @@ from .candidate_manifest import bind_approval_manifest
 from .bootstrap import (
     HonestCheckout,
     InitialBootstrapSpec,
+    SectionSpec,
     SourceBundle,
     bootstrap_initial_generation,
 )
@@ -632,11 +633,14 @@ def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> S
     evidence_dir.mkdir(parents=True, exist_ok=True)
     source_path = evidence_dir / "seed-source.ndjson"
     source_path.write_text('{"section2":"baseline"}\n', encoding="utf-8")
+    section_id = uuid.uuid5(uuid.NAMESPACE_URL, "dish-section2-section")
+    section_gid = "9000000000000002"
     source = SourceBundle(
         path=source_path,
         sha256=sha256_file(source_path),
         record_count=1,
         max_observed_at=utc_now(),
+        sections={section_id: section_gid},
     )
     honest_root = evidence_dir / "synthetic-honest-evidence"
     honest_root.mkdir(exist_ok=True)
@@ -658,10 +662,14 @@ def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> S
         project_id=uuid.uuid5(uuid.NAMESPACE_URL, "dish-section2-project"),
         project_gid="9000000000000001",
         project_name="Section 2 Recovery",
-        section_id=uuid.uuid5(uuid.NAMESPACE_URL, "dish-section2-section"),
-        section_gid="9000000000000002",
-        section_name="Recovery Evidence",
-        workflow_role="research_queue",
+        sections=(
+            SectionSpec(
+                section_id=section_id,
+                section_gid=section_gid,
+                section_name="Recovery Evidence",
+                workflow_role="research_queue",
+            ),
+        ),
     )
     factory = session_factory(engine)
     with session_scope(factory) as session:
@@ -679,7 +687,7 @@ def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> S
                 identity_scheme="section2-sha256-v1",
                 content_identity=REPRESENTATIVE_CONTENT_IDENTITY,
                 project_ids=(result.project_id,),
-                section_id=result.section_id,
+                section_id=result.sections[0].section_id,
                 completed=False,
                 observed_at=utc_now(),
             ),

@@ -43,8 +43,6 @@ DEFAULT_SCHEMA_HEAD = "0030_validation_failure_admission"
 DEFAULT_DATABASE_NAME = "dish_stage_a_dark_test"
 DEFAULT_PROJECT_GID = "1216693403164366"
 DEFAULT_PROJECT_ID = uuid.UUID("1ae6e7ba-31e3-5dc5-9565-4ea37b49ac97")
-DEFAULT_SECTION_GID = "1216891250619908"
-DEFAULT_SECTION_ID = uuid.UUID("8b5bfb31-b986-5116-a207-569a5ba95907")
 
 
 class InitialBootstrapError(ValueError):
@@ -57,6 +55,7 @@ class SourceBundle:
     sha256: str
     record_count: int
     max_observed_at: datetime
+    sections: Mapping[uuid.UUID, str]
 
     @property
     def high_water_mark(self) -> str:
@@ -76,6 +75,34 @@ class HonestCheckout:
 
 
 @dataclass(frozen=True)
+class SectionSpec:
+    section_id: uuid.UUID
+    section_gid: str
+    section_name: str
+    workflow_role: str
+
+
+def section_specs_from_bundle(source_bundle: SourceBundle) -> tuple[SectionSpec, ...]:
+    """Derive one registrable section per distinct section discovered in the corpus.
+
+    The legacy corpus carries only an Asana section gid per task, not a
+    human-assigned display name or workflow role, so both are placeholders
+    keyed off the gid. Ordered by gid for a deterministic registry ordinal.
+    """
+    return tuple(
+        SectionSpec(
+            section_id=section_id,
+            section_gid=section_gid,
+            section_name=f"Imported section {section_gid}",
+            workflow_role=f"imported-section-{section_gid}",
+        )
+        for section_id, section_gid in sorted(
+            source_bundle.sections.items(), key=lambda item: item[1]
+        )
+    )
+
+
+@dataclass(frozen=True)
 class InitialBootstrapSpec:
     dish_commit: str
     schema_head: str
@@ -85,10 +112,7 @@ class InitialBootstrapSpec:
     project_id: uuid.UUID
     project_gid: str
     project_name: str
-    section_id: uuid.UUID
-    section_gid: str
-    section_name: str
-    workflow_role: str
+    sections: tuple[SectionSpec, ...]
 
     @property
     def dish_release(self) -> str:
@@ -100,14 +124,20 @@ class InitialBootstrapSpec:
 
 
 @dataclass(frozen=True)
+class SectionResult:
+    section_id: uuid.UUID
+    section_gid: str
+    section_alias_id: uuid.UUID
+
+
+@dataclass(frozen=True)
 class InitialBootstrapResult:
     import_run_id: uuid.UUID
     generation_id: uuid.UUID
     binding_id: uuid.UUID
     project_id: uuid.UUID
     project_alias_id: uuid.UUID
-    section_id: uuid.UUID
-    section_alias_id: uuid.UUID
+    sections: tuple[SectionResult, ...]
     registry_version_id: uuid.UUID
     registry_activation_id: uuid.UUID
     source_bundle_sha256: str
@@ -124,8 +154,17 @@ class InitialBootstrapResult:
     source_generation: str
 
     def as_json(self) -> dict[str, object]:
-        value = asdict(self)
-        return {key: str(item) if isinstance(item, uuid.UUID) else item for key, item in value.items()}
+        return _jsonify(asdict(self))
+
+
+def _jsonify(value: object) -> object:
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {key: _jsonify(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonify(item) for item in value]
+    return value
 
 
 def _canonical_json_sha256(value: object) -> str:
@@ -166,9 +205,12 @@ def inspect_source_bundle(
     path: Path,
     *,
     project_id: uuid.UUID,
-    section_id: uuid.UUID,
 ) -> SourceBundle:
-    """Bind bootstrap metadata to one exact importer NDJSON corpus."""
+    """Bind bootstrap metadata to one exact importer NDJSON corpus.
+
+    Every distinct section referenced by the corpus is discovered here, not
+    supplied by the caller: a real corpus spans many sections.
+    """
     source = path.expanduser().resolve()
     try:
         raw = source.read_bytes()
@@ -178,6 +220,7 @@ def inspect_source_bundle(
     task_ids: set[uuid.UUID] = set()
     asana_gids: set[str] = set()
     observed_values: list[datetime] = []
+    sections: dict[uuid.UUID, str] = {}
     count = 0
     for line_number, raw_line in enumerate(raw.splitlines(), start=1):
         if not raw_line.strip():
@@ -219,9 +262,14 @@ def inspect_source_bundle(
             parsed_section = uuid.UUID(_required_string(record, "section_id", line_number=line_number))
         except ValueError as exc:
             raise InitialBootstrapError(f"source line {line_number}: section_id is not a UUID") from exc
-        if parsed_section != section_id:
+        section_gid = _required_string(record, "section_gid", line_number=line_number)
+        known_gid = sections.get(parsed_section)
+        if known_gid is None:
+            sections[parsed_section] = section_gid
+        elif known_gid != section_gid:
             raise InitialBootstrapError(
-                f"source line {line_number}: section_id {parsed_section} does not match {section_id}"
+                f"source line {line_number}: section_id {parsed_section} maps to both "
+                f"section_gid {known_gid} and {section_gid}"
             )
         _required_string(record, "title", line_number=line_number)
         _required_string(record, "body", line_number=line_number)
@@ -237,6 +285,7 @@ def inspect_source_bundle(
         sha256=digest,
         record_count=count,
         max_observed_at=max(observed_values),
+        sections=sections,
     )
 
 
@@ -359,14 +408,15 @@ def _registry_payload(spec: InitialBootstrapSpec) -> dict[str, object]:
         },
         "sections": [
             {
-                "section_id": str(spec.section_id),
-                "logical_name": spec.section_name,
-                "display_name": spec.section_name,
-                "workflow_role": spec.workflow_role,
-                "ordinal": 0,
+                "section_id": str(section.section_id),
+                "logical_name": section.section_name,
+                "display_name": section.section_name,
+                "workflow_role": section.workflow_role,
+                "ordinal": ordinal,
                 "external_system": "asana",
-                "external_id": spec.section_gid,
+                "external_id": section.section_gid,
             }
+            for ordinal, section in enumerate(spec.sections)
         ],
     }
 
@@ -414,7 +464,6 @@ def bootstrap_initial_generation(
     generation_id = uuid_factory()
     binding_id = uuid_factory()
     project_alias_id = uuid_factory()
-    section_alias_id = uuid_factory()
     registry_version_id = uuid_factory()
     registry_activation_id = uuid_factory()
     registry_sha256 = _canonical_json_sha256(_registry_payload(spec))
@@ -436,7 +485,7 @@ def bootstrap_initial_generation(
                 "source_record_count": spec.source_bundle.record_count,
                 "source_bundle_hash_method": "sha256-file-bytes",
                 "project_id": str(spec.project_id),
-                "section_id": str(spec.section_id),
+                "section_ids": [str(section.section_id) for section in spec.sections],
             },
         )
     )
@@ -508,31 +557,41 @@ def bootstrap_initial_generation(
             retired_at=None,
         )
     )
-    registry.add_section(
-        models.GovernedSection(
-            section_id=spec.section_id,
-            project_id=spec.project_id,
-            logical_name=spec.section_name,
-            lifecycle="active",
-            import_run_id=import_run_id,
-            created_at=now,
-            retired_at=None,
+    section_results: list[SectionResult] = []
+    for section in spec.sections:
+        section_alias_id = uuid_factory()
+        registry.add_section(
+            models.GovernedSection(
+                section_id=section.section_id,
+                project_id=spec.project_id,
+                logical_name=section.section_name,
+                lifecycle="active",
+                import_run_id=import_run_id,
+                created_at=now,
+                retired_at=None,
+            )
         )
-    )
-    registry.add_section_alias(
-        models.SectionExternalAlias(
-            alias_id=section_alias_id,
-            section_id=spec.section_id,
-            external_system="asana",
-            external_id=spec.section_gid,
-            origin="imported",
-            import_run_id=import_run_id,
-            projection_event_id=None,
-            state="active",
-            created_at=now,
-            retired_at=None,
+        registry.add_section_alias(
+            models.SectionExternalAlias(
+                alias_id=section_alias_id,
+                section_id=section.section_id,
+                external_system="asana",
+                external_id=section.section_gid,
+                origin="imported",
+                import_run_id=import_run_id,
+                projection_event_id=None,
+                state="active",
+                created_at=now,
+                retired_at=None,
+            )
         )
-    )
+        section_results.append(
+            SectionResult(
+                section_id=section.section_id,
+                section_gid=section.section_gid,
+                section_alias_id=section_alias_id,
+            )
+        )
     registry.add_registry_version(
         models.SectionRegistryVersion(
             registry_version_id=registry_version_id,
@@ -546,11 +605,12 @@ def bootstrap_initial_generation(
         [
             models.SectionRegistryEntry(
                 registry_version_id=registry_version_id,
-                section_id=spec.section_id,
-                ordinal=0,
-                display_name=spec.section_name,
-                workflow_role=spec.workflow_role,
+                section_id=section.section_id,
+                ordinal=ordinal,
+                display_name=section.section_name,
+                workflow_role=section.workflow_role,
             )
+            for ordinal, section in enumerate(spec.sections)
         ],
     )
     registry.activate_registry(
@@ -578,8 +638,7 @@ def bootstrap_initial_generation(
         binding_id=binding_id,
         project_id=spec.project_id,
         project_alias_id=project_alias_id,
-        section_id=spec.section_id,
-        section_alias_id=section_alias_id,
+        sections=tuple(section_results),
         registry_version_id=registry_version_id,
         registry_activation_id=registry_activation_id,
         source_bundle_sha256=spec.source_bundle.sha256,
@@ -651,10 +710,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--project-id", type=uuid.UUID, default=DEFAULT_PROJECT_ID)
     parser.add_argument("--project-gid", default=DEFAULT_PROJECT_GID)
     parser.add_argument("--project-name", default="Cooking")
-    parser.add_argument("--section-id", type=uuid.UUID, default=DEFAULT_SECTION_ID)
-    parser.add_argument("--section-gid", default=DEFAULT_SECTION_GID)
-    parser.add_argument("--section-name", default="Research Queue")
-    parser.add_argument("--workflow-role", default="research_queue")
     parser.add_argument("--receipt", type=Path)
     return parser
 
@@ -672,7 +727,6 @@ def main(argv: list[str] | None = None) -> int:
         source_bundle = inspect_source_bundle(
             args.source,
             project_id=args.project_id,
-            section_id=args.section_id,
         )
         spec = InitialBootstrapSpec(
             dish_commit=args.dish_commit,
@@ -683,10 +737,7 @@ def main(argv: list[str] | None = None) -> int:
             project_id=args.project_id,
             project_gid=args.project_gid,
             project_name=args.project_name,
-            section_id=args.section_id,
-            section_gid=args.section_gid,
-            section_name=args.section_name,
-            workflow_role=args.workflow_role,
+            sections=section_specs_from_bundle(source_bundle),
         )
         engine = create_database_engine(DatabaseSettings(url=args.database_url))
         try:

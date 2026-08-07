@@ -17,14 +17,13 @@ from dish_pg.bootstrap import (
     DEFAULT_SCHEMA_HEAD,
     DEFAULT_PROJECT_GID,
     DEFAULT_PROJECT_ID,
-    DEFAULT_SECTION_GID,
-    DEFAULT_SECTION_ID,
     HonestCheckout,
     InitialBootstrapError,
     InitialBootstrapSpec,
     bootstrap_initial_generation,
     inspect_source_bundle,
     resolve_honest_checkout,
+    section_specs_from_bundle,
 )
 from dish_pg.database import session_scope
 from dish_pg.import_runtime import already_imported, prepare_import_run, verify_imported_records
@@ -33,8 +32,21 @@ from dish_pg.transition import ShadowService
 
 NOW = datetime(2026, 8, 3, 20, 0, tzinfo=timezone.utc)
 
+DEFAULT_SECTION_GID = "1216891250619908"
+DEFAULT_SECTION_ID = uuid.UUID("8b5bfb31-b986-5116-a207-569a5ba95907")
 
-def _record(task_id: uuid.UUID, gid: str, *, title: str = "[ready] Imported") -> dict[str, object]:
+OTHER_SECTION_GID = "1216891250619999"
+OTHER_SECTION_ID = uuid.UUID("2a6f8b2e-4f3a-5c1e-9a2d-6e7f8a9b0c1d")
+
+
+def _record(
+    task_id: uuid.UUID,
+    gid: str,
+    *,
+    title: str = "[ready] Imported",
+    section_id: uuid.UUID = DEFAULT_SECTION_ID,
+    section_gid: str = DEFAULT_SECTION_GID,
+) -> dict[str, object]:
     return {
         "task_id": str(task_id),
         "asana_task_gid": gid,
@@ -43,7 +55,8 @@ def _record(task_id: uuid.UUID, gid: str, *, title: str = "[ready] Imported") ->
         "identity_scheme": "legacy-sha256-v1",
         "content_identity": hashlib.sha256(gid.encode()).hexdigest(),
         "project_ids": [str(DEFAULT_PROJECT_ID)],
-        "section_id": str(DEFAULT_SECTION_ID),
+        "section_id": str(section_id),
+        "section_gid": section_gid,
         "completed": False,
         "observed_at": NOW.isoformat(),
     }
@@ -59,7 +72,6 @@ def _spec(source: Path) -> InitialBootstrapSpec:
     bundle = inspect_source_bundle(
         source,
         project_id=DEFAULT_PROJECT_ID,
-        section_id=DEFAULT_SECTION_ID,
     )
     honest = HonestCheckout(
         root=source.parent,
@@ -79,10 +91,7 @@ def _spec(source: Path) -> InitialBootstrapSpec:
         project_id=DEFAULT_PROJECT_ID,
         project_gid=DEFAULT_PROJECT_GID,
         project_name="Cooking",
-        section_id=DEFAULT_SECTION_ID,
-        section_gid=DEFAULT_SECTION_GID,
-        section_name="Research Queue",
-        workflow_role="research_queue",
+        sections=section_specs_from_bundle(bundle),
     )
 
 
@@ -174,16 +183,31 @@ def test_bootstrap_refuses_nonempty_authority_target(tmp_path: Path) -> None:
         engine.dispose()
 
 
-def test_source_bundle_requires_exact_bootstrapped_location(tmp_path: Path) -> None:
-    record = _record(uuid.uuid4(), "3001")
-    record["section_id"] = str(uuid.uuid4())
-    source = _source(tmp_path, record)
-    with pytest.raises(InitialBootstrapError, match="does not match"):
-        inspect_source_bundle(
-            source,
-            project_id=DEFAULT_PROJECT_ID,
-            section_id=DEFAULT_SECTION_ID,
-        )
+def test_source_bundle_registers_every_distinct_section(tmp_path: Path) -> None:
+    first_task, second_task = uuid.uuid4(), uuid.uuid4()
+    source = _source(
+        tmp_path,
+        _record(first_task, "3001"),
+        _record(second_task, "3002", section_id=OTHER_SECTION_ID, section_gid=OTHER_SECTION_GID),
+    )
+    bundle = inspect_source_bundle(source, project_id=DEFAULT_PROJECT_ID)
+    assert bundle.sections == {
+        DEFAULT_SECTION_ID: DEFAULT_SECTION_GID,
+        OTHER_SECTION_ID: OTHER_SECTION_GID,
+    }
+    sections = section_specs_from_bundle(bundle)
+    assert [section.section_id for section in sections] == [DEFAULT_SECTION_ID, OTHER_SECTION_ID]
+    assert len({section.workflow_role for section in sections}) == len(sections)
+
+
+def test_source_bundle_rejects_section_id_reused_for_a_different_gid(tmp_path: Path) -> None:
+    source = _source(
+        tmp_path,
+        _record(uuid.uuid4(), "3003"),
+        _record(uuid.uuid4(), "3004", section_gid="9999999999999999"),
+    )
+    with pytest.raises(InitialBootstrapError, match="maps to both"):
+        inspect_source_bundle(source, project_id=DEFAULT_PROJECT_ID)
 
 
 def test_honest_checkout_uses_real_git_and_asset_hashes(tmp_path: Path, monkeypatch) -> None:

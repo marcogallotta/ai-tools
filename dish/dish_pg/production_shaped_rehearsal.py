@@ -27,12 +27,13 @@ from typing import Any, Callable, Mapping, Sequence
 
 from sqlalchemy import create_engine, func, select, text, update
 
-from .bootstrap import (
-    DEFAULT_PROJECT_GID,
-    DEFAULT_PROJECT_ID,
-    DEFAULT_SECTION_GID,
-    DEFAULT_SECTION_ID,
-)
+from .bootstrap import DEFAULT_PROJECT_GID, DEFAULT_PROJECT_ID
+
+# Rehearsal-fixture-only values: the corpus this script exercises is a small,
+# single-section synthetic fixture, independent of bootstrap.py's now
+# corpus-derived section registration.
+DEFAULT_SECTION_GID = "1216891250619908"
+DEFAULT_SECTION_ID = uuid.UUID("8b5bfb31-b986-5116-a207-569a5ba95907")
 from .database import session_factory, session_scope
 from . import models as core_models
 from . import stage3_models as workflow_models
@@ -1837,7 +1838,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--project-name", default="Sanitized production-shaped project")
     parser.add_argument("--section-id", type=uuid.UUID, default=DEFAULT_SECTION_ID)
     parser.add_argument("--section-gid", default=DEFAULT_SECTION_GID)
-    parser.add_argument("--section-name", default="Sanitized production-shaped section")
     parser.add_argument("--pg-bin", type=Path)
     parser.add_argument(
         "--service-entry-point",
@@ -2039,12 +2039,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     args.project_gid,
                     "--project-name",
                     args.project_name,
-                    "--section-id",
-                    str(args.section_id),
-                    "--section-gid",
-                    args.section_gid,
-                    "--section-name",
-                    args.section_name,
                     "--receipt",
                     receipt,
                 ],

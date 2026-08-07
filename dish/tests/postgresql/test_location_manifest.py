@@ -21,12 +21,22 @@ from dish_pg.location_manifest import (
 )
 
 
-def _database(path: Path, *task_gids: str) -> None:
+def _database(
+    path: Path, *task_gids: str, last_known_sections: dict[str, str] | None = None
+) -> None:
     connection = sqlite3.connect(path)
     connection.execute(
         """CREATE TABLE task_content_state(
         task_gid TEXT PRIMARY KEY,last_confirmed_identity TEXT,last_confirmed_title TEXT,
         last_confirmed_notes TEXT,schema_version TEXT,confirmed_at TEXT)"""
+    )
+    connection.execute(
+        """CREATE TABLE operations(operation_id TEXT PRIMARY KEY, task_gid TEXT NOT NULL)"""
+    )
+    connection.execute(
+        """CREATE TABLE movement_attempts(
+        attempt_id TEXT PRIMARY KEY, operation_id TEXT NOT NULL,
+        outcome TEXT NOT NULL, confirmed_section_gid TEXT, finished_at TEXT)"""
     )
     for index, task_gid in enumerate(task_gids, 1):
         connection.execute(
@@ -38,6 +48,21 @@ def _database(path: Path, *task_gids: str) -> None:
                 f"Body {index}",
                 "schema-1",
                 "2026-08-03T09:00:00+00:00",
+            ),
+        )
+    for index, (task_gid, section_gid) in enumerate((last_known_sections or {}).items(), 1):
+        operation_id = f"op-{index}"
+        connection.execute(
+            "INSERT INTO operations VALUES (?,?)", (operation_id, task_gid)
+        )
+        connection.execute(
+            "INSERT INTO movement_attempts VALUES (?,?,?,?,?)",
+            (
+                f"mv-{index}",
+                operation_id,
+                "confirmed",
+                section_gid,
+                "2026-08-01T00:00:00+00:00",
             ),
         )
     connection.commit()
@@ -143,6 +168,7 @@ def test_manifest_matches_sqlite_corpus_and_exports_importer_compatible_source(
         "task_id": str(target_uuid("task", "100")),
         "project_ids": [str(target_uuid("project", project_gid))],
         "section_id": str(target_uuid("section", "901")),
+        "section_gid": "901",
         "completed": False,
         "observed_at": "2026-08-03T09:01:00+00:00",
         "existence_state": "ordinary",
@@ -167,7 +193,7 @@ def test_manifest_matches_sqlite_corpus_and_exports_importer_compatible_source(
         (lambda task: task.update(gid="101"), "identity mismatch"),
         (lambda task: task.update(completed="false"), "must be a boolean"),
         (lambda task: task.update(memberships="bad"), "malformed task memberships"),
-        (lambda task: task["memberships"].clear(), "not a member"),
+        (lambda task: task["memberships"].clear(), "no last known section"),
         (
             lambda task: task["memberships"].append(
                 {"project": {"gid": "900"}, "section": {"gid": "902"}}
@@ -192,13 +218,33 @@ def test_manifest_fails_closed_on_malformed_or_inexact_task(
         )
 
 
+def test_manifest_falls_back_to_last_known_section_when_task_has_left_the_project(
+    tmp_path: Path,
+) -> None:
+    """dish still governs a task after it leaves live project membership (e.g. moved to
+    Cooking History once eaten) -- the manifest uses its last known section instead of
+    failing closed."""
+    database = tmp_path / "test.sqlite3"
+    _database(database, "100", last_known_sections={"100": "901"})
+    project_gid = "900"
+    departed = _task("100", project_gid, "901", completed=True)
+    departed["memberships"].clear()
+    value = build_location_manifest(
+        database=database,
+        project_gid=project_gid,
+        read_task=lambda _gid: departed,
+        environment="production",
+    )
+    assert value["tasks"]["100"]["section_id"] == str(target_uuid("section", "901"))
+
+
 def test_test_manifest_preserves_project_membership_failures(tmp_path: Path) -> None:
     database = tmp_path / "test.sqlite3"
     _database(database, "100")
     missing = _task("100", "999", "901", completed=False)
     ambiguous = _task("100", "900", "901", completed=False)
     ambiguous["memberships"].append({"project": {"gid": "900"}, "section": {"gid": "902"}})
-    for response, message in ((missing, "not a member of TEST project 900"), (ambiguous, "ambiguous placement in TEST project 900")):
+    for response, message in ((missing, "no last known section"), (ambiguous, "ambiguous placement in TEST project 900")):
         with pytest.raises(LocationManifestError, match=message):
             build_location_manifest(database=database, project_gid="900", read_task=lambda _gid: response)
 

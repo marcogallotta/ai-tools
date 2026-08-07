@@ -111,7 +111,9 @@ def path_fixture(tmp_path: Path):
     return inputs, service_values, worker_values
 
 
-def record(task_id: uuid.UUID, project_id: uuid.UUID, section_id: uuid.UUID) -> dict[str, object]:
+def record(
+    task_id: uuid.UUID, project_id: uuid.UUID, section_id: uuid.UUID, section_gid: str
+) -> dict[str, object]:
     return {
         "task_id": str(task_id),
         "asana_task_gid": "123456789",
@@ -121,6 +123,7 @@ def record(task_id: uuid.UUID, project_id: uuid.UUID, section_id: uuid.UUID) -> 
         "content_identity": HASH_A,
         "project_ids": [str(project_id)],
         "section_id": str(section_id),
+        "section_gid": section_gid,
         "completed": False,
         "observed_at": "2025-01-15T12:00:00+00:00",
         "existence_state": "ordinary",
@@ -144,7 +147,7 @@ def preflight_fixture(tmp_path: Path) -> tuple[PreflightInputs, Path, str, str]:
     import_run_id = uuid.uuid4()
     binding_id = uuid.uuid4()
 
-    task_record = record(uuid.uuid4(), uuid.uuid4(), uuid.uuid4())
+    task_record = record(uuid.uuid4(), uuid.uuid4(), uuid.uuid4(), "1216891250619908")
     inputs.legacy_ndjson.write_text(
         json.dumps(task_record, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -158,6 +161,7 @@ def preflight_fixture(tmp_path: Path) -> tuple[PreflightInputs, Path, str, str]:
                             "task_id",
                             "project_ids",
                             "section_id",
+                            "section_gid",
                             "completed",
                             "observed_at",
                             "existence_state",

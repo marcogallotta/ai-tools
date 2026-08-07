@@ -127,7 +127,13 @@ def _required_mapping(value: object, *, field: str) -> Mapping[str, Any]:
     return value
 
 
-def _project_section(task: Mapping[str, Any], project_gid: str, *, environment: str) -> str:
+def _project_section(
+    task: Mapping[str, Any], project_gid: str, *, environment: str
+) -> str | None:
+    """Return the task's current section within `project_gid`, or None if the task has
+    since left that project's membership (normal lifecycle -- e.g. moved to Cooking
+    History once eaten). A departed task is still governed by dish; the caller falls
+    back to its last known section rather than treating this as an error."""
     memberships = task.get("memberships")
     if not isinstance(memberships, list):
         raise LocationManifestError("Asana returned malformed task memberships")
@@ -151,13 +157,43 @@ def _project_section(task: Mapping[str, Any], project_gid: str, *, environment: 
         sections.add(_canonical_gid(section.get("gid"), field="membership.section.gid"))
     label = "TEST" if environment == "test" else "production"
     if matching_memberships == 0:
-        raise LocationManifestError(f"task is not a member of {label} project {project_gid}")
+        return None
     if matching_memberships != 1 or len(sections) != 1:
         raise LocationManifestError(
             f"task has ambiguous placement in {label} project {project_gid}: "
             f"sections={sorted(sections)}"
         )
     return next(iter(sections))
+
+
+def _last_known_section_gid(database: Path, task_gid: str) -> str | None:
+    """Most recent confirmed section movement recorded locally for `task_gid`, used
+    as the section for a task that has since left the live project's membership."""
+    resolved = _resolve_existing(database, label="SQLite authority database")
+    uri = f"file:{resolved}?mode=ro"
+    try:
+        connection = sqlite3.connect(uri, uri=True)
+        try:
+            row = connection.execute(
+                """
+                SELECT movement_attempts.confirmed_section_gid
+                  FROM movement_attempts
+                  JOIN operations ON operations.operation_id = movement_attempts.operation_id
+                 WHERE operations.task_gid = ?
+                   AND movement_attempts.outcome = 'confirmed'
+                   AND movement_attempts.confirmed_section_gid IS NOT NULL
+                 ORDER BY movement_attempts.finished_at DESC
+                 LIMIT 1
+                """,
+                (task_gid,),
+            ).fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error as exc:
+        raise LocationManifestError(f"cannot read last known section: {exc}") from exc
+    if row is None:
+        return None
+    return _canonical_gid(row[0], field="movement_attempts.confirmed_section_gid")
 
 
 def build_location_manifest(
@@ -187,6 +223,12 @@ def build_location_manifest(
         section_gid = _project_section(
             task, canonical_project_gid, environment=environment
         )
+        if section_gid is None:
+            section_gid = _last_known_section_gid(database, task_gid)
+            if section_gid is None:
+                raise LocationManifestError(
+                    f"task {task_gid} has left the project and has no last known section"
+                )
         observed_at = now()
         if (
             not isinstance(observed_at, datetime)
@@ -198,6 +240,7 @@ def build_location_manifest(
             "task_id": str(target_uuid("task", task_gid)),
             "project_ids": [str(target_uuid("project", canonical_project_gid))],
             "section_id": str(target_uuid("section", section_gid)),
+            "section_gid": section_gid,
             "completed": completed,
             "observed_at": observed_at.isoformat(),
             "existence_state": "ordinary",
