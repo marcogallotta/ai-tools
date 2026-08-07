@@ -208,11 +208,23 @@ takeover, supervision, reconciliation, and disconnect scenarios. It deliberately
 with `--postgresql` but not `--native-postgresql`, so it never triggers the governed
 full-repository-collection rule for native lanes.
 
-**Known gap:** `test_section4_service_database_disconnect_rolls_back_then_recovers_once`
-(`tests/postgresql/native/test_production_shaped_runtime.py`) also calls `compose_control()`
-against the live TEST PostgreSQL target, but it is in neither this rehearsal's fixed inventory nor
-any other runner's Compose wiring. It currently has no runner that passes cleanly. Tracked
-separately; do not assume `dish-pg-process-failure` covers it.
+**Known gap, waived:** `test_section4_service_database_disconnect_rolls_back_then_recovers_once`
+(`tests/postgresql/native/test_production_shaped_runtime.py`) also calls `compose_control()`, but
+against the live shared TEST PostgreSQL target rather than a disposable stack, so it fits neither
+this rehearsal's fixed inventory nor any other runner's Compose wiring. Unlike the failures above,
+this test explicitly skips (with a reason) when `DISH_SECTION1_COMPOSE_JSON` is unset, so
+native-certification runs must waive it rather than treat it as a defect:
+
+```sh
+--waive-skip "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once=no runner wires DISH_SECTION1_COMPOSE_JSON to the shared TEST PostgreSQL target; revisit before setting external_effects_enabled=true"
+```
+
+This is a decided, accepted gap (2026-08-07), tolerable only because dark-launch capture currently
+runs with `external_effects_enabled=false`: an undetected bug in this exact-once-recovery path can
+at worst cause shadow-worker downtime or bad shadow projection data, not real data loss or external
+side effects, since SQLite/Asana stay authoritative until cutover. It must be revisited — either with
+dedicated Compose wiring against the shared TEST target, or a decision to keep waiving — before any
+cutover that sets `external_effects_enabled=true`.
 
 ### Local PostgreSQL 17 server binaries (backup/PITR and production-shaped rehearsals)
 
