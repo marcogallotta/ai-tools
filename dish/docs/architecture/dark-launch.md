@@ -10,7 +10,7 @@ This document owns the architecture and safety boundary of dark launch, includin
 
 ## Authoritative implementation
 
-- Command treatment registry: `dish_shadow/policy.py`.
+- Command treatment derivation and shadow-only exceptions: `dish_shadow/policy.py`, reusing retained/query facts from `dish_pg/command_contract.py`.
 - Legacy capture and source snapshots: `dish_service/shadow_capture.py`.
 - Durable local spool and emergency gaps: `dish_service/shadow_spool.py`.
 - Production/test source-location capture: `dish_pg/location_manifest.py`.
@@ -32,7 +32,7 @@ Production source preparation is deliberately separate from shadow execution. `l
 
 The legacy result remains the request authority. Live title, notes, Cooking placement, and completion remain SQLite/Asana authority during dark launch. The production location manifest is a read-only observation of exact current task placement/completion, not a new writer or authority. The legacy export is deterministic importer input bound to SQLite content heads plus the complete location manifest; it does not replace either source authority.
 
-Spool records own durable capture delivery state. PostgreSQL shadow baselines own envelopes, delivery, comparison, and gap evidence. Parity classes and counts are evaluation evidence, not production correctness or authority. The command-treatment registry determines execute, capture-only, or excluded handling after legacy authorization. Readiness reports are evidence output only; they do not create candidate, generation, baseline, epoch, spool, marker, import, credential, service-unit, or external-effect authority.
+Spool records own durable capture delivery state. PostgreSQL shadow baselines own envelopes, delivery, comparison, and gap evidence. Parity classes and counts are evaluation evidence, not production correctness or authority. Stage A command metadata supplies the default retained/query classification; `dish_shadow/policy.py` derives execute/excluded treatment from those facts and owns only the shadow-specific capture-only or target-gap exceptions. Comparison eligibility derives from that same treatment and is not a separate command list. Readiness reports are evidence output only; they do not create candidate, generation, baseline, epoch, spool, marker, import, credential, service-unit, or external-effect authority.
 
 ## Invariants
 
@@ -47,7 +47,9 @@ Spool records own durable capture delivery state. PostgreSQL shadow baselines ow
 - Service, worker, spool, kill-switch, evidence, and TEST paths must remain isolated; production configuration may not alias TEST state or protected source/credential files.
 - Capture failure is fail-open for the already-completed legacy command but must create logs/emergency gap evidence where possible.
 - `create`, proposal application/review, and target-specific projection recovery remain capture-only until their target semantics are qualified.
+- Commands omitted from the Stage A target contract may appear in dark launch only as explicit shadow-only exceptions tied to a current Action/admin identity; they do not become target command authority by appearing in shadow policy.
 - Read-only/retired commands may be excluded explicitly; unregistered commands are not silently treated as parity evidence.
+- A captured treatment that contradicts the current derived treatment is a reported delivery failure, never a silent choice of the captured or current value.
 - Shadow projection epochs are effects-disabled.
 - Outbox rows carry immutable `origin`; projection workers reject `origin=shadow` independently of epoch configuration.
 - The kill switch stops both new capture and worker execution/drain.
@@ -100,7 +102,7 @@ Production source/readiness failures are fail-closed: corpus mismatch, changed a
 
 ## Change routing
 
-- Change command eligibility only in `dish_shadow/policy.py` and parity/acceptance tests.
+- Change retained/query command facts in their command-metadata owner. Change only genuinely shadow-specific treatment exceptions in `dish_shadow/policy.py`; comparison eligibility follows that treatment automatically.
 - Change capture snapshots/spool records in `shadow_capture.py`/`shadow_spool.py` and migration-safe spool tests.
 - Change fixed production source identity, read-only SQLite/Asana capture, or output-path protection in `dish_pg/location_manifest.py`; do not put production Asana reads into `legacy_source.py`.
 - Change importer-source binding in `dish_pg/legacy_source.py`; preserve exact corpus equality with the location manifest.
@@ -116,7 +118,7 @@ Production source/readiness failures are fail-closed: corpus mismatch, changed a
 - `tests/postgresql/test_dark_launch_legacy_source.py` proves deterministic SQLite-plus-manifest export and no source-corpus drift.
 - `tests/postgresql/test_dark_launch_readiness.py`, `tests/postgresql/test_dark_launch_readiness_authority.py`, `tests/postgresql/test_dark_launch_readiness_report.py`, and `tests/postgresql/test_dark_launch_readiness_systemd.py` prove fail-closed read-only preflight, authority non-creation, redacted reporting, and stopped-unit inspection.
 - `tests/postgresql/test_dark_launch_status.py` proves status is a bounded read-only observation surface.
-- `tests/postgresql/test_dark_launch_policy.py` proves treatment completeness and effect safety.
+- `tests/postgresql/test_dark_launch_policy.py` proves the independent treatment/eligibility inventory, metadata derivation, and shadow-origin effect rejection.
 - `tests/postgresql/test_dark_launch_shadow_worker.py` and `tests/postgresql/test_dark_launch_shadow_translation.py` prove worker execution/identity mapping.
 - `tests/postgresql/test_dark_launch_authority_regressions.py` proves authority does not transfer.
 - `tests/postgresql/test_shadow_delivery_authority.py` proves delivery/baseline ordering.

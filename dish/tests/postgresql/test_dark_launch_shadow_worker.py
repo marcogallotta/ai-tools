@@ -54,7 +54,7 @@ def test_capture_only_is_settled_as_explicit_uncomparable_gap(workflow_db, tmp_p
             generation_id=context["generation_id"], source_generation_identity="legacy-1",
             source_commit="worktree", created_at=NOW)
         baseline_id=baseline.shadow_baseline_id
-    worker=ShadowWorker(spool=_spool(tmp_path,treatment="capture_only"), session_maker=factory,
+    worker=ShadowWorker(spool=_spool(tmp_path,treatment="capture_only",command_name="create"), session_maker=factory,
                         baseline_id=baseline_id, evaluator=Evaluator(), worker_id="shadow-1",
                         comparator_release="test", kill_switch_path=tmp_path/"dark-launch.disabled",
                         clock=lambda:NOW)
@@ -62,6 +62,28 @@ def test_capture_only_is_settled_as_explicit_uncomparable_gap(workflow_db, tmp_p
     with session_scope(factory) as session:
         assert session.scalar(select(tx.ShadowComparison)).parity_class == "gap"
         assert session.scalar(select(tx.ShadowGap)).gap_kind == "uncomparable"
+
+
+def test_captured_treatment_contradiction_is_reported_not_silently_compared(workflow_db, tmp_path):
+    factory, ids, context, _task = workflow_db
+    with session_scope(factory) as session:
+        baseline = ShadowService(session, uuid_factory=lambda: _next(ids)).create_baseline(
+            generation_id=context["generation_id"], source_generation_identity="legacy-1",
+            source_commit="worktree", created_at=NOW)
+        baseline_id = baseline.shadow_baseline_id
+    worker = ShadowWorker(
+        spool=_spool(tmp_path, treatment="capture_only", command_name="prepare"),
+        session_maker=factory, baseline_id=baseline_id, evaluator=Evaluator(),
+        worker_id="shadow-1", comparator_release="test",
+        kill_switch_path=tmp_path/"dark-launch.disabled", clock=lambda: NOW,
+    )
+
+    assert worker.run_once() is True
+    with session_scope(factory) as session:
+        delivery = session.scalar(select(tx.ShadowDelivery))
+        assert delivery.state == "failed"
+        assert "contradicts authoritative command treatment" in delivery.last_error
+        assert session.scalar(select(tx.ShadowComparison)) is None
 
 def test_kill_switch_stops_worker_before_spool_delivery(workflow_db, tmp_path):
     factory, ids, context, _task = workflow_db

@@ -24,6 +24,7 @@ from sqlalchemy.engine import make_url
 
 from dish_service.path_safety import require_distinct_paths
 from dish_service.shadow_spool import ShadowSpool, ShadowSpoolItem
+from dish_shadow.policy import treatment_for
 from dish_tool.constants import RECOVERY_QUARANTINE_SECONDS
 
 from . import models
@@ -778,11 +779,18 @@ class ShadowWorker:
             with session_scope(self.session_maker) as session:
                 envelope = session.get(tx.ShadowEnvelope, envelope_id)
                 rollout_mode = dict(envelope.pinned_inputs or {}).get("rollout_mode")
-                if rollout_mode != "execute" or envelope.capture_qualification != "execute":
+                treatment = treatment_for(envelope.command_name)
+                if envelope.capture_qualification != treatment.treatment:
+                    raise ValueError(
+                        "captured dark-launch treatment contradicts authoritative command treatment: "
+                        f"{envelope.command_name} captured={envelope.capture_qualification} "
+                        f"authoritative={treatment.treatment}"
+                    )
+                if rollout_mode != "execute" or not treatment.comparison_eligible:
                     reason = (
                         f"dark-launch rollout mode is {rollout_mode or 'capture'}"
                         if rollout_mode != "execute"
-                        else f"dark-launch treatment is {envelope.capture_qualification}"
+                        else f"dark-launch treatment is {treatment.treatment}"
                     )
                     ShadowService(session).skip_delivery(
                         delivery_id=delivery_id,

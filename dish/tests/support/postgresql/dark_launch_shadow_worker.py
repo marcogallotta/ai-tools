@@ -28,12 +28,12 @@ class Evaluator:
         del session
         return dict(envelope.source_outcome)
 
-def _spool(tmp_path, *, treatment="execute"):
+def _spool(tmp_path, *, treatment="execute", command_name="prepare"):
     spool=ShadowSpool(tmp_path/"spool.sqlite3")
     reservation=spool.reserve(
-        source_request_identity=f"request-{treatment}", source_authority_generation="legacy-1",
-        command_name="prepare", treatment=treatment,
-        canonical_input={"command":"prepare","arguments":{}}, principal={},
+        source_request_identity=f"request-{command_name}-{treatment}", source_authority_generation="legacy-1",
+        command_name=command_name, treatment=treatment,
+        canonical_input={"command":command_name,"arguments":{}}, principal={},
         source_pre_state={"phase":"research"}, pinned_inputs={"rollout_mode":"execute"}, created_at=NOW,
     )
     spool.complete(reservation.registration_id, source_outcome={"ok":True},

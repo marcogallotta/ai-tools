@@ -1,18 +1,17 @@
-"""Dark-launch command eligibility and effect-safety contract.
+"""Dark-launch treatment derived from authoritative command metadata.
 
-This registry does not define workflow legality. It only says whether an
-already-authorized legacy command may be replayed against the non-authoritative
-PostgreSQL shadow, captured without execution, or excluded from rollout
-accounting. The PostgreSQL planner remains the sole target workflow-policy
-owner.
+This module does not define workflow legality or a second command catalogue.
+The PostgreSQL Stage A command contract owns retained/query command facts;
+current Action/admin specs own the identities that are not yet represented by
+that target contract. Dark launch adds only the exceptions that are genuinely
+specific to shadow execution.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Literal
-
-from dish_service.command_spec import ACTION_COMMAND_DEFINITIONS
-from dish_tool.admin_command_spec import ADMIN_COMMAND_SPECS
 
 Treatment = Literal["execute", "capture_only", "excluded"]
 
@@ -22,87 +21,96 @@ class DarkLaunchTreatment:
     command_name: str
     treatment: Treatment
     reason: str
-    external_effects_allowed: bool = False
+
+    @property
+    def comparison_eligible(self) -> bool:
+        """Whether an execute-mode envelope may produce parity evidence."""
+
+        return self.treatment == "execute"
+
+    @property
+    def external_effects_allowed(self) -> Literal[False]:
+        """Shadow treatment can never authorize an external effect."""
+
+        return False
 
 
-_CURRENT_COMMANDS = set(ACTION_COMMAND_DEFINITIONS) | set(ADMIN_COMMAND_SPECS)
+# These are the only dark-launch facts that cannot derive from the accepted
+# Stage A command contract. The semantic-proposal/review entries remain here
+# because that target contract still omits them; removing an exception requires
+# first adding the authoritative target command fact.
+_SHADOW_ONLY_OVERRIDES: dict[str, tuple[Treatment, str]] = {
+    "create": ("capture_only", "pre-cutover create correlation is not qualified"),
+    "recover": ("capture_only", "projection-attempt identity is target-specific"),
+    "repair-destination": ("capture_only", "projection-attempt identity is target-specific"),
+    "proposals": ("excluded", "read-only source semantic-proposal queue"),
+    "apply-proposal": ("capture_only", "target semantic-proposal authority is not implemented"),
+    "review-queue": ("excluded", "read-only source semantic-proposal queue"),
+    "review-inspect": ("excluded", "read-only source semantic-proposal detail"),
+    "review-approve": ("capture_only", "target semantic-proposal authority is not implemented"),
+    "review-reject": ("capture_only", "target semantic-proposal authority is not implemented"),
+}
 
 
-def _treatment(
-    command_name: str,
-    treatment: Treatment,
-    reason: str,
-    *,
-    target_only: bool = False,
-    external_effects_allowed: bool = False,
-) -> DarkLaunchTreatment:
-    if not target_only and command_name not in _CURRENT_COMMANDS:
-        raise ValueError(f"unknown command in dark-launch treatment: {command_name}")
-    return DarkLaunchTreatment(
-        command_name=command_name,
-        treatment=treatment,
-        reason=reason,
-        external_effects_allowed=external_effects_allowed,
-    )
+def _derived_treatment(definition) -> tuple[Treatment, str]:
+    if not definition.retained:
+        return "excluded", "retired from PostgreSQL command authority"
+    if definition.profile == "Q":
+        reason = "read-only administrative query" if definition.principal == "admin" else "read-only query"
+        return "excluded", reason
+    return "execute", "retained target command is shadow-executable"
 
 
-_ROWS = (
-    # Queries do not create governed effects and are not parity evidence for
-    # the mutation dark launch.
-    _treatment("sections", "excluded", "read-only query"),
-    _treatment("section-tasks", "excluded", "read-only query"),
-    _treatment("read", "excluded", "read-only query"),
-    _treatment("proposals", "excluded", "read-only source semantic-proposal queue"),
-    _treatment("attention", "excluded", "read-only administrative query"),
-    _treatment("holds", "excluded", "read-only administrative query"),
-    _treatment("review-queue", "excluded", "read-only source semantic-proposal queue"),
-    _treatment("review-inspect", "excluded", "read-only source semantic-proposal detail"),
-    # Create remains capture-only until exact lost-response correlation is
-    # proved for the production Asana topology.
-    _treatment("create", "capture_only", "pre-cutover create correlation is not qualified"),
-    _treatment("apply-proposal", "capture_only", "target semantic-proposal authority is not implemented"),
-    _treatment("review-approve", "capture_only", "target semantic-proposal authority is not implemented"),
-    _treatment("review-reject", "capture_only", "target semantic-proposal authority is not implemented"),
-    # Workflow mutations whose target semantics are fully local to PostgreSQL.
-    _treatment("start", "execute", "target workflow mutation is shadow-safe"),
-    _treatment("prepare", "execute", "target document and placement intents remain internal"),
-    _treatment("inspect", "execute", "target verification evidence remains internal"),
-    _treatment("approve", "execute", "target signoff and projection intent remain internal"),
-    _treatment("reject", "execute", "target correction or hold authority remains internal"),
-    _treatment("submit", "execute", "target terminal state and projection intent remain internal"),
-    _treatment("renew-lease", "execute", "target lease authority is internal"),
-    _treatment("discard", "execute", "target cancellation authority is internal"),
-    _treatment("abandon-operation", "execute", "target abandonment authority is internal"),
-    _treatment("reconcile-abandonment", "execute", "target succession authority is internal"),
-    _treatment("reopen-planning", "execute", "target reopen authority is internal"),
-    _treatment("reopen", "execute", "target continuation authority is internal"),
-    _treatment("supply-evidence", "execute", "target Evidence continuation is internal"),
-    _treatment("record-human-decision", "execute", "target Human Review decision is internal"),
-    _treatment("resolved", "execute", "target Verification-hold continuation is internal"),
-    _treatment("authorize-governed-change", "execute", "target authorization authority is internal"),
-    _treatment("recover-lease", "execute", "target lease recovery is internal"),
-    _treatment("expire-lease", "execute", "target lease expiry is internal"),
-    _treatment("migrate", "execute", "target migration command is internal"),
-    _treatment(
-        "planning-intent-settlement",
-        "execute",
-        "target Planning challenge settlement is internal",
-        target_only=True,
-    ),
-    # These routes adjudicate downstream projection attempts. The legacy and
-    # target attempt identities cannot be assumed equivalent during shadowing.
-    _treatment("recover", "capture_only", "projection-attempt identity is target-specific"),
-    _treatment("repair-destination", "capture_only", "projection-attempt identity is target-specific"),
-    # Retired post-cutover commands remain visible as explicit exclusions.
-    _treatment("backup-create", "excluded", "retired from PostgreSQL command authority"),
-    _treatment("backup-restore", "excluded", "retired from PostgreSQL command authority"),
-)
+@lru_cache(maxsize=1)
+def _build_treatments() -> dict[str, DarkLaunchTreatment]:
+    # Keep the legacy service import boundary light. These metadata modules are
+    # loaded only when dark launch actually needs the policy, after ordinary
+    # service composition has completed.
+    from dish_pg.command_contract import COMMAND_DEFINITIONS
+    from dish_service.command_spec import ACTION_COMMAND_DEFINITIONS
+    from dish_tool.admin_command_spec import ADMIN_COMMAND_SPECS
 
-DARK_LAUNCH_TREATMENTS = {row.command_name: row for row in _ROWS}
+    current_surface_commands = set(ACTION_COMMAND_DEFINITIONS) | set(ADMIN_COMMAND_SPECS)
+    stale_overrides = set(_SHADOW_ONLY_OVERRIDES) - current_surface_commands
+    if stale_overrides:
+        names = ", ".join(sorted(stale_overrides))
+        raise ValueError(f"shadow-only treatment exceptions lack a current command identity: {names}")
+
+    rows: dict[str, DarkLaunchTreatment] = {}
+    for name, definition in COMMAND_DEFINITIONS.items():
+        override = _SHADOW_ONLY_OVERRIDES.get(name)
+        treatment, reason = override if override is not None else _derived_treatment(definition)
+        rows[name] = DarkLaunchTreatment(name, treatment, reason)
+
+    for name, (treatment, reason) in _SHADOW_ONLY_OVERRIDES.items():
+        if name not in rows:
+            rows[name] = DarkLaunchTreatment(name, treatment, reason)
+
+    missing_treatment = current_surface_commands - set(rows)
+    if missing_treatment:
+        names = ", ".join(sorted(missing_treatment))
+        raise ValueError(f"current commands lack target metadata or a shadow-only exception: {names}")
+    return rows
+
+
+class _TreatmentInventory(Mapping[str, DarkLaunchTreatment]):
+    """Read-only compatibility view over the derived treatment inventory."""
+
+    def __getitem__(self, command_name: str) -> DarkLaunchTreatment:
+        return _build_treatments()[command_name]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(_build_treatments())
+
+    def __len__(self) -> int:
+        return len(_build_treatments())
+
+
+DARK_LAUNCH_TREATMENTS: Mapping[str, DarkLaunchTreatment] = _TreatmentInventory()
 
 
 def treatment_for(command_name: str) -> DarkLaunchTreatment:
     try:
-        return DARK_LAUNCH_TREATMENTS[command_name]
+        return _build_treatments()[command_name]
     except KeyError as exc:
         raise ValueError(f"dark-launch treatment is not registered: {command_name}") from exc

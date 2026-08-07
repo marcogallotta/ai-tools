@@ -12,14 +12,14 @@ This document owns package responsibilities and dependency direction. It does no
 
 - `dish_tool/`: current command applications, workflow use cases, canonical document logic, SQLite persistence, Asana gateway, CLI clients.
 - `dish_service/`: shared-process composition, HTTP/auth, replay, leases, process/database ownership, backup/restore, dark-launch capture.
-- `dish_shadow/`: transport-independent dark-launch command-treatment policy.
+- `dish_shadow/`: transport-independent dark-launch treatment derivation and shadow-only exceptions.
 - `dish_pg/`: isolated PostgreSQL target models, command port, workers, migrations, rehearsal, release, and cutover controls.
 - `test_selection/`: path ownership and governed test planning.
 - Executable entry points: `dish`, `dish-admin`, `dish-service`, and `scripts/`.
 
 ## Actors, processes, and stores
 
-`dish_tool` and `dish_service` run in the default service process. CLI modules in `dish_tool` may call the service client but must not gain live workflow authority. `dish_pg` runs in explicit test/runtime worker processes and owns PostgreSQL sessions. `dish_shadow` is pure policy shared by legacy capture.
+`dish_tool` and `dish_service` run in the default service process. CLI modules in `dish_tool` may call the service client but must not gain live workflow authority. `dish_pg` runs in explicit test/runtime worker processes and owns PostgreSQL sessions. `dish_shadow` is pure policy shared by legacy capture; it loads the Stage A command metadata lazily only when dark-launch treatment is requested, so ordinary service composition does not acquire PostgreSQL runtime authority.
 
 ## Authority and data ownership
 
@@ -27,13 +27,14 @@ This document owns package responsibilities and dependency direction. It does no
 |---|---|---|
 | `dish_tool` | Current workflow/domain rules, SQLite evidence, exact task effects, canonical envelopes | HTTP credentials, service process lifecycle, PostgreSQL commits |
 | `dish_service` | Process composition, authentication, transport, replay orchestration, leases, backup/restore, shadow capture | Duplicate workflow transition policy or canonical task schema |
-| `dish_shadow` | Execute/capture-only/excluded treatment for already-authorized commands | Workflow legality, database state, network I/O |
+| `dish_shadow` | Derivation of execute/excluded defaults from command metadata plus explicit shadow-only exceptions | A second command catalogue, workflow legality, database state, network I/O |
 | `dish_pg` | Target PostgreSQL authority, transactions, projections, dark-launch comparison, release/cutover evidence | Current legacy production authority before activation |
 | `test_selection` | Classification of changed paths into proof lanes | Runtime behavior |
 
 ## Invariants
 
 - Put a rule in the highest shared layer that owns the fact; do not duplicate it in each caller.
+- Dark-launch comparison eligibility must derive from the same treatment object used for capture; workers must not maintain a parallel eligibility table or naming rule.
 - HTTP and CLI layers parse and map; they do not decide legal workflow transitions.
 - Repositories and PostgreSQL domain services participate in caller-owned transactions and do not commit independently.
 - `dish_service.application` must remain the default current-service composition root.
