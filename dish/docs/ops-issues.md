@@ -7,8 +7,11 @@ not a live source of truth — it will go stale the same way
 verified" column before trusting an "open" or "done" mark on anything more
 than a few weeks old.
 
-Snapshot date: 2026-08-04, refreshed 2026-08-05. Verified repair tree through `09fa713`
-(synthetic Git history created from the supplied repository snapshot).
+Snapshot date: 2026-08-04, refreshed 2026-08-05, 2026-08-07, 2026-08-08. Verified repair tree
+through `09fa713` (synthetic Git history created from the supplied repository snapshot). The
+2026-08-08 refresh directly re-verified the "Confirmed open — verified directly against code"
+table and the §3 runtime-wiring blocker against current code and a real native rehearsal run; the
+ChatGPT-claim-only tables below were not re-checked in that pass.
 
 ## Priority key
 
@@ -44,31 +47,22 @@ or real external-system state).
 `database-backend-postgresql-test-plan.md` is the authoritative execution runbook for the
 Hard-local-effort verification work — it is not optional background reading, it is the actual
 procedure. Per that doc's own completion rule: "Local runtime validation is complete only when
-Sections 1 through 4 have reproducible evidence." As of this snapshot (2026-08-06), §1 and §2 have
-passed native execution; §3 has a historical run plus a reproducing native failure on a real,
-confirmed-stable bug; §4 has not been run (blocked transitively on §3).
+Sections 1 through 4 have reproducible evidence." As of this snapshot (2026-08-07/08), §1-§3 have
+passed native execution with real reproducible evidence; §4 has not been run — not because it is
+blocked, but because its own native run has never been attempted and needs setup (Honest-repo
+checkout, sanitized corpus/manifest) that is separate follow-up work, not a quick check.
 
 | Section | Covers | Status |
 | --- | --- | --- |
 | §1 Process-failure exercise | commit-before-response/lost-response replay, worker restart/takeover, PostgreSQL disconnect/recovery | **Passed natively** (commit `445da12` fixed the fixture/import gaps). `scripts/dish-pg-process-failure` covers disconnect, projection, takeover, command-child replay, reconciliation-checkpoint resume, and worker supervision/restart scenarios: 14/14 scenarios, evidence validated. |
 | §2 Backup, restore, and PITR rehearsal | backup/restore, PITR, RPO/RTO, fail-closed on corrupt backup | **Passed natively** on 2026-08-06 (PostgreSQL 17.10 via PGDG). `scripts/dish-pg-recovery-rehearsal` covers backup/restore, PITR to an LSN, and fail-closed corrupt-backup/missing-WAL paths; `pg_verifybackup`/`pg_controldata` checks and RPO/RTO measurement completed. Required a jsonb-vs-json operator fix (`778d82c`) and the version-pin bump to 17.10 (`7fb8d0f`) to get a real local PG that PGDG still serves. |
-| §3 Runtime wiring rehearsal | service + both workers against real PostgreSQL, cross-process proofs | Historical run completed 2026-08-04; commit `18e6446` fixed unrelated fixture/import gaps. **Currently blocked** on a real, deterministically-reproducing bug: `PostgresRuntimeService` has no `record_replay_validation_failure` method. `dish_service/http.py`'s fail-closed error handler calls it unconditionally on validation failures for replay-sensitive commands, so it crashes with `AttributeError` and the client sees `RemoteDisconnected`. Root cause and fix shape (see below) are understood; not fixed here per standing instruction to escalate architectural gaps rather than patch them locally. |
-| §4 Production-shaped local rehearsal | full sequence against sanitized production-shaped data | **Not run.** `scripts/dish-pg-production-shaped-rehearsal` implements all ten phases through the maintained §3 PostgreSQL TEST service path, but §4 explicitly reuses that path and remains blocked until §3's `record_replay_validation_failure` gap is resolved. |
+| §3 Runtime wiring rehearsal | service + both workers against real PostgreSQL, cross-process proofs | **Passed natively, 2026-08-08.** `PostgresRuntimeService.record_replay_validation_failure` (`dish_pg/postgres_service.py:222`) now exists and is wired from `dish_service/http.py:578`; the previously-reproducing `AttributeError` is gone. Re-ran `scripts/dish-pg-runtime-wiring-rehearsal` against a fresh disposable Compose instance: `status=passed`, first attempt clean, `evidence_validation.ok=true` (11 distinct PIDs, 8 runtime-identity reports). Covers PostgreSQL-loss fail-closed, worker takeover, same-worker restart, no duplicate dispatch/settlement. |
+| §4 Production-shaped local rehearsal | full sequence against sanitized production-shaped data | **Not run — genuinely open, own follow-up task.** `scripts/dish-pg-production-shaped-rehearsal` requires `--evidence-dir`, `--work-root`, `--corpus`, `--corpus-manifest`, `--honest-repo`, `--honest-commit`, `--repository-input-identity`; none of these have a documented default invocation, and no one has run this script standalone before (confirmed 2026-08-08: `--describe-input-identities` works, but a full run needs corpus/manifest authoring first). No longer blocked on §3's bug — blocked only on someone doing that setup work. |
 
-**§3/§4 blocker detail**: PostgreSQL already has the replay/idempotency infrastructure the legacy
-SQLite path (`dish_service/request_replay.py`'s `begin_request`/`stored_result`/`complete_request`)
-provides — `ServiceRequest`/`ServiceRequestOutcome` models plus `WorkflowAuthorityService.admit_request`/
-`record_outcome` in `dish_pg/workflow.py` and `dish_pg/command_port.py`. This is not a missing
-subsystem; it's a missing adapter method on `PostgresRuntimeService` (`dish_pg/postgres_service.py`)
-that persists a validation failure into that existing model. One design point to resolve before
-writing it: `admit_request` runs full generation/mutation-admission gating meant for real command
-execution (`require_active_run`, destructive-restore reservation checks, etc.) — those gates
-shouldn't fire for a pre-admission validation failure, so the adapter likely needs either a lighter
-admission path or to bypass gating explicitly, rather than calling `admit_request` unmodified.
-
-This is Must-fix, Local/Mixed, Hard local effort, gating a trusted cutover — do not let it get
-dropped just because it isn't broken into individual claim rows below like the ChatGPT-sourced
-items are.
+**§3 blocker: resolved.** The previous entry described a missing `record_replay_validation_failure`
+adapter method causing an `AttributeError` fail-closed crash. That method now exists and the fault
+sequence above proves it works end-to-end against real PostgreSQL, not just that the method is
+present in code.
 
 ## Done — verified implementation
 
@@ -100,6 +94,8 @@ items are.
 | Final-evidence completion gate | 2026-08-05 (directly code-verified) | `complete_cutover()` rebuilds and validates a fresh `cutover_final` evidence bundle before advancing to `completed` (`dish_pg/cutover_control.py`). |
 | Shared legacy service/local process lock | 2026-08-05 (directly code-verified) | `ServiceProcessLock` guards the service; `DatabaseProcessLock` guards local `dish` and `dish-admin` access to the governed SQLite database (`dish_service/__main__.py`, `dish_tool/cli.py`, `dish_tool/admin_cli.py`). |
 | Migration-target helper current head | 2026-08-07 (directly code-verified) | Release/bootstrap/acceptance helpers derive or assert `0030_validation_failure_admission` through `ALEMBIC_HEAD`/`DEFAULT_SCHEMA_HEAD`; the Stage 6 runbook names the same head. |
+| `test_native_initial_state_insert_guards_reject_direct_sql` fails against live PostgreSQL | 2026-08-08 (directly code-verified and fixed) | `engine.raw_connection()` returns SQLAlchemy's pool proxy, which only overrides `__getattr__`; setting `.autocommit` on it never reaches the real psycopg connection. Fixed by setting `raw.driver_connection.autocommit = True` instead (`tests/support/postgresql/native_first_request_reservation_single_gate.py:135`). Verified passing. |
+| Shadow-baseline capture vs close/disqualify race | 2026-08-08 (directly code-verified) | `capture_envelope()` and `close_baseline()` (`dish_pg/transition.py:381,895`) both go through `_lock_baseline()`, which applies `.with_for_update()` on PostgreSQL. Not an unlocked read; the described race does not exist in current code. |
 | Stale `dish_pg/shadow_worker.py.orig` hygiene claim | 2026-08-05 (directly tree-verified) | No `.orig` file exists under `dish_pg` in the supplied snapshot. |
 | Stage 6 runbook migration-head claim | 2026-08-07 (directly doc-verified) | `docs/database-backend-stage6-runbook.md` consistently names `0030_validation_failure_admission`; historical migration references remain explicit where needed. |
 
@@ -119,22 +115,12 @@ items are.
 
 ## Confirmed open — verified directly against code (high confidence)
 
-| Item | Priority | Owner | Local effort | Last verified | Evidence |
-| --- | --- | --- | --- | --- | --- |
-| Shadow-baseline capture vs close/disqualify race | Later | Mixed | Medium | 2026-08-04 (fork-verified) | `capture_envelope()`/`close_baseline()` (`transition.py:232,632`) use unlocked `session.get()`, no `.with_for_update()` |
-| `test_native_initial_state_insert_guards_reject_direct_sql` fails against live PostgreSQL | Later (test-only; no production code path affected) | Mixed | Medium | 2026-08-05 (directly code-verified, reproduced live) | `tests/postgresql/native/test_first_request_reservation_single_gate.py:381` — the second `raw.execute()` after a caught `psycopg.errors.RaiseException` hits `InFailedSqlTransaction`, even though `raw.autocommit = True` is set on the connection beforehand. Likely `autocommit` isn't taking effect on the already-open psycopg3 connection/transaction. Reproduced running `native-concurrency` lane against `postgresql-postgres-1` (127.0.0.1:55432): 21/22 passed, this one failed. Discovered incidentally while adding the projection-epoch-lifecycle tests to the `native-concurrency` lane (commit `3437bcc`); not investigated further. |
-
-The other six rows previously listed here (rollback-burn quiescence, first-request admission
-reopening, missing generation-bound FKs, illegal candidate/admission-control/reservation INSERT
-states, migration `0028` failing open) were all fixed in commit `fce152c` ("Enforce cutover
-admission authority", migration `0029_cutover_authority_admission_fixes.py`, applied from a
-ChatGPT-drafted patch, already on `main`). Directly re-verified 2026-08-05 against current code:
-`burn_rollback()` now reruns `evaluate_candidate()` before the irreversible transition
-(`cutover_control.py:661`); `verify_first_admission()` gates when mutation admission opens
-(`cutover_control.py:1221-1238`); migration `0029` installs `BEFORE INSERT` guard triggers on
-`release_candidates`, `mutation_admission_controls`, and `first_request_reservations`, plus
-composite FK constraints binding each candidate's import batch/shadow baseline/projection epoch
-to its generation. Moved to Done below.
+Empty as of 2026-08-08. The two rows previously here (shadow-baseline capture/close race,
+`test_native_initial_state_insert_guards_reject_direct_sql`) and the six rows before that
+(rollback-burn quiescence, first-request admission reopening, missing generation-bound FKs,
+illegal candidate/admission-control/reservation INSERT states, migration `0028` failing open) were
+all directly code-verified as fixed and moved to Done below. If this table gains new rows later,
+re-check the Done table isn't already covering them before assuming something regressed.
 
 ## Partial — mechanism exists, real gap remains
 
@@ -177,5 +163,5 @@ still unchecked directly.
 
 | Doc | Issue | Last verified |
 | --- | --- | --- |
-| `docs/database-backend-production-change-ledger.md` | Stale — last reviewed through `42619b9` (2026-08-01), 74 commits behind HEAD `b90f42c` (2026-08-04) as of this snapshot | 2026-08-04 (fork-verified) |
-| `docs/database-backend-imp.md` | Reasonably current/self-aware; no action needed | 2026-08-04 (fork-verified) |
+| `docs/database-backend-production-change-ledger.md` | Stale — last reviewed through `42619b9` (2026-08-01), well behind current HEAD as of this snapshot | 2026-08-04 (fork-verified) |
+| `docs/database-backend-imp.md` | Stale, superseding earlier "no action needed" note — its "Outstanding work for Stage A" §"Local, no production access needed" list still shows runtime-wiring rehearsal and production-shaped rehearsal as open work items, but both now have landed implementations (commits `41c0015` "Add native PostgreSQL §3 runtime-wiring rehearsal...", `069027d` "Add TEST dark-launch acceptance orchestrator"; §3 independently reverified passing this session). Needs its outstanding-work list refreshed against what's actually landed. | 2026-08-08 (directly code+commit-verified) |
