@@ -11,8 +11,10 @@ scratch spool/secret/kill-switch/log files unless ``--keep-scratch`` is used.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import secrets
 import signal
 import shutil
 import sqlite3
@@ -39,12 +41,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
+from dish_pg.bootstrap import DEFAULT_PROJECT_ID
 from dish_pg.database import (
     DatabaseSettings,
     create_database_engine,
     session_factory,
     session_scope,
 )
+from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
 from dish_pg.shadow_worker import _shadow_uuid
 from dish_pg.transition import ProjectionService, ShadowService
 from dish_service.shadow_spool import ShadowSpool
@@ -105,7 +109,7 @@ class DeliverySnapshot:
     request_count: int
     request_outcome_count: int
     execution_count: int
-    task_count: int
+    operation_count: int
     projection_count: int
 
 
@@ -137,6 +141,9 @@ class BaselineContext:
     source_generation_identity: str
     baseline_was_created: bool
     first_rollout_sequence: int
+    import_run_id: uuid.UUID
+    contract_binding_id: uuid.UUID
+    target_section_id: uuid.UUID
 
 
 def utcnow() -> datetime:
@@ -252,6 +259,10 @@ def active_generation_and_baseline(
 
         registry = session.get(models.ActiveSectionRegistry, generation.generation_id)
         require(registry is not None, "active generation has no active section registry")
+        registry_version = session.get(
+            models.SectionRegistryVersion, registry.registry_version_id
+        )
+        require(registry_version is not None, "active registry has no registry version")
         research_queue = session.scalar(
             select(models.SectionRegistryEntry).where(
                 models.SectionRegistryEntry.registry_version_id
@@ -351,10 +362,59 @@ def active_generation_and_baseline(
             source_generation_identity=baseline.source_generation_identity,
             baseline_was_created=created,
             first_rollout_sequence=max_sequence + 1,
+            import_run_id=registry_version.import_run_id,
+            contract_binding_id=registry_version.contract_binding_id,
+            target_section_id=research_queue.section_id,
         )
 
 
-def source_states() -> tuple[dict[str, Any], dict[str, Any]]:
+def materialize_target_task(
+    factory: sessionmaker[Session],
+    baseline: BaselineContext,
+    *,
+    run_marker: str,
+    label: str,
+) -> str:
+    """Materialize one real target task directly (not through shadow capture).
+
+    ``create`` is permanently capture_only (pre-cutover create correlation is
+    not qualified), so the shadow worker can never legally execute it. Real
+    tasks reach PostgreSQL the same way in production: through ordinary
+    import/authoritative means, not shadow re-execution. Only a task's later
+    lifecycle commands (``start``, ``prepare``, ...) are shadow-executable, so
+    this certification needs one real pre-existing task to act on before it
+    can exercise ``start`` through the actual worker/evaluator pipeline.
+
+    The title keeps the same ``[rehearsal-cert {run_marker}]`` prefix used
+    elsewhere so cleanup_manifest's title-prefix match still finds it.
+    """
+    task_id = uuid.uuid4()
+    asana_gid = str(1_900_000_000_000_000 + secrets.randbelow(90_000_000_000_000))
+    title = f"[rehearsal-cert {run_marker}] target-{label}"
+    body = "TEST-ONLY shadow-worker restart certification target task.\n"
+    content_identity = hashlib.sha256(f"{title}\n{body}".encode("utf-8")).hexdigest()
+    with session_scope(factory) as session:
+        CoreAuthorityService(session, uuid_factory=uuid.uuid4).import_task_document(
+            generation_id=baseline.generation_id,
+            import_run_id=baseline.import_run_id,
+            contract_binding_id=baseline.contract_binding_id,
+            spec=ImportedTaskSpec(
+                task_id=task_id,
+                asana_task_gid=asana_gid,
+                title=title,
+                body=body,
+                identity_scheme="legacy-sha256-v1",
+                content_identity=content_identity,
+                project_ids=(DEFAULT_PROJECT_ID,),
+                section_id=baseline.target_section_id,
+                completed=False,
+                observed_at=utcnow(),
+            ),
+        )
+    return asana_gid
+
+
+def source_states(*, task_gid: str) -> tuple[dict[str, Any], dict[str, Any]]:
     before = {
         "selected_tables": ["service_requests"],
         "tables": {"service_requests": []},
@@ -363,7 +423,7 @@ def source_states() -> tuple[dict[str, Any], dict[str, Any]]:
         "selected_tables": ["service_requests"],
         "tables": {
             "service_requests": [
-                {"command": "create", "status": "completed"}
+                {"command": "start", "task_gid": task_gid, "status": "completed"}
             ]
         },
     }
@@ -376,6 +436,7 @@ def make_fixture_spec(
     label: str,
     rollout_sequence: int,
     captured_at: datetime,
+    task_gid: str,
 ) -> dict[str, Any]:
     source_request_identity = f"rehearsal-cert:{run_marker}:{label}"
     title = f"[rehearsal-cert {run_marker}] {label}"
@@ -383,23 +444,23 @@ def make_fixture_spec(
         "TEST-ONLY shadow-worker restart certification artifact.\n"
         f"run_marker={run_marker}\nlabel={label}\n"
     )
-    before, after = source_states()
+    before, after = source_states(task_gid=task_gid)
     principal = {
         "owner_id": f"rehearsal-cert:{run_marker}",
         "principal_class": "agent",
         "run_id": f"source-run:{run_marker}:{label}",
     }
     canonical_input = {
-        "command": "create",
-        "arguments": {"title": title, "body": body},
+        "command": "start",
+        "arguments": {"task_gid": task_gid, "kind": "initial", "agent": "rehearsal-cert"},
     }
     source_outcome = {
         "ok": True,
-        "command": "create",
+        "command": "start",
         "code": "OK",
-        "task_gid": f"source-task:{run_marker}:{label}",
+        "task_gid": task_gid,
         "retryable": False,
-        "allowed_actions": ["start"],
+        "allowed_actions": ["prepare"],
         "data": {},
     }
     return {
@@ -428,7 +489,7 @@ def insert_fixture(
     with session_scope(factory) as session:
         envelope = ShadowService(session).capture_envelope(
             shadow_baseline_id=baseline.baseline_id,
-            command_name="create",
+            command_name="start",
             source_request_identity=spec["source_request_identity"],
             canonical_input=spec["canonical_input"],
             source_outcome=spec["source_outcome"],
@@ -481,7 +542,7 @@ def seed_spool(
         reservation = spool.reserve(
             source_request_identity=fixture.source_request_identity,
             source_authority_generation=baseline.source_generation_identity,
-            command_name="create",
+            command_name="start",
             treatment="execute",
             canonical_input=fixture.canonical_input,
             principal=fixture.principal,
@@ -557,14 +618,14 @@ def delivery_snapshot(
             )
         )
         execution_ids = [row.execution_id for row in executions]
-        task_count = 0
+        operation_count = 0
         projection_count = 0
         if execution_ids:
-            task_count = int(
+            operation_count = int(
                 session.scalar(
                     select(func.count())
-                    .select_from(models.DishTask)
-                    .where(models.DishTask.command_execution_id.in_(execution_ids))
+                    .select_from(wf.WorkflowOperation)
+                    .where(wf.WorkflowOperation.creation_execution_id.in_(execution_ids))
                 )
                 or 0
             )
@@ -597,7 +658,7 @@ def delivery_snapshot(
             request_count=request_count,
             request_outcome_count=request_outcome_count,
             execution_count=len(executions),
-            task_count=task_count,
+            operation_count=operation_count,
             projection_count=projection_count,
         )
 
@@ -708,18 +769,20 @@ def wait_for_claim_expiry(
 
 
 @contextmanager
-def block_create_execution(engine: Engine) -> Iterator[None]:
-    """Block the evaluator's first dish_tasks INSERT without blocking claim reads.
+def block_start_execution(engine: Engine) -> Iterator[None]:
+    """Block the evaluator's workflow_operations INSERT without blocking claim reads.
 
-    PostgreSQL INSERT acquires ROW EXCLUSIVE, which conflicts with this SHARE
-    table lock.  Plain SELECTs and the shadow-delivery CAS update remain free to
-    proceed, making the claimed-but-not-compared window deterministic.
+    ``start`` creates a new workflow_operations row (dish_pg/workflow.py), not a
+    dish_tasks row. PostgreSQL INSERT acquires ROW EXCLUSIVE, which conflicts
+    with this SHARE table lock. Plain SELECTs and the shadow-delivery CAS
+    update remain free to proceed, making the claimed-but-not-executed window
+    deterministic.
     """
 
     connection = engine.connect()
     transaction = connection.begin()
     try:
-        connection.exec_driver_sql("LOCK TABLE dish_tasks IN SHARE MODE NOWAIT")
+        connection.exec_driver_sql("LOCK TABLE workflow_operations IN SHARE MODE NOWAIT")
         yield
     finally:
         transaction.rollback()
@@ -893,7 +956,7 @@ def assert_single_execution(snapshot: DeliverySnapshot) -> None:
         f"service request outcome count is not one: {snapshot}",
     )
     require(snapshot.execution_count == 1, f"command execution count is not one: {snapshot}")
-    require(snapshot.task_count == 1, f"created task count is not one: {snapshot}")
+    require(snapshot.operation_count == 1, f"created workflow operation count is not one: {snapshot}")
     require(snapshot.projection_count == 1, f"shadow projection count is not one: {snapshot}")
     require(snapshot.last_error is None, f"delivery recorded an error: {snapshot}")
 
@@ -926,6 +989,9 @@ def run_test_1(
     directory.mkdir(parents=True, exist_ok=True)
     spool_path = directory / "shadow-spool.sqlite3"
     kill_switch = directory / "dark-launch.disabled"
+    target_task_gid = materialize_target_task(
+        factory, baseline, run_marker=run_marker, label="test-1-crash-reclaim"
+    )
     fixture = insert_fixture(
         factory,
         baseline=baseline,
@@ -934,6 +1000,7 @@ def run_test_1(
             label="test-1-crash-reclaim",
             rollout_sequence=rollout_sequence,
             captured_at=utcnow(),
+            task_gid=target_task_gid,
         ),
     )
     seed_spool(spool_path, baseline=baseline, fixtures=[fixture])
@@ -941,7 +1008,7 @@ def run_test_1(
     worker_a: WorkerProcess | None = None
     worker_b: WorkerProcess | None = None
     try:
-        with block_create_execution(engine):
+        with block_start_execution(engine):
             worker_a = start_worker(
                 database_url=database_url,
                 spool_path=spool_path,
@@ -975,7 +1042,7 @@ def run_test_1(
             timeout=args.expiry_timeout_seconds,
         )
 
-        with block_create_execution(engine):
+        with block_start_execution(engine):
             worker_b = start_worker(
                 database_url=database_url,
                 spool_path=spool_path,
@@ -1054,6 +1121,9 @@ def run_test_2(
     directory.mkdir(parents=True, exist_ok=True)
     spool_path = directory / "shadow-spool.sqlite3"
     kill_switch = directory / "dark-launch.disabled"
+    target_task_gid = materialize_target_task(
+        factory, baseline, run_marker=run_marker, label="test-2-concurrent-fencing"
+    )
     fixture = insert_fixture(
         factory,
         baseline=baseline,
@@ -1062,13 +1132,14 @@ def run_test_2(
             label="test-2-concurrent-fencing",
             rollout_sequence=rollout_sequence,
             captured_at=utcnow(),
+            task_gid=target_task_gid,
         ),
     )
     seed_spool(spool_path, baseline=baseline, fixtures=[fixture])
 
     workers: list[WorkerProcess] = []
     try:
-        with block_create_execution(engine):
+        with block_start_execution(engine):
             for worker_id in ("worker-a", "worker-b"):
                 workers.append(
                     start_worker(
@@ -1184,6 +1255,12 @@ def run_test_3(
     directory.mkdir(parents=True, exist_ok=True)
     spool_path = directory / "shadow-spool.sqlite3"
     kill_switch = directory / "dark-launch.disabled"
+    first_task_gid = materialize_target_task(
+        factory, baseline, run_marker=run_marker, label="test-3-sequence-1"
+    )
+    second_task_gid = materialize_target_task(
+        factory, baseline, run_marker=run_marker, label="test-3-sequence-2"
+    )
     first = insert_fixture(
         factory,
         baseline=baseline,
@@ -1192,6 +1269,7 @@ def run_test_3(
             label="test-3-sequence-1",
             rollout_sequence=first_rollout_sequence,
             captured_at=utcnow(),
+            task_gid=first_task_gid,
         ),
     )
     second = insert_fixture(
@@ -1202,6 +1280,7 @@ def run_test_3(
             label="test-3-sequence-2",
             rollout_sequence=first_rollout_sequence + 1,
             captured_at=utcnow(),
+            task_gid=second_task_gid,
         ),
     )
     require(
@@ -1213,7 +1292,7 @@ def run_test_3(
     worker_a: WorkerProcess | None = None
     worker_b: WorkerProcess | None = None
     try:
-        with block_create_execution(engine):
+        with block_start_execution(engine):
             worker_a = start_worker(
                 database_url=database_url,
                 spool_path=spool_path,
@@ -1253,7 +1332,7 @@ def run_test_3(
             timeout=args.expiry_timeout_seconds,
         )
 
-        with block_create_execution(engine):
+        with block_start_execution(engine):
             worker_b = start_worker(
                 database_url=database_url,
                 spool_path=spool_path,
@@ -1480,8 +1559,9 @@ def main(argv: list[str] | None = None) -> int:
                         "the script waits on the stored claim_expires_at timestamp."
                     ),
                     "execution_blocker": (
-                        "short-lived PostgreSQL SHARE lock on dish_tasks; this allows claim CAS "
-                        "to commit but blocks the evaluator's create INSERT until observation/kill"
+                        "short-lived PostgreSQL SHARE lock on workflow_operations; this allows "
+                        "claim CAS to commit but blocks the evaluator's start INSERT until "
+                        "observation/kill"
                     ),
                 },
                 indent=2,
