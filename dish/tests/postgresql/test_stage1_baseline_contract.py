@@ -3,10 +3,10 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import runpy
 from pathlib import Path
 from typing import Any
 
+from dish_service.command_spec import ACTION_COMMANDS
 from dish_tool.admin_command_spec import ADMIN_COMMANDS
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -23,12 +23,8 @@ def _baseline() -> dict[str, Any]:
 
 def test_frozen_command_inventory_matches_current_surfaces() -> None:
     baseline = _baseline()
-    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-stage-a-baseline"))
-    action_values = namespace["_literal_assignments"](
-        ROOT / "dish_service/command_spec.py"
-    )
 
-    assert list(action_values["ACTION_COMMANDS"]) == baseline["action_commands"]
+    assert list(ACTION_COMMANDS) == baseline["action_commands"]
     assert sorted(ADMIN_COMMANDS) == sorted(baseline["admin_commands"])
 
     expected_treatments = set(baseline["action_commands"]) | set(baseline["admin_commands"])

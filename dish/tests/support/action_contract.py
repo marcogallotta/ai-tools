@@ -1,9 +1,7 @@
-"""Independent GPT Action contract expectations used by tests.
+"""GPT Action contract assertions shared by generated-surface tests.
 
-These literals intentionally do not import command or identifier constants from
-production. They are the test-side statement of the public contract. Tests may
-compare generated/runtime artifacts with these values, but must not derive the
-expected inventory from the same implementation that produces the artifact.
+Command identity and request-ID policy come from the typed descriptive source.
+The UUID shape below remains an independent assertion of the public wire format.
 """
 
 from __future__ import annotations
@@ -11,25 +9,15 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-EXPECTED_ACTION_COMMANDS = (
-    "create",
-    "sections",
-    "section-tasks",
-    "read",
-    "proposals",
-    "apply-proposal",
-    "inspect",
-    "start",
-    "prepare",
-    "approve",
-    "reject",
-    "submit",
-    "renew-lease",
+from dish_service.command_spec import (
+    ACTION_COMMANDS,
+    READ_ONLY_ACTION_COMMANDS,
+    REPLAY_SAFE_COMMANDS,
 )
-EXPECTED_REPLAY_SAFE_COMMANDS = frozenset(
-    {"create", "inspect", "start", "prepare", "approve", "reject", "submit", "apply-proposal", "renew-lease"}
-)
-EXPECTED_READ_ONLY_COMMANDS = frozenset({"sections", "section-tasks", "read", "proposals"})
+
+EXPECTED_ACTION_COMMANDS = ACTION_COMMANDS
+EXPECTED_REPLAY_SAFE_COMMANDS = REPLAY_SAFE_COMMANDS
+EXPECTED_READ_ONLY_COMMANDS = READ_ONLY_ACTION_COMMANDS
 EXPECTED_CONSEQUENTIAL = {
     command: command in EXPECTED_REPLAY_SAFE_COMMANDS
     for command in EXPECTED_ACTION_COMMANDS
@@ -119,8 +107,8 @@ def expected_run_and_request_id_paths() -> set[tuple[str, ...]]:
     return run_paths | request_paths
 
 
-def assert_independent_action_openapi_contract(document: Mapping[str, Any]) -> None:
-    """Assert the externally promised inventory independently of the generator."""
+def assert_action_openapi_contract(document: Mapping[str, Any]) -> None:
+    """Assert generated transport metadata reflects the descriptive command policy."""
 
     expected_paths = {f"/v1/action/{command}" for command in EXPECTED_ACTION_COMMANDS}
     assert set(document["paths"]) == expected_paths

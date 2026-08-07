@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from dish_tool.admin_command_spec import ADMIN_COMMAND_SPECS
+
+from .command_spec import ACTION_LEASE_COMMAND
+
+
+def _admin_command(name: str) -> str:
+    return ADMIN_COMMAND_SPECS[name].name
+
 
 @dataclass(frozen=True)
 class PostRoute:
@@ -40,11 +48,27 @@ class _RoutePattern:
 _POST_ROUTES = (
     _RoutePattern(("v1", "commands", "{command}"), "agent", command_parameter="command"),
     _RoutePattern(("v1", "action", "{command}"), "action", command_parameter="command"),
-    _RoutePattern(("v1", "leases", "{operation_id}", "renew"), "lease", "renew-lease"),
-    _RoutePattern(("v1", "admin", "leases", "{operation_id}", "recover"), "admin-lease", "recover-lease"),
-    _RoutePattern(("v1", "admin", "leases", "expire"), "admin-lease-expiry", "expire-lease"),
-    _RoutePattern(("v1", "admin", "backups", "create"), "admin-backup", "backup-create"),
-    _RoutePattern(("v1", "admin", "backups", "restore"), "admin-backup", "backup-restore"),
+    _RoutePattern(("v1", "leases", "{operation_id}", "renew"), "lease", ACTION_LEASE_COMMAND),
+    _RoutePattern(
+        ("v1", "admin", "leases", "{operation_id}", "recover"),
+        "admin-lease",
+        _admin_command("recover-lease"),
+    ),
+    _RoutePattern(
+        ("v1", "admin", "leases", "expire"),
+        "admin-lease-expiry",
+        _admin_command("expire-lease"),
+    ),
+    _RoutePattern(
+        ("v1", "admin", "backups", "create"),
+        "admin-backup",
+        _admin_command("backup-create"),
+    ),
+    _RoutePattern(
+        ("v1", "admin", "backups", "restore"),
+        "admin-backup",
+        _admin_command("backup-restore"),
+    ),
     _RoutePattern(("v1", "admin", "argument-failures", "{command}"), "admin-argument-failure", command_parameter="command"),
     _RoutePattern(("v1", "argument-failures", "{command}"), "argument-failure", command_parameter="command"),
     _RoutePattern(("v1", "admin", "{command}"), "admin", command_parameter="command"),

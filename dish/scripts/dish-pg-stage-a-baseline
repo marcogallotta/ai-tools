@@ -148,8 +148,8 @@ def _sqlite_tables() -> list[str]:
 
 def generated_baseline() -> dict[str, Any]:
     baseline = json.loads(BASELINE_PATH.read_text(encoding="utf-8"))
-    action_commands = list(
-        _required_literal(ROOT / "dish_service/command_spec.py", "ACTION_COMMANDS")
+    action_commands = _first_string_call_arguments(
+        ROOT / "dish_service/command_spec.py", "_action"
     )
     admin_commands = sorted(
         _first_string_call_arguments(ROOT / "dish_tool/admin_command_spec.py", "_spec")

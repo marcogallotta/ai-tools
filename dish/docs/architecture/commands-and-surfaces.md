@@ -14,6 +14,7 @@ This document owns command discovery, route/surface boundaries, and the handoff 
 - Admin CLI: `dish_tool/admin_cli.py`.
 - Agent/Action command contract: `dish_service/command_spec.py`.
 - Admin command registry: `dish_tool/admin_command_spec.py`.
+- Canonical legacy result-field metadata: `dish_tool/results.py`.
 - HTTP route recognition: `dish_service/http_routing.py`.
 - HTTP validation and mapping: `dish_service/http.py`.
 - Authentication: `dish_service/auth.py`.
@@ -27,7 +28,7 @@ Agent callers use the private `/v1/commands/{command}` surface; GPT Action uses 
 
 ## Authority and data ownership
 
-`command_spec.py` owns Action command names and argument schemas. `admin_command_spec.py` owns admin target kind, identifier field, lease/backend requirements, and supported transports. `http_routing.py` owns path recognition. `DishApplication` and `DishAdminApplication` own command dispatch and canonical result construction. `CurrentWorkflowService` owns whether a mutation is legal.
+`command_spec.py` owns typed Action command identity, principal class, request-ID policy, private route/CLI exposure, and argument schemas. `admin_command_spec.py` owns admin command identity, target kind, identifier field, lease/backend requirements, and supported transports. `results.py` owns canonical legacy result-field names and public required-field metadata. `http_routing.py` owns path recognition while reusing command identities from those descriptive sources. `DishApplication` and `DishAdminApplication` own command dispatch and result construction. `CurrentWorkflowService` owns whether a mutation is legal.
 
 ## Invariants
 
@@ -102,7 +103,7 @@ Expected authenticated Action rule failures remain canonical Dish envelopes inst
 
 ## Current debt and temporary compatibility
 
-The current service and PostgreSQL target have separate command registries because they represent different authority stages. `dish_pg/command_contract.py` explicitly marks backup commands retired and classifies retained commands; it must not silently redefine current legacy transport behavior. The private frontend OpenAPI is a separate artifact and is not merged with the Action schema.
+The current service and PostgreSQL target have separate command registries because they represent different authority stages. For commands shared with the current Action surface, `dish_pg/command_contract.py` reuses current command identity, principal, and request-replay policy while continuing to own target-only profile, task/operation requirements, retention, and exposure decisions. It explicitly marks backup commands retired and must not silently redefine current legacy transport behavior. The private frontend OpenAPI is a separate artifact and is not merged with the Action schema.
 
 ## Related documents
 

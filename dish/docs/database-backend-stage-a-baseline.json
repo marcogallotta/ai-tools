@@ -63,11 +63,11 @@
     "tests/test_action_authority_structure.py": "559867653cb668dfde8da7906a56ac946cda226a5404d017f3163daca483f24e",
     "tests/test_action_full_lifecycle.py": "ed482111cd5ba95ff1c87076b2c4675df9375eb9b1174608262a4e16c174486d",
     "tests/test_action_model_validation.py": "461f8dcbde046f67dd11b12e4dbd5063365ae48de19f1e3c5ad8909f2610f549",
-    "tests/test_action_replay_contract.py": "a4bbfe5d5747c0f8d2e939d1d7df719ef8c3733899eba74fae535b54e9d1bb4c",
+    "tests/test_action_replay_contract.py": "b8795bd2ba934ff3452668dfee9c641b6e082191ad1c67b2350b3f827078a69f",
     "tests/test_action_router_switch.py": "cea2943594efb79a85dbfcd64318180a59f342d408fb3c683b7c3e3c8a2fc004",
     "tests/test_action_surface.py": "d7f8ccfacedc67f2fd998557b82989c38f014fb3b67d17111c355aa723ccb4b5",
     "tests/test_action_surface_identifier_contract.py": "610ca7d467aadf1919aca25aa4ea936d84cdf5fea131dd3d83b19ac68ba0bbe1",
-    "tests/test_action_surface_openapi.py": "fef32e515e35013b8e3baef312b8ab35e106d926f9fba35e2597522e0ca6153d",
+    "tests/test_action_surface_openapi.py": "a9e12393b439f8c653aeadc743b41b5209d99de49ac8f39abb6aef56137b2df6",
     "tests/test_actor_lease_attempt_context.py": "61b33e29934a759380e6e48e1028b3e855211592189b84df37ac92846144186b",
     "tests/test_admin_argument_validation.py": "4b2101df8a47e2c560a177028b24badff1a49c0433b95d4f575f7a3f01f15558",
     "tests/test_admin_attention.py": "7cb39490b1b0bd4f796769385c065a1fac3d965c85b96bb68a0374f5c6403fe0",
@@ -259,8 +259,8 @@
   "governing_source_sha256": {
     "dish_pg/release.py": "7ed6a52d7f7abdd0d93ddd3294a7db08b734e77a2ce4b44759ea00465e6a0459",
     "dish_service/application.py": "ddb60526cef5c90f9852335decd40467ec5af0d7015d3b86410d2b8cee7542da",
-    "dish_service/command_spec.py": "4af6c17d2b47de7df764d15fecb59eac7497e9c36eb87eeb46622e259b3740db",
-    "dish_tool/admin_cli.py": "d903dca43479eaa1a0e000294607b41ba5f10d82731a9a76193640d04640bff0",
+    "dish_service/command_spec.py": "d323e6862b1b9d1f7d883abefb49379b432ffc24ba5e4693472e9dddb676e002",
+    "dish_tool/admin_cli.py": "95596c168798415cc12b1f2bdeee9a0f76f796b9bca20f0ece03e12170f293bc",
     "dish_tool/admin_command_spec.py": "7b34dbb187bcfc98fe08f1056711e2a2e90304f2455a4e43a45aed4f735bc907",
     "dish_tool/database_initialization.py": "1205caa574c78fd7fe73c2be017218d10543a53f1acc66463f96963a7cd06def",
     "dish_tool/database_schema.py": "5e92bc0172fc6be231e91db0e6dfcfd5c7174a0de2c0868cd78502412ee98aa8",
@@ -268,9 +268,9 @@
     "docs/runtime-contract.md": "8e0d936e21dae44134460d73494d567006fec47d2c02b01077285c237882c2f8",
     "openapi/dish-action.openapi.json": "b98781d4f9a96f2dd383c23c1ddbf5a0037612cfa052fd4872ac9c4953822904",
     "scripts/dish-pg-acceptance": "8dc0681def2890f8fe98576225bd2f50a6c309d36b05d100c76402284f22cd5c",
-    "scripts/dish-pg-stage-a-baseline": "1273a2d412aca19fc7b99f4124d04eed4382acef2413921f382d2bf1a073f0b4"
+    "scripts/dish-pg-stage-a-baseline": "2ca757b55377eff8c39f97be6ed3d1cc930e0a99221f149aae16b9febd0b0cca"
   },
-  "last_rebaseline_reason": "Rebaseline after merging the canonical architecture knowledge base rebase with the test-governance stabilization baseline: regenerate source/test hashes for both changes together.",
+  "last_rebaseline_reason": "Stage A3: consolidate descriptive command identity, replay/principal exposure, and result metadata without runtime execution changes.",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "New PostgreSQL implementation tests use the tests/postgresql/ namespace and are not part of the frozen legacy characterization corpus.",

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dish_tool.results import RESULT_OPENAPI_REQUIRED_FIELDS
 from dish_tool.validation_scope import VALIDATION_SCOPE_VALUES
 
 from .command_spec import (
@@ -34,7 +35,7 @@ def _action_operation_description(command: str) -> str:
 def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[str, Any]:
     envelope = {
         "type": "object",
-        "required": ["ok", "command", "code", "retryable", "allowed_actions", "data", "errors"],
+        "required": list(RESULT_OPENAPI_REQUIRED_FIELDS),
         "properties": {
             "ok": {"type": "boolean"},
             "command": {"type": "string"},

@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 
 from dish_tool.constants import EXIT_STATUS_BY_CODE
 from dish_tool.errors import DishRuleError
-from dish_tool.results import result_envelope
+from dish_tool.results import RESULT_ENVELOPE_FIELD_SET, result_envelope
 
 from .command_spec import REPLAY_SAFE_COMMANDS
 from .identifiers import require_asana_gid, require_dish_uuid
@@ -28,22 +28,6 @@ def _request_id_for_command(command: str, request_id: str | None) -> str | None:
     if request_id is None and command in REPLAY_SAFE_COMMANDS:
         return str(uuid.uuid4())
     return request_id
-
-
-_RESULT_ENVELOPE_FIELDS = frozenset(
-    {
-        "ok",
-        "command",
-        "code",
-        "task_gid",
-        "submission_id",
-        "state",
-        "retryable",
-        "allowed_actions",
-        "data",
-        "errors",
-    }
-)
 
 
 class DishServiceClient:
@@ -173,7 +157,7 @@ class DishServiceClient:
                 details={"result_type": type(result).__name__},
             )
         present = set(result)
-        missing = sorted(_RESULT_ENVELOPE_FIELDS - present)
+        missing = sorted(RESULT_ENVELOPE_FIELD_SET - present)
         if missing:
             raise DishRuleError(
                 "INTERNAL_ERROR",
@@ -260,8 +244,8 @@ class DishServiceClient:
         if not isinstance(result, dict):
             raise ValueError("command result is not a JSON object")
         present = set(result)
-        missing = sorted(_RESULT_ENVELOPE_FIELDS - present)
-        extras = sorted(present - _RESULT_ENVELOPE_FIELDS)
+        missing = sorted(RESULT_ENVELOPE_FIELD_SET - present)
+        extras = sorted(present - RESULT_ENVELOPE_FIELD_SET)
         if missing or extras:
             raise ValueError(
                 f"command result fields are invalid: missing={missing}, extras={extras}"

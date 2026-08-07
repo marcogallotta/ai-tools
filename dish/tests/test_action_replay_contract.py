@@ -1,19 +1,32 @@
 from __future__ import annotations
 
+import argparse
 import copy
 import json
 
 import pytest
 from pathlib import Path
 
-from dish_service.command_spec import ACTION_COMMANDS, REPLAY_SAFE_COMMANDS
+from dish_service.command_spec import (
+    ACTION_CLI_COMMANDS,
+    ACTION_COMMANDS,
+    ACTION_COMMAND_SPECS,
+    READ_ONLY_ACTION_COMMANDS,
+    REPLAY_SAFE_COMMANDS,
+)
 from dish_service.openapi import action_openapi
+from dish_tool.cli import TOPIC_COMMANDS, build_parser
+from dish_tool.results import (
+    RESULT_ENVELOPE_FIELD_SET,
+    RESULT_OPENAPI_REQUIRED_FIELDS,
+    result_envelope,
+)
 from tests.support.action_contract import (
     EXPECTED_ACTION_COMMANDS,
     EXPECTED_DISH_UUID_SCHEMA,
     EXPECTED_READ_ONLY_COMMANDS,
     EXPECTED_REPLAY_SAFE_COMMANDS,
-    assert_independent_action_openapi_contract,
+    assert_action_openapi_contract,
     expected_run_and_request_id_paths,
     named_run_and_request_id_schemas,
 )
@@ -112,9 +125,34 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     assert "fresh UUID represents new work" in runtime
 
 
-def test_action_command_inventory_matches_independent_public_contract():
-    assert tuple(ACTION_COMMANDS) == EXPECTED_ACTION_COMMANDS
-    assert frozenset(REPLAY_SAFE_COMMANDS) == EXPECTED_REPLAY_SAFE_COMMANDS
+def test_typed_action_policy_derives_public_command_views():
+    assert ACTION_COMMANDS == tuple(spec.name for spec in ACTION_COMMAND_SPECS)
+    assert REPLAY_SAFE_COMMANDS == frozenset(
+        spec.name for spec in ACTION_COMMAND_SPECS if spec.request_id_required
+    )
+    assert READ_ONLY_ACTION_COMMANDS == frozenset(
+        spec.name for spec in ACTION_COMMAND_SPECS if not spec.request_id_required
+    )
+    assert ACTION_CLI_COMMANDS == tuple(
+        spec.name for spec in ACTION_COMMAND_SPECS if spec.cli_exposed
+    )
+
+
+def test_agent_cli_exposure_matches_typed_action_policy():
+    parser = build_parser()
+    subparsers = next(
+        action
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    assert set(subparsers.choices) == set(ACTION_CLI_COMMANDS) | set(TOPIC_COMMANDS)
+
+
+def test_result_envelope_metadata_drives_client_and_openapi_shape():
+    assert set(result_envelope(command="read")) == RESULT_ENVELOPE_FIELD_SET
+    assert action_openapi()["components"]["schemas"]["ResultEnvelope"]["required"] == list(
+        RESULT_OPENAPI_REQUIRED_FIELDS
+    )
 
 
 def test_every_run_and_request_id_openapi_occurrence_uses_independent_uuid_contract():
@@ -129,10 +167,10 @@ def test_every_run_and_request_id_openapi_occurrence_uses_independent_uuid_contr
                 assert schema.get(key) == expected, (path, key)
 
 
-def test_generated_and_checked_in_openapi_match_independent_action_contract():
+def test_generated_and_checked_in_openapi_match_action_contract():
     checked = json.loads((ROOT / "openapi" / "dish-action.openapi.json").read_text())
     for document in (action_openapi(), checked):
-        assert assert_independent_action_openapi_contract(document) is None
+        assert assert_action_openapi_contract(document) is None
 
 
 
@@ -151,12 +189,12 @@ def test_generated_and_checked_in_openapi_match_independent_action_contract():
     ],
     ids=["missing-command", "wrong-consequence", "weakened-uuid"],
 )
-def test_independent_action_contract_rejects_plausible_generator_regressions(mutate):
+def test_action_contract_rejects_plausible_generator_regressions(mutate):
     document = copy.deepcopy(action_openapi())
     mutate(document)
 
     with pytest.raises(AssertionError):
-        assert assert_independent_action_openapi_contract(document) is None
+        assert assert_action_openapi_contract(document) is None
 
 def test_connected_uuid_acceptance_remains_explicitly_reimport_gated():
     action_guide = " ".join(

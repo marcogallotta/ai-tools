@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Mapping
+from dataclasses import dataclass
+from typing import Any, Literal, Mapping
 
 from dish_tool.errors import DishRuleError
 from dish_tool.models import validate_actor_model, validate_independence_attestation
@@ -13,19 +14,85 @@ from .identifiers import (
     require_dish_uuid,
 )
 
-AGENT_MUTATION_COMMANDS = {
-    "create",
-    "inspect",
-    "start",
-    "prepare",
-    "approve",
-    "reject",
-    "submit",
-    "apply-proposal",
-}
-ACTION_LEASE_COMMAND = "renew-lease"
-REPLAY_SAFE_COMMANDS = AGENT_MUTATION_COMMANDS | {ACTION_LEASE_COMMAND}
+ActionPrincipal = Literal["reader", "agent", "verification"]
+ActionRoute = Literal["agent", "lease"]
+
+
+@dataclass(frozen=True)
+class ActionCommandSpec:
+    """Descriptive policy for one command exposed by the GPT Action surface."""
+
+    name: str
+    principal: ActionPrincipal
+    request_id_required: bool
+    private_route: ActionRoute = "agent"
+
+    @property
+    def cli_exposed(self) -> bool:
+        return self.private_route == "agent"
+
+
+def _action(
+    name: str,
+    principal: ActionPrincipal,
+    *,
+    request_id: bool,
+    private_route: ActionRoute = "agent",
+) -> ActionCommandSpec:
+    return ActionCommandSpec(
+        name=name,
+        principal=principal,
+        request_id_required=request_id,
+        private_route=private_route,
+    )
+
+
+CREATE_COMMAND = _action("create", "agent", request_id=True)
+SECTIONS_COMMAND = _action("sections", "reader", request_id=False)
+SECTION_TASKS_COMMAND = _action("section-tasks", "reader", request_id=False)
+READ_COMMAND = _action("read", "reader", request_id=False)
+PROPOSALS_COMMAND = _action("proposals", "reader", request_id=False)
+APPLY_PROPOSAL_COMMAND = _action("apply-proposal", "agent", request_id=True)
+INSPECT_COMMAND = _action("inspect", "verification", request_id=True)
+START_COMMAND = _action("start", "agent", request_id=True)
+PREPARE_COMMAND = _action("prepare", "agent", request_id=True)
+APPROVE_COMMAND = _action("approve", "verification", request_id=True)
+REJECT_COMMAND = _action("reject", "verification", request_id=True)
+SUBMIT_COMMAND = _action("submit", "agent", request_id=True)
+RENEW_LEASE_COMMAND = _action(
+    "renew-lease", "agent", request_id=True, private_route="lease"
+)
+
+ACTION_COMMAND_SPECS = (
+    CREATE_COMMAND,
+    SECTIONS_COMMAND,
+    SECTION_TASKS_COMMAND,
+    READ_COMMAND,
+    PROPOSALS_COMMAND,
+    APPLY_PROPOSAL_COMMAND,
+    INSPECT_COMMAND,
+    START_COMMAND,
+    PREPARE_COMMAND,
+    APPROVE_COMMAND,
+    REJECT_COMMAND,
+    SUBMIT_COMMAND,
+    RENEW_LEASE_COMMAND,
+)
+ACTION_COMMAND_DEFINITIONS = {spec.name: spec for spec in ACTION_COMMAND_SPECS}
+if len(ACTION_COMMAND_DEFINITIONS) != len(ACTION_COMMAND_SPECS):
+    raise ValueError("duplicate GPT Action command definition")
+
+ACTION_COMMANDS = tuple(spec.name for spec in ACTION_COMMAND_SPECS)
+ACTION_CLI_COMMANDS = tuple(spec.name for spec in ACTION_COMMAND_SPECS if spec.cli_exposed)
+ACTION_LEASE_COMMAND = RENEW_LEASE_COMMAND.name
+REPLAY_SAFE_COMMANDS = frozenset(
+    spec.name for spec in ACTION_COMMAND_SPECS if spec.request_id_required
+)
 REPLAY_CAPABLE_COMMANDS = REPLAY_SAFE_COMMANDS
+READ_ONLY_ACTION_COMMANDS = frozenset(
+    spec.name for spec in ACTION_COMMAND_SPECS if not spec.request_id_required
+)
+AGENT_MUTATION_COMMANDS = REPLAY_SAFE_COMMANDS - {ACTION_LEASE_COMMAND}
 
 DISH_UUID_SCHEMA = dict(CANONICAL_DISH_UUID_SCHEMA)
 ASANA_GID_SCHEMA = {
@@ -55,37 +122,21 @@ CLIENT_REQUEST_ID_SCHEMA = {
     ),
 }
 
-ACTION_COMMANDS = (
-    "create",
-    "sections",
-    "section-tasks",
-    "read",
-    "proposals",
-    "apply-proposal",
-    "inspect",
-    "start",
-    "prepare",
-    "approve",
-    "reject",
-    "submit",
-    ACTION_LEASE_COMMAND,
-)
-
 ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
-    "create": {
+    CREATE_COMMAND.name: {
         "required": ["agent", "title"],
         "properties": {
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "title": {"type": "string"},
         },
     },
-    "sections": {
+    SECTIONS_COMMAND.name: {
         "required": ["agent"],
         "properties": {
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]}
         },
     },
-    "section-tasks": {
+    SECTION_TASKS_COMMAND.name: {
         "required": ["section_gid", "agent"],
         "properties": {
             "section_gid": dict(ASANA_GID_SCHEMA),
@@ -100,27 +151,27 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
     },
-    "read": {
+    READ_COMMAND.name: {
         "required": ["task_gid", "agent"],
         "properties": {
             "task_gid": dict(ASANA_GID_SCHEMA),
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
         },
     },
-    "inspect": {
+    INSPECT_COMMAND.name: {
         "required": ["submission_id", "agent"],
         "properties": {
             "submission_id": dict(DISH_UUID_SCHEMA),
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
         },
     },
-    "proposals": {
+    PROPOSALS_COMMAND.name: {
         "required": ["agent"],
         "properties": {
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
         },
     },
-    "apply-proposal": {
+    APPLY_PROPOSAL_COMMAND.name: {
         "required": ["proposal_id", "agent", "model"],
         "properties": {
             "proposal_id": dict(DISH_UUID_SCHEMA),
@@ -128,7 +179,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "model": {"type": "string"},
         },
     },
-    "start": {
+    START_COMMAND.name: {
         "required": ["task_gid", "agent", "kind"],
         "properties": {
             "task_gid": dict(ASANA_GID_SCHEMA),
@@ -180,7 +231,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
     },
-    "prepare": {
+    PREPARE_COMMAND.name: {
         "required": ["submission_id", "agent", "model", "file_text"],
         "properties": {
             "submission_id": dict(DISH_UUID_SCHEMA),
@@ -200,7 +251,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
     },
-    "approve": {
+    APPROVE_COMMAND.name: {
         "required": [
             "submission_id",
             "agent",
@@ -221,7 +272,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "provenance_complete": {"type": "boolean"},
         },
     },
-    "reject": {
+    REJECT_COMMAND.name: {
         "required": ["submission_id", "agent", "reason", "route"],
         "properties": {
             "submission_id": dict(DISH_UUID_SCHEMA),
@@ -245,11 +296,11 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             },
         },
     },
-    "submit": {
+    SUBMIT_COMMAND.name: {
         "required": ["submission_id"],
         "properties": {"submission_id": dict(DISH_UUID_SCHEMA)},
     },
-    ACTION_LEASE_COMMAND: {
+    RENEW_LEASE_COMMAND.name: {
         "required": ["operation_id"],
         "properties": {"operation_id": dict(DISH_UUID_SCHEMA)},
     },

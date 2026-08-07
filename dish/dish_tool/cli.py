@@ -22,6 +22,20 @@ from .database import initialize_database
 from .errors import DishRuleError
 from .releases import configured_honest_path, resolve_release
 from dish_service.client import DishServiceClient
+from dish_service.command_spec import (
+    APPROVE_COMMAND,
+    APPLY_PROPOSAL_COMMAND,
+    CREATE_COMMAND,
+    INSPECT_COMMAND,
+    PREPARE_COMMAND,
+    PROPOSALS_COMMAND,
+    READ_COMMAND,
+    REJECT_COMMAND,
+    SECTIONS_COMMAND,
+    SECTION_TASKS_COMMAND,
+    START_COMMAND,
+    SUBMIT_COMMAND,
+)
 from dish_service.database_ownership import ServiceDatabaseOwnership, database_process_lock_path
 from dish_service.process_lock import DatabaseProcessLock
 from .results import error_envelope, exit_status
@@ -146,15 +160,18 @@ def build_parser() -> JsonArgumentParser:
             formatter_class=argparse.RawDescriptionHelpFormatter,
         )
 
-    create = subparsers.add_parser("create", help="open a new canonical Cooking task")
+    create = subparsers.add_parser(CREATE_COMMAND.name, help="open a new canonical Cooking task")
     create.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
     create.add_argument("--title", required=True)
 
-    sections = subparsers.add_parser("sections", help="list Cooking project sections and gids")
+    sections = subparsers.add_parser(
+        SECTIONS_COMMAND.name, help="list Cooking project sections and gids"
+    )
     sections.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
 
     section_tasks = subparsers.add_parser(
-        "section-tasks", help="list the tasks currently placed in a Cooking project section"
+        SECTION_TASKS_COMMAND.name,
+        help="list the tasks currently placed in a Cooking project section",
     )
     section_tasks.add_argument("section_gid")
     section_tasks.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
@@ -162,22 +179,28 @@ def build_parser() -> JsonArgumentParser:
         "--cursor", default=None, help="opaque next_cursor from a prior section-tasks page"
     )
 
-    read = subparsers.add_parser("read", help="read the exact live task through the tool")
+    read = subparsers.add_parser(
+        READ_COMMAND.name, help="read the exact live task through the tool"
+    )
     read.add_argument("task_gid")
     read.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
 
-    inspect = subparsers.add_parser("inspect", help="inspect a prior tool operation's recorded state")
+    inspect = subparsers.add_parser(
+        INSPECT_COMMAND.name, help="inspect a prior tool operation's recorded state"
+    )
     inspect.add_argument("submission_id")
     inspect.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
     inspect.add_argument("--request-id")
 
     proposals = subparsers.add_parser(
-        "proposals", help="list Marco-approved semantic proposals ready for exact application"
+        PROPOSALS_COMMAND.name,
+        help="list Marco-approved semantic proposals ready for exact application",
     )
     proposals.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
 
     apply_proposal = subparsers.add_parser(
-        "apply-proposal", help="claim and apply one exact Marco-approved proposal bundle"
+        APPLY_PROPOSAL_COMMAND.name,
+        help="claim and apply one exact Marco-approved proposal bundle",
     )
     apply_proposal.add_argument("proposal_id")
     apply_proposal.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
@@ -186,7 +209,8 @@ def build_parser() -> JsonArgumentParser:
     apply_proposal.add_argument("--request-id")
 
     start = subparsers.add_parser(
-        "start", help="open a Planning/Research/Verification/change operation on a task"
+        START_COMMAND.name,
+        help="open a Planning/Research/Verification/change operation on a task",
     )
     start.add_argument("task_gid")
     start.add_argument("--agent", required=True, choices=("claude", "gpt", "codex"))
@@ -235,7 +259,7 @@ def build_parser() -> JsonArgumentParser:
     )
 
     prepare = subparsers.add_parser(
-        "prepare",
+        PREPARE_COMMAND.name,
         help="submit the completed candidate for this operation and advance its state",
         description=(
             "Submit the completed candidate for this operation and advance its state. "
@@ -262,7 +286,7 @@ def build_parser() -> JsonArgumentParser:
     )
 
     approve = subparsers.add_parser(
-        "approve",
+        APPROVE_COMMAND.name,
         help="sign or small-correct a Verification candidate",
         description=(
             "Sign or small-correct a Verification candidate. --model is caller-supplied, "
@@ -286,7 +310,7 @@ def build_parser() -> JsonArgumentParser:
     approve.add_argument("--provenance-complete", action="store_true")
 
     reject = subparsers.add_parser(
-        "reject",
+        REJECT_COMMAND.name,
         help="stop signoff: a Large correction, Evidence gap, or Human Review",
         description=(
             "Stop signoff: a Large correction, Evidence gap, or Human Review. --route large "
@@ -312,7 +336,8 @@ def build_parser() -> JsonArgumentParser:
     reject.add_argument("--run-id")
 
     submit = subparsers.add_parser(
-        "submit", help="move a signed task to its recorded destination (run after a successful approve)"
+        SUBMIT_COMMAND.name,
+        help="move a signed task to its recorded destination (run after a successful approve)",
     )
     submit.add_argument("submission_id")
     return parser

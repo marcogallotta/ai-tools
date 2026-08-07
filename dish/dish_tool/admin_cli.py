@@ -21,6 +21,7 @@ from .database import initialize_database
 from .backend import AsanaBackend
 from .admin_command_spec import (
     ADMIN_COMMANDS as _ADMIN_COMMANDS,
+    ADMIN_COMMAND_SPECS,
     CLI_OPERATION_IDENTIFIER_COMMANDS as _OPERATION_ADMIN_COMMANDS,
 )
 from .releases import configured_honest_path, resolve_release
@@ -42,6 +43,10 @@ class JsonArgumentParser(argparse.ArgumentParser):
             message,
             rule="invalid_arguments",
         )
+
+
+def _admin_name(name: str) -> str:
+    return ADMIN_COMMAND_SPECS[name].name
 
 
 def build_parser() -> JsonArgumentParser:
@@ -71,7 +76,7 @@ def build_parser() -> JsonArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser(
-        "attention",
+        _admin_name("attention"),
         help=(
             "scan all active Dish workflow records for stale ownership, abandonments, "
             "holds, and uncertain effects without changing anything"
@@ -79,7 +84,7 @@ def build_parser() -> JsonArgumentParser:
     )
 
     review_queue = subparsers.add_parser(
-        "review-queue",
+        _admin_name("review-queue"),
         help="list durable semantic proposals and Human Review items waiting for Marco",
     )
     review_queue.add_argument(
@@ -87,12 +92,14 @@ def build_parser() -> JsonArgumentParser:
     )
 
     review_inspect = subparsers.add_parser(
-        "review-inspect", help="show one review item by UUID or current queue number"
+        _admin_name("review-inspect"),
+        help="show one review item by UUID or current queue number",
     )
     review_inspect.add_argument("proposal_id")
 
     review_approve = subparsers.add_parser(
-        "review-approve", help="approve a semantic bundle or resolve a Human Review item"
+        _admin_name("review-approve"),
+        help="approve a semantic bundle or resolve a Human Review item",
     )
     review_approve.add_argument("proposal_id")
     review_approve.add_argument(
@@ -104,12 +111,15 @@ def build_parser() -> JsonArgumentParser:
     )
 
     review_reject = subparsers.add_parser(
-        "review-reject", help="reject one pending semantic change bundle without editing the task"
+        _admin_name("review-reject"),
+        help="reject one pending semantic change bundle without editing the task",
     )
     review_reject.add_argument("proposal_id")
     review_reject.add_argument("--reason", required=True)
 
-    subparsers.add_parser("holds", help="list every currently open Evidence or Human Review hold")
+    subparsers.add_parser(
+        _admin_name("holds"), help="list every currently open Evidence or Human Review hold"
+    )
 
     _submission_target_help = (
         "exact operation ID, task GID, or supported Asana task URL "
@@ -117,13 +127,13 @@ def build_parser() -> JsonArgumentParser:
     )
 
     inspect_admin = subparsers.add_parser(
-        "inspect",
+        _admin_name("inspect"),
         help="explain what a task is waiting on and show Marco's safe next actions",
     )
     inspect_admin.add_argument("submission_id", help=_submission_target_help)
 
     recover = subparsers.add_parser(
-        "recover",
+        _admin_name("recover"),
         help=(
             "reconcile an uncertain external write or movement from a fresh live reread; "
             "this is not lease recovery"
@@ -139,7 +149,7 @@ def build_parser() -> JsonArgumentParser:
     recover.add_argument("--reason", default="no reason given")
 
     repair_destination = subparsers.add_parser(
-        "repair-destination",
+        _admin_name("repair-destination"),
         help="replace only the approved destination after an unrecoverable final movement failure",
     )
     repair_destination.add_argument("submission_id", help=_submission_target_help)
@@ -147,12 +157,14 @@ def build_parser() -> JsonArgumentParser:
     repair_destination.add_argument("--reason", default="no reason given")
     repair_destination.add_argument("--run-id")
 
-    discard = subparsers.add_parser("discard", help="abandon a stale open operation without applying it")
+    discard = subparsers.add_parser(
+        _admin_name("discard"), help="abandon a stale open operation without applying it"
+    )
     discard.add_argument("submission_id", help=_submission_target_help)
     discard.add_argument("--reason", default="no reason given")
 
     abandon = subparsers.add_parser(
-        "abandon-operation",
+        _admin_name("abandon-operation"),
         help=(
             "declare that a prior agent run will not return, retire its exact attempt, and "
             "prepare the safe continuation returned by Dish"
@@ -166,7 +178,7 @@ def build_parser() -> JsonArgumentParser:
     )
 
     reconcile_abandonment = subparsers.add_parser(
-        "reconcile-abandonment",
+        _admin_name("reconcile-abandonment"),
         help=(
             "continue an abandonment that Dish could not finish automatically after rereading "
             "the current task and durable evidence"
@@ -181,7 +193,7 @@ def build_parser() -> JsonArgumentParser:
     )
 
     reopen = subparsers.add_parser(
-        "reopen",
+        _admin_name("reopen"),
         help="apply a substantive reset to a held Verification candidate",
     )
     reopen.add_argument("submission_id", help=_submission_target_help)
@@ -200,17 +212,19 @@ def build_parser() -> JsonArgumentParser:
     reopen.add_argument("--date", required=True)
 
     resolved = subparsers.add_parser(
-        "resolved", help="release a Verification hold into a fresh Verification round"
+        _admin_name("resolved"),
+        help="release a Verification hold into a fresh Verification round",
     )
     resolved.add_argument("submission_id", help=_submission_target_help)
 
     migrate = subparsers.add_parser(
-        "migrate", help="migrate one individually encountered older-schema task after cutover"
+        _admin_name("migrate"),
+        help="migrate one individually encountered older-schema task after cutover",
     )
     migrate.add_argument("task_gid")
 
     reopen_planning = subparsers.add_parser(
-        "reopen-planning",
+        _admin_name("reopen-planning"),
         help="explicitly reopen one completed bare task before a new Planning operation",
     )
     reopen_planning.add_argument("task_gid")
@@ -221,7 +235,7 @@ def build_parser() -> JsonArgumentParser:
     )
 
     recover_lease = subparsers.add_parser(
-        "recover-lease",
+        _admin_name("recover-lease"),
         help=(
             "release an expired lease only so the same durable agent run can resume; this never "
             "transfers workflow or Verification-cycle ownership to a fresh run"
@@ -231,7 +245,7 @@ def build_parser() -> JsonArgumentParser:
     recover_lease.add_argument("--reason", default="no reason given")
 
     expire_lease = subparsers.add_parser(
-        "expire-lease",
+        _admin_name("expire-lease"),
         help=(
             "release an active lease when its process is gone; this does not transfer durable "
             "workflow ownership, so rerun dish-admin inspect afterward"
@@ -245,12 +259,13 @@ def build_parser() -> JsonArgumentParser:
     )
 
     backup_create = subparsers.add_parser(
-        "backup-create", help="create a validated online snapshot of the shared database"
+        _admin_name("backup-create"),
+        help="create a validated online snapshot of the shared database",
     )
     backup_create.add_argument("--label", default="manual")
 
     backup_restore = subparsers.add_parser(
-        "backup-restore", help="restore a managed shared-database snapshot"
+        _admin_name("backup-restore"), help="restore a managed shared-database snapshot"
     )
     backup_restore.add_argument("backup_id")
 
@@ -259,7 +274,7 @@ def build_parser() -> JsonArgumentParser:
         "This does not edit the task, approve Verification, or submit the dish."
     )
     authorize = subparsers.add_parser(
-        "authorize-governed-change",
+        _admin_name("authorize-governed-change"),
         help=authorize_description,
         description=authorize_description,
     )
@@ -274,16 +289,16 @@ def build_parser() -> JsonArgumentParser:
     authorize.add_argument("--run-id")
 
     _hold_help = {
-        "supply-evidence": "resume a pending-evidence operation with Marco-supplied evidence",
-        "record-human-decision": (
+        _admin_name("supply-evidence"): "resume a pending-evidence operation with Marco-supplied evidence",
+        _admin_name("record-human-decision"): (
             "record Marco's decision in the task log and release a pending-human-review hold; "
             "does not modify governed fields such as Exemptions or Locks — use "
             "authorize-governed-change for that"
         ),
     }
     _hold_detail_help = {
-        "supply-evidence": "the supplied evidence to append to the task record",
-        "record-human-decision": (
+        _admin_name("supply-evidence"): "the supplied evidence to append to the task record",
+        _admin_name("record-human-decision"): (
             "human decision and reasoning to append to Decisions; this text does not itself "
             "change Exemptions, Locks, or other canonical fields"
         ),

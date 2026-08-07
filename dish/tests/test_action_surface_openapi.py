@@ -6,7 +6,7 @@ from tests.support.action_contract import (
     EXPECTED_ACTION_COMMANDS,
     EXPECTED_CONSEQUENTIAL,
     EXPECTED_DISH_UUID_SCHEMA,
-    assert_independent_action_openapi_contract,
+    assert_action_openapi_contract,
 )
 
 
@@ -160,11 +160,11 @@ def test_verification_targets_explain_ordinary_start_and_abandonment_scope():
 
 
 
-def test_generated_and_checked_in_openapi_satisfy_independent_action_contract():
+def test_generated_and_checked_in_openapi_satisfy_action_contract():
     from pathlib import Path
 
     checked = json.loads(
         (Path(__file__).parent.parent / "openapi" / "dish-action.openapi.json").read_text()
     )
     for document in (action_openapi(), checked):
-        assert assert_independent_action_openapi_contract(document) is None
+        assert assert_action_openapi_contract(document) is None

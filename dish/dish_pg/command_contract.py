@@ -9,6 +9,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from dish_service.command_spec import (
+    APPROVE_COMMAND,
+    CREATE_COMMAND,
+    INSPECT_COMMAND,
+    PREPARE_COMMAND,
+    READ_COMMAND,
+    REJECT_COMMAND,
+    RENEW_LEASE_COMMAND,
+    SECTIONS_COMMAND,
+    SECTION_TASKS_COMMAND,
+    START_COMMAND,
+    SUBMIT_COMMAND,
+    ActionCommandSpec,
+)
+
 Profile = Literal["Q", "E", "L", "R", "P", "X"]
 Principal = Literal["reader", "agent", "verification", "admin", "historical"]
 
@@ -26,22 +41,42 @@ class CommandDefinition:
     description: str = ""
 
 
+def _current_action(
+    current: ActionCommandSpec,
+    profile: Profile,
+    *,
+    task_required: bool,
+    operation_required: bool,
+) -> CommandDefinition:
+    """Project current Action identity/replay policy into the PG target metadata."""
+
+    return CommandDefinition(
+        name=current.name,
+        profile=profile,
+        principal=current.principal,
+        request_replay=current.request_id_required,
+        task_required=task_required,
+        operation_required=operation_required,
+        action_exposed=True,
+    )
+
+
 COMMAND_DEFINITIONS = {
     row.name: row
     for row in (
-        CommandDefinition("create", "L", "agent", True, False, False, action_exposed=True),
-        CommandDefinition("sections", "Q", "reader", False, False, False, action_exposed=True),
-        CommandDefinition("section-tasks", "Q", "reader", False, False, False, action_exposed=True),
-        CommandDefinition("read", "Q", "reader", False, True, False, action_exposed=True),
+        _current_action(CREATE_COMMAND, "L", task_required=False, operation_required=False),
+        _current_action(SECTIONS_COMMAND, "Q", task_required=False, operation_required=False),
+        _current_action(SECTION_TASKS_COMMAND, "Q", task_required=False, operation_required=False),
+        _current_action(READ_COMMAND, "Q", task_required=True, operation_required=False),
         CommandDefinition("attention", "Q", "admin", False, False, False),
         CommandDefinition("holds", "Q", "admin", False, False, False),
-        CommandDefinition("inspect", "E", "verification", True, True, True, action_exposed=True),
-        CommandDefinition("start", "L", "agent", True, True, False, action_exposed=True),
-        CommandDefinition("prepare", "L", "agent", True, True, True, action_exposed=True),
-        CommandDefinition("approve", "L", "verification", True, True, True, action_exposed=True),
-        CommandDefinition("reject", "L", "verification", True, True, True, action_exposed=True),
-        CommandDefinition("submit", "L", "agent", True, True, True, action_exposed=True),
-        CommandDefinition("renew-lease", "L", "agent", True, True, True, action_exposed=True),
+        _current_action(INSPECT_COMMAND, "E", task_required=True, operation_required=True),
+        _current_action(START_COMMAND, "L", task_required=True, operation_required=False),
+        _current_action(PREPARE_COMMAND, "L", task_required=True, operation_required=True),
+        _current_action(APPROVE_COMMAND, "L", task_required=True, operation_required=True),
+        _current_action(REJECT_COMMAND, "L", task_required=True, operation_required=True),
+        _current_action(SUBMIT_COMMAND, "L", task_required=True, operation_required=True),
+        _current_action(RENEW_LEASE_COMMAND, "L", task_required=True, operation_required=True),
         CommandDefinition("recover", "P", "admin", True, True, False),
         CommandDefinition("repair-destination", "P", "admin", True, True, False),
         CommandDefinition("discard", "R", "admin", True, True, True),

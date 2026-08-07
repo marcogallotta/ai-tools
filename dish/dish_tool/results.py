@@ -1,11 +1,38 @@
 """Common result envelopes and exit-status mapping."""
 
+from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from .constants import DEFAULT_RETRYABLE_BY_CODE, EXIT_STATUS_BY_CODE
 from .errors import BackendFailure, DishRuleError
 from .validation_scope import add_validation_scope
 
+
+@dataclass(frozen=True)
+class ResultFieldSpec:
+    """Canonical legacy-service response field metadata."""
+
+    name: str
+    openapi_required: bool
+
+
+RESULT_FIELD_SPECS = (
+    ResultFieldSpec("ok", True),
+    ResultFieldSpec("command", True),
+    ResultFieldSpec("code", True),
+    ResultFieldSpec("task_gid", False),
+    ResultFieldSpec("submission_id", False),
+    ResultFieldSpec("state", False),
+    ResultFieldSpec("retryable", True),
+    ResultFieldSpec("allowed_actions", True),
+    ResultFieldSpec("data", True),
+    ResultFieldSpec("errors", True),
+)
+RESULT_ENVELOPE_FIELDS = tuple(spec.name for spec in RESULT_FIELD_SPECS)
+RESULT_ENVELOPE_FIELD_SET = frozenset(RESULT_ENVELOPE_FIELDS)
+RESULT_OPENAPI_REQUIRED_FIELDS = tuple(
+    spec.name for spec in RESULT_FIELD_SPECS if spec.openapi_required
+)
 
 
 def result_envelope(
