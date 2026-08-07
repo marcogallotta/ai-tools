@@ -129,7 +129,10 @@ def _case_test_native_initial_state_insert_guards_reject_direct_sql(core_db) -> 
     engine = factory.kw["bind"]
     raw = engine.raw_connection()
     try:
-        raw.autocommit = True
+        # engine.raw_connection() returns SQLAlchemy's pool proxy, which only
+        # overrides __getattr__: setting `.autocommit` on it does not reach the
+        # underlying psycopg connection, so autocommit must be set there directly.
+        raw.driver_connection.autocommit = True
         with pytest.raises(
             psycopg.errors.RaiseException,
             match="release candidate must initially be assembling at revision 1",
