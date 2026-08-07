@@ -767,6 +767,11 @@ def run_runtime_wiring_rehearsal(core_db, tmp_path) -> dict[str, object]:
         )
         evidence["downstream_failure_projection"] = downstream
 
+        with session_scope(factory) as session:
+            dish_task_count_before_failed_create = int(
+                session.scalar(select(func.count()).select_from(models.DishTask)) or 0
+            )
+
         failed_request = next(ids)
         current_proxy.terminate()
         stopped_proxy = dict(current_proxy.manifest)
@@ -794,14 +799,10 @@ def run_runtime_wiring_rehearsal(core_db, tmp_path) -> dict[str, object]:
         recovered_health = _wait_health(health_url, expected_ok=True)
         with session_scope(factory) as session:
             assert session.get(wf.ServiceRequest, failed_request) is None
-            leaked = int(
-                session.scalar(
-                    select(func.count())
-                    .select_from(models.DishTask)
-                    .where(models.DishTask.title == "Must not commit while PostgreSQL is down")
-                )
-                or 0
+            dish_task_count_after_failed_create = int(
+                session.scalar(select(func.count()).select_from(models.DishTask)) or 0
             )
+            leaked = dish_task_count_after_failed_create - dish_task_count_before_failed_create
         assert leaked == 0
         evidence["postgresql_loss"] = {
             "status": "passed",
