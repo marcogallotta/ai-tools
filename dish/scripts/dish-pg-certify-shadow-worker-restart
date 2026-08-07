@@ -41,7 +41,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
-from dish_pg.bootstrap import DEFAULT_PROJECT_ID
 from dish_pg.database import (
     DatabaseSettings,
     create_database_engine,
@@ -144,6 +143,7 @@ class BaselineContext:
     import_run_id: uuid.UUID
     contract_binding_id: uuid.UUID
     target_section_id: uuid.UUID
+    target_project_id: uuid.UUID
 
 
 def utcnow() -> datetime:
@@ -271,6 +271,8 @@ def active_generation_and_baseline(
             )
         )
         require(research_queue is not None, "active registry has no Research Queue entry")
+        target_section = session.get(models.GovernedSection, research_queue.section_id)
+        require(target_section is not None, "Research Queue section is missing its governed_sections row")
 
         baseline = session.scalar(
             select(tx.ShadowBaseline).where(
@@ -365,6 +367,7 @@ def active_generation_and_baseline(
             import_run_id=registry_version.import_run_id,
             contract_binding_id=registry_version.contract_binding_id,
             target_section_id=research_queue.section_id,
+            target_project_id=target_section.project_id,
         )
 
 
@@ -405,7 +408,7 @@ def materialize_target_task(
                 body=body,
                 identity_scheme="legacy-sha256-v1",
                 content_identity=content_identity,
-                project_ids=(DEFAULT_PROJECT_ID,),
+                project_ids=(baseline.target_project_id,),
                 section_id=baseline.target_section_id,
                 completed=False,
                 observed_at=utcnow(),
@@ -957,7 +960,10 @@ def assert_single_execution(snapshot: DeliverySnapshot) -> None:
     )
     require(snapshot.execution_count == 1, f"command execution count is not one: {snapshot}")
     require(snapshot.operation_count == 1, f"created workflow operation count is not one: {snapshot}")
-    require(snapshot.projection_count == 1, f"shadow projection count is not one: {snapshot}")
+    # start does not emit a projection outbox event (command_port.py's _start has no
+    # self._project(...) call, unlike create/prepare/approve); only workflow_operations
+    # is written, so projection_count is correctly always 0 for this fixture's command.
+    require(snapshot.projection_count == 0, f"unexpected shadow projection for start: {snapshot}")
     require(snapshot.last_error is None, f"delivery recorded an error: {snapshot}")
 
 
