@@ -80,13 +80,16 @@ def parse_args(argv):
 
 
 def run_git(cwd, *args, check=True):
-    return subprocess.run(
+    completed = subprocess.run(
         ["git", "-C", str(cwd), *args],
-        check=check,
+        check=False,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
+    if check and completed.returncode != 0:
+        fail(f"Error: git {' '.join(args)} failed:\n{completed.stderr}")
+    return completed
 
 
 def show(cwd, spec):
