@@ -1,42 +1,60 @@
-# ADR-0003: Approval and application are separate
+# ADR: Approval and application are separate
 
 Status: Accepted
 
 ## Read this when
-Changing semantic proposals, Human Review, approval, or later application of an approved change.
+
+Read this when changing semantic proposals, Human Review, approval, `apply-proposal`, proposal recovery, or governed-change execution.
 
 ## Scope
-This decision owns asynchronous proposal approval/application separation.
+
+Human approval authorizes the exact governed changes contained in a proposal. Applying those already-approved changes is a later mutation step.
 
 ## Authoritative implementation
-`dish_tool/semantic_proposals.py`, `dish_tool/review_queue.py`, `dish_tool/admin.py`, `dish_tool/commands.py`.
+
+Current implementation anchors live in [Workflow and human review](../workflow-and-human-review.md). Exact module locations may change without changing this decision.
 
 ## Actors, processes, and stores
-An agent proposes; Marco/admin reviews; an eligible later agent may apply the exact approved bundle.
+
+A proposal producer creates a candidate; Human Review authorizes the exact proposal; a later application attempt claims and executes that already-authorized object against fresh authoritative facts.
 
 ## Authority and data ownership
-Approval records authorization for one exact proposal/version. Application is a separate governed mutation with its own actor/run/request evidence.
+
+The durable approved proposal owns the authorized change bundle. Canonical task state changes only during application, not merely because approval exists.
 
 ## Invariants
-Approval never silently mutates the live task; application cannot alter or broaden the approved bundle.
+
+- Approval binds the exact proposal/change bundle presented for review.
+- Applying unchanged approved changes must not require a second human authorization.
+- Application may revalidate proposal identity, integrity, applicability, cycle/content binding, current facts, and concurrency.
+- Application must not broaden, substitute, or alter the approved bundle.
+- Candidate content does not become canonical before application.
 
 ## Process and transaction boundaries
-Review settlement and later application are separate durable executions.
+
+Approval persistence and later mutation execution may occur in different processes or transactions; the exact approved object must remain identifiable across that boundary.
 
 ## Normal flow
-Queue proposal, inspect, approve/reject, then apply the exact approved proposal.
+
+Create and validate a proposal, obtain human approval for that exact object, retain it durably, then later claim, revalidate, and apply the same approved changes unchanged.
 
 ## Failure, replay, recovery, and concurrency
-Claims and proposal status prevent double application; replay returns the settled result.
+
+If the proposal is malformed, obsolete, changed, or no longer applicable, fail or recover without mutating a different bundle. If the exact approved candidate is already canonical, recovery may reconcile that fact without reapproval or another blind write.
 
 ## Change routing
-Do not collapse review approval into immediate Asana/workflow mutation.
+
+Refactors may change the modules that create, review, claim, or apply proposals. Any change that adds a second human authorization for the same approved bundle or permits application of a different bundle changes this decision.
 
 ## Proving tests
-`tests/test_semantic_proposal_bundle_workflow.py`, `tests/test_human_review_queue_workflow.py`.
+
+Tests should cover proposal validity at creation and approval, approval/application separation, no candidate leakage before apply, exact revalidation, already-live recovery, and rejection of stale or altered bundles.
 
 ## Current debt and temporary compatibility
-The PostgreSQL target command registry still marks proposal application/review capture-only during dark launch.
+
+Current legacy/PostgreSQL/agent surfaces may expose different parts of the lifecycle while migration is underway; none may weaken the exact-approval contract.
 
 ## Related documents
-[Workflow and human review](../workflow-and-human-review.md), [Dark launch](../dark-launch.md).
+
+- [Workflow and human review](../workflow-and-human-review.md)
+- [Commands and surfaces](../commands-and-surfaces.md)

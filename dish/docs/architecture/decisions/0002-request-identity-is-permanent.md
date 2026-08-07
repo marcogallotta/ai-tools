@@ -1,42 +1,59 @@
-# ADR-0002: Request identity is permanent
+# ADR: Request identity is permanent
 
 Status: Accepted
 
 ## Read this when
-Changing request IDs, retries, duplicate handling, or lost-response recovery.
+
+Read this when changing admission, replay, retries, lost-response recovery, request storage, or mutation target selection.
 
 ## Scope
-This decision owns the meaning of a mutation request UUID.
+
+A mutation request ID identifies one admitted consequential request and remains bound to that request for its lifetime.
 
 ## Authoritative implementation
-`dish_service/request_replay.py`, `dish_service/request_coordinators.py`, `dish_tool/database_schema.py`, `dish_pg/workflow.py`.
+
+Current implementation anchors live in [Request replay and idempotency](../request-replay-and-idempotency.md). Exact module locations may change without changing this decision.
 
 ## Actors, processes, and stores
-Authenticated owner/run supplies the UUID; current or target authority stores its first result.
+
+The binding covers the caller, admitted command, canonical arguments, authenticated owner/run identity, and the original mutation target selected for that request.
 
 ## Authority and data ownership
-The first admitted identity binds command, canonical arguments, owner, and run permanently.
+
+The durable request record owns request identity and replay outcome. Nearby current state does not replace the target bound by the admitted request.
 
 ## Invariants
-Exact replay returns the stored result; changed reuse conflicts; pending/uncertain work is not reissued.
+
+- Exact reuse replays the same request/outcome; incompatible reuse conflicts.
+- Replay cannot silently retarget a later operation, cycle, lease, proposal, or other nearby object.
+- Lost-response and uncertainty recovery preserve the same request ID.
+- Minting a new request ID is not a way to escape uncertainty about an already-admitted mutation.
 
 ## Process and transaction boundaries
-Identity admission precedes execution and completion follows the authoritative outcome, atomically where coupling requires.
+
+Any process or transaction boundary that admits, executes, persists, or reconstructs a request must preserve the same identity and bound target.
 
 ## Normal flow
-Begin, execute once, complete, replay exact result.
+
+Admit and reserve the request identity, bind its target, execute the mutation once, persist its authoritative outcome, and reconstruct that outcome on exact replay.
 
 ## Failure, replay, recovery, and concurrency
-Concurrent duplicates join one identity; lost responses reconstruct from durable evidence.
+
+Concurrent duplicates converge on the durable request. Failure or uncertainty does not grant permission to choose a new identity or a fresh target for the same mutation.
 
 ## Change routing
-Do not create transport-local idempotency keys or retry with a new mutation identity.
+
+Refactors may move request/replay code while preserving these semantics. Changes to what a request ID binds or how retargeting works require explicit architectural review.
 
 ## Proving tests
-`tests/test_request_identity.py`, `tests/test_request_completion_race.py`, `tests/test_action_replay_contract.py`.
+
+Tests should prove exact replay, incompatible reuse conflict, lost-response recovery, concurrency convergence, and no silent retargeting. Structural tests are appropriate where structure itself protects these guarantees.
 
 ## Current debt and temporary compatibility
-Historical incomplete rows without sufficient evidence remain fail-closed.
+
+Legacy and PostgreSQL adapters may currently represent the request lifecycle differently; compatibility must preserve this identity contract until those paths converge.
 
 ## Related documents
-[Request replay and idempotency](../request-replay-and-idempotency.md).
+
+- [Request replay and idempotency](../request-replay-and-idempotency.md)
+- [Operations, leases, and fencing](../operations-leases-and-fencing.md)

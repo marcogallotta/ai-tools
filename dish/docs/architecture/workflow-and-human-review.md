@@ -2,86 +2,75 @@
 
 ## Read this when
 
-Read this for Planning, Research, Verification, approval, rejection, holds, Human Review, semantic proposals, submission, abandonment, succession, or current-action changes.
+Read this when changing workflow legality, verification, holds, semantic proposals, Human Review, approval/application, or recovery continuations.
 
 ## Scope
 
-This document owns the current action-authority model and workflow/human-review boundaries. It does not own transport parsing, exact Asana I/O, or request replay mechanics.
+This document records workflow semantics and authority. It does not dictate that HTTP, CLI, renderers, adapters, or persistence helpers contain no logic.
 
 ## Authoritative implementation
 
-- Snapshot and mutation authority: `dish_tool/application_service.py`.
-- Pure legal-action policy: `dish_tool/workflow_policy.py`.
-- Agent command application: `dish_tool/commands.py`.
-- Admin application: `dish_tool/admin.py`.
-- Stage use cases: `dish_tool/step5.py`, `dish_tool/step6.py`, `dish_tool/step7.py`, `dish_tool/step8.py`, `dish_tool/step9.py`.
-- Holds and human actions: `dish_tool/hold_resolution.py`, `dish_tool/human_actions.py`, `dish_tool/review_queue.py`.
-- Semantic proposal lifecycle: `dish_tool/semantic_proposals.py`.
-- Abandonment and succession: `dish_tool/abandonment.py`, `dish_tool/abandonment_succession.py`, `dish_tool/operation_execution.py`.
-- Durable workflow tables and invariants: `dish_tool/database_schema.py`, `dish_tool/database.py`.
+Current anchors include `dish_tool/application_service.py`, `dish_tool/workflow_policy.py`, workflow step/use-case modules, `dish_tool/semantic_proposals.py`, `dish_tool/review_queue.py`, and `dish_tool/admin.py`.
 
 ## Actors, processes, and stores
 
-Actors are planner/researcher, verifier, material editor, Marco/admin, and service/recovery. Their identities and run lineage are durable facts. The live task is the document under review; SQLite owns operations, actor facts, cycles, holds, signoff, proposals, and recovery state.
+Agents perform workflow work; Human Review authorizes governed proposals/decisions; service/admin surfaces expose available continuations; SQLite currently stores workflow evidence.
 
 ## Authority and data ownership
 
-`CurrentWorkflowService._snapshot` reads the operation, exact live task, current section registry, cycle, actor facts, pending steps, unresolved attempts, signoff/hold evidence, and active semantic-proposal facts. `CurrentWorkflowService.authoritative_view` adds exact abandonment-continuation facts, but `workflow_policy.legal_actions` is the only owner that turns those facts into the current legal action list. Stage modules own transition side effects. Admin continuations target exact recorded operations, cycles, holds, proposals, or abandonment attempts.
+The authoritative workflow decision answers whether a consequential transition is legal for the current durable/live facts. Consumers may present, suppress, group, translate, or authorization-filter that result and may expose unrelated surface actions; they must not independently authorize a contradictory workflow transition.
+
+Human approval is the authorization for the exact governed changes in an approved proposal. Applying that already-approved proposal is a later mutation step, not a second human-authorization decision for those same changes.
 
 ## Invariants
 
-- There is one open/active operation authority per task under the current schema constraints.
-- Legal actions are derived by `workflow_policy.legal_actions` from one exact snapshot plus explicit proposal/abandonment facts; no caller maintains a parallel state-to-action matrix or status-only proposal action table.
-- Verification binds an independent verifier agent/run, exact reviewed identity, current cycle, inspection fact, and signoff lineage.
-- Approval is not submission. Submission requires the signed Ready identity and handles destination movement separately.
-- Evidence and Human Review holds preserve exact baselines and expose only the recorded continuation.
-- Proposal approval is separate from proposal application; `semantic_proposal_action_facts` supplies exact cycle/content/integrity facts, `workflow_policy.legal_actions` decides whether `apply-proposal` is legal, and the mutation path repeats the P0 checks after claim before consuming the approved bundle.
-- Abandonment is not generic lease expiry. It is a route-preserving recovery workflow with exact successor/target evidence.
-- A prepared successor claim cannot be replaced with a nearby open operation or later cycle.
+- Proposal approval and proposal application are separate durable actions.
+- Human approval binds the exact proposal/governed-change bundle presented for review.
+- Application of that exact approved bundle must not require a second human authorization for the same governed changes.
+- Application may revalidate proposal identity, integrity, applicability, cycle/content binding, current authoritative facts, and concurrency before mutating.
+- Application must not silently broaden, substitute, or alter the approved bundle.
+- Candidate proposal content does not become canonical merely by being proposed or approved.
+- Proposal validity/actionability is evaluated against governed semantic facts rather than irrelevant cosmetic/task metadata.
+- Verification/review evidence stays bound to the exact subject it reviewed.
+- Human Review and recovery continuations target durable recorded work rather than an ambiguous nearby operation.
+- "Allowed actions" are a derived view of authority, not a second state machine.
 
 ## Process and transaction boundaries
 
-The action snapshot is built before mutation and revalidated inside command execution. Stage operations use SQLite savepoints/writer transactions and durable operation steps. External effects are separately journaled. Abandonment succession is one immutable spec applied in one local writer transaction. PostgreSQL preparation/discard uses the workflow-operation row lock as the serialization boundary.
+Workflow policy may be evaluated in shared application/domain code while transports, renderers, persistence queries, and adapters perform their own legitimate responsibilities. The boundary is authority, not the presence or absence of conditionals.
 
 ## Normal flow
 
-1. Start records an operation and actor/run lineage; Planning uses a durable two-request intent challenge.
-2. Prepare validates a complete candidate and records content/placement intent and the Verification handoff.
-3. Verification start binds the exact verifier and reviewed content occurrence.
-4. Inspect records the current review occurrence.
-5. Approve records signoff (and an exact small correction when applicable); reject opens a Large route or a named hold.
-6. Human Review/admin commands resolve only the exact durable hold or proposal.
-7. Submit validates the signed Ready task and completes or recovers destination handling.
-8. Abandon/reconcile is used only for dead-run recovery frontiers that cannot be handled as ordinary lease reclaim.
+For semantic proposals, the durable lifecycle is:
+
+1. create and validate the exact proposal against the governed semantic subject;
+2. obtain human approval for that exact proposal;
+3. retain the approved object without changing canonical task content;
+4. later claim/application work rereads and revalidates the same approved proposal against current authoritative facts;
+5. apply that proposal unchanged, or fail/reconcile if it is no longer applicable.
+
+More generally, workflow execution reads authoritative state, derives legal transitions, executes the selected transition through the owning application path, persists its outcome/evidence, then exposes resulting state/actions to callers.
 
 ## Failure, replay, recovery, and concurrency
 
-Ordinary workflow content or required-placement drift removes legal actions. Semantic-proposal applicability instead follows the P0 proposal content-identity and current-cycle rules: exact candidate-already-live recovery is valid, while section and other operational metadata do not invalidate the approved content bundle. Pending steps and unresolved attempts also fail closed. A crash after a workflow commit but before service-request completion is recovered from the operation execution and stored workflow result, not by repeating the transition. Holds and abandonment attempts are task-level mutation fences. Concurrent same-task starts, preparations, claims, or discards are serialized by database constraints/locks; independent tasks remain independent.
+Stale proposals, mismatched reviewed content, changed proposal identity/integrity, conflicting targets, or lost claims fail closed or move through explicit recovery. If the exact approved candidate is already canonical, recovery may reconcile that fact rather than demanding another human approval or blindly writing again.
+
+Exact recovery mechanisms may evolve; durable identity, authorization, and no-silent-broadening guarantees are architectural, not today's function layout.
 
 ## Change routing
 
-- Change state/action predicates in `dish_tool/workflow_policy.py` and snapshot inputs in `dish_tool/application_service.py`.
-- Change one stage transition in its owning `stepN.py` module and shared domain helper.
-- Add a human continuation only with an exact persisted target and a typed admin command specification.
-- Add proposal state facts in `semantic_proposals.py`, legal-action rules in `workflow_policy.py`, and mutation behavior in the review/application use cases; do not turn approval into immediate hidden application or advertise `apply-proposal` from status alone.
-- Do not implement workflow rules in HTTP, CLI rendering, Asana adapters, or persistence query helpers.
+Change workflow legality at the authority that decides it. Change transport-specific guidance, presentation, argument collection, or recovery explanation in the relevant surface. Persistence helpers may legitimately query/shape required facts; they should not independently become workflow policy authority.
 
 ## Proving tests
 
-- `tests/test_workflow_policy_fail_closed.py` proves legal-action fail-closed predicates.
-- `tests/test_action_full_lifecycle.py` proves the end-to-end current workflow.
-- `tests/test_verification_atomicity_and_route_recovery.py` proves review/signoff routing and recovery.
-- `tests/test_human_review_queue_workflow.py` and `tests/test_semantic_proposal_bundle_workflow.py` prove asynchronous Human Review and proposal application.
-- `tests/test_abandonment_admin_workflow.py`, `tests/test_abandonment_fencing_and_reconciliation.py`, and `tests/test_abandonment_stage_successors.py` prove route-preserving recovery.
-- `tests/test_change_start_intent.py` and `tests/test_planning_intent_concurrency_and_surfaces.py` prove durable intent gates.
+Relevant evidence includes semantic proposal/Human Review workflow tests, workflow policy tests, connected-agent surface tests, and recovery/lease tests. Favor end-to-end behavioral agreement across surfaces over AST/source-text topology checks. Structural tests remain appropriate where a structural boundary itself protects authority or exposure.
 
 ## Current debt and temporary compatibility
 
-The current SQLite workflow remains document-and-Asana-coupled. PostgreSQL target workflow is implemented separately and must remain semantically equivalent until cutover. Some future product decisions in `docs/workflow.md` and PostgreSQL planning documents are not current behavior. Legacy `submissions` data remains inspectable/migratable but is not an executable workflow engine.
+Legacy workflow, PostgreSQL target workflow, and migration-era recovery paths still overlap. Stage B is expected to consolidate them further. Current recovery mechanics should be documented as current behavior unless backed by an explicit accepted decision.
 
 ## Related documents
 
-- [Authority and data ownership](authority-and-data-ownership.md)
 - [Commands and surfaces](commands-and-surfaces.md)
-- [External effects and Asana](external-effects-and-asana.md)
+- [Operations, leases, and fencing](operations-leases-and-fencing.md)
 - [ADR-0003](decisions/0003-approval-and-application-are-separate.md)

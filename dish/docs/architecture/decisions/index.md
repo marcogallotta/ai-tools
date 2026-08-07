@@ -2,59 +2,59 @@
 
 ## Read this when
 
-Read this when a change appears to reopen a settled authority, replay, Human Review, shadow-effect, or cutover-evidence decision.
+Read this when a change appears to reopen a settled high-risk product/safety choice.
 
 ## Scope
 
-This index lists small current decision records. It is not a historical ADR reconstruction and does not replace domain architecture documents.
+This index contains the small set of decisions that are intentionally stronger than descriptive current architecture.
 
 ## Authoritative implementation
 
-Each decision links exact implementation and proving tests. A decision remains accepted only while those authorities remain current.
+Implementation anchors live in the related domain documents; ADRs should not freeze module topology.
 
 ## Actors, processes, and stores
 
-The decisions apply to the current service, PostgreSQL target, dark-launch worker, and release/cutover tooling described by the linked documents.
+The decisions apply to the current service, migration target, dark-launch machinery, and cutover flow as relevant.
 
 ## Authority and data ownership
 
-| Decision | Status | Primary owner |
-|---|---|---|
-| [ADR-0001: Dark launch does not transfer authority](0001-dark-launch-does-not-transfer-authority.md) | Accepted | Current service plus dark-launch capture/target evidence |
-| [ADR-0002: Request identity is permanent](0002-request-identity-is-permanent.md) | Accepted | Request replay authority |
-| [ADR-0003: Approval and application are separate](0003-approval-and-application-are-separate.md) | Accepted | Semantic proposal/Human Review workflow |
-| [ADR-0004: Shadow-origin work never projects](0004-shadow-origin-never-projects.md) | Accepted | Projection origin/effect isolation |
-| [ADR-0005: Cutover evidence is bounded](0005-cutover-evidence-is-bounded.md) | Accepted | Release/cutover evidence authority |
+| Decision | Status |
+|---|---|
+| [Dark launch does not transfer authority](0001-dark-launch-does-not-transfer-authority.md) | Accepted |
+| [Request identity is permanent](0002-request-identity-is-permanent.md) | Accepted |
+| [Approval and application are separate](0003-approval-and-application-are-separate.md) | Accepted |
+| [Shadow-origin work never projects](0004-shadow-origin-never-projects.md) | Accepted |
+| [Cutover evidence is bounded](0005-cutover-evidence-is-bounded.md) | Accepted |
 
 ## Invariants
 
-Do not create an ADR for speculative or merely historical behavior. Update or supersede a record only with a code/product decision that actually changes the settled boundary.
+Only promote a rule to an ADR when it is a deliberate durable decision, not because current code happens to work that way.
 
 ## Process and transaction boundaries
 
-Decision records point to the transaction/process owners; they do not introduce new boundaries.
+ADRs constrain semantics, not commit topology or exact transaction-owner modules unless that is itself the accepted decision.
 
 ## Normal flow
 
-Consult the relevant ADR, then read its related domain architecture document and authoritative code before implementation.
+Consult an ADR when a change would alter its semantic guarantee; otherwise use the domain architecture documents.
 
 ## Failure, replay, recovery, and concurrency
 
-A decision record that conflicts with current code/tests is stale and must be corrected; it cannot override runtime authority.
+A stale implementation should be fixed or the ADR deliberately superseded. An ADR should not be used to preserve accidental implementation behavior.
 
 ## Change routing
 
-Add a new ADR only for a settled choice that agents repeatedly risk reopening and whose rationale/consequences are supported by repository authority or approved product decisions.
+New ADRs require a real consequential decision with rationale/provenance. Coding conventions, test procedure, module placement, and temporary migration mechanics do not belong here.
 
 ## Proving tests
 
-`tests/test_architecture_knowledge_base.py` verifies that all decision records are indexed and linked.
+Behavioral evidence is referenced from the related domain architecture documents.
 
 ## Current debt and temporary compatibility
 
-No historical ADR series was reconstructed. These records capture only currently settled, high-risk boundaries.
+No attempt is made to reconstruct every historical decision. This list is intentionally small.
 
 ## Related documents
 
-- [Canonical architecture index](../index.md)
+- [Architecture index](../index.md)
 - [Extension rules](../extension-rules.md)

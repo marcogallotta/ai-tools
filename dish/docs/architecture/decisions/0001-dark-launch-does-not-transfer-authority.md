@@ -1,42 +1,58 @@
-# ADR-0001: Dark launch does not transfer authority
+# ADR: Dark launch does not transfer authority
 
 Status: Accepted
 
 ## Read this when
-Changing capture, shadow execution, status reporting, routing, or deciding whether PostgreSQL shadow state may affect live behavior.
+
+Read this when a change could make capture, import, shadow execution, comparison, readiness, or evidence alter live mutation authority.
 
 ## Scope
-This decision owns authority during dark launch.
+
+Dark launch evaluates a PostgreSQL candidate while the existing production path remains authoritative.
 
 ## Authoritative implementation
-`dish_service/shadow_capture.py`, `dish_shadow/policy.py`, `dish_pg/shadow_worker.py`, `dish_pg/dark_launch.py`.
+
+Current implementation anchors live in [Dark launch](../dark-launch.md). Exact module locations may change without changing this decision.
 
 ## Actors, processes, and stores
-Legacy service/SQLite/Asana remain live; spool and PostgreSQL are evidence stores.
+
+The relevant actors are the live service, current production stores, PostgreSQL dark-launch target, shadow workers, comparison/readiness tooling, and operators.
 
 ## Authority and data ownership
-Asana plus SQLite remain authoritative until explicit PostgreSQL cutover activation. Shadow results are comparisons only.
+
+Capture, import, shadow execution, comparison, readiness, or accumulated evidence does not transfer live production mutation authority to PostgreSQL.
 
 ## Invariants
-Routing, capture volume, parity, or a running worker cannot transfer authority.
+
+- Authority changes only through an explicit cutover decision and activation.
+- Dark-launch evidence describes a candidate; it does not authorize that candidate to become live.
+- Readiness or successful comparison cannot silently open mutation authority.
 
 ## Process and transaction boundaries
-Legacy command completion precedes supplemental capture; target execution occurs in separate worker transactions.
+
+Every process boundary involved in dark launch must preserve the separation between evidence collection and live authority. No particular transaction-owning module is fixed by this ADR.
 
 ## Normal flow
-Capture, execute/capture-only, compare, report; never read shadow state to authorize the legacy command.
+
+Capture/import a bounded source state, execute and compare the PostgreSQL candidate, accumulate readiness evidence, and leave production authority unchanged until cutover is explicitly invoked.
 
 ## Failure, replay, recovery, and concurrency
-Capture/worker failures do not change the already-authoritative legacy result and are represented as backlog/gap evidence.
+
+Failure, retry, restart, replay, or recovery during dark launch must remain evidence-only and cannot become an implicit authority-transfer path.
 
 ## Change routing
-Change authority only through cutover controls, not dark-launch configuration.
+
+Refactors that preserve these semantics do not require changing this ADR. A semantic change to when or how authority transfers should explicitly amend or supersede it.
 
 ## Proving tests
-`tests/postgresql/test_dark_launch_authority_regressions.py`, `tests/test_shadow_capture.py`.
+
+Behavioral and structural evidence should prove that dark-launch paths cannot mutate live authority or live external targets. Current test anchors are listed in [Dark launch](../dark-launch.md).
 
 ## Current debt and temporary compatibility
-Dark launch is temporary rollout evidence and host enablement remains gated.
+
+Migration-era capture/import/rehearsal mechanisms may change or disappear. Their existence does not weaken the authority boundary.
 
 ## Related documents
-[Dark launch](../dark-launch.md), [PostgreSQL runtime](../postgresql-runtime.md).
+
+- [Dark launch](../dark-launch.md)
+- [Authority and data ownership](../authority-and-data-ownership.md)

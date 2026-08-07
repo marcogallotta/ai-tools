@@ -2,114 +2,73 @@
 
 ## Read this when
 
-Read this when adding or changing a CLI command, private HTTP route, GPT Action route, admin operation, request body, result envelope, OpenAPI schema, or command classification.
+Read this when changing CLI, HTTP, GPT Action, admin, frontend command exposure, result guidance, or OpenAPI.
 
 ## Scope
 
-This document owns command discovery, route/surface boundaries, and the handoff from transport parsing to command authority. It does not own workflow legality.
+This document separates command semantics from surface-specific behavior. It does not assume that transports are thin or logic-free.
 
 ## Authoritative implementation
 
-- Agent CLI: `dish_tool/cli.py`.
-- Admin CLI: `dish_tool/admin_cli.py`.
-- Agent/Action command contract: `dish_service/command_spec.py`.
-- Admin command registry: `dish_tool/admin_command_spec.py`.
-- Canonical legacy result-field metadata: `dish_tool/results.py`.
-- HTTP route recognition: `dish_service/http_routing.py`.
-- HTTP validation and mapping: `dish_service/http.py`.
-- Authentication: `dish_service/auth.py`.
-- OpenAPI generation: `dish_service/openapi.py` and checked-in `openapi/dish-action.openapi.json`.
-- Command applications: `dish_tool/commands.py`, `dish_tool/admin.py`.
-- Human/admin action specification and terminal rendering: `dish_tool/human_actions.py`, `dish_tool/admin_human.py`; these render authoritative decisions but do not own workflow legality.
-- PostgreSQL retained/retired command classification: `dish_pg/command_contract.py`.
+Current anchors include `dish_service/command_spec.py`, `dish_tool/admin_command_spec.py`, `dish_service/http_routing.py`, `dish_service/http.py`, `dish_service/auth.py`, `dish_service/openapi.py`, and application command handlers.
+
+Current public GPT Action exposure is derived from `ACTION_COMMAND_DEFINITIONS` in the shared Action command specification and the generated Action schema. A command existing in CLI/application code does not by itself mean that the connected GPT can call it.
 
 ## Actors, processes, and stores
 
-Agent callers use the private `/v1/commands/{command}` surface; GPT Action uses `/v1/action/{command}`; admin callers use private `/v1/admin/...` routes. Lease and backup routes have dedicated path shapes. HTTP handlers do not directly mutate stores; they delegate to `DishService`.
+Agent CLI, admin CLI, GPT Action, and frontend are caller surfaces. They may expose overlapping capabilities with different authentication, presentation, or context.
 
 ## Authority and data ownership
 
-`command_spec.py` owns typed Action command identity, principal class, request-ID policy, private route/CLI exposure, workflow-action identity for commands that map directly to one legal workflow action, and argument schemas. `admin_command_spec.py` owns admin command identity, target kind, identifier field, lease/backend requirements, and supported transports. `results.py` owns canonical legacy result-field names and public required-field metadata. `http_routing.py` owns path recognition while reusing command identities from those descriptive sources. `DishApplication` and `DishAdminApplication` own command dispatch and result construction. `CurrentWorkflowService` owns whether a mutation is legal.
+Command specifications currently provide shared identity/exposure metadata. Workflow authority determines whether a consequential transition is legal. A surface decides how to expose, describe, collect arguments for, or present the authoritative result to its caller.
 
 ## Invariants
 
-- Authenticate protected routes before loading/parsing the body.
-- Reject duplicate JSON keys recursively, ambiguous media types, unknown fields, and invalid command shapes before workflow execution.
-- Public Action exposure comes from `ACTION_COMMAND_DEFINITIONS`; private/admin commands never become public by route coincidence, and result rendering does not keep a second hard-coded exposed-action set.
-- Read-only commands do not accept request IDs. Every externally callable mutation that supports replay requires a non-nil canonical request UUID.
-- A result envelope does not reconstruct legal actions from a state string; it uses the exact authoritative view supplied by the workflow owner.
-- The public GPT Action transport may add `data.agent_guidance` rendered from that exact canonical result. Guidance is contextual caller help, never workflow authority: it must not add legal actions, invent identifiers, or contradict `allowed_actions`.
-- CLI, HTTP, OpenAPI, legacy result projection, and PostgreSQL shared-command metadata derive command identity/exposure from the accepted command specs rather than parallel hard-coded sets.
+- A surface must not accidentally expose privileged/internal operations merely because a route or command exists elsewhere.
+- Surface-specific guidance may add navigation, explanation, recovery instructions, or non-workflow affordances; it must not manufacture a workflow transition the backend considers legal when it is not.
+- The public GPT Action transport may add `data.agent_guidance` derived from the canonical result. Guidance is contextual caller help, not workflow authority: it must not add or authorize legal actions, invent authoritative identifiers or state, or contradict `allowed_actions`.
+- Command identity and replay classification should not be independently redefined in every surface.
+- Overlapping capabilities across agent/admin/frontend surfaces are allowed when exposure and authorization are explicit.
+- Do not claim that the deployed connected GPT can call a command solely because CLI/application code or source Action metadata supports it. Source exposure and deployed capability are distinct facts; deployed capability must be verified separately when making claims about the live surface.
 
 ## Process and transaction boundaries
 
 ```mermaid
-sequenceDiagram
-    participant Caller
-    participant HTTP as DishRequestHandler
-    participant Auth as Bearer/auth + command spec
-    participant Service as DishService coordinator
-    participant Replay as Request replay
-    participant App as Command application
-    participant Workflow as CurrentWorkflowService
-    participant Store as SQLite/Asana boundary
-    Caller->>HTTP: POST route + JSON
-    HTTP->>Auth: resolve route, authenticate, validate body
-    Auth-->>HTTP: command + canonical arguments
-    HTTP->>Service: dispatch surface/command/principal
-    Service->>Replay: begin or load request identity
-    Replay-->>Service: new, stored, or pending
-    Service->>App: execute command
-    App->>Workflow: assert against authoritative snapshot
-    Workflow->>Store: run owned transaction/effect protocol
-    Store-->>Workflow: durable result/evidence
-    Workflow-->>App: result + authoritative view
-    App-->>Service: canonical envelope
-    Service->>Replay: complete first authoritative result
-    Service-->>HTTP: response envelope
-    HTTP-->>Caller: HTTP mapping + JSON
+flowchart LR
+    Caller --> Surface[CLI / HTTP / GPT Action / frontend]
+    Surface --> App[Application authority]
+    App --> Policy[Workflow / command policy]
+    App --> Store[(Durable authority)]
+    App --> Result[Authoritative outcome]
+    Result --> Surface
 ```
 
-HTTP parsing ends after route, credential, media-type, JSON, client identity, and command-argument validation. Command authority begins when the service coordinator enters replay/lease/application execution. Workflow legality begins only in `CurrentWorkflowService` and `workflow_policy.legal_actions`.
+Transport validation, normalization, capability handling, and response adaptation may occur before/after application execution. Those concerns do not confer workflow authority.
 
 ## Normal flow
 
-1. Resolve a declarative route pattern.
-2. Authenticate against the route class.
-3. Parse exactly one JSON object and validate command/client schemas.
-4. Build a `ServicePrincipal` and delegate to the matching service coordinator.
-5. Begin replay and lease gates for mutations.
-6. Dispatch through the application to the owning workflow use case.
-7. Return one canonical envelope; HTTP status remains transport metadata.
+A surface authenticates/validates its protocol, maps the request into a shared command/application call, receives an authoritative result, and renders caller-appropriate output.
+
+For the connected GPT specifically, checked-in source capability and the deployed Action schema can differ temporarily. The current shared Action specification is the source-side exposure contract; deployment synchronization is an operational concern.
 
 ## Failure, replay, recovery, and concurrency
 
-Expected authenticated Action rule failures remain canonical Dish envelopes instead of being hidden as generic transport errors. Authentication failures stay 401/403 and unexpected server failures stay 500. A changed command, owner, run, or canonical argument set under the same request ID is an identity conflict. Concurrent duplicate requests join the same durable identity rather than both executing.
+Mutation request identity/replay is handled by the shared replay mechanism. Surfaces may communicate recovery guidance but should not invent a second idempotency/retry identity model.
 
 ## Change routing
 
-- Add an Action command in `dish_service/command_spec.py`, HTTP dispatch, `DishApplication`, OpenAPI generation, and exact tests.
-- Add an admin command in `dish_tool/admin_command_spec.py`, CLI/private HTTP argument builders, service classification, and `DishAdminApplication`.
-- Put workflow preconditions in workflow policy/use cases, not command schemas.
-- Put route shape in `dish_service/http_routing.py`, not an expanding handler conditional chain.
-- Do not expose a PostgreSQL-only or operator command through the public Action schema without an explicit product decision.
+When adding a genuine backend command, update the shared command/application contract and whichever surfaces intentionally expose it. When changing only surface guidance or UX, it is legitimate to change only that surface if no backend semantic changes are required.
 
 ## Proving tests
 
-- `tests/test_action_surface.py` proves route exposure and private/public separation.
-- `tests/test_action_surface_openapi.py` and `tests/test_action_model_validation.py` prove shared schema behavior.
-- `tests/test_admin_command_spec.py` and `tests/test_admin_argument_validation.py` prove admin registry parity.
-- `tests/test_transport.py` and `tests/test_transport_contract_resilience.py` prove HTTP boundary behavior.
-- `tests/test_dish_cli_transport_errors.py` proves CLI transport mapping.
-- `tests/postgresql/test_postgresql_action_openapi_oracle.py` proves target Action contract consistency.
+Relevant current tests include `tests/test_action_surface.py`, `tests/test_action_surface_openapi.py`, `tests/test_transport.py`, and admin/Action contract tests. Prefer behavioral tests for behavioral guarantees. Structural tests are appropriate when structure itself enforces a security or authority boundary, but should not freeze incidental code layout.
 
 ## Current debt and temporary compatibility
 
-The current service and PostgreSQL target have separate command registries because they represent different authority stages. For commands shared with the current Action surface, `dish_pg/command_contract.py` reuses current command identity, principal, request-replay policy, and direct workflow-action identity while continuing to own target-only profile, task/operation requirements, retention, and exposure decisions. The PostgreSQL planner gates those commands through `workflow_policy.legal_actions`; it does not maintain a separate set of commands that require workflow legality. It explicitly marks backup commands retired and must not silently redefine current legacy transport behavior. The private frontend OpenAPI is a separate artifact and is not merged with the Action schema.
+The live connected-GPT schema and deployment can lag checked-in source schema; source capability and deployed capability are distinct operational facts. PostgreSQL command parity remains incomplete during migration.
 
 ## Related documents
 
 - [Workflow and human review](workflow-and-human-review.md)
 - [Request replay and idempotency](request-replay-and-idempotency.md)
 - [System context](system-context.md)
-- [`../runtime-contract.md`](../runtime-contract.md)

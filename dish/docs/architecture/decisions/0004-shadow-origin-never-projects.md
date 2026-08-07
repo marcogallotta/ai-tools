@@ -1,42 +1,59 @@
-# ADR-0004: Shadow-origin work never projects
+# ADR: Shadow-origin work never projects
 
 Status: Accepted
 
 ## Read this when
-Changing shadow execution, outbox origin, projection worker eligibility, or effect-enable controls.
+
+Read this when changing shadow execution, projection claims, external-effect enablement, recovery, or origin handling.
 
 ## Scope
-This decision owns structural isolation between shadow commands and Asana effects.
+
+Shadow-origin execution exists to produce target state and evidence. It is never eligible to dispatch live external effects.
 
 ## Authoritative implementation
-`dish_pg/stage5_models.py`, `dish_pg/transition.py`, `dish_pg/projection_worker.py`, `dish_pg/shadow_worker.py`.
+
+Current implementation anchors live in [Dark launch](../dark-launch.md) and [External effects and Asana](../external-effects-and-asana.md). Exact module locations may change without changing this decision.
 
 ## Actors, processes, and stores
-Shadow worker writes PostgreSQL target evidence; projection worker is the only target external-effect process.
+
+The relevant distinction is execution origin: live-origin work may enter the live effect lifecycle when otherwise authorized; shadow-origin work may not.
 
 ## Authority and data ownership
-Outbox origin is immutable. Shadow-origin rows are evidence and never eligible for external dispatch.
+
+Origin is durable authority data for effect eligibility. Secondary configuration cannot promote shadow-origin work into live-effect work.
 
 ## Invariants
-Projection workers reject shadow origin independently of projection-epoch effect configuration.
+
+- Shadow-origin work cannot dispatch to Asana or another live external target.
+- Effect-enable settings, epochs, worker configuration, or other misconfiguration cannot override shadow origin.
+- Recovery and replay preserve origin.
+- Dark-launch evidence does not transfer external-effect authority.
 
 ## Process and transaction boundaries
-Shadow command transactions may emit internal intents, but worker claim/admission refuses them before adapter calls.
+
+The origin fence must survive durable storage, worker claims, process restarts, retries, and recovery. No particular implementation module is fixed by this ADR.
 
 ## Normal flow
-Shadow execute, record comparison, retain internal projection intent only as evidence.
+
+Shadow work may execute against the PostgreSQL target and produce comparison evidence while live external effects remain ineligible by origin.
 
 ## Failure, replay, recovery, and concurrency
-Misconfiguration of an epoch cannot make shadow work dispatchable; stale workers remain fenced by origin and claim identity.
+
+Retry/recovery remains shadow-origin. Contradictory or missing secondary configuration must fail closed rather than make shadow work dispatchable.
 
 ## Change routing
-Do not weaken origin checks to simplify acceptance tests or dark-launch setup.
+
+Refactors may move effect code while preserving the origin fence. Any path that allows shadow-origin work to become dispatchable changes this decision.
 
 ## Proving tests
-`tests/postgresql/test_dark_launch_policy.py`, `tests/postgresql/test_dark_launch_shadow_worker.py`, `tests/postgresql/test_projection_attempt_lifecycle.py`.
+
+Behavioral tests should prove shadow-origin rejection at the actual effect boundary. Structural tests are appropriate where forbidden dependency/call paths themselves enforce the isolation guarantee.
 
 ## Current debt and temporary compatibility
-The projection worker is not yet a production deployable in the current authority topology.
+
+Migration-era shadow workers and treatment metadata may change; the origin fence remains mandatory until shadow execution itself is retired.
 
 ## Related documents
-[Dark launch](../dark-launch.md), [External effects and Asana](../external-effects-and-asana.md).
+
+- [Dark launch](../dark-launch.md)
+- [External effects and Asana](../external-effects-and-asana.md)

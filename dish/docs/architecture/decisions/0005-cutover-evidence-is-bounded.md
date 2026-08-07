@@ -1,42 +1,59 @@
-# ADR-0005: Cutover evidence is bounded
+# ADR: Cutover evidence is bounded
 
 Status: Accepted
 
 ## Read this when
-Adding release gates, candidate evidence, cutover certification, or permanent operational bureaucracy.
+
+Read this when changing cutover certification, candidate identity, readiness evidence, source capture, reconciliation, or long-term evidence retention.
 
 ## Scope
-This decision owns the shape of evidence required to transfer authority safely without turning one cutover into an indefinite certification system.
+
+Cutover needs enough evidence to protect authority transfer, recovery, and first admission without creating permanent open-ended certification bureaucracy.
 
 ## Authoritative implementation
-`dish_pg/release_evidence.py`, `dish_pg/release_status.py`, `dish_pg/release.py`, `dish_pg/cutover_control.py`, `scripts/dish-pg-release`.
+
+Current implementation anchors live in [PostgreSQL runtime](../postgresql-runtime.md), [Dark launch](../dark-launch.md), and the cutover program. Exact module locations may change without changing this decision.
 
 ## Actors, processes, and stores
-Release tooling collects exact evidence; Marco approves the bound candidate; cutover control records checkpoints/admission.
+
+Evidence is produced by source capture, import, reconciliation, runtime/recovery tests, readiness checks, and operator review for a specific cutover candidate.
 
 ## Authority and data ownership
-Evidence is candidate/revision-specific and recomputed from authoritative stores/artifacts. It is not a free-form checklist assertion.
+
+Evidence certifies a specific candidate/revision and the source, target generation, schema, corpus, and other identity facts that make that certification meaningful.
 
 ## Invariants
-Stale or mismatched evidence cannot be relabeled; only facts needed for authority transfer, recovery, and first admission are permanent gates.
+
+- Evidence for one candidate/revision/source/schema/generation/corpus does not automatically certify another.
+- Material identity changes or newly discovered material gaps invalidate the affected evidence.
+- Required durable evidence remains limited to what protects authority transfer, recovery, and first admission.
+- Evidence is not itself authority to cut over.
 
 ## Process and transaction boundaries
-Offline collection precedes approval; cutover checkpoints and rollback burn are durable target transactions.
+
+Evidence may be collected across multiple processes and runs; its identity binding must survive those boundaries. The ADR does not require a particular report format or commit topology.
 
 ## Normal flow
-Build candidate, collect bounded evidence, validate, approve, execute cutover, retain concise proof.
+
+Collect the required evidence for a named candidate, bind it to the relevant identities, resolve material gaps, make the explicit cutover decision separately, and retain only the concise durable record needed afterward.
 
 ## Failure, replay, recovery, and concurrency
-Any changed source/schema/generation/corpus/gap invalidates the bound candidate and requires new evidence.
+
+Changed candidate/source/schema/generation/corpus identity or a newly discovered material gap cannot silently inherit prior certification; affected evidence must be re-established.
 
 ## Change routing
-Add a gate only when it protects a concrete authority, recovery, or first-admission invariant.
+
+Refactors may change how evidence is collected or stored. Changes to what must be re-established after identity/gap changes, or to the bounded-retention principle, require architectural review.
 
 ## Proving tests
-`tests/postgresql/test_release_evidence_contracts.py`, `tests/postgresql/test_stage6_release_cutover.py`, `tests/postgresql/test_stage8_cutover_evidence_gates.py`.
+
+Tests and rehearsals should prove candidate binding, fail-closed invalidation after material identity changes, recovery readiness, and separation between evidence and authority transfer.
 
 ## Current debt and temporary compatibility
-The repository contains extensive migration/rehearsal planning documents; they are provenance and active planning, not permanent runtime certification authority.
+
+Migration-era evidence tooling may currently be larger than the desired end state. It should not become permanent solely because it exists today.
 
 ## Related documents
-[PostgreSQL runtime](../postgresql-runtime.md), [Testing boundaries](../testing-boundaries.md).
+
+- [PostgreSQL runtime](../postgresql-runtime.md)
+- [Dark launch](../dark-launch.md)
