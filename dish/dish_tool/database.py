@@ -2242,8 +2242,8 @@ def record_marco_authorization(conn: sqlite3.Connection, *, task_gid: str, opera
     clean_reason = str(reason or "").strip()
     if not clean_reason:
         raise DishRuleError("INVALID_ARGUMENT", "authorization reason is required", rule="authorization_reason_required")
-    before_json = json.dumps(before, sort_keys=True)
-    after_json = json.dumps(after, sort_keys=True)
+    before_json = json.dumps(before, sort_keys=True, separators=(",", ":"))
+    after_json = json.dumps(after, sort_keys=True, separators=(",", ":"))
     clean_run_id = str(actor_run_id or "").strip() or None
     with immediate_transaction(conn, "record_marco_authorization"):
         if operation_id is not None:
@@ -2349,8 +2349,8 @@ def reserve_marco_authorizations(
         rows: list[sqlite3.Row] = []
         missing: list[tuple[Mapping[str, Any], Any]] = []
         for change in changes:
-            before_json = json.dumps(change["before"], sort_keys=True)
-            after_json = json.dumps(change["after"], sort_keys=True)
+            before_json = json.dumps(change["before"], sort_keys=True, separators=(",", ":"))
+            after_json = json.dumps(change["after"], sort_keys=True, separators=(",", ":"))
             candidates = conn.execute(
                 """SELECT authorization.*
                      FROM marco_authorizations AS authorization

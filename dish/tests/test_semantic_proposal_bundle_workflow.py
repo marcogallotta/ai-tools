@@ -168,6 +168,55 @@ def test_decisions_governed_change_survives_json_round_trip_and_applies(tmp_path
     assert "Human — Marco: Use chicken." in backend.notes
 
 
+def test_multi_entry_decisions_authorization_reserves_across_json_serializers(tmp_path):
+    """A single-element Decisions array round-trips identically under either JSON
+    serializer, so it cannot reveal a serializer mismatch between the authorization
+    writer (proposal approval) and the authorization reader (apply-proposal
+    reservation). A multi-element array does: ``json.dumps([...], sort_keys=True)``
+    inserts a space after each comma that ``json.dumps([...], sort_keys=True,
+    separators=(",", ":"))`` omits, so an authorization recorded with one
+    serializer would silently fail the exact-string lookup performed with the
+    other, leaving an approved proposal permanently unapplyable."""
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    candidate = tmp_path / "decisions-multi-proposal.txt"
+    candidate.write_text(
+        TASK.replace(
+            "### Research basis",
+            "### Decisions\n"
+            "Human — Marco: Use chicken.\n"
+            "Human — Marco: Use ginger.\n"
+            "### Research basis",
+        )
+    )
+
+    queued = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large",
+        reason="Record Marco's settled chicken and ginger decisions.",
+        file_path=str(candidate), run_id="proposal-author",
+    )
+    assert queued["code"] == "VALIDATION_FAILED"
+    assert queued["errors"][0]["rule"] == "semantic_proposal_queued"
+    proposal_id = queued["data"]["proposal_id"]
+
+    admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
+    approved = admin.execute(
+        "review-approve", proposal_id=proposal_id,
+        reason="Marco approves recording both exact decisions.",
+    )
+    assert approved["ok"]
+
+    applied = app.execute(
+        "apply-proposal", proposal_id=proposal_id, agent="gpt",
+        model="gpt-5.6-sol", run_id="fresh-applicant",
+    )
+    assert applied["ok"]
+    assert applied["data"]["proposal"]["status"] == "applied"
+    assert "Human — Marco: Use chicken." in backend.notes
+    assert "Human — Marco: Use ginger." in backend.notes
+
+
 def test_malformed_governed_evidence_is_rejected_before_human_review(tmp_path):
     app, backend, operation_id, protocol_text = make_app(tmp_path)
     review_and_inspect(app, agent="codex", run_id="proposal-author")
