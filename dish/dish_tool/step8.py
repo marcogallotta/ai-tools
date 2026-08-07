@@ -11,7 +11,18 @@ from pathlib import Path
 from typing import Any
 
 from .constants import COOKING_PROJECT_GID
-from .database import create_verification_cycle, record_audit, record_actor_fact, transition_operation, declare_operation_step, complete_operation_step, content_identity, release_marco_authorization_reservations
+from .database import (
+    complete_operation_step,
+    confirm_task_content,
+    consume_reserved_marco_authorizations,
+    content_identity,
+    create_verification_cycle,
+    declare_operation_step,
+    record_actor_fact,
+    record_audit,
+    release_marco_authorization_reservations,
+    transition_operation,
+)
 from .transactions import savepoint_transaction
 from .errors import DishRuleError
 from .hold_resolution import resolve_preconstruction_hold_to_successor
@@ -37,8 +48,9 @@ from .step7 import approve_live, assert_verifier_authority
 from .human_actions import exact_action, relay_text
 from .semantic_proposals import (
     claim_semantic_proposal, get_semantic_proposal, mark_semantic_proposal_applied,
-    proposal_changes, proposal_payload, queue_semantic_proposal,
-    release_semantic_proposal_claim,
+    proposal_payload, queue_semantic_proposal, release_semantic_proposal_claim,
+    semantic_proposal_baseline_content, semantic_proposal_drift_details,
+    validate_semantic_proposal_integrity,
 )
 
 ROUTES = {"large", "evidence", "human-review"}
@@ -1067,6 +1079,8 @@ def apply_semantic_proposal(
         request_id=request_id,
     )
     write_confirmed = False
+    candidate_already_live = False
+    authorization_ids: tuple[str, ...] = ()
     try:
         op, cycle = _rows(conn, str(proposal["operation_id"]))
         if str(cycle["cycle_id"]) != str(proposal["cycle_id"]):
@@ -1081,64 +1095,38 @@ def apply_semantic_proposal(
         live = read_complete_task(
             backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID
         )
-        if live.identity != proposal["baseline_identity"]:
+        live_matches_baseline = live.identity == proposal["baseline_identity"]
+        candidate_already_live = live.identity == proposal["candidate_identity"]
+        if not live_matches_baseline and not candidate_already_live:
             raise DishRuleError(
-                "CONFLICT", "the live task changed after the proposal was created",
+                "CONFLICT", "the live task content changed after the proposal was created",
                 rule="semantic_proposal_stale",
                 details={
-                    "expected_identity": proposal["baseline_identity"],
-                    "actual_identity": live.identity,
+                    **semantic_proposal_drift_details(
+                        conn, proposal, live_title=live.title, live_notes=live.notes
+                    ),
+                    "live_matches_candidate": False,
+                    "required_action": (
+                        "Inspect the exact title/notes diff before deciding whether fresh review is "
+                        "required. Due date, section, assignee, completion, and comments are not "
+                        "part of semantic proposal content identity."
+                    ),
                 },
             )
-        try:
-            before_document = parse_task_document(f"{live.title}\n{live.notes}")
-            document = parse_task_document(
-                f"{proposal['candidate_title']}\n{proposal['candidate_notes']}"
-            )
-        except DocumentParseError as exc:
-            raise DishRuleError(
-                "VALIDATION_FAILED", "stored semantic proposal is not canonical",
-                errors=document_parse_error_payloads(exc),
-            ) from exc
-        intended = content_identity(
-            str(proposal["candidate_title"]), str(proposal["candidate_notes"])
+        if live_matches_baseline:
+            baseline_title, baseline_notes = live.title, live.notes
+        else:
+            # The exact approved candidate can already be live after a previously confirmed
+            # write whose proposal finalization failed, or after legacy behavior exposed the
+            # candidate early.  Once Marco has approved this exact candidate, reconcile that
+            # state instead of demanding a second write/review cycle.
+            baseline_title, baseline_notes = semantic_proposal_baseline_content(conn, proposal)
+        before_document, document = validate_semantic_proposal_integrity(
+            conn,
+            proposal,
+            baseline_title=baseline_title,
+            baseline_notes=baseline_notes,
         )
-        if intended.digest != proposal["candidate_identity"]:
-            raise DishRuleError(
-                "CONFLICT", "stored proposal identity does not match its exact candidate",
-                rule="semantic_proposal_identity_invalid",
-            )
-        rendered_title, rendered_notes = _render(document)
-        rendered = content_identity(rendered_title, rendered_notes)
-        if rendered.digest != proposal["candidate_identity"]:
-            raise DishRuleError(
-                "CONFLICT", "stored proposal no longer renders to the approved identity",
-                rule="semantic_proposal_render_drift",
-            )
-        actual_linked = [
-            {"path": path, "before": old, "after": new}
-            for path, (old, new) in canonical_diff(before_document, document).items()
-        ]
-        expected_linked = json.loads(proposal["linked_changes_json"])
-        if actual_linked != expected_linked:
-            raise DishRuleError(
-                "CONFLICT",
-                "stored proposal linked-change evidence does not match its exact candidate",
-                rule="semantic_proposal_linked_changes_invalid",
-                details={"proposal_id": clean_id},
-            )
-        actual_governed = [
-            {"ordinal": index, "field": item.field, "before": item.before, "after": item.after}
-            for index, item in enumerate(governed_changes(before_document, document))
-        ]
-        stored_governed = list(proposal_changes(conn, clean_id))
-        if actual_governed != stored_governed:
-            raise DishRuleError(
-                "CONFLICT",
-                "stored proposal governed-change evidence does not match its exact candidate",
-                rule="semantic_proposal_governed_changes_invalid",
-                details={"proposal_id": clean_id},
-            )
         authorization_ids = require_governed_authorization(
             conn, before_document, document,
             task_gid=op["task_gid"], operation_id=op["operation_id"],
@@ -1173,12 +1161,51 @@ def apply_semantic_proposal(
             "proposal_id": clean_id, "applying_agent": agent,
             "applying_run_id": run_id,
         })
-        confirmed = _write_document(
-            conn, backend, op, live, document, schema=schema,
-            authorization_ids=authorization_ids,
-        )
-        write_confirmed = True
+        if candidate_already_live:
+            # No external mutation is necessary: the live title/notes are byte-for-byte the
+            # approved candidate.  It must still pass the same deterministic boundary that a
+            # normal guarded write would enforce before Dish settles the proposal.
+            check = validate_task_document(
+                document, expected_schema_version=op["schema_version"], schema=schema
+            )
+            if not check.ok:
+                raise DishRuleError(
+                    "VALIDATION_FAILED",
+                    "approved candidate already live but failed deterministic validation",
+                    errors=[finding_payload(finding) for finding in check.findings],
+                )
+            # Record that exact observed content as durable evidence and consume the approval
+            # atomically with proposal finalization below.
+            confirmed_identity = confirm_task_content(
+                conn,
+                task_gid=op["task_gid"],
+                title=live.title,
+                notes=live.notes,
+                schema_version=op["schema_version"],
+                operation_id=op["operation_id"],
+                boundary="semantic_proposal_candidate_already_live",
+            )
+            if confirmed_identity.digest != live.identity:
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "confirmed candidate identity changed while reconciling the approved proposal",
+                    rule="semantic_proposal_reconciliation_identity_mismatch",
+                )
+            confirmed = live
+        else:
+            confirmed = _write_document(
+                conn, backend, op, live, document, schema=schema,
+                authorization_ids=authorization_ids,
+            )
+            write_confirmed = True
         with savepoint_transaction(conn, "semantic_proposal_apply_finalize"):
+            if candidate_already_live:
+                consume_reserved_marco_authorizations(
+                    conn,
+                    operation_id=op["operation_id"],
+                    authorization_ids=authorization_ids,
+                    candidate_identity=confirmed.identity,
+                )
             complete_operation_step(conn, op["operation_id"], write_step)
             record_actor_fact(
                 conn, operation_id=op["operation_id"], task_gid=op["task_gid"],
@@ -1236,6 +1263,7 @@ def apply_semantic_proposal(
                     "applied_identity": confirmed.identity,
                     "new_cycle_id": new_cycle["cycle_id"],
                     "model": model,
+                    "candidate_already_live": candidate_already_live,
                 }, result_code="OK", result_ok=True,
             )
         return {
@@ -1245,13 +1273,28 @@ def apply_semantic_proposal(
             "new_cycle_id": new_cycle["cycle_id"],
             "applied_identity": confirmed.identity,
             "task": dataclasses.asdict(confirmed),
+            "candidate_already_live": candidate_already_live,
             "next_step": (
-                "The exact approved candidate is installed. A later genuinely fresh "
-                "Verification run must independently review the new cycle."
+                (
+                    "The exact approved candidate was already live and Dish reconciled it "
+                    "without rewriting task content. A later genuinely fresh Verification run "
+                    "must independently review the new cycle."
+                )
+                if candidate_already_live
+                else (
+                    "The exact approved candidate is installed. A later genuinely fresh "
+                    "Verification run must independently review the new cycle."
+                )
             ),
         }
     except DishRuleError as exc:
         if not write_confirmed and exc.code != "BACKEND_UNCERTAIN":
+            if authorization_ids:
+                release_marco_authorization_reservations(
+                    conn,
+                    operation_id=str(proposal["operation_id"]),
+                    authorization_ids=authorization_ids,
+                )
             release_semantic_proposal_claim(
                 conn, proposal_id=clean_id, run_id=run_id,
                 reason=f"application failed before a confirmed write: {exc.rule or exc.code}",

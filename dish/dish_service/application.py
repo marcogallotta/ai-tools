@@ -62,6 +62,7 @@ from dish_tool.validation_scope import scope_for_command
 from dish_tool.transactions import immediate_transaction
 
 from .backup import BackupManager, BackupRecord
+from .command_spec import ACTION_COMMANDS
 from .backup_creation_journal import (
     complete_backup_creation,
     creation_for_request,
@@ -849,6 +850,17 @@ class DishService:
     def _synchronize_exposed_actions(
         result: dict[str, Any], actions: list[str], *, ensure_legal_next: bool = False
     ) -> None:
+        unsupported = [action for action in actions if action not in ACTION_COMMANDS]
+        if unsupported:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "workflow advertised an action that is not callable on the connected-agent surface",
+                rule="allowed_action_surface_mismatch",
+                details={
+                    "unsupported_actions": unsupported,
+                    "callable_actions": list(ACTION_COMMANDS),
+                },
+            )
         result["allowed_actions"] = list(actions)
         data = result.setdefault("data", {})
         if ensure_legal_next or "legal_next_actions" in data:

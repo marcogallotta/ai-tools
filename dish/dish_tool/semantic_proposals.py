@@ -6,7 +6,15 @@ import sqlite3
 import uuid
 from typing import Any, Mapping, Sequence
 
-from .database import create_verification_cycle, record_audit, transition_operation, utc_now
+from .database import (
+    content_identity,
+    create_verification_cycle,
+    record_audit,
+    transition_operation,
+    utc_now,
+)
+from .governed_diff import canonical_diff, governed_changes, validate_semantic_proposal
+from .task_document import DocumentParseError, document_parse_error_payloads, parse_task_document
 from .errors import DishRuleError
 from .transactions import immediate_transaction
 
@@ -19,6 +27,235 @@ def _json(value: Any) -> str:
 
 def _row_dict(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()} if hasattr(row, "keys") else dict(row)
+
+
+def _json_value(value: Any) -> Any:
+    """Return the stable JSON representation used by durable proposal evidence.
+
+    Canonical task structures use tuples for some fields (notably Decisions), while
+    SQLite proposal evidence round-trips through JSON arrays.  Comparing the Python
+    container types directly made valid approved proposals fail at apply time.
+    """
+
+    return json.loads(_json(value))
+
+
+def _normalized_change_records(changes: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "ordinal": int(change.get("ordinal", ordinal)),
+            "field": str(change["field"]),
+            "before": _json_value(change["before"]),
+            "after": _json_value(change["after"]),
+        }
+        for ordinal, change in enumerate(changes)
+    ]
+
+
+def _normalized_linked_changes(changes: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "path": str(change["path"]),
+            "before": str(change.get("before", "")),
+            "after": str(change.get("after", "")),
+        }
+        for change in changes
+    ]
+
+
+def _render_document(document) -> tuple[str, str]:
+    lines = document.render().splitlines()
+    return lines[0], "\n".join(lines[1:]) + "\n"
+
+
+def _record_mismatches(expected: Sequence[Mapping[str, Any]], actual: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    mismatches: list[dict[str, Any]] = []
+    limit = max(len(expected), len(actual))
+    for index in range(limit):
+        expected_item = None if index >= len(expected) else dict(expected[index])
+        actual_item = None if index >= len(actual) else dict(actual[index])
+        if expected_item != actual_item:
+            mismatches.append(
+                {
+                    "ordinal": index,
+                    "stored": expected_item,
+                    "derived": actual_item,
+                }
+            )
+    return mismatches
+
+
+def validate_semantic_proposal_integrity(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row | Mapping[str, Any],
+    *,
+    baseline_title: str,
+    baseline_notes: str,
+) -> tuple[Any, Any]:
+    """Prove stored proposal evidence matches the exact baseline and candidate.
+
+    This check intentionally runs before Marco approval as well as before application,
+    so an internally malformed proposal cannot become an approved dead end.
+    """
+
+    proposal = _row_dict(row)
+    baseline_identity = content_identity(baseline_title, baseline_notes).digest
+    if baseline_identity != proposal["baseline_identity"]:
+        raise DishRuleError(
+            "CONFLICT",
+            "proposal baseline content does not match its stored baseline identity",
+            rule="semantic_proposal_baseline_invalid",
+            details={
+                "proposal_id": proposal["proposal_id"],
+                "expected_identity": proposal["baseline_identity"],
+                "actual_identity": baseline_identity,
+            },
+        )
+    candidate_identity = content_identity(
+        str(proposal["candidate_title"]), str(proposal["candidate_notes"])
+    ).digest
+    if candidate_identity != proposal["candidate_identity"]:
+        raise DishRuleError(
+            "CONFLICT",
+            "stored proposal identity does not match its exact candidate",
+            rule="semantic_proposal_identity_invalid",
+            details={
+                "proposal_id": proposal["proposal_id"],
+                "expected_identity": proposal["candidate_identity"],
+                "actual_identity": candidate_identity,
+            },
+        )
+    try:
+        before_document = parse_task_document(f"{baseline_title}\n{baseline_notes}")
+        candidate_document = parse_task_document(
+            f"{proposal['candidate_title']}\n{proposal['candidate_notes']}"
+        )
+    except DocumentParseError as exc:
+        raise DishRuleError(
+            "VALIDATION_FAILED",
+            "stored semantic proposal is not canonical",
+            rule="semantic_proposal_candidate_invalid",
+            errors=document_parse_error_payloads(exc),
+            details={"proposal_id": proposal["proposal_id"]},
+        ) from exc
+    validate_semantic_proposal(before_document, candidate_document)
+    rendered_title, rendered_notes = _render_document(candidate_document)
+    rendered_identity = content_identity(rendered_title, rendered_notes).digest
+    if rendered_identity != proposal["candidate_identity"]:
+        raise DishRuleError(
+            "CONFLICT",
+            "stored proposal no longer renders to the approved identity",
+            rule="semantic_proposal_render_drift",
+            details={
+                "proposal_id": proposal["proposal_id"],
+                "expected_identity": proposal["candidate_identity"],
+                "actual_identity": rendered_identity,
+            },
+        )
+    actual_linked = _normalized_linked_changes(
+        [
+            {"path": path, "before": old, "after": new}
+            for path, (old, new) in canonical_diff(before_document, candidate_document).items()
+        ]
+    )
+    stored_linked = _normalized_linked_changes(json.loads(proposal["linked_changes_json"]))
+    if actual_linked != stored_linked:
+        raise DishRuleError(
+            "CONFLICT",
+            "stored proposal linked-change evidence does not match its exact candidate",
+            rule="semantic_proposal_linked_changes_invalid",
+            details={
+                "proposal_id": proposal["proposal_id"],
+                "mismatches": _record_mismatches(stored_linked, actual_linked),
+            },
+        )
+    actual_governed = _normalized_change_records(
+        [
+            {"ordinal": index, "field": item.field, "before": item.before, "after": item.after}
+            for index, item in enumerate(governed_changes(before_document, candidate_document))
+        ]
+    )
+    stored_governed = _normalized_change_records(proposal_changes(conn, proposal["proposal_id"]))
+    if actual_governed != stored_governed:
+        raise DishRuleError(
+            "CONFLICT",
+            "stored proposal governed-change evidence does not match its exact candidate",
+            rule="semantic_proposal_governed_changes_invalid",
+            details={
+                "proposal_id": proposal["proposal_id"],
+                "mismatches": _record_mismatches(stored_governed, actual_governed),
+            },
+        )
+    return before_document, candidate_document
+
+
+def semantic_proposal_baseline_content(
+    conn: sqlite3.Connection, row: sqlite3.Row | Mapping[str, Any]
+) -> tuple[str, str]:
+    proposal = _row_dict(row)
+    baseline = conn.execute(
+        """SELECT title,notes FROM content_versions
+             WHERE task_gid=? AND identity=? AND confirmed=1
+             ORDER BY created_at DESC,rowid DESC LIMIT 1""",
+        (proposal["task_gid"], proposal["baseline_identity"]),
+    ).fetchone()
+    if baseline is None:
+        raise DishRuleError(
+            "CONFLICT",
+            "semantic proposal baseline lacks durable confirmed content evidence",
+            rule="semantic_proposal_baseline_evidence_missing",
+            details={
+                "proposal_id": proposal["proposal_id"],
+                "task_gid": proposal["task_gid"],
+                "baseline_identity": proposal["baseline_identity"],
+            },
+        )
+    return str(baseline["title"]), str(baseline["notes"])
+
+
+def semantic_proposal_drift_details(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row | Mapping[str, Any],
+    *,
+    live_title: str,
+    live_notes: str,
+) -> dict[str, Any]:
+    """Explain exact canonical content drift without blaming unrelated task metadata."""
+
+    proposal = _row_dict(row)
+    details: dict[str, Any] = {
+        "proposal_id": proposal["proposal_id"],
+        "expected_identity": proposal["baseline_identity"],
+        "actual_identity": content_identity(live_title, live_notes).digest,
+        "candidate_identity": proposal["candidate_identity"],
+        "metadata_note": (
+            "Content identity covers task title and notes only; due date, section placement, "
+            "assignee, completion, and comments do not invalidate a semantic proposal."
+        ),
+    }
+    try:
+        baseline_title, baseline_notes = semantic_proposal_baseline_content(conn, proposal)
+    except DishRuleError:
+        details["baseline_content_available"] = False
+        return details
+    details["baseline_content_available"] = True
+    try:
+        baseline_document = parse_task_document(f"{baseline_title}\n{baseline_notes}")
+        live_document = parse_task_document(f"{live_title}\n{live_notes}")
+    except DocumentParseError:
+        details["content_changes"] = [
+            {
+                "path": "raw_title_or_notes",
+                "before_identity": proposal["baseline_identity"],
+                "after_identity": details["actual_identity"],
+            }
+        ]
+        return details
+    details["content_changes"] = [
+        {"path": path, "before": old, "after": new}
+        for path, (old, new) in canonical_diff(baseline_document, live_document).items()
+    ]
+    return details
 
 
 def proposal_changes(conn: sqlite3.Connection, proposal_id: str) -> tuple[dict[str, Any], ...]:
@@ -191,16 +428,93 @@ def queue_semantic_proposal(
                     "proposed_candidate_identity": candidate_identity,
                 },
             )
-        proposed_changes = [
-            {
-                "ordinal": ordinal,
-                "field": str(change["field"]),
-                "before": change["before"],
-                "after": change["after"],
-            }
-            for ordinal, change in enumerate(changes)
-        ]
-        proposed_linked = [dict(item) for item in linked_changes]
+        proposed_changes = _normalized_change_records(
+            [
+                {
+                    "ordinal": ordinal,
+                    "field": str(change["field"]),
+                    "before": change["before"],
+                    "after": change["after"],
+                }
+                for ordinal, change in enumerate(changes)
+            ]
+        )
+        proposed_linked = _normalized_linked_changes(linked_changes)
+        baseline = conn.execute(
+            """SELECT title,notes FROM content_versions
+                 WHERE task_gid=? AND identity=? AND confirmed=1
+                 ORDER BY created_at DESC,rowid DESC LIMIT 1""",
+            (task_gid, baseline_identity),
+        ).fetchone()
+        if baseline is None:
+            raise DishRuleError(
+                "CONFLICT",
+                "semantic proposal baseline lacks durable confirmed content evidence",
+                rule="semantic_proposal_baseline_evidence_missing",
+                details={
+                    "task_gid": task_gid,
+                    "operation_id": operation_id,
+                    "baseline_identity": baseline_identity,
+                },
+            )
+        try:
+            baseline_document = parse_task_document(f"{baseline['title']}\n{baseline['notes']}")
+            candidate_document = parse_task_document(f"{candidate_title}\n{candidate_notes}")
+        except DocumentParseError as exc:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "semantic proposal candidate or baseline is not canonical",
+                rule="semantic_proposal_candidate_invalid",
+                errors=document_parse_error_payloads(exc),
+            ) from exc
+        validate_semantic_proposal(baseline_document, candidate_document)
+        rendered_title, rendered_notes = _render_document(candidate_document)
+        rendered_identity = content_identity(rendered_title, rendered_notes).digest
+        if rendered_identity != candidate_identity:
+            raise DishRuleError(
+                "CONFLICT",
+                "semantic proposal candidate identity does not match its exact rendered content",
+                rule="semantic_proposal_identity_invalid",
+                details={
+                    "expected_identity": candidate_identity,
+                    "actual_identity": rendered_identity,
+                },
+            )
+        derived_linked = _normalized_linked_changes(
+            [
+                {"path": path, "before": old, "after": new}
+                for path, (old, new) in canonical_diff(
+                    baseline_document, candidate_document
+                ).items()
+            ]
+        )
+        derived_governed = _normalized_change_records(
+            [
+                {
+                    "ordinal": index,
+                    "field": item.field,
+                    "before": item.before,
+                    "after": item.after,
+                }
+                for index, item in enumerate(
+                    governed_changes(baseline_document, candidate_document)
+                )
+            ]
+        )
+        if derived_linked != proposed_linked or derived_governed != proposed_changes:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "semantic proposal evidence does not match its exact baseline and candidate",
+                rule="semantic_proposal_evidence_invalid",
+                details={
+                    "linked_change_mismatches": _record_mismatches(
+                        proposed_linked, derived_linked
+                    ),
+                    "governed_change_mismatches": _record_mismatches(
+                        proposed_changes, derived_governed
+                    ),
+                },
+            )
         rejected_rows = conn.execute(
             """SELECT proposal_id,review_reason,reviewed_at,linked_changes_json
                  FROM semantic_proposals
@@ -243,18 +557,18 @@ def queue_semantic_proposal(
             (
                 proposal_id, task_gid, operation_id, cycle_id, baseline_identity,
                 candidate_identity, candidate_title, candidate_notes, str(proposal_reason).strip(),
-                _json(dict(explanation)), _json([dict(item) for item in linked_changes]),
+                _json(dict(explanation)), _json(proposed_linked),
                 protocol_release, protocol_text, "large", proposer_agent, proposer_run_id,
                 "pending", now,
             ),
         )
-        for ordinal, change in enumerate(changes):
+        for change in proposed_changes:
             conn.execute(
                 """INSERT INTO semantic_proposal_changes(
                        proposal_id,ordinal,field_name,before_json,after_json
                    ) VALUES (?,?,?,?,?)""",
                 (
-                    proposal_id, ordinal, str(change["field"]),
+                    proposal_id, change["ordinal"], change["field"],
                     _json(change["before"]), _json(change["after"]),
                 ),
             )
@@ -343,7 +657,8 @@ def approve_semantic_proposal(
     conn: sqlite3.Connection,
     *,
     proposal_id: str,
-    live_identity: str,
+    live_title: str,
+    live_notes: str,
     reason: str,
     approved_by: str = "Marco",
 ) -> sqlite3.Row:
@@ -362,6 +677,7 @@ def approve_semantic_proposal(
                 "WRONG_STATE", "only a pending proposal can be approved",
                 rule="semantic_proposal_not_pending", details={"status": row["status"]},
             )
+        live_identity = content_identity(live_title, live_notes).digest
         if row["baseline_identity"] != live_identity:
             conn.execute(
                 "UPDATE semantic_proposals SET status='stale',reviewed_at=?,review_reason=? WHERE proposal_id=?",
@@ -370,8 +686,13 @@ def approve_semantic_proposal(
             raise DishRuleError(
                 "CONFLICT", "proposal baseline changed before approval",
                 rule="semantic_proposal_stale",
-                details={"expected_identity": row["baseline_identity"], "actual_identity": live_identity},
+                details=semantic_proposal_drift_details(
+                    conn, row, live_title=live_title, live_notes=live_notes
+                ),
             )
+        validate_semantic_proposal_integrity(
+            conn, row, baseline_title=live_title, baseline_notes=live_notes
+        )
         operation = conn.execute(
             "SELECT status FROM operations WHERE operation_id=?", (row["operation_id"],)
         ).fetchone()

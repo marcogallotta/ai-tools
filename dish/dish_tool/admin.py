@@ -1528,7 +1528,11 @@ def _command_review_approve(
         self.backend, task_gid=row["task_gid"], project_gid=COOKING_PROJECT_GID
     )
     approved = approve_semantic_proposal(
-        self.conn, proposal_id=clean_id, live_identity=live.identity, reason=reason
+        self.conn,
+        proposal_id=clean_id,
+        live_title=live.title,
+        live_notes=live.notes,
+        reason=reason,
     )
     trace.task_gid = approved["task_gid"]
     trace.submission_id = approved["operation_id"]

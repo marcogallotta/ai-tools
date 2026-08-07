@@ -1,5 +1,6 @@
 import pytest
 from dish_tool.admin import DishAdminApplication
+from dish_tool.database import content_identity
 from dish_tool.errors import DishRuleError
 from dish_tool.semantic_proposals import queue_semantic_proposal
 from tests.support.verification import TASK, make_app, review_and_inspect
@@ -27,6 +28,8 @@ def test_governed_large_correction_queues_one_bundle_and_fresh_run_applies_it(tm
     assert queued["errors"][0]["rule"] == "semantic_proposal_queued"
     assert queued["data"]["proposal_queued"] is True
     assert queued["data"]["batch_may_continue"] is True
+    # Pending review must not leak the candidate into the canonical Asana task.
+    assert "Use whole scallion" not in backend.notes
     proposal_id = queued["data"]["proposal_id"]
 
     proposal = app.conn.execute(
@@ -74,6 +77,8 @@ def test_governed_large_correction_queues_one_bundle_and_fresh_run_applies_it(tm
     )
     assert approved["ok"]
     assert approved["data"]["proposal"]["status"] == "approved"
+    # Approval is authorization, not application.
+    assert "Use whole scallion" not in backend.notes
     assert app.conn.execute(
         "SELECT COUNT(*) FROM marco_authorizations WHERE operation_id=? AND consumed_at IS NULL",
         (operation_id,),
@@ -101,6 +106,211 @@ def test_governed_large_correction_queues_one_bundle_and_fresh_run_applies_it(tm
         (operation_id,),
     ).fetchone()
     assert tuple(fact) == ("codex", "proposal-author")
+
+
+
+def test_decisions_governed_change_survives_json_round_trip_and_applies(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    candidate = tmp_path / "decisions-proposal.txt"
+    candidate.write_text(
+        TASK.replace(
+            "### Research basis",
+            "### Decisions\nHuman — Marco: Use chicken.\n### Research basis",
+        )
+    )
+
+    queued = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large",
+        reason="Record Marco's settled chicken decision.",
+        file_path=str(candidate), run_id="proposal-author",
+    )
+    assert queued["code"] == "VALIDATION_FAILED"
+    assert queued["errors"][0]["rule"] == "semantic_proposal_queued"
+    proposal_id = queued["data"]["proposal_id"]
+
+    stored_change = app.conn.execute(
+        "SELECT before_json,after_json FROM semantic_proposal_changes WHERE proposal_id=?",
+        (proposal_id,),
+    ).fetchone()
+    assert stored_change is not None
+    assert stored_change["before_json"] == "[]"
+    assert "Use chicken" in stored_change["after_json"]
+
+    admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
+    approved = admin.execute(
+        "review-approve", proposal_id=proposal_id,
+        reason="Marco approves recording this exact decision.",
+    )
+    assert approved["ok"]
+
+    applied = app.execute(
+        "apply-proposal", proposal_id=proposal_id, agent="gpt",
+        model="gpt-5.6-sol", run_id="fresh-applicant",
+    )
+    assert applied["ok"]
+    assert applied["data"]["proposal"]["status"] == "applied"
+    assert "Human — Marco: Use chicken." in backend.notes
+
+
+def test_malformed_governed_evidence_is_rejected_before_human_review(tmp_path):
+    app, backend, operation_id, protocol_text = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    cycle = app.conn.execute(
+        "SELECT * FROM verification_cycles WHERE operation_id=? AND completed_at IS NULL",
+        (operation_id,),
+    ).fetchone()
+    assert cycle is not None
+
+    candidate_text = TASK.replace(
+        "Locks: Keep crisp", "Locks: Keep crisp | Use whole scallion"
+    )
+    lines = candidate_text.splitlines()
+    candidate_title = lines[0]
+    candidate_notes = "\n".join(lines[1:]) + "\n"
+    baseline = content_identity(backend.title, backend.notes)
+    candidate = content_identity(candidate_title, candidate_notes)
+
+    with pytest.raises(DishRuleError) as exc:
+        queue_semantic_proposal(
+            app.conn,
+            task_gid="t",
+            operation_id=operation_id,
+            cycle_id=cycle["cycle_id"],
+            baseline_identity=baseline.digest,
+            candidate_identity=candidate.digest,
+            candidate_title=candidate_title,
+            candidate_notes=candidate_notes,
+            proposal_reason="Malformed evidence must never reach Marco.",
+            explanation={"problem": "test malformed evidence"},
+            linked_changes=(
+                {
+                    "path": "planning.Locks",
+                    "before": "Keep crisp",
+                    "after": "WRONG EVIDENCE",
+                },
+            ),
+            changes=(
+                {
+                    "field": "Locks",
+                    "before": "Keep crisp",
+                    "after": "WRONG EVIDENCE",
+                },
+            ),
+            protocol_release=cycle["protocol_release"],
+            protocol_text=protocol_text,
+            proposer_agent="codex",
+            proposer_run_id="proposal-author",
+        )
+    assert exc.value.rule == "semantic_proposal_evidence_invalid"
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM semantic_proposals WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()[0] == 0
+
+
+def test_section_move_does_not_invalidate_semantic_proposal(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    candidate = tmp_path / "proposal.txt"
+    candidate.write_text(
+        TASK.replace("Locks: Keep crisp", "Locks: Keep crisp | Use whole scallion")
+    )
+    queued = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large", reason="Linked governed correction",
+        file_path=str(candidate), run_id="proposal-author",
+    )
+    proposal_id = queued["data"]["proposal_id"]
+
+    # Operational placement is not semantic proposal content.
+    backend.section = "vq"
+    admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
+    assert admin.execute(
+        "review-approve", proposal_id=proposal_id, reason="Marco approves exact bundle."
+    )["ok"]
+    applied = app.execute(
+        "apply-proposal", proposal_id=proposal_id, agent="gpt",
+        model="gpt-5.6-sol", run_id="fresh-applicant",
+    )
+    assert applied["ok"]
+    assert backend.section == "vq"
+    assert "Use whole scallion" in backend.notes
+
+
+def test_apply_reconciles_exact_approved_candidate_when_it_is_already_live(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    candidate = tmp_path / "proposal.txt"
+    candidate.write_text(
+        TASK.replace("Locks: Keep crisp", "Locks: Keep crisp | Use whole scallion")
+    )
+    queued = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large", reason="Linked governed correction",
+        file_path=str(candidate), run_id="proposal-author",
+    )
+    proposal_id = queued["data"]["proposal_id"]
+    admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
+    assert admin.execute(
+        "review-approve", proposal_id=proposal_id, reason="Marco approves exact bundle."
+    )["ok"]
+
+    proposal = app.conn.execute(
+        "SELECT candidate_title,candidate_notes FROM semantic_proposals WHERE proposal_id=?",
+        (proposal_id,),
+    ).fetchone()
+    writes_before = backend.writes
+    # Simulate a prior confirmed/legacy path that exposed the exact approved candidate
+    # before proposal finalization. Applying should settle, not demand another rewrite/review.
+    backend.title = proposal["candidate_title"]
+    backend.notes = proposal["candidate_notes"]
+
+    applied = app.execute(
+        "apply-proposal", proposal_id=proposal_id, agent="gpt",
+        model="gpt-5.6-sol", run_id="fresh-applicant",
+    )
+    assert applied["ok"]
+    assert applied["data"]["candidate_already_live"] is True
+    assert applied["data"]["proposal"]["status"] == "applied"
+    assert backend.writes == writes_before
+    authorization = app.conn.execute(
+        "SELECT consumed_at,consumed_identity FROM marco_authorizations WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()
+    assert authorization["consumed_at"]
+    assert authorization["consumed_identity"] == applied["data"]["applied_identity"]
+
+
+def test_stale_proposal_reports_exact_content_paths_and_excludes_operational_metadata(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    candidate = tmp_path / "proposal.txt"
+    candidate.write_text(
+        TASK.replace("Locks: Keep crisp", "Locks: Keep crisp | Use whole scallion")
+    )
+    queued = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large", reason="Linked governed correction",
+        file_path=str(candidate), run_id="proposal-author",
+    )
+    proposal_id = queued["data"]["proposal_id"]
+
+    backend.notes = backend.notes.replace(
+        "Purpose: Compare texture", "Purpose: Compare changed texture"
+    )
+    admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
+    result = admin.execute(
+        "review-approve", proposal_id=proposal_id, reason="Marco approves exact bundle."
+    )
+    assert result["code"] == "CONFLICT"
+    error = result["errors"][0]
+    assert error["rule"] == "semantic_proposal_stale"
+    assert any(change["path"] == "planning.Purpose" for change in error["content_changes"])
+    assert "due date" in error["metadata_note"].lower()
+    assert "section" in error["metadata_note"].lower()
+
 
 @pytest.mark.smoke
 def test_pending_or_approved_proposal_parks_original_verification_actions(tmp_path):

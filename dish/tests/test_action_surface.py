@@ -202,3 +202,12 @@ def test_action_accepts_maximum_supported_task_gid(tmp_path, running_server):
     )
     assert result["code"] == "NOT_FOUND"
     assert calls == 1
+
+
+def test_service_refuses_to_advertise_non_callable_connected_action():
+    result = {"ok": True, "allowed_actions": [], "data": {}}
+    with pytest.raises(DishRuleError) as exc:
+        DishService._synchronize_exposed_actions(result, ["not-a-real-action"])
+    assert exc.value.rule == "allowed_action_surface_mismatch"
+    assert "not-a-real-action" in exc.value.details["unsupported_actions"]
+    assert "apply-proposal" in exc.value.details["callable_actions"]
