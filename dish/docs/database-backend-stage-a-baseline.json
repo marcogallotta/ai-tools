@@ -195,7 +195,7 @@
     "tests/test_schema_paths.py": "00927a099e6f74cc374b08963e07e127ec793cadbfc1985b2654b88b683f769f",
     "tests/test_semantic_evidence_diagnostics.py": "8df3d18f15ef1b661c06d8a497eab10d8a4ed1ef6d704ea34f8ccb3fb53aedff",
     "tests/test_semantic_invariant_diagnostic_coverage.py": "3f2b296517a5797952f3c3b891ac5b3aad07f095292e403afb043cef3794e3bd",
-    "tests/test_semantic_proposal_bundle_workflow.py": "ae1b8658de9bd08d6a49c2138f92c424f2ff4a2f68d9c413c39b055cb06efd2c",
+    "tests/test_semantic_proposal_bundle_workflow.py": "8a1a7f075db5c0da466a0ad07dc7cecf0651765396e6196efd23d2eea2c65216",
     "tests/test_service_clients_auth.py": "f08d5172432a04cc66b4cde193a67ecdcfbf7ddd34c205854ac894490319821e",
     "tests/test_service_coordinator_structure.py": "31404157f9a43b9938a608ae9421d8b1eb328a4a1a9a30288da1f86dd31a72b9",
     "tests/test_service_foundations.py": "e559bf749e3805df1aab1e0e520f930bb9ebc7cfa86735f68849c9dd24663529",
@@ -224,7 +224,7 @@
     "tests/test_test_mock_boundary_contract.py": "6f958fb0d5f5e34ad08deca8746dc23558d0cddb34c8660fe3289757ed611375",
     "tests/test_test_module_import_contract.py": "ba764da4b7e04c4d9ae7e3f02ee93bf716295d815edb7b26677d950e2098c29b",
     "tests/test_test_name_contract.py": "364e511ae54a4b5707d4892c9e1e4db4a1976caace7fbe26045935594bf1571d",
-    "tests/test_test_oracle_independence.py": "d97193038a7598240f2e2557de228d818a8c2a7638e1f9bdcfcd0c6f4d9ec8ad",
+    "tests/test_test_oracle_independence.py": "45417bf2d08cb893f2bdd930fb088f3513cec03a54f288530edb32f9e92566bb",
     "tests/test_test_thread_teardown_contract.py": "ffc37837031fbb02b819c98b170092d1443a205a683c679b9316d7baba1abe72",
     "tests/test_transport.py": "71c0760232e22da70d77970c971e138dd4ba8824aceeb21b3dfde511d9d4d6a6",
     "tests/test_transport_contract_resilience.py": "0ea66d1db8c3597d6d2dd3a379739460888a89ba0ea7976d08ef2d9f826d2c97",
@@ -268,7 +268,7 @@
     "scripts/dish-pg-acceptance": "8dc0681def2890f8fe98576225bd2f50a6c309d36b05d100c76402284f22cd5c",
     "scripts/dish-pg-stage-a-baseline": "2ca757b55377eff8c39f97be6ed3d1cc930e0a99221f149aae16b9febd0b0cca"
   },
-  "last_rebaseline_reason": "regenerate after stage-A3-remainder and shadow-treatment-comparison merges",
+  "last_rebaseline_reason": "Regenerate after merging worktree-dish-followup2 (TEST dark-launch acceptance, prod readiness preflight, worker-restart cert) into main",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "New PostgreSQL implementation tests use the tests/postgresql/ namespace and are not part of the frozen legacy characterization corpus.",
