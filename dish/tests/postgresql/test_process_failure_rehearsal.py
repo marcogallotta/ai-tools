@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from dish_pg import process_failure_rehearsal as rehearsal
-from tests.support.postgresql.certification import NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY
+from tests.support.postgresql.certification import discover_native_postgresql_inventory
 
 DISH_ROOT = Path(__file__).resolve().parents[2]
 
@@ -197,7 +197,7 @@ def test_process_failure_inventory_is_literal_process_owned_and_scenario_complet
     )
     assert all("::test_" in node for node in rehearsal.PROCESS_TEST_INVENTORY)
     assert set(rehearsal.PROCESS_TEST_INVENTORY).issubset(
-        NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY
+        discover_native_postgresql_inventory(DISH_ROOT)
     )
 
 

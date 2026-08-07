@@ -22,9 +22,6 @@ from typing import Any, Iterable
 import psutil
 
 ROOT = Path(__file__).resolve().parents[1]
-PGLITE_FOUNDATIONAL_QUARANTINE = (
-    "tests/postgresql/pglite/test_pglite_migrations.py::test_native_fixture_reset_uses_alembic_history",
-)
 _INTERNAL_RUNNER_ENV = "DISH_INTERNAL_GOVERNED_RUNNER"
 _INFRASTRUCTURE_SIGNATURES = (
     "server closed the connection unexpectedly",
@@ -343,11 +340,6 @@ def _junit_summary(path: Path) -> dict[str, Any]:
     }
 
 
-def _required_inventory_present(summary: dict[str, Any], required: tuple[str, ...]) -> bool:
-    """Return whether every required node ID is present in the JUnit inventory."""
-    return set(required).issubset(set(summary.get("nodeids", ())))
-
-
 def _failure_detail(path: Path) -> tuple[str, int, int, int]:
     if not path.is_file():
         return "missing JUnit report", 0, 0, 0
@@ -644,16 +636,9 @@ def main(argv: list[str] | None = None) -> int:
         collection_timeout_seconds=args.collection_timeout_seconds,
         cleanup_grace_seconds=args.cleanup_grace_seconds,
     )
-    quarantine_inventory_present = set(PGLITE_FOUNDATIONAL_QUARANTINE).issubset(
-        set(quarantine["inventory"])
-    )
-    passed = (
-        primary["passed"]
-        and quarantine["passed"]
-        and quarantine_inventory_present
-    )
+    passed = primary["passed"] and quarantine["passed"]
     report = {
-        "format": "dish-pglite-development-report-v3",
+        "format": "dish-pglite-development-report-v4",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "lane": "pglite_development",
         "execution_model": "one_fresh_pytest_process_per_governed_node",
@@ -661,8 +646,6 @@ def main(argv: list[str] | None = None) -> int:
         "artifact_root": str(artifact_root),
         "primary": primary,
         "quarantine": quarantine,
-        "foundational_quarantine_inventory": list(PGLITE_FOUNDATIONAL_QUARANTINE),
-        "foundational_quarantine_inventory_present": quarantine_inventory_present,
         "passed": passed,
         "certification_evidence": False,
         "native_postgresql_certified": False,

@@ -1,8 +1,10 @@
 """Native PostgreSQL certification diagnostics shared by pytest and lane scripts."""
 from __future__ import annotations
 
+import ast
 import os
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import create_engine, text
@@ -96,63 +98,23 @@ def probe_native_postgresql(dsn: str | None = None) -> NativePostgreSQLIdentity:
     finally:
         engine.dispose()
 
-# This inventory is intentionally literal. The native certification script rejects
-# collection drift instead of deriving the required set from production or pytest.
-NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY = (
-    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_cancelled_reservation_fails_closed",
-    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_candidate_dependencies_must_match_generation",
-    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_direct_sql_cannot_open_general_admission_before_verification",
-    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_exact_first_request_fails_before_first_request_gate",
-    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_exact_reserved_first_request_succeeds",
-    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_first_request_replay_succeeds",
-    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_initial_state_insert_guards_reject_direct_sql",
-    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_mismatched_request_before_consumption_fails",
-    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_missing_control_row_fails_closed",
-    "tests/postgresql/native/test_first_request_reservation_single_gate.py::test_native_unrelated_valid_second_request_fails_before_verification",
-    "tests/postgresql/native/test_importer.py::test_importer_persists_real_records_against_real_postgresql",
-    "tests/postgresql/native/test_native_honest_binding_populated_migration.py::test_native_postgresql_populated_honest_binding_upgrade_enforces_identity",
-    "tests/postgresql/native/test_native_honest_binding_populated_migration.py::test_native_postgresql_populated_honest_binding_upgrade_rejects_conflicts",
-    "tests/postgresql/native/test_native_populated_migrations.py::test_native_postgresql_rejects_mismatched_cutover_candidate_lineage",
-    "tests/postgresql/native/test_native_populated_migrations.py::test_native_postgresql_rejects_unverified_open_admission_predecessor",
-    "tests/postgresql/native/test_native_populated_migrations.py::test_native_postgresql_upgrades_matching_cutover_candidate_lineage",
-    "tests/postgresql/native/test_native_populated_migrations.py::test_native_postgresql_upgrades_populated_projection_attempt_predecessor",
-    "tests/postgresql/native/test_operation_discard_prepare_concurrency.py::test_native_discard_commits_before_prepare_lock_and_leaves_no_actionable_intent",
-    "tests/postgresql/native/test_operation_discard_prepare_concurrency.py::test_native_prepare_commits_before_discard_lock_and_discard_cannot_cancel",
-    "tests/postgresql/native/test_process_failure_command.py::test_command_process_commit_before_response_replays_without_duplicate_mutation",
-    "tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers",
-    "tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect",
-    "tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down",
-    "tests/postgresql/native/test_process_failure_projection.py::test_process_failure_after_ambiguous_external_response",
-    "tests/postgresql/native/test_process_failure_projection.py::test_process_failure_after_claim_before_durable_intent",
-    "tests/postgresql/native/test_process_failure_projection.py::test_process_failure_after_durable_intent_before_external_call",
-    "tests/postgresql/native/test_process_failure_projection.py::test_process_failure_after_settlement_before_shutdown",
-    "tests/postgresql/native/test_process_failure_projection.py::test_process_failure_before_claim",
-    "tests/postgresql/native/test_process_failure_reconciliation.py::test_reconciliation_process_loss_after_durable_run_creation_resumes_exact_run",
-    "tests/postgresql/native/test_process_failure_reconciliation.py::test_reconciliation_process_loss_after_partial_corpus_resumes_without_duplicate_items",
-    "tests/postgresql/native/test_process_failure_supervision.py::test_long_running_projection_worker_is_supervised_and_restarted",
-    "tests/postgresql/native/test_process_failure_supervision.py::test_reconciliation_worker_is_supervised_and_restarted",
-    "tests/postgresql/native/test_process_failure_takeover.py::test_process_takeover_is_lease_gated_fenced_and_task_local",
-    "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_process_loss_replays_without_duplicate_effects",
-    "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once",
-    "tests/postgresql/native/test_projection_epoch_lifecycle_concurrency.py::test_native_disable_during_candidate_selection_prevents_claim",
-    "tests/postgresql/native/test_projection_epoch_lifecycle_concurrency.py::test_native_disable_after_claim_blocks_durable_dispatch_attempt",
-    "tests/postgresql/native/test_projection_epoch_lifecycle_concurrency.py::test_native_event_insertion_admitted_before_retirement_is_superseded",
-    "tests/postgresql/native/test_projection_epoch_lifecycle_concurrency.py::test_native_confirmed_settlement_waiting_before_retirement_is_preserved",
-    "tests/postgresql/native/test_projection_attempt_concurrency.py::test_native_stale_settlement_races_current_owner_and_cannot_change_terminal_state",
-    "tests/postgresql/native/test_projection_attempt_concurrency.py::test_native_worker_restart_observes_without_second_dispatch",
-    "tests/postgresql/native/test_projection_worker.py::test_projection_worker_drains_one_pending_event_against_real_postgresql",
-    "tests/postgresql/native/test_projection_worker.py::test_projection_worker_never_claims_real_shadow_evaluator_outbox",
-    "tests/postgresql/native/test_reconciliation_worker.py::test_reconciliation_worker_completes_one_corpus_against_real_postgresql",
-    "tests/postgresql/native/test_validation_replay.py::test_native_validation_failure_replays_one_authoritative_outcome",
-    "tests/postgresql/native/test_validation_replay.py::test_native_concurrent_identical_validation_failures_converge",
-    "tests/postgresql/native/test_validation_replay.py::test_native_closed_admission_preserves_first_request_reservation",
-    "tests/postgresql/native/test_runtime_wiring_rehearsal.py::test_runtime_wiring_rehearsal_across_service_and_worker_processes",
-    "tests/postgresql/native/test_shadow_baseline_concurrency.py::test_native_admitted_capture_blocks_close_and_forces_close_to_reread",
-    "tests/postgresql/native/test_shadow_baseline_concurrency.py::test_native_committed_close_rejects_waiting_capture",
-    "tests/postgresql/native/test_shadow_baseline_concurrency.py::test_native_committed_disqualification_rejects_waiting_capture",
-    "tests/postgresql/native/test_shadow_baseline_concurrency.py::test_native_committed_disqualification_rejects_waiting_delivery_claim",
-    "tests/postgresql/native/test_stage_a_concurrency.py::test_independent_tasks_acquire_authority_without_global_serialization",
-    "tests/postgresql/native/test_stage_a_concurrency.py::test_ten_simultaneous_actor_lease_acquisitions_have_one_winner",
-    "tests/postgresql/native/test_stage_a_concurrency.py::test_ten_simultaneous_duplicate_request_admissions_perform_one_logical_execution",
-    "tests/postgresql/native/test_stage_a_concurrency.py::test_ten_simultaneous_marco_reservations_have_one_winner",
-)
+
+def discover_native_postgresql_inventory(root: Path | None = None) -> tuple[str, ...]:
+    """Derive the governed native inventory from native test modules.
+
+    Pytest marker selection remains independent: the certification runner compares
+    its selected node IDs with this file-derived inventory and fails on drift.
+    """
+
+    repo_root = (root or Path(__file__).resolve().parents[3]).resolve()
+    native_root = repo_root / "tests" / "postgresql" / "native"
+    nodeids: list[str] = []
+    for path in sorted(native_root.glob("test_*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        relative = path.relative_to(repo_root).as_posix()
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
+                "test_"
+            ):
+                nodeids.append(f"{relative}::{node.name}")
+    return tuple(sorted(nodeids))

@@ -81,9 +81,9 @@ Normal scoped work runs:
 3. consumer lanes required by bounded shared-test fan-out;
 4. every additional lane triggered by the actual semantic delta.
 
-`other_direct_consumers` and `transitive_consumers` are audit and integration context, not an
-instruction to execute every consumer during ordinary iteration. Shared test infrastructure uses
-fan-out scope: narrow helpers run known consumers; cross-lane helpers run their consumer lanes;
+Test rows select their own module automatically, so `direct_owner_tests` and
+`critical_contract_tests` only record additional cross-file evidence. Shared test infrastructure
+uses fan-out scope: narrow helpers run known consumers; cross-lane helpers run their consumer lanes;
 only genuinely global collection, dependency, fixture, selector, or governed-runner changes force
 the ordinary full suite before handoff. A row addition that only classifies a new path does not by
 itself force the full suite.

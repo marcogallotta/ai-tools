@@ -12,6 +12,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from tests.support.postgresql.runtime_wiring_rehearsal import _free_port
 
 from dish_pg import runtime_wiring_rehearsal as rehearsal
 from dish_service import __main__ as service_main
@@ -148,12 +149,6 @@ class _EchoHandler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         data = self.request.recv(4096)
         self.request.sendall(data)
-
-
-def _free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
-        server.bind(("127.0.0.1", 0))
-        return int(server.getsockname()[1])
 
 
 def test_postgresql_proxy_is_a_restartable_separate_process(tmp_path: Path) -> None:

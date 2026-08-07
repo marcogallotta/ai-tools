@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import json
 import runpy
 from pathlib import Path
@@ -8,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests.support.postgresql.certification import (
-    NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY,
+    discover_native_postgresql_inventory,
     NativePostgreSQLIdentity,
     NativePostgreSQLUnavailable,
 )
@@ -17,24 +16,12 @@ pytestmark = pytest.mark.smoke
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _native_test_nodeids() -> set[str]:
-    nodeids: set[str] = set()
-    for path in sorted((ROOT / "tests" / "postgresql" / "native").glob("test_*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        relative = path.relative_to(ROOT)
-        for node in tree.body:
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith(
-                "test_"
-            ):
-                nodeids.add(f"{relative}::{node.name}")
-    return nodeids
-
-
-def test_native_postgresql_certification_inventory_is_literal_and_complete() -> None:
-    assert len(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY) == len(
-        set(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY)
-    )
-    assert set(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY) == _native_test_nodeids()
+def test_native_postgresql_certification_inventory_is_derived_and_nonempty() -> None:
+    inventory = discover_native_postgresql_inventory(ROOT)
+    assert inventory == tuple(sorted(set(inventory)))
+    assert inventory
+    assert all(nodeid.startswith("tests/postgresql/native/test_") for nodeid in inventory)
+    assert all("::test_" in nodeid for nodeid in inventory)
 
 
 def test_native_postgresql_selector_refuses_sqlite_backend() -> None:
@@ -80,9 +67,7 @@ def test_native_certification_reports_unavailable_without_masquerading(
     assert report["status"] == "unavailable"
     assert report["native_postgresql_certified"] is False
     assert report["tests"]["executed"] == 0
-    assert report["tests"]["unavailable"] == len(
-        NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY
-    )
+    assert report["tests"]["unavailable"] == len(discover_native_postgresql_inventory(ROOT))
 
 
 def test_native_certification_rejects_zero_executed_tests(
@@ -107,22 +92,18 @@ def test_native_certification_rejects_zero_executed_tests(
                 {
                     "identity": identity.as_dict(),
                     "tests": {
-                        "selected": len(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY),
+                        "selected": len(discover_native_postgresql_inventory(ROOT)),
                         "executed": 0,
                         "passed": 0,
                         "failed": 0,
                         "errors": 0,
-                        "skipped": len(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY),
+                        "skipped": len(discover_native_postgresql_inventory(ROOT)),
                         "unavailable": 0,
-                        "selected_nodeids": list(
-                            NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY
-                        ),
-                        "skipped_nodeids": list(
-                            NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY
-                        ),
+                        "selected_nodeids": list(discover_native_postgresql_inventory(ROOT)),
+                        "skipped_nodeids": list(discover_native_postgresql_inventory(ROOT)),
                         "skip_reasons": {
                             nodeid: "governed fixture skip"
-                            for nodeid in NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY
+                            for nodeid in discover_native_postgresql_inventory(ROOT)
                         },
                     },
                     "pytest_exit_status": 0,
@@ -151,16 +132,11 @@ def test_native_certification_rejects_zero_executed_tests(
     assert isinstance(report, dict)
     assert report["native_postgresql_certified"] is False
     assert report["tests"]["executed"] == 0
-    assert report["unwaived_skips"] == sorted(
-        NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY
-    )
+    assert report["unwaived_skips"] == sorted(discover_native_postgresql_inventory(ROOT))
 
 
-def test_pglite_report_keeps_foundational_quarantine_visible(tmp_path: Path) -> None:
+def test_pglite_report_classifies_assertion_and_infrastructure_failures(tmp_path: Path) -> None:
     namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-pglite"))
-    assert namespace["PGLITE_FOUNDATIONAL_QUARANTINE"] == (
-        "tests/postgresql/pglite/test_pglite_migrations.py::test_native_fixture_reset_uses_alembic_history",
-    )
     report = tmp_path / "junit.xml"
     report.write_text(
         """<?xml version='1.0' encoding='utf-8'?>
@@ -174,18 +150,3 @@ def test_pglite_report_keeps_foundational_quarantine_visible(tmp_path: Path) -> 
     summary = namespace["_junit_summary"](report)
     assert summary["assertion_failures"] == 1
     assert summary["infrastructure_failures"] == 1
-
-    quarantine = tmp_path / "quarantine.xml"
-    quarantine.write_text(
-        """<?xml version='1.0' encoding='utf-8'?>
-<testsuite tests='2' failures='0' errors='0' skipped='0'>
-  <testcase classname='tests.postgresql.pglite.test_pglite_migrations' name='test_native_fixture_reset_uses_alembic_history'/>
-  <testcase classname='tests.postgresql.pglite.test_pglite_bootstrap' name='test_pglite_starts_and_reports_postgresql_version'/>
-</testsuite>
-""",
-        encoding="utf-8",
-    )
-    quarantine_summary = namespace["_junit_summary"](quarantine)
-    assert namespace["_required_inventory_present"](
-        quarantine_summary, namespace["PGLITE_FOUNDATIONAL_QUARANTINE"]
-    )

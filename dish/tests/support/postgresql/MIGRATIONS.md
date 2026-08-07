@@ -15,4 +15,4 @@ database.seed(assert_constraints_reject_invalid_rows)
 
 For a hand-built historical schema, call `database.reset()`, create only the predecessor objects, and then `database.stamp("<down_revision>")`. For intentionally conflicting rows, seed them and use `database.expect_upgrade_failure(...)` with the exact exception/message contract.
 
-Use `native_migration_database` for certification, `pglite_migration_database` only for PostgreSQL-semantic development evidence, and `sqlite_migration_database` only for compatibility. Do not mark PGlite or SQLite results as native PostgreSQL certification. New native migration tests must also be added literally to `NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY`.
+Use `native_migration_database` for certification, `pglite_migration_database` only for PostgreSQL-semantic development evidence, and `sqlite_migration_database` only for compatibility. Do not mark PGlite or SQLite results as native PostgreSQL certification. New native migration tests are discovered from `tests/postgresql/native/test_*.py`; the certification runner independently compares that derived inventory with pytest native-lane selection and fails on drift.

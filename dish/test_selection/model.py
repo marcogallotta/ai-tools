@@ -54,29 +54,19 @@ class PolicyRow:
     path: str
     kind: str
     primary_class: str
-    primary_class_name: str
     domain_class_for_tests: str
     traits: tuple[str, ...]
-    ownership_summary: str
-    ownership_basis: str
-    ownership_confidence: str
     direct_owner_tests: tuple[str, ...]
     critical_contract_tests: tuple[str, ...]
-    other_direct_consumers: tuple[str, ...]
-    transitive_consumers: tuple[str, ...]
     shared_infrastructure_scope: str
-    direct_consumer_files: tuple[str, ...]
     consumer_lanes: tuple[str, ...]
     default_lanes: tuple[str, ...]
     conditional_escalations: tuple[str, ...]
     escalation_predicates: tuple[str, ...]
-    native_postgresql_default: str
-    native_postgresql_required_when: str
-    pglite_default: str
-    pglite_useful_when: str
-    full_suite_trigger: str
-    classification_confidence: str
-    notes: str
+
+    @property
+    def primary_class_name(self) -> str:
+        return CLASS_NAMES[self.primary_class]
 
     @classmethod
     def from_mapping(cls, value: dict[str, str]) -> "PolicyRow":
@@ -84,27 +74,13 @@ class PolicyRow:
             "path",
             "kind",
             "primary_class",
-            "primary_class_name",
             "domain_class_for_tests",
-            "ownership_summary",
-            "ownership_basis",
-            "ownership_confidence",
             "shared_infrastructure_scope",
-            "native_postgresql_default",
-            "native_postgresql_required_when",
-            "pglite_default",
-            "pglite_useful_when",
-            "full_suite_trigger",
-            "classification_confidence",
-            "notes",
         }
         list_fields = {
             "traits",
             "direct_owner_tests",
             "critical_contract_tests",
-            "other_direct_consumers",
-            "transitive_consumers",
-            "direct_consumer_files",
             "consumer_lanes",
             "default_lanes",
             "conditional_escalations",

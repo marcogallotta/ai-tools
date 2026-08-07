@@ -19,7 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tests.support.postgresql.certification import (  # noqa: E402
-    NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY,
+    discover_native_postgresql_inventory,
     NativePostgreSQLUnavailable,
     postgresql_dsn,
     probe_native_postgresql,
@@ -91,13 +91,13 @@ def _run(command: list[str], *, env: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def _base_report(*, dsn: str, waivers: dict[str, str]) -> dict[str, Any]:
+def _base_report(*, dsn: str, waivers: dict[str, str], inventory: tuple[str, ...]) -> dict[str, Any]:
     return {
         "format": "dish-native-postgresql-certification-report-v1",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "certification_scope": "native_postgresql",
-        "inventory": list(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY),
-        "inventory_count": len(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY),
+        "inventory": list(inventory),
+        "inventory_count": len(inventory),
         "dsn": redacted_dsn(dsn),
         "skip_waivers": waivers,
         "source_contract_acceptance": False,
@@ -118,12 +118,13 @@ def main(argv: list[str] | None = None) -> int:
         waivers = _parse_waivers(args.waive_skip)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
-    unknown_waivers = sorted(set(waivers) - set(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY))
+    inventory = discover_native_postgresql_inventory(ROOT)
+    unknown_waivers = sorted(set(waivers) - set(inventory))
     if unknown_waivers:
         raise SystemExit("skip waivers are not in the governed inventory: " + ", ".join(unknown_waivers))
 
     dsn = args.dsn or postgresql_dsn()
-    report = _base_report(dsn=dsn, waivers=waivers)
+    report = _base_report(dsn=dsn, waivers=waivers, inventory=inventory)
     try:
         identity = probe_native_postgresql(dsn)
     except NativePostgreSQLUnavailable as exc:
@@ -133,14 +134,14 @@ def main(argv: list[str] | None = None) -> int:
                 "environment_error": str(exc),
                 "identity": None,
                 "tests": {
-                    "selected": len(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY),
+                    "selected": len(inventory),
                     "executed": 0,
                     "passed": 0,
                     "failed": 0,
                     "errors": 0,
                     "skipped": 0,
-                    "unavailable": len(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY),
-                    "unavailable_nodeids": list(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY),
+                    "unavailable": len(inventory),
+                    "unavailable_nodeids": list(inventory),
                 },
                 "native_postgresql_certified": False,
             }
@@ -202,7 +203,7 @@ def main(argv: list[str] | None = None) -> int:
 
     tests = pytest_payload["tests"]
     selected = set(tests.get("selected_nodeids", []))
-    expected = set(NATIVE_POSTGRESQL_CERTIFICATION_INVENTORY)
+    expected = set(inventory)
     inventory_missing = sorted(expected - selected)
     inventory_unexpected = sorted(selected - expected)
     skipped = set(tests.get("skipped_nodeids", []))

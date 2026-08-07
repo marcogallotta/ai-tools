@@ -15,21 +15,10 @@ from dish_tool.errors import DishRuleError
 from dish_tool.governed_diff import explicit_material_reasons, require_small_scope
 
 from dish_tool.task_document import parse_task_document
-from tests.support.readiness import _approve_and_submit
+from tests.support.readiness import _approve_and_submit, _review
 from tests.support.verification import TASK, make_app
 
 
-
-def _review(app, *, run="review", agent="codex"):
-    result = app.execute(
-        "start", agent=agent, task_gid="t", kind="verification", run_id=run,
-        independence_attestation="independent",
-    )
-    assert result["ok"]
-    inspected = app.execute("inspect", agent=agent, submission_id=result["submission_id"])
-    assert inspected["ok"]
-    assert inspected["allowed_actions"] == ["approve", "reject"]
-    return result
 
 def _authorize_dish_candidate(app, backend, operation_id, *, before="Test dish", after="Different dish"):
     admin = DishAdminApplication(

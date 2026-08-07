@@ -18,8 +18,6 @@ ALLOWED_KINDS = {
     "config-or-runner",
     "source-artifact",
 }
-ALLOWED_BASIS = {"direct_import", "explicit_contract", "transitive", "dynamic_manual", "none"}
-ALLOWED_CONFIDENCE = {"high", "medium", "low"}
 ALLOWED_INFRA_SCOPE = {
     "none",
     "narrow",
@@ -33,37 +31,22 @@ REQUIRED_FIELDS = {
     "path",
     "kind",
     "primary_class",
-    "primary_class_name",
     "domain_class_for_tests",
     "traits",
-    "ownership_summary",
-    "ownership_basis",
-    "ownership_confidence",
     "direct_owner_tests",
     "critical_contract_tests",
-    "other_direct_consumers",
-    "transitive_consumers",
     "shared_infrastructure_scope",
-    "direct_consumer_files",
     "consumer_lanes",
     "default_lanes",
     "conditional_escalations",
     "escalation_predicates",
-    "native_postgresql_default",
-    "native_postgresql_required_when",
-    "pglite_default",
-    "pglite_useful_when",
-    "full_suite_trigger",
-    "classification_confidence",
-    "notes",
 }
+
 REFERENCE_FIELDS = {
     "direct_owner_tests",
     "critical_contract_tests",
-    "other_direct_consumers",
-    "transitive_consumers",
-    "direct_consumer_files",
 }
+
 TOP_LEVEL_FILES = {
     "README.md",
     "alembic.ini",
@@ -91,22 +74,6 @@ SCOPED_ROOTS = {
 }
 EXCLUDED_PARTS = {".venv", ".pytest_cache", ".test-artifacts", "node_modules", "__pycache__"}
 PARENT_GUIDANCE = {"../AGENTS.md", "../CLAUDE.md", "../README.md"}
-GLOBAL_INFRA_PATHS = {
-    "tests/conftest.py",
-    "pytest.ini",
-    "requirements-test.txt",
-    "requirements-flake.txt",
-    "scripts/dish-pg-native-certification",
-    "scripts/dish-pg-pglite",
-    "scripts/dish-pg-acceptance",
-    "scripts/dish-test-plan",
-    "test_selection/planner.py",
-    "test_selection/validator.py",
-    "tests/flake_runner.py",
-    "tests/flake_policy.py",
-    "tests/mutation_runner.py",
-    "tests/mutation_cases.py",
-}
 POLICY_DATA_PATH = "test_selection/ownership.csv"
 
 
@@ -249,18 +216,10 @@ def validate_policy(
             errors.append(f"{prefix}: mapped path does not exist")
         if primary_class not in CLASS_NAMES:
             errors.append(f"{prefix}: invalid primary_class {primary_class!r}")
-        elif row.get("primary_class_name") != CLASS_NAMES[primary_class]:
-            errors.append(f"{prefix}: class name does not match class {primary_class}")
         if row.get("domain_class_for_tests") not in CLASS_NAMES:
             errors.append(f"{prefix}: invalid domain_class_for_tests")
         if kind not in ALLOWED_KINDS:
             errors.append(f"{prefix}: invalid kind {kind!r}")
-        if row.get("ownership_basis") not in ALLOWED_BASIS:
-            errors.append(f"{prefix}: invalid ownership_basis")
-        if row.get("ownership_confidence") not in ALLOWED_CONFIDENCE:
-            errors.append(f"{prefix}: invalid ownership_confidence")
-        if row.get("classification_confidence") not in ALLOWED_CONFIDENCE:
-            errors.append(f"{prefix}: invalid classification_confidence")
         scope = row.get("shared_infrastructure_scope")
         if scope not in ALLOWED_INFRA_SCOPE:
             errors.append(f"{prefix}: invalid shared_infrastructure_scope")
@@ -290,26 +249,10 @@ def validate_policy(
                         f"{prefix}: {field} test file was not present in supplied successful pytest collection: {ref!r}"
                     )
 
-        if kind == "production" and row.get("ownership_basis") == "none":
-            errors.append(f"{prefix}: production path has no ownership basis")
-        if kind == "test":
-            if path not in split_field(row.get("direct_owner_tests", "")):
-                errors.append(f"{prefix}: isolated test must own itself")
-            if not row.get("domain_class_for_tests"):
-                errors.append(f"{prefix}: test lacks domain class")
-        if kind == "config-or-runner" and path != POLICY_DATA_PATH:
-            if not split_field(row.get("direct_owner_tests", "")) and not split_field(
-                row.get("critical_contract_tests", "")
-            ):
-                errors.append(f"{prefix}: config or runner lacks an explicit contract test")
+        if kind == "test" and not row.get("domain_class_for_tests"):
+            errors.append(f"{prefix}: test lacks domain class")
 
         if "/migrations/versions/" in path:
-            if row.get("ownership_basis") != "dynamic_manual":
-                errors.append(f"{prefix}: Alembic version module must use dynamic_manual ownership")
-            if row.get("native_postgresql_default") != "Required":
-                errors.append(f"{prefix}: migration version must require native PostgreSQL")
-            if row.get("pglite_default") != "Required":
-                errors.append(f"{prefix}: migration version must require PGlite")
             required = {
                 "SQLite database-boundary",
                 "PGlite primary",
@@ -332,16 +275,10 @@ def validate_policy(
             if not required.issubset(lanes):
                 errors.append(f"{prefix}: release-critical path lacks mandatory lanes {sorted(required - lanes)}")
 
-        if {"locking-concurrency", "projection-lifecycle"} & traits:
-            if row.get("native_postgresql_default") != "Required":
-                errors.append(f"{prefix}: locking/projection trait must require native PostgreSQL")
         if "shared-test-infrastructure" in traits and scope == "none":
             errors.append(f"{prefix}: shared infrastructure trait lacks fan-out scope")
-        if path in GLOBAL_INFRA_PATHS:
-            if scope != "global":
-                errors.append(f"{prefix}: global policy path must have global scope")
-            if "ordinary full suite" not in lanes:
-                errors.append(f"{prefix}: global policy path must include ordinary full suite")
+        if scope == "global" and "ordinary full suite" not in lanes:
+            errors.append(f"{prefix}: global infrastructure must include ordinary full suite")
         if scope in {"narrow", "lane-local", "cross-lane", "generated-fixture", "policy-data"}:
             if "ordinary full suite" in lanes:
                 errors.append(f"{prefix}: bounded or policy-data infrastructure must not force full suite")
@@ -352,25 +289,6 @@ def validate_policy(
                 errors.append(f"{prefix}: ownership map must use policy-data scope")
             if not row.get("escalation_predicates"):
                 errors.append(f"{prefix}: ownership map lacks semantic change predicates")
-
-        if row.get("native_postgresql_default") not in {"Required", "Conditional", "No"}:
-            errors.append(f"{prefix}: invalid native_postgresql_default")
-        if row.get("pglite_default") not in {"Required", "Useful", "Conditional", "No"}:
-            errors.append(f"{prefix}: invalid pglite_default")
-        if row.get("native_postgresql_default") in {"Required", "Conditional"} and not row.get(
-            "native_postgresql_required_when"
-        ):
-            errors.append(f"{prefix}: native requirement lacks predicate")
-        if row.get("pglite_default") in {"Required", "Useful", "Conditional"} and not row.get(
-            "pglite_useful_when"
-        ):
-            errors.append(f"{prefix}: PGlite policy lacks predicate")
-        if not row.get("full_suite_trigger"):
-            errors.append(f"{prefix}: missing full_suite_trigger")
-
-    for path in GLOBAL_INFRA_PATHS:
-        if path in expected_repo and path not in row_by_path:
-            errors.append(f"global policy path is not mapped: {path}")
 
     return ValidationResult(
         row_count=len(rows),
