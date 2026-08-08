@@ -15,7 +15,7 @@ import pytest
 
 from tests.support.transport import FakeSocket as _FakeSocket
 
-from dish_service import client as client_module
+from dish_service import _client_transport as client_transport
 from dish_service.client import DishActionClient, DishServiceClient
 from dish_service.config import ServiceConfig
 from dish_service.openapi import action_openapi
@@ -205,7 +205,7 @@ def test_client_closes_failed_http_response(monkeypatch):
         made["connection"] = connection
         return connection
 
-    monkeypatch.setattr(client_module.http.client, "HTTPConnection", fake_connection_cls)
+    monkeypatch.setattr(client_transport.http.client, "HTTPConnection", fake_connection_cls)
     client = DishServiceClient(
         "http://dish.invalid", token="token-secret", run_id=RUN_ID
     )
@@ -220,7 +220,7 @@ def test_client_maps_abrupt_disconnect_to_service_error(monkeypatch):
         def getresponse(self):
             raise http.client.RemoteDisconnected("peer closed")
 
-    monkeypatch.setattr(client_module.http.client, "HTTPConnection", DisconnectingConnection)
+    monkeypatch.setattr(client_transport.http.client, "HTTPConnection", DisconnectingConnection)
     client = DishServiceClient(
         "http://dish.invalid", token="token-secret", run_id=RUN_ID
     )

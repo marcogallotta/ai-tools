@@ -10,7 +10,7 @@ import pytest
 
 from tests.support.transport import FakeSocket as _FakeSocket
 
-from dish_service import client as client_module
+from dish_service import _client_transport as client_transport
 from dish_service.client import DishAdminServiceClient
 from dish_service.http import DishHTTPServer, build_server
 from dish_service.leases import LeaseManager
@@ -169,7 +169,7 @@ def test_expire_client_maps_post_dispatch_failures_to_exact_replay_envelope(
                 return _FakeResponse(b"not-json")
             return _FakeResponse(b'{"ok":true}')
 
-    monkeypatch.setattr(client_module.http.client, "HTTPConnection", FakeConnection)
+    monkeypatch.setattr(client_transport.http.client, "HTTPConnection", FakeConnection)
     client = DishAdminServiceClient(
         "http://dish.invalid", token="admin-secret", run_id=ADMIN_RUN
     )
@@ -195,7 +195,7 @@ def test_expire_client_keeps_connect_failure_nonambiguous(monkeypatch):
         def connect(self):
             raise ConnectionRefusedError("no service")
 
-    monkeypatch.setattr(client_module.http.client, "HTTPConnection", FakeConnection)
+    monkeypatch.setattr(client_transport.http.client, "HTTPConnection", FakeConnection)
     client = DishAdminServiceClient(
         "http://dish.invalid", token="admin-secret", run_id=ADMIN_RUN
     )
@@ -232,7 +232,7 @@ def test_committed_lost_response_exact_retry_does_not_release_replacement(
     owner, started = _start(service)
     operation_id = started["submission_id"]
     old_lease_id = started["data"]["service_lease"]["lease_id"]
-    real_connection = client_module.http.client.HTTPConnection
+    real_connection = client_transport.http.client.HTTPConnection
 
     class LostResponseConnection:
         def __init__(self, host, port, timeout=None):
@@ -257,7 +257,7 @@ def test_committed_lost_response_exact_retry_does_not_release_replacement(
     client = DishAdminServiceClient(url, token="admin-secret", run_id=ADMIN_RUN)
     try:
         monkeypatch.setattr(
-            client_module.http.client, "HTTPConnection", LostResponseConnection
+            client_transport.http.client, "HTTPConnection", LostResponseConnection
         )
         ambiguous = client.expire_lease(
             lease_id=old_lease_id,
@@ -272,7 +272,7 @@ def test_committed_lost_response_exact_retry_does_not_release_replacement(
         finally:
             conn.close()
 
-        monkeypatch.setattr(client_module.http.client, "HTTPConnection", real_connection)
+        monkeypatch.setattr(client_transport.http.client, "HTTPConnection", real_connection)
         replay = client.expire_lease(
             lease_id=old_lease_id,
             reason="owner dead",
@@ -304,7 +304,7 @@ def test_settimeout_failure_is_known_predispatch_failure(monkeypatch):
             super().__init__(host, port, timeout=timeout)
             self.sock = FailingSocket()
 
-    monkeypatch.setattr(client_module.http.client, "HTTPConnection", FakeConnection)
+    monkeypatch.setattr(client_transport.http.client, "HTTPConnection", FakeConnection)
     client = DishAdminServiceClient(
         "http://dish.invalid", token="admin-secret", run_id=ADMIN_RUN
     )
