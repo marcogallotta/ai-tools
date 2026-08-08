@@ -63,7 +63,19 @@ python3 -m venv --clear .venv-flake
 
 Record the source archive SHA-256 plus the builder/target Python version and platform alongside an
 offline wheelhouse. A missing wheel is a bootstrap evidence gap to fix on the connected builder; do
-not fall back to a relocated virtual environment.
+not execute a relocated virtual environment.
+
+When an uploaded source archive already contains a populated `.venv` but no wheelhouse, that archived
+environment may still be used as a **package source** for sandbox testing. Preserve its `site-packages`
+before clearing/rebuilding `.venv`, create the new environment with the current interpreter, and try
+the normal requirements install first. If the sandbox index cannot supply a pinned package, seed only
+the missing package from the archived `site-packages` when its contents are pure Python or otherwise
+ABI-compatible with the current interpreter/platform. Never copy a CPython-minor-specific compiled
+extension (for example `*.cpython-312-*.so`) into a different Python minor. If a compiled dependency is
+missing, use a requirement-matching package/wheel already built for the current interpreter when
+available; otherwise report that dependency as unavailable. Verify the required top-level versions
+and imports before using the rebuilt environment as test evidence. This fallback recovers dependencies
+from the archive; it does not make the archived venv itself portable or executable.
 
 ## Autonomous changed-path selection
 

@@ -25,7 +25,14 @@ python3 -m venv .venv
 .venv/bin/python scripts/dish-test-plan --base <revision>
 ```
 
-If you are ChatGPT working from an uploaded or archived copy of this repo rather than the live filesystem: `dish/.venv/bin/python` is a symlink to the host Python that built it, not a self-contained interpreter, so on a relocated copy it can resolve to a different Python version than the one its packages were installed under. That makes a populated `.venv` misreport itself as empty — that's a version mismatch, not a missing dependency. Don't delete or rebuild it on that basis alone: compare `.venv`'s Python version (`pyvenv.cfg`) to the current `python3 --version` first. If they differ, rebuild a fresh `.venv` against the current interpreter and install normally. If normal installation then fails for lack of network/package-index access, report that honestly as a sandbox limitation — never report it as the repository lacking a dependency.
+If you are ChatGPT working from an uploaded or archived copy of this repo rather than the live filesystem, treat the populated archived `.venv` as a **package source, never as an executable environment**. Its interpreter symlinks and compiled extensions may belong to a different host or Python minor. Before clearing it, read `pyvenv.cfg` and preserve its `site-packages` somewhere outside `.venv`. Then:
+
+1. rebuild `.venv` with the current interpreter and attempt the normal requirements install;
+2. **do not stop at the first sandbox index miss** — seed each missing package from the preserved archived `site-packages` when it is pure Python or otherwise ABI-compatible;
+3. never load a CPython-minor-specific compiled extension (for example `*.cpython-312-*.so`) under a different Python minor; for a compiled dependency, use a requirement-matching package/wheel already built for the current interpreter if available, otherwise report that dependency as the remaining sandbox limitation;
+4. verify the required top-level versions and imports before treating the rebuilt environment as test evidence.
+
+A relocated archived `.venv` can therefore recover dependencies even when its interpreter is unusable. Never execute that relocated interpreter, and never describe an index miss as the repository lacking the dependency.
 
 Use the test planner for the complete changed-path set and execute the union of focused tests and semantically required governed lanes. New in-scope paths must be classified in `dish/test_selection/ownership.csv`. Run the ordinary full suite before final delivery of a completed change block. Testing policy and evidence boundaries are in `dish/docs/testing.md` and `dish/docs/architecture/testing-boundaries.md`.
 
